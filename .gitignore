@@ -1,0 +1,168 @@
+# ── Secrets ───────────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+*.p12
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+pip-wheel-metadata/
+.installed.cfg
+MANIFEST
+
+# Python testing / linting / type checking
+.mypy_cache/
+.dmypy.json
+.ruff_cache/
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+coverage.xml
+*.cover
+.cache/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ── Node / Frontend ───────────────────────────────────────────────────────────
+node_modules/
+.npm/
+.yarn/
+.pnp.*
+.pnpm-store/
+yarn-error.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Vite / bundler output
+**/dist/
+**/dist-ssr/
+.vite/
+.turbo/
+.next/
+.nuxt/
+.svelte-kit/
+.parcel-cache/
+.cache/
+
+# TypeScript
+*.tsbuildinfo
+.tscache/
+
+# Test output
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# ── Generated comic assets (large, regenerable — re-run the pipeline) ────────
+# Heavy/regenerable directories and binary outputs inside any project.
+# Lightweight JSON artifacts (state, config, story bible, scenes, screenplays,
+# panels, prompts) are NOT ignored — they let you resume a run without
+# regenerating, and diff cleanly in PRs.
+projects/*
+# projects/*/input/
+# projects/*/images/
+# projects/*/refs/
+# projects/*/plates/
+# projects/*/exports/
+# projects/*/qdrant_data/
+# projects/*/.qdrant/
+# projects/*/assembly/html/
+# projects/*/assembly/pages/*.png
+
+# # Generated binaries inside any project subtree
+# projects/**/*.png
+# projects/**/*.jpg
+# projects/**/*.jpeg
+# projects/**/*.webp
+# projects/**/*.pdf
+# projects/**/*.cbz
+# projects/**/*.zip
+# projects/**/*.epub
+
+# ── Vector store ──────────────────────────────────────────────────────────────
+qdrant_storage/
+.qdrant/
+**/qdrant_data/
+
+# ── Playwright ────────────────────────────────────────────────────────────────
+.playwright/
+playwright/.cache/
+
+# ── Logs & runtime ────────────────────────────────────────────────────────────
+*.log
+logs/
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# ── OS junk ───────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ── Editors / IDEs ────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.swp
+*.swo
+*.swn
+*~
+.netrwhist
+*.sublime-project
+*.sublime-workspace
+.history/
+
+# ── Tooling / package managers ────────────────────────────────────────────────
+.direnv/
+.envrc
+.tool-versions
+.python-version
+.nvmrc
+
+# ── Claude Code / agent metadata (project-local; user-specific) ───────────────
+.claude/cache/
+.claude/sessions/
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+*.bak
+*.tmp
+*.temp
+*.orig
+*.rej

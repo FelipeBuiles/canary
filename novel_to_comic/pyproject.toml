@@ -1,0 +1,44 @@
+[project]
+name = "novel-to-comic"
+version = "0.1.0"
+description = "A 7-stage pipeline that converts novels into graphic novels"
+requires-python = ">=3.12"
+
+dependencies = [
+    "click>=8.0",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "httpx>=0.27",
+    "together>=1.0",
+    "anthropic>=0.40",
+    "google-genai>=1.0",
+    "openai>=1.50",
+    "qdrant-client>=1.12",
+    "ebooklib>=0.18",
+    "Pillow>=10.0",
+    "img2pdf>=0.5",
+    "playwright>=1.40",
+    "rich>=13.0",
+    "tenacity>=9.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+web = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+pipeline = "novel_to_comic.cli:cli"
+
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"novel_to_comic" = [
+    "prompts/*.txt",
+    "fonts/*.ttf",
+]
