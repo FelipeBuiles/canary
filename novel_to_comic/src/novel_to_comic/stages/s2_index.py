@@ -16,7 +16,7 @@ from tenacity import RetryError
 from novel_to_comic.clients import embeddings, flux
 from novel_to_comic.clients.flux import _is_imagen
 from novel_to_comic.config import Config
-from novel_to_comic.events import EventCallback, _NOOP
+from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.rag.chunker import chunk_scene_text, load_scene_texts
 from novel_to_comic.rag.store import create_collection, upsert_chunks
@@ -107,7 +107,8 @@ async def _build_rag_index(config: Config, project_dir: Path, story_bible: Story
 
 
 async def _generate_character_refs(
-    config: Config, project_dir: Path, story_bible: StoryBible, state: PipelineState
+    config: Config, project_dir: Path, story_bible: StoryBible, state: PipelineState,
+    on_event: EventCallback | None = None,
 ) -> None:
     """Part B: Generate character reference sheets.
 
@@ -131,7 +132,7 @@ async def _generate_character_refs(
             "before indexing for tighter style consistency across character sheets.[/yellow]"
         )
 
-    with Progress() as progress:
+    with make_progress(on_event) as progress:
         task = progress.add_task("Character refs", total=len(story_bible.characters))
         for char in story_bible.characters:
             char_dir = refs_dir / char.id
@@ -186,14 +187,15 @@ async def _generate_character_refs(
 
 
 async def _generate_location_plates(
-    config: Config, project_dir: Path, story_bible: StoryBible, state: PipelineState
+    config: Config, project_dir: Path, story_bible: StoryBible, state: PipelineState,
+    on_event: EventCallback | None = None,
 ) -> None:
     """Part C: Generate location background plates."""
     console.print("[bold]Generating location plates...[/bold]")
     plates_dir = project_dir / "plates"
     plates_dir.mkdir(parents=True, exist_ok=True)
 
-    with Progress() as progress:
+    with make_progress(on_event) as progress:
         task = progress.add_task("Location plates", total=len(story_bible.locations))
         for loc in story_bible.locations:
             output_path = plates_dir / f"{loc.id}.png"
@@ -244,12 +246,12 @@ async def run(
               "done": state.stages["index"].items_done,
               "total": state.stages["index"].items_total})
 
-        await _generate_character_refs(config, project_dir, story_bible, state)
+        await _generate_character_refs(config, project_dir, story_bible, state, on_event)
         emit({"type": "stage_progress", "stage": "index",
               "done": state.stages["index"].items_done,
               "total": state.stages["index"].items_total})
 
-        await _generate_location_plates(config, project_dir, story_bible, state)
+        await _generate_location_plates(config, project_dir, story_bible, state, on_event)
 
         complete_stage(state, "index")
         emit({"type": "stage_complete", "stage": "index",

@@ -37,7 +37,7 @@ from novel_to_comic.assembly.html_renderer import (
     write_theme_css,
 )
 from novel_to_comic.config import Config
-from novel_to_comic.events import EventCallback, _NOOP
+from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.models.comic_page import Bubble, ComicPage, PagePanel, Sfx
 from novel_to_comic.models.panel import PanelBreakdown
 from novel_to_comic.models.story_bible import StoryBible
@@ -305,7 +305,7 @@ async def run(
     # ── Render phase (ComicPage JSON → HTML → PNG) ────────────────────────────
     try:
         async with browser_context() as browser:
-            with Progress() as progress:
+            with make_progress(on_event) as progress:
                 task = progress.add_task("Rendering pages", total=len(json_paths))
                 png_paths: list[Path] = []
                 for json_path in json_paths:

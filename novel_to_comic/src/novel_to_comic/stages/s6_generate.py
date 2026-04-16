@@ -14,7 +14,7 @@ from rich.progress import Progress
 from novel_to_comic.clients import flux
 from novel_to_comic.clients.flux import _is_gemini_native, _is_imagen
 from novel_to_comic.config import Config
-from novel_to_comic.events import EventCallback, _NOOP
+from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.state import (
     PipelineState,
@@ -223,7 +223,7 @@ async def run(
     semaphore = asyncio.Semaphore(batch_size)
 
     try:
-        with Progress() as progress:
+        with make_progress(on_event) as progress:
             task = progress.add_task("Generating panels", total=len(prompt_files))
             for batch_start in range(0, len(prompt_files), batch_size):
                 # Check cost limit

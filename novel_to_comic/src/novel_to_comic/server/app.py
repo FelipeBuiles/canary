@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from novel_to_comic.assembly.html_renderer import FONTS_DIR
 
-from .routers import config, export, pages, pipeline, projects
+from .routers import config, export, pages, pipeline, projects, stages
 
 
 def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
@@ -50,6 +50,11 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         config.router,
         prefix="/api/projects/{project_name}/config",
         tags=["config"],
+    )
+    app.include_router(
+        stages.router,
+        prefix="/api/projects/{project_name}",
+        tags=["stages"],
     )
 
     # Serve bundled fonts

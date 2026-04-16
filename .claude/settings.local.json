@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git:*)",
+      "WebSearch",
+      "Bash(pip install:*)",
+      "Bash(python3.12:*)",
+      "Bash(python3.13:*)",
+      "Bash(PYTHONPATH=src python3.13:*)",
+      "Bash(uv pip:*)",
+      "Bash(uv sync:*)",
+      "Bash(uv run:*)",
+      "mcp__MCPMagic__get_node_info",
+      "mcp__MCPMagic__scan_text_nodes",
+      "mcp__MCPMagic__export_node_as_image",
+      "mcp__MCPMagic__scan_nodes_by_types",
+      "Bash(python3:*)",
+      "Bash(npm create:*)",
+      "Bash(npm install:*)",
+      "mcp__MCPMagic__get_document_info",
+      "mcp__MCPMagic__get_nodes_info",
+      "Bash(npx tsc:*)",
+      "Bash(npm run:*)",
+      "Bash(npx vite:*)"
+    ]
+  }
+}

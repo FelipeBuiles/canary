@@ -14,7 +14,7 @@ from rich.progress import Progress
 
 from novel_to_comic.clients import gemini
 from novel_to_comic.config import Config
-from novel_to_comic.events import EventCallback, _NOOP
+from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.models.panel import PanelBreakdown
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.models.story_bible import StoryBible
@@ -252,7 +252,7 @@ async def run(
     semaphore = asyncio.Semaphore(config.parallel_batch_size)
 
     try:
-        with Progress() as progress:
+        with make_progress(on_event) as progress:
             task = progress.add_task("Image prompts", total=len(panel_files))
             for batch_start in range(0, len(panel_files), config.parallel_batch_size):
                 batch = panel_files[batch_start:batch_start + config.parallel_batch_size]

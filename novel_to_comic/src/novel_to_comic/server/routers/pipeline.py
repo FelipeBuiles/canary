@@ -75,7 +75,16 @@ async def _run_full_pipeline(config, project_dir, state, queue: asyncio.Queue):
             })
             break
 
-    queue.put_nowait({"type": "pipeline_done"})
+
+async def _run_job(project_name: str, request: Request, job):
+    """Wrap a pipeline task so lifecycle cleanup is consistent."""
+    try:
+        await job
+    finally:
+        queue = request.app.state.event_queues.get(project_name)
+        if queue is not None:
+            queue.put_nowait({"type": "pipeline_done"})
+        request.app.state.running_tasks.pop(project_name, None)
 
 
 @router.post("/run")
@@ -100,9 +109,11 @@ async def run_pipeline(
     request.app.state.event_queues[project_name] = queue
 
     if stage:
-        task = asyncio.create_task(_run_stage(stage, config, project_dir, state, queue))
+        job = _run_stage(stage, config, project_dir, state, queue)
     else:
-        task = asyncio.create_task(_run_full_pipeline(config, project_dir, state, queue))
+        job = _run_full_pipeline(config, project_dir, state, queue)
+
+    task = asyncio.create_task(_run_job(project_name, request, job))
 
     running[project_name] = task
     return {"status": "started", "stage": stage or "all"}
@@ -115,21 +126,26 @@ async def event_stream(request: Request, project_name: str):
         raise HTTPException(404, "No active run for this project")
 
     async def generator():
-        while True:
-            # Check if client disconnected
-            if await request.is_disconnected():
-                break
-            try:
-                event = await asyncio.wait_for(queue.get(), timeout=30.0)
-            except asyncio.TimeoutError:
-                # Send keepalive
-                yield ": keepalive\n\n"
-                continue
+        try:
+            while True:
+                # Check if client disconnected
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    # Send keepalive
+                    yield ": keepalive\n\n"
+                    continue
 
-            yield f"data: {json.dumps(event)}\n\n"
+                yield f"data: {json.dumps(event)}\n\n"
 
-            if event.get("type") in ("stage_complete", "stage_fail", "pipeline_done"):
-                break
+                if event.get("type") == "pipeline_done":
+                    break
+        finally:
+            task = request.app.state.running_tasks.get(project_name)
+            if task is None or task.done():
+                request.app.state.event_queues.pop(project_name, None)
 
     return StreamingResponse(generator(), media_type="text/event-stream")
 

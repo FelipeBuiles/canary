@@ -73,3 +73,39 @@ EventCallback = Callable[[dict[str, Any]], None]
 # Sentinel no-op: stages call ``emit = on_event or _NOOP`` so callers that
 # pass None pay zero overhead.
 _NOOP: EventCallback = lambda _: None
+
+
+class _SilentProgress:
+    """Progress stand-in that discards all output.
+
+    Used when ``on_event`` is provided (TUI / web server mode) — progress
+    is reported via ``emit()`` instead of Rich's live display.
+    """
+
+    def add_task(self, *a, **kw):
+        return None
+
+    def advance(self, *a, **kw):
+        pass
+
+    def update(self, *a, **kw):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        pass
+
+
+def make_progress(on_event):
+    """Return a Progress appropriate for the execution mode.
+
+    When ``on_event`` is provided (TUI or web server), returns a silent
+    stand-in so progress is reported via ``emit()`` only.  When ``on_event``
+    is ``None`` (CLI mode), returns a real Rich ``Progress`` bar.
+    """
+    if on_event is not None:
+        return _SilentProgress()
+    from rich.progress import Progress
+    return Progress()

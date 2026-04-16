@@ -21,6 +21,7 @@ dependencies = [
     "rich>=13.0",
     "tenacity>=9.0",
     "python-dotenv>=1.0",
+    "textual>=0.50",
 ]
 
 [project.optional-dependencies]
@@ -29,6 +30,7 @@ dev = ["pytest", "ruff"]
 
 [project.scripts]
 pipeline = "novel_to_comic.cli:cli"
+pipeline-tui = "novel_to_comic.tui.app:main"
 
 [build-system]
 requires = ["setuptools>=75.0"]
@@ -41,4 +43,5 @@ where = ["src"]
 "novel_to_comic" = [
     "prompts/*.txt",
     "fonts/*.ttf",
+    "tui/*.tcss",
 ]

@@ -12,7 +12,7 @@ from rich.progress import Progress
 
 from novel_to_comic.clients import gemini
 from novel_to_comic.config import Config
-from novel_to_comic.events import EventCallback, _NOOP
+from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.models.panel import Screenplay
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.state import (
@@ -122,7 +122,7 @@ async def run(
     semaphore = asyncio.Semaphore(config.parallel_batch_size)
 
     try:
-        with Progress() as progress:
+        with make_progress(on_event) as progress:
             task = progress.add_task("Screenplays", total=len(ids))
             for batch_start in range(0, len(ids), config.parallel_batch_size):
                 batch = ids[batch_start:batch_start + config.parallel_batch_size]
