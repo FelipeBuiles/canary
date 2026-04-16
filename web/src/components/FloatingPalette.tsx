@@ -35,11 +35,15 @@ export function FloatingPalette() {
             <div className="mb-2 font-meta text-[0.46rem] tracking-[0.18em] text-ink-black/45">
               SFX & BUBBLES
             </div>
+            <div className="mb-2 font-meta text-[0.44rem] tracking-[0.16em] text-ink-black/30">
+              DRAG-AND-DROP EDITOR COMING SOON
+            </div>
             <div className="space-y-1.5">
               {SFX_ITEMS.map((item) => (
                 <button
                   key={item}
-                  className="w-full border-[2px] border-ink-black bg-pulp-paper px-3 py-2 text-left font-display text-[0.85rem] font-bold tracking-[-0.03em] hover:bg-ghost-shadow"
+                  disabled
+                  className="w-full cursor-not-allowed border-[2px] border-ink-black/30 bg-pulp-paper/50 px-3 py-2 text-left font-display text-[0.85rem] font-bold tracking-[-0.03em] text-ink-black/40"
                 >
                   {item}
                 </button>
@@ -70,7 +74,8 @@ export function FloatingPalette() {
                     key={w}
                     variant="outline"
                     size="sm"
-                    className="flex-1 py-1.5"
+                    className="flex-1 py-1.5 cursor-not-allowed opacity-40"
+                    disabled
                   >
                     {w}px
                   </Button>
@@ -91,7 +96,7 @@ export function FloatingPalette() {
                 ].map((color) => (
                   <div
                     key={color}
-                    className={`h-6 w-6 cursor-pointer border-[2px] border-ink-black ${color}`}
+                    className={`h-6 w-6 border-[2px] border-ink-black/30 opacity-40 ${color}`}
                   />
                 ))}
               </div>

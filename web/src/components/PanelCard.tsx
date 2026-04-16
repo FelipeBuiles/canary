@@ -3,9 +3,14 @@ import type { ImageStatus } from "../types/api";
 import { Button } from "./ui/Button";
 import { Card } from "./ui/Card";
 
-type PanelState = "active" | "inking" | "failed" | "narrative";
+type PanelState = "active" | "inking" | "failed" | "narrative" | "regening";
 
-function resolvePanelState(status: ImageStatus["status"], hasNarrative?: boolean): PanelState {
+function resolvePanelState(
+  status: ImageStatus["status"],
+  isRegening: boolean,
+  hasNarrative?: boolean,
+): PanelState {
+  if (isRegening) return "regening";
   if (status === "failed") return "failed";
   if (status === "pending") return "inking";
   if (hasNarrative) return "narrative";
@@ -13,15 +18,15 @@ function resolvePanelState(status: ImageStatus["status"], hasNarrative?: boolean
 }
 
 function statusTone(state: PanelState) {
-  if (state === "active" || state === "narrative")
-    return "bg-archive-sage text-ink-black";
-  if (state === "inking") return "bg-narrator-gold text-ink-black";
+  if (state === "active" || state === "narrative") return "bg-archive-sage text-ink-black";
+  if (state === "inking" || state === "regening") return "bg-narrator-gold text-ink-black";
   return "bg-hero-red text-bristol";
 }
 
 function statusLabel(state: PanelState) {
   if (state === "active" || state === "narrative") return "ACCEPTED";
   if (state === "inking") return "PROCESSING";
+  if (state === "regening") return "REGENING";
   return "ERROR";
 }
 
@@ -32,6 +37,9 @@ interface PanelCardProps {
   imageUrl: string;
   narrative?: string;
   errorMessage?: string;
+  isRegening?: boolean;
+  regenError?: string | null;
+  onRegenerate?: () => void;
 }
 
 export function PanelCard({
@@ -40,9 +48,12 @@ export function PanelCard({
   imageUrl,
   narrative,
   errorMessage,
+  isRegening = false,
+  regenError,
+  onRegenerate,
 }: PanelCardProps) {
   const [hovered, setHovered] = useState(false);
-  const state = resolvePanelState(status, !!narrative);
+  const state = resolvePanelState(status, isRegening, !!narrative);
 
   return (
     <Card
@@ -50,7 +61,16 @@ export function PanelCard({
       onMouseLeave={() => setHovered(false)}
     >
       <div className="relative aspect-[4/5] overflow-hidden border-b-[2px] border-ink-black bg-ink-black">
-        {state === "inking" ? (
+        {state === "regening" ? (
+          <div className="flex h-full flex-col items-center justify-center">
+            <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-narrator-gold animate-pulse">
+              REGENING...
+            </div>
+            <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-bristol/55">
+              GENERATING NEW PANEL
+            </div>
+          </div>
+        ) : state === "inking" ? (
           <div className="flex h-full flex-col items-center justify-center">
             <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-narrator-gold animate-pulse">
               INKING...
@@ -67,9 +87,9 @@ export function PanelCard({
             <div className="mt-4 font-display text-[1.25rem] font-bold leading-none tracking-[-0.05em] text-hero-red">
               GENERATION FAILED
             </div>
-            {errorMessage && (
+            {(regenError || errorMessage) && (
               <div className="mt-2 max-w-[20ch] text-center text-[0.72rem] text-hero-red/80">
-                {errorMessage}
+                {regenError ?? errorMessage}
               </div>
             )}
           </div>
@@ -80,13 +100,14 @@ export function PanelCard({
               alt={`Panel ${panelNumber}`}
               className="h-full w-full object-cover"
             />
-            {state === "active" && hovered && (
+            {state === "active" && hovered && onRegenerate && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/60">
-                <Button size="md" className="border-bristol">
+                <Button
+                  size="md"
+                  className="border-bristol"
+                  onClick={onRegenerate}
+                >
                   REGENERATE
-                </Button>
-                <Button variant="secondary" size="md" className="border-bristol">
-                  PICK ALTERNATE
                 </Button>
               </div>
             )}

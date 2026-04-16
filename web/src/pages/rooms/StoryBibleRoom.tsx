@@ -1,6 +1,7 @@
 import { useParams } from "react-router-dom";
 import { useStoryBible } from "../../api/queries";
-import { SectionLabel } from "../../components/SectionLabel";
+import { ShowcaseHeader } from "../../components/ShowcaseHeader";
+import { SectionDivider } from "../../components/SectionDivider";
 import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
 import { RoomShell } from "../../components/ui/RoomShell";
@@ -70,32 +71,26 @@ export function StoryBibleRoom() {
       <RoomShell
         isEmpty
         emptyTitle="STORY BIBLE NOT AVAILABLE"
-        emptyDescription={error ? error.message : "This stage has not been reached yet."}
+        emptyDescription={error instanceof Error ? error.message : error ? "Failed to load story bible." : "This stage has not been reached yet."}
       />
     );
   }
 
   return (
     <RoomShell>
-      <section className="border-[2px] border-ink-black bg-bristol p-4 md:p-5">
-        <SectionLabel>EXTRACT / STORY BIBLE</SectionLabel>
-        <h1 className="mt-3 max-w-[12ch] font-display text-[3rem] font-bold leading-[0.86] tracking-[-0.08em] text-ink-black md:text-[4.7rem]">
-          {bible.title}
-        </h1>
-        <p className="mt-3 text-[0.9rem] text-ink-black/60">
-          by {bible.author} &middot; {bible.total_scenes} scenes
-        </p>
-      </section>
+      <ShowcaseHeader
+        label="EXTRACT / STORY BIBLE"
+        title={bible.title}
+        lead={<>by {bible.author} &middot; {bible.total_scenes} scenes extracted into the narrative frame.</>}
+      />
 
-      <section className="grid gap-5 xl:grid-cols-2">
+      <section className="grid gap-6 xl:grid-cols-2">
         <div>
-          <div className="mb-3 flex items-center gap-3">
-            <h2 className="font-display text-[2.5rem] font-bold leading-none tracking-[-0.06em] text-ink-black">
-              CHARACTER ENTITIES
-            </h2>
-          </div>
-          <SectionLabel>DRAMATIS PERSONAE</SectionLabel>
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <SectionDivider number={1} label="DRAMATIS PERSONAE" />
+          <h2 className="mt-3 font-display text-[2.25rem] font-bold leading-none tracking-[-0.06em] text-ink-black">
+            CHARACTER ENTITIES
+          </h2>
+          <div className="mt-5 grid gap-5 sm:grid-cols-2">
             {bible.characters.map((char) => (
               <CharacterCard key={char.id} character={char} />
             ))}
@@ -103,13 +98,11 @@ export function StoryBibleRoom() {
         </div>
 
         <div>
-          <div className="mb-3">
-            <h2 className="font-display text-[2.5rem] font-bold leading-none tracking-[-0.06em] text-ink-black">
-              LOCATION NODES
-            </h2>
-          </div>
-          <SectionLabel>THE WORLD STAGE</SectionLabel>
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <SectionDivider number={2} label="THE WORLD STAGE" />
+          <h2 className="mt-3 font-display text-[2.25rem] font-bold leading-none tracking-[-0.06em] text-ink-black">
+            LOCATION NODES
+          </h2>
+          <div className="mt-5 grid gap-5 sm:grid-cols-2">
             {bible.locations.map((loc) => (
               <LocationCard key={loc.id} location={loc} />
             ))}

@@ -10,6 +10,8 @@ interface PipelineStore {
 }
 
 let eventSource: EventSource | null = null;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectDelay = 1000;
 
 export const usePipelineStore = create<PipelineStore>((set) => ({
   connected: false,
@@ -31,14 +33,29 @@ export const usePipelineStore = create<PipelineStore>((set) => ({
     es.onerror = () => {
       es.close();
       set({ connected: false });
+      // Reconnect with exponential backoff if disconnect() wasn't called
+      if (eventSource !== null) {
+        reconnectTimer = setTimeout(() => {
+          reconnectDelay = Math.min(reconnectDelay * 2, 30_000);
+          usePipelineStore.getState().connect(projectName);
+        }, reconnectDelay);
+      }
     };
-    es.onopen = () => set({ connected: true });
+    es.onopen = () => {
+      reconnectDelay = 1000;
+      set({ connected: true });
+    };
     eventSource = es;
   },
 
   disconnect: () => {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     eventSource?.close();
     eventSource = null;
+    reconnectDelay = 1000;
     set({ connected: false });
   },
 

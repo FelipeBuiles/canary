@@ -6,7 +6,8 @@ interface PageCanvasProps {
 }
 
 export function PageCanvas({ page, projectName }: PageCanvasProps) {
-  const colCount = page.layout === "1" ? 1 : page.layout === "2" ? 2 : 2;
+  const layoutNum = parseInt(page.layout, 10);
+  const colCount = isNaN(layoutNum) || layoutNum <= 1 ? 1 : layoutNum <= 3 ? 2 : 3;
 
   return (
     <div className="border-[2px] border-ink-black bg-ink-black p-3">

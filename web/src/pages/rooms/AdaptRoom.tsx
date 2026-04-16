@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useScreenplays, useScreenplay } from "../../api/queries";
-import { SectionLabel } from "../../components/SectionLabel";
+import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
 import { RoomShell } from "../../components/ui/RoomShell";
@@ -21,12 +21,11 @@ export function AdaptRoom() {
       emptyTitle="SCREENPLAYS NOT AVAILABLE"
       emptyDescription="Complete the ADAPT stage first."
     >
-      <section className="border-[2px] border-ink-black bg-bristol p-4 md:p-5">
-        <SectionLabel>ADAPT / SCREENPLAY</SectionLabel>
-        <h1 className="mt-3 font-display text-[2.5rem] font-bold leading-[0.86] tracking-[-0.08em] text-ink-black">
-          SCREENPLAY VIEWER
-        </h1>
-      </section>
+      <ShowcaseHeader
+        label="ADAPT / SCREENPLAY"
+        title="SCREENPLAY VIEWER"
+        lead="Each scene's prose rendered into beats — action, dialogue, sfx, description — ready to panel."
+      />
 
       <section className="grid gap-5 xl:grid-cols-[220px_1fr]">
         {summaries && (

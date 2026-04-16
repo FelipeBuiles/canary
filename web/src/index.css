@@ -23,6 +23,10 @@
   --spacing-shell-top: 70px;
   --spacing-shell-side: 162px;
   --spacing-shell-footer: 34px;
+
+  --shadow-ink: 6px 6px 0 0 var(--color-ink-black);
+  --shadow-ink-sm: 4px 4px 0 0 var(--color-ink-black);
+  --shadow-ink-lg: 8px 8px 0 0 var(--color-ink-black);
 }
 
 @layer base {
@@ -61,5 +65,79 @@
 
   #root {
     min-height: 100vh;
+  }
+}
+
+@layer components {
+  /* Signature hard-offset ink shadow on cards and panels. */
+  .shadow-ink {
+    box-shadow: var(--shadow-ink);
+  }
+  .shadow-ink-sm {
+    box-shadow: var(--shadow-ink-sm);
+  }
+  .shadow-ink-lg {
+    box-shadow: var(--shadow-ink-lg);
+  }
+
+  /* Typography scale — mirrors the "Typography Scale" card in the spec. */
+  .display-impact {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: clamp(3.5rem, 8vw, 6.25rem);
+    line-height: 0.82;
+    letter-spacing: -0.08em;
+    color: var(--color-ink-black);
+  }
+
+  .display-headline {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: clamp(2.25rem, 4vw, 3rem);
+    line-height: 0.9;
+    letter-spacing: -0.05em;
+  }
+
+  .display-subhead {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 1.35rem;
+    line-height: 1;
+    letter-spacing: -0.04em;
+  }
+
+  .label-meta {
+    font-family: var(--font-meta);
+    font-size: 0.5rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--color-ink-black) 55%, transparent);
+  }
+
+  /* Lead paragraph — pulp style with red left bar. */
+  .lead-pulp {
+    border-left: 4px solid var(--color-hero-red);
+    padding-left: 1rem;
+    font-size: 0.95rem;
+    line-height: 1.6;
+    color: color-mix(in srgb, var(--color-ink-black) 74%, transparent);
+  }
+
+  /* Section divider rule — "SECTION 01 // NAME" style used above card grids. */
+  .section-rule {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-family: var(--font-meta);
+    font-size: 0.52rem;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--color-ink-black) 60%, transparent);
+  }
+  .section-rule::after {
+    content: "";
+    flex: 1;
+    height: 2px;
+    background: var(--color-ink-black);
   }
 }

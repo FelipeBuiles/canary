@@ -5,9 +5,10 @@ import { usePipelineStore } from "../store/pipeline";
 import { STAGE_DISPLAY_NAMES, STAGE_ORDER } from "../types/api";
 import type { StageStatus } from "../types/api";
 import { Button } from "../components/ui/Button";
+import { Icon } from "../components/ui/Icon";
 
 function stageBadgeStyle(status: StageStatus) {
-  if (status === "complete") return "bg-archive-sage text-ink-black";
+  if (status === "complete") return "bg-archive-sage text-bristol";
   if (status === "running") return "bg-narrator-gold text-ink-black animate-pulse";
   if (status === "awaiting_review") return "bg-hero-red text-bristol";
   if (status === "failed") return "bg-hero-red text-bristol";
@@ -21,6 +22,14 @@ function stageLabel(status: StageStatus) {
   if (status === "failed") return "ERROR";
   return "—";
 }
+
+const NAV_ITEMS: { icon: "draft" | "assets" | "styles" | "history" | "export"; label: string }[] = [
+  { icon: "draft", label: "Drafts" },
+  { icon: "assets", label: "Assets" },
+  { icon: "styles", label: "Styles" },
+  { icon: "history", label: "History" },
+  { icon: "export", label: "Export" },
+];
 
 export function SideNav() {
   const { name } = useParams();
@@ -49,7 +58,7 @@ export function SideNav() {
     <aside className="hidden w-[162px] shrink-0 flex-col border-r-[2px] border-ink-black bg-sidebar-tint md:flex">
       <div className="border-b-[2px] border-ink-black p-4">
         <div className="flex items-start gap-3">
-          <div className="h-8 w-8 border-[2px] border-ink-black bg-ink-black" />
+          <div className="h-8 w-8 shrink-0 border-[2px] border-ink-black bg-ink-black" />
           <div className="min-w-0">
             <div className="font-display text-[1rem] font-bold leading-none tracking-[-0.04em] truncate">
               {status?.project_name ?? "PROJECT INDEX"}
@@ -65,12 +74,26 @@ export function SideNav() {
             onClick={handleRun}
             disabled={runPipeline.isPending}
             size="sm"
-            className="mt-4 w-full py-2 font-semibold tracking-[0.14em]"
+            className="mt-4 flex w-full items-center justify-center gap-1.5 py-2 font-semibold tracking-[0.14em]"
           >
-            {runPipeline.isPending ? "RUNNING..." : "RUN PIPELINE"}
+            <Icon name="plus" size={11} />
+            {runPipeline.isPending ? "RUNNING..." : "NEW CHAPTER"}
           </Button>
         )}
       </div>
+
+      <nav className="flex flex-col border-b-[2px] border-ink-black py-2">
+        {NAV_ITEMS.map((item) => (
+          <button
+            key={item.label}
+            type="button"
+            className="flex items-center gap-2.5 px-4 py-2 text-left text-ink-black/78 hover:bg-ink-black/5"
+          >
+            <Icon name={item.icon} size={13} className="text-ink-black/70" />
+            <span className="font-body text-[0.78rem]">{item.label}</span>
+          </button>
+        ))}
+      </nav>
 
       <nav className="flex-1 overflow-y-auto">
         {name && status ? (
@@ -135,15 +158,13 @@ export function SideNav() {
       </nav>
 
       <div className="border-t-[2px] border-ink-black px-4 py-4">
-        <div className="space-y-2 text-[0.62rem] text-ink-black/70">
-          <div className="flex items-center gap-2">
-            <span className="h-3 w-3 border border-ink-black" />
-            <span className="font-body">Settings</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="h-3 w-3 border border-ink-black" />
-            <span className="font-body">Support</span>
-          </div>
+        <div className="space-y-2 text-[0.72rem] text-ink-black/78">
+          <button type="button" className="flex items-center gap-2 hover:text-ink-black">
+            <Icon name="settings" size={12} /> Settings
+          </button>
+          <button type="button" className="flex items-center gap-2 hover:text-ink-black">
+            <Icon name="support" size={12} /> Support
+          </button>
         </div>
       </div>
     </aside>

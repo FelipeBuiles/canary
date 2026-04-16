@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { usePages, usePage } from "../../api/queries";
-import { SectionLabel } from "../../components/SectionLabel";
+import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { PageCanvas } from "../../components/PageCanvas";
 import { FloatingPalette } from "../../components/FloatingPalette";
 import { Button } from "../../components/ui/Button";
@@ -44,12 +44,11 @@ export function ComposeRoom() {
 
   return (
     <div className="space-y-5">
-      <section className="border-[2px] border-ink-black bg-bristol p-4 md:p-5">
-        <SectionLabel>COMPOSE / PAGE EDITOR</SectionLabel>
-        <h1 className="mt-3 font-display text-[2.5rem] font-bold leading-[0.86] tracking-[-0.08em] text-ink-black">
-          PAGE EDITOR
-        </h1>
-      </section>
+      <ShowcaseHeader
+        label="COMPOSE / PAGE EDITOR"
+        title="PAGE EDITOR"
+        lead="Drag, pin, and re-render bubbles and SFX on the canonical ComicPage JSON — the editing surface for every exported spread."
+      />
 
       <section className="grid gap-5 xl:grid-cols-[1fr_200px]">
         <div>

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { usePanelSummaries, usePanelsForScene } from "../../api/queries";
-import { SectionLabel } from "../../components/SectionLabel";
+import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
 import { RoomShell } from "../../components/ui/RoomShell";
@@ -26,12 +26,11 @@ export function StoryboardRoom() {
       emptyTitle="PANEL BREAKDOWNS NOT AVAILABLE"
       emptyDescription="Complete the STORYBOARD stage first."
     >
-      <section className="border-[2px] border-ink-black bg-bristol p-4 md:p-5">
-        <SectionLabel>STORYBOARD / PANEL BREAKDOWN</SectionLabel>
-        <h1 className="mt-3 font-display text-[2.5rem] font-bold leading-[0.86] tracking-[-0.08em] text-ink-black">
-          PANEL BREAKDOWNS
-        </h1>
-      </section>
+      <ShowcaseHeader
+        label="STORYBOARD / PANEL BREAKDOWN"
+        title="PANEL BREAKDOWNS"
+        lead="Shot-by-shot blocking with camera, lighting, and dialogue — the blueprint the artist hands to the penciller."
+      />
 
       <section className="grid gap-5 xl:grid-cols-[220px_1fr]">
         {summaries && (

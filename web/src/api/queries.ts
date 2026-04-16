@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listProjects, getProjectStatus } from "./projects";
-import { runPipeline, approveStage } from "./pipeline";
+import { runPipeline, approveStage, regenPanel } from "./pipeline";
 import {
   getStoryBible,
   listScreenplays,
@@ -38,8 +38,8 @@ export function useRunPipeline() {
   return useMutation({
     mutationFn: ({ project, stage }: { project: string; stage?: string }) =>
       runPipeline(project, stage),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["project"] });
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
   });
@@ -55,10 +55,19 @@ export function useApproveStage() {
       project: string;
       stage: string;
     }) => approveStage(project, stage),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["project"] });
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
+  });
+}
+
+export function useRegenPanel() {
+  return useMutation({
+    mutationFn: ({ project, sceneId, panelNumber }: { project: string; sceneId: string; panelNumber: number }) =>
+      regenPanel(project, sceneId, panelNumber),
+    // No cache invalidation here — DrawRoom detects completion via images polling
+    // and busts the cache itself to avoid the panel disappearing mid-regen.
   });
 }
 
@@ -137,11 +146,12 @@ export function usePromptsForScene(
 
 // ── Images (DRAW) ─────────────────────────────────────────────────────────────
 
-export function useImages(project: string | undefined) {
+export function useImages(project: string | undefined, refetchInterval?: number) {
   return useQuery({
     queryKey: ["project", project, "images"],
     queryFn: () => listImages(project!),
     enabled: !!project,
+    refetchInterval,
   });
 }
 

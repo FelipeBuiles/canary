@@ -151,6 +151,7 @@ async def run(
     project_dir: Path,
     state: PipelineState,
     scene_ids: list[str] | None = None,
+    panel_numbers: list[int] | None = None,
     retry_failed: bool = False,
     on_event: EventCallback | None = None,
 ) -> None:
@@ -160,6 +161,7 @@ async def run(
     prompt_files: list[Path] = []
 
     target_scenes = set(scene_ids) if scene_ids else None
+    target_panels = set(panel_numbers) if panel_numbers else None
     if prompts_dir.exists():
         for scene_dir in sorted(prompts_dir.iterdir()):
             if not scene_dir.is_dir():
@@ -167,6 +169,14 @@ async def run(
             if target_scenes and scene_dir.name not in target_scenes:
                 continue
             for pf in sorted(scene_dir.glob("panel_*.json")):
+                if target_panels:
+                    try:
+                        panel_num = int(pf.stem.split("_")[1])
+                    except (IndexError, ValueError):
+                        pass
+                    else:
+                        if panel_num not in target_panels:
+                            continue
                 if retry_failed:
                     # Include only panels whose output image is actually missing.
                     # More reliable than the items_failed list, which resets each run.

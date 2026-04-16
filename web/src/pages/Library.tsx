@@ -1,8 +1,10 @@
 import { useProjects } from "../api/queries";
 import { ProjectCard } from "../components/ProjectCard";
 import { SectionLabel } from "../components/SectionLabel";
+import { SectionDivider } from "../components/SectionDivider";
 import { Card } from "../components/ui/Card";
 import { StatRow } from "../components/ui/StatRow";
+import { Icon } from "../components/ui/Icon";
 
 export function Library() {
   const { data: projects, isLoading, error } = useProjects();
@@ -30,29 +32,27 @@ export function Library() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-10">
       <section>
-        <SectionLabel>COLLECTION VIEW</SectionLabel>
-        <h1 className="mt-4 max-w-[10ch] font-display text-[3.5rem] font-bold leading-[0.86] tracking-[-0.08em] text-ink-black md:text-[6rem]">
-          LIBRARY
-        </h1>
-        <p className="mt-4 max-w-[38rem] border-l-[4px] border-hero-red pl-4 text-[0.95rem] leading-7 text-ink-black/74">
+        <SectionLabel tone="red">COLLECTION VIEW // ARCHIVE</SectionLabel>
+        <h1 className="mt-4 max-w-[10ch] display-impact">LIBRARY</h1>
+        <p className="mt-5 lead-pulp max-w-[44rem]">
           Your narrative multiverse — active productions, archived issues, and
           new story seeds waiting to be drawn.
         </p>
       </section>
 
       <section>
-        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-          {/* Start new project card */}
+        <SectionDivider number={1} label="ACTIVE PRODUCTIONS" />
+        <div className="mt-5 grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
           <Card className="flex min-h-[320px] flex-col items-center justify-center border-dashed p-5">
-            <div className="flex h-14 w-14 items-center justify-center border-[2px] border-dashed border-ink-black text-[1.5rem] text-ink-black/30">
-              +
+            <div className="flex h-14 w-14 items-center justify-center border-[2px] border-dashed border-ink-black text-ink-black/40">
+              <Icon name="plus" size={22} />
             </div>
-            <div className="mt-4 font-display text-[1rem] font-bold tracking-[-0.04em] text-ink-black/40">
+            <div className="mt-4 font-display text-[1rem] font-bold tracking-[-0.04em] text-ink-black/50">
               START NEW PROJECT
             </div>
-            <p className="mt-2 max-w-[20ch] text-center text-[0.78rem] text-ink-black/35">
+            <p className="mt-2 max-w-[20ch] text-center text-[0.78rem] text-ink-black/40">
               Initialize a new novel-to-comic production pipeline.
             </p>
           </Card>
@@ -65,7 +65,8 @@ export function Library() {
 
       {projects && projects.length > 0 && (
         <section>
-          <Card className="p-4 md:p-5">
+          <SectionDivider number={2} label="STUDIO TELEMETRY" />
+          <Card className="mt-5 p-5">
             <div className="space-y-3">
               <StatRow label="ARCHIVE FILES">{projects.length}</StatRow>
               <StatRow label="LIVE BOARDS">{runningCount}</StatRow>

@@ -21,7 +21,11 @@
       "mcp__MCPMagic__get_nodes_info",
       "Bash(npx tsc:*)",
       "Bash(npm run:*)",
-      "Bash(npx vite:*)"
+      "Bash(npx vite:*)",
+      "Bash(node_modules/.bin/tsc *)",
+      "Bash(tee /tmp/tsc.log)",
+      "Read(//tmp/**)",
+      "Bash(echo \"exit=$?\")"
     ]
   }
 }

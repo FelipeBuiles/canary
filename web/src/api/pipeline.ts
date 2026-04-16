@@ -10,6 +10,17 @@ export function runPipeline(
   });
 }
 
+export function regenPanel(
+  project: string,
+  sceneId: string,
+  panelNumber: number,
+): Promise<{ status: string; scene_id: string; panel_number: number }> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/regen?scene_id=${encodeURIComponent(sceneId)}&panel_number=${panelNumber}`,
+    { method: "POST" },
+  );
+}
+
 export function approveStage(
   project: string,
   stage: string,

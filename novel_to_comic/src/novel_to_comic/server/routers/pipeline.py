@@ -150,6 +150,43 @@ async def event_stream(request: Request, project_name: str):
     return StreamingResponse(generator(), media_type="text/event-stream")
 
 
+@router.post("/regen")
+async def regen_panel(
+    request: Request,
+    project_name: str,
+    scene_id: str = Query(...),
+    panel_number: int = Query(...),
+    project=Depends(get_project),
+):
+    project_dir, config, state = project
+
+    # Delete the existing image so _generate_panel doesn't skip it
+    img_path = project_dir / "images" / scene_id / f"panel_{panel_number:03d}.png"
+    if img_path.exists():
+        img_path.unlink()
+
+    running = request.app.state.running_tasks
+    existing = running.get(project_name)
+    if existing and not existing.done():
+        raise HTTPException(409, "A stage is already running for this project")
+
+    queue: asyncio.Queue = asyncio.Queue()
+    request.app.state.event_queues[project_name] = queue
+
+    async def _regen():
+        from novel_to_comic.stages import s6_generate
+        await s6_generate.run(
+            config, project_dir, state,
+            scene_ids=[scene_id],
+            panel_numbers=[panel_number],
+            on_event=lambda e: queue.put_nowait(e),
+        )
+
+    task = asyncio.create_task(_run_job(project_name, request, _regen()))
+    running[project_name] = task
+    return {"status": "started", "scene_id": scene_id, "panel_number": panel_number}
+
+
 @router.post("/approve/{stage}")
 def approve(stage: str, project_name: str, project=Depends(get_project)):
     project_dir, config, state = project
