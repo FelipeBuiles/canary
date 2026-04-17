@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useI18n } from "../../i18n";
 
 interface RoomShellProps {
   isLoading?: boolean;
@@ -17,11 +18,12 @@ export function RoomShell({
   emptyDescription = "This stage has not been reached yet.",
   children,
 }: RoomShellProps) {
+  const { t } = useI18n();
   if (isLoading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-          {loadingText}
+          {t(loadingText)}
         </p>
       </div>
     );
@@ -32,10 +34,10 @@ export function RoomShell({
       <div className="flex min-h-[40vh] items-center justify-center">
         <div className="text-center">
           <div className="font-display text-[1.5rem] font-bold tracking-[-0.05em] text-ink-black/30">
-            {emptyTitle}
+            {t(emptyTitle)}
           </div>
           <p className="mt-2 text-[0.82rem] text-ink-black/50">
-            {emptyDescription}
+            {t(emptyDescription)}
           </p>
         </div>
       </div>

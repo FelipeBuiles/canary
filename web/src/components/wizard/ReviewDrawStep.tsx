@@ -4,6 +4,7 @@ import { SectionLabel } from "../SectionLabel";
 import { PanelCard } from "../PanelCard";
 import { useImages } from "../../api/queries";
 import { StyleCallout } from "./StyleCallout";
+import { useI18n } from "../../i18n";
 
 interface ReviewDrawStepProps {
   project: string;
@@ -13,12 +14,13 @@ interface ReviewDrawStepProps {
 
 export function ReviewDrawStep({ project, onApprove, isApproving }: ReviewDrawStepProps) {
   const { data: images, isLoading } = useImages(project);
+  const { t } = useI18n();
 
   return (
     <div className="space-y-5">
       <Card className="p-5 md:p-6">
-        <SectionLabel tone="sage">REVIEW CHECKPOINT</SectionLabel>
-        <h1 className="mt-4 display-headline">PANEL GALLERY</h1>
+        <SectionLabel tone="sage">{t("REVIEW CHECKPOINT")}</SectionLabel>
+        <h1 className="mt-4 display-headline">{t("PANEL GALLERY")}</h1>
         <p className="mt-4 lead-pulp max-w-[52ch]">
           Review the generated panels. Approve to proceed to final assembly.
         </p>
@@ -26,7 +28,7 @@ export function ReviewDrawStep({ project, onApprove, isApproving }: ReviewDrawSt
 
       {isLoading ? (
         <div className="flex min-h-[20vh] items-center justify-center">
-          <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">LOADING PANELS…</p>
+          <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">{t("LOADING PANELS…")}</p>
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -49,7 +51,7 @@ export function ReviewDrawStep({ project, onApprove, isApproving }: ReviewDrawSt
       <div className="flex items-center gap-4">
         <StyleCallout project={project} />
         <Button size="lg" onClick={onApprove} disabled={isApproving}>
-          {isApproving ? "APPROVING…" : "APPROVE & CONTINUE"}
+          {isApproving ? t("APPROVING…") : t("APPROVE & CONTINUE")}
         </Button>
         <span className="text-[0.72rem] text-ink-black/40">
           Something looks wrong? Regenerate individual panels in the Draw room.

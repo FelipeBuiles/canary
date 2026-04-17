@@ -1,4 +1,5 @@
 import { cn } from "../lib/cn";
+import { useI18n } from "../i18n";
 
 /**
  * "SECTION 01 // PALETTE & PULP" rule line used above card grids in the spec.
@@ -13,11 +14,12 @@ export function SectionDivider({
   label: string;
   className?: string;
 }) {
+  const { t } = useI18n();
   return (
     <div className={cn("section-rule", className)}>
-      <span className="font-meta text-ink-black">SECTION {String(number).padStart(2, "0")}</span>
+      <span className="font-meta text-ink-black">{t("SECTION")} {String(number).padStart(2, "0")}</span>
       <span className="text-ink-black/45">//</span>
-      <span className="font-meta text-ink-black/80">{label}</span>
+      <span className="font-meta text-ink-black/80">{t(label)}</span>
     </div>
   );
 }

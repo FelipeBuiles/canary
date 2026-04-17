@@ -1,14 +1,16 @@
 import { useEffect } from "react";
 import { useGenerationJobs } from "../api/queries";
-import { useRegenStore } from "../store/regen";
+import { useActiveRegens, useRegenStore } from "../store/regen";
 
 /**
  * Polls generation jobs for all active regens in a project and
  * updates the global regen store on completion/failure/progress.
  */
 export function useJobPoller(project: string) {
-  const activeMap = useRegenStore((s) => s.active[project] ?? {});
-  const { attachJob, updateJob, complete, fail } = useRegenStore();
+  const activeMap = useActiveRegens(project);
+  const updateJob = useRegenStore((s) => s.updateJob);
+  const complete = useRegenStore((s) => s.complete);
+  const fail = useRegenStore((s) => s.fail);
 
   const jobIds = Object.values(activeMap)
     .map((r) => r.jobId)
@@ -37,5 +39,5 @@ export function useJobPoller(project: string) {
         updateJob(project, active.key, job);
       }
     }
-  }, [data, activeMap, project, attachJob, updateJob, complete, fail]);
+  }, [data, activeMap, project, updateJob, complete, fail]);
 }

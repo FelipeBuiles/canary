@@ -28,9 +28,56 @@ _SHOT_COMPOSITION: dict[str, str] = {
     "extreme-wide": "extreme-wide establishing panel, environment dominant, characters small but readable",
 }
 
+_PROMPT_LABELS: dict[str, dict[str, str]] = {
+    "en": {
+        "composition": "Composition",
+        "setting": "Setting",
+        "key_props": "Key props",
+        "expression": "expression",
+        "position": "position",
+        "constraints_prefix": "image-only comic panel art",
+        "character": "character",
+        "characters": "characters",
+        "one_body": "one body per listed character",
+        "no_lettering": "dialogue, captions, balloons, and lettering are absent for post-production",
+        "style_authority": "Use the selected visual style above as authoritative if later prompt text conflicts.",
+    },
+    "es": {
+        "composition": "Composición",
+        "setting": "Escenario",
+        "key_props": "Objetos clave",
+        "expression": "expresión",
+        "position": "posición",
+        "constraints_prefix": "arte de panel de cómic solo como imagen",
+        "character": "personaje",
+        "characters": "personajes",
+        "one_body": "un cuerpo por cada personaje listado",
+        "no_lettering": "sin diálogos, cartelas, globos ni rotulación porque se añadirán en posproducción",
+        "style_authority": "Usa el estilo visual seleccionado arriba como autoridad si el texto posterior entra en conflicto.",
+    },
+    "fr": {
+        "composition": "Composition",
+        "setting": "Décor",
+        "key_props": "Accessoires clés",
+        "expression": "expression",
+        "position": "position",
+        "constraints_prefix": "illustration de case de bande dessinée uniquement en image",
+        "character": "personnage",
+        "characters": "personnages",
+        "one_body": "un seul corps par personnage listé",
+        "no_lettering": "sans dialogues, cartouches, bulles ni lettrage, ajoutés en postproduction",
+        "style_authority": "Utilise le style visuel sélectionné ci-dessus comme référence si le texte suivant le contredit.",
+    },
+}
+
 
 def dimensions_for_shot(shot_type: str) -> tuple[int, int]:
     return _SHOT_DIMENSIONS.get(shot_type.lower().replace(" ", "-"), _DEFAULT_DIMENSIONS)
+
+
+def _labels(config: Config | None = None) -> dict[str, str]:
+    code = config.language_code() if config else "en"
+    return _PROMPT_LABELS.get(code, _PROMPT_LABELS["en"])
 
 
 _clean = clean
@@ -139,12 +186,14 @@ def build_image_prompt_spec(
     lighting = _clean(panel.lighting)
     mood = _clean(panel.mood)
     props = _panel_props(panel, story_bible)
+    labels = _labels(config)
+    character_label = labels["character"] if character_count == 1 else labels["characters"]
     constraints = (
-        f"image-only comic panel art; exactly {character_count} character"
-        f"{'' if character_count == 1 else 's'}; one body per listed character; "
-        "dialogue, captions, balloons, and lettering are absent for post-production"
+        f"{labels['constraints_prefix']}; exactly {character_count} {character_label}; "
+        f"{labels['one_body']}; {labels['no_lettering']}"
     )
     full_prompt = _render_panel_prompt_body_parts(
+        labels=labels,
         subjects=subjects,
         composition=composition,
         setting=setting,
@@ -171,7 +220,7 @@ def build_image_prompt_spec(
         negative_prompt=None,
         width=width,
         height=height,
-        steps=config.image_steps,
+        steps=config.effective_image_steps(),
         guidance_scale=config.flux_guidance_scale,
     )
     return prompt
@@ -179,6 +228,7 @@ def build_image_prompt_spec(
 
 def _render_panel_prompt_body_parts(
     *,
+    labels: dict[str, str] | None = None,
     subjects: list[PromptSubject],
     composition: str | None,
     setting: str | None,
@@ -187,6 +237,7 @@ def _render_panel_prompt_body_parts(
     props: list[str],
     constraints: str | None,
 ) -> str:
+    label_set = labels or _PROMPT_LABELS["en"]
     sentences: list[str] = []
 
     if subjects:
@@ -196,22 +247,22 @@ def _render_panel_prompt_body_parts(
                 subject.name,
                 subject.identity,
                 subject.action,
-                f"expression: {subject.expression}" if subject.expression else "",
-                f"position: {subject.position}" if subject.position else "",
+                f"{label_set['expression']}: {subject.expression}" if subject.expression else "",
+                f"{label_set['position']}: {subject.position}" if subject.position else "",
             ]
             rendered_subjects.append(", ".join(_clean(part) for part in details if _clean(part)))
         sentences.append("; ".join(rendered_subjects))
 
     if composition:
-        sentences.append(f"Composition: {_clean(composition)}")
+        sentences.append(f"{label_set['composition']}: {_clean(composition)}")
 
     setting_line_parts = [_clean(setting), _clean(lighting), _clean(mood)]
     setting_line = "; ".join(part for part in setting_line_parts if part)
     if setting_line:
-        sentences.append(f"Setting: {setting_line}")
+        sentences.append(f"{label_set['setting']}: {setting_line}")
 
     if props:
-        sentences.append(f"Key props: {'; '.join(_clean(prop) for prop in props)}")
+        sentences.append(f"{label_set['key_props']}: {'; '.join(_clean(prop) for prop in props)}")
 
     if constraints:
         sentences.append(_clean(constraints))
@@ -245,7 +296,7 @@ def render_generation_prompt(prompt: ImagePrompt, style_template: str) -> str:
     if style:
         return (
             f"{style}\n\n"
-            "Use the selected visual style above as authoritative if later prompt text conflicts.\n\n"
+            f"{_PROMPT_LABELS['en']['style_authority']}\n\n"
             f"{prompt.full_prompt}"
         )
     return getattr(prompt, "full_prompt", "")

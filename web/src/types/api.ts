@@ -17,6 +17,11 @@ export type StageStatus =
 export interface ConfigOverrides {
   style_template?: string;
   image_model?: string;
+  target_language?: "en" | "es" | "fr";
+  dev_mode?: boolean;
+  dev_image_scale?: number;
+  dev_image_steps?: number;
+  dev_image_concurrency?: number;
   image_width?: number;
   image_height?: number;
   image_steps?: number;
@@ -260,6 +265,13 @@ export interface Bubble {
   tail_x: number | null;
   tail_y: number | null;
   tail_direction: "auto" | "up" | "down";
+  font_family: string | null;
+  font_size: number | null;
+  font_color: string | null;
+  fill_color: string | null;
+  border_color: string | null;
+  border_width: number | null;
+  border_radius: number | null;
 }
 
 export interface Sfx {
@@ -285,6 +297,7 @@ export interface ComicPage {
   page_number: number;
   theme: string;
   layout: string;
+  style_vars: Record<string, string>;
   panels: PagePanel[];
 }
 

@@ -12,25 +12,28 @@ import { DirectRoom } from "./pages/rooms/DirectRoom";
 import { DrawRoom } from "./pages/rooms/DrawRoom";
 import { ComposeRoom } from "./pages/rooms/ComposeRoom";
 import { StyleRoom } from "./pages/rooms/StyleRoom";
+import { I18nProvider } from "./i18n";
 
 export function App() {
   return (
-    <Routes>
-      <Route element={<Shell />}>
-        <Route index element={<Library />} />
-        <Route path="new" element={<NewProject />} />
-        <Route path="project/:name" element={<ProjectRooms />}>
-          <Route index element={<NavigateToRoom />} />
-          <Route path="extract" element={<StoryBibleRoom />} />
-          <Route path="cast" element={<CastRoom />} />
-          <Route path="adapt" element={<AdaptRoom />} />
-          <Route path="storyboard" element={<StoryboardRoom />} />
-          <Route path="direct" element={<DirectRoom />} />
-          <Route path="draw" element={<DrawRoom />} />
-          <Route path="compose" element={<ComposeRoom />} />
-          <Route path="styles" element={<StyleRoom />} />
+    <I18nProvider>
+      <Routes>
+        <Route element={<Shell />}>
+          <Route index element={<Library />} />
+          <Route path="new" element={<NewProject />} />
+          <Route path="project/:name" element={<ProjectRooms />}>
+            <Route index element={<NavigateToRoom />} />
+            <Route path="extract" element={<StoryBibleRoom />} />
+            <Route path="cast" element={<CastRoom />} />
+            <Route path="adapt" element={<AdaptRoom />} />
+            <Route path="storyboard" element={<StoryboardRoom />} />
+            <Route path="direct" element={<DirectRoom />} />
+            <Route path="draw" element={<DrawRoom />} />
+            <Route path="compose" element={<ComposeRoom />} />
+            <Route path="styles" element={<StyleRoom />} />
+          </Route>
         </Route>
-      </Route>
-    </Routes>
+      </Routes>
+    </I18nProvider>
   );
 }

@@ -14,26 +14,34 @@ const VARIANT_STYLES: Record<Variant, string> = {
 };
 
 const SIZE_STYLES: Record<Size, string> = {
-  xs: "px-2 py-1 font-meta text-[0.42rem] tracking-[0.12em]",
-  sm: "px-3 py-1 font-meta text-[0.52rem] tracking-[0.16em]",
-  md: "px-4 py-2 font-meta text-[0.58rem] tracking-[0.16em]",
-  lg: "px-6 py-2.5 font-display text-[0.9rem] font-bold tracking-[-0.03em]",
+  xs: "px-2.5 py-1.5 font-meta text-[0.62rem] tracking-[0.12em]",
+  sm: "px-3.5 py-2 font-meta text-[0.72rem] tracking-[0.14em]",
+  md: "px-4.5 py-2.5 font-meta text-[0.82rem] tracking-[0.14em]",
+  lg: "px-7 py-3 font-display text-[1.05rem] font-bold tracking-[-0.02em]",
 };
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
   size?: Size;
+  fullWidth?: boolean;
 }
 
 export function Button({
   variant = "primary",
   size = "md",
+  fullWidth = false,
   className,
   ...props
 }: ButtonProps) {
   return (
     <button
-      className={cn(VARIANT_STYLES[variant], SIZE_STYLES[size], className)}
+      className={cn(
+        "inline-flex min-w-0 items-center justify-center text-center leading-tight",
+        VARIANT_STYLES[variant],
+        SIZE_STYLES[size],
+        fullWidth && "w-full",
+        className,
+      )}
       {...props}
     />
   );

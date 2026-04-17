@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from novel_to_comic.config import save_config
+from novel_to_comic.config import LANGUAGE_NAMES, save_config
 
 from ..deps import get_project
 
@@ -34,6 +34,8 @@ def update_config(body: dict, project=Depends(get_project)):
     # Apply updates
     for key, value in body.items():
         if hasattr(config, key):
+            if key == "target_language" and value not in LANGUAGE_NAMES:
+                raise HTTPException(400, "target_language must be one of: en, es, fr")
             setattr(config, key, value)
 
     save_config(config, project_dir)

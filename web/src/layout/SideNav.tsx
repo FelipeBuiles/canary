@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { useProjectStatus, useApproveStage } from "../api/queries";
+import { useProjectStatus, useApproveStage, useProjectConfig, useUpdateProjectConfig } from "../api/queries";
 import { useRunAction } from "../hooks/useRunAction";
-import { STAGE_DISPLAY_NAMES, STAGE_ORDER } from "../types/api";
+import { STAGE_ORDER } from "../types/api";
 import type { StageStatus } from "../types/api";
 import { Button } from "../components/ui/Button";
 import { Icon } from "../components/ui/Icon";
+import { LANGUAGES, useI18n } from "../i18n";
+import type { LanguageCode } from "../i18n";
 
 function stageBadgeStyle(status: StageStatus) {
   if (status === "complete") return "bg-archive-sage text-bristol";
@@ -13,14 +15,6 @@ function stageBadgeStyle(status: StageStatus) {
   if (status === "awaiting_review") return "bg-hero-red text-bristol";
   if (status === "failed") return "bg-hero-red text-bristol";
   return "bg-pulp-paper text-ink-black/45";
-}
-
-function stageLabel(status: StageStatus) {
-  if (status === "complete") return "DONE";
-  if (status === "running") return "LIVE";
-  if (status === "awaiting_review") return "REVIEW";
-  if (status === "failed") return "ERROR";
-  return "—";
 }
 
 const NAV_ITEMS: { icon: "draft" | "assets" | "styles" | "history" | "export"; label: string; route?: string }[] = [
@@ -35,9 +29,12 @@ export function SideNav() {
   const { name } = useParams();
   const navigate = useNavigate();
   const { data: status } = useProjectStatus(name);
+  const { data: config } = useProjectConfig(name);
   const { handleRun, isPending } = useRunAction();
   const approveStage = useApproveStage();
+  const updateConfig = useUpdateProjectConfig();
   const [collapsed, setCollapsed] = useState(false);
+  const { stageName, statusName, t } = useI18n();
 
   const handleApprove = (stage: string) => {
     if (!name) return;
@@ -51,10 +48,10 @@ export function SideNav() {
           <div className="h-8 w-8 shrink-0 border-[2px] border-ink-black bg-ink-black" />
           <div className="min-w-0 flex-1">
             <div className="font-display text-[1rem] font-bold leading-none tracking-[-0.04em] truncate">
-              {status?.project_name ?? "PROJECT INDEX"}
+              {status?.project_name ?? t("PROJECT INDEX")}
             </div>
             <div className="mt-1 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/55">
-              {name ? "NOVEL-TO-INK V1.0" : "SELECT A PROJECT"}
+              {name ? "NOVEL-TO-INK V1.0" : t("SELECT A PROJECT")}
             </div>
           </div>
         </div>
@@ -67,7 +64,7 @@ export function SideNav() {
             className="mt-4 flex w-full items-center justify-center gap-1.5 py-2 font-semibold tracking-[0.14em]"
           >
             <Icon name="plus" size={11} />
-            {isPending ? "RUNNING…" : "NEW CHAPTER"}
+            {isPending ? t("RUNNING…") : t("NEW CHAPTER")}
           </Button>
         )}
       </div>
@@ -83,7 +80,7 @@ export function SideNav() {
             }}
           >
             <Icon name={item.icon} size={13} className="text-ink-black/70" />
-            <span className="font-body text-[0.78rem]">{item.label}</span>
+            <span className="font-body text-[0.78rem]">{t(item.label)}</span>
           </button>
         ))}
       </nav>
@@ -97,7 +94,7 @@ export function SideNav() {
               className="flex w-full items-center justify-between border-b border-ink-black/15 px-4 py-3"
             >
               <span className="font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/55">
-                PIPELINE
+                {t("PIPELINE")}
               </span>
               <span className="text-[0.6rem] text-ink-black/40">
                 {collapsed ? "▸" : "▾"}
@@ -123,10 +120,10 @@ export function SideNav() {
                       </span>
                       <div className="min-w-0 flex-1">
                         <div className="font-body text-[0.72rem] font-medium truncate">
-                          {STAGE_DISPLAY_NAMES[stage]}
+                          {stageName(stage)}
                         </div>
                         <div className="font-meta text-[0.42rem] tracking-[0.14em] text-ink-black/45">
-                          {stageLabel(info.status)} {info.items_done > 0 ? `${info.items_done}/${info.items_total}` : ""}
+                          {statusName(info.status)} {info.items_done > 0 ? `${info.items_done}/${info.items_total}` : ""}
                         </div>
                       </div>
                       {needsApproval && (
@@ -135,7 +132,7 @@ export function SideNav() {
                           disabled={approveStage.isPending}
                           size="xs"
                         >
-                          APPROVE
+                          {t("APPROVE")}
                         </Button>
                       )}
                     </div>
@@ -146,18 +143,38 @@ export function SideNav() {
           </div>
         ) : (
           <div className="px-4 py-4 font-meta text-[0.62rem] tracking-[0.14em] text-ink-black/40">
-            NO PROJECT SELECTED
+            {t("NO PROJECT SELECTED")}
           </div>
         )}
       </nav>
 
       <div className="border-t-[2px] border-ink-black px-4 py-4">
+        {name && config && (
+          <div className="mb-3">
+            <label className="mb-1 block font-meta text-[0.48rem] tracking-[0.16em] text-ink-black/45">
+              {t("OUTPUT LANGUAGE")}
+            </label>
+            <select
+              value={config.target_language}
+              onChange={(e) => updateConfig.mutate({
+                project: name,
+                data: { target_language: e.target.value as LanguageCode },
+              })}
+              disabled={updateConfig.isPending}
+              className="w-full border-[2px] border-ink-black bg-bristol px-2 py-1.5 font-meta text-[0.56rem] tracking-[0.08em]"
+            >
+              {LANGUAGES.map((item) => (
+                <option key={item.code} value={item.code}>{item.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="space-y-2 text-[0.72rem] text-ink-black/78">
           <button type="button" className="flex items-center gap-2 hover:text-ink-black">
-            <Icon name="settings" size={12} /> Settings
+            <Icon name="settings" size={12} /> {t("Settings")}
           </button>
           <button type="button" className="flex items-center gap-2 hover:text-ink-black">
-            <Icon name="support" size={12} /> Support
+            <Icon name="support" size={12} /> {t("Support")}
           </button>
         </div>
       </div>

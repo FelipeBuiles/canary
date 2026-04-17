@@ -19,6 +19,7 @@ from ..deps import get_project
 from ..generation_jobs import (
     enqueue_generation_job,
     generation_job_payload,
+    generation_semaphore_for_config,
     prune_finished_generation_jobs,
 )
 
@@ -208,7 +209,6 @@ async def regen_panel(
             project_dir,
             scene_id,
             panel_number,
-            semaphore=request.app.state.generation_semaphore,
         )
 
     prune_finished_generation_jobs(request.app)
@@ -219,6 +219,7 @@ async def regen_panel(
         label=f"{scene_id} / panel {panel_number:03d}",
         payload={"scene_id": scene_id, "panel_number": panel_number},
         runner=_runner,
+        semaphore=generation_semaphore_for_config(request.app, config),
     )
     return {
         "status": "queued",
@@ -243,7 +244,6 @@ async def regen_ref(
             config,
             project_dir,
             char_id,
-            semaphore=request.app.state.generation_semaphore,
         )
 
     prune_finished_generation_jobs(request.app)
@@ -254,6 +254,7 @@ async def regen_ref(
         label=f"Character ref / {char_id}",
         payload={"char_id": char_id},
         runner=_runner,
+        semaphore=generation_semaphore_for_config(request.app, config),
     )
     return {
         "status": "queued",
@@ -277,7 +278,6 @@ async def regen_plate(
             config,
             project_dir,
             loc_id,
-            semaphore=request.app.state.generation_semaphore,
         )
 
     prune_finished_generation_jobs(request.app)
@@ -288,6 +288,7 @@ async def regen_plate(
         label=f"Location plate / {loc_id}",
         payload={"loc_id": loc_id},
         runner=_runner,
+        semaphore=generation_semaphore_for_config(request.app, config),
     )
     return {
         "status": "queued",

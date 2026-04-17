@@ -3,6 +3,7 @@ import type { ImageStatus } from "../types/api";
 import { Button } from "./ui/Button";
 import { Card } from "./ui/Card";
 import { ImageModal } from "./ui/ImageModal";
+import { useI18n } from "../i18n";
 
 type PanelState = "active" | "inking" | "failed" | "narrative" | "queued" | "regening";
 
@@ -25,12 +26,12 @@ function statusTone(state: PanelState) {
   return "bg-hero-red text-bristol";
 }
 
-function statusLabel(state: PanelState) {
+function statusLabel(state: PanelState, t: (text: string) => string) {
   if (state === "active" || state === "narrative") return "ACCEPTED";
-  if (state === "inking") return "PROCESSING";
-  if (state === "queued") return "QUEUED";
+  if (state === "inking") return t("PROCESSING");
+  if (state === "queued") return t("QUEUED");
   if (state === "regening") return "REGENING";
-  return "ERROR";
+  return t("ERROR");
 }
 
 interface PanelCardProps {
@@ -60,6 +61,7 @@ export function PanelCard({
   const resolvedRegenMode = regenMode ?? (isRegening ? "running" : null);
   const state = resolvePanelState(status, resolvedRegenMode, !!narrative);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const { t } = useI18n();
 
   return (
     <>
@@ -71,10 +73,10 @@ export function PanelCard({
           {state === "queued" || state === "regening" ? (
             <div className="flex h-full flex-col items-center justify-center">
               <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-narrator-gold animate-pulse">
-                {state === "queued" ? "QUEUED" : "REGENING…"}
+                {state === "queued" ? t("QUEUED") : t("REGENING…")}
               </div>
               <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-bristol/55">
-                {state === "queued" ? "WAITING FOR GENERATOR" : "GENERATING NEW PANEL"}
+                {state === "queued" ? t("WAITING FOR GENERATOR") : t("GENERATING NEW PANEL")}
               </div>
             </div>
           ) : state === "inking" ? (
@@ -120,7 +122,7 @@ export function PanelCard({
                       onRegenerate();
                     }}
                   >
-                    REGENERATE
+                    {t("REGENERATE")}
                   </Button>
                 </div>
               )}
@@ -142,7 +144,7 @@ export function PanelCard({
           <span
             className={`border border-ink-black px-2 py-1 font-meta text-[0.44rem] tracking-[0.14em] ${statusTone(state)}`}
           >
-            {statusLabel(state)}
+            {statusLabel(state, t)}
           </span>
         </div>
       </Card>

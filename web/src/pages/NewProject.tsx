@@ -13,6 +13,7 @@ import { CompleteStep } from "../components/wizard/CompleteStep";
 import { Button } from "../components/ui/Button";
 import type { StageName, ConfigOverrides } from "../types/api";
 import { STAGE_ORDER } from "../types/api";
+import { useI18n } from "../i18n";
 
 type WizardPhase = "upload" | "running" | "review" | "style" | "complete";
 
@@ -25,6 +26,7 @@ interface WizardState {
 const CHECKPOINT_STAGES = new Set<string>(["extract", "index", "prompts", "generate"]);
 
 export function NewProject() {
+  const { t } = useI18n();
   const [projectSlug, setProjectSlug] = useState<string | null>(null);
   const [state, setState] = useState<WizardState>({
     phase: "upload",
@@ -205,8 +207,8 @@ export function NewProject() {
           {state.errorMessage && (
             <div className="flex items-center gap-3">
               <div className="text-[0.88rem] text-hero-red">{state.errorMessage}</div>
-              <Button size="sm" onClick={handleRetry}>RETRY</Button>
-              <Button size="sm" variant="outline" onClick={handleStartOver}>START OVER</Button>
+              <Button size="sm" onClick={handleRetry}>{t("RETRY")}</Button>
+              <Button size="sm" variant="outline" onClick={handleStartOver}>{t("START OVER")}</Button>
             </div>
           )}
         </div>

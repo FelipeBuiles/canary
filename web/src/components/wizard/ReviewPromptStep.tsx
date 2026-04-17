@@ -5,6 +5,7 @@ import { Button } from "../ui/Button";
 import { SectionLabel } from "../SectionLabel";
 import { Tag } from "../ui/Tag";
 import { StyleCallout } from "./StyleCallout";
+import { useI18n } from "../../i18n";
 
 interface ReviewPromptStepProps {
   project: string;
@@ -17,6 +18,7 @@ function words(value: string): number {
 }
 
 export function ReviewPromptStep({ project, onApprove, isApproving }: ReviewPromptStepProps) {
+  const { t } = useI18n();
   const { data: summaries, isLoading: loadingSummaries } = usePromptSummaries(project);
   const sampleScene = summaries?.[0]?.scene_id;
   const { data: prompts, isLoading: loadingPrompts } = usePromptsForScene(project, sampleScene);
@@ -27,8 +29,8 @@ export function ReviewPromptStep({ project, onApprove, isApproving }: ReviewProm
   return (
     <div className="space-y-5">
       <Card className="p-5 md:p-6">
-        <SectionLabel tone="sage">REVIEW CHECKPOINT</SectionLabel>
-        <h1 className="mt-4 display-headline">PROMPT SAMPLE</h1>
+        <SectionLabel tone="sage">{t("REVIEW CHECKPOINT")}</SectionLabel>
+        <h1 className="mt-4 display-headline">{t("PROMPT SAMPLE")}</h1>
         <p className="mt-4 lead-pulp max-w-[56ch]">
           Informational pass before drawing. These compact prompts combine the active style,
           character refs, panel direction, and composition cues that will drive image generation.
@@ -45,7 +47,7 @@ export function ReviewPromptStep({ project, onApprove, isApproving }: ReviewProm
       {loading ? (
         <Card className="flex min-h-[22vh] items-center justify-center p-5">
           <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-            LOADING PROMPT SAMPLE...
+            {t("LOADING PROMPT SAMPLE...")}
           </p>
         </Card>
       ) : samples.length ? (
@@ -97,7 +99,7 @@ export function ReviewPromptStep({ project, onApprove, isApproving }: ReviewProm
 
       <div className="flex items-center gap-4">
         <Button size="lg" onClick={onApprove} disabled={isApproving || !samples.length}>
-          {isApproving ? "APPROVING..." : "APPROVE & DRAW"}
+          {isApproving ? t("APPROVING…") : t("APPROVE & DRAW")}
         </Button>
         <span className="text-[0.72rem] text-ink-black/40">
           Edits are available later in the Direct room; this checkpoint is review-only for now.

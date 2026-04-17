@@ -1,11 +1,13 @@
 """ComicPage JSON CRUD, HTML preview, and project file serving."""
 
+import json
 import mimetypes
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
+from novel_to_comic.config import Config, LANGUAGE_NAMES, save_config
 from novel_to_comic.assembly.html_renderer import build_page_html, resolve_theme, write_theme_css
 from novel_to_comic.models.comic_page import Bubble, ComicPage, Sfx
 
@@ -25,6 +27,210 @@ def _load_page(project_dir: Path, page_num: int) -> ComicPage:
     return ComicPage.model_validate_json(path.read_text())
 
 
+STYLE_VAR_ALLOWLIST = {
+    "--panel-border",
+    "--panel-border-width",
+    "--panel-bg",
+    "--caption-bg",
+    "--caption-border",
+    "--caption-color",
+    "--caption-font-size",
+    "--bubble-bg",
+    "--bubble-border",
+    "--bubble-border-width",
+    "--bubble-radius",
+    "--bubble-font-size",
+    "--bubble-padding",
+    "--bubble-max-width",
+    "--bubble-center-width",
+    "--speaker-color",
+    "--speaker-font-size",
+    "--thought-border-style",
+    "--thought-radius",
+    "--sfx-color",
+    "--sfx-shadow",
+    "--sfx-font-size",
+    "--page-num-color",
+    "--page-num-font-size",
+}
+
+
+def _sanitize_style_vars(raw: dict) -> dict[str, str]:
+    clean: dict[str, str] = {}
+    for key, value in raw.items():
+        if key not in STYLE_VAR_ALLOWLIST:
+            continue
+        if not isinstance(value, str):
+            continue
+        value = value.strip()
+        if not value or len(value) > 96:
+            continue
+        if any(token in value.lower() for token in ("url(", "expression(", "javascript:", "</")):
+            continue
+        clean[key] = value
+    return clean
+
+
+def _fallback_lettering_style(style_template: str) -> dict[str, str]:
+    low = style_template.lower()
+    if any(word in low for word in ("noir", "monochrome", "black and white", "shadow")):
+        return {
+            "--panel-border": "#E6E6E6",
+            "--panel-border-width": "3px",
+            "--caption-bg": "#1D1D1D",
+            "--caption-border": "#7A7A7A",
+            "--caption-color": "#F1F1F1",
+            "--bubble-bg": "#F2F2F2",
+            "--bubble-border": "#111111",
+            "--bubble-border-width": "3px",
+            "--speaker-color": "#444444",
+            "--sfx-color": "#FFFFFF",
+            "--sfx-shadow": "#000000",
+        }
+    if any(word in low for word in ("manga", "anime", "ink", "screentone")):
+        return {
+            "--panel-border": "#000000",
+            "--panel-border-width": "2px",
+            "--caption-bg": "#FFFFFF",
+            "--caption-border": "#000000",
+            "--caption-color": "#000000",
+            "--bubble-bg": "#FFFFFF",
+            "--bubble-border": "#000000",
+            "--bubble-border-width": "2px",
+            "--bubble-radius": "24px",
+            "--bubble-font-size": "21px",
+            "--sfx-color": "#000000",
+            "--sfx-shadow": "transparent",
+            "--thought-border-style": "solid",
+        }
+    if any(word in low for word in ("vintage", "risograph", "screen-print", "poster", "pulp")):
+        return {
+            "--panel-border": "#5C2E00",
+            "--panel-border-width": "4px",
+            "--caption-bg": "#FFE2A3",
+            "--caption-border": "#8B4513",
+            "--caption-color": "#4A2600",
+            "--bubble-bg": "#FFF4C7",
+            "--bubble-border": "#6E3511",
+            "--bubble-border-width": "3px",
+            "--speaker-color": "#8B2500",
+            "--sfx-color": "#9E1B12",
+            "--sfx-shadow": "#2B1000",
+        }
+    if any(word in low for word in ("watercolor", "paint", "gouache", "oil", "pastel")):
+        return {
+            "--panel-border": "#4A3728",
+            "--panel-border-width": "3px",
+            "--caption-bg": "#E8DCC8",
+            "--caption-border": "#6C5847",
+            "--caption-color": "#2A1A0A",
+            "--bubble-bg": "#FFFDF7",
+            "--bubble-border": "#4A3728",
+            "--bubble-border-width": "2px",
+            "--bubble-radius": "18px",
+            "--sfx-color": "#7B3B00",
+            "--sfx-shadow": "#2A1000",
+        }
+    return {
+        "--panel-border": "#111111",
+        "--panel-border-width": "3px",
+        "--caption-bg": "#F7F0DC",
+        "--caption-border": "#9B8A5A",
+        "--caption-color": "#3A2A10",
+        "--bubble-bg": "#FFFFFF",
+        "--bubble-border": "#1A1A1A",
+        "--bubble-border-width": "2px",
+        "--bubble-radius": "14px",
+        "--bubble-font-size": "19px",
+        "--speaker-color": "#664400",
+        "--sfx-color": "#CC1111",
+        "--sfx-shadow": "#000000",
+    }
+
+
+async def _generate_lettering_style(config: Config) -> dict[str, str]:
+    if not config.gemini_api_key:
+        return _fallback_lettering_style(config.style_template)
+
+    from novel_to_comic.clients import gemini
+
+    system = (
+        "You are a comic book lettering and production designer. Given an image generation style, "
+        "choose CSS custom property values for panel borders, narration captions, speech bubbles, "
+        "thought bubbles, SFX, and page numbers. Return JSON only. Use readable lettering with "
+        "strong contrast. Do not use url(), external assets, gradients, or CSS functions except simple px/% values."
+    )
+    user = (
+        f"Image generation style:\n{config.style_template}\n\n"
+        "Return an object with a short label, rationale, and a vars object. "
+        "The vars object may include only these keys:\n"
+        f"{', '.join(sorted(STYLE_VAR_ALLOWLIST))}\n\n"
+        "Example shape: "
+        '{"label":"Noir Lettering","rationale":"...","vars":{"--panel-border":"#111111","--bubble-bg":"#FFFFFF"}}'
+    )
+    try:
+        result = await gemini.generate_json(
+            config=config,
+            model=config.prompt_model,
+            system_prompt=system,
+            user_content=user,
+            temperature=0.45,
+            max_output_tokens=1400,
+        )
+    except Exception:
+        return _fallback_lettering_style(config.style_template)
+
+    vars_raw = result.get("vars", result) if isinstance(result, dict) else {}
+    generated = _sanitize_style_vars(vars_raw)
+    return generated or _fallback_lettering_style(config.style_template)
+
+
+async def _translate_text_items(config: Config, items: list[dict]) -> dict[str, str]:
+    """Translate editable lettering text items and return {id: translated_text}."""
+    if not items:
+        return {}
+    if not config.gemini_api_key:
+        raise HTTPException(400, "Gemini API key is required to translate existing page text")
+
+    from novel_to_comic.clients import gemini
+
+    system = (
+        "You are a literary comic localization editor. Translate only user-facing comic lettering "
+        f"into natural {config.language_name()}. Preserve tone, character voice, punctuation intent, "
+        "speaker names, IDs, JSON keys, and item order. Do not summarize, omit, or add dialogue. "
+        "Return JSON only."
+    )
+    user = (
+        f"Target language: {config.language_name()} ({config.language_code()})\n\n"
+        "Translate each item's text field. Return exactly this shape:\n"
+        '{"items":[{"id":"same id","text":"translated text"}]}\n\n'
+        f"Items:\n{json.dumps(items, ensure_ascii=False)}"
+    )
+    result = await gemini.generate_json(
+        config=config,
+        model=config.prompt_model,
+        system_prompt=system,
+        user_content=user,
+        temperature=0.2,
+        max_output_tokens=6000,
+    )
+    if isinstance(result, dict):
+        raw_items = result.get("items", [])
+    elif isinstance(result, list):
+        raw_items = result
+    else:
+        raw_items = []
+    translations: dict[str, str] = {}
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        item_id = str(item.get("id", ""))
+        text = item.get("text")
+        if item_id and isinstance(text, str):
+            translations[item_id] = text
+    return translations
+
+
 # ── Pages CRUD ───────────────────────────────────────────────────────────────
 
 
@@ -34,6 +240,20 @@ def list_pages(project=Depends(get_project)):
     pd = _pages_dir(project_dir)
     if not pd.exists():
         return []
+    pages = []
+    for f in sorted(pd.glob("page_*.json")):
+        cp = ComicPage.model_validate_json(f.read_text())
+        pages.append({
+            "page_number": cp.page_number,
+            "panel_count": len(cp.panels),
+            "layout": cp.layout,
+            "theme": cp.theme,
+        })
+    return pages
+
+
+def _page_summaries(project_dir: Path) -> list[dict]:
+    pd = _pages_dir(project_dir)
     pages = []
     for f in sorted(pd.glob("page_*.json")):
         cp = ComicPage.model_validate_json(f.read_text())
@@ -63,6 +283,8 @@ def update_page(page_num: int, body: dict, project=Depends(get_project)):
         cp.theme = body["theme"]
     if "layout" in body:
         cp.layout = body["layout"]
+    if "style_vars" in body:
+        cp.style_vars = _sanitize_style_vars(body["style_vars"])
 
     # Apply per-panel bubble/sfx updates
     if "panels" in body:
@@ -83,7 +305,13 @@ def update_page(page_num: int, body: dict, project=Depends(get_project)):
                 for bp in panel_patch["bubbles"]:
                     bubble = bubble_map.get(bp.get("id", ""))
                     if bubble:
-                        for field in ("x", "y", "width", "side", "text", "type", "tail_x", "tail_y", "tail_direction"):
+                        for field in (
+                            "x", "y", "width", "side", "text", "type",
+                            "tail_x", "tail_y", "tail_direction",
+                            "font_family", "font_size", "font_color",
+                            "fill_color", "border_color", "border_width",
+                            "border_radius",
+                        ):
                             if field in bp:
                                 setattr(bubble, field, bp[field])
                     else:
@@ -97,6 +325,13 @@ def update_page(page_num: int, body: dict, project=Depends(get_project)):
                             type=bp.get("type", "speech"),
                             text=bp.get("text", ""),
                             side=bp.get("side", "left"),
+                            font_family=bp.get("font_family"),
+                            font_size=bp.get("font_size"),
+                            font_color=bp.get("font_color"),
+                            fill_color=bp.get("fill_color"),
+                            border_color=bp.get("border_color"),
+                            border_width=bp.get("border_width"),
+                            border_radius=bp.get("border_radius"),
                         ))
 
             # ── Reorder bubbles ──
@@ -124,6 +359,119 @@ def update_page(page_num: int, body: dict, project=Depends(get_project)):
     path = _pages_dir(project_dir) / f"page_{page_num:03d}.json"
     path.write_text(cp.model_dump_json(indent=2))
     return cp.model_dump()
+
+
+@router.post("/pages/style-vars/generate")
+async def generate_page_style_vars(request: Request, project=Depends(get_project)):
+    """Generate page-level lettering/panel CSS variables from the active image style."""
+    project_dir, config, state = project
+
+    style_vars = await _generate_lettering_style(config)
+    pd = _pages_dir(project_dir)
+    page_paths = sorted(pd.glob("page_*.json"))
+    if not page_paths:
+        raise HTTPException(404, "No pages found")
+
+    for path in page_paths:
+        cp = ComicPage.model_validate_json(path.read_text())
+        cp.style_vars = style_vars
+        path.write_text(cp.model_dump_json(indent=2))
+
+    return {"status": "updated", "style_vars": style_vars, "pages": _page_summaries(project_dir)}
+
+
+@router.post("/pages/translate-bubbles")
+async def translate_page_bubbles(body: dict, project=Depends(get_project)):
+    """Translate all existing editable bubble/narration text across assembled pages."""
+    project_dir, config, state = project
+    target_language = body.get("target_language")
+    if target_language is not None:
+        if target_language not in LANGUAGE_NAMES:
+            raise HTTPException(400, "target_language must be one of: en, es, fr")
+        config.target_language = target_language
+        save_config(config, project_dir)
+
+    pd = _pages_dir(project_dir)
+    page_paths = sorted(pd.glob("page_*.json"))
+    if not page_paths:
+        raise HTTPException(404, "No pages found")
+
+    pages = [ComicPage.model_validate_json(path.read_text()) for path in page_paths]
+    items: list[dict] = []
+    for cp in pages:
+        for panel in cp.panels:
+            for bubble in panel.bubbles:
+                text = bubble.text.strip()
+                if text:
+                    items.append({
+                        "id": f"{cp.page_number}:{panel.id}:{bubble.id}",
+                        "type": bubble.type,
+                        "speaker": bubble.speaker_name,
+                        "text": bubble.text,
+                    })
+
+    translations = await _translate_text_items(config, items)
+    updated = 0
+    for cp, path in zip(pages, page_paths):
+        changed = False
+        for panel in cp.panels:
+            for bubble in panel.bubbles:
+                item_id = f"{cp.page_number}:{panel.id}:{bubble.id}"
+                translated = translations.get(item_id)
+                if translated and translated != bubble.text:
+                    bubble.text = translated
+                    changed = True
+                    updated += 1
+        if changed:
+            path.write_text(cp.model_dump_json(indent=2))
+
+    return {
+        "status": "updated",
+        "target_language": config.language_code(),
+        "updated": updated,
+        "pages": _page_summaries(project_dir),
+    }
+
+
+@router.post("/pages/reflow")
+def reflow_pages(body: dict, project=Depends(get_project)):
+    """Redistribute all panels into pages with N panels per page."""
+    project_dir, config, state = project
+    panels_per_page = int(body.get("panels_per_page", 0))
+    if panels_per_page < 1 or panels_per_page > 6:
+        raise HTTPException(400, "panels_per_page must be between 1 and 6")
+
+    pd = _pages_dir(project_dir)
+    page_paths = sorted(pd.glob("page_*.json"))
+    if not page_paths:
+        raise HTTPException(404, "No pages found")
+
+    source_pages = [ComicPage.model_validate_json(path.read_text()) for path in page_paths]
+    all_panels = []
+    for cp in source_pages:
+        for panel in cp.panels:
+            panel.grid_column = None
+            panel.grid_row = None
+            all_panels.append(panel)
+
+    theme = source_pages[0].theme
+    layout = str(panels_per_page)
+    new_count = 0
+    for start in range(0, len(all_panels), panels_per_page):
+        new_count += 1
+        chunk = all_panels[start:start + panels_per_page]
+        cp = ComicPage(
+            page_number=new_count,
+            theme=theme,
+            layout=layout,
+            panels=chunk,
+        )
+        (pd / f"page_{new_count:03d}.json").write_text(cp.model_dump_json(indent=2))
+
+    for stale in page_paths[new_count:]:
+        stale.unlink()
+
+    return _page_summaries(project_dir)
 
 
 @router.put("/pages/{page_num}")

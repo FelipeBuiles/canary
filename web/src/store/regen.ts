@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { GenerationJob, GenerationJobStatus } from "../types/api";
 
-interface ActiveRegen {
+export interface ActiveRegen {
   key: string;
   jobId: string | null;
   status: Extract<GenerationJobStatus, "queued" | "running">;
@@ -21,6 +21,8 @@ interface RegenStore {
   fail: (project: string, key: string, error: string) => void;
   clearError: (project: string, key: string) => void;
 }
+
+const EMPTY_ACTIVE_REGENS: Record<string, ActiveRegen> = {};
 
 export const useRegenStore = create<RegenStore>((set) => ({
   active: {},
@@ -46,7 +48,7 @@ export const useRegenStore = create<RegenStore>((set) => ({
   markStarted: (project, key) =>
     set((s) => {
       const cur = s.active[project]?.[key];
-      if (!cur) return {};
+      if (!cur || cur.status === "running") return s;
       return {
         active: {
           ...s.active,
@@ -61,7 +63,15 @@ export const useRegenStore = create<RegenStore>((set) => ({
   attachJob: (project, key, job) =>
     set((s) => {
       const cur = s.active[project]?.[key];
-      if (!cur) return {};
+      if (!cur) return s;
+      const nextStatus = job.status === "running" ? "running" : "queued";
+      if (
+        cur.jobId === job.id &&
+        cur.status === nextStatus &&
+        cur.queuePosition === job.queue_position
+      ) {
+        return s;
+      }
       return {
         active: {
           ...s.active,
@@ -70,7 +80,7 @@ export const useRegenStore = create<RegenStore>((set) => ({
             [key]: {
               ...cur,
               jobId: job.id,
-              status: job.status === "running" ? "running" : "queued",
+              status: nextStatus,
               queuePosition: job.queue_position,
             },
           },
@@ -81,8 +91,9 @@ export const useRegenStore = create<RegenStore>((set) => ({
   updateJob: (project, key, job) =>
     set((s) => {
       const cur = s.active[project]?.[key];
-      if (!cur) return {};
-      if (job.status !== "queued" && job.status !== "running") return {};
+      if (!cur) return s;
+      if (job.status !== "queued" && job.status !== "running") return s;
+      if (cur.status === job.status && cur.queuePosition === job.queue_position) return s;
       return {
         active: {
           ...s.active,
@@ -100,6 +111,7 @@ export const useRegenStore = create<RegenStore>((set) => ({
 
   complete: (project, key) =>
     set((s) => {
+      if (!s.active[project]?.[key]) return s;
       const projectActive = { ...(s.active[project] ?? {}) };
       delete projectActive[key];
       const active = { ...s.active };
@@ -113,6 +125,7 @@ export const useRegenStore = create<RegenStore>((set) => ({
 
   fail: (project, key, error) =>
     set((s) => {
+      if (!s.active[project]?.[key] && s.errors[`${project}/${key}`] === error) return s;
       const projectActive = { ...(s.active[project] ?? {}) };
       delete projectActive[key];
       const active = { ...s.active };
@@ -131,3 +144,7 @@ export const useRegenStore = create<RegenStore>((set) => ({
       return { errors };
     }),
 }));
+
+export function useActiveRegens(project: string): Record<string, ActiveRegen> {
+  return useRegenStore((s) => s.active[project] ?? EMPTY_ACTIVE_REGENS);
+}

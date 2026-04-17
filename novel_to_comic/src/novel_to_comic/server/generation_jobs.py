@@ -11,6 +11,8 @@ from typing import Any, Awaitable, Callable, Literal
 
 from fastapi import FastAPI
 
+from novel_to_comic.config import Config
+
 GenerationJobStatus = Literal["queued", "running", "complete", "failed"]
 GenerationJobRunner = Callable[[], Awaitable[None]]
 
@@ -32,6 +34,7 @@ class GenerationJob:
     payload: dict[str, Any]
     sequence: int
     runner: GenerationJobRunner
+    semaphore: asyncio.Semaphore | None = None
     status: GenerationJobStatus = "queued"
     queued_at: datetime = field(default_factory=_now)
     started_at: datetime | None = None
@@ -46,6 +49,7 @@ def enqueue_generation_job(
     label: str,
     payload: dict[str, Any],
     runner: GenerationJobRunner,
+    semaphore: asyncio.Semaphore | None = None,
 ) -> GenerationJob:
     sequence = app.state.generation_job_sequence
     app.state.generation_job_sequence += 1
@@ -57,6 +61,7 @@ def enqueue_generation_job(
         payload=payload,
         sequence=sequence,
         runner=runner,
+        semaphore=semaphore,
     )
     app.state.generation_jobs[job.id] = job
     app.state.generation_queue.put_nowait(job)
@@ -97,12 +102,20 @@ def generation_job_payload(app: FastAPI, job: GenerationJob) -> dict[str, Any]:
 async def generation_worker(app: FastAPI) -> None:
     while True:
         job: GenerationJob = await app.state.generation_queue.get()
-        job.status = "running"
-        job.started_at = _now()
         try:
-            result = job.runner()
-            if inspect.isawaitable(result):
-                await result
+            if job.semaphore is None:
+                job.status = "running"
+                job.started_at = _now()
+                result = job.runner()
+                if inspect.isawaitable(result):
+                    await result
+            else:
+                async with job.semaphore:
+                    job.status = "running"
+                    job.started_at = _now()
+                    result = job.runner()
+                    if inspect.isawaitable(result):
+                        await result
             job.status = "complete"
         except Exception as exc:
             job.status = "failed"
@@ -110,6 +123,18 @@ async def generation_worker(app: FastAPI) -> None:
         finally:
             job.finished_at = _now()
             app.state.generation_queue.task_done()
+
+
+def generation_semaphore_for_config(app: FastAPI, config: Config) -> asyncio.Semaphore:
+    if config.dev_mode:
+        concurrency = config.effective_image_concurrency()
+        semaphores = app.state.light_generation_semaphores
+        semaphore = semaphores.get(concurrency)
+        if semaphore is None:
+            semaphore = asyncio.Semaphore(concurrency)
+            semaphores[concurrency] = semaphore
+        return semaphore
+    return app.state.generation_semaphore
 
 
 def prune_finished_generation_jobs(app: FastAPI, max_finished: int = 200) -> None:

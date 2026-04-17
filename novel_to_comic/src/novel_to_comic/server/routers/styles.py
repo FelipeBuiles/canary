@@ -12,6 +12,7 @@ from ..deps import get_project
 from ..generation_jobs import (
     enqueue_generation_job,
     generation_job_payload,
+    generation_semaphore_for_config,
     prune_finished_generation_jobs,
 )
 
@@ -43,10 +44,15 @@ async def _suggest_styles(config: Config, bible) -> list[dict]:
         "distinct visual style templates for image generation prompts. "
         "Span the full medium spectrum — do NOT default to illustrated or comic styles. "
         "At least one suggestion must be photorealistic or cinematic. "
-        "Include a range: e.g. cinematic live-action, painterly, stylised illustration, graphic novel, "
-        "anime/manga — pick whichever 5 best suit this specific story. "
+        "Draw from the widest possible range of visual traditions: film, photography, painting, "
+        "printmaking, textiles, animation, editorial illustration, poster art, zines, "
+        "children's books, fine art, street art, vintage advertising, stained glass, "
+        "ukiyo-e, pointillism, risograph, screen-print, cel animation, moody noir, "
+        "sun-bleached editorial, or any other visual language that fits the story. "
+        "Never repeat the same combination of medium + palette + mood across calls. "
         "Each is a single paragraph of 40-70 words describing: medium/rendering style, color palette, "
-        "lighting, composition, mood. Make each genuinely distinct. Output a JSON array only, no markdown."
+        "lighting, composition, mood. Make each genuinely distinct. Output a JSON array only, no markdown. "
+        f"{config.generation_language_instruction()}"
     )
     user = (
         f'Story: "{bible.title}" by {bible.author}\n'
@@ -83,6 +89,8 @@ async def _generate_style_sample(config, bible, project_dir, sample_path):
         f"{config.style_template}\n\n"
         f"{char_desc}. Set in: {loc_desc}. "
         f"Medium shot, eye-level camera, dramatic lighting. "
+        f"Portrait 4:5 aspect ratio. Fill the entire frame edge to edge — "
+        f"no letterboxing, no pillarboxing, no border margins. "
         f"No text. No speech bubbles. No captions. Single panel only."
     )
 
@@ -161,8 +169,9 @@ async def suggest_styles(request: Request, project_name: str, project=Depends(ge
                 "level": "info",
                 "message": "Generating style suggestions...",
             })
-            suggestions = await _suggest_styles(config, bible)
-            _save_suggestions(project_dir, suggestions, bible.title)
+            new_suggestions = await _suggest_styles(config, bible)
+            existing = _load_suggestions(project_dir) or []
+            _save_suggestions(project_dir, existing + new_suggestions, bible.title)
             queue.put_nowait({"type": "stage_progress", "stage": "style_suggest", "done": 1, "total": 1})
             queue.put_nowait({"type": "stage_complete", "stage": "style_suggest", "done": 1, "total": 1})
         except Exception as exc:
@@ -211,8 +220,7 @@ async def generate_style_samples(
             sample_config=sample_config,
             sample_path=sample_path,
         ) -> None:
-            async with request.app.state.generation_semaphore:
-                await _generate_style_sample(sample_config, bible, project_dir, sample_path)
+            await _generate_style_sample(sample_config, bible, project_dir, sample_path)
 
         job = enqueue_generation_job(
             request.app,
@@ -221,6 +229,7 @@ async def generate_style_samples(
             label=f"style {idx}",
             payload={"index": idx},
             runner=_runner,
+            semaphore=generation_semaphore_for_config(request.app, sample_config),
         )
         jobs.append(generation_job_payload(request.app, job))
 
