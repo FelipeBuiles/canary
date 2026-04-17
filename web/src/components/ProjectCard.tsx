@@ -1,8 +1,9 @@
 import { Link } from "react-router-dom";
 import type { ProjectSummary, StageStatus } from "../types/api";
-import { STAGE_DISPLAY_NAMES, STAGE_ORDER } from "../types/api";
+import { STAGE_ORDER } from "../types/api";
 import { Card } from "./ui/Card";
 import { Tag } from "./ui/Tag";
+import { useI18n } from "../i18n";
 
 interface Props {
   project: ProjectSummary;
@@ -35,22 +36,21 @@ function resolveTone(status: StageStatus) {
   return "bg-pulp-paper text-ink-black";
 }
 
-function resolveTag(status: StageStatus) {
+function resolveTag(status: StageStatus, statusName: (status: StageStatus) => string) {
   if (status === "complete") return "ACCEPTED";
-  if (status === "awaiting_review") return "REVIEW";
-  if (status === "running") return "LIVE";
-  if (status === "failed") return "ERROR";
-  return "QUEUE";
+  if (status === "pending") return "QUEUE";
+  return statusName(status);
 }
 
 export function ProjectCard({ project, coverPending = false, coverFailed = false }: Props) {
+  const { stageName, statusName, t } = useI18n();
   const furthest = project.furthest_stage
     ? STAGE_ORDER.indexOf(project.furthest_stage as (typeof STAGE_ORDER)[number]) + 1
     : 0;
   const status = resolveStatus(project);
   const stageLabel = project.furthest_stage
-    ? STAGE_DISPLAY_NAMES[project.furthest_stage as (typeof STAGE_ORDER)[number]]
-    : "ARCHIVE";
+    ? stageName(project.furthest_stage as (typeof STAGE_ORDER)[number])
+    : t("ARCHIVE");
   const coverUrl = `/api/projects/${encodeURIComponent(project.name)}/files/cover/cover.png`;
   const progressPct = Math.round((furthest / STAGE_ORDER.length) * 100);
 
@@ -67,7 +67,7 @@ export function ProjectCard({ project, coverPending = false, coverFailed = false
         ) : (
           <div className="flex aspect-[4/5] flex-col justify-end bg-ink-black p-4 text-bristol">
             <div className="font-meta text-[0.46rem] tracking-[0.18em] text-bristol/45">
-              {coverFailed ? "COVER FAILED" : coverPending ? "COVER GENERATING" : "COVER QUEUED"}
+              {coverFailed ? t("COVER FAILED") : coverPending ? t("COVER GENERATING") : t("COVER QUEUED")}
             </div>
             <div className="mt-2 max-w-[10ch] font-display text-[2.4rem] font-bold leading-[0.86] tracking-[-0.07em] text-bristol">
               {project.project_name}
@@ -89,13 +89,13 @@ export function ProjectCard({ project, coverPending = false, coverFailed = false
 
           {project.is_running && (
             <div className="absolute left-2 top-2 z-10 animate-pulse bg-hero-red px-2 py-1 font-meta text-[0.48rem] tracking-[0.18em] text-bristol">
-              ACTIVE
+              {t("ACTIVE")}
             </div>
           )}
           <Tag
             className={`absolute right-2 top-2 ${resolveTone(status)}`}
           >
-            {resolveTag(status)}
+            {resolveTag(status, statusName)}
           </Tag>
       </div>
 
@@ -103,17 +103,17 @@ export function ProjectCard({ project, coverPending = false, coverFailed = false
         <div className="grid grid-cols-[1fr_auto] gap-4">
           <p className="text-[0.78rem] leading-6 text-ink-black/72">
             {project.has_cover
-              ? "Project cover, pipeline position, cost, and latest review checkpoint."
+              ? t("Project cover, pipeline position, cost, and latest review checkpoint.")
               : coverFailed
-                ? "Cover generation failed; opening the project still gives access to every pipeline room."
-                : "Cover art is being prepared from the story bible and selected visual style."}
+                ? t("Cover generation failed; opening the project still gives access to every pipeline room.")
+                : t("Cover art is being prepared from the story bible and selected visual style.")}
           </p>
           <div className="text-right">
             <div className="font-display text-[1.8rem] font-bold leading-none tracking-[-0.05em] text-ink-black">
               {furthest}
             </div>
             <div className="font-meta text-[0.42rem] tracking-[0.14em] text-ink-black/45">
-              OF 7
+              {t("OF")} 7
             </div>
           </div>
         </div>
@@ -125,7 +125,7 @@ export function ProjectCard({ project, coverPending = false, coverFailed = false
         <div className="mt-4 space-y-2 border-t-[2px] border-ink-black pt-3">
           <div className="flex items-center justify-between text-[0.66rem]">
             <span className="font-meta tracking-[0.16em] text-ink-black/45">
-              CREATED
+              {t("CREATED")}
             </span>
             <span className="font-body text-ink-black/78">
               {formatCreated(project.created_at)}
@@ -133,13 +133,13 @@ export function ProjectCard({ project, coverPending = false, coverFailed = false
           </div>
           <div className="flex items-center justify-between text-[0.66rem]">
             <span className="font-meta tracking-[0.16em] text-ink-black/45">
-              CHECKPOINT
+              {t("CHECKPOINT")}
             </span>
             <span className="font-body text-ink-black/78">{stageLabel}</span>
           </div>
           <div className="flex items-center justify-between text-[0.66rem]">
             <span className="font-meta tracking-[0.16em] text-ink-black/45">
-              SPEND
+              {t("SPEND")}
             </span>
             <span className="font-body text-ink-black/78 tabular-nums">
               ${project.total_cost_usd.toFixed(2)}
@@ -151,7 +151,7 @@ export function ProjectCard({ project, coverPending = false, coverFailed = false
           to={`/project/${encodeURIComponent(project.name)}`}
           className="mt-3 block border-[2px] border-ink-black bg-hero-red px-4 py-2 text-center font-meta text-[0.62rem] tracking-[0.16em] text-bristol hover:opacity-90"
         >
-          OPEN FILE
+          {t("OPEN FILE")}
         </Link>
       </div>
     </Card>

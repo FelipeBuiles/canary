@@ -360,6 +360,34 @@ def _fallback_config(config: Config) -> Config | None:
     return None
 
 
+def _generation_config(config: Config) -> Config:
+    model = config.effective_image_model()
+    if model != config.image_model:
+        return config.model_copy(update={"image_model": model})
+    return config
+
+
+def _effective_dimensions(config: Config, width: int | None, height: int | None) -> tuple[int, int]:
+    w = width or config.image_width
+    h = height or config.image_height
+    return config.effective_image_dimensions(w, h)
+
+
+async def _downscale_dev_output(config: Config, path: Path, width: int, height: int) -> Path:
+    if not config.dev_mode or not path.exists():
+        return path
+    try:
+        from PIL import Image as _PILImage
+        img = await asyncio.to_thread(_PILImage.open, path)
+        if img.width <= width and img.height <= height:
+            return path
+        img.thumbnail((width, height), _PILImage.Resampling.LANCZOS)
+        await asyncio.to_thread(img.save, path)
+    except Exception:
+        pass
+    return path
+
+
 async def _dispatch(
     config: Config,
     prompt: str,
@@ -394,20 +422,27 @@ async def generate_image(
     ref_type: "subject" (character identity) or "style" (art style transfer).
     Only meaningful for Imagen 4. On 429, automatically retries with fallback_image_model.
     """
+    config = _generation_config(config)
+    width, height = _effective_dimensions(config, width, height)
+    steps = config.effective_image_steps(steps)
     refs = [reference_image_path] if reference_image_path else None
     if _is_imagen(config.image_model):
         try:
-            return await _generate_imagen_image(config, prompt, output_path, width, height, refs, ref_type)
+            result = await _generate_imagen_image(config, prompt, output_path, width, height, refs, ref_type)
+            return await _downscale_dev_output(config, result, width, height)
         except ImagenRateLimitError:
             fb = _fallback_config(config)
             if fb:
                 from rich.console import Console
                 Console().print(f"[yellow]Rate limited on {config.image_model} → falling back to {fb.image_model}[/yellow]")
-                return await _dispatch(fb, prompt, output_path, width, height, steps, refs, ref_type)
+                result = await _dispatch(fb, prompt, output_path, width, height, steps, refs, ref_type)
+                return await _downscale_dev_output(config, result, width, height)
             raise
     if _is_gemini_native(config.image_model):
-        return await _generate_gemini_image(config, prompt, output_path, refs, width, height)
-    return await _generate_together_image(config, prompt, output_path, width, height, steps, refs)
+        result = await _generate_gemini_image(config, prompt, output_path, refs, width, height)
+        return await _downscale_dev_output(config, result, width, height)
+    result = await _generate_together_image(config, prompt, output_path, width, height, steps, refs)
+    return await _downscale_dev_output(config, result, width, height)
 
 
 async def generate_image_multi_ref(
@@ -429,16 +464,23 @@ async def generate_image_multi_ref(
                       for Imagen. Ignored for Together AI (no separate style conditioning).
     On 429, automatically retries with fallback_image_model.
     """
+    config = _generation_config(config)
+    width, height = _effective_dimensions(config, width, height)
+    steps = config.effective_image_steps(steps)
     if _is_imagen(config.image_model):
         try:
-            return await _generate_imagen_image(config, prompt, output_path, width, height, reference_paths, ref_type, style_refs)
+            result = await _generate_imagen_image(config, prompt, output_path, width, height, reference_paths, ref_type, style_refs)
+            return await _downscale_dev_output(config, result, width, height)
         except ImagenRateLimitError:
             fb = _fallback_config(config)
             if fb:
                 from rich.console import Console
                 Console().print(f"[yellow]Rate limited on {config.image_model} → falling back to {fb.image_model}[/yellow]")
-                return await _dispatch(fb, prompt, output_path, width, height, steps, reference_paths, ref_type, style_refs)
+                result = await _dispatch(fb, prompt, output_path, width, height, steps, reference_paths, ref_type, style_refs)
+                return await _downscale_dev_output(config, result, width, height)
             raise
     if _is_gemini_native(config.image_model):
-        return await _generate_gemini_image(config, prompt, output_path, reference_paths, width, height, style_refs)
-    return await _generate_together_image(config, prompt, output_path, width, height, steps, reference_paths)
+        result = await _generate_gemini_image(config, prompt, output_path, reference_paths, width, height, style_refs)
+        return await _downscale_dev_output(config, result, width, height)
+    result = await _generate_together_image(config, prompt, output_path, width, height, steps, reference_paths)
+    return await _downscale_dev_output(config, result, width, height)

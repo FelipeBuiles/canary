@@ -4,6 +4,8 @@ import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
 import { SectionLabel } from "../SectionLabel";
 import type { ConfigOverrides } from "../../types/api";
+import { LANGUAGES, useI18n } from "../../i18n";
+import type { LanguageCode } from "../../i18n";
 
 interface UploadStepProps {
   onSubmit: (file: File, name: string, configOverrides?: Partial<ConfigOverrides>) => void;
@@ -14,8 +16,11 @@ interface UploadStepProps {
 const ACCEPTED = [".txt", ".epub", ".pdf"];
 
 export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
+  const { language, t } = useI18n();
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [targetLanguage, setTargetLanguage] = useState<LanguageCode>(language);
+  const [devMode, setDevMode] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [theme, setTheme] = useState("auto");
   const [imageModel, setImageModel] = useState("gemini-3-pro-image-preview");
@@ -33,34 +38,41 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!file || !name.trim() || !extOk) return;
-    const overrides: Partial<ConfigOverrides> = {};
+    const overrides: Partial<ConfigOverrides> = { target_language: targetLanguage };
+    if (devMode) {
+      overrides.dev_mode = true;
+      overrides.dev_image_scale = 0.5;
+      overrides.dev_image_steps = 8;
+      overrides.dev_image_concurrency = 5;
+      overrides.image_model = "gemini-3.1-flash-image-preview";
+      overrides.image_steps = 8;
+    }
     if (showAdvanced) {
       if (theme !== "auto") overrides.comic_theme = theme;
-      if (imageModel !== "gemini-3-pro-image-preview") overrides.image_model = imageModel;
+      if (!devMode && imageModel !== "gemini-3-pro-image-preview") overrides.image_model = imageModel;
       if (imageWidth !== 1024) overrides.image_width = imageWidth;
       if (imageHeight !== 1024) overrides.image_height = imageHeight;
-      if (imageSteps !== 28) overrides.image_steps = imageSteps;
+      if (!devMode && imageSteps !== 28) overrides.image_steps = imageSteps;
       if (maxPanelsPerScene !== 8) overrides.max_panels_per_scene = maxPanelsPerScene;
       if (maxPanelsPerPage !== 6) overrides.max_panels_per_page = maxPanelsPerPage;
       if (styleTemplate.trim()) overrides.style_template = styleTemplate.trim();
     }
-    onSubmit(file, name.trim(), Object.keys(overrides).length > 0 ? overrides : undefined);
+    onSubmit(file, name.trim(), overrides);
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       <Card className="p-5 md:p-6">
-        <SectionLabel tone="red">NEW PRODUCTION</SectionLabel>
-        <h1 className="mt-4 display-headline">CREATE PROJECT</h1>
+        <SectionLabel tone="red">{t("NEW PRODUCTION")}</SectionLabel>
+        <h1 className="mt-4 display-headline">{t("CREATE PROJECT")}</h1>
         <p className="mt-4 lead-pulp max-w-[52ch]">
-          Upload your novel file and the pipeline will take it from there —
-          extracting characters, drawing panels, and assembling pages.
+          {t("Upload your novel file and the pipeline will take it from there — extracting characters, drawing panels, and assembling pages.")}
         </p>
 
         <div className="mt-6 space-y-4">
           <div>
             <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-              PROJECT NAME
+              {t("PROJECT NAME")}
             </label>
             <input
               type="text"
@@ -74,7 +86,7 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
 
           <div>
             <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-              NOVEL FILE
+              {t("NOVEL FILE")}
             </label>
             <div
               onClick={() => fileRef.current?.click()}
@@ -96,7 +108,7 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
                   </div>
                   {!extOk && (
                     <div className="mt-2 text-[0.78rem] text-hero-red">
-                      Unsupported file type. Accepted: {ACCEPTED.join(", ")}
+                      {t("Unsupported file type. Accepted:")} {ACCEPTED.join(", ")}
                     </div>
                   )}
                 </>
@@ -104,7 +116,7 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
                 <>
                   <Icon name="plus" size={22} className="text-ink-black/40" />
                   <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/50">
-                    DROP FILE OR CLICK TO BROWSE
+                    {t("DROP FILE OR CLICK TO BROWSE")}
                   </div>
                   <div className="mt-1 text-[0.72rem] text-ink-black/40">
                     .txt, .epub, .pdf
@@ -123,7 +135,42 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
               }}
             />
           </div>
+
+          <div>
+            <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
+              {t("OUTPUT LANGUAGE")}
+            </label>
+            <select
+              value={targetLanguage}
+              onChange={(e) => setTargetLanguage(e.target.value as LanguageCode)}
+              className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
+            >
+              {LANGUAGES.map((item) => (
+                <option key={item.code} value={item.code}>{item.label}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-[0.72rem] leading-relaxed text-ink-black/45">
+              {t("Controls generated dialogue, narration, style suggestions, and prompt artifacts for this project.")}
+            </p>
+          </div>
         </div>
+
+        <label className="mt-4 flex cursor-pointer items-start gap-3 border-[2px] border-ink-black bg-narrator-gold/35 p-3">
+          <input
+            type="checkbox"
+            checked={devMode}
+            onChange={(e) => setDevMode(e.target.checked)}
+            className="mt-1 h-4 w-4 accent-hero-red"
+          />
+          <span>
+            <span className="block font-meta text-[0.62rem] tracking-[0.16em] text-ink-black">
+              {t("DEV / DEMO MODE")}
+            </span>
+            <span className="mt-1 block text-[0.78rem] leading-relaxed text-ink-black/65">
+              {t("Uses the faster image model, fewer steps, and smaller generated files for quick testing.")}
+            </span>
+          </span>
+        </label>
 
         {/* Advanced config toggle */}
         <button
@@ -131,7 +178,7 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
           onClick={() => setShowAdvanced(!showAdvanced)}
           className="mt-4 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/50 hover:text-ink-black transition-colors"
         >
-          {showAdvanced ? "▼" : "▶"} ADVANCED CONFIGURATION
+          {showAdvanced ? "▼" : "▶"} {t("ADVANCED CONFIGURATION")}
         </button>
 
         {showAdvanced && (
@@ -139,7 +186,7 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-                  COMIC THEME
+                  {t("COMIC THEME")}
                 </label>
                 <select
                   value={theme}
@@ -156,7 +203,7 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
               </div>
               <div>
                 <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-                  IMAGE MODEL
+                  {t("IMAGE MODEL")}
                 </label>
                 <select
                   value={imageModel}
@@ -171,25 +218,25 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
             <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
               <div>
                 <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-                  WIDTH
+                  {t("WIDTH")}
                 </label>
                 <input type="number" value={imageWidth} onChange={(e) => setImageWidth(Number(e.target.value))} min={256} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
               </div>
               <div>
                 <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-                  HEIGHT
+                  {t("HEIGHT")}
                 </label>
                 <input type="number" value={imageHeight} onChange={(e) => setImageHeight(Number(e.target.value))} min={256} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
               </div>
               <div>
                 <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-                  STEPS
+                  {t("STEPS")}
                 </label>
                 <input type="number" value={imageSteps} onChange={(e) => setImageSteps(Number(e.target.value))} min={1} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
               </div>
               <div>
                 <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-                  PANELS/SCENE
+                  {t("PANELS/SCENE")}
                 </label>
                 <input type="number" value={maxPanelsPerScene} onChange={(e) => setMaxPanelsPerScene(Number(e.target.value))} min={1} max={20} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
               </div>
@@ -197,19 +244,19 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
             <div className="grid gap-3 grid-cols-2">
               <div>
                 <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-                  PANELS/PAGE
+                  {t("PANELS/PAGE")}
                 </label>
                 <input type="number" value={maxPanelsPerPage} onChange={(e) => setMaxPanelsPerPage(Number(e.target.value))} min={1} max={12} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
               </div>
             </div>
             <div>
               <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-                STYLE TEMPLATE
+                {t("STYLE TEMPLATE")}
               </label>
               <textarea
                 value={styleTemplate}
                 onChange={(e) => setStyleTemplate(e.target.value)}
-                placeholder="Leave empty for default style. Override to set visual identity of the comic."
+                placeholder={t("Leave empty for default style. Override to set visual identity of the comic.")}
                 rows={3}
                 className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm resize-y"
               />
@@ -227,7 +274,7 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
             size="lg"
             disabled={!file || !name.trim() || !extOk || isPending}
           >
-            {isPending ? "CREATING…" : "CREATE PROJECT"}
+            {isPending ? t("CREATING…") : t("CREATE PROJECT")}
           </Button>
         </div>
       </Card>

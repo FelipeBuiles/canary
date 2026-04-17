@@ -17,6 +17,7 @@ from ..deps import get_project, get_projects_dir
 from ..generation_jobs import (
     enqueue_generation_job,
     generation_job_payload,
+    generation_semaphore_for_config,
     prune_finished_generation_jobs,
 )
 
@@ -289,8 +290,7 @@ async def generate_cover(
         }
 
     async def _runner() -> None:
-        async with request.app.state.generation_semaphore:
-            await _generate_project_cover(config, project_dir)
+        await _generate_project_cover(config, project_dir)
 
     prune_finished_generation_jobs(request.app)
     job = enqueue_generation_job(
@@ -300,6 +300,7 @@ async def generate_cover(
         label=f"{state.project_name} cover",
         payload={"path": "cover/cover.png"},
         runner=_runner,
+        semaphore=generation_semaphore_for_config(request.app, config),
     )
     return {
         "status": "queued",

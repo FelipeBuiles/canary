@@ -4,9 +4,10 @@ import { SectionLabel } from "../SectionLabel";
 import { useRegenPlate, useRegenRef, useStoryBible } from "../../api/queries";
 import { ImageModal } from "../ui/ImageModal";
 import { StyleCallout } from "./StyleCallout";
-import { useRegenStore } from "../../store/regen";
+import { useActiveRegens, useRegenStore } from "../../store/regen";
 import { useJobPoller } from "../../hooks/useJobPoller";
 import { useState } from "react";
+import { useI18n } from "../../i18n";
 
 interface ReviewCastStepProps {
   project: string;
@@ -15,15 +16,18 @@ interface ReviewCastStepProps {
 }
 
 export function ReviewCastStep({ project, onApprove, isApproving }: ReviewCastStepProps) {
+  const { t } = useI18n();
   const { data: storyBible } = useStoryBible(project);
   const [modalImage, setModalImage] = useState<{ src: string; alt: string } | null>(null);
   const regenRef = useRegenRef();
   const regenPlate = useRegenPlate();
 
-  const activeMap = useRegenStore((s) => s.active[project] ?? {});
+  const activeMap = useActiveRegens(project);
   const bustTimestamps = useRegenStore((s) => s.bustTimestamps);
   const errors = useRegenStore((s) => s.errors);
-  const { begin, attachJob, fail: failRegen } = useRegenStore();
+  const begin = useRegenStore((s) => s.begin);
+  const attachJob = useRegenStore((s) => s.attachJob);
+  const failRegen = useRegenStore((s) => s.fail);
 
   useJobPoller(project);
 
@@ -63,8 +67,8 @@ export function ReviewCastStep({ project, onApprove, isApproving }: ReviewCastSt
   return (
     <div className="space-y-5">
       <Card className="p-5 md:p-6">
-        <SectionLabel tone="sage">REVIEW CHECKPOINT</SectionLabel>
-        <h1 className="mt-4 display-headline">CAST & LOCATIONS</h1>
+        <SectionLabel tone="sage">{t("REVIEW CHECKPOINT")}</SectionLabel>
+        <h1 className="mt-4 display-headline">{t("CAST & LOCATIONS")}</h1>
         <p className="mt-4 lead-pulp max-w-[52ch]">
           Review character reference sheets and location plates.
           These visuals anchor every downstream image generation.
@@ -74,7 +78,7 @@ export function ReviewCastStep({ project, onApprove, isApproving }: ReviewCastSt
             <div className="flex items-center gap-2">
               <span className="h-2.5 w-2.5 animate-pulse bg-hero-red" />
               <span className="font-meta text-[0.48rem] tracking-[0.16em]">
-                REGENERATION QUEUE
+                {t("REGENERATION QUEUE")}
               </span>
             </div>
             <div className="mt-1 font-display text-[1rem] font-bold tracking-[-0.04em]">
@@ -84,7 +88,7 @@ export function ReviewCastStep({ project, onApprove, isApproving }: ReviewCastSt
         )}
         {regenError && (
           <div className="mt-4 border-[2px] border-ink-black bg-hero-red p-3 text-bristol">
-            <div className="font-meta text-[0.48rem] tracking-[0.16em]">REGENERATION FAILED</div>
+            <div className="font-meta text-[0.48rem] tracking-[0.16em]">{t("REGENERATION FAILED")}</div>
             <div className="mt-1 text-[0.78rem] leading-relaxed">{regenError}</div>
           </div>
         )}
@@ -93,7 +97,7 @@ export function ReviewCastStep({ project, onApprove, isApproving }: ReviewCastSt
       <Card className="p-5">
         <div className="space-y-2">
           <div className="border-b-[2px] border-ink-black pb-2 font-display text-[1rem] font-bold tracking-[-0.04em]">
-            CHARACTER REFS
+            {t("CHARACTER REFS")}
           </div>
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {storyBible?.characters.map((c) => {
@@ -120,7 +124,7 @@ export function ReviewCastStep({ project, onApprove, isApproving }: ReviewCastSt
                       <div className="absolute inset-0 flex items-center justify-center bg-ink-black/65">
                         <div className="text-center">
                           <div className="font-display text-[1rem] font-bold tracking-[-0.04em] text-narrator-gold animate-pulse">
-                            {active.status === "running" ? "RUNNING" : "QUEUED"}
+                            {active.status === "running" ? t("RUNNING") : t("QUEUED")}
                           </div>
                           {active.queuePosition && (
                             <div className="mt-1 font-meta text-[0.48rem] tracking-[0.16em] text-bristol/70">
@@ -139,7 +143,7 @@ export function ReviewCastStep({ project, onApprove, isApproving }: ReviewCastSt
                       disabled={!!active}
                       onClick={() => startRefRegen(c.id)}
                     >
-                      {active ? "QUEUED" : "REGEN"}
+                      {active ? t("QUEUED") : t("REGEN")}
                     </Button>
                   </div>
                 </div>
@@ -156,7 +160,7 @@ export function ReviewCastStep({ project, onApprove, isApproving }: ReviewCastSt
       <Card className="p-5">
         <div className="space-y-2">
           <div className="border-b-[2px] border-ink-black pb-2 font-display text-[1rem] font-bold tracking-[-0.04em]">
-            LOCATION PLATES
+            {t("LOCATION PLATES")}
           </div>
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {storyBible?.locations.map((l) => {
@@ -183,7 +187,7 @@ export function ReviewCastStep({ project, onApprove, isApproving }: ReviewCastSt
                       <div className="absolute inset-0 flex items-center justify-center bg-ink-black/65">
                         <div className="text-center">
                           <div className="font-display text-[1rem] font-bold tracking-[-0.04em] text-narrator-gold animate-pulse">
-                            {active.status === "running" ? "RUNNING" : "QUEUED"}
+                            {active.status === "running" ? t("RUNNING") : t("QUEUED")}
                           </div>
                           {active.queuePosition && (
                             <div className="mt-1 font-meta text-[0.48rem] tracking-[0.16em] text-bristol/70">
@@ -202,7 +206,7 @@ export function ReviewCastStep({ project, onApprove, isApproving }: ReviewCastSt
                       disabled={!!active}
                       onClick={() => startPlateRegen(l.id)}
                     >
-                      {active ? "QUEUED" : "REGEN"}
+                      {active ? t("QUEUED") : t("REGEN")}
                     </Button>
                   </div>
                 </div>
@@ -219,7 +223,7 @@ export function ReviewCastStep({ project, onApprove, isApproving }: ReviewCastSt
       <div className="flex items-center gap-4">
         <StyleCallout project={project} />
         <Button size="lg" onClick={onApprove} disabled={isApproving || isRegenerating}>
-          {isApproving ? "APPROVING…" : "APPROVE & CONTINUE"}
+          {isApproving ? t("APPROVING…") : t("APPROVE & CONTINUE")}
         </Button>
         <span className="text-[0.72rem] text-ink-black/40">
           Regenerate any reference that does not match the story bible before continuing.

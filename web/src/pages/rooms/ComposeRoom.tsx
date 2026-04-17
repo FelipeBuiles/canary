@@ -1,16 +1,15 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { usePages, usePage, useUpdatePage, useReplacePage, useExport } from "../../api/queries";
+import { usePages, usePage, useUpdatePage, useReplacePage, useReflowPages, useGeneratePageStyleVars, useTranslatePageBubbles, useExport } from "../../api/queries";
 import { downloadExportUrl } from "../../api/pages";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
-import { PagePreview } from "../../components/compose/PagePreview";
-import type { PagePreviewHandle } from "../../components/compose/PagePreview";
-import { EditorOverlay } from "../../components/compose/EditorOverlay";
 import { PageNavigator } from "../../components/compose/PageNavigator";
 import { PropertyPanel } from "../../components/compose/PropertyPanel";
 import { EditorToolbar } from "../../components/compose/EditorToolbar";
+import { PageEditor } from "../../components/compose/PageEditor";
 import { useComposeStore } from "../../store/compose";
 import type { ComicPage, Bubble, Sfx } from "../../types/api";
+import "../../components/compose/comic-page.css";
 
 export function ComposeRoom() {
   const { name } = useParams<{ name: string }>();
@@ -20,9 +19,11 @@ export function ComposeRoom() {
   const safePage = pageList?.length ? Math.min(currentPage, pageList.length) : undefined;
   const { data: page, isLoading: loadingPage } = usePage(name, safePage);
 
-  const previewRef = useRef<PagePreviewHandle>(null);
   const updatePageMut = useUpdatePage();
   const replacePageMut = useReplacePage();
+  const reflowPagesMut = useReflowPages();
+  const generatePageStyleMut = useGeneratePageStyleVars();
+  const translateBubblesMut = useTranslatePageBubbles();
   const exportMut = useExport();
 
   const selection = useComposeStore((s) => s.selection);
@@ -41,20 +42,16 @@ export function ComposeRoom() {
     clearHistory();
   }
 
-  // Refresh iframe after successful PATCH
-  const refreshPreview = useCallback(() => {
-    setTimeout(() => previewRef.current?.refresh(), 50);
-  }, []);
-
   // ── Mutations ────────────────────────────────────────────────────────────
 
   function patchPage(patch: Partial<ComicPage>) {
     if (!name || !safePage || !page) return;
     pushUndo(page);
-    updatePageMut.mutate(
-      { project: name, pageNum: safePage, data: patch },
-      { onSuccess: refreshPreview },
-    );
+    updatePageMut.mutate({
+      project: name,
+      pageNum: safePage,
+      data: patch,
+    });
   }
 
   function handleUpdateBubble(panelId: string, bubbleId: string, bPatch: Partial<Bubble>) {
@@ -71,6 +68,31 @@ export function ComposeRoom() {
 
   function handleUpdatePageProps(patch: Partial<ComicPage>) {
     patchPage(patch);
+  }
+
+  function handleReflowPages(panelsPerPage: number) {
+    if (!name || !page) return;
+    reflowPagesMut.mutate(
+      { project: name, panelsPerPage },
+      {
+        onSuccess: (pages) => {
+          clearHistory();
+          const lastPage = pages.at(-1)?.page_number ?? 1;
+          if (currentPage > lastPage) setPage(lastPage);
+        },
+      },
+    );
+  }
+
+  function handleGeneratePageStyle() {
+    if (!name) return;
+    generatePageStyleMut.mutate({ project: name });
+  }
+
+  function handleTranslateBubbles() {
+    if (!name || !page) return;
+    pushUndo(page);
+    translateBubblesMut.mutate({ project: name });
   }
 
   function handleDeleteElement(panelId: string, type: "bubble" | "sfx", elementId: string) {
@@ -143,14 +165,14 @@ export function ComposeRoom() {
   function handleUndo() {
     const prev = popUndo();
     if (!prev || !name || !safePage || !page) return;
-    // Push current to redo before replacing
     useComposeStore.setState((s) => ({
       redoStack: [...s.redoStack, structuredClone(page)],
     }));
-    replacePageMut.mutate(
-      { project: name, pageNum: safePage, data: prev },
-      { onSuccess: refreshPreview },
-    );
+    replacePageMut.mutate({
+      project: name,
+      pageNum: safePage,
+      data: prev,
+    });
   }
 
   function handleRedo() {
@@ -159,10 +181,11 @@ export function ComposeRoom() {
     useComposeStore.setState((s) => ({
       undoStack: [...s.undoStack, structuredClone(page)],
     }));
-    replacePageMut.mutate(
-      { project: name, pageNum: safePage, data: next },
-      { onSuccess: refreshPreview },
-    );
+    replacePageMut.mutate({
+      project: name,
+      pageNum: safePage,
+      data: next,
+    });
   }
 
   function handleExport(format: "pdf" | "cbz") {
@@ -182,7 +205,6 @@ export function ComposeRoom() {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Delete" || e.key === "Backspace") {
-        // Don't delete if user is typing in an input
         if ((e.target as HTMLElement).tagName === "INPUT" || (e.target as HTMLElement).tagName === "TEXTAREA") return;
         if (selection && page) {
           handleDeleteElement(selection.panelId, selection.type, selection.elementId);
@@ -256,59 +278,62 @@ export function ComposeRoom() {
         isExporting={exportMut.isPending}
       />
 
-      <div className="grid gap-4" style={{ gridTemplateColumns: "160px 1fr 240px" }}>
+      <div className="flex gap-4 h-[calc(100vh-180px)]">
         {/* Left: page navigator */}
-        <PageNavigator
-          project={name}
-          pages={pageList}
-          currentPage={pageNumber}
-          onSelect={setPage}
-        />
+        <div className="w-[220px] flex-shrink-0 overflow-y-auto">
+          <PageNavigator
+            project={name}
+            pages={pageList}
+            currentPage={pageNumber}
+            onSelect={setPage}
+          />
+        </div>
 
-        {/* Center: preview + overlay */}
-        <div className="relative">
+        {/* Center: native React editor (replaces iframe + overlay) */}
+        <div className="flex-1 flex items-center justify-center overflow-hidden bg-ink-black/5 p-4 border-[2px] border-ink-black">
           {loadingPage ? (
             <div
-              className="flex items-center justify-center border-[2px] border-ink-black bg-ink-black/5"
-              style={{ aspectRatio: "2480 / 3508" }}
+              className="flex items-center justify-center bg-ink-black/5"
+              style={{ aspectRatio: "2480 / 3508", maxHeight: "100%" }}
             >
               <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
                 LOADING PAGE...
               </p>
             </div>
           ) : page ? (
-            <div className="relative">
-              <PagePreview
-                ref={previewRef}
-                project={name}
-                pageNum={pageNumber}
-              />
-              <EditorOverlay
-                page={page}
-                previewRef={previewRef}
-                selectedId={selection?.elementId ?? null}
-                onSelect={select}
-                onDeselect={deselect}
-                onDragEnd={handleDragEnd}
-              />
-            </div>
+            <PageEditor
+              page={page}
+              project={name}
+              selectedId={selection?.elementId ?? null}
+              selectedType={selection?.type ?? null}
+              onSelect={select}
+              onDeselect={deselect}
+              onDragEnd={handleDragEnd}
+            />
           ) : null}
         </div>
 
         {/* Right: property panel */}
-        {page ? (
-          <PropertyPanel
-            page={page}
-            selection={selection}
-            onUpdateBubble={handleUpdateBubble}
-            onUpdateSfx={handleUpdateSfx}
-            onUpdatePage={handleUpdatePageProps}
-            onDeleteElement={handleDeleteElement}
-            onUnpin={handleUnpin}
-          />
-        ) : (
-          <div />
-        )}
+        <div className="w-[340px] flex-shrink-0 overflow-y-auto">
+          {page ? (
+            <PropertyPanel
+              page={page}
+              selection={selection}
+              onUpdateBubble={handleUpdateBubble}
+              onUpdateSfx={handleUpdateSfx}
+              onUpdatePage={handleUpdatePageProps}
+              onReflowPages={handleReflowPages}
+              onGeneratePageStyle={handleGeneratePageStyle}
+              onTranslateBubbles={handleTranslateBubbles}
+              isGeneratingPageStyle={generatePageStyleMut.isPending}
+              isTranslatingBubbles={translateBubblesMut.isPending}
+              onDeleteElement={handleDeleteElement}
+              onUnpin={handleUnpin}
+            />
+          ) : (
+            <div />
+          )}
+        </div>
       </div>
     </div>
   );

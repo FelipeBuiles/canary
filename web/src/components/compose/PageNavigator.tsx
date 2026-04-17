@@ -1,4 +1,5 @@
 import type { PageSummary } from "../../types/api";
+import { pagePreviewUrl } from "../../api/pages";
 
 interface PageNavigatorProps {
   project: string;
@@ -14,13 +15,13 @@ export function PageNavigator({
   onSelect,
 }: PageNavigatorProps) {
   return (
-    <div className="space-y-2 overflow-y-auto pr-1" style={{ maxHeight: "calc(100vh - 260px)" }}>
-      <div className="font-meta text-[0.46rem] tracking-[0.18em] text-ink-black/45">
+    <div className="space-y-3 overflow-y-auto pr-1" style={{ maxHeight: "calc(100vh - 260px)" }}>
+      <div className="font-meta text-[0.78rem] tracking-[0.18em] text-ink-black/50">
         PAGES ({pages.length})
       </div>
       {pages.map((p) => {
         const isActive = p.page_number === currentPage;
-        const src = `/api/projects/${encodeURIComponent(project)}/files/assembly/pages/page_${String(p.page_number).padStart(3, "0")}.png`;
+        const src = pagePreviewUrl(project, p.page_number);
 
         return (
           <button
@@ -33,21 +34,19 @@ export function PageNavigator({
             }`}
           >
             <div className="aspect-[2480/3508] w-full overflow-hidden bg-ink-black/5">
-              <img
+              <iframe
                 src={src}
-                alt={`Page ${p.page_number}`}
-                className="h-full w-full object-contain"
+                title={`Page ${p.page_number} preview`}
+                className="h-full w-full origin-top-left scale-[0.087] border-0 bg-white pointer-events-none"
+                style={{ width: 2480, height: 3508 }}
                 loading="lazy"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none";
-                }}
               />
             </div>
             <div className="flex items-center justify-between px-2 py-1">
-              <span className="font-meta text-[0.44rem] tracking-[0.14em] text-ink-black/60">
+              <span className="font-meta text-[0.64rem] tracking-[0.14em] text-ink-black/65">
                 PAGE {String(p.page_number).padStart(2, "0")}
               </span>
-              <span className="font-meta text-[0.40rem] tracking-[0.12em] text-ink-black/40">
+              <span className="font-meta text-[0.58rem] tracking-[0.12em] text-ink-black/45">
                 {p.panel_count}p
               </span>
             </div>

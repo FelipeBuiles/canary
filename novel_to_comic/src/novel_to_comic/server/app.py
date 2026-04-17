@@ -1,6 +1,7 @@
 """FastAPI application factory for the web dashboard."""
 
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -16,13 +17,15 @@ from .routers import config, export, pages, pipeline, projects, stages, styles
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    app.state.generation_worker_task = asyncio.create_task(generation_worker(app))
+    worker_count = max(1, int(os.environ.get("CANARY_GENERATION_WORKERS", "5")))
+    app.state.generation_worker_tasks = [
+        asyncio.create_task(generation_worker(app))
+        for _ in range(worker_count)
+    ]
     yield
-    app.state.generation_worker_task.cancel()
-    try:
-        await app.state.generation_worker_task
-    except asyncio.CancelledError:
-        pass
+    for task in app.state.generation_worker_tasks:
+        task.cancel()
+    await asyncio.gather(*app.state.generation_worker_tasks, return_exceptions=True)
 
 
 def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
@@ -33,6 +36,10 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app.state.event_queues: dict[str, asyncio.Queue] = {}
     app.state.running_tasks: dict[str, asyncio.Task] = {}
     app.state.generation_semaphore = asyncio.Semaphore(1)
+    app.state.light_generation_semaphore = asyncio.Semaphore(5)
+    app.state.light_generation_semaphores: dict[int, asyncio.Semaphore] = {
+        5: app.state.light_generation_semaphore,
+    }
     app.state.generation_queue: asyncio.Queue = asyncio.Queue()
     app.state.generation_jobs = {}
     app.state.generation_job_sequence = 1

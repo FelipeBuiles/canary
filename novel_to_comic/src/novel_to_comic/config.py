@@ -8,6 +8,13 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
+
+LANGUAGE_NAMES: dict[str, str] = {
+    "en": "English",
+    "es": "Spanish",
+    "fr": "French",
+}
+
 # Env var name → Config field name for all sensitive keys
 _ENV_KEYS: dict[str, str] = {
     "GEMINI_API_KEY": "gemini_api_key",
@@ -35,6 +42,16 @@ class Config(BaseModel):
     embedding_model: str = "gemini-embedding-2-preview"  # Google, 3072 dims, $0.00625/M tokens
     image_model: str = "gemini-3-pro-image-preview"   # Nano Banana Pro — Gemini 3 Pro Image (native)
     fallback_image_model: str = "gemini-3.1-flash-image-preview"  # Nano Banana 2 — faster, used on 429
+
+    # Output language for generated screenplay dialogue, panel text, and prompt artifacts.
+    target_language: str = "en"
+
+    # Dev/demo mode — lowers image generation resolution/steps and prefers the
+    # faster Gemini Flash image model when the default production model is used.
+    dev_mode: bool = False
+    dev_image_scale: float = 0.5
+    dev_image_steps: int = 8
+    dev_image_concurrency: int = 5
 
     # Image generation
     # Width/height are used for Together AI models; Gemini native chooses its own resolution.
@@ -82,6 +99,53 @@ class Config(BaseModel):
     # Override: "default" | "noir" | "manga" | "vintage" | "painted"
     # Fine-grained control: edit project_dir/assembly/theme.css after first run
     comic_theme: str = "auto"
+
+    def effective_image_model(self) -> str:
+        if self.dev_mode and self.image_model == "gemini-3-pro-image-preview":
+            return self.fallback_image_model or "gemini-3.1-flash-image-preview"
+        return self.image_model
+
+    def language_code(self) -> str:
+        return self.target_language if self.target_language in LANGUAGE_NAMES else "en"
+
+    def language_name(self) -> str:
+        return LANGUAGE_NAMES[self.language_code()]
+
+    def generation_language_instruction(self) -> str:
+        name = self.language_name()
+        if self.language_code() == "en":
+            return (
+                "Generate all user-facing creative text in English. Preserve structured IDs, "
+                "file names, enum values, and JSON keys exactly as specified."
+            )
+        return (
+            f"Generate all user-facing creative text in {name}. Translate dialogue, narration, "
+            "captions, action descriptions, panel descriptions, visual prompt text, and style text "
+            f"into natural {name}. Preserve structured IDs, file names, enum values, character IDs, "
+            "location IDs, and JSON keys exactly as specified. Character and place names should stay "
+            "as written unless the source text already localizes them."
+        )
+
+    def effective_image_steps(self, steps: int | None = None) -> int:
+        base = steps or self.image_steps
+        return min(base, self.dev_image_steps) if self.dev_mode else base
+
+    def effective_image_dimensions(self, width: int, height: int) -> tuple[int, int]:
+        if not self.dev_mode:
+            return width, height
+        scale = min(max(self.dev_image_scale, 0.2), 1.0)
+
+        def snap(value: int) -> int:
+            return max(256, int(round((value * scale) / 64)) * 64)
+
+        return snap(width), snap(height)
+
+    def effective_image_concurrency(self, *, google_model: bool = False) -> int:
+        if self.dev_mode:
+            return max(1, self.dev_image_concurrency)
+        if google_model:
+            return 1
+        return max(1, self.max_concurrent_requests)
 
 
 def _find_env_file(start: Path) -> Path | None:
@@ -182,6 +246,18 @@ image_model: "{config.image_model}"
 # Fallback used automatically when image_model returns a 429 rate-limit error.
 # Leave blank to disable.
 fallback_image_model: "{config.fallback_image_model}"
+
+# Generated text language: en | es | fr
+target_language: "{config.language_code()}"
+
+# Dev/demo mode trades image fidelity for iteration speed.
+# When enabled, generated images use scaled-down dimensions, fewer diffusion
+# steps where supported, and Gemini Flash Image instead of Gemini Pro Image
+# unless a custom image_model is explicitly configured.
+dev_mode: {str(config.dev_mode).lower()}
+dev_image_scale: {config.dev_image_scale}
+dev_image_steps: {config.dev_image_steps}
+dev_image_concurrency: {config.dev_image_concurrency}
 
 # ---------------------------------------------------------------------------
 # Image generation settings

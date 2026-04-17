@@ -15,8 +15,9 @@ import {
   updatePrompt,
   listImages,
 } from "./stages";
-import { listPages, getPage, updatePage, replacePage, triggerExport } from "./pages";
+import { listPages, getPage, updatePage, replacePage, reflowPages, generatePageStyleVars, translatePageBubbles, triggerExport } from "./pages";
 import { getStyles, suggestStyles, generateStyleSamples, setActiveStyle } from "./styles";
+import { getProjectConfig, updateProjectConfig } from "./config";
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
@@ -57,6 +58,25 @@ export function useGenerateProjectCover() {
     mutationFn: ({ project }: { project: string }) => generateProjectCover(project),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+}
+
+export function useProjectConfig(project: string | undefined) {
+  return useQuery({
+    queryKey: ["project", project, "config"],
+    queryFn: () => getProjectConfig(project!),
+    enabled: !!project,
+  });
+}
+
+export function useUpdateProjectConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, data }: { project: string; data: Parameters<typeof updateProjectConfig>[1] }) =>
+      updateProjectConfig(project, data),
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "config"] });
     },
   });
 }
@@ -284,6 +304,39 @@ export function useReplacePage() {
     onSuccess: (_data, { project, pageNum }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "pages", pageNum] });
       qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
+    },
+  });
+}
+
+export function useReflowPages() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, panelsPerPage }: { project: string; panelsPerPage: number }) =>
+      reflowPages(project, panelsPerPage),
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
+    },
+  });
+}
+
+export function useGeneratePageStyleVars() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project }: { project: string }) => generatePageStyleVars(project),
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
+    },
+  });
+}
+
+export function useTranslatePageBubbles() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, targetLanguage }: { project: string; targetLanguage?: "en" | "es" | "fr" }) =>
+      translatePageBubbles(project, targetLanguage),
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
+      qc.invalidateQueries({ queryKey: ["project", project, "config"] });
     },
   });
 }

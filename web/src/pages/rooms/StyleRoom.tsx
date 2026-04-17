@@ -19,6 +19,7 @@ import {
   useStyleJobIds,
   useStyleJobStatuses,
 } from "../../store/styleGen";
+import { usePipelineStore } from "../../store/pipeline";
 import type { StyleSuggestion } from "../../api/styles";
 
 function StyleCard({
@@ -68,7 +69,7 @@ function StyleCard({
 
   return (
     <>
-      <Card>
+      <Card className="flex flex-col">
         <div
           className="relative border-b-[2px] border-ink-black bg-ink-black cursor-pointer group"
           onClick={() => !imgFailed && setIsModalOpen(true)}
@@ -101,7 +102,7 @@ function StyleCard({
                 loading="lazy"
                 width={320}
                 height={400}
-                className="aspect-[4/5] w-full object-cover hover:opacity-90 transition-opacity"
+                className="block w-full aspect-[4/5] object-cover object-center hover:opacity-90 transition-opacity"
                 onError={() => setImgFailed(true)}
               />
               <div
@@ -126,7 +127,7 @@ function StyleCard({
             </Tag>
           )}
         </div>
-        <div className="p-3">
+        <div className="flex flex-1 flex-col p-3">
           <div className="flex items-start justify-between gap-2">
             <div className="font-display text-[1rem] font-bold tracking-[-0.04em] text-ink-black">
               {suggestion.label}
@@ -138,14 +139,26 @@ function StyleCard({
           <p className="mt-2 font-body text-[0.78rem] leading-relaxed text-ink-black/70 line-clamp-4">
             {suggestion.template}
           </p>
-          <div className="mt-3 flex gap-2">
+          <div className="mt-auto flex flex-wrap gap-2 pt-3">
+            <Button
+              size="sm"
+              variant={suggestion.is_active ? "secondary" : "primary"}
+              className="min-w-[min(7.5rem,100%)] flex-1 whitespace-nowrap"
+              onClick={suggestion.is_active ? handleGenerate : () => setActive.mutate({ project: projectName, index: suggestion.index })}
+              disabled={suggestion.is_active && isGenerating}
+            >
+              {suggestion.is_active
+                ? (isGenerating ? (queueState === "queued" ? "QUEUED" : "GENERATING…") : "REGENERATE")
+                : "SELECT"}
+            </Button>
             {!suggestion.is_active && (
-              <Button size="xs" variant="primary" onClick={() => setActive.mutate({ project: projectName, index: suggestion.index })}>
-                SELECT
-              </Button>
-            )}
-            {!imgFailed && (
-              <Button size="xs" variant="secondary" onClick={handleGenerate} disabled={isGenerating}>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="min-w-[min(7.5rem,100%)] flex-1 whitespace-nowrap"
+                onClick={handleGenerate}
+                disabled={isGenerating}
+              >
                 {isGenerating ? (queueState === "queued" ? "QUEUED" : "GENERATING…") : "REGENERATE"}
               </Button>
             )}
@@ -165,7 +178,7 @@ function StyleCard({
 export function StyleRoom() {
   const { name } = useParams<{ name: string }>();
   const projectName = name ?? "";
-  const { data: stylesData, isLoading } = useStyles(name);
+  const { data: stylesData, isLoading, refetch: refetchStyles } = useStyles(name);
   const suggestStyles = useSuggestStyles();
   const generateSamples = useGenerateStyleSamples();
   const pendingSet = usePendingIndices(projectName);
@@ -176,6 +189,12 @@ export function StyleRoom() {
     name,
     Object.values(styleJobIds),
   );
+  const events = usePipelineStore((s) => s.events);
+  const connect = usePipelineStore((s) => s.connect);
+  const clearEvents = usePipelineStore((s) => s.clearEvents);
+  const [suggestionStatus, setSuggestionStatus] = useState<"idle" | "running" | "failed">("idle");
+  const [suggestionError, setSuggestionError] = useState<string | null>(null);
+  const prevSuggestionCount = useRef(0);
 
   useEffect(() => {
     if (!projectName || !generationJobs?.jobs.length) return;
@@ -186,6 +205,40 @@ export function StyleRoom() {
       else updateJob(projectName, job);
     }
   }, [generationJobs, projectName, updateJob, remove]);
+
+  const isSuggesting = suggestionStatus === "running";
+
+  // Listen for SSE events to detect suggestion completion
+  useEffect(() => {
+    if (!isSuggesting) return;
+    for (let i = events.length - 1; i >= 0; i--) {
+      const event = events[i];
+      if (event.stage !== "style_suggest") continue;
+      if (event.type === "stage_complete") {
+        setSuggestionStatus("idle");
+        setSuggestionError(null);
+        refetchStyles().then(({ data }) => {
+          const all = data?.suggestions ?? [];
+          const newIndices = all.slice(prevSuggestionCount.current).map((s) => s.index);
+          if (newIndices.length === 0) return;
+          add(projectName, newIndices);
+          generateSamples.mutate(
+            { project: projectName, indices: newIndices },
+            {
+              onSuccess: (d) => attachJobs(projectName, d.jobs),
+              onError: () => remove(projectName, newIndices),
+            },
+          );
+        });
+        return;
+      }
+      if (event.type === "stage_fail") {
+        setSuggestionStatus("failed");
+        setSuggestionError(event.message ?? "Style suggestion failed");
+        return;
+      }
+    }
+  }, [events, isSuggesting, refetchStyles, add, attachJobs, generateSamples, projectName, remove]);
 
   if (isLoading) {
     return <RoomShell isLoading loadingText="LOADING STYLES…" />;
@@ -203,14 +256,19 @@ export function StyleRoom() {
 
   const suggestions = stylesData?.suggestions ?? [];
 
-  function handleGenerateAll() {
-    const indices = suggestions.map((s) => s.index);
-    add(projectName, indices);
-    generateSamples.mutate(
-      { project: projectName, indices },
+  function startSuggestions() {
+    prevSuggestionCount.current = stylesData?.suggestions.length ?? 0;
+    clearEvents();
+    setSuggestionStatus("running");
+    setSuggestionError(null);
+    suggestStyles.mutate(
+      { project: projectName },
       {
-        onSuccess: (data) => attachJobs(projectName, data.jobs),
-        onError: () => remove(projectName, indices),
+        onSuccess: () => connect(projectName),
+        onError: (err) => {
+          setSuggestionStatus("failed");
+          setSuggestionError(err.message);
+        },
       },
     );
   }
@@ -227,35 +285,48 @@ export function StyleRoom() {
         lead="Pick the visual style that defines your comic. Generate samples to compare, then select one to lock it in."
         actions={
           <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={handleGenerateAll}
-              disabled={suggestions.length === 0 || anyGenerating}
-            >
-              {anyGenerating
-                ? `RUNNING ${runningStyleCount}${queuedStyleCount ? ` / QUEUED ${queuedStyleCount}` : ""}`
-                : "GENERATE ALL"}
-            </Button>
+            {anyGenerating && (
+              <span className="font-meta text-[0.48rem] tracking-[0.16em] text-ink-black/50 self-center">
+                {runningStyleCount > 0 && `${runningStyleCount} RUNNING`}{runningStyleCount > 0 && queuedStyleCount > 0 && " / "}{queuedStyleCount > 0 && `${queuedStyleCount} QUEUED`}
+              </span>
+            )}
             <Button
               size="sm"
               variant="primary"
-              onClick={() => suggestStyles.mutate({ project: name })}
-              disabled={suggestStyles.isPending}
+              onClick={startSuggestions}
+              disabled={suggestStyles.isPending || isSuggesting}
             >
-              {suggestStyles.isPending ? "GENERATING…" : "REFRESH SUGGESTIONS"}
+              {suggestStyles.isPending || isSuggesting ? "SUGGESTING…" : "SUGGEST MORE STYLES"}
             </Button>
           </div>
         }
       />
 
+      {(isSuggesting || suggestionStatus === "failed") && (
+        <div className={`mt-4 border-[2px] border-ink-black p-3 ${
+          suggestionStatus === "failed" ? "bg-hero-red text-bristol" : "bg-narrator-gold text-ink-black"
+        }`}>
+          <div className="flex items-center gap-2">
+            {isSuggesting && <span className="h-2.5 w-2.5 animate-pulse bg-hero-red" />}
+            <span className="font-meta text-[0.48rem] tracking-[0.16em]">
+              {suggestionStatus === "failed" ? "STYLE SUGGESTION FAILED" : "STYLE SUGGESTIONS RUNNING"}
+            </span>
+          </div>
+          <div className="mt-1 font-body text-[0.78rem] leading-relaxed">
+            {suggestionStatus === "failed"
+              ? suggestionError
+              : "Asking the art director for five visual directions. This usually takes a short model call."}
+          </div>
+        </div>
+      )}
+
       {suggestions.length === 0 ? (
         <Card className="p-8 text-center">
           <div className="font-display text-[1.2rem] font-bold text-ink-black/60">
-            NO STYLE SUGGESTIONS YET
+            {isSuggesting ? "GENERATING STYLE SUGGESTIONS" : "NO STYLE SUGGESTIONS YET"}
           </div>
           <div className="mt-2 font-meta text-[0.52rem] tracking-[0.16em] text-ink-black/45">
-            CLICK "REFRESH SUGGESTIONS" TO GENERATE 5 OPTIONS
+            {isSuggesting ? "OPTIONS WILL APPEAR AUTOMATICALLY" : "CLICK \"SUGGEST MORE STYLES\" TO GENERATE 5 OPTIONS"}
           </div>
         </Card>
       ) : (

@@ -5,6 +5,7 @@ import { StatRow } from "../ui/StatRow";
 import type { StoryBible, Character, Location } from "../../types/api";
 import { CharacterCard, LocationCard } from "../../pages/rooms/StoryBibleRoom";
 import { useUpdateStoryBible } from "../../api/queries";
+import { useI18n } from "../../i18n";
 
 interface ReviewExtractStepProps {
   storyBible: StoryBible | undefined;
@@ -15,11 +16,12 @@ interface ReviewExtractStepProps {
 
 export function ReviewExtractStep({ storyBible, onApprove, isApproving, project }: ReviewExtractStepProps) {
   const updateBible = useUpdateStoryBible();
+  const { t } = useI18n();
 
   if (!storyBible) {
     return (
       <Card className="flex min-h-[40vh] items-center justify-center p-5">
-        <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">LOADING STORY BIBLE…</p>
+        <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">{t("LOADING STORY BIBLE…")}</p>
       </Card>
     );
   }
@@ -45,8 +47,8 @@ export function ReviewExtractStep({ storyBible, onApprove, isApproving, project 
   return (
     <div className="space-y-5">
       <Card className="p-5 md:p-6">
-        <SectionLabel tone="sage">REVIEW CHECKPOINT</SectionLabel>
-        <h1 className="mt-4 display-headline">STORY BIBLE</h1>
+        <SectionLabel tone="sage">{t("REVIEW CHECKPOINT")}</SectionLabel>
+        <h1 className="mt-4 display-headline">{t("STORY BIBLE")}</h1>
         <p className="mt-4 lead-pulp max-w-[52ch]">
           Review the extracted story data below. Characters, locations, and scenes
           will drive all downstream stages.
@@ -100,7 +102,7 @@ export function ReviewExtractStep({ storyBible, onApprove, isApproving, project 
 
       <div className="flex items-center gap-4">
         <Button size="lg" onClick={onApprove} disabled={isApproving}>
-          {isApproving ? "APPROVING…" : "APPROVE & CONTINUE"}
+          {isApproving ? t("APPROVING…") : t("APPROVE & CONTINUE")}
         </Button>
         <span className="text-[0.72rem] text-ink-black/40">
           Something looks wrong? Edit via CLI.

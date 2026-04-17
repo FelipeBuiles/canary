@@ -313,8 +313,8 @@ async def run(
         _is_imagen(model) or _is_gemini_native(model)
         or _is_imagen(fallback) or _is_gemini_native(fallback)
     )
-    batch_size = 1 if using_google else config.max_concurrent_requests
-    inter_request_delay = 4.0 if using_google else 0.0
+    batch_size = config.effective_image_concurrency(google_model=using_google)
+    inter_request_delay = 4.0 if using_google and not config.dev_mode else 0.0
 
     semaphore = asyncio.Semaphore(batch_size)
 

@@ -44,6 +44,34 @@ export function reorderPanels(
   });
 }
 
+export function reflowPages(
+  project: string,
+  panelsPerPage: number,
+): Promise<PageSummary[]> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/reflow`, {
+    method: "POST",
+    body: JSON.stringify({ panels_per_page: panelsPerPage }),
+  });
+}
+
+export function generatePageStyleVars(
+  project: string,
+): Promise<{ status: string; style_vars: Record<string, string>; pages: PageSummary[] }> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/style-vars/generate`, {
+    method: "POST",
+  });
+}
+
+export function translatePageBubbles(
+  project: string,
+  targetLanguage?: "en" | "es" | "fr",
+): Promise<{ status: string; target_language: string; updated: number; pages: PageSummary[] }> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/translate-bubbles`, {
+    method: "POST",
+    body: JSON.stringify(targetLanguage ? { target_language: targetLanguage } : {}),
+  });
+}
+
 export function triggerExport(
   project: string,
   format: "pdf" | "cbz",

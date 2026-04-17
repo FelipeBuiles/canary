@@ -7,10 +7,12 @@ import { SectionDivider } from "../components/SectionDivider";
 import { Card } from "../components/ui/Card";
 import { StatRow } from "../components/ui/StatRow";
 import { Icon } from "../components/ui/Icon";
+import { useI18n } from "../i18n";
 
 const coverRequestedProjects = new Set<string>();
 
 export function Library() {
+  const { t } = useI18n();
   const { data: projects, isLoading, error, refetch } = useProjects();
   const generateCover = useGenerateProjectCover();
   const [pendingCovers, setPendingCovers] = useState<Set<string>>(new Set());
@@ -79,7 +81,7 @@ export function Library() {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-          BUILDING STUDIO INDEX…
+          {t("BUILDING STUDIO INDEX…")}
         </p>
       </div>
     );
@@ -98,11 +100,10 @@ export function Library() {
   return (
     <div className="space-y-10">
       <section>
-        <SectionLabel tone="red">COLLECTION VIEW // ARCHIVE</SectionLabel>
-        <h1 className="mt-4 max-w-[10ch] display-impact">LIBRARY</h1>
+        <SectionLabel tone="red">{t("COLLECTION VIEW // ARCHIVE")}</SectionLabel>
+        <h1 className="mt-4 max-w-[10ch] display-impact">{t("LIBRARY")}</h1>
         <p className="mt-5 lead-pulp max-w-[44rem]">
-          Your narrative multiverse — active productions, archived issues, and
-          new story seeds waiting to be drawn.
+          {t("Your narrative multiverse — active productions, archived issues, and new story seeds waiting to be drawn.")}
         </p>
       </section>
 
@@ -115,10 +116,10 @@ export function Library() {
                 <Icon name="plus" size={22} />
               </div>
               <div className="mt-4 font-display text-[1rem] font-bold tracking-[-0.04em] text-ink-black/50">
-                START NEW PROJECT
+                {t("START NEW PROJECT")}
               </div>
               <p className="mt-2 max-w-[20ch] text-center text-[0.78rem] text-ink-black/40">
-                Initialize a new novel-to-comic production pipeline.
+                {t("Initialize a new novel-to-comic production pipeline.")}
               </p>
             </Card>
           </Link>

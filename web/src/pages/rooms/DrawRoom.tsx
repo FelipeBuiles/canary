@@ -8,15 +8,21 @@ import { Card } from "../../components/ui/Card";
 import { StatRow } from "../../components/ui/StatRow";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { StyleCallout } from "../../components/wizard/StyleCallout";
-import { useRegenStore } from "../../store/regen";
+import { useActiveRegens, useRegenStore } from "../../store/regen";
 import type { ImageStatus } from "../../types/api";
 
 export function DrawRoom() {
   const { name } = useParams<{ name: string }>();
-  const { active, bustTimestamps, errors, begin, attachJob, updateJob, complete, fail } = useRegenStore();
+  const projectRegens = useActiveRegens(name ?? "");
+  const bustTimestamps = useRegenStore((s) => s.bustTimestamps);
+  const errors = useRegenStore((s) => s.errors);
+  const begin = useRegenStore((s) => s.begin);
+  const attachJob = useRegenStore((s) => s.attachJob);
+  const updateJob = useRegenStore((s) => s.updateJob);
+  const complete = useRegenStore((s) => s.complete);
+  const fail = useRegenStore((s) => s.fail);
   const [sceneFilter, setSceneFilter] = useState<string | null>(null);
 
-  const projectRegens = name ? (active[name] ?? {}) : {};
   const regeningKeys = Object.keys(projectRegens);
   const regenJobIds = Object.values(projectRegens)
     .map((regen) => regen.jobId)

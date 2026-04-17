@@ -68,6 +68,15 @@ class Bubble(BaseModel):
     # Tail direction: "auto" picks up/down based on bubble position in panel,
     # "up"/"down" forces direction. Only affects CSS tails (non-SVG).
     tail_direction: Literal["auto", "up", "down"] = "auto"
+    # Optional per-bubble typography and shape overrides. None means inherit
+    # the active page/theme CSS variables.
+    font_family: str | None = None
+    font_size: int | None = None
+    font_color: str | None = None
+    fill_color: str | None = None
+    border_color: str | None = None
+    border_width: int | None = None
+    border_radius: int | None = None
 
 
 class Sfx(BaseModel):
@@ -113,4 +122,5 @@ class ComicPage(BaseModel):
     page_number: int
     theme: str = "default"
     layout: str = "4"                           # "1"–"6" or "many"
+    style_vars: dict[str, str] = Field(default_factory=dict)
     panels: list[PagePanel] = Field(default_factory=list)

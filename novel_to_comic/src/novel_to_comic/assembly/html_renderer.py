@@ -149,8 +149,8 @@ def resolve_theme(config: Config) -> str:
     return raw if raw in THEMES else "default"
 
 
-def _vars_css(theme_name: str) -> str:
-    merged = {**_BASE_VARS, **THEMES.get(theme_name, {})}
+def _vars_css(theme_name: str, overrides: dict[str, str] | None = None) -> str:
+    merged = {**_BASE_VARS, **THEMES.get(theme_name, {}), **(overrides or {})}
     lines = "\n".join(f"  {k}: {v};" for k, v in merged.items())
     return f":root {{\n{lines}\n}}"
 
@@ -604,6 +604,23 @@ def _bubble_html(bubble: Bubble) -> str:
         inline.append(f"top:  {bubble.y:.0f}px")
     if bubble.width is not None:
         inline.append(f"width: {bubble.width:.0f}px")
+    if getattr(bubble, "font_family", None):
+        inline.append(f"font-family: {bubble.font_family}")
+    if getattr(bubble, "font_size", None) is not None:
+        inline.append(f"font-size: {bubble.font_size}px")
+    if getattr(bubble, "font_color", None):
+        inline.append(f"color: {bubble.font_color}")
+    if getattr(bubble, "fill_color", None):
+        inline.append(f"background: {bubble.fill_color}")
+        inline.append(f"--bubble-bg: {bubble.fill_color}")
+    if getattr(bubble, "border_color", None):
+        inline.append(f"border-color: {bubble.border_color}")
+        inline.append(f"--bubble-border: {bubble.border_color}")
+    if getattr(bubble, "border_width", None) is not None:
+        inline.append(f"border-width: {bubble.border_width}px")
+        inline.append(f"--bubble-border-width: {bubble.border_width}px")
+    if getattr(bubble, "border_radius", None) is not None:
+        inline.append(f"border-radius: {bubble.border_radius}px")
 
     if bubble.tail_x is not None and bubble.tail_y is not None:
         classes.append("svg-tail")
@@ -757,7 +774,7 @@ def build_page_html(
         _font_face("Comic Neue", "ComicNeue-Bold.ttf", "bold",  url_fn=font_url_fn),
     ]))
 
-    vars_css   = _vars_css(comic_page.theme)
+    vars_css   = _vars_css(comic_page.theme, comic_page.style_vars)
     static_css = _STATIC_CSS.replace("{PAGE_W}", str(PAGE_W)).replace("{PAGE_H}", str(PAGE_H))
     user_block = f"\n/* ── theme.css ── */\n{custom_css}" if custom_css.strip() else ""
 

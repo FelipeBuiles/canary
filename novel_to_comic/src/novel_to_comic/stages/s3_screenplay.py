@@ -64,6 +64,10 @@ def _build_user_content(scene_text: str, story_bible: StoryBible, scene_id: str)
     return "\n".join(parts)
 
 
+def _localized_system_prompt(config: Config, system_prompt: str) -> str:
+    return f"{system_prompt.rstrip()}\n\nLANGUAGE REQUIREMENT:\n{config.generation_language_instruction()}"
+
+
 async def _process_scene(
     config: Config,
     project_dir: Path,
@@ -88,7 +92,7 @@ async def _process_scene(
         result = await gemini.generate_json(
             config=config,
             model=config.screenplay_model,
-            system_prompt=system_prompt,
+            system_prompt=_localized_system_prompt(config, system_prompt),
             user_content=user_content,
         )
 

@@ -1,4 +1,5 @@
 import { Button } from "../ui/Button";
+import { useI18n } from "../../i18n";
 
 interface EditorToolbarProps {
   onAddBubble: (type: "speech" | "thought" | "narration") => void;
@@ -25,49 +26,50 @@ export function EditorToolbar({
   canRedo,
   isExporting,
 }: EditorToolbarProps) {
+  const { t } = useI18n();
   return (
-    <div className="flex flex-wrap items-center gap-2 border-[2px] border-ink-black bg-bristol px-3 py-2">
-      <div className="flex items-center gap-1.5">
-        <Button size="xs" variant="secondary" onClick={() => onAddBubble("speech")}>
-          + SPEECH
+    <div className="flex flex-wrap items-center gap-3 border-[2px] border-ink-black bg-bristol px-4 py-3">
+      <div className="flex items-center gap-2">
+        <Button size="sm" variant="secondary" onClick={() => onAddBubble("speech")}>
+          + {t("SPEECH")}
         </Button>
-        <Button size="xs" variant="secondary" onClick={() => onAddBubble("thought")}>
-          + THOUGHT
+        <Button size="sm" variant="secondary" onClick={() => onAddBubble("thought")}>
+          + {t("THOUGHT")}
         </Button>
-        <Button size="xs" variant="secondary" onClick={() => onAddBubble("narration")}>
-          + NARRATION
+        <Button size="sm" variant="secondary" onClick={() => onAddBubble("narration")}>
+          + {t("NARRATION")}
         </Button>
-        <Button size="xs" variant="secondary" onClick={onAddSfx}>
+        <Button size="sm" variant="secondary" onClick={onAddSfx}>
           + SFX
         </Button>
       </div>
 
-      <div className="mx-1 h-4 w-px bg-ink-black/20" />
+      <div className="mx-1 h-6 w-px bg-ink-black/20" />
 
-      <Button size="xs" variant="outline" onClick={onDelete} disabled={!hasSelection}>
-        DELETE
+      <Button size="sm" variant="outline" onClick={onDelete} disabled={!hasSelection}>
+        {t("DELETE")}
       </Button>
 
-      <div className="mx-1 h-4 w-px bg-ink-black/20" />
+      <div className="mx-1 h-6 w-px bg-ink-black/20" />
 
-      <Button size="xs" variant="outline" onClick={onUndo} disabled={!canUndo}>
-        UNDO
+      <Button size="sm" variant="outline" onClick={onUndo} disabled={!canUndo}>
+        {t("UNDO")}
       </Button>
-      <Button size="xs" variant="outline" onClick={onRedo} disabled={!canRedo}>
-        REDO
+      <Button size="sm" variant="outline" onClick={onRedo} disabled={!canRedo}>
+        {t("REDO")}
       </Button>
 
-      <div className="ml-auto flex items-center gap-1.5">
+      <div className="ml-auto flex items-center gap-2">
         <Button
-          size="xs"
+          size="sm"
           variant="primary"
           onClick={() => onExport("pdf")}
           disabled={isExporting}
         >
-          {isExporting ? "EXPORTING..." : "EXPORT PDF"}
+          {isExporting ? t("EXPORTING...") : t("EXPORT PDF")}
         </Button>
         <Button
-          size="xs"
+          size="sm"
           variant="secondary"
           onClick={() => onExport("cbz")}
           disabled={isExporting}
