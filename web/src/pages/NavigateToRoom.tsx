@@ -23,7 +23,7 @@ export function NavigateToRoom() {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-          OPENING PROJECT...
+          OPENING PROJECT…
         </p>
       </div>
     );

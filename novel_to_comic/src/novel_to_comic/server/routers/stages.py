@@ -27,6 +27,23 @@ def get_story_bible(project=Depends(get_project)):
     return StoryBible.model_validate_json(path.read_text()).model_dump()
 
 
+@router.put("/story-bible")
+def update_story_bible(body: dict, project=Depends(get_project)):
+    project_dir, config, state = project
+    path = project_dir / "story_bible.json"
+    if not path.exists():
+        raise HTTPException(404, "Story bible not found")
+    
+    try:
+        # Validate the incoming body against the StoryBible schema
+        updated_bible = StoryBible.model_validate(body)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid story bible data: {e}")
+        
+    path.write_text(updated_bible.model_dump_json(indent=2))
+    return updated_bible.model_dump()
+
+
 # ── Screenplays (ADAPT) ───────────────────────────────────────────────────────
 
 
@@ -97,6 +114,20 @@ def get_panels_for_scene(scene_id: str, project=Depends(get_project)):
     return results
 
 
+@router.put("/panels/{scene_id}/{panel_number}")
+def update_panel(scene_id: str, panel_number: int, body: dict, project=Depends(get_project)):
+    project_dir, config, state = project
+    path = project_dir / "panels" / scene_id / f"panel_{panel_number:03d}.json"
+    if not path.exists():
+        raise HTTPException(404, f"Panel {scene_id}/{panel_number} not found")
+    try:
+        updated = PanelBreakdown.model_validate(body)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid panel data: {e}")
+    path.write_text(updated.model_dump_json(indent=2))
+    return updated.model_dump()
+
+
 # ── Image Prompts (DIRECT) ────────────────────────────────────────────────────
 
 
@@ -133,6 +164,20 @@ def get_prompts_for_scene(scene_id: str, project=Depends(get_project)):
         except Exception:
             pass
     return results
+
+
+@router.put("/prompts/{scene_id}/{panel_number}")
+def update_prompt(scene_id: str, panel_number: int, body: dict, project=Depends(get_project)):
+    project_dir, config, state = project
+    path = project_dir / "prompts" / scene_id / f"panel_{panel_number:03d}.json"
+    if not path.exists():
+        raise HTTPException(404, f"Prompt {scene_id}/{panel_number} not found")
+    try:
+        updated = ImagePrompt.model_validate(body)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid prompt data: {e}")
+    path.write_text(updated.model_dump_json(indent=2))
+    return updated.model_dump()
 
 
 # ── Generated Images (DRAW) ───────────────────────────────────────────────────

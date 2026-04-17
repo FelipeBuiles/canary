@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { useScreenplays, useScreenplay } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { Card } from "../../components/ui/Card";
@@ -10,13 +9,14 @@ import { SceneSidebar } from "../../components/ui/SceneSidebar";
 export function AdaptRoom() {
   const { name } = useParams<{ name: string }>();
   const { data: summaries, isLoading: loadingList } = useScreenplays(name);
-  const [selectedScene, setSelectedScene] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedScene = searchParams.get("scene");
   const { data: screenplay, isLoading: loadingScript } = useScreenplay(name, selectedScene);
 
   return (
     <RoomShell
       isLoading={loadingList}
-      loadingText="LOADING SCREENPLAYS..."
+      loadingText="LOADING SCREENPLAYS…"
       isEmpty={!summaries?.length || !name}
       emptyTitle="SCREENPLAYS NOT AVAILABLE"
       emptyDescription="Complete the ADAPT stage first."
@@ -36,7 +36,7 @@ export function AdaptRoom() {
               count: `${s.beat_count} beats`,
             }))}
             activeId={selectedScene ?? summaries[0]?.scene_id ?? ""}
-            onSelect={setSelectedScene}
+            onSelect={(id) => setSearchParams({ scene: id }, { replace: true })}
           />
         )}
 
@@ -44,7 +44,7 @@ export function AdaptRoom() {
           {loadingScript ? (
             <div className="flex min-h-[40vh] items-center justify-center">
               <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-                LOADING...
+                LOADING…
               </p>
             </div>
           ) : screenplay ? (

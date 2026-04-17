@@ -11,7 +11,7 @@ interface RoomShellProps {
 
 export function RoomShell({
   isLoading,
-  loadingText = "LOADING...",
+  loadingText = "LOADING…",
   isEmpty,
   emptyTitle = "NOT AVAILABLE",
   emptyDescription = "This stage has not been reached yet.",

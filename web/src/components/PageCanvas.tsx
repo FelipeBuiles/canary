@@ -34,6 +34,9 @@ export function PageCanvas({ page, projectName }: PageCanvasProps) {
               <img
                 src={imageUrl}
                 alt={`Panel ${panel.panel_number}`}
+                loading="lazy"
+                width={400}
+                height={600}
                 className="h-full w-full object-cover"
               />
 

@@ -30,7 +30,7 @@ class StageState(BaseModel):
 
 
 STAGE_NAMES = ["extract", "index", "screenplay", "panels", "prompts", "generate", "assemble"]
-CHECKPOINT_STAGES = {"extract", "index", "generate"}
+CHECKPOINT_STAGES = {"extract", "index", "prompts", "generate"}
 
 
 class PipelineState(BaseModel):

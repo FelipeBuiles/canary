@@ -11,10 +11,16 @@ from novel_to_comic.state import (
     STAGE_NAMES,
     StageStatus,
     approve_stage,
+    fail_stage,
     save_state,
 )
 
 from ..deps import get_project
+from ..generation_jobs import (
+    enqueue_generation_job,
+    generation_job_payload,
+    prune_finished_generation_jobs,
+)
 
 router = APIRouter()
 
@@ -39,14 +45,16 @@ def _stage_runner(stage: str, config, project_dir, state):
 
 async def _run_stage(stage: str, config, project_dir, state, queue: asyncio.Queue):
     """Execute a single stage, feeding events into the queue."""
-    runner = _stage_runner(stage, config, project_dir, state)
-    if not runner:
-        queue.put_nowait({"type": "stage_fail", "stage": stage, "message": f"Unknown stage: {stage}"})
-        return
     try:
+        runner = _stage_runner(stage, config, project_dir, state)
+        if not runner:
+            raise ValueError(f"Unknown stage: {stage}")
         await runner(on_event=lambda e: queue.put_nowait(e))
     except Exception as exc:
-        queue.put_nowait({"type": "stage_fail", "stage": stage, "message": str(exc)})
+        message = str(exc)
+        fail_stage(state, stage, message)
+        save_state(state, project_dir)
+        queue.put_nowait({"type": "stage_fail", "stage": stage, "message": message})
 
 
 async def _run_full_pipeline(config, project_dir, state, queue: asyncio.Queue):
@@ -126,6 +134,7 @@ async def event_stream(request: Request, project_name: str):
         raise HTTPException(404, "No active run for this project")
 
     async def generator():
+        completed = False
         try:
             while True:
                 # Check if client disconnected
@@ -141,10 +150,12 @@ async def event_stream(request: Request, project_name: str):
                 yield f"data: {json.dumps(event)}\n\n"
 
                 if event.get("type") == "pipeline_done":
+                    completed = True
                     break
         finally:
             task = request.app.state.running_tasks.get(project_name)
-            if task is None or task.done():
+            current_queue = request.app.state.event_queues.get(project_name)
+            if current_queue is queue and (completed or task is None or task.done()):
                 request.app.state.event_queues.pop(project_name, None)
 
     return StreamingResponse(generator(), media_type="text/event-stream")
@@ -160,31 +171,123 @@ async def regen_panel(
 ):
     project_dir, config, state = project
 
-    # Delete the existing image so _generate_panel doesn't skip it
-    img_path = project_dir / "images" / scene_id / f"panel_{panel_number:03d}.png"
-    if img_path.exists():
-        img_path.unlink()
-
     running = request.app.state.running_tasks
     existing = running.get(project_name)
     if existing and not existing.done():
         raise HTTPException(409, "A stage is already running for this project")
 
-    queue: asyncio.Queue = asyncio.Queue()
-    request.app.state.event_queues[project_name] = queue
+    prompt_path = project_dir / "prompts" / scene_id / f"panel_{panel_number:03d}.json"
+    if not prompt_path.exists():
+        raise HTTPException(404, f"Prompt not found: {scene_id}/panel_{panel_number:03d}")
 
-    async def _regen():
+    async def _runner() -> None:
         from novel_to_comic.stages import s6_generate
-        await s6_generate.run(
-            config, project_dir, state,
-            scene_ids=[scene_id],
-            panel_numbers=[panel_number],
-            on_event=lambda e: queue.put_nowait(e),
+        await s6_generate.regenerate_panel_image(
+            config,
+            project_dir,
+            scene_id,
+            panel_number,
+            semaphore=request.app.state.generation_semaphore,
         )
 
-    task = asyncio.create_task(_run_job(project_name, request, _regen()))
-    running[project_name] = task
-    return {"status": "started", "scene_id": scene_id, "panel_number": panel_number}
+    prune_finished_generation_jobs(request.app)
+    job = enqueue_generation_job(
+        request.app,
+        project_name=project_name,
+        kind="panel_regen",
+        label=f"{scene_id} / panel {panel_number:03d}",
+        payload={"scene_id": scene_id, "panel_number": panel_number},
+        runner=_runner,
+    )
+    return {
+        "status": "queued",
+        "job": generation_job_payload(request.app, job),
+        "scene_id": scene_id,
+        "panel_number": panel_number,
+    }
+
+
+@router.post("/regen-ref")
+async def regen_ref(
+    request: Request,
+    project_name: str,
+    char_id: str = Query(...),
+    project=Depends(get_project),
+):
+    project_dir, config, state = project
+
+    async def _runner() -> None:
+        from novel_to_comic.stages import s2_index
+        await s2_index.regenerate_character_ref(
+            config,
+            project_dir,
+            char_id,
+            semaphore=request.app.state.generation_semaphore,
+        )
+
+    prune_finished_generation_jobs(request.app)
+    job = enqueue_generation_job(
+        request.app,
+        project_name=project_name,
+        kind="character_ref_regen",
+        label=f"Character ref / {char_id}",
+        payload={"char_id": char_id},
+        runner=_runner,
+    )
+    return {
+        "status": "queued",
+        "job": generation_job_payload(request.app, job),
+        "char_id": char_id,
+    }
+
+
+@router.post("/regen-plate")
+async def regen_plate(
+    request: Request,
+    project_name: str,
+    loc_id: str = Query(...),
+    project=Depends(get_project),
+):
+    project_dir, config, state = project
+
+    async def _runner() -> None:
+        from novel_to_comic.stages import s2_index
+        await s2_index.regenerate_location_plate(
+            config,
+            project_dir,
+            loc_id,
+            semaphore=request.app.state.generation_semaphore,
+        )
+
+    prune_finished_generation_jobs(request.app)
+    job = enqueue_generation_job(
+        request.app,
+        project_name=project_name,
+        kind="location_plate_regen",
+        label=f"Location plate / {loc_id}",
+        payload={"loc_id": loc_id},
+        runner=_runner,
+    )
+    return {
+        "status": "queued",
+        "job": generation_job_payload(request.app, job),
+        "loc_id": loc_id,
+    }
+
+
+@router.get("/generation-jobs")
+def get_generation_jobs(
+    request: Request,
+    project_name: str,
+    ids: list[str] | None = Query(None),
+):
+    jobs = [
+        job
+        for job in request.app.state.generation_jobs.values()
+        if job.project_name == project_name and (ids is None or job.id in ids)
+    ]
+    jobs.sort(key=lambda job: job.sequence)
+    return {"jobs": [generation_job_payload(request.app, job) for job in jobs]}
 
 
 @router.post("/approve/{stage}")

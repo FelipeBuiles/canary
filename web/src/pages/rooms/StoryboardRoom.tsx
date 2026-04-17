@@ -1,27 +1,39 @@
-import { useState } from "react";
-import { useParams } from "react-router-dom";
-import { usePanelSummaries, usePanelsForScene } from "../../api/queries";
+import { useParams, useSearchParams } from "react-router-dom";
+import { usePanelSummaries, usePanelsForScene, useUpdatePanel } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
+import { EditableText } from "../../components/ui/EditableText";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { SceneSidebar } from "../../components/ui/SceneSidebar";
+import type { PanelBreakdown } from "../../types/api";
 
 export function StoryboardRoom() {
   const { name } = useParams<{ name: string }>();
   const { data: summaries, isLoading } = usePanelSummaries(name);
-  const [selectedScene, setSelectedScene] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedScene = searchParams.get("scene");
   const { data: panels, isLoading: loadingPanels } = usePanelsForScene(
     name,
     selectedScene ?? summaries?.[0]?.scene_id,
   );
+  const updatePanel = useUpdatePanel();
 
   const activeScene = selectedScene ?? summaries?.[0]?.scene_id;
+
+  const handleSavePanel = (panel: PanelBreakdown, patch: Partial<PanelBreakdown>) => {
+    if (!name || !activeScene) return;
+    updatePanel.mutate({
+      project: name,
+      sceneId: activeScene,
+      data: { ...panel, ...patch },
+    });
+  };
 
   return (
     <RoomShell
       isLoading={isLoading}
-      loadingText="LOADING PANEL BREAKDOWNS..."
+      loadingText="LOADING PANEL BREAKDOWNS…"
       isEmpty={!summaries?.length || !name}
       emptyTitle="PANEL BREAKDOWNS NOT AVAILABLE"
       emptyDescription="Complete the STORYBOARD stage first."
@@ -41,7 +53,7 @@ export function StoryboardRoom() {
               count: `${s.panel_count} panels`,
             }))}
             activeId={activeScene ?? ""}
-            onSelect={setSelectedScene}
+            onSelect={(id) => setSearchParams({ scene: id }, { replace: true })}
           />
         )}
 
@@ -49,7 +61,7 @@ export function StoryboardRoom() {
           {loadingPanels ? (
             <div className="flex min-h-[40vh] items-center justify-center">
               <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-                LOADING...
+                LOADING…
               </p>
             </div>
           ) : panels?.length ? (
@@ -62,17 +74,26 @@ export function StoryboardRoom() {
                         <div className="font-meta text-[0.46rem] tracking-[0.16em] text-ink-black/45">
                           PANEL {String(panel.panel_number).padStart(2, "0")}
                         </div>
-                        <div className="font-display text-[0.85rem] font-bold tracking-[-0.03em]">
-                          {panel.shot_type}
-                        </div>
+                        <EditableText
+                          value={panel.shot_type}
+                          onSave={(v) => handleSavePanel(panel, { shot_type: v })}
+                          className="font-display text-[0.85rem] font-bold tracking-[-0.03em]"
+                        />
                       </div>
-                      <Tag>{panel.camera_angle}</Tag>
+                      <EditableText
+                        value={panel.camera_angle}
+                        onSave={(v) => handleSavePanel(panel, { camera_angle: v })}
+                        className="border border-ink-black px-2 py-1 font-meta text-[0.44rem] tracking-[0.14em]"
+                      />
                     </div>
                   </div>
                   <div className="space-y-2 p-3">
-                    <p className="text-[0.78rem] leading-6 text-ink-black/74">
-                      {panel.background_description}
-                    </p>
+                    <EditableText
+                      value={panel.background_description}
+                      onSave={(v) => handleSavePanel(panel, { background_description: v })}
+                      multiline
+                      className="block text-[0.78rem] leading-6 text-ink-black/74"
+                    />
                     <div className="flex flex-wrap gap-1">
                       {panel.characters_present.map((cid) => (
                         <Tag key={cid}>{cid}</Tag>
@@ -91,8 +112,30 @@ export function StoryboardRoom() {
                       </div>
                     )}
                     <div className="flex gap-2 text-[0.62rem] text-ink-black/45">
-                      <span className="font-meta tracking-[0.14em]">{panel.lighting}</span>
-                      <span className="font-meta tracking-[0.14em]">{panel.mood}</span>
+                      <EditableText
+                        value={panel.lighting}
+                        onSave={(v) => handleSavePanel(panel, { lighting: v })}
+                        className="font-meta tracking-[0.14em]"
+                      />
+                      <EditableText
+                        value={panel.mood}
+                        onSave={(v) => handleSavePanel(panel, { mood: v })}
+                        className="font-meta tracking-[0.14em]"
+                      />
+                      {panel.sfx && (
+                        <EditableText
+                          value={panel.sfx}
+                          onSave={(v) => handleSavePanel(panel, { sfx: v })}
+                          className="font-meta tracking-[0.14em]"
+                        />
+                      )}
+                      {panel.transition_note && (
+                        <EditableText
+                          value={panel.transition_note}
+                          onSave={(v) => handleSavePanel(panel, { transition_note: v })}
+                          className="font-meta tracking-[0.14em]"
+                        />
+                      )}
                     </div>
                   </div>
                 </Card>

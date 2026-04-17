@@ -7,6 +7,8 @@ Part C: Generate location background plates via FLUX.2 Pro.
 
 import asyncio
 import json
+import re
+import uuid
 from pathlib import Path
 
 from rich.console import Console
@@ -17,7 +19,7 @@ from novel_to_comic.clients import embeddings, flux
 from novel_to_comic.clients.flux import _is_imagen
 from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
-from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.models.story_bible import Character, StoryBible
 from novel_to_comic.rag.chunker import chunk_scene_text, load_scene_texts
 from novel_to_comic.rag.store import create_collection, upsert_chunks
 from novel_to_comic.state import (
@@ -30,6 +32,73 @@ from novel_to_comic.state import (
 )
 
 console = Console()
+
+
+def _clean(value: str | None) -> str:
+    return " ".join((value or "").replace("\n", " ").split())
+
+
+def _shorten(value: str, limit: int) -> str:
+    value = _clean(value)
+    if len(value) <= limit:
+        return value
+    shortened = value[:limit].rsplit(" ", 1)[0].rstrip(" ,.;:")
+    return f"{shortened}."
+
+
+def _tokens(value: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", value.lower())
+        if len(token) > 2 and token not in {"the", "and", "with", "his", "her"}
+    }
+
+
+def _character_signature(char: Character) -> str:
+    features = ", ".join(_clean(f) for f in char.distinguishing_features[:4])
+    pieces = [
+        f"{char.name}: {_clean(char.age_range)} {_clean(char.gender)}".strip(),
+        features,
+        _clean(char.default_outfit),
+    ]
+    return _shorten("; ".join(piece for piece in pieces if piece), 220)
+
+
+def _similar_cast_members(char: Character, story_bible: StoryBible) -> list[Character]:
+    char_outfit_tokens = _tokens(char.default_outfit)
+    matches = []
+    for other in story_bible.characters:
+        if other.id == char.id:
+            continue
+        other_outfit_tokens = _tokens(other.default_outfit)
+        outfit_overlap = len(char_outfit_tokens & other_outfit_tokens)
+        same_gender = _clean(other.gender).lower() == _clean(char.gender).lower()
+        same_age = _clean(other.age_range).lower() == _clean(char.age_range).lower()
+        if same_gender and (outfit_overlap >= 2 or (same_age and outfit_overlap >= 1)):
+            matches.append((outfit_overlap, other))
+    return [other for _overlap, other in sorted(matches, key=lambda item: item[0], reverse=True)[:3]]
+
+
+def _cast_identity_lock(char: Character, story_bible: StoryBible) -> str:
+    similar = _similar_cast_members(char, story_bible)
+    if not similar:
+        return (
+            f"CAST IDENTITY LOCK: Only {char.name} appears in this reference sheet. "
+            f"Preserve these unique traits: {_character_signature(char)}."
+        )
+
+    comparisons = []
+    own_features = _character_signature(char)
+    for other in similar:
+        comparisons.append(
+            f"distinct from {other.name}, who is {_character_signature(other)}"
+        )
+    return (
+        f"CAST IDENTITY LOCK: Only {char.name} appears in this reference sheet. "
+        f"{char.name} must be immediately recognizable as {_shorten(own_features, 180)}. "
+        f"Keep this face, hairline, build, posture, and silhouette visually "
+        f"{'; '.join(comparisons)}. Do not merge cast members into one generic person."
+    )
 
 
 def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
@@ -64,6 +133,114 @@ def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
 def _load_story_bible(project_dir: Path) -> StoryBible:
     bible_path = project_dir / "story_bible.json"
     return StoryBible.model_validate_json(bible_path.read_text())
+
+
+def _character_ref_prompt(config: Config, story_bible: StoryBible, char: Character) -> str:
+    # All four views in one image guarantees identical style, identical face,
+    # identical rendering. Separate calls drift even with the same text prompt.
+    identity_lock = _cast_identity_lock(char, story_bible)
+    return (
+        f"{config.style_template}\n\n"
+        f"CHARACTER REFERENCE SHEET - {char.name}, {char.gender}.\n"
+        f"{identity_lock}\n"
+        f"{char.visual_anchor}\n\n"
+        f"One square image divided into a 2x2 grid of four equal panels: "
+        f"top-left: front-facing, arms at sides; "
+        f"top-right: three-quarter turn, near shoulder forward; "
+        f"bottom-left: side profile, only profile of face visible; "
+        f"bottom-right: three-quarter with one hand raised in gesture. "
+        f"All four figures are the SAME character - identical face, hair, build, and clothing. "
+        f"Each figure is fully contained within its quadrant with white space around it - no figure touches or crosses the edge of the image. "
+        f"Pure white background. Full body head to toe in each quadrant, no cropping. No text, no labels, no grid lines.\n\n"
+        f"Render every figure in the style described above."
+    )
+
+
+def _location_plate_prompt(config: Config, loc) -> str:
+    return (
+        f"{config.style_template} {loc.visual_anchor} "
+        f"Wide establishing shot, no characters present, detailed background, "
+        f"cinematic composition. No text."
+    )
+
+
+async def regenerate_character_ref(
+    config: Config,
+    project_dir: Path,
+    char_id: str,
+    semaphore: asyncio.Semaphore | None = None,
+) -> Path:
+    story_bible = _load_story_bible(project_dir)
+    char = next((candidate for candidate in story_bible.characters if candidate.id == char_id), None)
+    if char is None:
+        raise ValueError(f"Character not found: {char_id}")
+
+    output_path = project_dir / "refs" / char.id / "sheet.png"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = output_path.with_name(
+        f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
+    )
+    style_ref = _find_style_ref(project_dir, config.style_template)
+    prompt = _character_ref_prompt(config, story_bible, char)
+
+    try:
+        if semaphore is None:
+            await flux.generate_image(
+                config,
+                prompt,
+                tmp_path,
+                width=1024,
+                height=1024,
+                reference_image_path=style_ref,
+                ref_type="style",
+            )
+        else:
+            async with semaphore:
+                await flux.generate_image(
+                    config,
+                    prompt,
+                    tmp_path,
+                    width=1024,
+                    height=1024,
+                    reference_image_path=style_ref,
+                    ref_type="style",
+                )
+        tmp_path.replace(output_path)
+        return output_path
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
+async def regenerate_location_plate(
+    config: Config,
+    project_dir: Path,
+    loc_id: str,
+    semaphore: asyncio.Semaphore | None = None,
+) -> Path:
+    story_bible = _load_story_bible(project_dir)
+    loc = next((candidate for candidate in story_bible.locations if candidate.id == loc_id), None)
+    if loc is None:
+        raise ValueError(f"Location not found: {loc_id}")
+
+    output_path = project_dir / "plates" / f"{loc.id}.png"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = output_path.with_name(
+        f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
+    )
+    prompt = _location_plate_prompt(config, loc)
+
+    try:
+        if semaphore is None:
+            await flux.generate_image(config, prompt, tmp_path)
+        else:
+            async with semaphore:
+                await flux.generate_image(config, prompt, tmp_path)
+        tmp_path.replace(output_path)
+        return output_path
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
 
 
 async def _build_rag_index(config: Config, project_dir: Path, story_bible: StoryBible) -> int:
@@ -108,6 +285,7 @@ async def _build_rag_index(config: Config, project_dir: Path, story_bible: Story
 
 async def _generate_character_refs(
     config: Config, project_dir: Path, story_bible: StoryBible, state: PipelineState,
+    char_ids: list[str] | None = None,
     on_event: EventCallback | None = None,
 ) -> None:
     """Part B: Generate character reference sheets.
@@ -117,7 +295,10 @@ async def _generate_character_refs(
     reliable way to ensure style consistency — separate calls produce separate
     style interpretations regardless of reference conditioning.
     """
+    emit = on_event or _NOOP
     console.print("[bold]Generating character reference images...[/bold]")
+    emit({"type": "log", "stage": "index", "level": "info",
+          "message": "Generating character reference sheets..."})
     refs_dir = project_dir / "refs"
 
     # A visual style reference image is far stronger than text for locking style.
@@ -132,39 +313,30 @@ async def _generate_character_refs(
             "before indexing for tighter style consistency across character sheets.[/yellow]"
         )
 
+    chars_to_gen = [c for c in story_bible.characters if not char_ids or c.id in char_ids]
+
     with make_progress(on_event) as progress:
-        task = progress.add_task("Character refs", total=len(story_bible.characters))
-        for char in story_bible.characters:
+        task = progress.add_task("Character refs", total=len(chars_to_gen))
+        for char in chars_to_gen:
             char_dir = refs_dir / char.id
             char_dir.mkdir(parents=True, exist_ok=True)
             output_path = char_dir / "sheet.png"
 
             if output_path.exists():
+                record_item_done(state, "index", cost=0.0)
+                emit({"type": "log", "stage": "index", "level": "dim",
+                      "message": f"Using existing ref sheet for {char.name}"})
+                emit({"type": "stage_progress", "stage": "index",
+                      "done": state.stages["index"].items_done,
+                      "total": state.stages["index"].items_total})
                 progress.advance(task)
                 continue
 
-            # All four views in one image guarantees identical style, identical face,
-            # identical rendering. The model holds its interpretation of the character
-            # consistent within a single generation — separate calls cannot.
-            #
-            # Keep instructions compact so the style template retains relative weight.
-            # More instruction text = more style drift.
-            prompt = (
-                f"{config.style_template}\n\n"
-                f"CHARACTER REFERENCE SHEET — {char.name}, {char.gender}.\n"
-                f"{char.visual_anchor}\n\n"
-                f"One square image divided into a 2x2 grid of four equal panels: "
-                f"top-left: front-facing, arms at sides; "
-                f"top-right: three-quarter turn, near shoulder forward; "
-                f"bottom-left: side profile, only profile of face visible; "
-                f"bottom-right: three-quarter with one hand raised in gesture. "
-                f"All four figures are the SAME character — identical face, hair, build, and clothing. "
-                f"Each figure is fully contained within its quadrant with white space around it — no figure touches or crosses the edge of the image. "
-                f"Pure white background. Full body head to toe in each quadrant, no cropping. No text, no labels, no grid lines.\n\n"
-                f"Render every figure in the style described above."
-            )
+            prompt = _character_ref_prompt(config, story_bible, char)
 
             try:
+                emit({"type": "log", "stage": "index", "level": "info",
+                      "message": f"Generating ref sheet for {char.name}"})
                 # Square 2x2 grid — each quadrant gives a full-body figure
                 # ~512x512px of space, enough to avoid edge clipping.
                 # Pass the style sample as a style reference to lock visual style
@@ -176,6 +348,9 @@ async def _generate_character_refs(
                     ref_type="style",
                 )
                 record_item_done(state, "index", cost=0.05)
+                emit({"type": "stage_progress", "stage": "index",
+                      "done": state.stages["index"].items_done,
+                      "total": state.stages["index"].items_total})
                 if _is_imagen(config.image_model) or _is_imagen(
                     getattr(config, "fallback_image_model", "")
                 ):
@@ -188,28 +363,41 @@ async def _generate_character_refs(
 
 async def _generate_location_plates(
     config: Config, project_dir: Path, story_bible: StoryBible, state: PipelineState,
+    loc_ids: list[str] | None = None,
     on_event: EventCallback | None = None,
 ) -> None:
     """Part C: Generate location background plates."""
+    emit = on_event or _NOOP
     console.print("[bold]Generating location plates...[/bold]")
+    emit({"type": "log", "stage": "index", "level": "info",
+          "message": "Generating location plates..."})
     plates_dir = project_dir / "plates"
     plates_dir.mkdir(parents=True, exist_ok=True)
 
+    locs_to_gen = [l for l in story_bible.locations if not loc_ids or l.id in loc_ids]
+
     with make_progress(on_event) as progress:
-        task = progress.add_task("Location plates", total=len(story_bible.locations))
-        for loc in story_bible.locations:
+        task = progress.add_task("Location plates", total=len(locs_to_gen))
+        for loc in locs_to_gen:
             output_path = plates_dir / f"{loc.id}.png"
             if output_path.exists():
+                record_item_done(state, "index", cost=0.0)
+                emit({"type": "log", "stage": "index", "level": "dim",
+                      "message": f"Using existing location plate for {loc.name}"})
+                emit({"type": "stage_progress", "stage": "index",
+                      "done": state.stages["index"].items_done,
+                      "total": state.stages["index"].items_total})
                 progress.advance(task)
                 continue
-            prompt = (
-                f"{config.style_template} {loc.visual_anchor} "
-                f"Wide establishing shot, no characters present, detailed background, "
-                f"cinematic composition. No text."
-            )
+            prompt = _location_plate_prompt(config, loc)
             try:
+                emit({"type": "log", "stage": "index", "level": "info",
+                      "message": f"Generating location plate for {loc.name}"})
                 await flux.generate_image(config, prompt, output_path)
                 record_item_done(state, "index", cost=0.03)
+                emit({"type": "stage_progress", "stage": "index",
+                      "done": state.stages["index"].items_done,
+                      "total": state.stages["index"].items_total})
                 if _is_imagen(config.image_model) or _is_imagen(
                     getattr(config, "fallback_image_model", "")
                 ):
@@ -224,34 +412,49 @@ async def run(
     config: Config,
     project_dir: Path,
     state: PipelineState,
+    char_ids: list[str] | None = None,
+    loc_ids: list[str] | None = None,
     on_event: EventCallback | None = None,
 ) -> None:
     """Execute Stage 2: Build RAG index and generate reference images."""
     emit = on_event or _NOOP
 
     story_bible = _load_story_bible(project_dir)
-    total_items = (
-        1  # RAG index
-        + len(story_bible.characters)  # 1 reference sheet per character
-        + len(story_bible.locations)   # 1 plate per location
-    )
+
+    is_partial = bool(char_ids or loc_ids)
+    should_generate_refs = not is_partial or char_ids is not None
+    should_generate_plates = not is_partial or loc_ids is not None
+
+    total_items = 0
+    if not is_partial:
+        total_items += 1  # RAG index
+    if should_generate_refs:
+        total_items += len([c for c in story_bible.characters if not char_ids or c.id in char_ids])
+    if should_generate_plates:
+        total_items += len([l for l in story_bible.locations if not loc_ids or l.id in loc_ids])
+
     begin_stage(state, "index", total=total_items)
     emit({"type": "stage_begin", "stage": "index", "total": total_items})
     save_state(state, project_dir)
 
     try:
-        await _build_rag_index(config, project_dir, story_bible)
-        record_item_done(state, "index", cost=0.002)
-        emit({"type": "stage_progress", "stage": "index",
-              "done": state.stages["index"].items_done,
-              "total": state.stages["index"].items_total})
+        if not is_partial:
+            emit({"type": "log", "stage": "index", "level": "info",
+                  "message": "Building scene search index..."})
+            await _build_rag_index(config, project_dir, story_bible)
+            record_item_done(state, "index", cost=0.002)
+            emit({"type": "stage_progress", "stage": "index",
+                  "done": state.stages["index"].items_done,
+                  "total": state.stages["index"].items_total})
 
-        await _generate_character_refs(config, project_dir, story_bible, state, on_event)
-        emit({"type": "stage_progress", "stage": "index",
-              "done": state.stages["index"].items_done,
-              "total": state.stages["index"].items_total})
+        if should_generate_refs:
+            await _generate_character_refs(config, project_dir, story_bible, state, char_ids, on_event)
+            emit({"type": "stage_progress", "stage": "index",
+                  "done": state.stages["index"].items_done,
+                  "total": state.stages["index"].items_total})
 
-        await _generate_location_plates(config, project_dir, story_bible, state, on_event)
+        if should_generate_plates:
+            await _generate_location_plates(config, project_dir, story_bible, state, loc_ids, on_event)
 
         complete_stage(state, "index")
         emit({"type": "stage_complete", "stage": "index",
@@ -259,9 +462,10 @@ async def run(
               "total": state.stages["index"].items_total})
         save_state(state, project_dir)
 
-        console.print("[yellow]Stage 2 complete — awaiting review.[/yellow]")
-        console.print("Review character refs in: refs/")
-        console.print("Run [bold]pipeline approve --project . --stage index[/bold] to continue.")
+        if not is_partial:
+            console.print("[yellow]Stage 2 complete — awaiting review.[/yellow]")
+            console.print("Review character refs in: refs/")
+            console.print("Run [bold]pipeline approve --project . --stage index[/bold] to continue.")
 
     except Exception as e:
         fail_stage(state, "index", str(e))

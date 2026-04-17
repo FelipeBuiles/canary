@@ -6,6 +6,7 @@ images for multi-reference consistency.
 
 import asyncio
 import json
+import uuid
 from pathlib import Path
 
 from rich.console import Console
@@ -15,7 +16,10 @@ from novel_to_comic.clients import flux
 from novel_to_comic.clients.flux import _is_gemini_native, _is_imagen
 from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
+from novel_to_comic.models.panel import PanelBreakdown
 from novel_to_comic.models.prompt import ImagePrompt
+from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.prompting import build_image_prompt_spec, render_generation_prompt
 from novel_to_comic.state import (
     PipelineState,
     begin_stage,
@@ -49,6 +53,26 @@ def _find_style_sample(project_dir: Path, style_template: str) -> Path | None:
         if candidate.exists():
             return candidate
     return None
+
+
+def _load_or_upgrade_prompt(
+    config: Config,
+    project_dir: Path,
+    prompt_path: Path,
+    story_bible: StoryBible | None,
+) -> ImagePrompt:
+    prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
+    if getattr(prompt, "prompt_version", 1) >= 2 or story_bible is None:
+        return prompt
+
+    panel_path = project_dir / "panels" / prompt.scene_id / f"panel_{prompt.panel_number:03d}.json"
+    if not panel_path.exists():
+        return prompt
+
+    panel = PanelBreakdown.model_validate_json(panel_path.read_text())
+    upgraded = build_image_prompt_spec(config, project_dir, panel, story_bible)
+    prompt_path.write_text(upgraded.model_dump_json(indent=2))
+    return upgraded
 
 
 def _fmt_error(exc: BaseException) -> str:
@@ -94,6 +118,8 @@ async def _generate_panel(
     style_sample: Path | None,
     scene_to_location: dict[str, str],
     scene_anchors: dict[str, Path],
+    story_bible: StoryBible | None,
+    force: bool = False,
 ) -> Path | None:
     """Generate a single panel image from its prompt.
 
@@ -102,11 +128,11 @@ async def _generate_panel(
       2. location plate — environment anchor (locks scene lighting/palette per location)
       3. scene anchor   — first panel of this scene (locks rendering within a scene)
     """
-    prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
+    prompt = _load_or_upgrade_prompt(config, project_dir, prompt_path, story_bible)
 
     output_dir = project_dir / "images" / prompt.scene_id
     output_path = output_dir / f"panel_{prompt.panel_number:03d}.png"
-    if output_path.exists():
+    if output_path.exists() and not force:
         if prompt.scene_id not in scene_anchors:
             scene_anchors[prompt.scene_id] = output_path
         return output_path
@@ -127,23 +153,81 @@ async def _generate_panel(
     if scene_anchor and scene_anchor.exists():
         style_refs.append(scene_anchor)
 
-    async with semaphore:
-        result = await flux.generate_image_multi_ref(
-            config=config,
-            prompt=prompt.full_prompt,
-            output_path=output_path,
-            reference_paths=subject_refs,
-            style_refs=style_refs or None,
-            width=prompt.width,
-            height=prompt.height,
-            steps=prompt.steps,
+    generation_path = output_path
+    if force:
+        generation_path = output_path.with_name(
+            f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
         )
+
+    try:
+        async with semaphore:
+            result = await flux.generate_image_multi_ref(
+                config=config,
+                prompt=render_generation_prompt(prompt, config.style_template),
+                output_path=generation_path,
+                reference_paths=subject_refs,
+                style_refs=style_refs or None,
+                width=prompt.width,
+                height=prompt.height,
+                steps=prompt.steps,
+            )
+        if force and result:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            generation_path.replace(output_path)
+            result = output_path
+    finally:
+        if force and generation_path.exists():
+            generation_path.unlink(missing_ok=True)
 
     # Register as scene anchor after the first successful generation per scene
     if result and prompt.scene_id not in scene_anchors:
         scene_anchors[prompt.scene_id] = output_path
 
     return result
+
+
+async def regenerate_panel_image(
+    config: Config,
+    project_dir: Path,
+    scene_id: str,
+    panel_number: int,
+    semaphore: asyncio.Semaphore | None = None,
+) -> Path | None:
+    """Regenerate one panel without mutating stage counters or deleting the old image."""
+    prompt_path = project_dir / "prompts" / scene_id / f"panel_{panel_number:03d}.json"
+    if not prompt_path.exists():
+        raise FileNotFoundError(f"Prompt not found: {scene_id}/panel_{panel_number:03d}")
+
+    style_sample = _find_style_sample(project_dir, config.style_template)
+
+    scene_to_location: dict[str, str] = {}
+    story_bible: StoryBible | None = None
+    bible_path = project_dir / "story_bible.json"
+    if bible_path.exists():
+        story_bible = StoryBible.model_validate_json(bible_path.read_text())
+        scene_to_location = {s.id: s.location_id for s in story_bible.scenes}
+
+    scene_anchors: dict[str, Path] = {}
+    images_dir = project_dir / "images"
+    target_path = images_dir / scene_id / f"panel_{panel_number:03d}.png"
+    if images_dir.exists():
+        for scene_dir in sorted(images_dir.iterdir()):
+            if scene_dir.is_dir():
+                existing = [p for p in sorted(scene_dir.glob("panel_*.png")) if p != target_path]
+                if existing:
+                    scene_anchors[scene_dir.name] = existing[0]
+
+    return await _generate_panel(
+        config,
+        project_dir,
+        prompt_path,
+        semaphore or asyncio.Semaphore(1),
+        style_sample,
+        scene_to_location,
+        scene_anchors,
+        story_bible,
+        force=True,
+    )
 
 
 async def run(
@@ -196,11 +280,11 @@ async def run(
 
     # 2. Scene → location mapping (for location plate lookup)
     scene_to_location: dict[str, str] = {}
+    story_bible: StoryBible | None = None
     bible_path = project_dir / "story_bible.json"
     if bible_path.exists():
-        from novel_to_comic.models.story_bible import StoryBible
-        bible = StoryBible.model_validate_json(bible_path.read_text())
-        scene_to_location = {s.id: s.location_id for s in bible.scenes}
+        story_bible = StoryBible.model_validate_json(bible_path.read_text())
+        scene_to_location = {s.id: s.location_id for s in story_bible.scenes}
 
     # 3. Scene anchor pool — pre-populate with already-generated panels so
     #    re-runs and retry-failed runs benefit from existing generations.
@@ -216,6 +300,8 @@ async def run(
     # Always reset counters for clean tracking
     begin_stage(state, "generate", total=len(prompt_files))
     emit({"type": "stage_begin", "stage": "generate", "total": len(prompt_files)})
+    emit({"type": "log", "stage": "generate", "level": "info",
+          "message": f"Preparing {len(prompt_files)} panel image jobs..."})
     save_state(state, project_dir)
 
     # Google models (Imagen and Gemini native) have tight per-minute quotas
@@ -242,9 +328,13 @@ async def run(
                     break
 
                 batch = prompt_files[batch_start:batch_start + batch_size]
+                first = batch_start + 1
+                last = batch_start + len(batch)
+                emit({"type": "log", "stage": "generate", "level": "info",
+                      "message": f"Drawing panel batch {first}-{last} of {len(prompt_files)}"})
                 coros = [
                     _generate_panel(config, project_dir, pf, semaphore,
-                                    style_sample, scene_to_location, scene_anchors)
+                                    style_sample, scene_to_location, scene_anchors, story_bible)
                     for pf in batch
                 ]
                 results = await asyncio.gather(*coros, return_exceptions=True)
@@ -259,6 +349,8 @@ async def run(
                         record_item_failed(state, "generate", str(pf))
                     else:
                         record_item_done(state, "generate", cost=COST_PER_IMAGE)
+                        emit({"type": "log", "stage": "generate", "level": "dim",
+                              "message": f"Finished {pf.parent.name} / {pf.stem.replace('_', ' ')}"})
                         emit({"type": "stage_progress", "stage": "generate",
                               "done": state.stages["generate"].items_done,
                               "total": state.stages["generate"].items_total})

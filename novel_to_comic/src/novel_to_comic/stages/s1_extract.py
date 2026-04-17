@@ -29,11 +29,23 @@ PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "extraction.txt"
 
 
 def _read_novel(novel_path: Path) -> str:
-    """Read novel text from EPUB or plain text."""
+    """Read novel text from EPUB, PDF, or plain text."""
     if novel_path.suffix.lower() == ".epub":
         return _read_epub(novel_path)
-    return novel_path.read_text(encoding="utf-8")
+    elif novel_path.suffix.lower() == ".pdf":
+        return _read_pdf(novel_path)
+    return novel_path.read_text(encoding="utf-8", errors="replace")
 
+def _read_pdf(pdf_path: Path) -> str:
+    """Extract text content from a PDF file."""
+    from pypdf import PdfReader
+    reader = PdfReader(str(pdf_path))
+    text_parts = []
+    for page in reader.pages:
+        text = page.extract_text()
+        if text:
+            text_parts.append(text)
+    return "\n\n".join(text_parts)
 
 def _read_epub(epub_path: Path) -> str:
     """Extract text content from an EPUB file."""
@@ -243,7 +255,7 @@ async def run(
     emit = on_event or _NOOP
 
     begin_stage(state, "extract", total=1)
-    emit({"type": "stage_begin", "stage": "extract", "total": 1})
+    emit({"type": "stage_begin", "stage": "extract", "total": 4})
     save_state(state, project_dir)
 
     try:
@@ -257,8 +269,10 @@ async def run(
         console.print(f"Novel length: {len(novel_text):,} characters (~{len(novel_text) // 4:,} tokens)")
         emit({"type": "log", "stage": "extract", "level": "dim",
               "message": f"Novel length: {len(novel_text):,} characters"})
+        emit({"type": "stage_progress", "stage": "extract", "done": 1, "total": 4})
 
         system_prompt = PROMPT_PATH.read_text()
+        emit({"type": "stage_progress", "stage": "extract", "done": 2, "total": 4})
 
         console.print(f"[bold]Calling {config.extraction_model}...[/bold]")
         emit({"type": "log", "stage": "extract", "level": "info",
@@ -272,6 +286,7 @@ async def run(
               "message": (f"Extracted: {len(story_bible.characters)} characters, "
                           f"{len(story_bible.locations)} locations, "
                           f"{len(story_bible.scenes)} scenes")})
+        emit({"type": "stage_progress", "stage": "extract", "done": 3, "total": 4})
 
         bible_path = project_dir / "story_bible.json"
         bible_json = story_bible.model_dump_json(indent=2)
@@ -287,8 +302,8 @@ async def run(
         cost = (input_tokens / 1_000_000) * 2.50 + (output_tokens / 1_000_000) * 10.00
         record_item_done(state, "extract", cost=cost)
         emit({"type": "stage_progress", "stage": "extract",
-              "done": state.stages["extract"].items_done,
-              "total": state.stages["extract"].items_total})
+              "done": 4,
+              "total": 4})
         complete_stage(state, "extract")
         emit({"type": "stage_complete", "stage": "extract",
               "done": state.stages["extract"].items_done,

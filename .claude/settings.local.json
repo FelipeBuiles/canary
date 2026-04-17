@@ -25,7 +25,8 @@
       "Bash(node_modules/.bin/tsc *)",
       "Bash(tee /tmp/tsc.log)",
       "Read(//tmp/**)",
-      "Bash(echo \"exit=$?\")"
+      "Bash(echo \"exit=$?\")",
+      "Bash(python:*)"
     ]
   }
 }
