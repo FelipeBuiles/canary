@@ -1,10 +1,16 @@
+import { useCallback, useEffect, useRef } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { usePages, usePage } from "../../api/queries";
+import { usePages, usePage, useUpdatePage, useReplacePage, useExport } from "../../api/queries";
+import { downloadExportUrl } from "../../api/pages";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
-import { PageCanvas } from "../../components/PageCanvas";
-import { FloatingPalette } from "../../components/FloatingPalette";
-import { Button } from "../../components/ui/Button";
-import { Card } from "../../components/ui/Card";
+import { PagePreview } from "../../components/compose/PagePreview";
+import type { PagePreviewHandle } from "../../components/compose/PagePreview";
+import { EditorOverlay } from "../../components/compose/EditorOverlay";
+import { PageNavigator } from "../../components/compose/PageNavigator";
+import { PropertyPanel } from "../../components/compose/PropertyPanel";
+import { EditorToolbar } from "../../components/compose/EditorToolbar";
+import { useComposeStore } from "../../store/compose";
+import type { ComicPage, Bubble, Sfx } from "../../types/api";
 
 export function ComposeRoom() {
   const { name } = useParams<{ name: string }>();
@@ -14,15 +20,197 @@ export function ComposeRoom() {
   const safePage = pageList?.length ? Math.min(currentPage, pageList.length) : undefined;
   const { data: page, isLoading: loadingPage } = usePage(name, safePage);
 
+  const previewRef = useRef<PagePreviewHandle>(null);
+  const updatePageMut = useUpdatePage();
+  const replacePageMut = useReplacePage();
+  const exportMut = useExport();
+
+  const selection = useComposeStore((s) => s.selection);
+  const select = useComposeStore((s) => s.select);
+  const deselect = useComposeStore((s) => s.deselect);
+  const pushUndo = useComposeStore((s) => s.pushUndo);
+  const popUndo = useComposeStore((s) => s.popUndo);
+  const popRedo = useComposeStore((s) => s.popRedo);
+  const undoStack = useComposeStore((s) => s.undoStack);
+  const redoStack = useComposeStore((s) => s.redoStack);
+  const clearHistory = useComposeStore((s) => s.clearHistory);
+
   function setPage(p: number) {
     setSearchParams({ page: String(p) }, { replace: true });
+    deselect();
+    clearHistory();
   }
+
+  // Refresh iframe after successful PATCH
+  const refreshPreview = useCallback(() => {
+    setTimeout(() => previewRef.current?.refresh(), 50);
+  }, []);
+
+  // ── Mutations ────────────────────────────────────────────────────────────
+
+  function patchPage(patch: Partial<ComicPage>) {
+    if (!name || !safePage || !page) return;
+    pushUndo(page);
+    updatePageMut.mutate(
+      { project: name, pageNum: safePage, data: patch },
+      { onSuccess: refreshPreview },
+    );
+  }
+
+  function handleUpdateBubble(panelId: string, bubbleId: string, bPatch: Partial<Bubble>) {
+    patchPage({
+      panels: [{ id: panelId, bubbles: [{ id: bubbleId, ...bPatch }] }] as ComicPage["panels"],
+    });
+  }
+
+  function handleUpdateSfx(panelId: string, sPatch: Partial<Sfx>) {
+    patchPage({
+      panels: [{ id: panelId, sfx: sPatch }] as ComicPage["panels"],
+    });
+  }
+
+  function handleUpdatePageProps(patch: Partial<ComicPage>) {
+    patchPage(patch);
+  }
+
+  function handleDeleteElement(panelId: string, type: "bubble" | "sfx", elementId: string) {
+    if (!name || !safePage || !page) return;
+    pushUndo(page);
+    if (type === "bubble") {
+      patchPage({
+        panels: [{ id: panelId, remove_bubble_ids: [elementId] }] as unknown as ComicPage["panels"],
+      });
+    } else {
+      patchPage({
+        panels: [{ id: panelId, remove_sfx: true }] as unknown as ComicPage["panels"],
+      });
+    }
+    deselect();
+  }
+
+  function handleUnpin(panelId: string, type: "bubble" | "sfx", elementId: string) {
+    if (type === "bubble") {
+      handleUpdateBubble(panelId, elementId, { x: null, y: null, tail_x: null, tail_y: null });
+    } else {
+      handleUpdateSfx(panelId, { x: null, y: null });
+    }
+  }
+
+  function handleDragEnd(
+    panelId: string,
+    type: "bubble" | "sfx",
+    elementId: string,
+    x: number,
+    y: number,
+  ) {
+    if (type === "bubble") {
+      handleUpdateBubble(panelId, elementId, { x, y });
+    } else {
+      handleUpdateSfx(panelId, { x, y });
+    }
+  }
+
+  function handleAddBubble(bubbleType: "speech" | "thought" | "narration") {
+    if (!page || !name || !safePage) return;
+    const targetPanel = selection?.panelId
+      ? page.panels.find((p) => p.id === selection.panelId)
+      : page.panels[0];
+    if (!targetPanel) return;
+    pushUndo(page);
+    const newBubble = {
+      id: `new-${Date.now()}`,
+      type: bubbleType,
+      text: bubbleType === "narration" ? "Narration text..." : "Dialogue...",
+      side: "left" as const,
+    };
+    patchPage({
+      panels: [{ id: targetPanel.id, bubbles: [newBubble] }] as unknown as ComicPage["panels"],
+    });
+  }
+
+  function handleAddSfx() {
+    if (!page || !name || !safePage) return;
+    const targetPanel = selection?.panelId
+      ? page.panels.find((p) => p.id === selection.panelId)
+      : page.panels[0];
+    if (!targetPanel) return;
+    pushUndo(page);
+    patchPage({
+      panels: [{ id: targetPanel.id, sfx: { text: "KRAK!" } }] as unknown as ComicPage["panels"],
+    });
+  }
+
+  function handleUndo() {
+    const prev = popUndo();
+    if (!prev || !name || !safePage || !page) return;
+    // Push current to redo before replacing
+    useComposeStore.setState((s) => ({
+      redoStack: [...s.redoStack, structuredClone(page)],
+    }));
+    replacePageMut.mutate(
+      { project: name, pageNum: safePage, data: prev },
+      { onSuccess: refreshPreview },
+    );
+  }
+
+  function handleRedo() {
+    const next = popRedo();
+    if (!next || !name || !safePage || !page) return;
+    useComposeStore.setState((s) => ({
+      undoStack: [...s.undoStack, structuredClone(page)],
+    }));
+    replacePageMut.mutate(
+      { project: name, pageNum: safePage, data: next },
+      { onSuccess: refreshPreview },
+    );
+  }
+
+  function handleExport(format: "pdf" | "cbz") {
+    if (!name) return;
+    exportMut.mutate(
+      { project: name, format },
+      {
+        onSuccess: () => {
+          window.open(downloadExportUrl(name, format), "_blank");
+        },
+      },
+    );
+  }
+
+  // ── Keyboard shortcuts ───────────────────────────────────────────────────
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Delete" || e.key === "Backspace") {
+        // Don't delete if user is typing in an input
+        if ((e.target as HTMLElement).tagName === "INPUT" || (e.target as HTMLElement).tagName === "TEXTAREA") return;
+        if (selection && page) {
+          handleDeleteElement(selection.panelId, selection.type, selection.elementId);
+        }
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === "z" && e.shiftKey) {
+        e.preventDefault();
+        handleRedo();
+      }
+      if (e.key === "Escape") {
+        deselect();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
+  // ── Render ───────────────────────────────────────────────────────────────
 
   if (loadingList) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-          LOADING PAGE EDITOR…
+          LOADING PAGE EDITOR...
         </p>
       </div>
     );
@@ -43,72 +231,85 @@ export function ComposeRoom() {
     );
   }
 
-  const totalPages = pageList.length;
   const pageNumber = safePage ?? 1;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3 -mx-5 px-3 max-w-none">
       <ShowcaseHeader
         label="COMPOSE / PAGE EDITOR"
         title="PAGE EDITOR"
-        lead="Drag, pin, and re-render bubbles and SFX on the canonical ComicPage JSON — the editing surface for every exported spread."
+        lead="Position bubbles, edit dialogue, adjust layout, and export your comic."
       />
 
-      <section className="grid gap-5 xl:grid-cols-[1fr_200px]">
-        <div>
-          {/* Page navigation */}
-          <div className="mb-4 flex items-center gap-3">
-            <Button
-              variant="secondary"
-              size="md"
-              onClick={() => setPage(Math.max(1, pageNumber - 1))}
-              disabled={pageNumber <= 1}
-            >
-              ← PREV
-            </Button>
-            <div className="border-[2px] border-ink-black bg-bristol px-4 py-2 font-display text-[0.9rem] font-bold tracking-[-0.03em]">
-              PAGE {String(pageNumber).padStart(2, "0")} / {totalPages}
-            </div>
-            <Button
-              variant="secondary"
-              size="md"
-              onClick={() => setPage(Math.min(totalPages, pageNumber + 1))}
-              disabled={pageNumber >= totalPages}
-            >
-              NEXT →
-            </Button>
+      <EditorToolbar
+        onAddBubble={handleAddBubble}
+        onAddSfx={handleAddSfx}
+        onDelete={() => {
+          if (selection) handleDeleteElement(selection.panelId, selection.type, selection.elementId);
+        }}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        onExport={handleExport}
+        hasSelection={!!selection}
+        canUndo={undoStack.length > 0}
+        canRedo={redoStack.length > 0}
+        isExporting={exportMut.isPending}
+      />
 
-            <div className="ml-auto flex gap-1.5">
-              {pageList.map((p) => (
-                <button
-                  key={p.page_number}
-                  onClick={() => setPage(p.page_number)}
-                  className={`h-6 w-6 border-[2px] border-ink-black font-meta text-[0.44rem] tracking-[0.12em] ${
-                    p.page_number === pageNumber
-                      ? "bg-hero-red text-bristol"
-                      : "bg-pulp-paper text-ink-black"
-                  }`}
-                >
-                  {p.page_number}
-                </button>
-              ))}
-            </div>
-          </div>
+      <div className="grid gap-4" style={{ gridTemplateColumns: "160px 1fr 240px" }}>
+        {/* Left: page navigator */}
+        <PageNavigator
+          project={name}
+          pages={pageList}
+          currentPage={pageNumber}
+          onSelect={setPage}
+        />
 
-          {/* Page canvas */}
+        {/* Center: preview + overlay */}
+        <div className="relative">
           {loadingPage ? (
-            <Card className="flex min-h-[40vh] items-center justify-center">
+            <div
+              className="flex items-center justify-center border-[2px] border-ink-black bg-ink-black/5"
+              style={{ aspectRatio: "2480 / 3508" }}
+            >
               <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-                LOADING PAGE…
+                LOADING PAGE...
               </p>
-            </Card>
+            </div>
           ) : page ? (
-            <PageCanvas page={page} projectName={name} />
+            <div className="relative">
+              <PagePreview
+                ref={previewRef}
+                project={name}
+                pageNum={pageNumber}
+              />
+              <EditorOverlay
+                page={page}
+                previewRef={previewRef}
+                selectedId={selection?.elementId ?? null}
+                onSelect={select}
+                onDeselect={deselect}
+                onDragEnd={handleDragEnd}
+              />
+            </div>
           ) : null}
         </div>
 
-        <FloatingPalette />
-      </section>
+        {/* Right: property panel */}
+        {page ? (
+          <PropertyPanel
+            page={page}
+            selection={selection}
+            onUpdateBubble={handleUpdateBubble}
+            onUpdateSfx={handleUpdateSfx}
+            onUpdatePage={handleUpdatePageProps}
+            onDeleteElement={handleDeleteElement}
+            onUnpin={handleUnpin}
+          />
+        ) : (
+          <div />
+        )}
+      </div>
     </div>
   );
 }

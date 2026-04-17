@@ -273,19 +273,19 @@ body {
   border-style: var(--thought-border-style);
 }
 
-/* ── Upward tails (character is above bubble, in the panel art) ── */
-.bubble.speech.left::after,
-.bubble.speech.right::after,
-.bubble.speech.center::after {
+/* ── Upward tails (default — character is above bubble) ── */
+.bubble.speech.tail-up.left::after,
+.bubble.speech.tail-up.right::after,
+.bubble.speech.tail-up.center::after {
   content: '';
   position: absolute;
   top: -14px;
   border: 8px solid transparent;
   border-bottom: 14px solid var(--bubble-border);
 }
-.bubble.speech.left::before,
-.bubble.speech.right::before,
-.bubble.speech.center::before {
+.bubble.speech.tail-up.left::before,
+.bubble.speech.tail-up.right::before,
+.bubble.speech.tail-up.center::before {
   content: '';
   position: absolute;
   top: -10px;
@@ -293,12 +293,39 @@ body {
   border-bottom: 12px solid var(--bubble-bg);
   z-index: 1;
 }
-.bubble.speech.left::after   { left: 18px; }
-.bubble.speech.left::before  { left: 20px; }
-.bubble.speech.right::after  { right: 18px; }
-.bubble.speech.right::before { right: 20px; }
-.bubble.speech.center::after  { left: 50%; transform: translateX(-50%); }
-.bubble.speech.center::before { left: 50%; transform: translateX(-50%); }
+.bubble.speech.tail-up.left::after   { left: 18px; }
+.bubble.speech.tail-up.left::before  { left: 20px; }
+.bubble.speech.tail-up.right::after  { right: 18px; }
+.bubble.speech.tail-up.right::before { right: 20px; }
+.bubble.speech.tail-up.center::after  { left: 50%; transform: translateX(-50%); }
+.bubble.speech.tail-up.center::before { left: 50%; transform: translateX(-50%); }
+
+/* ── Downward tails (character is below bubble) ── */
+.bubble.speech.tail-down.left::after,
+.bubble.speech.tail-down.right::after,
+.bubble.speech.tail-down.center::after {
+  content: '';
+  position: absolute;
+  bottom: -14px;
+  border: 8px solid transparent;
+  border-top: 14px solid var(--bubble-border);
+}
+.bubble.speech.tail-down.left::before,
+.bubble.speech.tail-down.right::before,
+.bubble.speech.tail-down.center::before {
+  content: '';
+  position: absolute;
+  bottom: -10px;
+  border: 6px solid transparent;
+  border-top: 12px solid var(--bubble-bg);
+  z-index: 1;
+}
+.bubble.speech.tail-down.left::after   { left: 18px; }
+.bubble.speech.tail-down.left::before  { left: 20px; }
+.bubble.speech.tail-down.right::after  { right: 18px; }
+.bubble.speech.tail-down.right::before { right: 20px; }
+.bubble.speech.tail-down.center::after  { left: 50%; transform: translateX(-50%); }
+.bubble.speech.tail-down.center::before { left: 50%; transform: translateX(-50%); }
 
 /* Speaker label */
 .speaker {
@@ -315,6 +342,18 @@ body {
 .bubble.pinned {
   position: absolute;
   /* left, top, width set via inline style */
+}
+
+/* ── SVG tail (replaces CSS pseudo-element tails for pinned bubbles) ── */
+.bubble.svg-tail::before,
+.bubble.svg-tail::after { display: none; }
+.bubble .tail-svg {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: visible;
+  pointer-events: none;
+  z-index: -1;
 }
 
 /* ── Narration caption — pinned variant ── */
@@ -489,10 +528,75 @@ def _font_face(
     )
 
 
+def _svg_tail(bubble: Bubble) -> str:
+    """Render an SVG tail triangle for a pinned bubble.
+
+    The SVG is placed *outside* the bubble via negative offset so the
+    tail does not overlap bubble content.  It draws a filled triangle
+    from the bubble edge toward ``(tail_x, tail_y)`` in panel-relative
+    coordinates.
+    """
+    if bubble.tail_x is None or bubble.tail_y is None:
+        return ""
+    if bubble.x is None or bubble.y is None:
+        return ""
+
+    bw = bubble.width or 200
+    tx = bubble.tail_x - bubble.x
+    ty = bubble.tail_y - bubble.y
+
+    # Determine anchor edge: if target is below the bubble center, anchor
+    # at the bottom edge; otherwise anchor at the top edge.
+    target_below = ty > 20  # rough threshold: anything below ~20px from top
+    hw = 10  # half-width of tail base
+
+    if target_below:
+        # Anchor at bottom-center, SVG extends downward
+        anchor_css = "left: 50%; bottom: 0; transform: translate(-50%, 100%);"
+        # Triangle points relative to anchor: base at y=0, tip toward target
+        # Target relative to bottom-center of bubble (estimated height ~50px)
+        tip_x = tx - bw / 2
+        tip_y = ty - 50  # approximate bubble height
+    else:
+        # Anchor at top-center, SVG extends upward
+        anchor_css = "left: 50%; top: 0; transform: translate(-50%, -100%);"
+        # Triangle base at y=0 (bottom of SVG, which is the bubble top edge)
+        # tip extends upward (negative y)
+        tip_x = tx - bw / 2
+        tip_y = ty  # already relative to bubble top
+
+    return (
+        f'<svg class="tail-svg" style="{anchor_css}" viewBox="0 0 0 0">'
+        f'<polygon points="{-hw},0 {hw},0 {tip_x:.0f},{tip_y:.0f}" '
+        f'fill="var(--bubble-bg)" stroke="var(--bubble-border)" '
+        f'stroke-width="var(--bubble-border-width)" stroke-linejoin="round"/>'
+        f'</svg>'
+    )
+
+
+def _resolve_tail_direction(bubble: Bubble) -> str:
+    """Resolve 'auto' tail direction based on bubble position.
+
+    For auto-layout bubbles (x/y=None), the default CSS tail always
+    points up (characters are above, bubble at bottom).
+
+    For pinned bubbles, auto checks whether the bubble is in the top or
+    bottom half of the panel (using a 400px threshold — roughly half a
+    typical panel height of ~800-1200px in the 2480x3508 page).
+    """
+    direction = getattr(bubble, "tail_direction", "auto")
+    if direction != "auto":
+        return direction
+    if bubble.y is not None and bubble.y < 400:
+        return "down"  # bubble near top → tail points down toward character below
+    return "up"  # default: bubble at bottom → tail points up
+
+
 def _bubble_html(bubble: Bubble) -> str:
     """Render one Bubble to an HTML element string."""
     classes = ["bubble", bubble.type, bubble.side]
     inline: list[str] = []
+    has_svg_tail = False
 
     if bubble.x is not None and bubble.y is not None:
         classes.append("pinned")
@@ -501,6 +605,13 @@ def _bubble_html(bubble: Bubble) -> str:
     if bubble.width is not None:
         inline.append(f"width: {bubble.width:.0f}px")
 
+    if bubble.tail_x is not None and bubble.tail_y is not None:
+        classes.append("svg-tail")
+        has_svg_tail = True
+    elif bubble.type == "speech":
+        # Add tail direction class for CSS pseudo-element tails
+        classes.append(f"tail-{_resolve_tail_direction(bubble)}")
+
     style_attr = f' style="{"; ".join(inline)}"' if inline else ""
     cls = " ".join(classes)
 
@@ -508,7 +619,8 @@ def _bubble_html(bubble: Bubble) -> str:
     if bubble.speaker_name:
         speaker_html = f'<span class="speaker">{_e(bubble.speaker_name)}:</span>'
 
-    return f'<div class="{cls}" data-id="{_e(bubble.id)}"{style_attr}>{speaker_html}{_e(bubble.text)}</div>'
+    tail_html = _svg_tail(bubble) if has_svg_tail else ""
+    return f'<div class="{cls}" data-id="{_e(bubble.id)}"{style_attr}>{speaker_html}{_e(bubble.text)}{tail_html}</div>'
 
 
 def _panel_html(
@@ -586,7 +698,7 @@ def _panel_html(
         if sfx.font_size is not None:
             inline.append(f"font-size: {sfx.font_size}px")
         style_attr = f' style="{"; ".join(inline)}"' if inline else ""
-        sfx_html = f'  <div class="{" ".join(classes)}"{style_attr}>{_e(sfx.text.upper())}</div>'
+        sfx_html = f'  <div class="{" ".join(classes)}" data-sfx="true"{style_attr}>{_e(sfx.text.upper())}</div>'
 
     # Debug label
     pid_html = (

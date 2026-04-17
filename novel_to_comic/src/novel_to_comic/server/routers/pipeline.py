@@ -93,6 +93,27 @@ async def _run_job(project_name: str, request: Request, job):
         if queue is not None:
             queue.put_nowait({"type": "pipeline_done"})
         request.app.state.running_tasks.pop(project_name, None)
+        # Schedule cleanup of the event queue if no SSE client drains it.
+        # This prevents orphaned queues when a client disconnects before
+        # receiving pipeline_done.
+        asyncio.get_event_loop().call_later(
+            60,
+            _cleanup_stale_queue,
+            request.app,
+            project_name,
+            queue,
+        )
+
+
+def _cleanup_stale_queue(app, project_name: str, queue) -> None:
+    """Remove an event queue if it's still the same one and no task owns it."""
+    current = app.state.event_queues.get(project_name)
+    if current is not queue:
+        return  # a new run replaced it
+    task = app.state.running_tasks.get(project_name)
+    if task is not None and not task.done():
+        return  # a new run is active
+    app.state.event_queues.pop(project_name, None)
 
 
 @router.post("/run")

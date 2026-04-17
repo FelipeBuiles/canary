@@ -7,7 +7,7 @@ import re
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Form
 
 from novel_to_comic.config import Config, load_config, save_config
 from novel_to_comic.models.story_bible import StoryBible
@@ -268,12 +268,13 @@ def project_status(request: Request, project=Depends(get_project)):
 async def generate_cover(
     request: Request,
     project_name: str,
+    force: bool = Query(False),
     project=Depends(get_project),
 ):
     project_dir, config, state = project
 
     cover_path = _cover_path(project_dir)
-    if cover_path.exists():
+    if cover_path.exists() and not force:
         return {"status": "exists", "path": "cover/cover.png", "job": None}
 
     if not (project_dir / "story_bible.json").exists():

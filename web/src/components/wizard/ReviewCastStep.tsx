@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
 import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
 import { SectionLabel } from "../SectionLabel";
-import { useGenerationJobs, useRegenPlate, useRegenRef, useStoryBible } from "../../api/queries";
+import { useRegenPlate, useRegenRef, useStoryBible } from "../../api/queries";
 import { ImageModal } from "../ui/ImageModal";
 import { StyleCallout } from "./StyleCallout";
+import { useRegenStore } from "../../store/regen";
+import { useJobPoller } from "../../hooks/useJobPoller";
+import { useState } from "react";
 
 interface ReviewCastStepProps {
   project: string;
@@ -12,153 +14,49 @@ interface ReviewCastStepProps {
   isApproving: boolean;
 }
 
-type RegenType = "ref" | "plate";
-
-interface ActiveRegen {
-  key: string;
-  type: RegenType;
-  id: string;
-  label: string;
-  jobId: string | null;
-  status: "queued" | "running";
-  queuePosition: number | null;
-}
-
 export function ReviewCastStep({ project, onApprove, isApproving }: ReviewCastStepProps) {
   const { data: storyBible } = useStoryBible(project);
   const [modalImage, setModalImage] = useState<{ src: string; alt: string } | null>(null);
-  const [activeRegens, setActiveRegens] = useState<Record<string, ActiveRegen>>({});
-  const [regenError, setRegenError] = useState<string | null>(null);
-  const [cacheBusters, setCacheBusters] = useState<Record<string, number>>({});
   const regenRef = useRegenRef();
   const regenPlate = useRegenPlate();
-  const regenJobIds = Object.values(activeRegens)
-    .map((regen) => regen.jobId)
-    .filter((jobId): jobId is string => !!jobId);
-  const { data: generationJobs } = useGenerationJobs(project, regenJobIds);
 
-  useEffect(() => {
-    if (!generationJobs?.jobs.length) return;
+  const activeMap = useRegenStore((s) => s.active[project] ?? {});
+  const bustTimestamps = useRegenStore((s) => s.bustTimestamps);
+  const errors = useRegenStore((s) => s.errors);
+  const { begin, attachJob, fail: failRegen } = useRegenStore();
 
-    const activeByJobId = new Map(
-      Object.values(activeRegens)
-        .filter((regen) => regen.jobId)
-        .map((regen) => [regen.jobId, regen] as const),
-    );
+  useJobPoller(project);
 
-    for (const job of generationJobs.jobs) {
-      const active = activeByJobId.get(job.id);
-      if (!active) continue;
+  const regenError = Object.entries(errors)
+    .filter(([k]) => k.startsWith(`${project}/`))
+    .map(([, v]) => v)[0] ?? null;
 
-      if (job.status === "complete") {
-        setActiveRegens((current) => {
-          const { [active.key]: _done, ...rest } = current;
-          return rest;
-        });
-        setCacheBusters((busters) => ({ ...busters, [active.key]: Date.now() }));
-        setRegenError(null);
-      } else if (job.status === "failed") {
-        setActiveRegens((current) => {
-          const { [active.key]: _failed, ...rest } = current;
-          return rest;
-        });
-        setRegenError(`${active.label}: ${job.error ?? "Regeneration failed"}`);
-      } else {
-        const nextStatus = job.status === "running" ? "running" : "queued";
-        setActiveRegens((current) => {
-          const currentActive = current[active.key];
-          if (!currentActive) return current;
-          if (
-            currentActive.status === nextStatus &&
-            currentActive.queuePosition === job.queue_position
-          ) {
-            return current;
-          }
-          return {
-            ...current,
-            [active.key]: {
-              ...currentActive,
-              status: nextStatus,
-              queuePosition: job.queue_position,
-            },
-          };
-        });
-      }
-    }
-  }, [generationJobs, activeRegens]);
-
-  function beginRegen(type: RegenType, id: string, label: string) {
-    const key = `${type}:${id}`;
-    setActiveRegens((current) => ({
-      ...current,
-      [key]: { key, type, id, label, jobId: null, status: "queued", queuePosition: null },
-    }));
-    setRegenError(null);
-    return key;
-  }
-
-  function attachJob(key: string, jobId: string, status: "queued" | "running", queuePosition: number | null) {
-    setActiveRegens((current) => {
-      const active = current[key];
-      if (!active) return current;
-      return {
-        ...current,
-        [key]: {
-          ...active,
-          jobId,
-          status,
-          queuePosition,
-        },
-      };
-    });
-  }
-
-  function failRegen(key: string, message: string) {
-    setActiveRegens((current) => {
-      const { [key]: _failed, ...rest } = current;
-      return rest;
-    });
-    setRegenError(message);
-  }
-
-  function startRefRegen(id: string, label: string) {
-    const key = beginRegen("ref", id, label);
+  function startRefRegen(id: string) {
+    const key = `ref:${id}`;
+    begin(project, key);
     regenRef.mutate(
       { project, charId: id },
       {
-        onSuccess: (data) => attachJob(
-          key,
-          data.job.id,
-          data.job.status === "running" ? "running" : "queued",
-          data.job.queue_position,
-        ),
-        onError: (err) => {
-          failRegen(key, err.message);
-        },
+        onSuccess: (data) => attachJob(project, key, data.job),
+        onError: (err) => failRegen(project, key, err.message),
       },
     );
   }
 
-  function startPlateRegen(id: string, label: string) {
-    const key = beginRegen("plate", id, label);
+  function startPlateRegen(id: string) {
+    const key = `plate:${id}`;
+    begin(project, key);
     regenPlate.mutate(
       { project, locId: id },
       {
-        onSuccess: (data) => attachJob(
-          key,
-          data.job.id,
-          data.job.status === "running" ? "running" : "queued",
-          data.job.queue_position,
-        ),
-        onError: (err) => {
-          failRegen(key, err.message);
-        },
+        onSuccess: (data) => attachJob(project, key, data.job),
+        onError: (err) => failRegen(project, key, err.message),
       },
     );
   }
 
-  const activeList = Object.values(activeRegens);
-  const runningCount = activeList.filter((regen) => regen.status === "running").length;
+  const activeList = Object.values(activeMap);
+  const runningCount = activeList.filter((r) => r.status === "running").length;
   const queuedCount = activeList.length - runningCount;
   const isRegenerating = activeList.length > 0 || regenRef.isPending || regenPlate.isPending;
 
@@ -199,12 +97,13 @@ export function ReviewCastStep({ project, onApprove, isApproving }: ReviewCastSt
           </div>
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {storyBible?.characters.map((c) => {
-              const bust = cacheBusters[`ref:${c.id}`] ?? 0;
+              const key = `ref:${c.id}`;
+              const bust = bustTimestamps[`${project}/${key}`] ?? 0;
               const src = `/api/projects/${encodeURIComponent(project)}/files/refs/${c.id}/sheet.png${bust ? `?t=${bust}` : ""}`;
-              const active = activeRegens[`ref:${c.id}`];
+              const active = activeMap[key];
               return (
                 <div key={c.id} className="border-[2px] border-ink-black bg-pulp-paper">
-                  <div 
+                  <div
                     className="relative flex aspect-square cursor-pointer items-center justify-center bg-ink-black/5"
                     onClick={() => setModalImage({ src, alt: c.name })}
                   >
@@ -238,7 +137,7 @@ export function ReviewCastStep({ project, onApprove, isApproving }: ReviewCastSt
                       size="xs"
                       variant="secondary"
                       disabled={!!active}
-                      onClick={() => startRefRegen(c.id, c.name)}
+                      onClick={() => startRefRegen(c.id)}
                     >
                       {active ? "QUEUED" : "REGEN"}
                     </Button>
@@ -261,12 +160,13 @@ export function ReviewCastStep({ project, onApprove, isApproving }: ReviewCastSt
           </div>
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {storyBible?.locations.map((l) => {
-              const bust = cacheBusters[`plate:${l.id}`] ?? 0;
+              const key = `plate:${l.id}`;
+              const bust = bustTimestamps[`${project}/${key}`] ?? 0;
               const src = `/api/projects/${encodeURIComponent(project)}/files/plates/${l.id}.png${bust ? `?t=${bust}` : ""}`;
-              const active = activeRegens[`plate:${l.id}`];
+              const active = activeMap[key];
               return (
                 <div key={l.id} className="border-[2px] border-ink-black bg-pulp-paper">
-                  <div 
+                  <div
                     className="relative flex aspect-video cursor-pointer items-center justify-center bg-ink-black/5"
                     onClick={() => setModalImage({ src, alt: l.name })}
                   >
@@ -300,7 +200,7 @@ export function ReviewCastStep({ project, onApprove, isApproving }: ReviewCastSt
                       size="xs"
                       variant="secondary"
                       disabled={!!active}
-                      onClick={() => startPlateRegen(l.id, l.name)}
+                      onClick={() => startPlateRegen(l.id)}
                     >
                       {active ? "QUEUED" : "REGEN"}
                     </Button>
@@ -326,11 +226,11 @@ export function ReviewCastStep({ project, onApprove, isApproving }: ReviewCastSt
         </span>
       </div>
 
-      <ImageModal 
-        isOpen={!!modalImage} 
-        onClose={() => setModalImage(null)} 
-        src={modalImage?.src ?? ""} 
-        alt={modalImage?.alt ?? ""} 
+      <ImageModal
+        isOpen={!!modalImage}
+        onClose={() => setModalImage(null)}
+        src={modalImage?.src ?? ""}
+        alt={modalImage?.alt ?? ""}
       />
     </div>
   );
