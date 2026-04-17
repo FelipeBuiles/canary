@@ -257,6 +257,9 @@ export interface Bubble {
   x: number | null;
   y: number | null;
   width: number | null;
+  tail_x: number | null;
+  tail_y: number | null;
+  tail_direction: "auto" | "up" | "down";
 }
 
 export interface Sfx {

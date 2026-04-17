@@ -60,7 +60,7 @@ async def _suggest_styles(config: Config, bible) -> list[dict]:
     )
 
     result = await gemini.generate_json(
-        config=config, model=config.screenplay_model,
+        config=config, model=config.prompt_model,
         system_prompt=system, user_content=user,
     )
     if isinstance(result, list):

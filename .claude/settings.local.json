@@ -26,7 +26,8 @@
       "Bash(tee /tmp/tsc.log)",
       "Read(//tmp/**)",
       "Bash(echo \"exit=$?\")",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(/Users/jbuilesgallo/Code/canary/novel_to_comic/.venv/bin/python:*)"
     ]
   }
 }

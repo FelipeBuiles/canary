@@ -4,26 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import BaseModel
-
 from novel_to_comic.config import Config
 from novel_to_comic.models.panel import PanelBreakdown
-from novel_to_comic.models.prompt import ImagePrompt
+from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
 from novel_to_comic.models.story_bible import Character, StoryBible
-
-try:
-    from novel_to_comic.models.prompt import PromptSubject
-except ImportError:
-    # A dev server can already have the old prompt model in sys.modules when
-    # this module is imported after a code change. Keep the prompt builder usable
-    # until the server is restarted with the new model fields.
-    class PromptSubject(BaseModel):
-        character_id: str | None = None
-        name: str
-        identity: str
-        action: str = ""
-        expression: str = ""
-        position: str = ""
+from novel_to_comic.text_utils import clean, shorten
 
 
 _SHOT_DIMENSIONS: dict[str, tuple[int, int]] = {
@@ -48,16 +33,8 @@ def dimensions_for_shot(shot_type: str) -> tuple[int, int]:
     return _SHOT_DIMENSIONS.get(shot_type.lower().replace(" ", "-"), _DEFAULT_DIMENSIONS)
 
 
-def _clean(value: str | None) -> str:
-    return " ".join((value or "").replace("\n", " ").split())
-
-
-def _shorten(value: str, limit: int) -> str:
-    value = _clean(value)
-    if len(value) <= limit:
-        return value
-    shortened = value[:limit].rsplit(" ", 1)[0].rstrip(" ,.;:")
-    return f"{shortened}."
+_clean = clean
+_shorten = shorten
 
 
 def _character_identity(character: Character) -> str:

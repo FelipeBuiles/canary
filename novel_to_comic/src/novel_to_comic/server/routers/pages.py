@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 
 from novel_to_comic.assembly.html_renderer import build_page_html, resolve_theme, write_theme_css
-from novel_to_comic.models.comic_page import ComicPage
+from novel_to_comic.models.comic_page import Bubble, ComicPage, Sfx
 
 from ..deps import get_project
 
@@ -64,30 +64,118 @@ def update_page(page_num: int, body: dict, project=Depends(get_project)):
     if "layout" in body:
         cp.layout = body["layout"]
 
-    # Apply per-panel bubble/sfx position updates
+    # Apply per-panel bubble/sfx updates
     if "panels" in body:
         panel_map = {p.id: p for p in cp.panels}
         for panel_patch in body["panels"]:
             panel = panel_map.get(panel_patch.get("id", ""))
             if not panel:
                 continue
+
+            # ── Remove bubbles ──
+            remove_ids = panel_patch.get("remove_bubble_ids", [])
+            if remove_ids:
+                panel.bubbles = [b for b in panel.bubbles if b.id not in remove_ids]
+
+            # ── Update or add bubbles ──
             if "bubbles" in panel_patch:
                 bubble_map = {b.id: b for b in panel.bubbles}
                 for bp in panel_patch["bubbles"]:
                     bubble = bubble_map.get(bp.get("id", ""))
-                    if not bubble:
-                        continue
-                    for field in ("x", "y", "width", "side", "text"):
-                        if field in bp:
-                            setattr(bubble, field, bp[field])
-            if "sfx" in panel_patch and panel.sfx:
-                for field in ("x", "y", "rotation", "font_size", "text"):
-                    if field in panel_patch["sfx"]:
-                        setattr(panel.sfx, field, panel_patch["sfx"][field])
+                    if bubble:
+                        for field in ("x", "y", "width", "side", "text", "type", "tail_x", "tail_y", "tail_direction"):
+                            if field in bp:
+                                setattr(bubble, field, bp[field])
+                    else:
+                        # New bubble — generate stable ID
+                        next_idx = len(panel.bubbles) + 1
+                        new_id = bp.get("id", "") or f"{panel.id}-b{next_idx}"
+                        if new_id.startswith("new-"):
+                            new_id = f"{panel.id}-b{next_idx}"
+                        panel.bubbles.append(Bubble(
+                            id=new_id,
+                            type=bp.get("type", "speech"),
+                            text=bp.get("text", ""),
+                            side=bp.get("side", "left"),
+                        ))
+
+            # ── Reorder bubbles ──
+            if "bubble_order" in panel_patch:
+                order = panel_patch["bubble_order"]
+                id_to_bubble = {b.id: b for b in panel.bubbles}
+                ordered = [id_to_bubble[bid] for bid in order if bid in id_to_bubble]
+                remaining = [b for b in panel.bubbles if b.id not in set(order)]
+                panel.bubbles = ordered + remaining
+
+            # ── Remove SFX ──
+            if panel_patch.get("remove_sfx"):
+                panel.sfx = None
+
+            # ── Update or create SFX ──
+            elif "sfx" in panel_patch:
+                sfx_data = panel_patch["sfx"]
+                if panel.sfx:
+                    for field in ("x", "y", "rotation", "font_size", "text"):
+                        if field in sfx_data:
+                            setattr(panel.sfx, field, sfx_data[field])
+                else:
+                    panel.sfx = Sfx(text=sfx_data.get("text", "SFX!"))
 
     path = _pages_dir(project_dir) / f"page_{page_num:03d}.json"
     path.write_text(cp.model_dump_json(indent=2))
     return cp.model_dump()
+
+
+@router.put("/pages/{page_num}")
+def replace_page(page_num: int, body: dict, project=Depends(get_project)):
+    """Full page replacement (used by undo/redo)."""
+    project_dir, config, state = project
+    cp = ComicPage.model_validate(body)
+    cp.page_number = page_num
+    path = _pages_dir(project_dir) / f"page_{page_num:03d}.json"
+    if not path.exists():
+        raise HTTPException(404, f"Page {page_num} not found")
+    path.write_text(cp.model_dump_json(indent=2))
+    return cp.model_dump()
+
+
+@router.post("/pages/reorder")
+def reorder_panels(body: dict, project=Depends(get_project)):
+    """Reorder panels within and across pages.
+
+    Body: { "pages": [{ "page_number": N, "panel_ids": ["id1", "id2"] }, ...] }
+    """
+    project_dir, config, state = project
+    pages_spec = body.get("pages", [])
+    if not pages_spec:
+        raise HTTPException(400, "Provide non-empty 'pages' list")
+
+    pd = _pages_dir(project_dir)
+
+    # Collect all panels from affected pages into a flat map
+    affected_nums = {p["page_number"] for p in pages_spec}
+    all_panels = {}
+    for num in affected_nums:
+        path = pd / f"page_{num:03d}.json"
+        if not path.exists():
+            raise HTTPException(404, f"Page {num} not found")
+        cp = ComicPage.model_validate_json(path.read_text())
+        for panel in cp.panels:
+            all_panels[panel.id] = panel
+
+    # Redistribute panels
+    for page_spec in pages_spec:
+        num = page_spec["page_number"]
+        panel_ids = page_spec["panel_ids"]
+        path = pd / f"page_{num:03d}.json"
+        cp = ComicPage.model_validate_json(path.read_text())
+        new_panels = [all_panels[pid] for pid in panel_ids if pid in all_panels]
+        cp.panels = new_panels
+        count = len(new_panels)
+        cp.layout = str(min(count, 6)) if count <= 6 else "many"
+        path.write_text(cp.model_dump_json(indent=2))
+
+    return {"status": "ok"}
 
 
 # ── HTML preview ─────────────────────────────────────────────────────────────

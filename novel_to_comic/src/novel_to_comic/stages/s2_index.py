@@ -20,6 +20,7 @@ from novel_to_comic.clients.flux import _is_imagen
 from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.models.story_bible import Character, StoryBible
+from novel_to_comic.text_utils import clean, shorten
 from novel_to_comic.rag.chunker import chunk_scene_text, load_scene_texts
 from novel_to_comic.rag.store import create_collection, upsert_chunks
 from novel_to_comic.state import (
@@ -34,16 +35,8 @@ from novel_to_comic.state import (
 console = Console()
 
 
-def _clean(value: str | None) -> str:
-    return " ".join((value or "").replace("\n", " ").split())
-
-
-def _shorten(value: str, limit: int) -> str:
-    value = _clean(value)
-    if len(value) <= limit:
-        return value
-    shortened = value[:limit].rsplit(" ", 1)[0].rstrip(" ,.;:")
-    return f"{shortened}."
+_clean = clean
+_shorten = shorten
 
 
 def _tokens(value: str) -> set[str]:
@@ -175,6 +168,7 @@ async def regenerate_character_ref(
     if char is None:
         raise ValueError(f"Character not found: {char_id}")
 
+    sem = semaphore or asyncio.Semaphore(1)
     output_path = project_dir / "refs" / char.id / "sheet.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = output_path.with_name(
@@ -184,7 +178,7 @@ async def regenerate_character_ref(
     prompt = _character_ref_prompt(config, story_bible, char)
 
     try:
-        if semaphore is None:
+        async with sem:
             await flux.generate_image(
                 config,
                 prompt,
@@ -194,17 +188,6 @@ async def regenerate_character_ref(
                 reference_image_path=style_ref,
                 ref_type="style",
             )
-        else:
-            async with semaphore:
-                await flux.generate_image(
-                    config,
-                    prompt,
-                    tmp_path,
-                    width=1024,
-                    height=1024,
-                    reference_image_path=style_ref,
-                    ref_type="style",
-                )
         tmp_path.replace(output_path)
         return output_path
     finally:
@@ -223,6 +206,7 @@ async def regenerate_location_plate(
     if loc is None:
         raise ValueError(f"Location not found: {loc_id}")
 
+    sem = semaphore or asyncio.Semaphore(1)
     output_path = project_dir / "plates" / f"{loc.id}.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = output_path.with_name(
@@ -231,11 +215,8 @@ async def regenerate_location_plate(
     prompt = _location_plate_prompt(config, loc)
 
     try:
-        if semaphore is None:
+        async with sem:
             await flux.generate_image(config, prompt, tmp_path)
-        else:
-            async with semaphore:
-                await flux.generate_image(config, prompt, tmp_path)
         tmp_path.replace(output_path)
         return output_path
     finally:

@@ -61,6 +61,13 @@ class Bubble(BaseModel):
     x: float | None = None
     y: float | None = None
     width: float | None = None                          # explicit width override
+    # SVG tail target — null = use CSS upward-pointing tail; float = draw SVG
+    # triangle from bubble edge toward this panel-relative point
+    tail_x: float | None = None
+    tail_y: float | None = None
+    # Tail direction: "auto" picks up/down based on bubble position in panel,
+    # "up"/"down" forces direction. Only affects CSS tails (non-SVG).
+    tail_direction: Literal["auto", "up", "down"] = "auto"
 
 
 class Sfx(BaseModel):

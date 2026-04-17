@@ -15,7 +15,7 @@ import {
   updatePrompt,
   listImages,
 } from "./stages";
-import { listPages, getPage } from "./pages";
+import { listPages, getPage, updatePage, replacePage, triggerExport } from "./pages";
 import { getStyles, suggestStyles, generateStyleSamples, setActiveStyle } from "./styles";
 
 // ── Projects ──────────────────────────────────────────────────────────────────
@@ -261,6 +261,37 @@ export function usePage(project: string | undefined, pageNum: number | undefined
     queryKey: ["project", project, "pages", pageNum],
     queryFn: () => getPage(project!, pageNum!),
     enabled: !!project && !!pageNum,
+  });
+}
+
+export function useUpdatePage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, pageNum, data }: { project: string; pageNum: number; data: Partial<import("../types/api").ComicPage> }) =>
+      updatePage(project, pageNum, data),
+    onSuccess: (_data, { project, pageNum }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "pages", pageNum] });
+      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
+    },
+  });
+}
+
+export function useReplacePage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, pageNum, data }: { project: string; pageNum: number; data: import("../types/api").ComicPage }) =>
+      replacePage(project, pageNum, data),
+    onSuccess: (_data, { project, pageNum }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "pages", pageNum] });
+      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
+    },
+  });
+}
+
+export function useExport() {
+  return useMutation({
+    mutationFn: ({ project, format }: { project: string; format: "pdf" | "cbz" }) =>
+      triggerExport(project, format),
   });
 }
 
