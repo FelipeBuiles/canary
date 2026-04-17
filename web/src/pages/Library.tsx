@@ -1,4 +1,6 @@
-import { useProjects } from "../api/queries";
+import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useGenerateProjectCover, useProjects } from "../api/queries";
 import { ProjectCard } from "../components/ProjectCard";
 import { SectionLabel } from "../components/SectionLabel";
 import { SectionDivider } from "../components/SectionDivider";
@@ -6,16 +8,78 @@ import { Card } from "../components/ui/Card";
 import { StatRow } from "../components/ui/StatRow";
 import { Icon } from "../components/ui/Icon";
 
+const coverRequestedProjects = new Set<string>();
+
 export function Library() {
-  const { data: projects, isLoading, error } = useProjects();
+  const { data: projects, isLoading, error, refetch } = useProjects();
+  const generateCover = useGenerateProjectCover();
+  const [pendingCovers, setPendingCovers] = useState<Set<string>>(new Set());
   const totalCost = projects?.reduce((sum, p) => sum + p.total_cost_usd, 0) ?? 0;
   const runningCount = projects?.filter((p) => p.is_running).length ?? 0;
+
+  useEffect(() => {
+    if (!projects?.length) return;
+    for (const project of projects) {
+      if (
+        !project.furthest_stage ||
+        project.has_cover ||
+        project.cover_job?.status === "queued" ||
+        project.cover_job?.status === "running" ||
+        coverRequestedProjects.has(project.name)
+      ) {
+        continue;
+      }
+      coverRequestedProjects.add(project.name);
+      setPendingCovers((current) => new Set(current).add(project.name));
+      generateCover.mutate(
+        { project: project.name },
+        {
+          onSuccess: (data) => {
+            if (data.status === "exists") {
+              setPendingCovers((current) => {
+                const next = new Set(current);
+                next.delete(project.name);
+                return next;
+              });
+            }
+          },
+          onError: () => {
+            setPendingCovers((current) => {
+              const next = new Set(current);
+              next.delete(project.name);
+              return next;
+            });
+          },
+        },
+      );
+    }
+  }, [projects, generateCover]);
+
+  useEffect(() => {
+    if (!pendingCovers.size) return;
+    const timer = window.setInterval(() => {
+      refetch().then((result) => {
+        const covered = new Set(
+          (result.data ?? [])
+            .filter((project) => project.has_cover || project.cover_job?.status === "failed")
+            .map((project) => project.name),
+        );
+        if (!covered.size) return;
+        setPendingCovers((current) => {
+          const next = new Set(current);
+          for (const name of covered) next.delete(name);
+          return next;
+        });
+      });
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [pendingCovers, refetch]);
 
   if (isLoading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-          BUILDING STUDIO INDEX...
+          BUILDING STUDIO INDEX…
         </p>
       </div>
     );
@@ -45,20 +109,31 @@ export function Library() {
       <section>
         <SectionDivider number={1} label="ACTIVE PRODUCTIONS" />
         <div className="mt-5 grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
-          <Card className="flex min-h-[320px] flex-col items-center justify-center border-dashed p-5">
-            <div className="flex h-14 w-14 items-center justify-center border-[2px] border-dashed border-ink-black text-ink-black/40">
-              <Icon name="plus" size={22} />
-            </div>
-            <div className="mt-4 font-display text-[1rem] font-bold tracking-[-0.04em] text-ink-black/50">
-              START NEW PROJECT
-            </div>
-            <p className="mt-2 max-w-[20ch] text-center text-[0.78rem] text-ink-black/40">
-              Initialize a new novel-to-comic production pipeline.
-            </p>
-          </Card>
+          <Link to="/new">
+            <Card className="flex min-h-[320px] flex-col items-center justify-center border-dashed p-5">
+              <div className="flex h-14 w-14 items-center justify-center border-[2px] border-dashed border-ink-black text-ink-black/40">
+                <Icon name="plus" size={22} />
+              </div>
+              <div className="mt-4 font-display text-[1rem] font-bold tracking-[-0.04em] text-ink-black/50">
+                START NEW PROJECT
+              </div>
+              <p className="mt-2 max-w-[20ch] text-center text-[0.78rem] text-ink-black/40">
+                Initialize a new novel-to-comic production pipeline.
+              </p>
+            </Card>
+          </Link>
 
           {projects?.map((project) => (
-            <ProjectCard key={project.name} project={project} />
+            <ProjectCard
+              key={project.name}
+              project={project}
+              coverPending={
+                pendingCovers.has(project.name) ||
+                project.cover_job?.status === "queued" ||
+                project.cover_job?.status === "running"
+              }
+              coverFailed={project.cover_job?.status === "failed"}
+            />
           ))}
         </div>
       </section>

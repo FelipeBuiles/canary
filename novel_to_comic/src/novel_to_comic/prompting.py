@@ -1,0 +1,274 @@
+"""Compact image prompt composition for panel generation."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from pydantic import BaseModel
+
+from novel_to_comic.config import Config
+from novel_to_comic.models.panel import PanelBreakdown
+from novel_to_comic.models.prompt import ImagePrompt
+from novel_to_comic.models.story_bible import Character, StoryBible
+
+try:
+    from novel_to_comic.models.prompt import PromptSubject
+except ImportError:
+    # A dev server can already have the old prompt model in sys.modules when
+    # this module is imported after a code change. Keep the prompt builder usable
+    # until the server is restarted with the new model fields.
+    class PromptSubject(BaseModel):
+        character_id: str | None = None
+        name: str
+        identity: str
+        action: str = ""
+        expression: str = ""
+        position: str = ""
+
+
+_SHOT_DIMENSIONS: dict[str, tuple[int, int]] = {
+    "close-up": (768, 1024),
+    "over-shoulder": (768, 1024),
+    "medium": (768, 1344),
+    "wide": (768, 1344),
+    "extreme-wide": (768, 1344),
+}
+_DEFAULT_DIMENSIONS = (768, 1344)
+
+_SHOT_COMPOSITION: dict[str, str] = {
+    "close-up": "close-up portrait, eye-level, face and shoulders filling the vertical panel",
+    "medium": "medium vertical panel, full body visible, character in the lower two-thirds",
+    "over-shoulder": "over-the-shoulder vertical panel, one foreground shoulder, the other face visible",
+    "wide": "wide vertical panel, full bodies visible with significant surrounding environment",
+    "extreme-wide": "extreme-wide establishing panel, environment dominant, characters small but readable",
+}
+
+
+def dimensions_for_shot(shot_type: str) -> tuple[int, int]:
+    return _SHOT_DIMENSIONS.get(shot_type.lower().replace(" ", "-"), _DEFAULT_DIMENSIONS)
+
+
+def _clean(value: str | None) -> str:
+    return " ".join((value or "").replace("\n", " ").split())
+
+
+def _shorten(value: str, limit: int) -> str:
+    value = _clean(value)
+    if len(value) <= limit:
+        return value
+    shortened = value[:limit].rsplit(" ", 1)[0].rstrip(" ,.;:")
+    return f"{shortened}."
+
+
+def _character_identity(character: Character) -> str:
+    features = ", ".join(character.distinguishing_features[:4])
+    pieces = [
+        _clean(character.age_range),
+        _clean(character.gender),
+        _clean(features),
+        _clean(character.default_outfit),
+    ]
+    identity = "; ".join(piece for piece in pieces if piece)
+    if len(identity) < 40:
+        identity = _clean(character.visual_anchor)
+    return _shorten(identity, 220)
+
+
+def _reference_paths(project_dir: Path, character_id: str, character_count: int) -> list[str]:
+    char_ref_dir = project_dir / "refs" / character_id
+    sheet = char_ref_dir / "sheet.png"
+    if sheet.exists():
+        return [str(sheet)]
+
+    if character_count <= 1:
+        legacy_views = ["front", "three_quarter", "gesture"]
+    elif character_count == 2:
+        legacy_views = ["front", "three_quarter"]
+    else:
+        legacy_views = ["front"]
+    return [str(path) for view in legacy_views if (path := char_ref_dir / f"{view}.png").exists()]
+
+
+def _panel_text_blob(panel: PanelBreakdown) -> str:
+    pieces: list[str] = [
+        panel.background_description,
+        panel.lighting,
+        panel.mood,
+        panel.sfx or "",
+    ]
+    pieces.extend(panel.character_actions.values())
+    pieces.extend(line.text for line in panel.dialogue)
+    return " ".join(pieces).lower()
+
+
+def _panel_props(panel: PanelBreakdown, story_bible: StoryBible) -> list[str]:
+    blob = _panel_text_blob(panel)
+    props: list[str] = []
+    for prop in getattr(story_bible, "props", []):
+        name = prop.name.lower()
+        prop_id = (prop.id or "").lower()
+        if name in blob or (prop_id and prop_id in blob):
+            props.append(f"{prop.name}: {_shorten(prop.visual_anchor, 120)}")
+    return props
+
+
+def build_image_prompt_spec(
+    config: Config,
+    project_dir: Path,
+    panel: PanelBreakdown,
+    story_bible: StoryBible,
+) -> ImagePrompt:
+    character_count = len(panel.characters_present)
+    subjects: list[PromptSubject] = []
+    ref_paths: list[str] = []
+
+    for character_id in panel.characters_present:
+        character = next((c for c in story_bible.characters if c.id == character_id), None)
+        if not character:
+            continue
+        subjects.append(
+            PromptSubject(
+                character_id=character_id,
+                name=character.name,
+                identity=_character_identity(character),
+                action=_clean(panel.character_actions.get(character_id, "")),
+                expression=_clean(panel.character_expressions.get(character_id, "")),
+                position=_clean(panel.character_positions.get(character_id, "")),
+            )
+        )
+        ref_paths.extend(_reference_paths(project_dir, character_id, character_count))
+
+    scene = next((s for s in story_bible.scenes if s.id == panel.scene_id), None)
+    location = None
+    if scene:
+        location = next((loc for loc in story_bible.locations if loc.id == scene.location_id), None)
+
+    shot_key = panel.shot_type.lower().replace(" ", "-")
+    composition = _SHOT_COMPOSITION.get(
+        shot_key,
+        f"{_clean(panel.shot_type)} panel, {_clean(panel.camera_angle)} camera",
+    )
+    if panel.camera_angle:
+        composition = f"{composition}, {_clean(panel.camera_angle)} camera"
+
+    setting_parts = []
+    if location:
+        setting_parts.append(_shorten(location.visual_anchor, 180))
+    if panel.background_description:
+        setting_parts.append(_shorten(panel.background_description, 160))
+
+    width, height = dimensions_for_shot(panel.shot_type)
+    setting = "; ".join(setting_parts)
+    lighting = _clean(panel.lighting)
+    mood = _clean(panel.mood)
+    props = _panel_props(panel, story_bible)
+    constraints = (
+        f"image-only comic panel art; exactly {character_count} character"
+        f"{'' if character_count == 1 else 's'}; one body per listed character; "
+        "dialogue, captions, balloons, and lettering are absent for post-production"
+    )
+    full_prompt = _render_panel_prompt_body_parts(
+        subjects=subjects,
+        composition=composition,
+        setting=setting,
+        lighting=lighting,
+        mood=mood,
+        props=props,
+        constraints=constraints,
+    )
+
+    prompt = ImagePrompt(
+        prompt_version=2,
+        scene_id=panel.scene_id,
+        panel_number=panel.panel_number,
+        full_prompt=full_prompt,
+        style=config.style_template,
+        composition=composition,
+        setting=setting,
+        lighting=lighting,
+        mood=mood,
+        subjects=subjects,
+        props=props,
+        constraints=constraints,
+        reference_image_paths=ref_paths,
+        negative_prompt=None,
+        width=width,
+        height=height,
+        steps=config.image_steps,
+        guidance_scale=config.flux_guidance_scale,
+    )
+    return prompt
+
+
+def _render_panel_prompt_body_parts(
+    *,
+    subjects: list[PromptSubject],
+    composition: str | None,
+    setting: str | None,
+    lighting: str | None,
+    mood: str | None,
+    props: list[str],
+    constraints: str | None,
+) -> str:
+    sentences: list[str] = []
+
+    if subjects:
+        rendered_subjects = []
+        for subject in subjects:
+            details = [
+                subject.name,
+                subject.identity,
+                subject.action,
+                f"expression: {subject.expression}" if subject.expression else "",
+                f"position: {subject.position}" if subject.position else "",
+            ]
+            rendered_subjects.append(", ".join(_clean(part) for part in details if _clean(part)))
+        sentences.append("; ".join(rendered_subjects))
+
+    if composition:
+        sentences.append(f"Composition: {_clean(composition)}")
+
+    setting_line_parts = [_clean(setting), _clean(lighting), _clean(mood)]
+    setting_line = "; ".join(part for part in setting_line_parts if part)
+    if setting_line:
+        sentences.append(f"Setting: {setting_line}")
+
+    if props:
+        sentences.append(f"Key props: {'; '.join(_clean(prop) for prop in props)}")
+
+    if constraints:
+        sentences.append(_clean(constraints))
+
+    body = ". ".join(sentence.rstrip(" .") for sentence in sentences if sentence).strip()
+    return f"{body}." if body else ""
+
+
+def render_panel_prompt_body(prompt: ImagePrompt) -> str:
+    """Render the compact panel-specific prompt body, excluding global style."""
+    return _render_panel_prompt_body_parts(
+        subjects=getattr(prompt, "subjects", []) or [],
+        composition=getattr(prompt, "composition", None),
+        setting=getattr(prompt, "setting", None),
+        lighting=getattr(prompt, "lighting", None),
+        mood=getattr(prompt, "mood", None),
+        props=getattr(prompt, "props", []) or [],
+        constraints=getattr(prompt, "constraints", None),
+    )
+
+
+def render_generation_prompt(prompt: ImagePrompt, style_template: str) -> str:
+    style = _clean(style_template or getattr(prompt, "style", None))
+
+    if getattr(prompt, "prompt_version", 1) >= 2:
+        body = _clean(getattr(prompt, "full_prompt", "")) or render_panel_prompt_body(prompt)
+        if style:
+            return f"{style}\n\n{body}"
+        return body
+
+    if style:
+        return (
+            f"{style}\n\n"
+            "Use the selected visual style above as authoritative if later prompt text conflicts.\n\n"
+            f"{prompt.full_prompt}"
+        )
+    return getattr(prompt, "full_prompt", "")

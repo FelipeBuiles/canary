@@ -1,43 +1,36 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { useImages, useProjectStatus, useRegenPanel } from "../../api/queries";
+import { useGenerationJobs, useImages, useProjectStatus, useRegenPanel } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { PanelCard } from "../../components/PanelCard";
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
 import { StatRow } from "../../components/ui/StatRow";
 import { RoomShell } from "../../components/ui/RoomShell";
+import { StyleCallout } from "../../components/wizard/StyleCallout";
 import { useRegenStore } from "../../store/regen";
-import { useState } from "react";
 import type { ImageStatus } from "../../types/api";
 
 export function DrawRoom() {
   const { name } = useParams<{ name: string }>();
-  const { active, bustTimestamps, errors, begin, markStarted, complete, fail } = useRegenStore();
+  const { active, bustTimestamps, errors, begin, attachJob, updateJob, complete, fail } = useRegenStore();
   const [sceneFilter, setSceneFilter] = useState<string | null>(null);
 
-  const projectRegen = name ? (active[name] ?? null) : null;
-  const regeningKey = projectRegen?.key ?? null;
-  const regenStartedAt = projectRegen?.startedAt ?? null;
+  const projectRegens = name ? (active[name] ?? {}) : {};
+  const regeningKeys = Object.keys(projectRegens);
+  const regenJobIds = Object.values(projectRegens)
+    .map((regen) => regen.jobId)
+    .filter((jobId): jobId is string => !!jobId);
+  const { data: generationJobs } = useGenerationJobs(name, regenJobIds);
+  const regenModes = new Map(
+    regeningKeys.map((key) => [key, projectRegens[key]?.status ?? "queued"] as const),
+  );
+  const runningRegenCount = Object.values(projectRegens).filter((regen) => regen.status === "running").length;
+  const queuedRegenCount = Object.values(projectRegens).filter((regen) => regen.status === "queued").length;
 
-  const { data: images, isLoading, dataUpdatedAt } = useImages(name, regeningKey ? 2000 : undefined);
+  const { data: images, isLoading } = useImages(name, regeningKeys.length > 0 ? 2000 : undefined);
   const { data: status } = useProjectStatus(name);
   const { mutate: regen } = useRegenPanel();
-
-  // Completion: panel reappears in a poll that happened after file was deleted.
-  useEffect(() => {
-    if (!name || !regeningKey || !images || regenStartedAt === null) return;
-    // dataUpdatedAt < regenStartedAt means cached data from before the delete — skip.
-    if (dataUpdatedAt < regenStartedAt) return;
-
-    const lastDash = regeningKey.lastIndexOf("-");
-    const sceneId = regeningKey.slice(0, lastDash);
-    const panelNum = parseInt(regeningKey.slice(lastDash + 1), 10);
-    const done = images.some(
-      (img) => img.scene_id === sceneId && img.panel_number === panelNum,
-    );
-    if (done) complete(name, regeningKey);
-  }, [images, dataUpdatedAt, regeningKey, regenStartedAt, name, complete]);
 
   function handleRegen(sceneId: string, panelNumber: number) {
     if (!name) return;
@@ -46,13 +39,29 @@ export function DrawRoom() {
     regen(
       { project: name, sceneId, panelNumber },
       {
-        onSuccess: () => markStarted(name),
+        onSuccess: (data) => attachJob(name, key, data.job),
         onError: (err) => {
           fail(name, key, err instanceof Error ? err.message : "Regeneration failed");
         },
       },
     );
   }
+
+  useEffect(() => {
+    if (!name || !generationJobs?.jobs.length) return;
+    const activeByJobId = new Map(
+      Object.values(projectRegens)
+        .filter((regen) => regen.jobId)
+        .map((regen) => [regen.jobId, regen] as const),
+    );
+    for (const job of generationJobs.jobs) {
+      const regen = activeByJobId.get(job.id);
+      if (!regen) continue;
+      if (job.status === "complete") complete(name, regen.key);
+      else if (job.status === "failed") fail(name, regen.key, job.error ?? "Regeneration failed");
+      else updateJob(name, regen.key, job);
+    }
+  }, [generationJobs, projectRegens, name, updateJob, complete, fail]);
 
   const generateStage = status?.stages?.generate;
   const failedItems = generateStage?.items_failed ?? [];
@@ -63,7 +72,7 @@ export function DrawRoom() {
 
   // Keep the regen panel in the grid while its file is absent from disk.
   const displayImages: ImageStatus[] = [...baseImages];
-  if (regeningKey && name) {
+  for (const regeningKey of regeningKeys) {
     const lastDash = regeningKey.lastIndexOf("-");
     const regenSceneId = regeningKey.slice(0, lastDash);
     const regenPanelNum = parseInt(regeningKey.slice(lastDash + 1), 10);
@@ -85,10 +94,10 @@ export function DrawRoom() {
   const scenes = [...new Set(displayImages.map((img) => img.scene_id))];
 
   if (isLoading) {
-    return <RoomShell isLoading loadingText="LOADING PANEL GALLERY..." />;
+    return <RoomShell isLoading loadingText="LOADING PANEL GALLERY…" />;
   }
 
-  if ((!images?.length && !regeningKey) || !name) {
+  if ((!images?.length && regeningKeys.length === 0) || !name) {
     return (
       <RoomShell
         isEmpty
@@ -105,6 +114,7 @@ export function DrawRoom() {
         title="PANEL GALLERY"
         lead="Every generated panel at a glance — regenerate individual frames, review failures, switch scenes."
       />
+      <StyleCallout project={name} />
       <div className="flex flex-wrap gap-2">
         <Button variant={!sceneFilter ? "primary" : "outline"} size="sm" onClick={() => setSceneFilter(null)}>
           ALL
@@ -139,7 +149,7 @@ export function DrawRoom() {
                 panelNumber={img.panel_number}
                 status={isFailed ? "failed" : img.status}
                 imageUrl={imageUrl}
-                isRegening={regeningKey === key}
+                regenMode={regenModes.get(key) ?? null}
                 regenError={regenError}
                 onRegenerate={() => handleRegen(img.scene_id, img.panel_number)}
               />
@@ -164,12 +174,17 @@ export function DrawRoom() {
           </Card>
           <Card className="p-3">
             <div className="space-y-2">
-              <StatRow label="TOTAL PANELS">{(images?.length ?? 0) + (regeningKey ? 1 : 0)}</StatRow>
+              <StatRow label="TOTAL PANELS">{displayImages.length}</StatRow>
               <StatRow label="COMPLETED">{images?.filter((i) => i.status === "done").length ?? 0}</StatRow>
               <StatRow label="FAILED">{images?.filter((i) => i.status === "failed").length ?? 0}</StatRow>
-              {regeningKey && (
-                <StatRow label="REGENING">
-                  <span className="animate-pulse text-narrator-gold">1</span>
+              {runningRegenCount > 0 && (
+                <StatRow label="RUNNING">
+                  <span className="animate-pulse text-narrator-gold">{runningRegenCount}</span>
+                </StatRow>
+              )}
+              {queuedRegenCount > 0 && (
+                <StatRow label="QUEUED">
+                  <span className="text-narrator-gold">{queuedRegenCount}</span>
                 </StatRow>
               )}
             </div>

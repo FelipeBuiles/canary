@@ -1,23 +1,35 @@
-import { useState } from "react";
-import { useParams } from "react-router-dom";
-import { usePromptSummaries, usePromptsForScene } from "../../api/queries";
+import { useParams, useSearchParams } from "react-router-dom";
+import { usePromptSummaries, usePromptsForScene, useUpdatePrompt } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
+import { EditableText } from "../../components/ui/EditableText";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { SceneSidebar } from "../../components/ui/SceneSidebar";
+import type { ImagePrompt } from "../../types/api";
 
 export function DirectRoom() {
   const { name } = useParams<{ name: string }>();
   const { data: summaries, isLoading } = usePromptSummaries(name);
-  const [selectedScene, setSelectedScene] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedScene = searchParams.get("scene");
   const activeScene = selectedScene ?? summaries?.[0]?.scene_id;
   const { data: prompts, isLoading: loadingPrompts } = usePromptsForScene(name, activeScene);
+  const updatePrompt = useUpdatePrompt();
+
+  const handleSavePrompt = (prompt: ImagePrompt, patch: Partial<ImagePrompt>) => {
+    if (!name || !activeScene) return;
+    updatePrompt.mutate({
+      project: name,
+      sceneId: activeScene,
+      data: { ...prompt, ...patch },
+    });
+  };
 
   return (
     <RoomShell
       isLoading={isLoading}
-      loadingText="LOADING IMAGE PROMPTS..."
+      loadingText="LOADING IMAGE PROMPTS…"
       isEmpty={!summaries?.length || !name}
       emptyTitle="IMAGE PROMPTS NOT AVAILABLE"
       emptyDescription="Complete the DIRECT stage first."
@@ -37,7 +49,7 @@ export function DirectRoom() {
               count: `${s.prompt_count} prompts`,
             }))}
             activeId={activeScene ?? ""}
-            onSelect={setSelectedScene}
+            onSelect={(id) => setSearchParams({ scene: id }, { replace: true })}
           />
         )}
 
@@ -45,7 +57,7 @@ export function DirectRoom() {
           {loadingPrompts ? (
             <div className="flex min-h-[40vh] items-center justify-center">
               <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-                LOADING...
+                LOADING…
               </p>
             </div>
           ) : prompts?.length ? (
@@ -66,9 +78,12 @@ export function DirectRoom() {
                       <Tag>steps: {prompt.steps}</Tag>
                     </div>
                   </div>
-                  <div className="mt-3 whitespace-pre-wrap text-[0.82rem] leading-7 text-ink-black/80">
-                    {prompt.full_prompt}
-                  </div>
+                  <EditableText
+                    value={prompt.full_prompt}
+                    onSave={(v) => handleSavePrompt(prompt, { full_prompt: v })}
+                    multiline
+                    className="mt-3 block whitespace-pre-wrap text-[0.82rem] leading-7 text-ink-black/80"
+                  />
                   {prompt.reference_image_paths.length > 0 && (
                     <div className="mt-3 border-t border-panel-line pt-3">
                       <div className="mb-2 font-meta text-[0.46rem] tracking-[0.16em] text-ink-black/45">

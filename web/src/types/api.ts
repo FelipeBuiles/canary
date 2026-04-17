@@ -14,6 +14,17 @@ export type StageStatus =
   | "complete"
   | "failed";
 
+export interface ConfigOverrides {
+  style_template?: string;
+  image_model?: string;
+  image_width?: number;
+  image_height?: number;
+  image_steps?: number;
+  max_panels_per_scene?: number;
+  max_panels_per_page?: number;
+  comic_theme?: string;
+}
+
 export interface StageInfo {
   status: StageStatus;
   items_done: number;
@@ -32,6 +43,8 @@ export interface ProjectSummary {
   total_cost_usd: number;
   furthest_stage: string | null;
   is_running: boolean;
+  has_cover: boolean;
+  cover_job: GenerationJob | null;
 }
 
 export interface ProjectStatus {
@@ -39,6 +52,7 @@ export interface ProjectStatus {
   created_at: string;
   total_cost_usd: number;
   is_running: boolean;
+  has_cover: boolean;
   stages: Record<string, StageInfo>;
 }
 
@@ -49,6 +63,22 @@ export interface PipelineEvent {
   done?: number;
   message?: string;
   level?: "info" | "warn" | "error" | "dim" | "bold";
+}
+
+export type GenerationJobStatus = "queued" | "running" | "complete" | "failed";
+
+export interface GenerationJob {
+  id: string;
+  project_name: string;
+  kind: string;
+  label: string;
+  payload: Record<string, unknown>;
+  status: GenerationJobStatus;
+  queue_position: number | null;
+  queued_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
 }
 
 export const STAGE_ORDER: StageName[] = [
@@ -187,10 +217,28 @@ export interface PanelBreakdown {
   transition_note: string | null;
 }
 
+export interface PromptSubject {
+  character_id: string | null;
+  name: string;
+  identity: string;
+  action: string;
+  expression: string;
+  position: string;
+}
+
 export interface ImagePrompt {
+  prompt_version?: number;
   scene_id: string;
   panel_number: number;
   full_prompt: string;
+  style?: string | null;
+  composition?: string | null;
+  setting?: string | null;
+  lighting?: string | null;
+  mood?: string | null;
+  subjects?: PromptSubject[];
+  props?: string[];
+  constraints?: string | null;
   reference_image_paths: string[];
   negative_prompt: null;
   width: number;

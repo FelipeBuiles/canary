@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { usePages, usePage } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { PageCanvas } from "../../components/PageCanvas";
@@ -10,15 +9,20 @@ import { Card } from "../../components/ui/Card";
 export function ComposeRoom() {
   const { name } = useParams<{ name: string }>();
   const { data: pageList, isLoading: loadingList } = usePages(name);
-  const [currentPage, setCurrentPage] = useState(1);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const currentPage = Number(searchParams.get("page") ?? 1);
   const safePage = pageList?.length ? Math.min(currentPage, pageList.length) : undefined;
   const { data: page, isLoading: loadingPage } = usePage(name, safePage);
+
+  function setPage(p: number) {
+    setSearchParams({ page: String(p) }, { replace: true });
+  }
 
   if (loadingList) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-          LOADING PAGE EDITOR...
+          LOADING PAGE EDITOR…
         </p>
       </div>
     );
@@ -57,7 +61,7 @@ export function ComposeRoom() {
             <Button
               variant="secondary"
               size="md"
-              onClick={() => setCurrentPage(Math.max(1, pageNumber - 1))}
+              onClick={() => setPage(Math.max(1, pageNumber - 1))}
               disabled={pageNumber <= 1}
             >
               ← PREV
@@ -68,7 +72,7 @@ export function ComposeRoom() {
             <Button
               variant="secondary"
               size="md"
-              onClick={() => setCurrentPage(Math.min(totalPages, pageNumber + 1))}
+              onClick={() => setPage(Math.min(totalPages, pageNumber + 1))}
               disabled={pageNumber >= totalPages}
             >
               NEXT →
@@ -78,7 +82,7 @@ export function ComposeRoom() {
               {pageList.map((p) => (
                 <button
                   key={p.page_number}
-                  onClick={() => setCurrentPage(p.page_number)}
+                  onClick={() => setPage(p.page_number)}
                   className={`h-6 w-6 border-[2px] border-ink-black font-meta text-[0.44rem] tracking-[0.12em] ${
                     p.page_number === pageNumber
                       ? "bg-hero-red text-bristol"
@@ -95,7 +99,7 @@ export function ComposeRoom() {
           {loadingPage ? (
             <Card className="flex min-h-[40vh] items-center justify-center">
               <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-                LOADING PAGE...
+                LOADING PAGE…
               </p>
             </Card>
           ) : page ? (

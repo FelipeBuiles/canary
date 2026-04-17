@@ -9,7 +9,8 @@ from fastapi.staticfiles import StaticFiles
 
 from novel_to_comic.assembly.html_renderer import FONTS_DIR
 
-from .routers import config, export, pages, pipeline, projects, stages
+from .generation_jobs import generation_worker
+from .routers import config, export, pages, pipeline, projects, stages, styles
 
 
 def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
@@ -19,6 +20,24 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app.state.projects_dir = projects_dir
     app.state.event_queues: dict[str, asyncio.Queue] = {}
     app.state.running_tasks: dict[str, asyncio.Task] = {}
+    app.state.generation_semaphore = asyncio.Semaphore(1)
+    app.state.generation_queue: asyncio.Queue = asyncio.Queue()
+    app.state.generation_jobs = {}
+    app.state.generation_job_sequence = 1
+
+    @app.on_event("startup")
+    async def _start_generation_worker() -> None:
+        app.state.generation_worker_task = asyncio.create_task(generation_worker(app))
+
+    @app.on_event("shutdown")
+    async def _stop_generation_worker() -> None:
+        task = getattr(app.state, "generation_worker_task", None)
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
     # CORS for Vite dev server
     if dev:
@@ -55,6 +74,11 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         stages.router,
         prefix="/api/projects/{project_name}",
         tags=["stages"],
+    )
+    app.include_router(
+        styles.router,
+        prefix="/api/projects/{project_name}",
+        tags=["styles"],
     )
 
     # Serve bundled fonts

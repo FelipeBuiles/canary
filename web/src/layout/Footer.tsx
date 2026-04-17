@@ -24,10 +24,10 @@ export function Footer() {
         </span>
 
         <div className="flex flex-wrap items-center gap-5 text-[0.55rem]">
-          <span className="font-meta tracking-[0.12em] text-bristol/80">
+          <span className="font-meta tracking-[0.12em] text-bristol/80 tabular-nums">
             Usage: ${(status?.total_cost_usd ?? 0).toFixed(2)}
           </span>
-          <span className="font-meta tracking-[0.12em] text-bristol/80">
+          <span className="font-meta tracking-[0.12em] text-bristol/80 tabular-nums">
             Progress: {completedStages}/7
           </span>
           <span className="font-meta tracking-[0.12em] text-narrator-gold">

@@ -1,31 +1,56 @@
 import { useParams } from "react-router-dom";
-import { useStoryBible } from "../../api/queries";
+import { useStoryBible, useUpdateStoryBible } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { SectionDivider } from "../../components/SectionDivider";
 import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
+import { EditableText } from "../../components/ui/EditableText";
 import { RoomShell } from "../../components/ui/RoomShell";
 import type { Character, Location } from "../../types/api";
 
-function CharacterCard({ character }: { character: Character }) {
+export function CharacterCard({
+  character,
+  onSave,
+}: {
+  character: Character;
+  onSave: (updated: Character) => void;
+}) {
+  const update = (patch: Partial<Character>) =>
+    onSave({ ...character, ...patch });
+
   return (
     <Card className="p-4">
       <div className="flex items-start justify-between">
         <div>
-          <div className="font-display text-[1.15rem] font-bold tracking-[-0.05em] text-ink-black">
-            {character.name}
-          </div>
-          <div className="mt-1 font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/55">
-            {character.age_range} &middot; {character.gender}
+          <EditableText
+            value={character.name}
+            onSave={(v) => update({ name: v })}
+            className="font-display text-[1.15rem] font-bold tracking-[-0.05em] text-ink-black"
+          />
+          <div className="mt-1 font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/55 flex items-center gap-1">
+            <EditableText
+              value={character.age_range}
+              onSave={(v) => update({ age_range: v })}
+              className="text-ink-black/55"
+            />
+            <span>&middot;</span>
+            <EditableText
+              value={character.gender}
+              onSave={(v) => update({ gender: v })}
+              className="text-ink-black/55"
+            />
           </div>
         </div>
         <Tag className="bg-pulp-paper">{character.id.toUpperCase()}</Tag>
       </div>
       <div className="mt-3 text-[0.82rem] leading-6 text-ink-black/74">
         <span className="font-meta text-[0.48rem] tracking-[0.18em] text-ink-black/45">VISUAL ANCHOR</span>
-        <p className="mt-1 text-[0.78rem] italic leading-6 text-ink-black/68">
-          {character.visual_anchor}
-        </p>
+        <EditableText
+          value={character.visual_anchor}
+          onSave={(v) => update({ visual_anchor: v })}
+          multiline
+          className="mt-1 block text-[0.78rem] italic leading-6 text-ink-black/68"
+        />
       </div>
       <div className="mt-3 flex flex-wrap gap-1.5">
         {character.distinguishing_features.map((f) => (
@@ -36,23 +61,45 @@ function CharacterCard({ character }: { character: Character }) {
   );
 }
 
-function LocationCard({ location }: { location: Location }) {
+export function LocationCard({
+  location,
+  onSave,
+}: {
+  location: Location;
+  onSave: (updated: Location) => void;
+}) {
+  const update = (patch: Partial<Location>) =>
+    onSave({ ...location, ...patch });
+
   return (
     <Card className="p-4">
       <div className="flex items-start justify-between">
-        <div className="font-display text-[1.15rem] font-bold tracking-[-0.05em] text-ink-black">
-          {location.name}
-        </div>
+        <EditableText
+          value={location.name}
+          onSave={(v) => update({ name: v })}
+          className="font-display text-[1.15rem] font-bold tracking-[-0.05em] text-ink-black"
+        />
         <Tag className="bg-pulp-paper">{location.id.toUpperCase()}</Tag>
       </div>
-      <p className="mt-2 text-[0.78rem] italic leading-6 text-ink-black/68">
-        {location.visual_anchor}
-      </p>
+      <EditableText
+        value={location.visual_anchor}
+        onSave={(v) => update({ visual_anchor: v })}
+        multiline
+        className="mt-2 block text-[0.78rem] italic leading-6 text-ink-black/68"
+      />
       <div className="mt-3 flex flex-wrap gap-1.5">
         {location.time_of_day && (
-          <Tag>{location.time_of_day}</Tag>
+          <EditableText
+            value={location.time_of_day}
+            onSave={(v) => update({ time_of_day: v })}
+            className="border border-ink-black px-2 py-1 font-meta text-[0.44rem] tracking-[0.14em]"
+          />
         )}
-        <Tag>{location.mood}</Tag>
+        <EditableText
+          value={location.mood}
+          onSave={(v) => update({ mood: v })}
+          className="border border-ink-black px-2 py-1 font-meta text-[0.44rem] tracking-[0.14em]"
+        />
       </div>
     </Card>
   );
@@ -61,12 +108,13 @@ function LocationCard({ location }: { location: Location }) {
 export function StoryBibleRoom() {
   const { name } = useParams<{ name: string }>();
   const { data: bible, isLoading, error } = useStoryBible(name);
+  const updateBible = useUpdateStoryBible();
 
   if (isLoading) {
-    return <RoomShell isLoading loadingText="LOADING STORY BIBLE..." />;
+    return <RoomShell isLoading loadingText="LOADING STORY BIBLE…" />;
   }
 
-  if (error || !bible) {
+  if (error || !bible || !name) {
     return (
       <RoomShell
         isEmpty
@@ -75,6 +123,22 @@ export function StoryBibleRoom() {
       />
     );
   }
+
+  const handleUpdateCharacter = (updatedChar: Character) => {
+    const newBible = {
+      ...bible,
+      characters: bible.characters.map(c => c.id === updatedChar.id ? updatedChar : c)
+    };
+    updateBible.mutate({ project: name, data: newBible });
+  };
+
+  const handleUpdateLocation = (updatedLoc: Location) => {
+    const newBible = {
+      ...bible,
+      locations: bible.locations.map(l => l.id === updatedLoc.id ? updatedLoc : l)
+    };
+    updateBible.mutate({ project: name, data: newBible });
+  };
 
   return (
     <RoomShell>
@@ -92,7 +156,11 @@ export function StoryBibleRoom() {
           </h2>
           <div className="mt-5 grid gap-5 sm:grid-cols-2">
             {bible.characters.map((char) => (
-              <CharacterCard key={char.id} character={char} />
+              <CharacterCard
+                key={char.id}
+                character={char}
+                onSave={handleUpdateCharacter}
+              />
             ))}
           </div>
         </div>
@@ -104,7 +172,11 @@ export function StoryBibleRoom() {
           </h2>
           <div className="mt-5 grid gap-5 sm:grid-cols-2">
             {bible.locations.map((loc) => (
-              <LocationCard key={loc.id} location={loc} />
+              <LocationCard
+                key={loc.id}
+                location={loc}
+                onSave={handleUpdateLocation}
+              />
             ))}
           </div>
         </div>

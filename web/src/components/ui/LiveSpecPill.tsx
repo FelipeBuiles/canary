@@ -1,29 +1,29 @@
-import type { ButtonHTMLAttributes } from "react";
 import { cn } from "../../lib/cn";
 
 /**
- * Bottom-right "LIVE SPEC ACTIVE" pill button from the spec.
+ * Bottom-right "LIVE SPEC ACTIVE" pill indicator.
  * A persistent floating indicator with a pulsing dot. Render at the app root.
  */
 export function LiveSpecPill({
   label = "LIVE SPEC ACTIVE",
   active = true,
   className,
-  ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & {
+}: {
   label?: string;
   active?: boolean;
+  className?: string;
 }) {
   return (
-    <button
+    <div
+      role="status"
+      aria-live="polite"
       className={cn(
-        "fixed bottom-[50px] right-5 z-40 flex items-center gap-2 rounded-full border-[2px] border-ink-black px-4 py-2 font-meta text-[0.56rem] tracking-[0.2em] uppercase shadow-ink-sm transition-transform hover:-translate-y-[1px]",
+        "fixed bottom-[50px] right-5 z-40 flex items-center gap-2 rounded-full border-[2px] border-ink-black px-4 py-2 font-meta text-[0.56rem] tracking-[0.2em] uppercase shadow-ink-sm",
         active
           ? "bg-archive-sage text-bristol"
           : "bg-pulp-paper text-ink-black/55",
         className,
       )}
-      {...props}
     >
       <span
         className={cn(
@@ -32,6 +32,6 @@ export function LiveSpecPill({
         )}
       />
       {label}
-    </button>
+    </div>
   );
 }

@@ -1,12 +1,11 @@
 import { Link, useParams, useLocation } from "react-router-dom";
-import { useRunPipeline } from "../api/queries";
-import { usePipelineStore } from "../store/pipeline";
+import { useRunAction } from "../hooks/useRunAction";
 import { STAGE_DISPLAY_NAMES, STAGE_ORDER, STAGE_ROUTES } from "../types/api";
 import { Button } from "../components/ui/Button";
 
 function ProfileIcon() {
   return (
-    <span className="flex h-8 w-8 items-center justify-center rounded-full border-[2px] border-ink-black">
+    <span aria-hidden="true" className="flex h-8 w-8 items-center justify-center rounded-full border-[2px] border-ink-black">
       <span className="block h-2.5 w-2.5 rounded-full border border-ink-black" />
     </span>
   );
@@ -15,23 +14,12 @@ function ProfileIcon() {
 export function TopNav() {
   const { name } = useParams();
   const location = useLocation();
-  const runPipeline = useRunPipeline();
-  const connect = usePipelineStore((state) => state.connect);
-  const clearEvents = usePipelineStore((state) => state.clearEvents);
+  const { handleRun, isPending } = useRunAction();
 
   const currentRoom = location.pathname.split("/").pop() ?? "";
   const activeRouteStage = Object.entries(STAGE_ROUTES).find(
     ([, route]) => route === currentRoom,
   )?.[0];
-
-  const handleRun = () => {
-    if (!name) return;
-    clearEvents();
-    runPipeline.mutate(
-      { project: name },
-      { onSuccess: () => connect(name) },
-    );
-  };
 
   return (
     <header className="shrink-0 border-b-[2px] border-ink-black bg-pulp-paper">
@@ -71,12 +59,12 @@ export function TopNav() {
 
         <div className="flex items-center gap-4">
           <Button
-            onClick={handleRun}
-            disabled={!name || runPipeline.isPending}
+            onClick={() => name && handleRun(name)}
+            disabled={!name || isPending}
             size="lg"
             className="px-7"
           >
-            {runPipeline.isPending ? "RUNNING" : "RENDER"}
+            {isPending ? "RUNNING…" : "RENDER"}
           </Button>
           <ProfileIcon />
         </div>

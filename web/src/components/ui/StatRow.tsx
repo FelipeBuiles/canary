@@ -11,7 +11,7 @@ export function StatRow({ label, children }: StatRowProps) {
       <span className="font-meta text-[0.56rem] tracking-[0.18em] text-ink-black/45">
         {label}
       </span>
-      <span className="font-display text-[1.15rem] font-bold leading-none tracking-[-0.04em]">
+      <span className="font-display text-[1.15rem] font-bold leading-none tracking-[-0.04em] tabular-nums">
         {children}
       </span>
     </div>

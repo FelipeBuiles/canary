@@ -15,6 +15,13 @@ export function getStoryBible(project: string): Promise<StoryBible> {
   return apiFetch(`/projects/${encodeURIComponent(project)}/story-bible`);
 }
 
+export function updateStoryBible(project: string, data: StoryBible): Promise<StoryBible> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/story-bible`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
 // ── Screenplays ──────────────────────────────────────────────────────────────
 
 export function listScreenplays(project: string): Promise<ScreenplaySummary[]> {
@@ -47,6 +54,18 @@ export function getPanelsForScene(
   );
 }
 
+export function updatePanel(
+  project: string,
+  sceneId: string,
+  panelNumber: number,
+  data: PanelBreakdown,
+): Promise<PanelBreakdown> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/panels/${encodeURIComponent(sceneId)}/${panelNumber}`,
+    { method: "PUT", body: JSON.stringify(data) },
+  );
+}
+
 // ── Prompts ───────────────────────────────────────────────────────────────────
 
 export function listPromptSummaries(
@@ -61,6 +80,18 @@ export function getPromptsForScene(
 ): Promise<ImagePrompt[]> {
   return apiFetch(
     `/projects/${encodeURIComponent(project)}/prompts/${encodeURIComponent(sceneId)}`,
+  );
+}
+
+export function updatePrompt(
+  project: string,
+  sceneId: string,
+  panelNumber: number,
+  data: ImagePrompt,
+): Promise<ImagePrompt> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/prompts/${encodeURIComponent(sceneId)}/${panelNumber}`,
+    { method: "PUT", body: JSON.stringify(data) },
   );
 }
 

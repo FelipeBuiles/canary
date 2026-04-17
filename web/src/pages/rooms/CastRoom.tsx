@@ -1,87 +1,262 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { useStoryBible } from "../../api/queries";
+import { useGenerationJobs, useStoryBible, useRegenRef, useRegenPlate } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { SectionDivider } from "../../components/SectionDivider";
 import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
+import { Button } from "../../components/ui/Button";
 import { RoomShell } from "../../components/ui/RoomShell";
-import type { Character, Location } from "../../types/api";
+import { ImageModal } from "../../components/ui/ImageModal";
+import type { Character, GenerationJob, Location } from "../../types/api";
+
+function queuedLabel(job: GenerationJob | null) {
+  if (!job) return "QUEUED";
+  if (job.status === "running") return "RUNNING";
+  if (job.queue_position) return `QUEUE ${job.queue_position}`;
+  return "QUEUED";
+}
 
 function CharacterCastCard({ character, projectName }: { character: Character; projectName: string }) {
-  const refUrl = `/api/projects/${encodeURIComponent(projectName)}/files/refs/${encodeURIComponent(character.id)}/front.png`;
+  const refUrl = `/api/projects/${encodeURIComponent(projectName)}/files/refs/${encodeURIComponent(character.id)}/sheet.png`;
   const [imgFailed, setImgFailed] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [timestamp, setTimestamp] = useState(() => Date.now());
+  const [activeJob, setActiveJob] = useState<GenerationJob | null>(null);
+  const [regenError, setRegenError] = useState<string | null>(null);
+  const regenRef = useRegenRef();
+  const { data: generationJobs } = useGenerationJobs(projectName, activeJob ? [activeJob.id] : []);
+
+  useEffect(() => {
+    const job = generationJobs?.jobs[0];
+    if (!job) return;
+    if (job.status === "complete") {
+      setTimestamp(Date.now());
+      setImgFailed(false);
+      setActiveJob(null);
+      setRegenError(null);
+    } else if (job.status === "failed") {
+      setActiveJob(null);
+      setRegenError(job.error ?? "Regeneration failed");
+    } else {
+      setActiveJob(job);
+    }
+  }, [generationJobs]);
+
+  const handleRegen = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRegenError(null);
+    regenRef.mutate(
+      { project: projectName, charId: character.id },
+      {
+        onSuccess: (data) => setActiveJob(data.job),
+        onError: (err) => setRegenError(err.message),
+      }
+    );
+  };
 
   return (
-    <Card>
-      <div className="relative border-b-[2px] border-ink-black bg-ink-black">
-        {imgFailed ? (
-          <div className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-2 bg-ink-black/40">
-            <div className="font-meta text-[0.5rem] tracking-[0.18em] text-bristol/40">NO REF IMAGE</div>
-            <div className="font-meta text-[0.44rem] tracking-[0.14em] text-bristol/25">RUN CAST STAGE</div>
+    <>
+      <Card>
+        <div 
+          className="relative border-b-[2px] border-ink-black bg-ink-black cursor-pointer group"
+          onClick={() => !imgFailed && setIsModalOpen(true)}
+        >
+          {imgFailed ? (
+            <div className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-2 bg-ink-black/40">
+              {regenRef.isPending || activeJob ? (
+                <>
+                  <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-narrator-gold animate-pulse">
+                    {queuedLabel(activeJob)}
+                  </div>
+                  <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-bristol/55">
+                    GENERATING NEW REF
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="font-meta text-[0.5rem] tracking-[0.18em] text-bristol/40">NO REF IMAGE</div>
+                  <div className="font-meta text-[0.44rem] tracking-[0.14em] text-bristol/25">RUN CAST STAGE</div>
+                </>
+              )}
+            </div>
+          ) : (
+            <>
+              <img
+                src={`${refUrl}?t=${timestamp}`}
+                alt={character.name}
+                loading="lazy"
+                width={320}
+                height={400}
+                className="aspect-[4/5] w-full object-cover hover:opacity-90 transition-opacity"
+                onError={() => setImgFailed(true)}
+              />
+              {activeJob && (
+                <div className="absolute inset-x-2 bottom-2 border-[2px] border-ink-black bg-narrator-gold px-2 py-1 text-center font-meta text-[0.48rem] tracking-[0.16em] text-ink-black">
+                  {queuedLabel(activeJob)}
+                </div>
+              )}
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+                <Button
+                  size="md"
+                  className="border-bristol"
+                  onClick={handleRegen}
+                  disabled={regenRef.isPending || !!activeJob}
+                >
+                  {regenRef.isPending || activeJob ? queuedLabel(activeJob) : "REGENERATE"}
+                </Button>
+              </div>
+            </>
+          )}
+          <Tag className="absolute right-2 top-2 bg-hero-red text-bristol">
+            REF
+          </Tag>
+        </div>
+        <div className="p-3">
+          <div className="font-display text-[1rem] font-bold tracking-[-0.04em] text-ink-black">
+            {character.name}
           </div>
-        ) : (
-          <img
-            src={refUrl}
-            alt={character.name}
-            className="aspect-[4/5] w-full object-cover"
-            onError={() => setImgFailed(true)}
-          />
-        )}
-        <Tag className="absolute right-2 top-2 bg-hero-red text-bristol">
-          REF
-        </Tag>
-      </div>
-      <div className="p-3">
-        <div className="font-display text-[1rem] font-bold tracking-[-0.04em] text-ink-black">
-          {character.name}
+          <div className="mt-1 font-meta text-[0.48rem] tracking-[0.16em] text-ink-black/55">
+            {character.age_range} &middot; {character.gender}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {character.distinguishing_features.slice(0, 3).map((f) => (
+              <Tag key={f}>{f}</Tag>
+            ))}
+          </div>
+          {regenError && (
+            <div className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-[0.72rem] leading-relaxed text-bristol">
+              {regenError}
+            </div>
+          )}
         </div>
-        <div className="mt-1 font-meta text-[0.48rem] tracking-[0.16em] text-ink-black/55">
-          {character.age_range} &middot; {character.gender}
-        </div>
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {character.distinguishing_features.slice(0, 3).map((f) => (
-            <Tag key={f}>{f}</Tag>
-          ))}
-        </div>
-      </div>
-    </Card>
+      </Card>
+      <ImageModal 
+        isOpen={isModalOpen} 
+        onClose={() => setIsModalOpen(false)} 
+        src={`${refUrl}?t=${timestamp}`} 
+        alt={character.name} 
+      />
+    </>
   );
 }
 
 function LocationPlateCard({ location, projectName }: { location: Location; projectName: string }) {
   const plateUrl = `/api/projects/${encodeURIComponent(projectName)}/files/plates/${encodeURIComponent(location.id)}.png`;
   const [imgFailed, setImgFailed] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [timestamp, setTimestamp] = useState(() => Date.now());
+  const [activeJob, setActiveJob] = useState<GenerationJob | null>(null);
+  const [regenError, setRegenError] = useState<string | null>(null);
+  const regenPlate = useRegenPlate();
+  const { data: generationJobs } = useGenerationJobs(projectName, activeJob ? [activeJob.id] : []);
+
+  useEffect(() => {
+    const job = generationJobs?.jobs[0];
+    if (!job) return;
+    if (job.status === "complete") {
+      setTimestamp(Date.now());
+      setImgFailed(false);
+      setActiveJob(null);
+      setRegenError(null);
+    } else if (job.status === "failed") {
+      setActiveJob(null);
+      setRegenError(job.error ?? "Regeneration failed");
+    } else {
+      setActiveJob(job);
+    }
+  }, [generationJobs]);
+
+  const handleRegen = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRegenError(null);
+    regenPlate.mutate(
+      { project: projectName, locId: location.id },
+      {
+        onSuccess: (data) => setActiveJob(data.job),
+        onError: (err) => setRegenError(err.message),
+      }
+    );
+  };
 
   return (
-    <Card>
-      <div className="relative border-b-[2px] border-ink-black bg-ink-black">
-        {imgFailed ? (
-          <div className="flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 bg-ink-black/40">
-            <div className="font-meta text-[0.5rem] tracking-[0.18em] text-bristol/40">NO PLATE IMAGE</div>
-            <div className="font-meta text-[0.44rem] tracking-[0.14em] text-bristol/25">RUN CAST STAGE</div>
-          </div>
-        ) : (
-          <img
-            src={plateUrl}
-            alt={location.name}
-            className="aspect-[16/9] w-full object-cover"
-            onError={() => setImgFailed(true)}
-          />
-        )}
-      </div>
-      <div className="p-3">
-        <div className="font-display text-[1rem] font-bold tracking-[-0.04em] text-ink-black">
-          {location.name}
-        </div>
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {location.time_of_day && (
-            <Tag>{location.time_of_day}</Tag>
+    <>
+      <Card>
+        <div 
+          className="relative border-b-[2px] border-ink-black bg-ink-black cursor-pointer group"
+          onClick={() => !imgFailed && setIsModalOpen(true)}
+        >
+          {imgFailed ? (
+            <div className="flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 bg-ink-black/40">
+              {regenPlate.isPending || activeJob ? (
+                <>
+                  <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-narrator-gold animate-pulse">
+                    {queuedLabel(activeJob)}
+                  </div>
+                  <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-bristol/55">
+                    GENERATING NEW PLATE
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="font-meta text-[0.5rem] tracking-[0.18em] text-bristol/40">NO PLATE IMAGE</div>
+                  <div className="font-meta text-[0.44rem] tracking-[0.14em] text-bristol/25">RUN CAST STAGE</div>
+                </>
+              )}
+            </div>
+          ) : (
+            <>
+              <img
+                src={`${plateUrl}?t=${timestamp}`}
+                alt={location.name}
+                loading="lazy"
+                width={480}
+                height={270}
+                className="aspect-[16/9] w-full object-cover hover:opacity-90 transition-opacity"
+                onError={() => setImgFailed(true)}
+              />
+              {activeJob && (
+                <div className="absolute inset-x-2 bottom-2 border-[2px] border-ink-black bg-narrator-gold px-2 py-1 text-center font-meta text-[0.48rem] tracking-[0.16em] text-ink-black">
+                  {queuedLabel(activeJob)}
+                </div>
+              )}
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+                <Button
+                  size="md"
+                  className="border-bristol"
+                  onClick={handleRegen}
+                  disabled={regenPlate.isPending || !!activeJob}
+                >
+                  {regenPlate.isPending || activeJob ? queuedLabel(activeJob) : "REGENERATE"}
+                </Button>
+              </div>
+            </>
           )}
-          <Tag>{location.mood}</Tag>
         </div>
-      </div>
-    </Card>
+        <div className="p-3">
+          <div className="font-display text-[1rem] font-bold tracking-[-0.04em] text-ink-black">
+            {location.name}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {location.time_of_day && (
+              <Tag>{location.time_of_day}</Tag>
+            )}
+            <Tag>{location.mood}</Tag>
+          </div>
+          {regenError && (
+            <div className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-[0.72rem] leading-relaxed text-bristol">
+              {regenError}
+            </div>
+          )}
+        </div>
+      </Card>
+      <ImageModal 
+        isOpen={isModalOpen} 
+        onClose={() => setIsModalOpen(false)} 
+        src={`${plateUrl}?t=${timestamp}`} 
+        alt={location.name} 
+      />
+    </>
   );
 }
 
@@ -90,7 +265,7 @@ export function CastRoom() {
   const { data: bible, isLoading } = useStoryBible(name);
 
   if (isLoading) {
-    return <RoomShell isLoading loadingText="LOADING CAST..." />;
+    return <RoomShell isLoading loadingText="LOADING CAST…" />;
   }
 
   if (!bible || !name) {

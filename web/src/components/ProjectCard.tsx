@@ -6,6 +6,8 @@ import { Tag } from "./ui/Tag";
 
 interface Props {
   project: ProjectSummary;
+  coverPending?: boolean;
+  coverFailed?: boolean;
 }
 
 function resolveStatus(project: ProjectSummary): StageStatus {
@@ -41,7 +43,7 @@ function resolveTag(status: StageStatus) {
   return "QUEUE";
 }
 
-export function ProjectCard({ project }: Props) {
+export function ProjectCard({ project, coverPending = false, coverFailed = false }: Props) {
   const furthest = project.furthest_stage
     ? STAGE_ORDER.indexOf(project.furthest_stage as (typeof STAGE_ORDER)[number]) + 1
     : 0;
@@ -49,11 +51,42 @@ export function ProjectCard({ project }: Props) {
   const stageLabel = project.furthest_stage
     ? STAGE_DISPLAY_NAMES[project.furthest_stage as (typeof STAGE_ORDER)[number]]
     : "ARCHIVE";
+  const coverUrl = `/api/projects/${encodeURIComponent(project.name)}/files/cover/cover.png`;
+  const progressPct = Math.round((furthest / STAGE_ORDER.length) * 100);
 
   return (
-    <Card className="transition-transform duration-150 hover:-translate-y-[2px]">
-      <div className="border-b-[2px] border-ink-black p-2">
-        <div className="relative border-[2px] border-ink-black bg-preview-tint p-2">
+    <Card className="overflow-hidden transition-transform duration-150 hover:-translate-y-[2px]">
+      <div className="relative border-b-[2px] border-ink-black bg-ink-black">
+        {project.has_cover ? (
+          <img
+            src={coverUrl}
+            alt={`${project.project_name} cover`}
+            loading="lazy"
+            className="aspect-[4/5] w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+          />
+        ) : (
+          <div className="flex aspect-[4/5] flex-col justify-end bg-ink-black p-4 text-bristol">
+            <div className="font-meta text-[0.46rem] tracking-[0.18em] text-bristol/45">
+              {coverFailed ? "COVER FAILED" : coverPending ? "COVER GENERATING" : "COVER QUEUED"}
+            </div>
+            <div className="mt-2 max-w-[10ch] font-display text-[2.4rem] font-bold leading-[0.86] tracking-[-0.07em] text-bristol">
+              {project.project_name}
+            </div>
+            <div className="mt-4 h-2 border border-bristol/35">
+              <div className="h-full animate-pulse bg-narrator-gold" style={{ width: coverPending ? "60%" : "22%" }} />
+            </div>
+          </div>
+        )}
+
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink-black/85 to-transparent p-3 pt-12">
+          <div className="font-meta text-[0.48rem] tracking-[0.18em] text-bristol/70">
+            {stageLabel}
+          </div>
+          <h3 className="mt-1 font-display text-[2rem] font-bold leading-none tracking-[-0.06em] text-bristol">
+            {project.project_name}
+          </h3>
+        </div>
+
           {project.is_running && (
             <div className="absolute left-2 top-2 z-10 animate-pulse bg-hero-red px-2 py-1 font-meta text-[0.48rem] tracking-[0.18em] text-bristol">
               ACTIVE
@@ -64,37 +97,35 @@ export function ProjectCard({ project }: Props) {
           >
             {resolveTag(status)}
           </Tag>
-
-          <div className="grid aspect-[4/5] grid-rows-[1.1fr_0.9fr] gap-2">
-            <div className="border border-ink-black bg-ink-black" />
-            <div className="grid grid-cols-[1.1fr_0.9fr] gap-2">
-              <div className="border border-ink-black bg-[#d7d0c1]" />
-              <div className="grid gap-2">
-                <div className="border border-ink-black bg-bristol" />
-                <div className="border border-ink-black bg-hero-red" />
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
 
       <div className="p-3">
-        {project.furthest_stage && (
-          <div className="mb-1 font-meta text-[0.48rem] tracking-[0.18em] text-ink-black/45">
-            STAGE: {stageLabel}
+        <div className="grid grid-cols-[1fr_auto] gap-4">
+          <p className="text-[0.78rem] leading-6 text-ink-black/72">
+            {project.has_cover
+              ? "Project cover, pipeline position, cost, and latest review checkpoint."
+              : coverFailed
+                ? "Cover generation failed; opening the project still gives access to every pipeline room."
+                : "Cover art is being prepared from the story bible and selected visual style."}
+          </p>
+          <div className="text-right">
+            <div className="font-display text-[1.8rem] font-bold leading-none tracking-[-0.05em] text-ink-black">
+              {furthest}
+            </div>
+            <div className="font-meta text-[0.42rem] tracking-[0.14em] text-ink-black/45">
+              OF 7
+            </div>
           </div>
-        )}
-        <h3 className="font-display text-[1.85rem] font-bold leading-none tracking-[-0.05em] text-ink-black">
-          {project.project_name}
-        </h3>
-        <p className="mt-2 text-[0.78rem] leading-6 text-ink-black/72">
-          Stage dossier, live pipeline telemetry, and issue progression for this board.
-        </p>
+        </div>
+
+        <div className="mt-4 h-3 border-[2px] border-ink-black bg-pulp-paper">
+          <div className="h-full bg-archive-sage" style={{ width: `${progressPct}%` }} />
+        </div>
 
         <div className="mt-4 space-y-2 border-t-[2px] border-ink-black pt-3">
           <div className="flex items-center justify-between text-[0.66rem]">
             <span className="font-meta tracking-[0.16em] text-ink-black/45">
-              OPENED
+              CREATED
             </span>
             <span className="font-body text-ink-black/78">
               {formatCreated(project.created_at)}
@@ -102,15 +133,15 @@ export function ProjectCard({ project }: Props) {
           </div>
           <div className="flex items-center justify-between text-[0.66rem]">
             <span className="font-meta tracking-[0.16em] text-ink-black/45">
-              PROGRESS
+              CHECKPOINT
             </span>
-            <span className="font-body text-ink-black/78">{furthest}/7</span>
+            <span className="font-body text-ink-black/78">{stageLabel}</span>
           </div>
           <div className="flex items-center justify-between text-[0.66rem]">
             <span className="font-meta tracking-[0.16em] text-ink-black/45">
-              COST SO FAR
+              SPEND
             </span>
-            <span className="font-body text-ink-black/78">
+            <span className="font-body text-ink-black/78 tabular-nums">
               ${project.total_cost_usd.toFixed(2)}
             </span>
           </div>

@@ -40,7 +40,7 @@ export function Card({
   return (
     <div
       className={cn(
-        "border-[2px] border-ink-black",
+        "group border-[2px] border-ink-black",
         TONE_STYLES[tone],
         shadowClass,
         className,
