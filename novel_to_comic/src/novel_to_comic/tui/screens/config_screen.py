@@ -19,6 +19,12 @@ from textual.widgets import (
 
 from novel_to_comic.config import Config, save_config, _ENV_KEYS
 
+_API_KEY_ENV_KEYS = {
+    name: field
+    for name, field in _ENV_KEYS.items()
+    if name.endswith("API_KEY")
+}
+
 
 class ConfigScreen(Screen):
     """View and edit pipeline configuration."""
@@ -91,9 +97,13 @@ class ConfigScreen(Screen):
 
         config = app.config
 
-        # API keys section (read-only, masked)
-        lines = ["[bold]API Keys[/bold]\n"]
-        for env_name, field_name in _ENV_KEYS.items():
+        # Google auth / API keys section (read-only)
+        lines = ["[bold]Google Auth[/bold]\n"]
+        lines.append(f"  GOOGLE_GENAI_USE_VERTEXAI: {str(config.google_use_vertex_ai).lower()}")
+        lines.append(f"  GOOGLE_CLOUD_PROJECT: {config.google_cloud_project or '[red]NOT SET[/red]'}")
+        lines.append(f"  GOOGLE_CLOUD_LOCATION: {config.google_cloud_location or 'global'}")
+        lines.append("\n[bold]API Keys[/bold]")
+        for env_name, field_name in _API_KEY_ENV_KEYS.items():
             val = getattr(config, field_name, "")
             if not val:
                 masked = "[red]NOT SET[/red]"

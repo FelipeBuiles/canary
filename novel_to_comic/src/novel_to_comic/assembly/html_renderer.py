@@ -802,6 +802,13 @@ def build_page_html(
 
 # ── Playwright renderer ───────────────────────────────────────────────────────
 
+def _playwright_browser_install_message() -> str:
+    return (
+        "Playwright Chromium is not installed for this Python environment. "
+        "Run: cd novel_to_comic && uv run playwright install chromium"
+    )
+
+
 def _require_playwright():
     try:
         from playwright.async_api import async_playwright
@@ -826,7 +833,13 @@ async def browser_context():
     """
     async_playwright = _require_playwright()
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch()
+        try:
+            browser = await pw.chromium.launch()
+        except Exception as exc:
+            message = str(exc)
+            if "Executable doesn't exist" in message or "playwright install" in message:
+                raise RuntimeError(_playwright_browser_install_message()) from exc
+            raise
         try:
             yield browser
         finally:

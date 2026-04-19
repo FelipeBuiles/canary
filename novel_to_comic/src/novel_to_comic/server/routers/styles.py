@@ -36,31 +36,37 @@ def _save_suggestions(project_dir, suggestions, title):
     path.write_text(json.dumps({"title": title, "suggestions": suggestions}, indent=2))
 
 
-async def _suggest_styles(config: Config, bible) -> list[dict]:
+async def _suggest_styles(config: Config, bible, existing_labels: list[str] | None = None) -> list[dict]:
     from novel_to_comic.clients import gemini
+
+    avoid = ""
+    if existing_labels:
+        joined = ", ".join(f'"{l}"' for l in existing_labels)
+        avoid = f"\nThese styles have already been suggested and must NOT be repeated or closely paraphrased: [{joined}]. "
 
     system = (
         "You are a visual art director for adapted fiction. Given a story's details, generate 5 "
         "distinct visual style templates for image generation prompts. "
-        "Span the full medium spectrum — do NOT default to illustrated or comic styles. "
-        "At least one suggestion must be photorealistic or cinematic. "
-        "Draw from the widest possible range of visual traditions: film, photography, painting, "
-        "printmaking, textiles, animation, editorial illustration, poster art, zines, "
-        "children's books, fine art, street art, vintage advertising, stained glass, "
-        "ukiyo-e, pointillism, risograph, screen-print, cel animation, moody noir, "
-        "sun-bleached editorial, or any other visual language that fits the story. "
-        "Never repeat the same combination of medium + palette + mood across calls. "
-        "Each is a single paragraph of 40-70 words describing: medium/rendering style, color palette, "
-        "lighting, composition, mood. Make each genuinely distinct. Output a JSON array only, no markdown. "
+        "Each style must come from a completely different visual tradition — span painting, printmaking, "
+        "photography, animation, textile, folk art, editorial, fine art, street art, or any other visual language. "
+        "Do NOT default to cinematic or photorealistic. "
+        f"{avoid}"
+        "At least 3 of the 5 should complement the story's mood — but include at least 1 unexpected or contrasting choice "
+        "that could reveal a surprising side of the story. "
+        "Each template is a single paragraph of 40-70 words of vivid, specific visual direction. "
+        "Write naturally — do NOT follow a rigid 'medium, palette, lighting, composition, mood' formula. "
+        "Vary sentence structure, what you emphasize, and how you describe each style. "
+        "Output a JSON array only, no markdown. "
         f"{config.generation_language_instruction()}"
     )
     user = (
         f'Story: "{bible.title}" by {bible.author}\n'
         f"Style notes: {bible.style_notes or 'none'}\n"
-        f"Genre/tone: {', '.join({s.scene_type for s in bible.scenes})}\n"
-        f"Characters: {'; '.join(f'{c.name} ({c.gender}, {c.age_range})' for c in bible.characters[:5])}\n\n"
-        f"Generate 5 style options that genuinely serve this story. "
-        f"Consider what rendering style would best capture the tone — not just what looks 'comic-like'. "
+        f"Genre/tone: {', '.join({s.scene_type for s in bible.scenes})}\n\n"
+        f"Generate 5 style options that would suit this story's tone. "
+        f"Each template must describe a general visual aesthetic — do NOT reference specific characters, "
+        f"locations, or plot elements from the story. The template will be combined with story details later, "
+        f"so it should only define the visual style (medium, palette, texture, atmosphere). "
         f"Output JSON array of 5 objects: "
         f'[{{"label": "Style Name (2-4 words)", "template": "40-70 word description"}}, ...]'
     )
@@ -68,6 +74,7 @@ async def _suggest_styles(config: Config, bible) -> list[dict]:
     result = await gemini.generate_json(
         config=config, model=config.prompt_model,
         system_prompt=system, user_content=user,
+        temperature=1.0,
     )
     if isinstance(result, list):
         return result
@@ -169,8 +176,9 @@ async def suggest_styles(request: Request, project_name: str, project=Depends(ge
                 "level": "info",
                 "message": "Generating style suggestions...",
             })
-            new_suggestions = await _suggest_styles(config, bible)
             existing = _load_suggestions(project_dir) or []
+            existing_labels = [s.get("label", "") for s in existing if isinstance(s, dict)]
+            new_suggestions = await _suggest_styles(config, bible, existing_labels=existing_labels)
             _save_suggestions(project_dir, existing + new_suggestions, bible.title)
             queue.put_nowait({"type": "stage_progress", "stage": "style_suggest", "done": 1, "total": 1})
             queue.put_nowait({"type": "stage_complete", "stage": "style_suggest", "done": 1, "total": 1})

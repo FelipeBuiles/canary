@@ -17,13 +17,16 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `anthropic_api_key` | `str` | `''` |  |
 | `together_api_key` | `str` | `''` |  |
 | `openai_api_key` | `str` | `''` |  |
+| `google_use_vertex_ai` | `bool` | `True` | Use Vertex AI ADC instead of Gemini Developer API keys |
+| `google_cloud_project` | `str` | `''` | Google Cloud project ID for Vertex AI |
+| `google_cloud_location` | `str` | `'global'` | Vertex AI location |
 | `extraction_model` | `str` | `'gemini-3.1-pro-preview'` |  |
 | `screenplay_model` | `str` | `'gemini-3.1-pro-preview'` |  |
 | `panel_model` | `str` | `'gemini-3.1-flash-lite-preview'` |  |
 | `prompt_model` | `str` | `'gemini-3.1-flash-lite-preview'` |  |
-| `embedding_model` | `str` | `'gemini-embedding-2-preview'` | Google, 3072 dims, $0.00625/M tokens |
+| `embedding_model` | `str` | `'gemini-embedding-001'` | Google Vertex AI, 3072 dims |
 | `image_model` | `str` | `'gemini-3-pro-image-preview'` | Nano Banana Pro — Gemini 3 Pro Image (native) |
-| `fallback_image_model` | `str` | `'gemini-3.1-flash-image-preview'` | Nano Banana 2 — faster, used on 429 |
+| `fallback_image_model` | `str` | `'gemini-3.1-flash-image-preview'` | Nano Banana 2 — faster dev image model |
 | `image_width` | `int` | `1024` |  |
 | `image_height` | `int` | `1024` |  |
 | `image_steps` | `int` | `28` |  |

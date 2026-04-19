@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from novel_to_comic.assembly.html_renderer import FONTS_DIR
 
 from .generation_jobs import generation_worker
+from .logging import request_log_middleware
 from .routers import config, export, pages, pipeline, projects, stages, styles
 
 
@@ -30,6 +31,7 @@ async def _lifespan(app: FastAPI):
 
 def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app = FastAPI(title="Canary — Novel to Comic", lifespan=_lifespan)
+    app.middleware("http")(request_log_middleware)
 
     # Shared state for SSE streaming and concurrency control
     app.state.projects_dir = projects_dir

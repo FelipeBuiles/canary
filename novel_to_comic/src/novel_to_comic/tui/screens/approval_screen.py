@@ -50,6 +50,9 @@ class ApprovalScreen(Screen):
                     "Approve Only", variant="primary", id="approve-only-btn"
                 )
                 yield Button(
+                    "Regenerate Panels", variant="warning", id="regen-btn"
+                )
+                yield Button(
                     "Back to Dashboard", variant="default", id="back-btn"
                 )
 
@@ -134,6 +137,10 @@ class ApprovalScreen(Screen):
                 from .pipeline_screen import PipelineScreen
                 self.app.push_screen(PipelineScreen())
             # "approve only" just returns to dashboard
+
+        elif event.button.id == "regen-btn":
+            from .regen_screen import RegenScreen
+            self.app.push_screen(RegenScreen())
 
         elif event.button.id == "back-btn":
             self.app.pop_screen()

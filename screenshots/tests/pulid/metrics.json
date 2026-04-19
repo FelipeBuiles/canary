@@ -1,0 +1,37 @@
+[
+  {
+    "backend": "replicate_pulid",
+    "model": "bytedance/flux-pulid",
+    "version": "8baa7ef2255075b46f4d91cd238c21d31181b3e6a864463f967960bb0112525b",
+    "prompt_file": "prompts/scene_001/panel_001.json",
+    "characters": [
+      "char_001"
+    ],
+    "primary_character": "char_001",
+    "status": "succeeded",
+    "latency_seconds": 15.13,
+    "prediction_metrics": {
+      "predict_time": 14.113736196,
+      "total_time": 14.144365429
+    },
+    "error": null
+  },
+  {
+    "backend": "replicate_pulid",
+    "model": "bytedance/flux-pulid",
+    "version": "8baa7ef2255075b46f4d91cd238c21d31181b3e6a864463f967960bb0112525b",
+    "prompt_file": "prompts/scene_003/panel_003.json",
+    "characters": [
+      "char_001",
+      "char_002"
+    ],
+    "primary_character": "char_001",
+    "status": "succeeded",
+    "latency_seconds": 13.44,
+    "prediction_metrics": {
+      "predict_time": 12.656406271,
+      "total_time": 12.688949437
+    },
+    "error": null
+  }
+]

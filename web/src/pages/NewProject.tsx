@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useCreateProject, useRunPipeline, useApproveStage, useProjectStatus, useStoryBible } from "../api/queries";
+import { useCreateProject, useRunPipeline, useApproveStage, useProjectStatus, useStoryBible, useRegenExtract } from "../api/queries";
 import { usePipelineStore } from "../store/pipeline";
 import { WizardShell } from "../components/wizard/WizardShell";
 import { UploadStep } from "../components/wizard/UploadStep";
@@ -37,6 +37,7 @@ export function NewProject() {
   const createProject = useCreateProject();
   const runPipeline = useRunPipeline();
   const approve = useApproveStage();
+  const regenExtractMut = useRegenExtract();
   const { data: status } = useProjectStatus(state.phase !== "upload" ? projectSlug ?? undefined : undefined);
   const { data: storyBible } = useStoryBible(
     state.phase === "review" && state.currentStage === "extract" ? projectSlug ?? undefined : undefined,
@@ -183,6 +184,19 @@ export function NewProject() {
     setState({ phase: "upload", currentStage: "extract", errorMessage: null });
   }
 
+  function handleRegenExtract() {
+    if (!projectSlug) return;
+    clearEvents();
+    setState({ phase: "running", currentStage: "extract", errorMessage: null });
+    regenExtractMut.mutate(
+      { project: projectSlug },
+      {
+        onSuccess: () => connect(projectSlug),
+        onError: (err) => setState((s) => ({ ...s, errorMessage: err.message })),
+      },
+    );
+  }
+
   // Build step states for WizardShell
   const stepStates = buildStepStates(state, status);
 
@@ -219,6 +233,8 @@ export function NewProject() {
           storyBible={storyBible}
           onApprove={() => handleApprove("extract")}
           isApproving={approve.isPending}
+          onRegenExtract={handleRegenExtract}
+          isRegenerating={regenExtractMut.isPending}
           project={projectSlug}
         />
       )}

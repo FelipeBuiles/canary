@@ -1,6 +1,7 @@
 """Click CLI entry point for the novel-to-comic pipeline."""
 
 import asyncio
+import os
 import shutil
 from pathlib import Path
 
@@ -53,10 +54,18 @@ def _load(project: str):
         raise click.ClickException(str(e))
 
     # Warn loudly if critical keys are missing so the user isn't left guessing.
-    missing = [k for k, f in {
-        "GEMINI_API_KEY": config.gemini_api_key,
-        "TOGETHER_API_KEY": config.together_api_key,
-    }.items() if not f]
+    google_ready = config.google_use_vertex_ai or bool(config.gemini_api_key)
+    missing = []
+    if not google_ready:
+        missing.append("GOOGLE_GENAI_USE_VERTEXAI or GEMINI_API_KEY")
+    if (
+        config.google_use_vertex_ai
+        and not config.google_cloud_project
+        and not os.environ.get("GOOGLE_CLOUD_PROJECT", "").strip()
+    ):
+        missing.append("GOOGLE_CLOUD_PROJECT")
+    if not config.together_api_key:
+        missing.append("TOGETHER_API_KEY")
     if missing:
         src = str(env_file) if env_file else "no .env found"
         console.print(
@@ -145,6 +154,10 @@ def init(input_path: str, name: str | None):
         "# API keys — copy to a .env at your repo root (not per-project).\n"
         "# The pipeline walks up from any project dir to find the nearest .env.\n"
         "# Never commit the real .env — add it to your root .gitignore.\n\n"
+        "GOOGLE_GENAI_USE_VERTEXAI=true\n"
+        "GOOGLE_CLOUD_PROJECT=\n"
+        "GOOGLE_CLOUD_LOCATION=global\n"
+        "# Optional legacy Gemini Developer API fallback:\n"
         "GEMINI_API_KEY=\n"
         "ANTHROPIC_API_KEY=\n"
         "TOGETHER_API_KEY=\n"
@@ -153,7 +166,7 @@ def init(input_path: str, name: str | None):
 
     console.print(f"[green]Project initialised:[/green] {project_dir}")
     console.print(f"\nNext steps:")
-    console.print(f"  1. Add API keys to a [bold].env[/bold] at your repo root (see .env.example)")
+    console.print(f"  1. Configure Google ADC / API keys in a [bold].env[/bold] at your repo root")
     console.print(f"  2. [bold]playwright install chromium[/bold]  ← one-time browser install for assembly")
     console.print(f"  3. [bold]pipeline run extract[/bold]")
     console.print(f"  4. [bold]pipeline style[/bold]              ← set visual identity before images")
@@ -630,9 +643,9 @@ async def _suggest_styles(config: Config, bible) -> list[dict]:
 @click.option("--project", default=".", show_default=True, type=click.Path(),
               help="Project directory")
 def show_config(project: str):
-    """Show resolved configuration and API key sources for this project.
+    """Show resolved configuration and auth sources for this project.
 
-    Useful for diagnosing missing or wrong API keys.
+    Useful for diagnosing missing or wrong credentials.
 
     Example:
         pipeline config
@@ -653,6 +666,15 @@ def show_config(project: str):
     console.print(f"[bold].env file:[/bold] {env_file or '[yellow]not found — walking up from project dir[/yellow]'}")
     console.print()
 
+    table = Table(title="Google Auth", show_header=True)
+    table.add_column("Setting")
+    table.add_column("Value")
+    table.add_row("google_use_vertex_ai", "[green]true[/green]" if config.google_use_vertex_ai else "[yellow]false[/yellow]")
+    table.add_row("google_cloud_project", config.google_cloud_project or "[yellow]from environment/ADC[/yellow]")
+    table.add_row("google_cloud_location", config.google_cloud_location or "[yellow]global[/yellow]")
+    console.print(table)
+
+    console.print()
     table = Table(title="API Keys", show_header=True)
     table.add_column("Variable")
     table.add_column("Value")
@@ -825,14 +847,16 @@ def serve(host: str, port: int, projects_dir: str, dev: bool):
             "Web dependencies not installed. Run: pip install -e '.[web]'"
         )
     from novel_to_comic.server.app import create_app
+    from novel_to_comic.server.logging import configure_logging
 
     p = Path(projects_dir).resolve()
+    configure_logging()
     app = create_app(projects_dir=p, dev=dev)
     console.print(f"[bold]Canary dashboard[/bold] → http://{host}:{port}")
     console.print(f"[dim]Projects dir:[/dim] {p}")
     if dev:
         console.print("[dim]Dev mode: frontend served by Vite at http://localhost:5173[/dim]")
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(app, host=host, port=port, access_log=False, log_config=None)
 
 
 # ── internal: run all ─────────────────────────────────────────────────────────

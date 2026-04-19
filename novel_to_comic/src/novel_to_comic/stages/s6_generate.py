@@ -13,13 +13,13 @@ from rich.console import Console
 from rich.progress import Progress
 
 from novel_to_comic.clients import flux
-from novel_to_comic.clients.flux import _is_gemini_native, _is_imagen
+from novel_to_comic.clients.flux import _is_gemini_native
 from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.models.panel import PanelBreakdown
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.prompting import build_image_prompt_spec, render_generation_prompt
+from novel_to_comic.prompting import IMAGE_PROMPT_VERSION, build_image_prompt_spec, render_generation_prompt
 from novel_to_comic.state import (
     PipelineState,
     begin_stage,
@@ -62,7 +62,7 @@ def _load_or_upgrade_prompt(
     story_bible: StoryBible | None,
 ) -> ImagePrompt:
     prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
-    if getattr(prompt, "prompt_version", 1) >= 2 or story_bible is None:
+    if getattr(prompt, "prompt_version", 1) >= IMAGE_PROMPT_VERSION or story_bible is None:
         return prompt
 
     panel_path = project_dir / "panels" / prompt.scene_id / f"panel_{prompt.panel_number:03d}.json"
@@ -304,14 +304,12 @@ async def run(
           "message": f"Preparing {len(prompt_files)} panel image jobs..."})
     save_state(state, project_dir)
 
-    # Google models (Imagen and Gemini native) have tight per-minute quotas
-    # and must be called sequentially with a delay. Together AI supports
-    # real parallelism.
+    # Google Gemini image models have tight per-minute quotas and are called
+    # sequentially with a delay. Together AI supports real parallelism.
     model = config.image_model
     fallback = getattr(config, "fallback_image_model", "")
     using_google = (
-        _is_imagen(model) or _is_gemini_native(model)
-        or _is_imagen(fallback) or _is_gemini_native(fallback)
+        _is_gemini_native(model) or _is_gemini_native(fallback)
     )
     batch_size = config.effective_image_concurrency(google_model=using_google)
     inter_request_delay = 4.0 if using_google and not config.dev_mode else 0.0

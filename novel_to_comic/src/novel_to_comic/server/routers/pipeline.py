@@ -2,6 +2,9 @@
 
 import asyncio
 import json
+import logging
+import shutil
+import time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -9,6 +12,7 @@ from fastapi.responses import StreamingResponse
 
 from novel_to_comic.state import (
     STAGE_NAMES,
+    StageState,
     StageStatus,
     approve_stage,
     fail_stage,
@@ -24,6 +28,7 @@ from ..generation_jobs import (
 )
 
 router = APIRouter()
+logger = logging.getLogger("canary.pipeline")
 
 
 def _stage_runner(stage: str, config, project_dir, state):
@@ -46,16 +51,43 @@ def _stage_runner(stage: str, config, project_dir, state):
 
 async def _run_stage(stage: str, config, project_dir, state, queue: asyncio.Queue):
     """Execute a single stage, feeding events into the queue."""
+    started = time.perf_counter()
+    logger.info(
+        "[bold cyan]Stage start[/] project=[white]%s[/] stage=[bold]%s[/]",
+        project_dir.name,
+        stage,
+    )
     try:
         runner = _stage_runner(stage, config, project_dir, state)
         if not runner:
             raise ValueError(f"Unknown stage: {stage}")
         await runner(on_event=lambda e: queue.put_nowait(e))
+        elapsed = time.perf_counter() - started
+        status = state.stages[stage].status.value
+        status_color = "green" if status in {"complete", "awaiting_review"} else "yellow"
+        logger.info(
+            "[bold green]Stage end[/] project=[white]%s[/] stage=[bold]%s[/] "
+            "status=[%s]%s[/] elapsed=[bold]%.1fs[/]",
+            project_dir.name,
+            stage,
+            status_color,
+            status,
+            elapsed,
+        )
     except Exception as exc:
         message = str(exc)
         fail_stage(state, stage, message)
         save_state(state, project_dir)
         queue.put_nowait({"type": "stage_fail", "stage": stage, "message": message})
+        elapsed = time.perf_counter() - started
+        logger.exception(
+            "[bold red]Stage failed[/] project=[white]%s[/] stage=[bold]%s[/] "
+            "elapsed=[bold]%.1fs[/] error=%s",
+            project_dir.name,
+            stage,
+            elapsed,
+            message,
+        )
 
 
 async def _run_full_pipeline(config, project_dir, state, queue: asyncio.Queue):
@@ -146,7 +178,57 @@ async def run_pipeline(
     task = asyncio.create_task(_run_job(project_name, request, job))
 
     running[project_name] = task
+    logger.info(
+        "[bold blue]Pipeline queued[/] project=[white]%s[/] stage=[bold]%s[/]",
+        project_name,
+        stage or "all",
+    )
     return {"status": "started", "stage": stage or "all"}
+
+
+@router.post("/regen-extract")
+async def regen_extract(
+    request: Request,
+    project_name: str,
+    project=Depends(get_project),
+):
+    project_dir, config, state = project
+
+    # Concurrency guard
+    running = request.app.state.running_tasks
+    existing = running.get(project_name)
+    if existing and not existing.done():
+        raise HTTPException(409, "A stage is already running for this project")
+
+    # Reset all downstream stages to pending
+    extract_idx = STAGE_NAMES.index("extract")
+    for stage_name in STAGE_NAMES[extract_idx + 1:]:
+        state.stages[stage_name] = StageState()
+
+    # Also reset extract itself so it re-runs cleanly
+    state.stages["extract"] = StageState()
+    save_state(state, project_dir)
+
+    # Delete stale extract artifacts
+    story_bible = project_dir / "story_bible.json"
+    if story_bible.exists():
+        story_bible.unlink()
+    scenes_dir = project_dir / "scenes"
+    if scenes_dir.exists():
+        shutil.rmtree(scenes_dir)
+
+    # Run extract stage via SSE pipeline (same pattern as POST /run?stage=extract)
+    queue: asyncio.Queue = asyncio.Queue()
+    request.app.state.event_queues[project_name] = queue
+    job = _run_stage("extract", config, project_dir, state, queue)
+    task = asyncio.create_task(_run_job(project_name, request, job))
+    running[project_name] = task
+    logger.info(
+        "[bold blue]Pipeline queued[/] project=[white]%s[/] stage=[bold]extract[/] mode=regen",
+        project_name,
+    )
+
+    return {"status": "started", "stage": "extract"}
 
 
 @router.get("/events")

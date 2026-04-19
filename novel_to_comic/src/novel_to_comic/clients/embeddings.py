@@ -1,25 +1,30 @@
 """Embeddings wrapper with async support.
 
-Uses Google's text-embedding-004 by default (768 dims, $0.00625/M tokens).
-Falls back to OpenAI text-embedding-3-small if configured.
+Uses Google's Gemini embedding model by default.
+Falls back to OpenAI if configured.
 """
 
-import httpx
-from openai import AsyncOpenAI
-from tenacity import retry, stop_after_attempt, wait_exponential
+import logging
+import time
 
+from google.genai.errors import ClientError
+from openai import AsyncOpenAI
+from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
+
+from novel_to_comic.clients.gemini import describe_provider, get_client
 from novel_to_comic.config import Config
 
-# Google gemini-embedding-2-preview = 3072 dims (via Gemini Developer REST API)
+# Google gemini-embedding-001 = 3072 dims on Vertex AI
 # OpenAI text-embedding-3-small = 1536 dims
-GOOGLE_EMBEDDING_MODEL = "gemini-embedding-2-preview"
+GOOGLE_EMBEDDING_MODEL = "gemini-embedding-001"
+logger = logging.getLogger("canary.google")
 
-_GOOGLE_EMBED_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/{model}:embedContent"
+
+@retry(
+    wait=wait_exponential(min=1, max=30),
+    stop=stop_after_attempt(3),
+    retry=retry_if_not_exception_type(ClientError),
 )
-
-
-@retry(wait=wait_exponential(min=1, max=30), stop=stop_after_attempt(3))
 async def embed_texts(
     config: Config,
     texts: list[str],
@@ -31,33 +36,36 @@ async def embed_texts(
 
 
 async def _embed_google(config: Config, texts: list[str]) -> list[list[float]]:
-    """Embed via Google text-embedding-004 using the REST API directly.
+    """Embed via Google Gen AI, using Vertex AI when configured."""
+    from google.genai import types
 
-    The google-genai SDK routes embedding requests to a path that isn't
-    available for Developer API keys. Calling the REST endpoint directly
-    sidesteps the SDK routing issue.
-    """
-    url = _GOOGLE_EMBED_URL.format(model=config.embedding_model)
-    params = {"key": config.gemini_api_key}
-
+    started = time.perf_counter()
+    logger.info(
+        "[bold cyan]Gemini[/] task=embedding model=[bold]%s[/] count=[bold]%d[/] "
+        "provider=[green]%s[/]",
+        config.embedding_model,
+        len(texts),
+        describe_provider(config),
+    )
+    client = get_client(config)
     results: list[list[float]] = []
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        for text in texts:
-            body = {
-                "content": {"parts": [{"text": text}]},
-                "taskType": "RETRIEVAL_DOCUMENT",
-            }
-            response = await client.post(url, params=params, json=body)
-            if response.status_code != 200:
-                raise ValueError(
-                    f"Google embedding API error {response.status_code}: {response.text}"
-                )
-            data = response.json()
-            values = data.get("embedding", {}).get("values")
-            if not values:
-                raise ValueError(f"Empty embedding in response: {data}")
-            results.append(values)
+    for text in texts:
+        response = await client.aio.models.embed_content(
+            model=config.embedding_model,
+            contents=text,
+            config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
+        )
+        if not response.embeddings or not response.embeddings[0].values:
+            raise ValueError("Empty embedding in Google response")
+        results.append(response.embeddings[0].values)
 
+    logger.info(
+        "[bold green]Gemini done[/] task=embedding model=[bold]%s[/] count=[bold]%d[/] "
+        "elapsed=[bold]%.1fs[/]",
+        config.embedding_model,
+        len(texts),
+        time.perf_counter() - started,
+    )
     return results
 
 

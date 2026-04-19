@@ -15,12 +15,14 @@ LANGUAGE_NAMES: dict[str, str] = {
     "fr": "French",
 }
 
-# Env var name → Config field name for all sensitive keys
+# Env var name → Config field name
 _ENV_KEYS: dict[str, str] = {
     "GEMINI_API_KEY": "gemini_api_key",
     "ANTHROPIC_API_KEY": "anthropic_api_key",
     "TOGETHER_API_KEY": "together_api_key",
     "OPENAI_API_KEY": "openai_api_key",
+    "GOOGLE_CLOUD_PROJECT": "google_cloud_project",
+    "GOOGLE_CLOUD_LOCATION": "google_cloud_location",
 }
 
 
@@ -33,15 +35,21 @@ class Config(BaseModel):
     together_api_key: str = ""
     openai_api_key: str = ""
 
+    # Google Gemini access. Vertex AI uses Application Default Credentials
+    # instead of Gemini Developer API keys.
+    google_use_vertex_ai: bool = True
+    google_cloud_project: str = ""
+    google_cloud_location: str = "global"
+
     # Model choices
     # NOTE: Gemini 2.5 Pro/Flash deprecated June 17 2026 — using 3.1/Flash-Lite
     extraction_model: str = "gemini-3.1-pro-preview"
     screenplay_model: str = "gemini-3.1-pro-preview"
     panel_model: str = "gemini-3.1-flash-lite-preview"
     prompt_model: str = "gemini-3.1-flash-lite-preview"
-    embedding_model: str = "gemini-embedding-2-preview"  # Google, 3072 dims, $0.00625/M tokens
+    embedding_model: str = "gemini-embedding-001"  # Google Vertex AI, 3072 dims
     image_model: str = "gemini-3-pro-image-preview"   # Nano Banana Pro — Gemini 3 Pro Image (native)
-    fallback_image_model: str = "gemini-3.1-flash-image-preview"  # Nano Banana 2 — faster, used on 429
+    fallback_image_model: str = "gemini-3.1-flash-image-preview"  # Nano Banana 2 — faster dev image model
 
     # Output language for generated screenplay dialogue, panel text, and prompt artifacts.
     target_language: str = "en"
@@ -185,11 +193,15 @@ def load_config(project_dir: Path) -> tuple["Config", Path | None]:
         with open(config_path) as f:
             data = yaml.safe_load(f) or {}
 
-    # Overlay env vars for API key fields.  Explicit shell exports beat .env.
+    # Overlay env vars.  Explicit shell exports beat .env.
     for env_name, field_name in _ENV_KEYS.items():
         val = os.environ.get(env_name, "").strip()
         if val:
             data[field_name] = val
+
+    use_vertex = os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").strip()
+    if use_vertex:
+        data["google_use_vertex_ai"] = use_vertex.lower() in {"1", "true", "yes", "on"}
 
     return Config(**data), env_file
 
@@ -205,8 +217,11 @@ def save_config(config: Config, project_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 # API Keys  — put these in .env instead of here (see .env.example)
 # ---------------------------------------------------------------------------
-# Leave blank. Keys are loaded from .env or shell environment variables:
-#   GEMINI_API_KEY      — https://aistudio.google.com/apikey
+# Google Gemini defaults to Vertex AI via Application Default Credentials.
+# For local dev, run `gcloud auth application-default login`, or set
+# GOOGLE_APPLICATION_CREDENTIALS to a service account JSON file.
+#
+# Non-Google providers still use API keys:
 #   ANTHROPIC_API_KEY   — https://console.anthropic.com/
 #   TOGETHER_API_KEY    — https://api.together.ai/settings/api-keys
 #   OPENAI_API_KEY      — optional, only for OpenAI embeddings
@@ -214,6 +229,11 @@ gemini_api_key: ""
 anthropic_api_key: ""
 together_api_key: ""
 openai_api_key: ""
+
+# Set false only if you intentionally want to use GEMINI_API_KEY instead of Vertex AI.
+google_use_vertex_ai: {str(config.google_use_vertex_ai).lower()}
+google_cloud_project: "{config.google_cloud_project}"
+google_cloud_location: "{config.google_cloud_location}"
 
 # ---------------------------------------------------------------------------
 # Model choices
@@ -230,7 +250,7 @@ panel_model: "{config.panel_model}"
 # Stage 5 – image prompt assembly (template filling)
 prompt_model: "{config.prompt_model}"
 
-# Embeddings for RAG index (Google gemini-embedding-2-preview = 3072 dims, $0.00625/M tokens)
+# Embeddings for RAG index (Google gemini-embedding-001 = 3072 dims on Vertex AI)
 # Switch to "text-embedding-3-small" for OpenAI (1536 dims, $0.02/M tokens)
 # WARNING: changing this after Stage 2 requires rebuilding the Qdrant index
 embedding_model: "{config.embedding_model}"
@@ -238,13 +258,11 @@ embedding_model: "{config.embedding_model}"
 # Image generation model
 # Nano Banana Pro  (Gemini 3 Pro Image, default): "gemini-3-pro-image-preview"
 # Nano Banana 2    (Gemini 3.1 Flash Image):      "gemini-3.1-flash-image-preview"
-# Imagen 4 Ultra   (highest quality, low quota):  "imagen-4.0-ultra-generate-001"
-# Imagen 4 Fast    (higher quota):                "imagen-4.0-fast-generate-001"
 # Together AI:                                    "black-forest-labs/FLUX.1-kontext-pro"
 image_model: "{config.image_model}"
 
-# Fallback used automatically when image_model returns a 429 rate-limit error.
-# Leave blank to disable.
+# Dev-mode fallback used when image_model is the default Gemini Pro Image model.
+# Leave blank to keep the configured image_model in dev_mode.
 fallback_image_model: "{config.fallback_image_model}"
 
 # Generated text language: en | es | fr

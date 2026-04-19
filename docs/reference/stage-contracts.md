@@ -11,11 +11,11 @@ _This file is manually maintained. Update it when stage I/O changes._
 | # | Stage | CLI name | LLM | Checkpoint? |
 |---|-------|----------|-----|-------------|
 | 1 | Extract | `extract` | Gemini 3.1 Pro | ✅ Yes |
-| 2 | Index | `index` | FLUX/Imagen/Gemini (image gen) | ✅ Yes |
+| 2 | Index | `index` | FLUX/Gemini (image gen) | ✅ Yes |
 | 3 | Screenplay | `screenplay` | Gemini 3.1 Pro | ❌ No |
 | 4 | Panels | `panels` | Gemini 3.1 Flash-Lite | ❌ No |
 | 5 | Prompts | `prompts` | Gemini 3.1 Flash-Lite | ❌ No |
-| 6 | Generate | `generate` | FLUX/Imagen/Gemini (image gen) | ✅ Yes |
+| 6 | Generate | `generate` | FLUX/Gemini (image gen) | ✅ Yes |
 | 7 | Assemble | `assemble` | None (deterministic) | ❌ No |
 
 Checkpoint stages pause at `awaiting_review` state. Advance with `pipeline approve <stage>` or the TUI/web approval screen.
@@ -102,7 +102,7 @@ Checkpoint stages pause at `awaiting_review` state. Advance with `pipeline appro
 **Writes:**
 - `images/scene_NNN/panel_NNN.png`
 
-**What it does:** Runs image generation. Routes to Imagen 4, Gemini native, or Together AI (FLUX) based on model name. Runs async with rate limiting and fallback on 429. Pauses for human review of generated panels before Stage 7.
+**What it does:** Runs image generation. Routes to Gemini via Vertex AI or Together AI (FLUX) based on model name. Runs async with rate limiting. Pauses for human review of generated panels before Stage 7.
 
 ---
 

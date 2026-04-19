@@ -82,19 +82,14 @@ def _labels(config: Config | None = None) -> dict[str, str]:
 
 _clean = clean
 _shorten = shorten
+IMAGE_PROMPT_VERSION = 5
 
 
-def _character_identity(character: Character) -> str:
-    features = ", ".join(character.distinguishing_features[:4])
-    pieces = [
-        _clean(character.age_range),
-        _clean(character.gender),
-        _clean(features),
-        _clean(character.default_outfit),
-    ]
-    identity = "; ".join(piece for piece in pieces if piece)
-    if len(identity) < 40:
-        identity = _clean(character.visual_anchor)
+def _character_identity(character: Character, scene_appearance: str | None = None) -> str:
+    anchor = _clean(character.visual_anchor)
+    # scene_appearance overrides default_outfit when present
+    outfit = _clean(scene_appearance or character.default_outfit)
+    identity = "; ".join(part for part in [anchor, outfit] if part)
     return _shorten(identity, 220)
 
 
@@ -146,15 +141,20 @@ def build_image_prompt_spec(
     subjects: list[PromptSubject] = []
     ref_paths: list[str] = []
 
+    scene = next((s for s in story_bible.scenes if s.id == panel.scene_id), None)
+
     for character_id in panel.characters_present:
         character = next((c for c in story_bible.characters if c.id == character_id), None)
         if not character:
             continue
+        scene_appearance = None
+        if scene:
+            scene_appearance = scene.character_appearances.get(character_id)
         subjects.append(
             PromptSubject(
                 character_id=character_id,
                 name=character.name,
-                identity=_character_identity(character),
+                identity=_character_identity(character, scene_appearance),
                 action=_clean(panel.character_actions.get(character_id, "")),
                 expression=_clean(panel.character_expressions.get(character_id, "")),
                 position=_clean(panel.character_positions.get(character_id, "")),
@@ -162,7 +162,6 @@ def build_image_prompt_spec(
         )
         ref_paths.extend(_reference_paths(project_dir, character_id, character_count))
 
-    scene = next((s for s in story_bible.scenes if s.id == panel.scene_id), None)
     location = None
     if scene:
         location = next((loc for loc in story_bible.locations if loc.id == scene.location_id), None)
@@ -176,7 +175,7 @@ def build_image_prompt_spec(
         composition = f"{composition}, {_clean(panel.camera_angle)} camera"
 
     setting_parts = []
-    if location:
+    if location and location.visual_anchor:
         setting_parts.append(_shorten(location.visual_anchor, 180))
     if panel.background_description:
         setting_parts.append(_shorten(panel.background_description, 160))
@@ -204,7 +203,7 @@ def build_image_prompt_spec(
     )
 
     prompt = ImagePrompt(
-        prompt_version=2,
+        prompt_version=IMAGE_PROMPT_VERSION,
         scene_id=panel.scene_id,
         panel_number=panel.panel_number,
         full_prompt=full_prompt,
