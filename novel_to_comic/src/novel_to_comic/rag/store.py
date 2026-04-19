@@ -17,7 +17,6 @@ COLLECTION_NAME = "novel_scenes"
 # Maps embedding model name → output dimension.
 # Add entries here when new models are introduced.
 _MODEL_VECTOR_SIZES: dict[str, int] = {
-    "gemini-embedding-2-preview": 3072,
     "gemini-embedding-001": 3072,
     "text-embedding-3-small": 1536,
     "text-embedding-3-large": 3072,

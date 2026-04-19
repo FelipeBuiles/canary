@@ -16,7 +16,7 @@ from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.models.panel import PanelBreakdown
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.prompting import build_image_prompt_spec
+from novel_to_comic.prompting import IMAGE_PROMPT_VERSION, build_image_prompt_spec
 from novel_to_comic.state import (
     PipelineState,
     begin_stage,
@@ -47,7 +47,7 @@ async def _process_panel(
     output_path = output_dir / f"panel_{panel.panel_number:03d}.json"
     if output_path.exists():
         existing = ImagePrompt.model_validate_json(output_path.read_text())
-        if getattr(existing, "prompt_version", 1) >= 2:
+        if getattr(existing, "prompt_version", 1) >= IMAGE_PROMPT_VERSION:
             return existing
 
     prompt = build_image_prompt_spec(config, project_dir, panel, story_bible)

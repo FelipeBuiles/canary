@@ -29,6 +29,36 @@ console = Console()
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "screenplay.txt"
 
 
+def _is_offscreen_character(char) -> bool:
+    text = " ".join(
+        str(part)
+        for part in (
+            char.name,
+            char.visual_anchor,
+            char.default_outfit,
+            char.age_range,
+            char.gender,
+            " ".join(char.distinguishing_features),
+        )
+    ).lower()
+    return any(
+        marker in text
+        for marker in (
+            "off-screen",
+            "off screen",
+            "off-panel",
+            "off panel",
+            "unseen speaker",
+            "unseen voice",
+            "voice-only",
+            "voice only",
+            "heard but not seen",
+            "not physically shown",
+            "never physically shown",
+        )
+    )
+
+
 def _load_story_bible(project_dir: Path) -> StoryBible:
     return StoryBible.model_validate_json((project_dir / "story_bible.json").read_text())
 
@@ -43,7 +73,7 @@ def _build_user_content(scene_text: str, story_bible: StoryBible, scene_id: str)
     char_info = []
     for cid in scene.character_ids:
         char = next((c for c in story_bible.characters if c.id == cid), None)
-        if char:
+        if char and not _is_offscreen_character(char):
             char_info.append(f"- {char.name} ({cid}): {char.visual_anchor}")
 
     # Gather location
@@ -62,6 +92,30 @@ def _build_user_content(scene_text: str, story_bible: StoryBible, scene_id: str)
         scene_text,
     ]
     return "\n".join(parts)
+
+
+def _normalize_screenplay(screenplay: Screenplay, story_bible: StoryBible) -> Screenplay:
+    # TODO: Add first-class off-screen speaker support instead of nulling voice-only speakers.
+    offscreen_ids = {char.id for char in story_bible.characters if _is_offscreen_character(char)}
+    if not offscreen_ids:
+        return screenplay
+
+    visible_characters = [cid for cid in screenplay.characters if cid not in offscreen_ids]
+    beats = []
+    for beat in screenplay.beats:
+        if beat.character_id not in offscreen_ids:
+            beats.append(beat)
+            continue
+
+        char = next((c for c in story_bible.characters if c.id == beat.character_id), None)
+        speaker = char.name if char else beat.character_id
+        direction = beat.direction or ""
+        cue = f"off-screen voice: {speaker}"
+        if cue not in direction:
+            direction = f"{cue}. {direction}".strip()
+        beats.append(beat.model_copy(update={"character_id": None, "direction": direction}))
+
+    return screenplay.model_copy(update={"characters": visible_characters, "beats": beats})
 
 
 def _localized_system_prompt(config: Config, system_prompt: str) -> str:
@@ -99,7 +153,7 @@ async def _process_scene(
     # Some models wrap the response in a list — unwrap before validating.
     if isinstance(result, list):
         result = result[0]
-    screenplay = Screenplay.model_validate(result)
+    screenplay = _normalize_screenplay(Screenplay.model_validate(result), story_bible)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(screenplay.model_dump_json(indent=2))
     return screenplay

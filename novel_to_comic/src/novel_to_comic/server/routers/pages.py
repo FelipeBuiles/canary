@@ -149,7 +149,7 @@ def _fallback_lettering_style(style_template: str) -> dict[str, str]:
 
 
 async def _generate_lettering_style(config: Config) -> dict[str, str]:
-    if not config.gemini_api_key:
+    if not config.google_use_vertex_ai and not config.gemini_api_key:
         return _fallback_lettering_style(config.style_template)
 
     from novel_to_comic.clients import gemini
@@ -189,8 +189,8 @@ async def _translate_text_items(config: Config, items: list[dict]) -> dict[str, 
     """Translate editable lettering text items and return {id: translated_text}."""
     if not items:
         return {}
-    if not config.gemini_api_key:
-        raise HTTPException(400, "Gemini API key is required to translate existing page text")
+    if not config.google_use_vertex_ai and not config.gemini_api_key:
+        raise HTTPException(400, "Google Gemini auth is required to translate existing page text")
 
     from novel_to_comic.clients import gemini
 

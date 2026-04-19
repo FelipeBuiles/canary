@@ -14,7 +14,7 @@ class CharacterRelationship(BaseModel):
 class Character(BaseModel):
     id: str  # "char_001"
     name: str  # "Elena Vasquez"
-    visual_anchor: str  # EXACTLY 60-80 words. Physical description ONLY.
+    visual_anchor: str  # Strict comma-separated physical tags. Injected verbatim at the very start of identity.
     age_range: str  # "early 30s"
     gender: str
     distinguishing_features: list[str]  # ["jagged scar on left cheek"]
@@ -34,7 +34,7 @@ class Character(BaseModel):
 class Location(BaseModel):
     id: str  # "loc_001"
     name: str  # "The Bunker"
-    visual_anchor: str  # 40-60 words. Physical environment only.
+    visual_anchor: str  # Strict comma-separated environment tags. Injected verbatim at the very start of setting.
     time_of_day: Optional[str] = None  # "night", "dawn", etc.
     mood: str  # "tense", "warm", "desolate"
 
@@ -49,6 +49,10 @@ class Scene(BaseModel):
     scene_type: str  # "action", "dialogue", "emotional", "transition"
     narrative_beat: str  # "inciting_incident", "climax", "resolution", etc.
     source_start_quote: str  # verbatim first ~60 chars of this scene in the novel text
+    character_appearances: dict[str, str] = {}
+    # Maps character_id → appearance notes when DIFFERENT from their default.
+    # e.g. {"char_001": "barefoot, shivering, blue lips, thin torn shirt"}
+    # Only populated when a character's appearance in this scene differs from default.
 
 
 class NarrativeArc(BaseModel):

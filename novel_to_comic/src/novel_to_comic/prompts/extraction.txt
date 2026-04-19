@@ -14,7 +14,7 @@ Given the complete text of a novel, output a single JSON object matching the sch
     {
       "id": "char_001",
       "name": "Full Name",
-      "visual_anchor": "EXACTLY 60-80 words. Physical appearance ONLY — face, hair, eyes, build, clothing, scars. End with: 'Same character, same appearance.'",
+      "visual_anchor": "STRICT DANBOORU-STYLE TAGS (comma-separated). Minimum 15-20 tags of the character's typical look — physical appearance, usual clothing, accessories. NO situational state (wet, dirty, shivering, injured, covered in blood). End with the phrase: ', Same character, same appearance.'",
       "age_range": "early 30s",
       "gender": "female",
       "distinguishing_features": ["feature one", "feature two"],
@@ -30,7 +30,7 @@ Given the complete text of a novel, output a single JSON object matching the sch
     {
       "id": "loc_001",
       "name": "Short Location Name",
-      "visual_anchor": "40-60 words describing physical environment only — architecture, lighting, colors, key objects.",
+      "visual_anchor": "STRICT DANBOORU-STYLE TAGS (comma-separated). Minimum 15 tags of physical environment — e.g. 'night, indoors, dim lighting, wooden table'.",
       "time_of_day": "night",
       "mood": "tense"
     }
@@ -46,7 +46,8 @@ Given the complete text of a novel, output a single JSON object matching the sch
       "summary": "2-3 sentence summary of what happens.",
       "scene_type": "action",
       "narrative_beat": "inciting_incident",
-      "source_start_quote": "Copy verbatim the first 60-80 characters of this scene, exactly as they appear in the original text — including punctuation and capitalisation."
+      "source_start_quote": "Copy verbatim the first 60-80 characters of this scene, exactly as they appear in the original text — including punctuation and capitalisation.",
+      "character_appearances": {}
     }
   ],
 
@@ -99,15 +100,26 @@ PROPS
 
 CHARACTERS
 - Include any named character who appears in 2+ scenes.
-- visual_anchor = EXACTLY 60-80 words of PHYSICAL description only. What would a camera see?
-  WRONG: "Kind, brave, determined"
-  RIGHT: "Tall woman, early 30s, angular face, short black hair shaved at the sides, cold grey eyes, jagged scar across left cheek, dark tactical jacket with red arm patch, always upright posture."
-- Every visual_anchor MUST end with the exact phrase: "Same character, same appearance."
+- Include only characters who can be visually shown in panels.
+- Do NOT create Character entries for off-screen voices, unseen speakers, people only heard from another room, or people mentioned but never physically shown. Preserve their dialogue/events in scene summaries instead.
+- Do NOT add voice-only or off-screen speakers to scenes[].character_ids.
+- visual_anchor = Danbooru-style comma-separated tags ONLY. No prose, no sentences. The character's typical, recognizable look — physical traits, usual clothing, usual accessories. The only exclusion is situational state: no "wet", "injured", "shivering", "covered in blood", "exhausted". These temporary states belong in the scene's character_appearances instead.
+  WRONG: "A tall woman with short black hair who is wearing a tactical jacket."
+  WRONG: "1woman, adult female, tall, short black hair, grey eyes, shivering, thin torn clothes, lips blue from cold" (situational state — belongs in character_appearances)
+  RIGHT: "1woman, adult female, tall, short black hair, grey eyes, jagged scar on cheek, olive skin, athletic build, dark tactical jacket, red arm patch, upright posture"
+- default_outfit = supplementary clothing details the anchor tags may not fully capture. e.g. "cargo pants, combat boots, dog tags around neck"
+- Use age-appropriate count/gender tags:
+  - Adult male characters MUST start with "1man, adult male" — NEVER "1boy".
+  - Adult female characters MUST start with "1woman, adult female" — NEVER "1girl".
+  - Child male characters use "1boy, child".
+  - Child female characters use "1girl, child".
+- Every visual_anchor MUST end with the exact phrase: ", Same character, same appearance."
 - distinguishing_features: specific visual details a storyboard artist needs (scars, hair, marks).
 
 SCENES
 - A new scene starts when: location changes, significant time passes (hours+), or POV character changes.
 - source_start_quote: copy the first 60-80 characters of the scene VERBATIM from the text — exact words, punctuation, capitalisation. This is used to locate the scene in the source file. Do NOT invent or paraphrase this field.
+- character_appearances: a dict mapping character_id → appearance description for characters whose look DIFFERS from their default in this scene. Only include entries where a character's appearance is noticeably different from their visual_anchor + default_outfit. Examples: character is undressed/injured/wet/dirty/covered in blood/wearing borrowed clothes. If they look normal, omit them from this dict. Leave as {} when no characters have altered appearances.
 - Target 5-15 scenes for a short story, 30-60 for a full novel. Be exhaustive — cover the ENTIRE novel from first page to last.
 - Each scene should yield 3-8 comic panels. If a scene is too long, split it.
 - scene_type: one of action / dialogue / emotional / transition

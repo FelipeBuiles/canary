@@ -16,7 +16,6 @@ from rich.progress import Progress
 from tenacity import RetryError
 
 from novel_to_comic.clients import embeddings, flux
-from novel_to_comic.clients.flux import _is_imagen
 from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.models.story_bible import Character, StoryBible
@@ -332,10 +331,6 @@ async def _generate_character_refs(
                 emit({"type": "stage_progress", "stage": "index",
                       "done": state.stages["index"].items_done,
                       "total": state.stages["index"].items_total})
-                if _is_imagen(config.image_model) or _is_imagen(
-                    getattr(config, "fallback_image_model", "")
-                ):
-                    await asyncio.sleep(3)
             except Exception as e:
                 cause = e.last_attempt.exception() if isinstance(e, RetryError) else e
                 console.print(f"[red]Failed ref sheet for {char.name}: {cause}[/red]")
@@ -379,10 +374,6 @@ async def _generate_location_plates(
                 emit({"type": "stage_progress", "stage": "index",
                       "done": state.stages["index"].items_done,
                       "total": state.stages["index"].items_total})
-                if _is_imagen(config.image_model) or _is_imagen(
-                    getattr(config, "fallback_image_model", "")
-                ):
-                    await asyncio.sleep(3)
             except Exception as e:
                 cause = e.last_attempt.exception() if isinstance(e, RetryError) else e
                 console.print(f"[red]Failed plate for {loc.name}: {cause}[/red]")

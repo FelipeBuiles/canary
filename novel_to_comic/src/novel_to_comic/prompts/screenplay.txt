@@ -9,6 +9,10 @@ Every distinct spoken line in the source must appear as a beat. Do not cut, merg
 If a speech is longer than 35 words, split it into consecutive beats with the same character_id.
 Split at natural sentence or clause breaks — never mid-thought.
 
+VISIBLE CHARACTER LIST ONLY.
+The "characters" array is for people or entities physically shown in panels. Do not add off-screen voices, unseen speakers, people speaking from another room, or mentioned-only people to "characters".
+If a source line is spoken by an off-screen or unseen speaker, preserve the exact dialogue as a dialogue beat with character_id null and put the speaker cue in direction, e.g. "off-screen voice: the dentist's son".
+
 CONVERT DESCRIPTION TO VISIBLE ACTION.
 "She felt afraid" → "She backs against the wall, eyes wide, hands trembling at her sides"
 Remove all interiority (feelings, backstory) unless it can be shown as a physical action or thought bubble.

@@ -36,7 +36,7 @@ The image generation market in 2026 is dominated by FLUX (Black Forest Labs), wi
 |---|---|---|---|---|---|---|
 | Black Forest Labs | FLUX.2 [pro] | $0.030 | Yes | Yes (community) | Yes (8–10 refs) | Best |
 | OpenAI | GPT Image 1.5 | $0.009–$0.250 | Yes | No | No | Moderate |
-| Google | Imagen 4 Ultra | $0.020–$0.060 | Yes | No | No | Moderate |
+| Google | Gemini image models | Vertex AI pricing | Yes | No | Yes | Moderate |
 | Stability AI | Stable Image Ultra | $0.009–$0.080 | Yes | Yes | No | Good |
 | Ideogram | v3.0 | $0.025–$0.090 | Yes | No | No | Good (text) |
 | Midjourney | v7/v8 | ~$0.033 (sub) | No official API | No | Via --cref | Good (no API) |

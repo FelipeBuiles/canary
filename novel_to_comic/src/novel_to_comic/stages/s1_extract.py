@@ -5,6 +5,7 @@ to extract characters, locations, scenes, and narrative arcs.
 """
 
 import json
+import re
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -120,10 +121,125 @@ def _normalize_narrative_arcs(arcs: list[dict]) -> list[dict]:
     return normalized
 
 
+def _looks_adult(age_range: str, visual_anchor: str) -> bool:
+    text = f"{age_range} {visual_anchor}".lower()
+    if any(word in text for word in ("adult", "mature", "middle-aged", "middle aged", "elderly")):
+        return True
+    return any(int(match) >= 18 for match in re.findall(r"\d+", text))
+
+
+def _normalize_character_anchor_tags(characters: list[dict]) -> list[dict]:
+    """Fix common Danbooru age/gender tag slips before validation."""
+    for character in characters:
+        anchor = character.get("visual_anchor")
+        if not isinstance(anchor, str):
+            continue
+
+        gender = str(character.get("gender", "")).lower()
+        if not _looks_adult(str(character.get("age_range", "")), anchor):
+            continue
+
+        tags = [tag.strip() for tag in anchor.split(",")]
+        if not tags:
+            continue
+
+        is_female = any(word in gender for word in ("female", "woman", "girl"))
+        is_male = not is_female and any(word in gender for word in ("male", "man", "boy"))
+
+        if is_male and tags[0].lower() in {"1boy", "1girl"}:
+            tags[0] = "1man"
+            tags = [tag for tag in tags if tag.lower() != "adult"]
+            if not any(tag.lower() == "adult male" for tag in tags):
+                tags.insert(1, "adult male")
+        elif is_female and tags[0].lower() in {"1boy", "1girl"}:
+            tags[0] = "1woman"
+            tags = [tag for tag in tags if tag.lower() != "adult"]
+            if not any(tag.lower() == "adult female" for tag in tags):
+                tags.insert(1, "adult female")
+
+        character["visual_anchor"] = ", ".join(tag for tag in tags if tag)
+    return characters
+
+
+def _is_offscreen_character(character: dict) -> bool:
+    """Return True for voice-only entities that should not become visual subjects."""
+    features = character.get("distinguishing_features", [])
+    if isinstance(features, list):
+        features_text = " ".join(str(feature) for feature in features)
+    else:
+        features_text = str(features)
+    text = " ".join(
+        str(character.get(field, ""))
+        for field in ("name", "visual_anchor", "default_outfit", "age_range", "gender")
+    )
+    text = f"{text} {features_text}".lower()
+    return any(
+        marker in text
+        for marker in (
+            "off-screen",
+            "off screen",
+            "off-panel",
+            "off panel",
+            "unseen speaker",
+            "unseen voice",
+            "voice-only",
+            "voice only",
+            "heard but not seen",
+            "not physically shown",
+            "never physically shown",
+        )
+    )
+
+
+def _remove_offscreen_characters(result: dict) -> dict:
+    """Drop voice-only characters until the pipeline models off-screen speakers."""
+    characters = result.get("characters")
+    if not isinstance(characters, list):
+        return result
+
+    # TODO: Add first-class off-screen speaker support instead of dropping them.
+    removed_ids = {
+        character.get("id")
+        for character in characters
+        if isinstance(character, dict) and _is_offscreen_character(character)
+    }
+    removed_ids.discard(None)
+    if not removed_ids:
+        return result
+
+    result["characters"] = [
+        character
+        for character in characters
+        if not (isinstance(character, dict) and character.get("id") in removed_ids)
+    ]
+
+    for character in result["characters"]:
+        relationships = character.get("relationships")
+        if isinstance(relationships, list):
+            character["relationships"] = [
+                rel
+                for rel in relationships
+                if not (isinstance(rel, dict) and rel.get("character_id") in removed_ids)
+            ]
+
+    for scene in result.get("scenes", []):
+        if isinstance(scene, dict) and isinstance(scene.get("character_ids"), list):
+            scene["character_ids"] = [
+                character_id
+                for character_id in scene["character_ids"]
+                if character_id not in removed_ids
+            ]
+
+    return result
+
+
 def _normalize_result(result: dict) -> dict:
     """Apply light normalization to the raw LLM output before Pydantic validation."""
     if "narrative_arcs" in result and isinstance(result["narrative_arcs"], list):
         result["narrative_arcs"] = _normalize_narrative_arcs(result["narrative_arcs"])
+    result = _remove_offscreen_characters(result)
+    if "characters" in result and isinstance(result["characters"], list):
+        result["characters"] = _normalize_character_anchor_tags(result["characters"])
     return result
 
 

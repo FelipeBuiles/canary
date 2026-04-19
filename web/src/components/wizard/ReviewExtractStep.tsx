@@ -11,10 +11,12 @@ interface ReviewExtractStepProps {
   storyBible: StoryBible | undefined;
   onApprove: () => void;
   isApproving: boolean;
+  onRegenExtract?: () => void;
+  isRegenerating?: boolean;
   project?: string;
 }
 
-export function ReviewExtractStep({ storyBible, onApprove, isApproving, project }: ReviewExtractStepProps) {
+export function ReviewExtractStep({ storyBible, onApprove, isApproving, onRegenExtract, isRegenerating, project }: ReviewExtractStepProps) {
   const updateBible = useUpdateStoryBible();
   const { t } = useI18n();
 
@@ -101,12 +103,14 @@ export function ReviewExtractStep({ storyBible, onApprove, isApproving, project 
       )}
 
       <div className="flex items-center gap-4">
-        <Button size="lg" onClick={onApprove} disabled={isApproving}>
+        <Button size="lg" onClick={onApprove} disabled={isApproving || isRegenerating}>
           {isApproving ? t("APPROVING…") : t("APPROVE & CONTINUE")}
         </Button>
-        <span className="text-[0.72rem] text-ink-black/40">
-          Something looks wrong? Edit via CLI.
-        </span>
+        {onRegenExtract && (
+          <Button size="lg" variant="outline" onClick={onRegenExtract} disabled={isApproving || isRegenerating}>
+            {isRegenerating ? t("RE-EXTRACTING…") : t("RE-EXTRACT")}
+          </Button>
+        )}
       </div>
     </div>
   );

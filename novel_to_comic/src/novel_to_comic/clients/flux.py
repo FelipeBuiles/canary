@@ -1,48 +1,32 @@
-"""Image generation: routes to Imagen 4, Gemini native, or Together AI.
+"""Image generation: routes to Gemini native or Together AI.
 
 Routing rule (checked in order):
-  - model starts with 'imagen-'   →  Google Imagen API  (predict endpoint)
-  - model name has no '/'         →  Gemini Developer API (generateContent + response_modalities)
+  - model name has no '/'         →  Gemini via google-genai
   - model name contains '/'       →  Together AI (FLUX / SD / etc.)
 """
 
 import asyncio
 import base64
 import io
-from math import gcd
+import logging
+import time
 from pathlib import Path
 
-import httpx
-from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_exponential
 from together import AsyncTogether
 
 from novel_to_comic.config import Config
+from novel_to_comic.clients.gemini import describe_provider, get_client
 
-_IMAGEN_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:predict"
-
-
-class ImagenRateLimitError(Exception):
-    """Raised on HTTP 429 from Imagen — don't retry, switch to fallback model."""
-
-# Aspect ratios supported by Imagen 4
-_IMAGEN_RATIOS: dict[str, float] = {
-    "1:1": 1.0,
-    "3:4": 0.75,
-    "4:3": 1.333,
-    "9:16": 0.5625,
-    "16:9": 1.777,
-}
+logger = logging.getLogger("canary.google")
+image_logger = logging.getLogger("canary.image")
 
 
 # ── Routing helpers ───────────────────────────────────────────────────────────
 
-def _is_imagen(model: str) -> bool:
-    return model.lower().startswith("imagen-")
-
-
 def _is_gemini_native(model: str) -> bool:
-    """Gemini generateContent path — not Imagen, not Together AI."""
-    return "/" not in model and not _is_imagen(model)
+    """Gemini generateContent path — not Together AI."""
+    return bool(model.strip()) and "/" not in model
 
 
 # ── Together AI capability flags ──────────────────────────────────────────────
@@ -77,120 +61,6 @@ def _encode_image_sync(path: Path) -> str:
         return base64.b64encode(f.read()).decode()
 
 
-def _closest_aspect_ratio(width: int, height: int) -> str:
-    """Map pixel dimensions to the nearest Imagen 4 supported aspect ratio string."""
-    ratio = width / height
-    return min(_IMAGEN_RATIOS, key=lambda k: abs(_IMAGEN_RATIOS[k] - ratio))
-
-
-# ── Imagen 4 implementation ───────────────────────────────────────────────────
-
-@retry(
-    wait=wait_exponential(min=5, max=120),
-    stop=stop_after_attempt(4),
-    retry=retry_if_not_exception_type(ImagenRateLimitError),
-)
-async def _generate_imagen_image(
-    config: Config,
-    prompt: str,
-    output_path: Path,
-    width: int | None = None,
-    height: int | None = None,
-    reference_paths: list[Path] | None = None,
-    ref_type: str = "subject",
-    style_refs: list[Path] | None = None,
-) -> Path:
-    """Generate image via Google Imagen 4 predict endpoint.
-
-    Imagen 4 is a dedicated image generation model — higher quality than
-    Gemini's built-in generateContent image path. Uses aspect ratio strings
-    rather than pixel dimensions.
-
-    reference_paths — subject references (character identity, REFERENCE_TYPE_SUBJECT)
-    style_refs      — style references (art style / environment, REFERENCE_TYPE_STYLE)
-
-    Imagen 4 supports a maximum of 4 reference images total. Style refs are
-    allocated first (up to 2), remaining slots go to subject refs.
-    """
-    w = width or config.image_width
-    h = height or config.image_height
-    aspect_ratio = _closest_aspect_ratio(w, h)
-
-    instance: dict = {"prompt": prompt}
-
-    valid_style = [p for p in (style_refs or []) if p.exists()][:2]
-    max_subject = max(0, 4 - len(valid_style))
-
-    # For character-sheet generation (legacy ref_type="style" call site in s2),
-    # treat all reference_paths as style refs when ref_type == "style".
-    if ref_type == "style":
-        valid_style = [p for p in (reference_paths or []) if p.exists()][:4]
-        valid_subject: list[Path] = []
-    else:
-        valid_subject = [p for p in (reference_paths or []) if p.exists()][:max_subject]
-
-    if valid_style or valid_subject:
-        ref_list = []
-        ref_idx = 1
-        for ref_path in valid_style:
-            ref_bytes = await asyncio.to_thread(ref_path.read_bytes)
-            b64 = base64.b64encode(ref_bytes).decode()
-            ref_list.append({
-                "referenceType": "REFERENCE_TYPE_STYLE",
-                "referenceId": ref_idx,
-                "referenceImage": {"bytesBase64Encoded": b64},
-                "styleImageConfig": {},
-            })
-            ref_idx += 1
-        for ref_path in valid_subject:
-            ref_bytes = await asyncio.to_thread(ref_path.read_bytes)
-            b64 = base64.b64encode(ref_bytes).decode()
-            ref_list.append({
-                "referenceType": "REFERENCE_TYPE_SUBJECT",
-                "referenceId": ref_idx,
-                "referenceImage": {"bytesBase64Encoded": b64},
-                "subjectImageConfig": {"subjectType": "SUBJECT_TYPE_PERSON"},
-            })
-            ref_idx += 1
-        if ref_list:
-            instance["referenceImages"] = ref_list
-
-    body = {
-        "instances": [instance],
-        "parameters": {
-            "sampleCount": 1,
-            "aspectRatio": aspect_ratio,
-            "safetyFilterLevel": "block_some",
-            "personGeneration": "allow_adult",
-        },
-    }
-
-    url = _IMAGEN_URL.format(model=config.image_model)
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        response = await client.post(
-            url, params={"key": config.gemini_api_key}, json=body
-        )
-
-    if response.status_code == 429:
-        raise ImagenRateLimitError(f"Imagen API 429: {response.text[:300]}")
-    if response.status_code != 200:
-        raise ValueError(f"Imagen API {response.status_code}: {response.text[:300]}")
-
-    data = response.json()
-    predictions = data.get("predictions", [])
-    if not predictions:
-        raise ValueError(f"No predictions in Imagen response: {list(data.keys())}")
-
-    b64_data = predictions[0].get("bytesBase64Encoded", "")
-    if not b64_data:
-        raise ValueError("Empty bytesBase64Encoded in Imagen prediction")
-
-    image_bytes = base64.b64decode(b64_data)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    await asyncio.to_thread(output_path.write_bytes, image_bytes)
-    return output_path
-
-
 # ── Gemini native implementation ──────────────────────────────────────────────
 
 @retry(wait=wait_exponential(min=5, max=120), stop=stop_after_attempt(4))
@@ -213,10 +83,20 @@ async def _generate_gemini_image(
     style_refs are placed BEFORE subject refs in the contents list so they
     receive higher positional weight in the model's attention.
     """
-    from google import genai
     from google.genai import types as gtypes
 
-    client = genai.Client(api_key=config.gemini_api_key)
+    valid_refs = [p for p in (reference_paths or []) if p.exists()]
+    valid_style_refs = [p for p in (style_refs or []) if p.exists()]
+    started = time.perf_counter()
+    logger.info(
+        "[bold cyan]Gemini[/] task=image model=[bold]%s[/] refs=[bold]%d[/] "
+        "style_refs=[bold]%d[/] provider=[green]%s[/]",
+        config.image_model,
+        len(valid_refs),
+        len(valid_style_refs),
+        describe_provider(config),
+    )
+    client = get_client(config)
     contents: list = []
 
     # Style refs first — positional weight is highest at the start of the context.
@@ -281,6 +161,11 @@ async def _generate_gemini_image(
 
             output_path.parent.mkdir(parents=True, exist_ok=True)
             await asyncio.to_thread(output_path.write_bytes, image_bytes)
+            logger.info(
+                "[bold green]Gemini done[/] task=image model=[bold]%s[/] elapsed=[bold]%.1fs[/]",
+                config.image_model,
+                time.perf_counter() - started,
+            )
             return output_path
 
     text = getattr(response, "text", "no text")
@@ -300,6 +185,14 @@ async def _generate_together_image(
     reference_paths: list[Path] | None = None,
 ) -> Path:
     """Generate image via Together AI (FLUX.2, SD, etc.)."""
+    started = time.perf_counter()
+    image_logger.info(
+        "[bold cyan]Image[/] provider=together model=[bold]%s[/] refs=[bold]%d[/] size=%sx%s",
+        config.image_model,
+        len([p for p in (reference_paths or []) if p.exists()]),
+        width or config.image_width,
+        height or config.image_height,
+    )
     client = _get_together_client(config)
 
     kwargs: dict = {
@@ -347,21 +240,24 @@ async def _generate_together_image(
     image_data = base64.b64decode(response.data[0].b64_json)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     await asyncio.to_thread(output_path.write_bytes, image_data)
+    image_logger.info(
+        "[bold green]Image done[/] provider=together model=[bold]%s[/] elapsed=[bold]%.1fs[/]",
+        config.image_model,
+        time.perf_counter() - started,
+    )
     return output_path
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def _fallback_config(config: Config) -> Config | None:
-    """Return a config with fallback_image_model set as image_model, or None."""
-    fallback = config.fallback_image_model.strip()
-    if fallback and fallback != config.image_model:
-        return config.model_copy(update={"image_model": fallback})
-    return None
-
 
 def _generation_config(config: Config) -> Config:
     model = config.effective_image_model()
+    if model.lower().startswith("imagen-"):
+        raise ValueError(
+            "Imagen image models are no longer supported. Use a Gemini image "
+            "model such as gemini-3-pro-image-preview or a Together AI model path."
+        )
     if model != config.image_model:
         return config.model_copy(update={"image_model": model})
     return config
@@ -388,25 +284,6 @@ async def _downscale_dev_output(config: Config, path: Path, width: int, height: 
     return path
 
 
-async def _dispatch(
-    config: Config,
-    prompt: str,
-    output_path: Path,
-    width: int | None,
-    height: int | None,
-    steps: int | None,
-    refs: list[Path] | None,
-    ref_type: str,
-    style_refs: list[Path] | None = None,
-) -> Path:
-    """Route a generation request to the correct backend for config.image_model."""
-    if _is_imagen(config.image_model):
-        return await _generate_imagen_image(config, prompt, output_path, width, height, refs, ref_type, style_refs)
-    if _is_gemini_native(config.image_model):
-        return await _generate_gemini_image(config, prompt, output_path, refs, width, height, style_refs)
-    return await _generate_together_image(config, prompt, output_path, width, height, steps, refs)
-
-
 async def generate_image(
     config: Config,
     prompt: str,
@@ -417,27 +294,15 @@ async def generate_image(
     reference_image_path: Path | None = None,
     ref_type: str = "subject",
 ) -> Path:
-    """Generate a single image, routing to Imagen 4, Gemini, or Together AI.
+    """Generate a single image, routing to Gemini or Together AI.
 
-    ref_type: "subject" (character identity) or "style" (art style transfer).
-    Only meaningful for Imagen 4. On 429, automatically retries with fallback_image_model.
+    ref_type is retained for call-site readability; Gemini receives any
+    reference image as normal image context.
     """
     config = _generation_config(config)
     width, height = _effective_dimensions(config, width, height)
     steps = config.effective_image_steps(steps)
     refs = [reference_image_path] if reference_image_path else None
-    if _is_imagen(config.image_model):
-        try:
-            result = await _generate_imagen_image(config, prompt, output_path, width, height, refs, ref_type)
-            return await _downscale_dev_output(config, result, width, height)
-        except ImagenRateLimitError:
-            fb = _fallback_config(config)
-            if fb:
-                from rich.console import Console
-                Console().print(f"[yellow]Rate limited on {config.image_model} → falling back to {fb.image_model}[/yellow]")
-                result = await _dispatch(fb, prompt, output_path, width, height, steps, refs, ref_type)
-                return await _downscale_dev_output(config, result, width, height)
-            raise
     if _is_gemini_native(config.image_model):
         result = await _generate_gemini_image(config, prompt, output_path, refs, width, height)
         return await _downscale_dev_output(config, result, width, height)
@@ -460,25 +325,12 @@ async def generate_image_multi_ref(
 
     reference_paths — subject/character refs (identity conditioning).
     style_refs      — style/environment refs: style sample, location plate, scene anchor.
-                      Placed before subject refs for Gemini; sent as REFERENCE_TYPE_STYLE
-                      for Imagen. Ignored for Together AI (no separate style conditioning).
-    On 429, automatically retries with fallback_image_model.
+                      Placed before subject refs for Gemini. Ignored for
+                      Together AI (no separate style conditioning).
     """
     config = _generation_config(config)
     width, height = _effective_dimensions(config, width, height)
     steps = config.effective_image_steps(steps)
-    if _is_imagen(config.image_model):
-        try:
-            result = await _generate_imagen_image(config, prompt, output_path, width, height, reference_paths, ref_type, style_refs)
-            return await _downscale_dev_output(config, result, width, height)
-        except ImagenRateLimitError:
-            fb = _fallback_config(config)
-            if fb:
-                from rich.console import Console
-                Console().print(f"[yellow]Rate limited on {config.image_model} → falling back to {fb.image_model}[/yellow]")
-                result = await _dispatch(fb, prompt, output_path, width, height, steps, reference_paths, ref_type, style_refs)
-                return await _downscale_dev_output(config, result, width, height)
-            raise
     if _is_gemini_native(config.image_model):
         result = await _generate_gemini_image(config, prompt, output_path, reference_paths, width, height, style_refs)
         return await _downscale_dev_output(config, result, width, height)

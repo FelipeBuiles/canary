@@ -71,10 +71,10 @@ Novel (EPUB/TXT)
 | Image prompts | `gemini-3.1-flash-lite-preview` | Template assembly, Flash-Lite sufficient |
 | Embeddings | `gemini-embedding-2-preview` (Google) | 3072 dims, strong semantic retrieval |
 | Image generation | `gemini-3-pro-image-preview` (default) | Native Gemini 3, no per-image cost |
-| Image generation (fallback) | `gemini-3.1-flash-image-preview` | Triggered automatically on 429 rate limits |
+| Image generation (dev fallback) | `gemini-3.1-flash-image-preview` | Faster iteration when `dev_mode` is enabled |
 | Vector store | Qdrant | Hybrid search (dense + BM25), excellent metadata filtering |
 
-Image generation also supports `imagen-4-*` (Vertex AI) and FLUX.2 Pro via Together AI (`black-forest-labs/FLUX.2-pro`, $0.03/image). Switch via `image_model` in `config.yaml`. See `clients/flux.py` for routing logic.
+Image generation supports Gemini image models through Vertex AI and FLUX.2 Pro via Together AI (`black-forest-labs/FLUX.2-pro`, $0.03/image). Switch via `image_model` in `config.yaml`. See `clients/flux.py` for routing logic.
 
 ---
 

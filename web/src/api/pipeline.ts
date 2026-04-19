@@ -61,3 +61,12 @@ export function approveStage(
     { method: "POST" },
   );
 }
+
+export function regenExtract(
+  project: string,
+): Promise<{ status: string; stage: string }> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/regen-extract`,
+    { method: "POST" },
+  );
+}

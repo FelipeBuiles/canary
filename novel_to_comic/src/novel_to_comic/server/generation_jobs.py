@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -15,6 +17,7 @@ from novel_to_comic.config import Config
 
 GenerationJobStatus = Literal["queued", "running", "complete", "failed"]
 GenerationJobRunner = Callable[[], Awaitable[None]]
+logger = logging.getLogger("canary.generation")
 
 
 def _now() -> datetime:
@@ -65,6 +68,13 @@ def enqueue_generation_job(
     )
     app.state.generation_jobs[job.id] = job
     app.state.generation_queue.put_nowait(job)
+    logger.info(
+        "[bold blue]Job queued[/] project=[white]%s[/] kind=[cyan]%s[/] label=%s id=[dim]%s[/]",
+        project_name,
+        kind,
+        label,
+        job.id[:8],
+    )
     return job
 
 
@@ -102,10 +112,18 @@ def generation_job_payload(app: FastAPI, job: GenerationJob) -> dict[str, Any]:
 async def generation_worker(app: FastAPI) -> None:
     while True:
         job: GenerationJob = await app.state.generation_queue.get()
+        started = time.perf_counter()
         try:
             if job.semaphore is None:
                 job.status = "running"
                 job.started_at = _now()
+                logger.info(
+                    "[bold cyan]Job start[/] project=[white]%s[/] kind=[cyan]%s[/] label=%s id=[dim]%s[/]",
+                    job.project_name,
+                    job.kind,
+                    job.label,
+                    job.id[:8],
+                )
                 result = job.runner()
                 if inspect.isawaitable(result):
                     await result
@@ -113,13 +131,39 @@ async def generation_worker(app: FastAPI) -> None:
                 async with job.semaphore:
                     job.status = "running"
                     job.started_at = _now()
+                    logger.info(
+                        "[bold cyan]Job start[/] project=[white]%s[/] kind=[cyan]%s[/] label=%s id=[dim]%s[/]",
+                        job.project_name,
+                        job.kind,
+                        job.label,
+                        job.id[:8],
+                    )
                     result = job.runner()
                     if inspect.isawaitable(result):
                         await result
             job.status = "complete"
+            logger.info(
+                "[bold green]Job complete[/] project=[white]%s[/] kind=[cyan]%s[/] "
+                "label=%s id=[dim]%s[/] elapsed=[bold]%.1fs[/]",
+                job.project_name,
+                job.kind,
+                job.label,
+                job.id[:8],
+                time.perf_counter() - started,
+            )
         except Exception as exc:
             job.status = "failed"
             job.error = str(exc) or type(exc).__name__
+            logger.exception(
+                "[bold red]Job failed[/] project=[white]%s[/] kind=[cyan]%s[/] "
+                "label=%s id=[dim]%s[/] elapsed=[bold]%.1fs[/] error=%s",
+                job.project_name,
+                job.kind,
+                job.label,
+                job.id[:8],
+                time.perf_counter() - started,
+                job.error,
+            )
         finally:
             job.finished_at = _now()
             app.state.generation_queue.task_done()

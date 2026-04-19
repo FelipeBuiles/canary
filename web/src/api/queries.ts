@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listProjects, getProjectStatus, createProject, generateProjectCover } from "./projects";
-import { runPipeline, approveStage, regenPanel, regenRef, regenPlate, getGenerationJobs } from "./pipeline";
+import { runPipeline, approveStage, regenPanel, regenRef, regenPlate, getGenerationJobs, regenExtract } from "./pipeline";
 import type { ConfigOverrides, StoryBible } from "../types/api";
 import {
   getStoryBible,
@@ -118,6 +118,18 @@ export function useRegenPanel() {
       regenPanel(project, sceneId, panelNumber),
     // No cache invalidation here — DrawRoom detects completion via images polling
     // and busts the cache itself to avoid the panel disappearing mid-regen.
+  });
+}
+
+export function useRegenExtract() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project }: { project: string }) =>
+      regenExtract(project),
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+      qc.invalidateQueries({ queryKey: ["project", project, "story-bible"] });
+    },
   });
 }
 
