@@ -12,7 +12,7 @@ Remove the top header navigation entirely. Redesign the SideNav as the single so
 ## Header Removal
 
 - Remove `TopNav.tsx` entirely — no more top navigation bar
-- Project context lives in SideNav
+- Keep project selector (it stays where it is or moves into SideNav)
 - App title / logo moves into SideNav header when expanded
 
 ---
@@ -131,16 +131,16 @@ Shows when `is_running = true`. Fixed bottom-right corner.
 
 ## Project Selector
 
-When multiple projects exist, a project switcher at the top of SideNav:
-- Dropdown or button showing current project name
+Project selector is kept and integrated into SideNav:
+- Shows current project name prominently at top of SideNav
 - Click to expand list of all projects
-- "NEW PROJECT" button creates a new project (moves creation wizard back inline)
+- "NEW PROJECT" button creates a new project
 
 ---
 
 ## Removed Elements
 
-- **TopNav** — completely removed
+- **TopNav** — completely removed (project selector is preserved, moves into SideNav)
 - **"NEW CHAPTER" / "RENDER" button in header** — removed
 - **Footer component** — replaced by SideNav footer
 - **LiveSpecPill** — replaced by floating indicator
