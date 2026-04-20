@@ -127,25 +127,36 @@ def render_generation_prompt(prompt: ImagePrompt, style_template: str) -> str:
 
 ---
 
-### Stage 6 — Fix Scene Anchor Chaining
+### Stage 6 — Conditional Scene Anchor + Continuity
 
 **File:** `novel_to_comic/src/novel_to_comic/stages/s6_generate.py`
 
-**Current (broken) behavior:**
-```python
-# Scene anchor is set once on first success
-if result and prompt.scene_id not in scene_anchors:
-    scene_anchors[prompt.scene_id] = output_path
-```
-
-**Fixed behavior:**
+**Scene anchor chaining (fix as described above):**
 ```python
 # Scene anchor is updated after EACH success to point to immediately previous panel
 if result:
     scene_anchors[prompt.scene_id] = output_path
 ```
 
-This ensures every panel after the first in a scene uses the immediately previous panel image as its style reference, maintaining visual continuity.
+**Conditional image reference based on transition:**
+
+The previous panel image should only be used as a style reference when the transition is **smooth/semantic**. Hard cuts (smash cut, fade to black/white, scene change) can make the previous panel image actively harmful — the model might blend the previous scene into the new one.
+
+```python
+def _should_use_prev_panel_image(prev_panel: PanelBreakdown | None) -> bool:
+    """Return True if the previous panel's image should be used as a style reference."""
+    if not prev_panel:
+        return False
+    transition = prev_panel.transition_note.lower() if prev_panel.transition_note else ""
+    hard_cuts = ["smash cut", "fade to", "cut to", "scene change", "time jump"]
+    return not any(hard in transition for hard in hard_cuts)
+```
+
+When generating a panel, check `transition_note` from the **previous** panel:
+- **Smooth transitions** (no note, temporal continuity like "seconds later", "then") → use previous panel image as style_ref
+- **Hard cuts** (smash cut, fade, cut to, time jump) → skip previous panel image, only use style sample
+
+This decision is made at generation time using the previous panel's breakdown (already on disk). The continuity note text is always included regardless of transition type — it describes what happened, not visual reference.
 
 ---
 
@@ -163,8 +174,8 @@ No data migration needed.
 
 ## Scope Boundaries
 
-- **In scope:** Intra-scene continuity only (panel N → panel N+1 within the same `scene_id`). Cross-scene continuity not desired — scenes can have location/time breaks.
-- **Out of scope:** Cross-scene continuity, camera movement descriptions between panels, dialogue continuity (dialogue is already in the prompt).
+- **In scope:** Intra-scene continuity only (panel N → panel N+1 within the same `scene_id`). Cross-scene continuity not desired — scenes can have location/time breaks. Conditional image reference based on transition type.
+- **Out of scope:** Cross-scene continuity, camera movement descriptions between panels, dialogue continuity (dialogue is already in the prompt). User-configurable transition behavior (transition list is hardcoded for now).
 
 ---
 
@@ -175,5 +186,6 @@ No data migration needed.
 3. Update `build_image_prompt_spec()` to accept `prev_panel` and build continuity note
 4. Update `s5_prompts.py` to pass previous panel when building prompts
 5. Update `render_generation_prompt()` to append continuity note
-6. Fix scene anchor chaining in `s6_generate.py`
-7. Test with a multi-panel scene, verify regeneration produces continuity note
+6. Implement `_should_use_prev_panel_image()` in `s6_generate.py`
+7. Update scene anchor logic to chain and use conditional previous panel image
+8. Test with a multi-panel scene, verify continuity note appears and hard cuts skip image reference
