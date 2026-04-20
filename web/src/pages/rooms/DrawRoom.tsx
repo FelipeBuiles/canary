@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { useGenerationJobs, useImages, useProjectStatus, useRegenPanel } from "../../api/queries";
+import { useGenerationJobs, useImages, useProjectStatus, useRegenPanel, usePromptSummaries } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { PanelCard } from "../../components/PanelCard";
+import { PanelDetailModal } from "../../components/PanelDetailModal";
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
 import { StatRow } from "../../components/ui/StatRow";
@@ -22,6 +23,7 @@ export function DrawRoom() {
   const complete = useRegenStore((s) => s.complete);
   const fail = useRegenStore((s) => s.fail);
   const [sceneFilter, setSceneFilter] = useState<string | null>(null);
+  const [selectedPanel, setSelectedPanel] = useState<{ sceneId: string; panelNumber: number } | null>(null);
 
   const regeningKeys = Object.keys(projectRegens);
   const regenJobIds = Object.values(projectRegens)
@@ -36,6 +38,7 @@ export function DrawRoom() {
 
   const { data: images, isLoading } = useImages(name, regeningKeys.length > 0 ? 2000 : undefined);
   const { data: status } = useProjectStatus(name);
+  const { data: promptSummaries } = usePromptSummaries(name);
   const { mutate: regen } = useRegenPanel();
 
   function handleRegen(sceneId: string, panelNumber: number) {
@@ -78,6 +81,49 @@ export function DrawRoom() {
 
   // Keep the regen panel in the grid while its file is absent from disk.
   const displayImages: ImageStatus[] = [...baseImages];
+
+  // Add failed panels that might not be in images yet
+  for (const failedItem of failedItems) {
+    const parts = failedItem.split("/");
+    const failedSceneId = parts[0];
+    const panelMatch = parts[1]?.match(/panel_(\d+)/);
+    if (!panelMatch) continue;
+    const failedPanelNum = parseInt(panelMatch[1], 10);
+    const alreadyPresent = displayImages.some(
+      (img) => img.scene_id === failedSceneId && img.panel_number === failedPanelNum,
+    );
+    if (!alreadyPresent && (!sceneFilter || sceneFilter === failedSceneId)) {
+      const synth: ImageStatus = { scene_id: failedSceneId, panel_number: failedPanelNum, status: "failed" };
+      const idx = displayImages.findIndex(
+        (img) =>
+          img.scene_id > failedSceneId ||
+          (img.scene_id === failedSceneId && img.panel_number > failedPanelNum),
+      );
+      if (idx === -1) displayImages.push(synth);
+      else displayImages.splice(idx, 0, synth);
+    }
+  }
+
+  // Add pending placeholders for panels that haven't been generated yet
+  for (const summary of promptSummaries ?? []) {
+    if (sceneFilter && sceneFilter !== summary.scene_id) continue;
+    for (let panelNum = 1; panelNum <= summary.prompt_count; panelNum++) {
+      const alreadyPresent = displayImages.some(
+        (img) => img.scene_id === summary.scene_id && img.panel_number === panelNum,
+      );
+      if (!alreadyPresent) {
+        const idx = displayImages.findIndex(
+          (img) =>
+            img.scene_id > summary.scene_id ||
+            (img.scene_id === summary.scene_id && img.panel_number > panelNum),
+        );
+        const synth: ImageStatus = { scene_id: summary.scene_id, panel_number: panelNum, status: "pending" };
+        if (idx === -1) displayImages.push(synth);
+        else displayImages.splice(idx, 0, synth);
+      }
+    }
+  }
+
   for (const regeningKey of regeningKeys) {
     const lastDash = regeningKey.lastIndexOf("-");
     const regenSceneId = regeningKey.slice(0, lastDash);
@@ -97,13 +143,13 @@ export function DrawRoom() {
     }
   }
 
-  const scenes = [...new Set(displayImages.map((img) => img.scene_id))];
+  const scenes = [...new Set(images?.map((img) => img.scene_id) ?? [])];
 
   if (isLoading) {
     return <RoomShell isLoading loadingText="LOADING PANEL GALLERY…" />;
   }
 
-  if ((!images?.length && regeningKeys.length === 0) || !name) {
+  if ((!images?.length && !promptSummaries?.length && regeningKeys.length === 0) || !name) {
     return (
       <RoomShell
         isEmpty
@@ -158,6 +204,7 @@ export function DrawRoom() {
                 regenMode={regenModes.get(key) ?? null}
                 regenError={regenError}
                 onRegenerate={() => handleRegen(img.scene_id, img.panel_number)}
+                onPanelClick={() => setSelectedPanel({ sceneId: img.scene_id, panelNumber: img.panel_number })}
               />
             );
           })}
@@ -197,6 +244,16 @@ export function DrawRoom() {
           </Card>
         </div>
       </section>
+      {selectedPanel && name && (
+        <PanelDetailModal
+          isOpen={!!selectedPanel}
+          onClose={() => setSelectedPanel(null)}
+          project={name}
+          sceneId={selectedPanel.sceneId}
+          panelNumber={selectedPanel.panelNumber}
+          imageUrl={`/api/projects/${encodeURIComponent(name)}/files/images/${selectedPanel.sceneId}/panel_${String(selectedPanel.panelNumber).padStart(3, "0")}.png`}
+        />
+      )}
     </RoomShell>
   );
 }

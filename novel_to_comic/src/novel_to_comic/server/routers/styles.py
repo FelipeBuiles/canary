@@ -116,6 +116,11 @@ async def _generate_style_samples_parallel(config, bible, project_dir, indices, 
         sample_path = samples_dir / f"style_{idx}.png"
         await _generate_style_sample(sample_config, bible, project_dir, sample_path)
 
+    if config.effective_image_model().strip() and "/" not in config.effective_image_model():
+        for i in indices:
+            await _one(i)
+        return
+
     await asyncio.gather(*[_one(i) for i in indices])
 
 

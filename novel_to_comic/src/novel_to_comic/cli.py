@@ -588,7 +588,7 @@ async def _generate_style_samples_parallel(
     indices: list[int],
     suggestions: list[dict],
 ) -> None:
-    """Generate sample images for the given suggestion indices in parallel."""
+    """Generate sample images for the given suggestion indices."""
     samples_dir = project_dir / "samples"
     samples_dir.mkdir(exist_ok=True)
 
@@ -598,6 +598,11 @@ async def _generate_style_samples_parallel(
         sample_config = config.model_copy(update={"style_template": template})
         sample_path = samples_dir / f"style_{idx}.png"
         await _generate_style_sample(sample_config, bible, project_dir, sample_path)
+
+    if config.effective_image_model().strip() and "/" not in config.effective_image_model():
+        for i in indices:
+            await _one(i)
+        return
 
     await asyncio.gather(*[_one(i) for i in indices])
 
@@ -700,6 +705,7 @@ def show_config(project: str):
         ("screenplay",  config.screenplay_model),
         ("panels",      config.panel_model),
         ("prompts",     config.prompt_model),
+        ("rag index",   "enabled" if config.enable_rag_index else "disabled"),
         ("embeddings",  config.embedding_model),
         ("image",       config.image_model),
         ("fallback img",config.fallback_image_model),

@@ -93,6 +93,7 @@ class Config(BaseModel):
     )
 
     # Pipeline settings
+    enable_rag_index: bool = False
     max_panels_per_scene: int = 8
     max_panels_per_page: int = 6    # how many panels appear on each assembled page
     max_words_per_bubble: int = 35
@@ -250,9 +251,13 @@ panel_model: "{config.panel_model}"
 # Stage 5 – image prompt assembly (template filling)
 prompt_model: "{config.prompt_model}"
 
-# Embeddings for RAG index (Google gemini-embedding-001 = 3072 dims on Vertex AI)
+# Optional experimental RAG index. Disabled by default because the current
+# screenplay/prompt stages read scene files directly and do not query Qdrant.
+enable_rag_index: {str(config.enable_rag_index).lower()}
+
+# Embeddings for optional RAG index (Google gemini-embedding-001 = 3072 dims on Vertex AI)
 # Switch to "text-embedding-3-small" for OpenAI (1536 dims, $0.02/M tokens)
-# WARNING: changing this after Stage 2 requires rebuilding the Qdrant index
+# WARNING: changing this after building a RAG index requires rebuilding that index
 embedding_model: "{config.embedding_model}"
 
 # Image generation model

@@ -100,21 +100,52 @@ async def _generate_gemini_image(
     )
     client = get_client(config)
     contents: list = []
+    reference_notes: list[str] = []
 
     # Subject refs first — strongest positional weight goes to character identity.
     # Cap at 4 to support multi-character dialogue panels without overrunning the
     # model's effective reference-image budget.
+    subject_count = 0
     if reference_paths:
         for ref_path in [p for p in reference_paths if p.exists()][:4]:
             ref_bytes = await asyncio.to_thread(ref_path.read_bytes)
             contents.append(gtypes.Part.from_bytes(data=ref_bytes, mime_type="image/png"))
+            subject_count += 1
+    if subject_count:
+        if subject_count == 1:
+            reference_notes.append(
+                "Image 1 is a character identity reference. Preserve that "
+                "character's face, build, hair, and clothing continuity."
+            )
+        else:
+            reference_notes.append(
+                f"Images 1-{subject_count} are character identity references. "
+                "Preserve each character's face, build, hair, and clothing continuity."
+            )
 
     # Style / continuity refs after subjects. Capped at 2; caller dedups so this
     # is typically a single scene anchor, or style_sample (+ plate) for the
     # first panel of a scene.
+    style_count = 0
     for ref_path in [p for p in (style_refs or []) if p.exists()][:2]:
         ref_bytes = await asyncio.to_thread(ref_path.read_bytes)
         contents.append(gtypes.Part.from_bytes(data=ref_bytes, mime_type="image/png"))
+        style_count += 1
+    if style_count:
+        start = subject_count + 1
+        end = subject_count + style_count
+        if style_count == 1:
+            reference_notes.append(
+                f"Image {start} is a visual style and scene-continuity reference. "
+                "Match its rendering style, palette, texture, and lighting without "
+                "copying its exact composition unless requested."
+            )
+        else:
+            reference_notes.append(
+                f"Images {start}-{end} are visual style and scene-continuity references. "
+                "Match their rendering style, palette, texture, and lighting without "
+                "copying their exact composition unless requested."
+            )
 
     # Nudge Gemini toward the requested aspect ratio.  The model picks its own
     # resolution, so we hint in the prompt and then center-crop as a fallback.
@@ -127,7 +158,14 @@ async def _generate_gemini_image(
         shape_hint = "VERTICAL PORTRAIT panel (taller than wide)."
     else:
         shape_hint = "HORIZONTAL LANDSCAPE panel (wider than tall)."
-    contents.append(prompt + f"\n\nCompose as a {shape_hint}")
+    reference_instruction = "\n".join(reference_notes)
+    if reference_instruction:
+        reference_instruction = (
+            "REFERENCE IMAGE INSTRUCTIONS:\n"
+            f"{reference_instruction}\n"
+            "The written panel prompt is authoritative for action, camera, framing, and subject count.\n\n"
+        )
+    contents.append(reference_instruction + prompt + f"\n\nCompose as a {shape_hint}")
 
     response = await client.aio.models.generate_content(
         model=config.image_model,
@@ -331,8 +369,9 @@ async def generate_image_multi_ref(
 
     reference_paths — subject/character refs (identity conditioning).
     style_refs      — style/environment refs: style sample, location plate, scene anchor.
-                      Placed before subject refs for Gemini. Ignored for
-                      Together AI (no separate style conditioning).
+                      Placed after subject refs for Gemini so character identity
+                      has priority. Ignored for Together AI until its FLUX.2
+                      reference_images path is wired.
     """
     config = _generation_config(config)
     width, height = _effective_dimensions(config, width, height)

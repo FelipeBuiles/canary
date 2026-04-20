@@ -1,11 +1,12 @@
-"""Stage 2: RAG index + character reference images + location plates.
+"""Stage 2: optional RAG index + character reference images + location plates.
 
-Part A: Embed novel scene chunks into Qdrant.
+Part A: Optionally embed novel scene chunks into Qdrant.
 Part B: Generate character reference sheets via FLUX.2 Pro.
 Part C: Generate location background plates via FLUX.2 Pro.
 """
 
 import asyncio
+import hashlib
 import json
 import re
 import uuid
@@ -37,6 +38,9 @@ console = Console()
 _clean = clean
 _shorten = shorten
 
+_MAX_EMBEDDING_BATCH_TEXTS = 100
+_MAX_EMBEDDING_BATCH_TOKENS = 18_000
+
 
 def _tokens(value: str) -> set[str]:
     return {
@@ -44,6 +48,33 @@ def _tokens(value: str) -> set[str]:
         for token in re.findall(r"[a-z0-9]+", value.lower())
         if len(token) > 2 and token not in {"the", "and", "with", "his", "her"}
     }
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, len(text) // 4)
+
+
+def _embedding_batches(chunks: list[dict]) -> list[list[dict]]:
+    batches: list[list[dict]] = []
+    current: list[dict] = []
+    current_tokens = 0
+
+    for chunk in chunks:
+        chunk_tokens = _estimate_tokens(chunk["text"])
+        would_exceed_count = len(current) >= _MAX_EMBEDDING_BATCH_TEXTS
+        would_exceed_tokens = current_tokens + chunk_tokens > _MAX_EMBEDDING_BATCH_TOKENS
+        if current and (would_exceed_count or would_exceed_tokens):
+            batches.append(current)
+            current = []
+            current_tokens = 0
+
+        current.append(chunk)
+        current_tokens += chunk_tokens
+
+    if current:
+        batches.append(current)
+
+    return batches
 
 
 def _character_signature(char: Character) -> str:
@@ -122,12 +153,93 @@ def _crop_sheet_to_poses(sheet_path: Path) -> None:
             img.crop(box).save(out_path)
 
 
+def _file_sha256(path: Path | None) -> str | None:
+    if path is None or not path.exists():
+        return None
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _relative_to_project(path: Path | None, project_dir: Path) -> str | None:
+    if path is None:
+        return None
+    try:
+        return str(path.relative_to(project_dir))
+    except ValueError:
+        return str(path)
+
+
+def _asset_meta_path(output_path: Path) -> Path:
+    return output_path.with_suffix(f"{output_path.suffix}.meta.json")
+
+
+def _asset_meta_common(config: Config, project_dir: Path, style_ref: Path | None) -> dict:
+    return {
+        "version": 1,
+        "style_template": config.style_template,
+        "image_model": config.effective_image_model(),
+        "style_ref": _relative_to_project(style_ref, project_dir),
+        "style_ref_sha256": _file_sha256(style_ref),
+    }
+
+
+def _character_ref_meta(
+    config: Config,
+    project_dir: Path,
+    style_ref: Path | None,
+    char: Character,
+    prompt: str,
+) -> dict:
+    return {
+        **_asset_meta_common(config, project_dir, style_ref),
+        "kind": "character_ref",
+        "character_id": char.id,
+        "visual_anchor": char.visual_anchor,
+        "default_outfit": char.default_outfit,
+        "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+    }
+
+
+def _location_plate_meta(
+    config: Config,
+    project_dir: Path,
+    style_ref: Path | None,
+    loc,
+    prompt: str,
+) -> dict:
+    return {
+        **_asset_meta_common(config, project_dir, style_ref),
+        "kind": "location_plate",
+        "location_id": loc.id,
+        "visual_anchor": loc.visual_anchor,
+        "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+    }
+
+
+def _asset_matches_meta(output_path: Path, expected: dict) -> bool:
+    meta_path = _asset_meta_path(output_path)
+    if not output_path.exists() or not meta_path.exists():
+        return False
+    try:
+        actual = json.loads(meta_path.read_text())
+    except Exception:
+        return False
+    return actual == expected
+
+
+def _write_asset_meta(output_path: Path, meta: dict) -> None:
+    _asset_meta_path(output_path).write_text(json.dumps(meta, indent=2, sort_keys=True))
+
+
 def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
     """Return the sample image that matches the active style template.
 
     Tries to match by comparing the template text against saved suggestions.
-    Falls back to the first available sample if no exact match is found.
-    Returns None if no samples exist (style command hasn't been run).
+    Returns None if no exact sample exists. This avoids conditioning refs and
+    panels on a sample from a different active style.
     """
     suggestions_path = project_dir / "samples" / "style_suggestions.json"
     if suggestions_path.exists():
@@ -141,12 +253,6 @@ def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
                         return candidate
         except Exception:
             pass
-
-    # Fallback: first available sample regardless of which style is active
-    for i in range(1, 20):
-        candidate = project_dir / "samples" / f"style_{i}.png"
-        if candidate.exists():
-            return candidate
 
     return None
 
@@ -204,6 +310,7 @@ async def regenerate_character_ref(
     )
     style_ref = _find_style_ref(project_dir, config.style_template)
     prompt = _character_ref_prompt(config, story_bible, char)
+    meta = _character_ref_meta(config, project_dir, style_ref, char, prompt)
 
     try:
         async with sem:
@@ -218,6 +325,7 @@ async def regenerate_character_ref(
             )
         tmp_path.replace(output_path)
         await asyncio.to_thread(_crop_sheet_to_poses, output_path)
+        _write_asset_meta(output_path, meta)
         return output_path
     finally:
         if tmp_path.exists():
@@ -241,12 +349,21 @@ async def regenerate_location_plate(
     tmp_path = output_path.with_name(
         f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
     )
+    style_ref = _find_style_ref(project_dir, config.style_template)
     prompt = _location_plate_prompt(config, loc)
+    meta = _location_plate_meta(config, project_dir, style_ref, loc, prompt)
 
     try:
         async with sem:
-            await flux.generate_image(config, prompt, tmp_path)
+            await flux.generate_image(
+                config,
+                prompt,
+                tmp_path,
+                reference_image_path=style_ref,
+                ref_type="style",
+            )
         tmp_path.replace(output_path)
+        _write_asset_meta(output_path, meta)
         return output_path
     finally:
         if tmp_path.exists():
@@ -256,7 +373,7 @@ async def regenerate_location_plate(
 async def _build_rag_index(config: Config, project_dir: Path, story_bible: StoryBible) -> int:
     """Part A: Build the Qdrant RAG index from scene texts."""
     console.print("[bold]Building RAG index...[/bold]")
-    create_collection(config)
+    create_collection(config, project_dir)
 
     scene_texts = load_scene_texts(project_dir / "scenes")
     scene_lookup = {s.id: s for s in story_bible.scenes}
@@ -281,13 +398,10 @@ async def _build_rag_index(config: Config, project_dir: Path, story_bible: Story
         console.print("[yellow]No scene texts found to index.[/yellow]")
         return 0
 
-    # Embed in batches
-    batch_size = 100
-    for i in range(0, len(all_chunks), batch_size):
-        batch = all_chunks[i:i + batch_size]
+    for batch in _embedding_batches(all_chunks):
         texts = [c["text"] for c in batch]
         vectors = await embeddings.embed_texts(config, texts)
-        upsert_chunks(config, batch, vectors)
+        upsert_chunks(config, batch, vectors, project_dir)
 
     console.print(f"[green]Indexed {len(all_chunks)} chunks from {len(scene_texts)} scenes.[/green]")
     return len(all_chunks)
@@ -331,8 +445,10 @@ async def _generate_character_refs(
             char_dir = refs_dir / char.id
             char_dir.mkdir(parents=True, exist_ok=True)
             output_path = char_dir / "sheet.png"
+            prompt = _character_ref_prompt(config, story_bible, char)
+            meta = _character_ref_meta(config, project_dir, style_ref, char, prompt)
 
-            if output_path.exists():
+            if _asset_matches_meta(output_path, meta):
                 # Migrate older sheets that pre-date cropped-pose references.
                 if not (char_dir / "front.png").exists():
                     try:
@@ -348,8 +464,6 @@ async def _generate_character_refs(
                 progress.advance(task)
                 continue
 
-            prompt = _character_ref_prompt(config, story_bible, char)
-
             try:
                 emit({"type": "log", "stage": "index", "level": "info",
                       "message": f"Generating ref sheet for {char.name}"})
@@ -364,6 +478,7 @@ async def _generate_character_refs(
                     ref_type="style",
                 )
                 await asyncio.to_thread(_crop_sheet_to_poses, output_path)
+                _write_asset_meta(output_path, meta)
                 record_item_done(state, "index", cost=0.05)
                 emit({"type": "stage_progress", "stage": "index",
                       "done": state.stages["index"].items_done,
@@ -393,7 +508,10 @@ async def _generate_location_plates(
         task = progress.add_task("Location plates", total=len(locs_to_gen))
         for loc in locs_to_gen:
             output_path = plates_dir / f"{loc.id}.png"
-            if output_path.exists():
+            prompt = _location_plate_prompt(config, loc)
+            style_ref = _find_style_ref(project_dir, config.style_template)
+            meta = _location_plate_meta(config, project_dir, style_ref, loc, prompt)
+            if _asset_matches_meta(output_path, meta):
                 record_item_done(state, "index", cost=0.0)
                 emit({"type": "log", "stage": "index", "level": "dim",
                       "message": f"Using existing location plate for {loc.name}"})
@@ -402,11 +520,17 @@ async def _generate_location_plates(
                       "total": state.stages["index"].items_total})
                 progress.advance(task)
                 continue
-            prompt = _location_plate_prompt(config, loc)
             try:
                 emit({"type": "log", "stage": "index", "level": "info",
                       "message": f"Generating location plate for {loc.name}"})
-                await flux.generate_image(config, prompt, output_path)
+                await flux.generate_image(
+                    config,
+                    prompt,
+                    output_path,
+                    reference_image_path=style_ref,
+                    ref_type="style",
+                )
+                _write_asset_meta(output_path, meta)
                 record_item_done(state, "index", cost=0.03)
                 emit({"type": "stage_progress", "stage": "index",
                       "done": state.stages["index"].items_done,
@@ -425,17 +549,18 @@ async def run(
     loc_ids: list[str] | None = None,
     on_event: EventCallback | None = None,
 ) -> None:
-    """Execute Stage 2: Build RAG index and generate reference images."""
+    """Execute Stage 2: optionally build RAG index and generate reference images."""
     emit = on_event or _NOOP
 
     story_bible = _load_story_bible(project_dir)
 
     is_partial = bool(char_ids or loc_ids)
+    should_build_rag = not is_partial and config.enable_rag_index
     should_generate_refs = not is_partial or char_ids is not None
     should_generate_plates = not is_partial or loc_ids is not None
 
     total_items = 0
-    if not is_partial:
+    if should_build_rag:
         total_items += 1  # RAG index
     if should_generate_refs:
         total_items += len([c for c in story_bible.characters if not char_ids or c.id in char_ids])
@@ -447,7 +572,7 @@ async def run(
     save_state(state, project_dir)
 
     try:
-        if not is_partial:
+        if should_build_rag:
             emit({"type": "log", "stage": "index", "level": "info",
                   "message": "Building scene search index..."})
             await _build_rag_index(config, project_dir, story_bible)
@@ -455,6 +580,10 @@ async def run(
             emit({"type": "stage_progress", "stage": "index",
                   "done": state.stages["index"].items_done,
                   "total": state.stages["index"].items_total})
+        elif not is_partial:
+            console.print("[dim]Skipping optional RAG index; enable_rag_index is false.[/dim]")
+            emit({"type": "log", "stage": "index", "level": "dim",
+                  "message": "Skipping optional RAG index; enable_rag_index is false."})
 
         if should_generate_refs:
             await _generate_character_refs(config, project_dir, story_bible, state, char_ids, on_event)

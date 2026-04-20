@@ -32,3 +32,4 @@ class ImagePrompt(BaseModel):
     height: int
     steps: int
     guidance_scale: float
+    continuity_note: str | None = None  # Narrative chain from previous panel

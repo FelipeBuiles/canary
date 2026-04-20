@@ -24,6 +24,7 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `screenplay_model` | `str` | `'gemini-3.1-pro-preview'` |  |
 | `panel_model` | `str` | `'gemini-3.1-flash-lite-preview'` |  |
 | `prompt_model` | `str` | `'gemini-3.1-flash-lite-preview'` |  |
+| `enable_rag_index` | `bool` | `False` | Build optional Qdrant scene index during Stage 2 |
 | `embedding_model` | `str` | `'gemini-embedding-001'` | Google Vertex AI, 3072 dims |
 | `image_model` | `str` | `'gemini-3-pro-image-preview'` | Nano Banana Pro — Gemini 3 Pro Image (native) |
 | `fallback_image_model` | `str` | `'gemini-3.1-flash-image-preview'` | Nano Banana 2 — faster dev image model |

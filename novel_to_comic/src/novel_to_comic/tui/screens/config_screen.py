@@ -53,6 +53,7 @@ class ConfigScreen(Screen):
         ("screenplay_model", "Screenplay model"),
         ("panel_model", "Panel model"),
         ("prompt_model", "Prompt model"),
+        ("enable_rag_index", "Enable RAG index"),
         ("embedding_model", "Embedding model"),
         ("image_model", "Image model"),
         ("fallback_image_model", "Fallback image model"),
@@ -146,6 +147,8 @@ class ConfigScreen(Screen):
                 ann = field_info.annotation
                 if ann is float or ann is float | None:
                     raw = float(raw) if raw else None
+                elif ann is bool:
+                    raw = raw.lower() in {"1", "true", "yes", "on"}
                 elif ann is int:
                     raw = int(raw) if raw else 0
 

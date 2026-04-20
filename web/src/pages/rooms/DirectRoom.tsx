@@ -1,9 +1,7 @@
 import { useParams, useSearchParams } from "react-router-dom";
 import { usePromptSummaries, usePromptsForScene, useUpdatePrompt } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
-import { Card } from "../../components/ui/Card";
-import { Tag } from "../../components/ui/Tag";
-import { EditableText } from "../../components/ui/EditableText";
+import { PromptLineageCard } from "../../components/PromptLineageCard";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { SceneSidebar } from "../../components/ui/SceneSidebar";
 import type { ImagePrompt } from "../../types/api";
@@ -62,41 +60,16 @@ export function DirectRoom() {
             </div>
           ) : prompts?.length ? (
             <div className="space-y-4">
-              {prompts.map((prompt) => (
-                <Card key={`${prompt.scene_id}-${prompt.panel_number}`} className="p-4">
-                  <div className="flex items-start justify-between border-b-[2px] border-ink-black pb-3">
-                    <div>
-                      <div className="font-meta text-[0.46rem] tracking-[0.16em] text-ink-black/45">
-                        PANEL {String(prompt.panel_number).padStart(2, "0")}
-                      </div>
-                      <div className="font-display text-[1rem] font-bold tracking-[-0.04em]">
-                        {prompt.scene_id} — Panel {prompt.panel_number}
-                      </div>
-                    </div>
-                    <div className="flex gap-1.5">
-                      <Tag>{prompt.width}×{prompt.height}</Tag>
-                      <Tag>steps: {prompt.steps}</Tag>
-                    </div>
-                  </div>
-                  <EditableText
-                    value={prompt.full_prompt}
-                    onSave={(v) => handleSavePrompt(prompt, { full_prompt: v })}
-                    multiline
-                    className="mt-3 block whitespace-pre-wrap text-[0.82rem] leading-7 text-ink-black/80"
+              {prompts.map((prompt, index) => (
+                <div key={`${prompt.scene_id}-${prompt.panel_number}`} className={index > 0 ? "border-t-2 border-ink-black pt-4 mt-4" : ""}>
+                  <PromptLineageCard
+                    prompt={prompt}
+                    onSave={(patch) => handleSavePrompt(prompt, patch)}
+                    mode="edit"
+                    showAdvanced
+                    project={name}
                   />
-                  {prompt.reference_image_paths.length > 0 && (
-                    <div className="mt-3 border-t border-panel-line pt-3">
-                      <div className="mb-2 font-meta text-[0.46rem] tracking-[0.16em] text-ink-black/45">
-                        REFERENCE IMAGES
-                      </div>
-                      <div className="flex flex-wrap gap-1">
-                        {prompt.reference_image_paths.map((path: string, i: number) => (
-                          <Tag key={i}>{path.split("/").pop()}</Tag>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </Card>
+                </div>
               ))}
             </div>
           ) : (

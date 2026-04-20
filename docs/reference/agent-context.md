@@ -41,7 +41,7 @@ novel_to_comic/src/novel_to_comic/
 │   └── embeddings.py       # Google / OpenAI embedding clients
 ├── stages/
 │   ├── s1_extract.py       # Novel → Story Bible JSON
-│   ├── s2_index.py         # RAG index + character refs + location plates
+│   ├── s2_index.py         # Optional RAG index + character refs + location plates
 │   ├── s3_screenplay.py    # Scene prose → screenplay
 │   ├── s4_panels.py        # Screenplay → panel breakdown JSON
 │   ├── s5_prompts.py       # Panel breakdown → image prompts
@@ -55,7 +55,7 @@ novel_to_comic/src/novel_to_comic/
 ├── assembly/
 │   └── html_renderer.py    # build_page_html(), browser_context(), render_html_to_png()
 ├── rag/
-│   ├── store.py            # Qdrant hybrid search
+│   ├── store.py            # Optional Qdrant search
 │   └── chunker.py          # Scene-boundary text chunking
 └── prompts/                # LLM prompt templates
 ```
@@ -271,7 +271,6 @@ projects/my-novel/
 ├── story_bible.json
 ├── input/novel.epub
 ├── scenes/
-├── qdrant_data/
 ├── refs/
 ├── plates/
 ├── screenplays/

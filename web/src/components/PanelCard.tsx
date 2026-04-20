@@ -45,6 +45,7 @@ interface PanelCardProps {
   regenMode?: "queued" | "running" | null;
   regenError?: string | null;
   onRegenerate?: () => void;
+  onPanelClick?: () => void;
 }
 
 export function PanelCard({
@@ -57,18 +58,29 @@ export function PanelCard({
   regenMode,
   regenError,
   onRegenerate,
+  onPanelClick,
 }: PanelCardProps) {
   const resolvedRegenMode = regenMode ?? (isRegening ? "running" : null);
   const state = resolvePanelState(status, resolvedRegenMode, !!narrative);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const { t } = useI18n();
 
+  const handleClick = () => {
+    if (state === "active" || state === "narrative") {
+      if (onPanelClick) {
+        onPanelClick();
+      } else {
+        setIsModalOpen(true);
+      }
+    }
+  };
+
   return (
     <>
       <Card>
-        <div 
+        <div
           className="relative aspect-[4/5] overflow-hidden border-b-[2px] border-ink-black bg-ink-black group cursor-pointer"
-          onClick={() => (state === "active" || state === "narrative") && setIsModalOpen(true)}
+          onClick={handleClick}
         >
           {state === "queued" || state === "regening" ? (
             <div className="flex h-full flex-col items-center justify-center">
@@ -122,7 +134,7 @@ export function PanelCard({
                       onRegenerate();
                     }}
                   >
-                    {t("REGENERATE")}
+                    {t("QUICK RE-DO")}
                   </Button>
                 </div>
               )}

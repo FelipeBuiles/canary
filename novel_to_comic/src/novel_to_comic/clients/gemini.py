@@ -13,6 +13,8 @@ from novel_to_comic.config import Config
 
 logger = logging.getLogger("canary.google")
 
+_client_cache: dict[str, genai.Client] = {}
+
 
 def _vertex_project(config: Config) -> str:
     project = config.google_cloud_project or os.environ.get("GOOGLE_CLOUD_PROJECT", "")
@@ -34,8 +36,11 @@ def describe_provider(config: Config) -> str:
 
 
 def get_client(config: Config) -> genai.Client:
+    cache_key = f"{config.google_use_vertex_ai}:{config.google_cloud_project}:{config.google_cloud_location}"
+    if cache_key in _client_cache:
+        return _client_cache[cache_key]
     if config.google_use_vertex_ai:
-        return genai.Client(
+        client = genai.Client(
             vertexai=True,
             project=_vertex_project(config),
             location=(
@@ -45,7 +50,10 @@ def get_client(config: Config) -> genai.Client:
             ),
             http_options=types.HttpOptions(api_version="v1"),
         )
-    return genai.Client(api_key=config.gemini_api_key)
+    else:
+        client = genai.Client(api_key=config.gemini_api_key)
+    _client_cache[cache_key] = client
+    return client
 
 
 @retry(wait=wait_exponential(min=2, max=60), stop=stop_after_attempt(3))
