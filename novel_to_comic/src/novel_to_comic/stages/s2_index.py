@@ -93,6 +93,35 @@ def _cast_identity_lock(char: Character, story_bible: StoryBible) -> str:
     )
 
 
+_SHEET_POSE_BOXES: dict[str, tuple[float, float, float, float]] = {
+    # 2x2 grid produced by _character_ref_prompt — quadrant coordinates as
+    # fractions of (width, height).
+    "front":         (0.0, 0.0, 0.5, 0.5),
+    "three_quarter": (0.5, 0.0, 1.0, 0.5),
+    "profile":       (0.0, 0.5, 0.5, 1.0),
+    "gesture":       (0.5, 0.5, 1.0, 1.0),
+}
+
+
+def _crop_sheet_to_poses(sheet_path: Path) -> None:
+    """Crop a 2x2 character reference sheet into four single-pose PNGs.
+
+    The 2x2 composite keeps style/identity coherent across the four poses
+    during generation, but passing the grid directly as a panel reference
+    leaks the grid layout into the model's attention. Individual poses give
+    the model a clean portrait to condition on while preserving the shared
+    style the sheet was generated with.
+    """
+    from PIL import Image
+
+    with Image.open(sheet_path) as img:
+        w, h = img.size
+        for name, (x0, y0, x1, y1) in _SHEET_POSE_BOXES.items():
+            box = (int(w * x0), int(h * y0), int(w * x1), int(h * y1))
+            out_path = sheet_path.parent / f"{name}.png"
+            img.crop(box).save(out_path)
+
+
 def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
     """Return the sample image that matches the active style template.
 
@@ -188,6 +217,7 @@ async def regenerate_character_ref(
                 ref_type="style",
             )
         tmp_path.replace(output_path)
+        await asyncio.to_thread(_crop_sheet_to_poses, output_path)
         return output_path
     finally:
         if tmp_path.exists():
@@ -303,6 +333,12 @@ async def _generate_character_refs(
             output_path = char_dir / "sheet.png"
 
             if output_path.exists():
+                # Migrate older sheets that pre-date cropped-pose references.
+                if not (char_dir / "front.png").exists():
+                    try:
+                        await asyncio.to_thread(_crop_sheet_to_poses, output_path)
+                    except Exception:
+                        pass
                 record_item_done(state, "index", cost=0.0)
                 emit({"type": "log", "stage": "index", "level": "dim",
                       "message": f"Using existing ref sheet for {char.name}"})
@@ -327,6 +363,7 @@ async def _generate_character_refs(
                     reference_image_path=style_ref,
                     ref_type="style",
                 )
+                await asyncio.to_thread(_crop_sheet_to_poses, output_path)
                 record_item_done(state, "index", cost=0.05)
                 emit({"type": "stage_progress", "stage": "index",
                       "done": state.stages["index"].items_done,

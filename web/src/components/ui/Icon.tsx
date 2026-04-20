@@ -1,14 +1,17 @@
-import { 
-  FileText, 
-  Image as ImageIcon, 
-  Palette, 
-  History, 
-  Download, 
-  Settings, 
-  LifeBuoy, 
-  Plus, 
+import {
+  FileText,
+  Image as ImageIcon,
+  Palette,
+  History,
+  Download,
+  Settings,
+  LifeBuoy,
+  Plus,
   ArrowRight,
-  X
+  X,
+  ChevronDown,
+  ChevronLeft,
+  Check,
 } from "lucide-react";
 import { cn } from "../../lib/cn";
 
@@ -22,7 +25,10 @@ type IconName =
   | "support"
   | "plus"
   | "arrow-right"
-  | "x";
+  | "x"
+  | "chevron-down"
+  | "chevron-left"
+  | "check";
 
 interface IconProps {
   name: IconName;
@@ -41,6 +47,9 @@ const ICON_MAP = {
   plus: Plus,
   "arrow-right": ArrowRight,
   x: X,
+  "chevron-down": ChevronDown,
+  "chevron-left": ChevronLeft,
+  check: Check,
 };
 
 export function Icon({ name, size = 14, className }: IconProps) {

@@ -27,7 +27,12 @@
       "Read(//tmp/**)",
       "Bash(echo \"exit=$?\")",
       "Bash(python:*)",
-      "Bash(/Users/jbuilesgallo/Code/canary/novel_to_comic/.venv/bin/python:*)"
+      "Bash(/Users/jbuilesgallo/Code/canary/novel_to_comic/.venv/bin/python:*)",
+      "Bash(npx eslint *)",
+      "Bash(ls .venv/bin/python*)",
+      "Bash(find /workspace/novel_to_comic -maxdepth 3 -name \"pyvenv.cfg\")",
+      "Bash(.venv/bin/python *)",
+      "Bash(/workspace/novel_to_comic/.venv/bin/python *)"
     ]
   }
 }
