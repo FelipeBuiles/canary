@@ -13,6 +13,7 @@ from typing import Any, Awaitable, Callable, Literal
 
 from fastapi import FastAPI
 
+from novel_to_comic.clients.flux import _is_gemini_native
 from novel_to_comic.config import Config
 
 GenerationJobStatus = Literal["queued", "running", "complete", "failed"]
@@ -170,6 +171,8 @@ async def generation_worker(app: FastAPI) -> None:
 
 
 def generation_semaphore_for_config(app: FastAPI, config: Config) -> asyncio.Semaphore:
+    if _is_gemini_native(config.effective_image_model()):
+        return app.state.generation_semaphore
     if config.dev_mode:
         concurrency = config.effective_image_concurrency()
         semaphores = app.state.light_generation_semaphores

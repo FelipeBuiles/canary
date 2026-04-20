@@ -25,6 +25,7 @@ export interface ConfigOverrides {
   image_width?: number;
   image_height?: number;
   image_steps?: number;
+  enable_rag_index?: boolean;
   max_panels_per_scene?: number;
   max_panels_per_page?: number;
   comic_theme?: string;
@@ -250,6 +251,7 @@ export interface ImagePrompt {
   height: number;
   steps: number;
   guidance_scale: number;
+  continuity_note?: string | null;
 }
 
 export interface Bubble {

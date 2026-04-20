@@ -34,9 +34,24 @@ console = Console()
 
 COST_PER_IMAGE = 0.03  # FLUX.2 Pro via Together AI
 
+_HARD_CUTS = ("smash cut", "fade to", "cut to", "scene change", "time jump")
+
+
+def _should_use_prev_panel_image(prev_panel: PanelBreakdown | None) -> bool:
+    """Return True if the previous panel's image should be used as a style reference.
+
+    Hard cuts (smash cut, fade to, cut to, scene change, time jump) can make the
+    previous panel image actively harmful — the model might blend the previous scene
+    into the new one. Only use the previous panel image for smooth transitions.
+    """
+    if not prev_panel:
+        return False
+    transition = (prev_panel.transition_note or "").lower()
+    return not any(hard in transition for hard in _HARD_CUTS)
+
 
 def _find_style_sample(project_dir: Path, style_template: str) -> Path | None:
-    """Return the sample image matching the active style template, or the first available."""
+    """Return the sample image matching the active style template."""
     suggestions_path = project_dir / "samples" / "style_suggestions.json"
     if suggestions_path.exists():
         try:
@@ -48,10 +63,6 @@ def _find_style_sample(project_dir: Path, style_template: str) -> Path | None:
                         return candidate
         except Exception:
             pass
-    for i in range(1, 20):
-        candidate = project_dir / "samples" / f"style_{i}.png"
-        if candidate.exists():
-            return candidate
     return None
 
 
@@ -142,8 +153,7 @@ async def _generate_panel(
     output_dir = project_dir / "images" / prompt.scene_id
     output_path = output_dir / f"panel_{prompt.panel_number:03d}.png"
     if output_path.exists() and not force:
-        if prompt.scene_id not in scene_anchors:
-            scene_anchors[prompt.scene_id] = output_path
+        scene_anchors[prompt.scene_id] = output_path
         return output_path
 
     # Subject refs: character reference sheets
@@ -151,14 +161,27 @@ async def _generate_panel(
 
     # Style / continuity refs: deduped by priority.
     # Once a scene anchor exists, it carries style + characters + environment
-    # from the same scene, so it fully supersedes the global style sample
-    # and the location plate. For the first panel of a scene we fall back to
-    # style_sample (+ plate when present).
+    # from the same scene, so it supersedes the global style sample and location
+    # plate. HOWEVER, we skip the scene anchor if the previous panel had a hard
+    # cut transition (smash cut, fade, etc.) to avoid blending scenes.
     style_refs: list[Path] = []
     scene_anchor = scene_anchors.get(prompt.scene_id)
+
     if scene_anchor and scene_anchor.exists():
-        style_refs.append(scene_anchor)
-    else:
+        prev_panel_path = project_dir / "panels" / prompt.scene_id / f"panel_{prompt.panel_number - 1:03d}.json"
+        prev_panel: PanelBreakdown | None = None
+        if prev_panel_path.exists():
+            try:
+                prev_panel = PanelBreakdown.model_validate_json(prev_panel_path.read_text())
+            except Exception:
+                pass
+
+        if _should_use_prev_panel_image(prev_panel):
+            style_refs.append(scene_anchor)
+        else:
+            prev_panel = None
+
+    if not style_refs:
         if style_sample and style_sample.exists():
             style_refs.append(style_sample)
         loc_id = scene_to_location.get(prompt.scene_id)
@@ -193,8 +216,9 @@ async def _generate_panel(
         if force and generation_path.exists():
             generation_path.unlink(missing_ok=True)
 
-    # Register as scene anchor after the first successful generation per scene
-    if result and prompt.scene_id not in scene_anchors:
+    # Register as scene anchor after each successful generation
+    # This ensures later panels chain to the immediately previous panel
+    if result:
         scene_anchors[prompt.scene_id] = output_path
 
     return result
@@ -229,7 +253,7 @@ async def regenerate_panel_image(
             if scene_dir.is_dir():
                 existing = [p for p in sorted(scene_dir.glob("panel_*.png")) if p != target_path]
                 if existing:
-                    scene_anchors[scene_dir.name] = existing[0]
+                    scene_anchors[scene_dir.name] = existing[-1]
 
     return await _generate_panel(
         config,
@@ -302,6 +326,7 @@ async def run(
 
     # 3. Scene anchor pool — pre-populate with already-generated panels so
     #    re-runs and retry-failed runs benefit from existing generations.
+    #    Use the LAST panel in sorted order (most recently generated).
     scene_anchors: dict[str, Path] = {}
     images_dir = project_dir / "images"
     if images_dir.exists():
@@ -309,7 +334,7 @@ async def run(
             if scene_dir.is_dir():
                 existing = sorted(scene_dir.glob("panel_*.png"))
                 if existing:
-                    scene_anchors[scene_dir.name] = existing[0]
+                    scene_anchors[scene_dir.name] = existing[-1]
 
     # Always reset counters for clean tracking
     begin_stage(state, "generate", total=len(prompt_files))
@@ -325,7 +350,7 @@ async def run(
     using_google = (
         _is_gemini_native(model) or _is_gemini_native(fallback)
     )
-    batch_size = config.effective_image_concurrency(google_model=using_google)
+    batch_size = 1 if using_google else config.effective_image_concurrency(google_model=False)
     inter_request_delay = 4.0 if using_google and not config.dev_mode else 0.0
 
     semaphore = asyncio.Semaphore(batch_size)

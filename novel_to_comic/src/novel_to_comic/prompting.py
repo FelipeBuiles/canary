@@ -82,7 +82,7 @@ def _labels(config: Config | None = None) -> dict[str, str]:
 
 _clean = clean
 _shorten = shorten
-IMAGE_PROMPT_VERSION = 6
+IMAGE_PROMPT_VERSION = 7
 
 
 def _character_identity(
@@ -106,12 +106,11 @@ def _character_identity(
 
     parts: list[str] = [anchor] if anchor else []
     if scene_override:
-        parts.append(f"{label_set['wardrobe_override']}: {scene_override}")
+        parts.append(f"{label_set['wardrobe_override']}: {_shorten(scene_override, 180)}")
     elif default_outfit:
-        parts.append(default_outfit)
+        parts.append(_shorten(default_outfit, 180))
 
-    identity = "; ".join(part for part in parts if part)
-    return _shorten(identity, 420)
+    return "; ".join(part for part in parts if part)
 
 
 def _reference_paths(project_dir: Path, character_id: str, character_count: int) -> list[str]:
@@ -163,11 +162,54 @@ def _panel_props(panel: PanelBreakdown, story_bible: StoryBible) -> list[str]:
     return props
 
 
+def build_continuity_note(
+    current_panel: PanelBreakdown,
+    prev_panel: PanelBreakdown | None,
+) -> str | None:
+    """Build narrative chain from previous panel's state.
+
+    Returns a string like:
+    "CONTINUING FROM: Sara stands at the hospital door, hand on the frame,
+    expression worried. Marcus lies in the hospital bed, eyes closed, IV drip nearby.
+    TRANSITION: fade. Now: Close-up on Sara's face, tears in her eyes."
+    """
+    if not prev_panel:
+        return None
+
+    prev_state_parts: list[str] = []
+    for char_id in prev_panel.characters_present:
+        action = prev_panel.character_actions.get(char_id, "")
+        expression = prev_panel.character_expressions.get(char_id, "")
+        position = prev_panel.character_positions.get(char_id, "")
+        parts = [p for p in [action, expression, position] if p]
+        if parts:
+            prev_state_parts.append(f"{char_id}: {', '.join(parts)}")
+
+    prev_state_str = "; ".join(prev_state_parts) if prev_state_parts else "scene continues"
+
+    curr_action_parts: list[str] = []
+    for char_id in current_panel.characters_present:
+        action = current_panel.character_actions.get(char_id, "")
+        expression = current_panel.character_expressions.get(char_id, "")
+        parts = [p for p in [action, expression] if p]
+        if parts:
+            curr_action_parts.append(f"{char_id}: {', '.join(parts)}")
+
+    curr_str = "; ".join(curr_action_parts) if curr_action_parts else "scene continues"
+
+    parts: list[str] = [f"CONTINUING FROM: {prev_state_str}."]
+    if prev_panel.transition_note:
+        parts.append(f"TRANSITION: {prev_panel.transition_note}.")
+    parts.append(f"Now: {curr_str}.")
+    return " ".join(parts)
+
+
 def build_image_prompt_spec(
     config: Config,
     project_dir: Path,
     panel: PanelBreakdown,
     story_bible: StoryBible,
+    prev_panel: PanelBreakdown | None = None,
 ) -> ImagePrompt:
     character_count = len(panel.characters_present)
     subjects: list[PromptSubject] = []
@@ -253,6 +295,7 @@ def build_image_prompt_spec(
         height=height,
         steps=config.effective_image_steps(),
         guidance_scale=config.flux_guidance_scale,
+        continuity_note=build_continuity_note(panel, prev_panel),
     )
     return prompt
 
@@ -320,14 +363,11 @@ def render_generation_prompt(prompt: ImagePrompt, style_template: str) -> str:
 
     if getattr(prompt, "prompt_version", 1) >= 2:
         body = _clean(getattr(prompt, "full_prompt", "")) or render_panel_prompt_body(prompt)
-        if style:
-            return f"{style}\n\n{body}"
-        return body
+        output = f"{style}\n\n{body}" if style else body
+    else:
+        output = f"{style}\n\n{_PROMPT_LABELS['en']['style_authority']}\n\n{prompt.full_prompt}" if style else getattr(prompt, "full_prompt", "")
 
-    if style:
-        return (
-            f"{style}\n\n"
-            f"{_PROMPT_LABELS['en']['style_authority']}\n\n"
-            f"{prompt.full_prompt}"
-        )
-    return getattr(prompt, "full_prompt", "")
+    if getattr(prompt, "continuity_note", None):
+        output = f"{output}\n\n{prompt.continuity_note}"
+
+    return output

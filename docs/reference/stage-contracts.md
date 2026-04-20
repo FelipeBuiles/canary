@@ -31,7 +31,7 @@ Checkpoint stages pause at `awaiting_review` state. Advance with `pipeline appro
 - `story_bible.json` ← central artifact; all downstream stages read this
 - `scenes/scene_NNN.txt` (one file per scene)
 
-**What it does:** Uses 1M-context Gemini Pro to extract characters, locations, scenes, narrative arcs, and props from the entire novel. Also splits the novel into per-scene text files for downstream RAG.
+**What it does:** Uses 1M-context Gemini Pro to extract characters, locations, scenes, narrative arcs, and props from the entire novel. Also splits the novel into per-scene text files for downstream stages.
 
 ---
 
@@ -42,11 +42,11 @@ Checkpoint stages pause at `awaiting_review` state. Advance with `pipeline appro
 - `scenes/scene_NNN.txt`
 
 **Writes:**
-- `qdrant_data/` — Qdrant vector store (dense + BM25 hybrid search)
 - `refs/char_NNN/` — Character reference sheets: `front.png`, `three_quarter.png`, `side.png`, `action.png`
 - `plates/loc_NNN.png` — Location background plates
+- optional Qdrant collection when `enable_rag_index: true`
 
-**What it does:** Builds the RAG index for scene retrieval. Generates character reference images (4 angles) and location plates using the image generation router. These reference images are injected into Stage 6 prompts.
+**What it does:** Generates character reference images (4 angles) and location plates using the image generation router. These reference images are injected into Stage 6 prompts. The experimental RAG index is skipped by default because downstream stages currently read scene files directly.
 
 ---
 
@@ -55,12 +55,11 @@ Checkpoint stages pause at `awaiting_review` state. Advance with `pipeline appro
 **Reads:**
 - `story_bible.json`
 - `scenes/scene_NNN.txt` (per scene)
-- RAG store at `qdrant_data/` (for context retrieval)
 
 **Writes:**
 - `screenplays/scene_NNN.json` (one `Screenplay` JSON per scene)
 
-**What it does:** Converts raw scene prose into screenplay format with beats (action/dialogue/SFX/transition). Uses RAG retrieval to inject relevant story context into the prompt.
+**What it does:** Converts raw scene prose into screenplay format with beats (action/dialogue/SFX/transition). Injects scene-specific Story Bible context directly into the prompt.
 
 ---
 
