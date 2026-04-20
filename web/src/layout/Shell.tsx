@@ -1,25 +1,8 @@
-import { Outlet, useParams, useLocation } from "react-router-dom";
-import { Footer } from "./Footer";
+import { Outlet, useLocation } from "react-router-dom";
 import { SideNav } from "./SideNav";
-import { TopNav } from "./TopNav";
-import { LiveSpecPill } from "../components/ui/LiveSpecPill";
-import { useProjectStatus } from "../api/queries";
+import { FloatingIndicator } from "../components/ui/FloatingIndicator";
 import { cn } from "../lib/cn";
 import { useI18n } from "../i18n";
-
-function LiveIndicator() {
-  const { name } = useParams();
-  const { data: status } = useProjectStatus(name);
-  const { t } = useI18n();
-  const running = !!status?.is_running;
-
-  return (
-    <LiveSpecPill
-      label={running ? t("LIVE PIPELINE") : name ? t("SPEC READY") : t("LIVE SPEC ACTIVE")}
-      active={running || !name}
-    />
-  );
-}
 
 export function Shell() {
   const location = useLocation();
@@ -34,7 +17,6 @@ export function Shell() {
       >
         {t("SKIP TO CONTENT")}
       </a>
-      <TopNav />
       <div className="flex flex-1 overflow-hidden">
         <SideNav />
         <main id="main-content" className="flex-1 overflow-y-auto bg-pulp-paper">
@@ -46,8 +28,7 @@ export function Shell() {
           </div>
         </main>
       </div>
-      <Footer />
-      <LiveIndicator />
+      <FloatingIndicator />
     </div>
   );
 }

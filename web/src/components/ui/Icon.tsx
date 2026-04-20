@@ -12,6 +12,10 @@ import {
   ChevronDown,
   ChevronLeft,
   Check,
+  Play,
+  Circle,
+  AlertTriangle,
+  Loader2,
 } from "lucide-react";
 import { cn } from "../../lib/cn";
 
@@ -28,7 +32,11 @@ type IconName =
   | "x"
   | "chevron-down"
   | "chevron-left"
-  | "check";
+  | "check"
+  | "play"
+  | "circle"
+  | "alert"
+  | "loader";
 
 interface IconProps {
   name: IconName;
@@ -50,6 +58,10 @@ const ICON_MAP = {
   "chevron-down": ChevronDown,
   "chevron-left": ChevronLeft,
   check: Check,
+  play: Play,
+  circle: Circle,
+  alert: AlertTriangle,
+  loader: Loader2,
 };
 
 export function Icon({ name, size = 14, className }: IconProps) {
