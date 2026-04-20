@@ -35,11 +35,11 @@ _PROMPT_LABELS: dict[str, dict[str, str]] = {
         "key_props": "Key props",
         "expression": "expression",
         "position": "position",
-        "constraints_prefix": "image-only comic panel art",
+        "wardrobe_override": "current wardrobe (overrides any clothing mentioned above)",
         "character": "character",
         "characters": "characters",
         "one_body": "one body per listed character",
-        "no_lettering": "dialogue, captions, balloons, and lettering are absent for post-production",
+        "no_lettering": "no text, captions, speech balloons, or lettering anywhere in the image",
         "style_authority": "Use the selected visual style above as authoritative if later prompt text conflicts.",
     },
     "es": {
@@ -48,11 +48,11 @@ _PROMPT_LABELS: dict[str, dict[str, str]] = {
         "key_props": "Objetos clave",
         "expression": "expresión",
         "position": "posición",
-        "constraints_prefix": "arte de panel de cómic solo como imagen",
+        "wardrobe_override": "vestuario actual (sobrescribe cualquier ropa mencionada arriba)",
         "character": "personaje",
         "characters": "personajes",
         "one_body": "un cuerpo por cada personaje listado",
-        "no_lettering": "sin diálogos, cartelas, globos ni rotulación porque se añadirán en posproducción",
+        "no_lettering": "sin texto, cartelas, globos ni rotulación en ninguna parte de la imagen",
         "style_authority": "Usa el estilo visual seleccionado arriba como autoridad si el texto posterior entra en conflicto.",
     },
     "fr": {
@@ -61,11 +61,11 @@ _PROMPT_LABELS: dict[str, dict[str, str]] = {
         "key_props": "Accessoires clés",
         "expression": "expression",
         "position": "position",
-        "constraints_prefix": "illustration de case de bande dessinée uniquement en image",
+        "wardrobe_override": "tenue actuelle (remplace tout vêtement mentionné au-dessus)",
         "character": "personnage",
         "characters": "personnages",
         "one_body": "un seul corps par personnage listé",
-        "no_lettering": "sans dialogues, cartouches, bulles ni lettrage, ajoutés en postproduction",
+        "no_lettering": "aucun texte, cartouche, bulle ni lettrage nulle part dans l'image",
         "style_authority": "Utilise le style visuel sélectionné ci-dessus comme référence si le texte suivant le contredit.",
     },
 }
@@ -82,30 +82,62 @@ def _labels(config: Config | None = None) -> dict[str, str]:
 
 _clean = clean
 _shorten = shorten
-IMAGE_PROMPT_VERSION = 5
+IMAGE_PROMPT_VERSION = 6
 
 
-def _character_identity(character: Character, scene_appearance: str | None = None) -> str:
+def _character_identity(
+    character: Character,
+    scene_appearance: str | None = None,
+    labels: dict[str, str] | None = None,
+) -> str:
+    """Assemble the identity blob for one subject.
+
+    Keeps the full visual_anchor verbatim — the anchor carries permanent
+    identity (face, build, hair, distinguishing marks) AND the character's
+    default wardrobe tags. When scene_appearance is set, we append it with
+    an explicit override directive so the model knows this panel's clothing
+    supersedes any wardrobe tags in the anchor, without us having to strip
+    those tags and lose the richer description.
+    """
+    label_set = labels or _PROMPT_LABELS["en"]
     anchor = _clean(character.visual_anchor)
-    # scene_appearance overrides default_outfit when present
-    outfit = _clean(scene_appearance or character.default_outfit)
-    identity = "; ".join(part for part in [anchor, outfit] if part)
-    return _shorten(identity, 220)
+    default_outfit = _clean(character.default_outfit)
+    scene_override = _clean(scene_appearance)
+
+    parts: list[str] = [anchor] if anchor else []
+    if scene_override:
+        parts.append(f"{label_set['wardrobe_override']}: {scene_override}")
+    elif default_outfit:
+        parts.append(default_outfit)
+
+    identity = "; ".join(part for part in parts if part)
+    return _shorten(identity, 420)
 
 
 def _reference_paths(project_dir: Path, character_id: str, character_count: int) -> list[str]:
+    """Return subject ref paths for one character, ordered by priority.
+
+    Prefers individual pose crops (front/three_quarter/gesture) over the 2x2
+    sheet composite — passing the grid directly leaks its layout into the
+    model's panel compositions. Falls back to sheet.png only when crops are
+    not yet available (e.g. projects generated before cropping was added).
+    """
     char_ref_dir = project_dir / "refs" / character_id
+
+    if character_count <= 1:
+        views = ["front", "three_quarter", "gesture"]
+    elif character_count == 2:
+        views = ["front", "three_quarter"]
+    else:
+        views = ["front"]
+    cropped = [str(p) for v in views if (p := char_ref_dir / f"{v}.png").exists()]
+    if cropped:
+        return cropped
+
     sheet = char_ref_dir / "sheet.png"
     if sheet.exists():
         return [str(sheet)]
-
-    if character_count <= 1:
-        legacy_views = ["front", "three_quarter", "gesture"]
-    elif character_count == 2:
-        legacy_views = ["front", "three_quarter"]
-    else:
-        legacy_views = ["front"]
-    return [str(path) for view in legacy_views if (path := char_ref_dir / f"{view}.png").exists()]
+    return []
 
 
 def _panel_text_blob(panel: PanelBreakdown) -> str:
@@ -140,6 +172,7 @@ def build_image_prompt_spec(
     character_count = len(panel.characters_present)
     subjects: list[PromptSubject] = []
     ref_paths: list[str] = []
+    labels = _labels(config)
 
     scene = next((s for s in story_bible.scenes if s.id == panel.scene_id), None)
 
@@ -154,7 +187,7 @@ def build_image_prompt_spec(
             PromptSubject(
                 character_id=character_id,
                 name=character.name,
-                identity=_character_identity(character, scene_appearance),
+                identity=_character_identity(character, scene_appearance, labels),
                 action=_clean(panel.character_actions.get(character_id, "")),
                 expression=_clean(panel.character_expressions.get(character_id, "")),
                 position=_clean(panel.character_positions.get(character_id, "")),
@@ -185,10 +218,9 @@ def build_image_prompt_spec(
     lighting = _clean(panel.lighting)
     mood = _clean(panel.mood)
     props = _panel_props(panel, story_bible)
-    labels = _labels(config)
     character_label = labels["character"] if character_count == 1 else labels["characters"]
     constraints = (
-        f"{labels['constraints_prefix']}; exactly {character_count} {character_label}; "
+        f"exactly {character_count} {character_label}; "
         f"{labels['one_body']}; {labels['no_lettering']}"
     )
     full_prompt = _render_panel_prompt_body_parts(

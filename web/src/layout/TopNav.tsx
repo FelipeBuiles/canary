@@ -2,13 +2,17 @@ import { Link, useParams, useLocation } from "react-router-dom";
 import { useRunAction } from "../hooks/useRunAction";
 import { STAGE_ORDER, STAGE_ROUTES } from "../types/api";
 import { Button } from "../components/ui/Button";
-import { LANGUAGES, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 
-function ProfileIcon() {
+function ProfileIcon({ to }: { to: string }) {
   return (
-    <span aria-hidden="true" className="flex h-8 w-8 items-center justify-center rounded-full border-[2px] border-ink-black">
+    <Link
+      to={to}
+      aria-label="Settings"
+      className="flex h-8 w-8 items-center justify-center rounded-full border-[2px] border-ink-black hover:bg-pulp-paper"
+    >
       <span className="block h-2.5 w-2.5 rounded-full border border-ink-black" />
-    </span>
+    </Link>
   );
 }
 
@@ -16,12 +20,13 @@ export function TopNav() {
   const { name } = useParams();
   const location = useLocation();
   const { handleRun, isPending } = useRunAction();
-  const { language, setLanguage, stageName, t } = useI18n();
+  const { stageName, t } = useI18n();
 
   const currentRoom = location.pathname.split("/").pop() ?? "";
   const activeRouteStage = Object.entries(STAGE_ROUTES).find(
     ([, route]) => route === currentRoom,
   )?.[0];
+  const settingsPath = name ? `/project/${encodeURIComponent(name)}/settings` : "/settings";
 
   return (
     <header className="shrink-0 border-b-[2px] border-ink-black bg-pulp-paper">
@@ -60,16 +65,6 @@ export function TopNav() {
         </nav>
 
         <div className="flex items-center gap-4">
-          <select
-            value={language}
-            onChange={(e) => setLanguage(e.target.value as typeof language)}
-            className="hidden border-[2px] border-ink-black bg-bristol px-2 py-1.5 font-meta text-[0.62rem] tracking-[0.1em] md:block"
-            aria-label="Language"
-          >
-            {LANGUAGES.map((item) => (
-              <option key={item.code} value={item.code}>{item.label}</option>
-            ))}
-          </select>
           <Button
             onClick={() => name && handleRun(name)}
             disabled={!name || isPending}
@@ -78,7 +73,7 @@ export function TopNav() {
           >
             {isPending ? t("RUNNING…") : t("RENDER")}
           </Button>
-          <ProfileIcon />
+          <ProfileIcon to={settingsPath} />
         </div>
       </div>
     </header>

@@ -80,8 +80,10 @@ async def _generate_gemini_image(
     the ImagePrompt) so each shot type gets the correct portrait ratio rather
     than always using the global config default.
 
-    style_refs are placed BEFORE subject refs in the contents list so they
-    receive higher positional weight in the model's attention.
+    Subject refs are placed BEFORE style refs so character identity — the
+    hardest consistency problem — gets the strongest positional weight.
+    Caller is responsible for deduping style_refs (prefer a single scene
+    anchor once available, otherwise a global style sample + optional plate).
     """
     from google.genai import types as gtypes
 
@@ -99,16 +101,20 @@ async def _generate_gemini_image(
     client = get_client(config)
     contents: list = []
 
-    # Style refs first — positional weight is highest at the start of the context.
-    for ref_path in [p for p in (style_refs or []) if p.exists()][:3]:
-        ref_bytes = await asyncio.to_thread(ref_path.read_bytes)
-        contents.append(gtypes.Part.from_bytes(data=ref_bytes, mime_type="image/png"))
-
-    # Subject refs (character sheets) after style refs.
+    # Subject refs first — strongest positional weight goes to character identity.
+    # Cap at 4 to support multi-character dialogue panels without overrunning the
+    # model's effective reference-image budget.
     if reference_paths:
-        for ref_path in [p for p in reference_paths if p.exists()][:3]:
+        for ref_path in [p for p in reference_paths if p.exists()][:4]:
             ref_bytes = await asyncio.to_thread(ref_path.read_bytes)
             contents.append(gtypes.Part.from_bytes(data=ref_bytes, mime_type="image/png"))
+
+    # Style / continuity refs after subjects. Capped at 2; caller dedups so this
+    # is typically a single scene anchor, or style_sample (+ plate) for the
+    # first panel of a scene.
+    for ref_path in [p for p in (style_refs or []) if p.exists()][:2]:
+        ref_bytes = await asyncio.to_thread(ref_path.read_bytes)
+        contents.append(gtypes.Part.from_bytes(data=ref_bytes, mime_type="image/png"))
 
     # Nudge Gemini toward the requested aspect ratio.  The model picks its own
     # resolution, so we hint in the prompt and then center-crop as a fallback.

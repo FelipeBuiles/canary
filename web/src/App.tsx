@@ -2,6 +2,7 @@ import { Routes, Route } from "react-router-dom";
 import { Shell } from "./layout/Shell";
 import { Library } from "./pages/Library";
 import { NewProject } from "./pages/NewProject";
+import { Settings } from "./pages/Settings";
 import { ProjectRooms } from "./layout/ProjectRooms";
 import { NavigateToRoom } from "./pages/NavigateToRoom";
 import { StoryBibleRoom } from "./pages/rooms/StoryBibleRoom";
@@ -21,6 +22,8 @@ export function App() {
         <Route element={<Shell />}>
           <Route index element={<Library />} />
           <Route path="new" element={<NewProject />} />
+          <Route path="settings" element={<Settings />} />
+          <Route path="project/:name/settings" element={<Settings />} />
           <Route path="project/:name" element={<ProjectRooms />}>
             <Route index element={<NavigateToRoom />} />
             <Route path="extract" element={<StoryBibleRoom />} />

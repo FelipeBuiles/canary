@@ -123,10 +123,19 @@ async def _generate_panel(
 ) -> Path | None:
     """Generate a single panel image from its prompt.
 
-    Three-layer style consistency system:
-      1. style_sample   — global style anchor (locks rendering style across all panels)
-      2. location plate — environment anchor (locks scene lighting/palette per location)
-      3. scene anchor   — first panel of this scene (locks rendering within a scene)
+    Style / continuity refs are chosen in priority order per panel:
+      - scene anchor — a previously-rendered panel from the same scene. Once
+                       available it supersedes style_sample + plate because it
+                       already carries style, characters, and environment from
+                       the same scene.
+      - style_sample — global style anchor, used only for the first panel of
+                       each scene.
+      - location plate — environment anchor, paired with style_sample for the
+                         first panel only.
+
+    Subject refs (character sheets / pose crops) are always passed first to
+    flux.generate_image_multi_ref so character identity gets the strongest
+    positional weight in the Gemini contents list.
     """
     prompt = _load_or_upgrade_prompt(config, project_dir, prompt_path, story_bible)
 
@@ -140,18 +149,23 @@ async def _generate_panel(
     # Subject refs: character reference sheets
     subject_refs = [Path(p) for p in prompt.reference_image_paths if Path(p).exists()]
 
-    # Style refs: assembled in priority order
+    # Style / continuity refs: deduped by priority.
+    # Once a scene anchor exists, it carries style + characters + environment
+    # from the same scene, so it fully supersedes the global style sample
+    # and the location plate. For the first panel of a scene we fall back to
+    # style_sample (+ plate when present).
     style_refs: list[Path] = []
-    if style_sample and style_sample.exists():
-        style_refs.append(style_sample)
-    loc_id = scene_to_location.get(prompt.scene_id)
-    if loc_id:
-        plate = project_dir / "plates" / f"{loc_id}.png"
-        if plate.exists():
-            style_refs.append(plate)
     scene_anchor = scene_anchors.get(prompt.scene_id)
     if scene_anchor and scene_anchor.exists():
         style_refs.append(scene_anchor)
+    else:
+        if style_sample and style_sample.exists():
+            style_refs.append(style_sample)
+        loc_id = scene_to_location.get(prompt.scene_id)
+        if loc_id:
+            plate = project_dir / "plates" / f"{loc_id}.png"
+            if plate.exists():
+                style_refs.append(plate)
 
     generation_path = output_path
     if force:
