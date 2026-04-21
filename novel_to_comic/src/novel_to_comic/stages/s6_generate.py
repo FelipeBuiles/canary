@@ -5,6 +5,7 @@ images for multi-reference consistency.
 """
 
 import asyncio
+import hashlib
 import json
 import uuid
 from pathlib import Path
@@ -35,8 +36,22 @@ console = Console()
 COST_PER_IMAGE = 0.03  # FLUX.2 Pro via Together AI
 _RATE_LIMIT_RECOVERY_COOLDOWN_SECONDS = 45.0
 
-_HARD_CUTS = ("smash cut", "fade to", "cut to", "scene change", "time jump")
 _SOFT_CONTINUITY = {"smooth_continuation", "match_cut"}
+
+
+def _meta_path(image_path: Path) -> Path:
+    return image_path.with_suffix(f"{image_path.suffix}.meta.json")
+
+
+def _relative_to_project(path: Path, project_dir: Path) -> str:
+    try:
+        return str(path.relative_to(project_dir))
+    except ValueError:
+        return str(path)
+
+
+def _write_generation_meta(image_path: Path, payload: dict) -> None:
+    _meta_path(image_path).write_text(json.dumps(payload, indent=2, sort_keys=True))
 
 
 def _should_use_prev_panel_image(prev_panel: PanelBreakdown | None) -> bool:
@@ -51,12 +66,11 @@ def _should_use_prev_panel_image(prev_panel: PanelBreakdown | None) -> bool:
     transition_type = (prev_panel.transition_type or "").strip().lower()
     if transition_type in _SOFT_CONTINUITY:
         return True
-    if transition_type == "hard_cut":
-        return False
-    transition = (prev_panel.transition_note or "").lower()
-    if any(hard in transition for hard in _HARD_CUTS):
-        return False
-    return True
+    return False
+
+
+def _use_continuity_refs(config: Config) -> bool:
+    return getattr(config, "continuity_mode", "hybrid") in {"ref_only", "hybrid"}
 
 
 def _find_style_sample(project_dir: Path, style_template: str) -> Path | None:
@@ -139,17 +153,15 @@ async def _generate_panel(
     scene_locks: dict[str, asyncio.Lock],
     style_sample: Path | None,
     scene_to_location: dict[str, str],
-    scene_anchors: dict[str, Path],
+    panel_events: dict[tuple[str, int], asyncio.Event] | None,
     story_bible: StoryBible | None,
     force: bool = False,
 ) -> Path | None:
     """Generate a single panel image from its prompt.
 
     Style / continuity refs are chosen in priority order per panel:
-      - scene anchor — a previously-rendered panel from the same scene. Once
-                       available it supersedes style_sample + plate because it
-                       already carries style, characters, and environment from
-                       the same scene.
+      - previous panel image (N-1) from the same scene when transition metadata
+        indicates smooth continuity.
       - style_sample — global style anchor, used only for the first panel of
                        each scene.
       - location plate — environment anchor, paired with style_sample for the
@@ -159,92 +171,125 @@ async def _generate_panel(
     flux.generate_image_multi_ref so character identity gets the strongest
     positional weight in the Gemini contents list.
     """
-    raw_prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
+    panel_key: tuple[str, int] | None = None
+    try:
+        try:
+            panel_key = (prompt_path.parent.name, int(prompt_path.stem.split("_")[1]))
+        except (IndexError, ValueError):
+            panel_key = None
 
-    prev_panel: PanelBreakdown | None = None
-    if raw_prompt.panel_number > 1:
-        prev_panel_path = project_dir / "panels" / raw_prompt.scene_id / f"panel_{raw_prompt.panel_number - 1:03d}.json"
-        if prev_panel_path.exists():
-            try:
-                prev_panel = PanelBreakdown.model_validate_json(prev_panel_path.read_text())
-            except Exception:
-                pass
+        raw_prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
+        panel_key = (raw_prompt.scene_id, raw_prompt.panel_number)
+        prev_event: asyncio.Event | None = None
+        if panel_events and raw_prompt.panel_number > 1:
+            prev_event = panel_events.get((raw_prompt.scene_id, raw_prompt.panel_number - 1))
+        if prev_event:
+            await prev_event.wait()
 
-    prompt = _load_or_upgrade_prompt(config, project_dir, prompt_path, story_bible, prev_panel)
-
-    output_dir = project_dir / "images" / prompt.scene_id
-    output_path = output_dir / f"panel_{prompt.panel_number:03d}.png"
-    scene_lock = scene_locks.setdefault(prompt.scene_id, asyncio.Lock())
-
-    async with scene_lock:
-        if output_path.exists() and not force:
-            scene_anchors[prompt.scene_id] = output_path
-            return output_path
-
-        # Subject refs: character reference sheets
-        subject_refs = [Path(p) for p in prompt.reference_image_paths if Path(p).exists()]
-
-        # Style / continuity refs: deduped by priority.
-        # Once a scene anchor exists, it carries style + characters + environment
-        # from the same scene, so it supersedes the global style sample and location
-        # plate. HOWEVER, we skip the scene anchor if the previous panel had a hard
-        # cut transition (smash cut, fade, etc.) to avoid blending scenes.
-        style_refs: list[Path] = []
-        scene_anchor = scene_anchors.get(prompt.scene_id)
-
-        if scene_anchor and scene_anchor.exists():
-            prev_panel_path = project_dir / "panels" / prompt.scene_id / f"panel_{prompt.panel_number - 1:03d}.json"
-            prev_panel: PanelBreakdown | None = None
+        prev_panel: PanelBreakdown | None = None
+        if raw_prompt.panel_number > 1:
+            prev_panel_path = project_dir / "panels" / raw_prompt.scene_id / f"panel_{raw_prompt.panel_number - 1:03d}.json"
             if prev_panel_path.exists():
                 try:
                     prev_panel = PanelBreakdown.model_validate_json(prev_panel_path.read_text())
                 except Exception:
                     pass
 
-            if _should_use_prev_panel_image(prev_panel):
-                style_refs.append(scene_anchor)
+        prompt = _load_or_upgrade_prompt(config, project_dir, prompt_path, story_bible, prev_panel)
 
-        if not style_refs:
-            if style_sample and style_sample.exists():
-                style_refs.append(style_sample)
-            loc_id = scene_to_location.get(prompt.scene_id)
-            if loc_id:
-                plate = project_dir / "plates" / f"{loc_id}.png"
-                if plate.exists():
-                    style_refs.append(plate)
+        output_dir = project_dir / "images" / prompt.scene_id
+        output_path = output_dir / f"panel_{prompt.panel_number:03d}.png"
+        scene_lock = scene_locks.setdefault(prompt.scene_id, asyncio.Lock())
 
-        generation_path = output_path
-        if force:
-            generation_path = output_path.with_name(
-                f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
-            )
+        async with scene_lock:
+            if output_path.exists() and not force:
+                return output_path
 
-        try:
-            async with semaphore:
-                result = await flux.generate_image_multi_ref(
-                    config=config,
-                    prompt=render_generation_prompt(prompt, config.style_template),
-                    output_path=generation_path,
-                    reference_paths=subject_refs,
-                    style_refs=style_refs or None,
-                    width=prompt.width,
-                    height=prompt.height,
-                    steps=prompt.steps,
+            # Subject refs: character reference sheets
+            subject_refs = [Path(p) for p in prompt.reference_image_paths if Path(p).exists()]
+
+            # Style / continuity refs: adjacent previous panel only.
+            # This prevents reruns from accidentally inheriting style from unrelated
+            # non-adjacent panels and keeps continuity deterministic.
+            style_refs: list[Path] = []
+            if _use_continuity_refs(config) and prompt.panel_number > 1:
+                prev_panel_path = project_dir / "panels" / prompt.scene_id / f"panel_{prompt.panel_number - 1:03d}.json"
+                prev_panel = None
+                if prev_panel_path.exists():
+                    try:
+                        prev_panel = PanelBreakdown.model_validate_json(prev_panel_path.read_text())
+                    except Exception:
+                        pass
+                prev_image = output_dir / f"panel_{prompt.panel_number - 1:03d}.png"
+                if prev_image.exists() and _should_use_prev_panel_image(prev_panel):
+                    style_refs.append(prev_image)
+
+            if not style_refs:
+                if style_sample and style_sample.exists():
+                    style_refs.append(style_sample)
+                loc_id = scene_to_location.get(prompt.scene_id)
+                if loc_id:
+                    plate = project_dir / "plates" / f"{loc_id}.png"
+                    if plate.exists():
+                        style_refs.append(plate)
+
+            generation_path = output_path
+            if force:
+                generation_path = output_path.with_name(
+                    f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
                 )
-            if force and result:
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                generation_path.replace(output_path)
-                result = output_path
-        finally:
-            if force and generation_path.exists():
-                generation_path.unlink(missing_ok=True)
+            generation_prompt = render_generation_prompt(prompt, config.style_template)
+            meta_payload = {
+                "version": 1,
+                "kind": "panel_image",
+                "prompt": generation_prompt,
+                "prompt_sha256": hashlib.sha256(generation_prompt.encode("utf-8")).hexdigest(),
+                "parameters": {
+                    "scene_id": prompt.scene_id,
+                    "panel_number": prompt.panel_number,
+                    "image_model": config.effective_image_model(),
+                    "width": prompt.width,
+                    "height": prompt.height,
+                    "steps": prompt.steps,
+                    "guidance_scale": prompt.guidance_scale,
+                    "style_template": config.style_template,
+                    "subject_refs": [_relative_to_project(p, project_dir) for p in subject_refs],
+                    "style_refs": [_relative_to_project(p, project_dir) for p in style_refs],
+                    "continuity_note": prompt.continuity_note,
+                },
+            }
 
-        # Register as scene anchor after each successful generation
-        # This ensures later panels chain to the immediately previous panel
-        if result:
-            scene_anchors[prompt.scene_id] = output_path
+            try:
+                async with semaphore:
+                    result = await flux.generate_image_multi_ref(
+                        config=config,
+                        prompt=generation_prompt,
+                        output_path=generation_path,
+                        reference_paths=subject_refs,
+                        style_refs=style_refs or None,
+                        width=prompt.width,
+                        height=prompt.height,
+                        steps=prompt.steps,
+                    )
+                if force and result:
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    generation_path.replace(output_path)
+                    result = output_path
+            finally:
+                if force and generation_path.exists():
+                    generation_path.unlink(missing_ok=True)
 
-        return result
+            if result:
+                try:
+                    _write_generation_meta(output_path, meta_payload)
+                except Exception:
+                    pass
+            return result
+    finally:
+        if panel_events and panel_key:
+            event = panel_events.get(panel_key)
+            if event:
+                event.set()
 
 
 async def regenerate_panel_image(
@@ -268,16 +313,7 @@ async def regenerate_panel_image(
         story_bible = StoryBible.model_validate_json(bible_path.read_text())
         scene_to_location = {s.id: s.location_id for s in story_bible.scenes}
 
-    scene_anchors: dict[str, Path] = {}
     scene_locks: dict[str, asyncio.Lock] = {}
-    images_dir = project_dir / "images"
-    target_path = images_dir / scene_id / f"panel_{panel_number:03d}.png"
-    if images_dir.exists():
-        for scene_dir in sorted(images_dir.iterdir()):
-            if scene_dir.is_dir():
-                existing = [p for p in sorted(scene_dir.glob("panel_*.png")) if p != target_path]
-                if existing:
-                    scene_anchors[scene_dir.name] = existing[-1]
 
     return await _generate_panel(
         config,
@@ -287,7 +323,7 @@ async def regenerate_panel_image(
         scene_locks,
         style_sample,
         scene_to_location,
-        scene_anchors,
+        None,
         story_bible,
         force=True,
     )
@@ -349,18 +385,14 @@ async def run(
         story_bible = StoryBible.model_validate_json(bible_path.read_text())
         scene_to_location = {s.id: s.location_id for s in story_bible.scenes}
 
-    # 3. Scene anchor pool — pre-populate with already-generated panels so
-    #    re-runs and retry-failed runs benefit from existing generations.
-    #    Use the LAST panel in sorted order (most recently generated).
-    scene_anchors: dict[str, Path] = {}
     scene_locks: dict[str, asyncio.Lock] = {}
-    images_dir = project_dir / "images"
-    if images_dir.exists():
-        for scene_dir in sorted(images_dir.iterdir()):
-            if scene_dir.is_dir():
-                existing = sorted(scene_dir.glob("panel_*.png"))
-                if existing:
-                    scene_anchors[scene_dir.name] = existing[-1]
+    panel_events: dict[tuple[str, int], asyncio.Event] = {}
+    for pf in prompt_files:
+        try:
+            panel_num = int(pf.stem.split("_")[1])
+        except (IndexError, ValueError):
+            continue
+        panel_events[(pf.parent.name, panel_num)] = asyncio.Event()
 
     # Always reset counters for clean tracking
     begin_stage(state, "generate", total=len(prompt_files))
@@ -371,11 +403,8 @@ async def run(
 
     # Google Gemini image models have tight per-minute quotas and are called
     # sequentially with a delay. Together AI supports real parallelism.
-    model = config.image_model
-    fallback = getattr(config, "fallback_image_model", "")
-    using_google = (
-        _is_gemini_native(model) or _is_gemini_native(fallback)
-    )
+    model = config.effective_image_model()
+    using_google = _is_gemini_native(model)
     batch_size = 1 if using_google else config.effective_image_concurrency(google_model=False)
     inter_request_delay = 4.0 if using_google and not config.dev_mode else 0.0
 
@@ -397,7 +426,7 @@ async def run(
                       "message": f"Drawing panel batch {first}-{last} of {len(prompt_files)}"})
                 coros = [
                     _generate_panel(config, project_dir, pf, semaphore, scene_locks,
-                                    style_sample, scene_to_location, scene_anchors, story_bible)
+                                    style_sample, scene_to_location, panel_events, story_bible)
                     for pf in batch
                 ]
                 results = await asyncio.gather(*coros, return_exceptions=True)
@@ -421,7 +450,7 @@ async def run(
                                     scene_locks,
                                     style_sample,
                                     scene_to_location,
-                                    scene_anchors,
+                                    panel_events,
                                     story_bible,
                                 ),
                                 return_exceptions=True,

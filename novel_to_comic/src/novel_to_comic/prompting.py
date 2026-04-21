@@ -21,7 +21,7 @@ _SHOT_DIMENSIONS: dict[str, tuple[int, int]] = {
 _DEFAULT_DIMENSIONS = (768, 1344)
 
 _SHOT_COMPOSITION: dict[str, str] = {
-    "close-up": "close-up portrait, eye-level, face and shoulders filling the vertical panel",
+    "close-up": "close-up portrait, face and shoulders filling the vertical panel",
     "medium": "medium vertical panel, full body visible, character in the lower two-thirds",
     "over-shoulder": "over-the-shoulder vertical panel, one foreground shoulder, the other face visible",
     "wide": "wide vertical panel, full bodies visible with significant surrounding environment",
@@ -89,6 +89,7 @@ def _labels(config: Config | None = None) -> dict[str, str]:
 _clean = clean
 _shorten = shorten
 IMAGE_PROMPT_VERSION = 9
+_SOFT_CONTINUITY = {"smooth_continuation", "match_cut"}
 
 
 def _character_identity(
@@ -196,14 +197,18 @@ def build_continuity_note(
     if not prev_panel:
         return None
 
-    prev_state_str = _panel_state_summary(prev_panel)
-    curr_state_str = _panel_state_summary(current_panel)
-    transition_type = getattr(prev_panel, "transition_type", None) or "unknown"
+    transition_type = (getattr(prev_panel, "transition_type", "") or "").strip().lower()
+    if transition_type not in _SOFT_CONTINUITY:
+        return None
+
+    prev_state_str = _shorten(_panel_state_summary(prev_panel), 120)
+    curr_state_str = _shorten(_panel_state_summary(current_panel), 120)
 
     parts: list[str] = [f"CONTINUING FROM: {prev_state_str}."]
     parts.append(f"TRANSITION TYPE: {transition_type}.")
-    if prev_panel.transition_note:
-        parts.append(f"TRANSITION: {prev_panel.transition_note}.")
+    transition_note = _clean(prev_panel.transition_note or "")
+    if transition_note:
+        parts.append(f"TRANSITION: {_shorten(transition_note.rstrip('. '), 70)}.")
     parts.append(f"Now: {curr_state_str}.")
     return " ".join(parts)
 
@@ -250,8 +255,9 @@ def build_image_prompt_spec(
         shot_key,
         f"{_clean(panel.shot_type)} panel, {_clean(panel.camera_angle)} camera",
     )
-    if panel.camera_angle:
-        composition = f"{composition}, {_clean(panel.camera_angle)} camera"
+    camera_angle = _clean(panel.camera_angle)
+    if camera_angle and camera_angle.lower() not in composition.lower():
+        composition = f"{composition}, {camera_angle} camera"
 
     setting_parts = []
     if location and location.visual_anchor:
@@ -299,7 +305,11 @@ def build_image_prompt_spec(
         height=height,
         steps=config.effective_image_steps(),
         guidance_scale=config.flux_guidance_scale,
-        continuity_note=build_continuity_note(panel, prev_panel),
+        continuity_note=(
+            build_continuity_note(panel, prev_panel)
+            if getattr(config, "continuity_mode", "hybrid") in {"text_only", "hybrid"}
+            else None
+        ),
     )
     return prompt
 
@@ -382,3 +392,25 @@ def render_generation_prompt(prompt: ImagePrompt, style_template: str) -> str:
         output = f"{output}\n\n{prompt.continuity_note}"
 
     return output
+
+
+def build_style_sample_prompt(config: Config, story_bible: StoryBible) -> str:
+    """Render a compact style-evaluation prompt shared by CLI and API routes."""
+    first_char = story_bible.characters[0] if story_bible.characters else None
+    first_loc = story_bible.locations[0] if story_bible.locations else None
+    char_desc = _shorten(
+        (first_char.visual_anchor if first_char else "") or (first_char.name if first_char else ""),
+        200,
+    ) or "a mysterious cloaked figure"
+    loc_desc = _shorten(
+        (first_loc.visual_anchor if first_loc else "") or (first_loc.name if first_loc else ""),
+        200,
+    ) or "a dramatic atmospheric setting"
+    return (
+        f"{config.style_template}\n\n"
+        f"{char_desc}. Set in: {loc_desc}. "
+        "Medium shot, eye-level camera, dramatic lighting. "
+        "Portrait 4:5 aspect ratio. Fill the entire frame edge to edge — "
+        "no letterboxing, no pillarboxing, no border margins. "
+        "No text. No speech bubbles. No captions. Single panel only."
+    )

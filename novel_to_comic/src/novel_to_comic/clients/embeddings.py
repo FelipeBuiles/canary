@@ -5,12 +5,12 @@ Falls back to OpenAI if configured.
 """
 
 import logging
-import time
 
 from google.genai.errors import ClientError
 from openai import AsyncOpenAI
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+from novel_to_comic.clients.api_logging import log_call_end, log_call_start
 from novel_to_comic.clients.gemini import describe_provider, get_client
 from novel_to_comic.config import Config
 
@@ -48,53 +48,108 @@ async def _embed_google(config: Config, texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
 
-    started = time.perf_counter()
-    logger.info(
-        "[bold cyan]Gemini[/] task=embedding model=[bold]%s[/] count=[bold]%d[/] "
-        "provider=[green]%s[/]",
-        config.embedding_model,
-        len(texts),
-        describe_provider(config),
+    call_id, started = log_call_start(
+        logger,
+        provider="gemini",
+        operation="models.embed_content",
+        params={
+            "model": config.embedding_model,
+            "count": len(texts),
+            "provider_mode": describe_provider(config),
+            "task_type": "RETRIEVAL_DOCUMENT",
+        },
+        payload={"input_chars_total": sum(len(t) for t in texts)},
     )
     client = get_client(config)
-    response = await client.aio.models.embed_content(
-        model=config.embedding_model,
-        contents=texts,
-        config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
-    )
-    if not response.embeddings:
-        raise ValueError("Empty embedding response from Google API")
-    if len(response.embeddings) != len(texts):
-        raise ValueError(
-            "Google embedding response count mismatch: "
-            f"expected {len(texts)}, got {len(response.embeddings)}"
+    try:
+        response = await client.aio.models.embed_content(
+            model=config.embedding_model,
+            contents=texts,
+            config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
         )
-    results = []
-    for embedding in response.embeddings:
-        if not embedding.values:
-            raise ValueError("Empty embedding in Google response")
-        results.append(embedding.values)
-
-    logger.info(
-        "[bold green]Gemini done[/] task=embedding model=[bold]%s[/] count=[bold]%d[/] "
-        "elapsed=[bold]%.1fs[/]",
-        config.embedding_model,
-        len(texts),
-        time.perf_counter() - started,
-    )
-    return results
+        if not response.embeddings:
+            raise ValueError("Empty embedding response from Google API")
+        if len(response.embeddings) != len(texts):
+            raise ValueError(
+                "Google embedding response count mismatch: "
+                f"expected {len(texts)}, got {len(response.embeddings)}"
+            )
+        results = []
+        for embedding in response.embeddings:
+            if not embedding.values:
+                raise ValueError("Empty embedding in Google response")
+            results.append(embedding.values)
+        log_call_end(
+            logger,
+            call_id=call_id,
+            started=started,
+            provider="gemini",
+            operation="models.embed_content",
+            ok=True,
+            result={
+                "count": len(results),
+                "dims": len(results[0]) if results else 0,
+            },
+        )
+        return results
+    except Exception as e:
+        log_call_end(
+            logger,
+            call_id=call_id,
+            started=started,
+            provider="gemini",
+            operation="models.embed_content",
+            ok=False,
+            error=e,
+        )
+        raise
 
 
 async def _embed_openai(config: Config, texts: list[str]) -> list[list[float]]:
     """Embed via OpenAI text-embedding-3-small (1536 dims)."""
-    client = AsyncOpenAI(api_key=config.openai_api_key)
-    response = await client.embeddings.create(
-        model=config.embedding_model,
-        input=texts,
+    call_id, started = log_call_start(
+        logger,
+        provider="openai",
+        operation="embeddings.create",
+        params={
+            "model": config.embedding_model,
+            "count": len(texts),
+        },
+        payload={"input_chars_total": sum(len(t) for t in texts)},
     )
-    if not response.data:
-        raise ValueError("Empty embedding response from OpenAI API")
-    return [item.embedding for item in response.data]
+    client = AsyncOpenAI(api_key=config.openai_api_key)
+    try:
+        response = await client.embeddings.create(
+            model=config.embedding_model,
+            input=texts,
+        )
+        if not response.data:
+            raise ValueError("Empty embedding response from OpenAI API")
+        vectors = [item.embedding for item in response.data]
+        log_call_end(
+            logger,
+            call_id=call_id,
+            started=started,
+            provider="openai",
+            operation="embeddings.create",
+            ok=True,
+            result={
+                "count": len(vectors),
+                "dims": len(vectors[0]) if vectors else 0,
+            },
+        )
+        return vectors
+    except Exception as e:
+        log_call_end(
+            logger,
+            call_id=call_id,
+            started=started,
+            provider="openai",
+            operation="embeddings.create",
+            ok=False,
+            error=e,
+        )
+        raise
 
 
 async def embed_single(config: Config, text: str) -> list[float]:

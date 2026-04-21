@@ -14,19 +14,32 @@ interface UploadStepProps {
 }
 
 const ACCEPTED = [".txt", ".epub", ".pdf"];
+const DEFAULT_IMAGE_MODEL = "gemini-3-pro-image-preview";
+const IMAGE_MODEL_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: DEFAULT_IMAGE_MODEL, label: "Gemini 3 Pro Image" },
+  { value: "gemini-2.5-flash-image", label: "Gemini 2.5 Flash Image" },
+  { value: "gemini-2.5-pro-image", label: "Gemini 2.5 Pro Image" },
+  { value: "gemini-3.1-flash-image-preview", label: "Gemini 3.1 Flash Image" },
+  { value: "gemini-3.1-pro-image-preview", label: "Gemini 3.1 Pro Image" },
+  { value: "gpt-image-1.5", label: "OpenAI GPT Image 1.5" },
+  { value: "gpt-image-2", label: "OpenAI GPT Image 2" },
+];
+type RenderPreset = "fast_draft" | "balanced" | "high_quality";
 
 export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
   const { language, t } = useI18n();
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [targetLanguage, setTargetLanguage] = useState<LanguageCode>(language);
-  const [devMode, setDevMode] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showExpert, setShowExpert] = useState(false);
+  const [renderPreset, setRenderPreset] = useState<RenderPreset>("balanced");
   const [theme, setTheme] = useState("auto");
-  const [imageModel, setImageModel] = useState("gemini-3-pro-image-preview");
+  const [imageModel, setImageModel] = useState(DEFAULT_IMAGE_MODEL);
   const [imageWidth, setImageWidth] = useState(1024);
   const [imageHeight, setImageHeight] = useState(1024);
   const [imageSteps, setImageSteps] = useState(28);
+  const [imageQuality, setImageQuality] = useState<"auto" | "low" | "medium" | "high">("auto");
   const [maxPanelsPerScene, setMaxPanelsPerScene] = useState(8);
   const [maxPanelsPerPage, setMaxPanelsPerPage] = useState(6);
   const [styleTemplate, setStyleTemplate] = useState("");
@@ -34,28 +47,65 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
 
   const ext = file ? "." + file.name.split(".").pop()?.toLowerCase() : "";
   const extOk = !file || ACCEPTED.includes(ext);
+  const isTogetherModel = imageModel.includes("/");
+  const isOpenAIModel = imageModel.startsWith("gpt-image-");
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!file || !name.trim() || !extOk) return;
     const overrides: Partial<ConfigOverrides> = { target_language: targetLanguage };
-    if (devMode) {
+
+    // Persist model choice if changed from default.
+    if (imageModel !== DEFAULT_IMAGE_MODEL) overrides.image_model = imageModel;
+
+    // Presets: keep common flows safe and avoid exposing low-level footguns by default.
+    if (renderPreset === "fast_draft") {
       overrides.dev_mode = true;
-      overrides.dev_image_scale = 0.5;
+      overrides.dev_image_scale = 0.6;
       overrides.dev_image_steps = 8;
       overrides.dev_image_concurrency = 5;
-      overrides.image_model = "gemini-3.1-flash-image-preview";
-      overrides.image_steps = 8;
+      overrides.max_panels_per_scene = 6;
+      overrides.max_panels_per_page = 6;
+      if (isTogetherModel) {
+        overrides.image_steps = 8;
+      }
+      if (isOpenAIModel) {
+        overrides.image_quality = "low";
+      }
+    } else if (renderPreset === "high_quality") {
+      overrides.dev_mode = false;
+      overrides.max_panels_per_scene = 10;
+      overrides.max_panels_per_page = 5;
+      if (isTogetherModel) {
+        overrides.image_steps = 36;
+      }
+      if (isOpenAIModel) {
+        overrides.image_quality = "high";
+      }
+    } else {
+      overrides.dev_mode = false;
+      overrides.max_panels_per_scene = 8;
+      overrides.max_panels_per_page = 6;
+      if (isTogetherModel) {
+        overrides.image_steps = 24;
+      }
+      if (isOpenAIModel) {
+        overrides.image_quality = "medium";
+      }
     }
+
+    // Advanced manual overrides are opt-in and override presets.
     if (showAdvanced) {
       if (theme !== "auto") overrides.comic_theme = theme;
-      if (!devMode && imageModel !== "gemini-3-pro-image-preview") overrides.image_model = imageModel;
-      if (imageWidth !== 1024) overrides.image_width = imageWidth;
-      if (imageHeight !== 1024) overrides.image_height = imageHeight;
-      if (!devMode && imageSteps !== 28) overrides.image_steps = imageSteps;
-      if (maxPanelsPerScene !== 8) overrides.max_panels_per_scene = maxPanelsPerScene;
-      if (maxPanelsPerPage !== 6) overrides.max_panels_per_page = maxPanelsPerPage;
       if (styleTemplate.trim()) overrides.style_template = styleTemplate.trim();
+      if (showExpert) {
+        if (imageWidth !== 1024) overrides.image_width = imageWidth;
+        if (imageHeight !== 1024) overrides.image_height = imageHeight;
+        if (isTogetherModel && imageSteps !== 28) overrides.image_steps = imageSteps;
+        if (isOpenAIModel && imageQuality !== "auto") overrides.image_quality = imageQuality;
+        if (maxPanelsPerScene !== 8) overrides.max_panels_per_scene = maxPanelsPerScene;
+        if (maxPanelsPerPage !== 6) overrides.max_panels_per_page = maxPanelsPerPage;
+      }
     }
     onSubmit(file, name.trim(), overrides);
   }
@@ -155,23 +205,6 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
           </div>
         </div>
 
-        <label className="mt-4 flex cursor-pointer items-start gap-3 border-[2px] border-ink-black bg-narrator-gold/35 p-3">
-          <input
-            type="checkbox"
-            checked={devMode}
-            onChange={(e) => setDevMode(e.target.checked)}
-            className="mt-1 h-4 w-4 accent-hero-red"
-          />
-          <span>
-            <span className="block font-meta text-[0.62rem] tracking-[0.16em] text-ink-black">
-              {t("DEV / DEMO MODE")}
-            </span>
-            <span className="mt-1 block text-[0.78rem] leading-relaxed text-ink-black/65">
-              {t("Uses the faster image model, fewer steps, and smaller generated files for quick testing.")}
-            </span>
-          </span>
-        </label>
-
         {/* Advanced config toggle */}
         <button
           type="button"
@@ -210,44 +243,33 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
                   onChange={(e) => setImageModel(e.target.value)}
                   className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
                 >
-                  <option value="gemini-3-pro-image-preview">Gemini 3 Pro Image</option>
-                  <option value="gemini-3.1-flash-image-preview">Gemini 3.1 Flash Image</option>
+                  {IMAGE_MODEL_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
+                <p className="mt-1 text-[0.72rem] leading-relaxed text-ink-black/45">
+                  Selected model is persisted to the project config and used by Stage 6.
+                </p>
               </div>
             </div>
-            <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
-              <div>
-                <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-                  {t("WIDTH")}
-                </label>
-                <input type="number" value={imageWidth} onChange={(e) => setImageWidth(Number(e.target.value))} min={256} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
-              </div>
-              <div>
-                <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-                  {t("HEIGHT")}
-                </label>
-                <input type="number" value={imageHeight} onChange={(e) => setImageHeight(Number(e.target.value))} min={256} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
-              </div>
-              <div>
-                <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-                  {t("STEPS")}
-                </label>
-                <input type="number" value={imageSteps} onChange={(e) => setImageSteps(Number(e.target.value))} min={1} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
-              </div>
-              <div>
-                <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-                  {t("PANELS/SCENE")}
-                </label>
-                <input type="number" value={maxPanelsPerScene} onChange={(e) => setMaxPanelsPerScene(Number(e.target.value))} min={1} max={20} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
-              </div>
-            </div>
-            <div className="grid gap-3 grid-cols-2">
-              <div>
-                <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-                  {t("PANELS/PAGE")}
-                </label>
-                <input type="number" value={maxPanelsPerPage} onChange={(e) => setMaxPanelsPerPage(Number(e.target.value))} min={1} max={12} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
-              </div>
+            <div>
+              <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
+                {t("QUALITY PRESET")}
+              </label>
+              <select
+                value={renderPreset}
+                onChange={(e) => setRenderPreset(e.target.value as RenderPreset)}
+                className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
+              >
+                <option value="fast_draft">Fast draft</option>
+                <option value="balanced">Balanced (recommended)</option>
+                <option value="high_quality">High quality</option>
+              </select>
+              <p className="mt-1 text-[0.72rem] leading-relaxed text-ink-black/45">
+                Fast draft lowers cost/latency. Balanced is safe default. High quality increases runtime and spend.
+              </p>
             </div>
             <div>
               <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
@@ -261,6 +283,75 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
                 className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm resize-y"
               />
             </div>
+
+            <button
+              type="button"
+              onClick={() => setShowExpert(!showExpert)}
+              className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/50 hover:text-ink-black transition-colors"
+            >
+              {showExpert ? "▼" : "▶"} EXPERT OVERRIDES (OPTIONAL)
+            </button>
+
+            {showExpert && (
+              <div className="space-y-3 border-t-[2px] border-ink-black/30 pt-3">
+                <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
+                  <div>
+                    <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
+                      {t("WIDTH")}
+                    </label>
+                    <input type="number" value={imageWidth} onChange={(e) => setImageWidth(Number(e.target.value))} min={256} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
+                      {t("HEIGHT")}
+                    </label>
+                    <input type="number" value={imageHeight} onChange={(e) => setImageHeight(Number(e.target.value))} min={256} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
+                      {t("PANELS/SCENE")}
+                    </label>
+                    <input type="number" value={maxPanelsPerScene} onChange={(e) => setMaxPanelsPerScene(Number(e.target.value))} min={1} max={20} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
+                      {t("PANELS/PAGE")}
+                    </label>
+                    <input type="number" value={maxPanelsPerPage} onChange={(e) => setMaxPanelsPerPage(Number(e.target.value))} min={1} max={12} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
+                  </div>
+                </div>
+
+                {isTogetherModel && (
+                  <div>
+                    <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
+                      {t("STEPS")}
+                    </label>
+                    <input type="number" value={imageSteps} onChange={(e) => setImageSteps(Number(e.target.value))} min={1} max={50} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
+                    <p className="mt-1 text-[0.72rem] leading-relaxed text-ink-black/45">
+                      Used by diffusion-style models (Together): higher is usually cleaner but slower.
+                    </p>
+                  </div>
+                )}
+
+                {isOpenAIModel && (
+                  <div>
+                    <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
+                      IMAGE QUALITY (OPENAI)
+                    </label>
+                    <select
+                      value={imageQuality}
+                      onChange={(e) => setImageQuality(e.target.value as "auto" | "low" | "medium" | "high")}
+                      className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
+                    >
+                      <option value="auto">auto</option>
+                      <option value="low">low</option>
+                      <option value="medium">medium</option>
+                      <option value="high">high</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 

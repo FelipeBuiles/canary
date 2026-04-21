@@ -3,7 +3,8 @@ import type { ImagePrompt } from "../types/api";
 import { PromptLineageCard } from "./PromptLineageCard";
 import { Button } from "./ui/Button";
 import { Icon } from "./ui/Icon";
-import { useUpdatePrompt, useRegenPanel, usePromptsForScene } from "../api/queries";
+import { GenerationDetailsModal } from "./ui/GenerationDetailsModal";
+import { useUpdatePrompt, useRegenPanel, usePromptsForScene, useImageGenerationMeta, useProjectConfig } from "../api/queries";
 import { useRegenStore } from "../store/regen";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -30,15 +31,19 @@ export function PanelDetailModal({
 }: PanelDetailModalProps) {
   const [draft, setDraft] = useState<ImagePrompt | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const queryClient = useQueryClient();
   const begin = useRegenStore((s) => s.begin);
   const attachJob = useRegenStore((s) => s.attachJob);
   const fail = useRegenStore((s) => s.fail);
 
   const { data: prompts } = usePromptsForScene(project, sceneId);
+  const { data: projectConfig } = useProjectConfig(project);
   const originalPrompt = prompts?.find(
     (p) => p.scene_id === sceneId && p.panel_number === panelNumber
   );
+  const panelRelPath = `images/${sceneId}/panel_${String(panelNumber).padStart(3, "0")}.png`;
+  const { data: generationMeta } = useImageGenerationMeta(project, panelRelPath, isDetailsOpen);
 
   const updatePrompt = useUpdatePrompt();
   const regenPanel = useRegenPanel();
@@ -118,6 +123,33 @@ export function PanelDetailModal({
   const hasChanges = draft && originalPrompt
     ? JSON.stringify(draft) !== JSON.stringify(originalPrompt)
     : false;
+  const fallbackBody = (draft.full_prompt || "").trim();
+  const fallbackStyle = (projectConfig?.style_template ?? draft.style ?? "").trim();
+  const fallbackPrompt = (draft.prompt_version ?? 1) >= 2
+    ? (fallbackStyle ? `${fallbackStyle}\n\n${fallbackBody}` : fallbackBody)
+    : (fallbackStyle ? `${fallbackStyle}\n\n${draft.full_prompt}` : draft.full_prompt);
+  const fallbackPromptWithContinuity = draft.continuity_note
+    ? `${fallbackPrompt}\n\n${draft.continuity_note}`
+    : fallbackPrompt;
+  const effectiveModel = projectConfig?.dev_mode && projectConfig?.image_model === "gemini-3-pro-image-preview"
+    ? (projectConfig?.fallback_image_model || "gemini-3.1-flash-image-preview")
+    : projectConfig?.image_model;
+  const effectiveSteps = projectConfig?.dev_mode
+    ? Math.min(draft.steps, projectConfig?.dev_image_steps ?? draft.steps)
+    : draft.steps;
+  const fallbackParams: Record<string, unknown> = {
+    scene_id: sceneId,
+    panel_number: panelNumber,
+    image_model: effectiveModel,
+    width: draft.width,
+    height: draft.height,
+    steps: effectiveSteps,
+    guidance_scale: draft.guidance_scale,
+    style_template: projectConfig?.style_template ?? draft.style,
+    subject_refs: draft.reference_image_paths,
+    style_refs: [],
+    continuity_note: draft.continuity_note,
+  };
 
   return (
     <div
@@ -192,6 +224,12 @@ export function PanelDetailModal({
         <div className="flex items-center justify-end gap-3 border-t-[2px] border-ink-black p-4">
           <Button
             variant="outline"
+            onClick={() => setIsDetailsOpen(true)}
+          >
+            DETAILS
+          </Button>
+          <Button
+            variant="outline"
             onClick={handleQuickRedo}
           >
             QUICK RE-DO
@@ -210,6 +248,15 @@ export function PanelDetailModal({
           </Button>
         </div>
       </div>
+      <GenerationDetailsModal
+        isOpen={isDetailsOpen}
+        onClose={() => setIsDetailsOpen(false)}
+        title={`${sceneId.toUpperCase()} / PANEL ${String(panelNumber).padStart(2, "0")}`}
+        imageUrl={imageUrl}
+        prompt={generationMeta?.prompt ?? fallbackPromptWithContinuity}
+        parameters={generationMeta?.parameters ?? fallbackParams}
+        isFallback={!generationMeta}
+      />
     </div>
   );
 }

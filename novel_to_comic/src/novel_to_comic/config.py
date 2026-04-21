@@ -66,7 +66,9 @@ class Config(BaseModel):
     image_width: int = 1024
     image_height: int = 1024
     image_steps: int = 28
+    image_quality: str = "auto"  # OpenAI GPT Image quality: auto | low | medium | high
     flux_guidance_scale: float = 3.5
+    continuity_mode: str = "hybrid"  # off | text_only | ref_only | hybrid
 
     # Negative prompt — only applied for Together AI / SDXL models (Gemini native ignores it)
     # Keep style-neutral: no photorealistic/cartoon terms here. Put those in config.yaml
@@ -288,7 +290,9 @@ dev_image_concurrency: {config.dev_image_concurrency}
 image_width: {config.image_width}       # pixels — 1024 recommended for square panels
 image_height: {config.image_height}     # pixels — same as width for 1:1 square panels
 image_steps: {config.image_steps}       # inference steps — 28 is a good balance
+image_quality: "{config.image_quality}"  # OpenAI GPT Image only: auto | low | medium | high
 flux_guidance_scale: {config.flux_guidance_scale}  # 3.5–4.5 recommended for FLUX.2 Pro
+continuity_mode: "{config.continuity_mode}"  # off | text_only | ref_only | hybrid
 negative_prompt: "{config.negative_prompt}"  # applied to Together AI models only
 
 # ---------------------------------------------------------------------------

@@ -6,13 +6,16 @@ import {
   useSuggestStyles,
   useGenerateStyleSamples,
   useSetActiveStyle,
+  useImageGenerationMeta,
+  useProjectConfig,
+  useStoryBible,
 } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
 import { Button } from "../../components/ui/Button";
 import { RoomShell } from "../../components/ui/RoomShell";
-import { ImageModal } from "../../components/ui/ImageModal";
+import { GenerationDetailsModal } from "../../components/ui/GenerationDetailsModal";
 import {
   useStyleGenStore,
   usePendingIndices,
@@ -21,26 +24,55 @@ import {
 } from "../../store/styleGen";
 import { usePipelineStore } from "../../store/pipeline";
 import type { StyleSuggestion } from "../../api/styles";
+import type { StoryBible } from "../../types/api";
+
+function buildFallbackStyleSamplePrompt(suggestion: StyleSuggestion, storyBible: StoryBible | undefined): string {
+  const charDesc =
+    storyBible?.characters?.[0]?.visual_anchor?.trim() ||
+    storyBible?.characters?.[0]?.name?.trim() ||
+    "a mysterious cloaked figure";
+  const locDesc =
+    storyBible?.locations?.[0]?.visual_anchor?.trim() ||
+    storyBible?.locations?.[0]?.name?.trim() ||
+    "a dramatic atmospheric setting";
+  return (
+    `${suggestion.template}\n\n` +
+    `${charDesc}. Set in: ${locDesc}. ` +
+    "Medium shot, eye-level camera, dramatic lighting. " +
+    "Portrait 4:5 aspect ratio. Fill the entire frame edge to edge - " +
+    "no letterboxing, no pillarboxing, no border margins. " +
+    "No text. No speech bubbles. No captions. Single panel only."
+  );
+}
 
 function StyleCard({
   suggestion,
   projectName,
   isGenerating,
   queueState,
+  fallbackPrompt,
+  fallbackParameters,
 }: {
   suggestion: StyleSuggestion;
   projectName: string;
   isGenerating: boolean;
   queueState: "queued" | "running" | null;
+  fallbackPrompt: string;
+  fallbackParameters: Record<string, unknown>;
 }) {
   const sampleUrl = `/api/projects/${encodeURIComponent(projectName)}/files/samples/style_${suggestion.index}.png`;
   const [imgFailed, setImgFailed] = useState(!suggestion.has_sample);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [timestamp, setTimestamp] = useState(() => Date.now());
   const wasGenerating = useRef(isGenerating);
   const generateSamples = useGenerateStyleSamples();
   const setActive = useSetActiveStyle();
   const { add, attachJobs, remove } = useStyleGenStore();
+  const { data: meta } = useImageGenerationMeta(
+    projectName,
+    `samples/style_${suggestion.index}.png`,
+    isDetailsOpen,
+  );
 
   useEffect(() => {
     if (suggestion.has_sample) setImgFailed(false);
@@ -72,7 +104,7 @@ function StyleCard({
       <Card className="flex flex-col">
         <div
           className="relative border-b-[2px] border-ink-black bg-ink-black cursor-pointer group"
-          onClick={() => !imgFailed && setIsModalOpen(true)}
+          onClick={() => !imgFailed && setIsDetailsOpen(true)}
         >
           {imgFailed ? (
             <div className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-2 bg-ink-black/40">
@@ -165,11 +197,14 @@ function StyleCard({
           </div>
         </div>
       </Card>
-      <ImageModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        src={`${sampleUrl}?t=${timestamp}`}
-        alt={suggestion.label}
+      <GenerationDetailsModal
+        isOpen={isDetailsOpen}
+        onClose={() => setIsDetailsOpen(false)}
+        title={suggestion.label}
+        imageUrl={`${sampleUrl}?t=${timestamp}`}
+        prompt={meta?.prompt ?? fallbackPrompt}
+        parameters={meta?.parameters ?? fallbackParameters}
+        isFallback={!meta}
       />
     </>
   );
@@ -179,6 +214,8 @@ export function StyleRoom() {
   const { name } = useParams<{ name: string }>();
   const projectName = name ?? "";
   const { data: stylesData, isLoading, refetch: refetchStyles } = useStyles(name);
+  const { data: projectConfig } = useProjectConfig(name);
+  const { data: storyBible } = useStoryBible(name);
   const suggestStyles = useSuggestStyles();
   const generateSamples = useGenerateStyleSamples();
   const pendingSet = usePendingIndices(projectName);
@@ -284,6 +321,12 @@ export function StyleRoom() {
   const anyGenerating = pendingSet.size > 0;
   const runningStyleCount = Object.values(styleJobStatuses).filter((status) => status === "running").length;
   const queuedStyleCount = Object.values(styleJobStatuses).filter((status) => status === "queued").length;
+  const effectiveModel = projectConfig?.dev_mode && projectConfig?.image_model === "gemini-3-pro-image-preview"
+    ? (projectConfig?.fallback_image_model || "gemini-3.1-flash-image-preview")
+    : projectConfig?.image_model;
+  const effectiveSteps = projectConfig?.dev_mode
+    ? Math.min(projectConfig?.image_steps ?? 0, projectConfig?.dev_image_steps ?? 0)
+    : projectConfig?.image_steps;
 
   return (
     <RoomShell>
@@ -355,6 +398,15 @@ export function StyleRoom() {
                   ? styleJobStatuses[s.index] ?? "queued"
                   : null
               }
+              fallbackPrompt={buildFallbackStyleSamplePrompt(s, storyBible)}
+              fallbackParameters={{
+                image_model: effectiveModel,
+                width: projectConfig?.image_width,
+                height: projectConfig?.image_height,
+                steps: effectiveSteps,
+                guidance_scale: projectConfig?.flux_guidance_scale,
+                style_template: s.template,
+              }}
             />
           ))}
         </section>

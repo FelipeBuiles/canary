@@ -22,9 +22,12 @@ export interface ConfigOverrides {
   dev_image_scale?: number;
   dev_image_steps?: number;
   dev_image_concurrency?: number;
+  fallback_image_model?: string;
   image_width?: number;
   image_height?: number;
   image_steps?: number;
+  image_quality?: "auto" | "low" | "medium" | "high";
+  flux_guidance_scale?: number;
   enable_rag_index?: boolean;
   max_panels_per_scene?: number;
   max_panels_per_page?: number;
@@ -330,4 +333,12 @@ export interface ImageStatus {
   scene_id: string;
   panel_number: number;
   status: "done" | "failed" | "pending" | "queued" | "running" | "stale";
+}
+
+export interface ImageGenerationMeta {
+  version: number;
+  kind: string;
+  prompt: string;
+  prompt_sha256: string;
+  parameters: Record<string, unknown>;
 }
