@@ -16,12 +16,16 @@ from novel_to_comic.state import (
     StageStatus,
     approve_stage,
     fail_stage,
+    get_stale_stages,
+    is_stale,
+    reset_stale_stages,
     save_state,
 )
 
 from ..deps import get_project
 from ..generation_jobs import (
     enqueue_generation_job,
+    find_active_generation_job,
     generation_job_payload,
     generation_semaphore_for_config,
     prune_finished_generation_jobs,
@@ -29,6 +33,16 @@ from ..generation_jobs import (
 
 router = APIRouter()
 logger = logging.getLogger("canary.pipeline")
+
+_RERUN_CLEAN_PATHS: dict[str, tuple[str, ...]] = {
+    "extract": ("story_bible.json", "scenes", "refs", "plates", "screenplays", "panels", "prompts", "images", "assembly", "exports"),
+    "index": ("refs", "plates", "screenplays", "panels", "prompts", "images", "assembly", "exports"),
+    "screenplay": ("screenplays", "panels", "prompts", "images", "assembly", "exports"),
+    "panels": ("panels", "prompts", "images", "assembly", "exports"),
+    "prompts": ("prompts", "images", "assembly", "exports"),
+    "generate": ("images", "assembly", "exports"),
+    "assemble": ("assembly", "exports"),
+}
 
 
 def _stage_runner(stage: str, config, project_dir, state):
@@ -149,23 +163,48 @@ def _cleanup_stale_queue(app, project_name: str, queue) -> None:
     app.state.event_queues.pop(project_name, None)
 
 
+def _reset_stage_and_downstream(state, stage: str) -> None:
+    stage_idx = STAGE_NAMES.index(stage)
+    for stage_name in STAGE_NAMES[stage_idx:]:
+        state.stages[stage_name] = StageState()
+
+
+def _clear_outputs_for_rerun(project_dir, stage: str) -> None:
+    for rel_path in _RERUN_CLEAN_PATHS.get(stage, ()):
+        path = project_dir / rel_path
+        if not path.exists():
+            continue
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+
 @router.post("/run")
 async def run_pipeline(
     request: Request,
     project_name: str,
     stage: Optional[str] = Query(None),
+    rerun: bool = Query(False),
     project=Depends(get_project),
 ):
     project_dir, config, state = project
 
     if stage and stage not in STAGE_NAMES:
         raise HTTPException(400, f"Unknown stage: {stage}. Valid: {STAGE_NAMES}")
+    if rerun and not stage:
+        raise HTTPException(400, "rerun=true requires a specific stage")
 
     # Concurrency guard
     running = request.app.state.running_tasks
     existing = running.get(project_name)
     if existing and not existing.done():
         raise HTTPException(409, "A stage is already running for this project")
+
+    if stage and rerun:
+        _reset_stage_and_downstream(state, stage)
+        _clear_outputs_for_rerun(project_dir, stage)
+        save_state(state, project_dir)
 
     queue: asyncio.Queue = asyncio.Queue()
     request.app.state.event_queues[project_name] = queue
@@ -200,22 +239,11 @@ async def regen_extract(
     if existing and not existing.done():
         raise HTTPException(409, "A stage is already running for this project")
 
-    # Reset all downstream stages to pending
-    extract_idx = STAGE_NAMES.index("extract")
-    for stage_name in STAGE_NAMES[extract_idx + 1:]:
-        state.stages[stage_name] = StageState()
-
-    # Also reset extract itself so it re-runs cleanly
-    state.stages["extract"] = StageState()
+    # Keep behavior aligned with /run?stage=extract&rerun=1:
+    # reset extract + all downstream stage state, and clear downstream outputs.
+    _reset_stage_and_downstream(state, "extract")
+    _clear_outputs_for_rerun(project_dir, "extract")
     save_state(state, project_dir)
-
-    # Delete stale extract artifacts
-    story_bible = project_dir / "story_bible.json"
-    if story_bible.exists():
-        story_bible.unlink()
-    scenes_dir = project_dir / "scenes"
-    if scenes_dir.exists():
-        shutil.rmtree(scenes_dir)
 
     # Run extract stage via SSE pipeline (same pattern as POST /run?stage=extract)
     queue: asyncio.Queue = asyncio.Queue()
@@ -293,6 +321,20 @@ async def regen_panel(
             panel_number,
         )
 
+    existing = find_active_generation_job(
+        request.app,
+        project_name=project_name,
+        kind="panel_regen",
+        payload={"scene_id": scene_id, "panel_number": panel_number},
+    )
+    if existing:
+        return {
+            "status": "queued",
+            "job": generation_job_payload(request.app, existing),
+            "scene_id": scene_id,
+            "panel_number": panel_number,
+        }
+
     prune_finished_generation_jobs(request.app)
     job = enqueue_generation_job(
         request.app,
@@ -328,6 +370,19 @@ async def regen_ref(
             char_id,
         )
 
+    existing = find_active_generation_job(
+        request.app,
+        project_name=project_name,
+        kind="character_ref_regen",
+        payload={"char_id": char_id},
+    )
+    if existing:
+        return {
+            "status": "queued",
+            "job": generation_job_payload(request.app, existing),
+            "char_id": char_id,
+        }
+
     prune_finished_generation_jobs(request.app)
     job = enqueue_generation_job(
         request.app,
@@ -361,6 +416,19 @@ async def regen_plate(
             project_dir,
             loc_id,
         )
+
+    existing = find_active_generation_job(
+        request.app,
+        project_name=project_name,
+        kind="location_plate_regen",
+        payload={"loc_id": loc_id},
+    )
+    if existing:
+        return {
+            "status": "queued",
+            "job": generation_job_payload(request.app, existing),
+            "loc_id": loc_id,
+        }
 
     prune_finished_generation_jobs(request.app)
     job = enqueue_generation_job(
@@ -405,3 +473,68 @@ def approve(stage: str, project_name: str, project=Depends(get_project)):
         raise HTTPException(409, str(e))
     save_state(state, project_dir)
     return {"status": "approved", "stage": stage}
+
+
+@router.post("/reset/{stage}")
+def reset_stage(stage: str, project_name: str, project=Depends(get_project)):
+    """Reset a failed stage back to pending so it can be re-run."""
+    project_dir, config, state = project
+    if stage not in STAGE_NAMES:
+        raise HTTPException(400, f"Unknown stage: {stage}")
+
+    stage_state = state.stages[stage]
+    if stage_state.status != StageStatus.FAILED:
+        raise HTTPException(
+            409,
+            f"Stage '{stage}' is not failed (status: {stage_state.status.value}). "
+            "Only failed stages can be reset."
+        )
+
+    state.stages[stage] = StageState()
+    save_state(state, project_dir)
+    return {
+        "status": "reset",
+        "stage": stage,
+        "message": f"Stage '{stage}' has been reset to pending. You can now re-run it."
+    }
+
+
+@router.post("/reset-stale")
+def reset_stale(request: Request, project_name: str, project=Depends(get_project)):
+    """Reset all stale RUNNING stages back to PENDING.
+
+    A stage is stale when state.json shows RUNNING but no server-side process
+    is actively tracking it — e.g. after a server restart or crash.
+    """
+    project_dir, config, state = project
+    stale = get_stale_stages(state)
+    if not stale:
+        return {"status": "ok", "reset": [], "message": "No stale stages detected."}
+    reset = reset_stale_stages(state)
+    save_state(state, project_dir)
+    return {
+        "status": "reset",
+        "reset": reset,
+        "message": f"Reset stale stages: {', '.join(reset)}",
+    }
+
+
+@router.get("/stage-error/{stage}")
+def get_stage_error(stage: str, project_name: str, project=Depends(get_project)):
+    """Get the error message from a failed stage."""
+    project_dir, config, state = project
+    if stage not in STAGE_NAMES:
+        raise HTTPException(400, f"Unknown stage: {stage}")
+
+    stage_state = state.stages[stage]
+    if stage_state.status != StageStatus.FAILED:
+        raise HTTPException(
+            404,
+            f"Stage '{stage}' is not failed (status: {stage_state.status.value})."
+        )
+
+    return {
+        "stage": stage,
+        "error": stage_state.error or "Unknown error",
+        "items_failed": stage_state.items_failed,
+    }

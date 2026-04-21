@@ -1,14 +1,17 @@
 import { useParams, useSearchParams } from "react-router-dom";
 import { useScreenplays, useScreenplay } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
+import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { SceneSidebar } from "../../components/ui/SceneSidebar";
+import { useRunAction } from "../../hooks/useRunAction";
 
 export function AdaptRoom() {
   const { name } = useParams<{ name: string }>();
   const { data: summaries, isLoading: loadingList } = useScreenplays(name);
+  const { handleRun, isPending } = useRunAction();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedScene = searchParams.get("scene");
   const { data: screenplay, isLoading: loadingScript } = useScreenplay(name, selectedScene);
@@ -25,6 +28,16 @@ export function AdaptRoom() {
         label="ADAPT / SCREENPLAY"
         title="SCREENPLAY VIEWER"
         lead="Each scene's prose rendered into beats — action, dialogue, sfx, description — ready to panel."
+        actions={(
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => name && handleRun(name, "screenplay", true)}
+            disabled={isPending}
+          >
+            {isPending ? "RERUNNING…" : "RERUN ADAPT"}
+          </Button>
+        )}
       />
 
       <section className="grid gap-5 xl:grid-cols-[220px_1fr]">

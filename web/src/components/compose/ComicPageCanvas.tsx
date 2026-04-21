@@ -1,7 +1,7 @@
 import type { ComicPage } from "../../types/api";
 import { PanelCell } from "./PanelCell";
 import { getLayout } from "./layouts";
-import { resolveThemeVars } from "./themes";
+import { resolveThemeVars, sanitizeStyleVars } from "./themes";
 
 interface ComicPageCanvasProps {
   page: ComicPage;
@@ -22,7 +22,7 @@ export function ComicPageCanvas({
   imageBaseUrl,
 }: ComicPageCanvasProps) {
   const layout = getLayout(page.layout);
-  const vars = { ...resolveThemeVars(page.theme), ...(page.style_vars ?? {}) };
+  const vars = { ...resolveThemeVars(page.theme), ...sanitizeStyleVars(page.style_vars) };
 
   // Apply CSS variables as inline styles for the page root
   const cssVars = vars as unknown as React.CSSProperties;

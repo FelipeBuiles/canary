@@ -22,6 +22,18 @@ THOUGHT BUBBLES: use sparingly (max 2 per scene) for interior monologue that can
 SFX: annotate meaningful sounds: [SFX: CRACK], [SFX: soft footsteps].
 
 TRANSITIONS: mark scene transitions: [TRANSITION: smash cut], [TRANSITION: fade to white].
+When a beat is a transition, include transition_type on that beat:
+- "smooth_continuation" for a gentle handoff or same-moment follow-through
+- "match_cut" for an intentional visual or motion echo
+- "hard_cut" for a deliberate jump in time, place, or emotional state
+Use the direction field for the short human-readable cue, and keep the transition content faithful to the source text.
+
+Examples:
+- [TRANSITION: He lowers the phone and looks toward the window.] -> transition_type: "smooth_continuation"
+- [TRANSITION: Cut from the candle flame to the city lights outside.] -> transition_type: "match_cut"
+- [TRANSITION: Smash cut to dawn, two hours later.] -> transition_type: "hard_cut"
+- [TRANSITION: Fade to black.] -> transition_type: "hard_cut"
+- [TRANSITION: The silence lingers as she turns away.] -> transition_type: "smooth_continuation"
 
 EMOTIONAL ARC: preserve the emotional progression of the scene. The final beat should reflect where the character ends up emotionally, not where they started.
 
@@ -41,7 +53,8 @@ Output JSON:
       "type": "action" | "dialogue" | "sfx" | "transition",
       "character_id": "..." (null for action/sfx/transition),
       "content": "exact dialogue text OR observable action description",
-      "direction": "optional visual direction note (camera angle, emphasis, etc.)"
+      "direction": "optional visual direction note (camera angle, emphasis, etc.)",
+      "transition_type": "optional one of \"smooth_continuation\" | \"match_cut\" | \"hard_cut\" (only for transition beats)"
     }
   ]
 }

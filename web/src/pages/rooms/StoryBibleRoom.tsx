@@ -2,10 +2,12 @@ import { useParams } from "react-router-dom";
 import { useStoryBible, useUpdateStoryBible } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { SectionDivider } from "../../components/SectionDivider";
+import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
 import { EditableText } from "../../components/ui/EditableText";
 import { RoomShell } from "../../components/ui/RoomShell";
+import { useRunAction } from "../../hooks/useRunAction";
 import type { Character, Location } from "../../types/api";
 
 export function CharacterCard({
@@ -109,6 +111,7 @@ export function StoryBibleRoom() {
   const { name } = useParams<{ name: string }>();
   const { data: bible, isLoading, error } = useStoryBible(name);
   const updateBible = useUpdateStoryBible();
+  const { handleRun, isPending } = useRunAction();
 
   if (isLoading) {
     return <RoomShell isLoading loadingText="LOADING STORY BIBLE…" />;
@@ -146,6 +149,16 @@ export function StoryBibleRoom() {
         label="EXTRACT / STORY BIBLE"
         title={bible.title}
         lead={<>by {bible.author} &middot; {bible.total_scenes} scenes extracted into the narrative frame.</>}
+        actions={(
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => name && handleRun(name, "extract", true)}
+            disabled={isPending}
+          >
+            {isPending ? "RERUNNING…" : "RERUN EXTRACT"}
+          </Button>
+        )}
       />
 
       <section className="grid gap-6 xl:grid-cols-2">

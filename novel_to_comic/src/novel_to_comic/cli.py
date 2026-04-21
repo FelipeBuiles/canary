@@ -15,7 +15,10 @@ from novel_to_comic.state import (
     StageStatus,
     approve_stage,
     create_initial_state,
+    get_stale_stages,
+    is_stale,
     load_state,
+    reset_stale_stages,
     save_state,
 )
 
@@ -335,6 +338,7 @@ def _print_status_summary(state) -> None:
     for name in STAGE_NAMES:
         s = state.stages[name]
         style = styles.get(s.status, "")
+        stale_marker = " [yellow](stale)[/yellow]" if is_stale(s) else ""
         progress = ""
         if s.items_total > 0:
             progress = f"{s.items_done}/{s.items_total}"
@@ -342,7 +346,7 @@ def _print_status_summary(state) -> None:
                 progress += f" ({len(s.items_failed)} failed)"
         table.add_row(
             name,
-            f"[{style}]{s.status.value}[/{style}]",
+            f"[{style}]{s.status.value}[/{style}]{stale_marker}",
             progress,
             f"${s.cost_usd:.3f}" if s.cost_usd > 0 else "",
             s.error or "",
@@ -350,6 +354,12 @@ def _print_status_summary(state) -> None:
 
     console.print(table)
     console.print(f"\n[bold]Total cost:[/bold] ${state.total_cost_usd:.2f}")
+
+    stale = get_stale_stages(state)
+    if stale:
+        console.print(f"\n[yellow]Stale running stages detected:[/yellow] {', '.join(stale)}")
+        console.print(f"Run [bold]pipeline fix-stale[/bold] to reset them.\n")
+        return
 
     awaiting = [n for n in STAGE_NAMES if state.stages[n].status == StageStatus.AWAITING_REVIEW]
     if awaiting:
@@ -822,6 +832,39 @@ def regen(project: str, scene: str, skip_prompts: bool, panel_numbers: tuple[int
     _run_async(s6_generate.run(config, project_dir, state, scene_ids=[scene]))
 
     console.print(f"\n[green]Done.[/green] Run [bold]pipeline export[/bold] to rebuild the comic pages.")
+
+
+# ── fix-stale ──────────────────────────────────────────────────────────────────
+
+@cli.command("fix-stale")
+@click.option("--project", default=".", show_default=True, type=click.Path(),
+              help="Project directory")
+def fix_stale(project: str):
+    """Detect and reset stale RUNNING stages back to PENDING.
+
+    A stage gets stuck in RUNNING when the pipeline server was restarted mid-run
+    or the process crashed. No server-side process is tracking it, but state.json
+    still says it's running.
+
+    Examples:
+        pipeline fix-stale
+        pipeline fix-stale --project ./projects/mynovel
+    """
+    project_dir, _, state = _load(project)
+    stale = get_stale_stages(state)
+    if not stale:
+        console.print("[dim]No stale stages detected.[/dim]")
+        return
+
+    console.print(f"[yellow]Stale stages detected:[/yellow] {', '.join(stale)}")
+    if not click.confirm("Reset these stages to PENDING?", default=True):
+        console.print("[dim]Aborted.[/dim]")
+        return
+
+    reset = reset_stale_stages(state)
+    save_state(state, project_dir)
+    console.print(f"[green]Reset:[/green] {', '.join(reset)}")
+    console.print("Run [bold]pipeline continue[/bold] to re-run.")
 
 
 # ── serve (web dashboard) ────────────────────────────────────────────────────

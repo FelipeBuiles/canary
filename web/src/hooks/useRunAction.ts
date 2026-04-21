@@ -6,10 +6,10 @@ export function useRunAction() {
   const connect = usePipelineStore((state) => state.connect);
   const clearEvents = usePipelineStore((state) => state.clearEvents);
 
-  function handleRun(project: string) {
+  function handleRun(project: string, stage?: string, rerun = false) {
     clearEvents();
     runPipeline.mutate(
-      { project },
+      { project, stage, rerun },
       { onSuccess: () => connect(project) },
     );
   }

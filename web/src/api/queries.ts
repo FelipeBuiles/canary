@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listProjects, getProjectStatus, createProject, generateProjectCover } from "./projects";
-import { runPipeline, approveStage, regenPanel, regenRef, regenPlate, getGenerationJobs, regenExtract } from "./pipeline";
+import { runPipeline, approveStage, regenPanel, regenRef, regenPlate, getGenerationJobs, regenExtract, resetStale } from "./pipeline";
 import type { ConfigOverrides, StoryBible } from "../types/api";
 import {
   getStoryBible,
@@ -86,8 +86,8 @@ export function useUpdateProjectConfig() {
 export function useRunPipeline() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ project, stage }: { project: string; stage?: string }) =>
-      runPipeline(project, stage),
+    mutationFn: ({ project, stage, rerun }: { project: string; stage?: string; rerun?: boolean }) =>
+      runPipeline(project, stage, rerun),
     onSuccess: (_data, { project }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "status"] });
       qc.invalidateQueries({ queryKey: ["projects"] });
@@ -129,6 +129,17 @@ export function useRegenExtract() {
     onSuccess: (_data, { project }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "status"] });
       qc.invalidateQueries({ queryKey: ["project", project, "story-bible"] });
+    },
+  });
+}
+
+export function useResetStale() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project }: { project: string }) => resetStale(project),
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+      qc.invalidateQueries({ queryKey: ["projects"] });
     },
   });
 }

@@ -75,6 +75,7 @@ def _build_user_content(
     page_group: int | None = None,
     total_pages: int | None = None,
     prev_context: str | None = None,
+    prev_panel_context: str | None = None,
 ) -> str:
     """Build user message with screenplay (or page group) and character context."""
     char_info = []
@@ -97,6 +98,8 @@ def _build_user_content(
         )
     if prev_context:
         parts.append(f"CONTINUING FROM: {prev_context}")
+    if prev_panel_context:
+        parts.append(f"VISUAL CONTINUITY FROM PREVIOUS PANEL: {prev_panel_context}")
     parts += [
         loc_desc,
         "",
@@ -115,7 +118,29 @@ def _context_note(beat: ScreenplayBeat, story_bible: StoryBible) -> str:
         char = next((c for c in story_bible.characters if c.id == beat.character_id), None)
         name = char.name if char else beat.character_id
         return f'{name}: "{beat.content}"'
+    if beat.type == "transition":
+        transition_type = beat.transition_type or "unknown"
+        return f"transition [{transition_type}]: {beat.content}"
     return beat.content
+
+
+def _panel_context(panel: PanelBreakdown, story_bible: StoryBible) -> str:
+    """One-line summary of a panel, used as continuity context for the next chunk."""
+    bits: list[str] = []
+    for char_id in panel.characters_present:
+        char = next((c for c in story_bible.characters if c.id == char_id), None)
+        name = char.name if char else char_id
+        action = panel.character_actions.get(char_id, "")
+        expression = panel.character_expressions.get(char_id, "")
+        position = panel.character_positions.get(char_id, "")
+        details = [part for part in (action, expression, position) if part]
+        if details:
+            bits.append(f"{name}: {', '.join(details)}")
+    summary = "; ".join(bits) if bits else "scene continues"
+    transition_type = panel.transition_type or "unknown"
+    if panel.transition_note:
+        return f"{summary}; transition type: {transition_type}; transition: {panel.transition_note}"
+    return f"{summary}; transition type: {transition_type}"
 
 
 def _localized_system_prompt(config: Config, system_prompt: str) -> str:
@@ -158,6 +183,7 @@ async def _process_scene(
     all_panels: list[PanelBreakdown] = []
     panels_dir.mkdir(parents=True, exist_ok=True)
     prev_context: str | None = None
+    prev_panel_context: str | None = None
 
     for chunk_idx, chunk_beats in enumerate(chunks):
         user_content = _build_user_content(
@@ -167,6 +193,7 @@ async def _process_scene(
             page_group=chunk_idx + 1 if total_chunks > 1 else None,
             total_pages=total_chunks if total_chunks > 1 else None,
             prev_context=prev_context,
+            prev_panel_context=prev_panel_context,
         )
 
         async with semaphore:
@@ -191,6 +218,7 @@ async def _process_scene(
                 raw["panel_number"] = panel_offset + i + 1
                 panel = PanelBreakdown.model_validate(raw)
                 all_panels.append(panel)
+            prev_panel_context = _panel_context(all_panels[-1], story_bible)
 
         prev_context = _context_note(chunk_beats[-1], story_bible)
 

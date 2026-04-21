@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
 import type { ComicPage, Bubble, Sfx, PagePanel } from "../../types/api";
@@ -7,12 +8,15 @@ import { useI18n } from "../../i18n";
 interface PropertyPanelProps {
   page: ComicPage;
   selection: { panelId: string; type: "bubble" | "sfx"; elementId: string } | null;
+  onUpdatePanel: (panelId: string, patch: Partial<PagePanel>) => void;
   onUpdateBubble: (panelId: string, bubbleId: string, patch: Partial<Bubble>) => void;
   onUpdateSfx: (panelId: string, patch: Partial<Sfx>) => void;
   onUpdatePage: (patch: Partial<ComicPage>) => void;
   onReflowPages: (panelsPerPage: number) => void;
   onGeneratePageStyle: () => void;
-  onTranslateBubbles: () => void;
+  outputLanguage: "en" | "es" | "fr";
+  onOutputLanguageChange: (language: "en" | "es" | "fr") => void;
+  onTranslateBubbles: (language: "en" | "es" | "fr") => void;
   isGeneratingPageStyle?: boolean;
   isTranslatingBubbles?: boolean;
   onDeleteElement: (panelId: string, type: "bubble" | "sfx", elementId: string) => void;
@@ -31,6 +35,59 @@ const FONT_OPTIONS = [
   { label: "Mono", value: "'Courier New', monospace" },
 ];
 
+interface DebouncedColorInputProps {
+  value: string;
+  onCommit: (value: string) => void;
+}
+
+function DebouncedColorInput({ value, onCommit }: DebouncedColorInputProps) {
+  const [localValue, setLocalValue] = useState(value);
+  const timeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setLocalValue(value);
+  }, [value]);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current != null) window.clearTimeout(timeoutRef.current);
+    };
+  }, []);
+
+  function scheduleCommit(nextValue: string) {
+    if (nextValue === value) return;
+    if (timeoutRef.current != null) window.clearTimeout(timeoutRef.current);
+    timeoutRef.current = window.setTimeout(() => {
+      onCommit(nextValue);
+      timeoutRef.current = null;
+    }, 180);
+  }
+
+  function flushCommit() {
+    if (timeoutRef.current != null) {
+      window.clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    if (localValue === value) return;
+    onCommit(localValue);
+  }
+
+  return (
+    <input
+      type="color"
+      value={localValue}
+      onChange={(e) => {
+        const nextValue = e.target.value;
+        setLocalValue(nextValue);
+        scheduleCommit(nextValue);
+      }}
+      onBlur={flushCommit}
+      onPointerUp={flushCommit}
+      className="h-[36px] w-full border-[2px] border-ink-black bg-pulp-paper p-1"
+    />
+  );
+}
+
 function findBubble(page: ComicPage, panelId: string, bubbleId: string): { panel: PagePanel; bubble: Bubble } | null {
   const panel = page.panels.find((p) => p.id === panelId);
   if (!panel) return null;
@@ -48,11 +105,14 @@ function findSfx(page: ComicPage, panelId: string): { panel: PagePanel; sfx: Sfx
 export function PropertyPanel({
   page,
   selection,
+  onUpdatePanel,
   onUpdateBubble,
   onUpdateSfx,
   onUpdatePage,
   onReflowPages,
   onGeneratePageStyle,
+  outputLanguage,
+  onOutputLanguageChange,
   onTranslateBubbles,
   isGeneratingPageStyle,
   isTranslatingBubbles,
@@ -60,6 +120,20 @@ export function PropertyPanel({
   onUnpin,
 }: PropertyPanelProps) {
   const { t } = useI18n();
+  const [imagePanelId, setImagePanelId] = useState(page.panels[0]?.id ?? "");
+
+  useEffect(() => {
+    if (!page.panels.length) {
+      setImagePanelId("");
+      return;
+    }
+    if (!page.panels.some((p) => p.id === imagePanelId)) {
+      setImagePanelId(page.panels[0].id);
+    }
+  }, [imagePanelId, page.panels]);
+
+  const imagePanel = page.panels.find((p) => p.id === imagePanelId) ?? page.panels[0];
+
   if (!selection) {
     return (
       <Card className="p-3 space-y-3">
@@ -118,10 +192,22 @@ export function PropertyPanel({
         </div>
 
         <div className="border-t-[2px] border-ink-black/10 pt-3 space-y-2">
+          <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">
+            {t("OUTPUT BUBBLE LANGUAGE")}
+          </label>
+          <select
+            value={outputLanguage}
+            onChange={(e) => onOutputLanguageChange(e.target.value as "en" | "es" | "fr")}
+            className="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.78rem]"
+          >
+            <option value="en">English (en)</option>
+            <option value="es">Español (es)</option>
+            <option value="fr">Français (fr)</option>
+          </select>
           <Button
             size="sm"
             variant="secondary"
-            onClick={onTranslateBubbles}
+            onClick={() => onTranslateBubbles(outputLanguage)}
             disabled={isTranslatingBubbles}
             className="w-full"
           >
@@ -131,6 +217,102 @@ export function PropertyPanel({
             {t("Translates assembled speech, thought, and narration text into the project output language.")}
           </p>
         </div>
+
+        {imagePanel && (
+          <div className="border-t-[2px] border-ink-black/10 pt-3 space-y-2">
+            <div className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/45">
+              {t("PANEL IMAGE FRAMING")}
+            </div>
+            <select
+              value={imagePanel.id}
+              onChange={(e) => setImagePanelId(e.target.value)}
+              className="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.78rem]"
+            >
+              {page.panels.map((panel, idx) => (
+                <option key={panel.id} value={panel.id}>
+                  {t("PANEL")} {idx + 1} ({panel.scene_id}/{panel.panel_number})
+                </option>
+              ))}
+            </select>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">X</label>
+                <input
+                  type="number"
+                  value={imagePanel.image_offset_x ?? 0}
+                  min={-1200}
+                  max={1200}
+                  onChange={(e) => onUpdatePanel(imagePanel.id, {
+                    image_offset_x: Number(e.target.value),
+                  })}
+                  className="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.78rem]"
+                />
+              </div>
+              <div>
+                <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">Y</label>
+                <input
+                  type="number"
+                  value={imagePanel.image_offset_y ?? 0}
+                  min={-1200}
+                  max={1200}
+                  onChange={(e) => onUpdatePanel(imagePanel.id, {
+                    image_offset_y: Number(e.target.value),
+                  })}
+                  className="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.78rem]"
+                />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="secondary"
+                size="xs"
+                onClick={() => onUpdatePanel(imagePanel.id, {
+                  image_offset_x: (imagePanel.image_offset_x ?? 0) - 20,
+                })}
+              >
+                {t("LEFT")}
+              </Button>
+              <Button
+                variant="secondary"
+                size="xs"
+                onClick={() => onUpdatePanel(imagePanel.id, {
+                  image_offset_x: (imagePanel.image_offset_x ?? 0) + 20,
+                })}
+              >
+                {t("RIGHT")}
+              </Button>
+              <Button
+                variant="secondary"
+                size="xs"
+                onClick={() => onUpdatePanel(imagePanel.id, {
+                  image_offset_y: (imagePanel.image_offset_y ?? 0) - 20,
+                })}
+              >
+                {t("UP")}
+              </Button>
+              <Button
+                variant="secondary"
+                size="xs"
+                onClick={() => onUpdatePanel(imagePanel.id, {
+                  image_offset_y: (imagePanel.image_offset_y ?? 0) + 20,
+                })}
+              >
+                {t("DOWN")}
+              </Button>
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={() => onUpdatePanel(imagePanel.id, {
+                  image_offset_x: null,
+                  image_offset_y: null,
+                })}
+              >
+                {t("RESET")}
+              </Button>
+            </div>
+          </div>
+        )}
 
         <div className="text-[0.78rem] text-ink-black/40">
           {t("Click a bubble or SFX on the page to edit its properties.")}
@@ -265,11 +447,9 @@ export function PropertyPanel({
             </div>
             <div>
               <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">TEXT</label>
-              <input
-                type="color"
+              <DebouncedColorInput
                 value={bubble.font_color ?? "#1A1A1A"}
-                onChange={(e) => onUpdateBubble(selection.panelId, bubble.id, { font_color: e.target.value })}
-                className="h-[36px] w-full border-[2px] border-ink-black bg-pulp-paper p-1"
+                onCommit={(value) => onUpdateBubble(selection.panelId, bubble.id, { font_color: value })}
               />
             </div>
           </div>
@@ -277,20 +457,16 @@ export function PropertyPanel({
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">FILL</label>
-              <input
-                type="color"
+              <DebouncedColorInput
                 value={bubble.fill_color ?? "#FFFFFF"}
-                onChange={(e) => onUpdateBubble(selection.panelId, bubble.id, { fill_color: e.target.value })}
-                className="h-[36px] w-full border-[2px] border-ink-black bg-pulp-paper p-1"
+                onCommit={(value) => onUpdateBubble(selection.panelId, bubble.id, { fill_color: value })}
               />
             </div>
             <div>
               <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">BORDER</label>
-              <input
-                type="color"
+              <DebouncedColorInput
                 value={bubble.border_color ?? "#1A1A1A"}
-                onChange={(e) => onUpdateBubble(selection.panelId, bubble.id, { border_color: e.target.value })}
-                className="h-[36px] w-full border-[2px] border-ink-black bg-pulp-paper p-1"
+                onCommit={(value) => onUpdateBubble(selection.panelId, bubble.id, { border_color: value })}
               />
             </div>
           </div>

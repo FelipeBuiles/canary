@@ -1,16 +1,19 @@
 import { useParams, useSearchParams } from "react-router-dom";
 import { usePanelSummaries, usePanelsForScene, useUpdatePanel } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
+import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
 import { EditableText } from "../../components/ui/EditableText";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { SceneSidebar } from "../../components/ui/SceneSidebar";
+import { useRunAction } from "../../hooks/useRunAction";
 import type { PanelBreakdown } from "../../types/api";
 
 export function StoryboardRoom() {
   const { name } = useParams<{ name: string }>();
   const { data: summaries, isLoading } = usePanelSummaries(name);
+  const { handleRun, isPending } = useRunAction();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedScene = searchParams.get("scene");
   const { data: panels, isLoading: loadingPanels } = usePanelsForScene(
@@ -42,6 +45,16 @@ export function StoryboardRoom() {
         label="STORYBOARD / PANEL BREAKDOWN"
         title="PANEL BREAKDOWNS"
         lead="Shot-by-shot blocking with camera, lighting, and dialogue — the blueprint the artist hands to the penciller."
+        actions={(
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => name && handleRun(name, "panels", true)}
+            disabled={isPending}
+          >
+            {isPending ? "RERUNNING…" : "RERUN STORYBOARD"}
+          </Button>
+        )}
       />
 
       <section className="grid gap-5 xl:grid-cols-[220px_1fr]">

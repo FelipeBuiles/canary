@@ -50,7 +50,11 @@ export function PanelCell({
       data-panel-id={panel.id}
       style={gridStyle}
     >
-      <PanelImage src={imageSrc} />
+      <PanelImage
+        src={imageSrc}
+        imageOffsetX={panel.image_offset_x}
+        imageOffsetY={panel.image_offset_y}
+      />
 
       {/* Auto narration → .captions container at top */}
       {autoNarration.length > 0 && (

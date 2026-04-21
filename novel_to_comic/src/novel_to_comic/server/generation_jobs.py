@@ -87,6 +87,7 @@ def generation_job_payload(app: FastAPI, job: GenerationJob) -> dict[str, Any]:
                 candidate
                 for candidate in app.state.generation_jobs.values()
                 if candidate.status == "queued"
+                and candidate.project_name == job.project_name
             ),
             key=lambda candidate: candidate.sequence,
         )
@@ -110,7 +111,32 @@ def generation_job_payload(app: FastAPI, job: GenerationJob) -> dict[str, Any]:
     }
 
 
+def find_active_generation_job(
+    app: FastAPI,
+    project_name: str,
+    kind: str,
+    payload: dict[str, Any] | None = None,
+) -> GenerationJob | None:
+    for job in app.state.generation_jobs.values():
+        if (
+            job.project_name == project_name
+            and job.kind == kind
+            and job.status in ("queued", "running")
+            and (payload is None or job.payload == payload)
+        ):
+            return job
+    return None
+
+
 async def generation_worker(app: FastAPI) -> None:
+    timeout_seconds = max(1, int(getattr(app.state, "generation_job_timeout_seconds", 900)))
+
+    async def _run_job(job: GenerationJob) -> None:
+        result = job.runner()
+        if not inspect.isawaitable(result):
+            return
+        await asyncio.wait_for(result, timeout=timeout_seconds)
+
     while True:
         job: GenerationJob = await app.state.generation_queue.get()
         started = time.perf_counter()
@@ -125,9 +151,7 @@ async def generation_worker(app: FastAPI) -> None:
                     job.label,
                     job.id[:8],
                 )
-                result = job.runner()
-                if inspect.isawaitable(result):
-                    await result
+                await _run_job(job)
             else:
                 async with job.semaphore:
                     job.status = "running"
@@ -139,9 +163,7 @@ async def generation_worker(app: FastAPI) -> None:
                         job.label,
                         job.id[:8],
                     )
-                    result = job.runner()
-                    if inspect.isawaitable(result):
-                        await result
+                    await _run_job(job)
             job.status = "complete"
             logger.info(
                 "[bold green]Job complete[/] project=[white]%s[/] kind=[cyan]%s[/] "
@@ -151,6 +173,19 @@ async def generation_worker(app: FastAPI) -> None:
                 job.label,
                 job.id[:8],
                 time.perf_counter() - started,
+            )
+        except asyncio.TimeoutError:
+            job.status = "failed"
+            job.error = f"Generation timed out after {timeout_seconds}s"
+            logger.error(
+                "[bold red]Job timeout[/] project=[white]%s[/] kind=[cyan]%s[/] "
+                "label=%s id=[dim]%s[/] elapsed=[bold]%.1fs[/] timeout=%ss",
+                job.project_name,
+                job.kind,
+                job.label,
+                job.id[:8],
+                time.perf_counter() - started,
+                timeout_seconds,
             )
         except Exception as exc:
             job.status = "failed"

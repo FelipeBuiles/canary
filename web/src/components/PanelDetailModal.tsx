@@ -10,6 +10,8 @@ import { useQueryClient } from "@tanstack/react-query";
 interface PanelDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onPrev: (() => void) | null;
+  onNext: (() => void) | null;
   project: string;
   sceneId: string;
   panelNumber: number;
@@ -19,6 +21,8 @@ interface PanelDetailModalProps {
 export function PanelDetailModal({
   isOpen,
   onClose,
+  onPrev,
+  onNext,
   project,
   sceneId,
   panelNumber,
@@ -55,6 +59,16 @@ export function PanelDetailModal({
       document.body.style.overflow = "";
     };
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft" && onPrev) onPrev();
+      if (e.key === "ArrowRight" && onNext) onNext();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onPrev, onNext]);
 
   if (!isOpen || !draft) return null;
 
@@ -111,17 +125,39 @@ export function PanelDetailModal({
       onClick={onClose}
     >
       <div
-        className="max-h-[90vh] max-w-[95vw] overflow-y-auto bg-bristol border-[4px] border-ink-black"
+        className="flex h-[90vh] w-[95vw] max-w-[1400px] flex-col bg-bristol border-[4px] border-ink-black"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b-[2px] border-ink-black p-4">
-          <div>
-            <div className="font-meta text-[0.46rem] tracking-[0.16em] text-ink-black/45">
-              {sceneId.toUpperCase()}
+        <div className="flex items-center justify-between border-b-[2px] border-ink-black p-4 min-h-[4.5rem]">
+          <div className="flex items-center gap-3">
+            {onPrev ? (
+              <button
+                onClick={onPrev}
+                className="p-2 text-ink-black/50 hover:text-hero-red transition-colors"
+              >
+                <Icon name="chevron-left" size={20} />
+              </button>
+            ) : (
+              <span className="w-9" />
+            )}
+            <div>
+              <div className="font-meta text-[0.46rem] tracking-[0.16em] text-ink-black/45">
+                {sceneId.toUpperCase()}
+              </div>
+              <div className="font-display text-[1.25rem] font-bold tracking-[-0.04em]">
+                PANEL {String(panelNumber).padStart(2, "0")}
+              </div>
             </div>
-            <div className="font-display text-[1.25rem] font-bold tracking-[-0.04em]">
-              PANEL {String(panelNumber).padStart(2, "0")}
-            </div>
+            {onNext ? (
+              <button
+                onClick={onNext}
+                className="p-2 text-ink-black/50 hover:text-hero-red transition-colors"
+              >
+                <Icon name="chevron-right" size={20} />
+              </button>
+            ) : (
+              <span className="w-9" />
+            )}
           </div>
           <button
             onClick={onClose}
@@ -131,16 +167,18 @@ export function PanelDetailModal({
           </button>
         </div>
 
-        <div className="grid gap-0 lg:grid-cols-[1fr_1fr]">
-          <div className="border-r-[2px] border-ink-black p-4">
-            <img
-              src={imageUrl}
-              alt={`Panel ${panelNumber}`}
-              className="w-full max-h-[60vh] object-contain bg-ink-black"
-            />
+        <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[1fr_1fr]">
+          <div className="border-r-[2px] border-ink-black p-4 min-h-0">
+            <div className="h-full w-full bg-ink-black flex items-center justify-center">
+              <img
+                src={imageUrl}
+                alt={`Panel ${panelNumber}`}
+                className="w-full max-h-full object-contain"
+              />
+            </div>
           </div>
 
-          <div className="p-4 overflow-y-auto max-h-[70vh]">
+          <div className="p-4 overflow-y-auto min-h-0">
             <PromptLineageCard
               prompt={draft}
               onSave={handleSave}

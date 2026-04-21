@@ -1,19 +1,23 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { usePages, usePage, useUpdatePage, useReplacePage, useReflowPages, useGeneratePageStyleVars, useTranslatePageBubbles, useExport } from "../../api/queries";
+import { usePages, usePage, useUpdatePage, useReplacePage, useReflowPages, useGeneratePageStyleVars, useTranslatePageBubbles, useExport, useProjectConfig, useUpdateProjectConfig } from "../../api/queries";
 import { downloadExportUrl } from "../../api/pages";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
+import { Button } from "../../components/ui/Button";
 import { PageNavigator } from "../../components/compose/PageNavigator";
 import { PropertyPanel } from "../../components/compose/PropertyPanel";
 import { EditorToolbar } from "../../components/compose/EditorToolbar";
 import { PageEditor } from "../../components/compose/PageEditor";
+import { useRunAction } from "../../hooks/useRunAction";
 import { useComposeStore } from "../../store/compose";
 import type { ComicPage, Bubble, Sfx } from "../../types/api";
 import "../../components/compose/comic-page.css";
 
 export function ComposeRoom() {
   const { name } = useParams<{ name: string }>();
+  const { handleRun, isPending } = useRunAction();
   const { data: pageList, isLoading: loadingList } = usePages(name);
+  const { data: projectConfig } = useProjectConfig(name);
   const [searchParams, setSearchParams] = useSearchParams();
   const currentPage = Number(searchParams.get("page") ?? 1);
   const safePage = pageList?.length ? Math.min(currentPage, pageList.length) : undefined;
@@ -24,6 +28,7 @@ export function ComposeRoom() {
   const reflowPagesMut = useReflowPages();
   const generatePageStyleMut = useGeneratePageStyleVars();
   const translateBubblesMut = useTranslatePageBubbles();
+  const updateProjectConfigMut = useUpdateProjectConfig();
   const exportMut = useExport();
 
   const selection = useComposeStore((s) => s.selection);
@@ -35,11 +40,21 @@ export function ComposeRoom() {
   const undoStack = useComposeStore((s) => s.undoStack);
   const redoStack = useComposeStore((s) => s.redoStack);
   const clearHistory = useComposeStore((s) => s.clearHistory);
+  const [zoom, setZoom] = useState(1);
+  const [outputLanguage, setOutputLanguage] = useState<"en" | "es" | "fr">("en");
+  const clampZoom = (value: number) => Math.max(0.5, Math.min(2.5, Number(value.toFixed(2))));
+
+  useEffect(() => {
+    if (projectConfig?.target_language) {
+      setOutputLanguage(projectConfig.target_language);
+    }
+  }, [projectConfig?.target_language]);
 
   function setPage(p: number) {
     setSearchParams({ page: String(p) }, { replace: true });
     deselect();
     clearHistory();
+    setZoom(1);
   }
 
   // ── Mutations ────────────────────────────────────────────────────────────
@@ -66,6 +81,12 @@ export function ComposeRoom() {
     });
   }
 
+  function handleUpdatePanel(panelId: string, pPatch: Partial<ComicPage["panels"][number]>) {
+    patchPage({
+      panels: [{ id: panelId, ...pPatch }] as ComicPage["panels"],
+    });
+  }
+
   function handleUpdatePageProps(patch: Partial<ComicPage>) {
     patchPage(patch);
   }
@@ -89,10 +110,19 @@ export function ComposeRoom() {
     generatePageStyleMut.mutate({ project: name });
   }
 
-  function handleTranslateBubbles() {
+  function handleTranslateBubbles(targetLanguage: "en" | "es" | "fr") {
     if (!name || !page) return;
     pushUndo(page);
-    translateBubblesMut.mutate({ project: name });
+    translateBubblesMut.mutate({ project: name, targetLanguage });
+  }
+
+  function handleOutputLanguageChange(targetLanguage: "en" | "es" | "fr") {
+    setOutputLanguage(targetLanguage);
+    if (!name) return;
+    updateProjectConfigMut.mutate({
+      project: name,
+      data: { target_language: targetLanguage },
+    });
   }
 
   function handleDeleteElement(panelId: string, type: "bubble" | "sfx", elementId: string) {
@@ -200,6 +230,18 @@ export function ComposeRoom() {
     );
   }
 
+  function handleZoomIn() {
+    setZoom((z) => clampZoom(z + 0.1));
+  }
+
+  function handleZoomOut() {
+    setZoom((z) => clampZoom(z - 0.1));
+  }
+
+  function handleZoomReset() {
+    setZoom(1);
+  }
+
   // ── Keyboard shortcuts ───────────────────────────────────────────────────
 
   useEffect(() => {
@@ -220,6 +262,18 @@ export function ComposeRoom() {
       }
       if (e.key === "Escape") {
         deselect();
+      }
+      if ((e.metaKey || e.ctrlKey) && (e.key === "=" || e.key === "+")) {
+        e.preventDefault();
+        handleZoomIn();
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === "-") {
+        e.preventDefault();
+        handleZoomOut();
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === "0") {
+        e.preventDefault();
+        handleZoomReset();
       }
     }
     window.addEventListener("keydown", onKeyDown);
@@ -261,6 +315,16 @@ export function ComposeRoom() {
         label="COMPOSE / PAGE EDITOR"
         title="PAGE EDITOR"
         lead="Position bubbles, edit dialogue, adjust layout, and export your comic."
+        actions={(
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => name && handleRun(name, "assemble", true)}
+            disabled={isPending}
+          >
+            {isPending ? "RERUNNING…" : "RERUN COMPOSE"}
+          </Button>
+        )}
       />
 
       <EditorToolbar
@@ -276,6 +340,10 @@ export function ComposeRoom() {
         canUndo={undoStack.length > 0}
         canRedo={redoStack.length > 0}
         isExporting={exportMut.isPending}
+        zoomPercent={zoom * 100}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+        onZoomReset={handleZoomReset}
       />
 
       <div className="flex gap-4 h-[calc(100vh-180px)]">
@@ -304,6 +372,8 @@ export function ComposeRoom() {
             <PageEditor
               page={page}
               project={name}
+              zoom={zoom}
+              onZoomChange={(nextZoom) => setZoom(clampZoom(nextZoom))}
               selectedId={selection?.elementId ?? null}
               selectedType={selection?.type ?? null}
               onSelect={select}
@@ -319,11 +389,14 @@ export function ComposeRoom() {
             <PropertyPanel
               page={page}
               selection={selection}
+              onUpdatePanel={handleUpdatePanel}
               onUpdateBubble={handleUpdateBubble}
               onUpdateSfx={handleUpdateSfx}
               onUpdatePage={handleUpdatePageProps}
               onReflowPages={handleReflowPages}
               onGeneratePageStyle={handleGeneratePageStyle}
+              outputLanguage={outputLanguage}
+              onOutputLanguageChange={handleOutputLanguageChange}
               onTranslateBubbles={handleTranslateBubbles}
               isGeneratingPageStyle={generatePageStyleMut.isPending}
               isTranslatingBubbles={translateBubblesMut.isPending}

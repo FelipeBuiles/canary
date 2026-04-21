@@ -5,6 +5,21 @@ Given a scene screenplay (or a PAGE GROUP from a longer scene), break it into 4-
 PAGE GROUPS: When the input is labelled "PAGE GROUP: N of M", you are receiving one section of a
 longer screenplay. Every dialogue line in the provided beats MUST appear in at least one panel —
 do not drop or skip lines. Use all 6-8 panels so nothing is compressed away.
+If the prompt includes "VISUAL CONTINUITY FROM PREVIOUS PANEL", keep spatial and emotional
+state coherent with that summary unless the screenplay clearly introduces a hard cut.
+If a screenplay beat includes transition_type, treat it as the strongest continuity hint
+for the next panel's relationship to the previous one.
+If the screenplay implies a transition, classify it with transition_type:
+- "smooth_continuation" when the next panel should feel like the same moment or a gentle follow-on
+- "match_cut" when the next panel should intentionally echo composition, action, or motion from the prior panel
+- "hard_cut" when the scene intentionally jumps, shifts location, or resets time/state
+Use transition_note for the brief human-readable cue that explains the choice.
+
+Examples:
+- Previous beat: transition_type "smooth_continuation" with "He lowers the phone and looks toward the window." -> next panel should stay in the same emotional and spatial flow
+- Previous beat: transition_type "match_cut" with "Cut from the candle flame to the city lights outside." -> next panel should echo the shape, brightness, or motion of the previous image
+- Previous beat: transition_type "hard_cut" with "Smash cut to dawn, two hours later." -> next panel should not reuse the prior scene anchor or visual state
+- Previous beat: transition_type "hard_cut" with "Fade to black." -> next panel should restart the visual logic cleanly
 
 === VISUAL STORYTELLING RULES (follow these strictly) ===
 
@@ -68,6 +83,7 @@ For each panel output:
 - mood: single word
 - dialogue: [{character_id, text, type: "speech"|"thought"|"narration"}] — leave empty [] for action/insert panels
 - sfx: optional sound effect (null if none)
+- transition_type: optional one of "smooth_continuation" | "match_cut" | "hard_cut" (null if none)
 - transition_note: optional cut hint (null if none)
 
 Output JSON: {"scene_id": "...", "panels": [array of panel objects]}

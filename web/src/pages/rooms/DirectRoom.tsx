@@ -2,12 +2,15 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { usePromptSummaries, usePromptsForScene, useUpdatePrompt } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { PromptLineageCard } from "../../components/PromptLineageCard";
+import { Button } from "../../components/ui/Button";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { SceneSidebar } from "../../components/ui/SceneSidebar";
+import { useRunAction } from "../../hooks/useRunAction";
 import type { ImagePrompt } from "../../types/api";
 
 export function DirectRoom() {
   const { name } = useParams<{ name: string }>();
+  const { handleRun, isPending } = useRunAction();
   const { data: summaries, isLoading } = usePromptSummaries(name);
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedScene = searchParams.get("scene");
@@ -36,6 +39,16 @@ export function DirectRoom() {
         label="DIRECT / IMAGE PROMPTS"
         title="IMAGE PROMPTS"
         lead="Compiled prompts with character and location refs baked in — the last human-readable artifact before image generation."
+        actions={(
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => name && handleRun(name, "prompts", true)}
+            disabled={isPending}
+          >
+            {isPending ? "RERUNNING…" : "RERUN DIRECT"}
+          </Button>
+        )}
       />
 
       <section className="grid gap-5 xl:grid-cols-[220px_1fr]">

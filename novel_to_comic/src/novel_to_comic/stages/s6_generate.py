@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.progress import Progress
 
 from novel_to_comic.clients import flux
-from novel_to_comic.clients.flux import _is_gemini_native
+from novel_to_comic.clients.flux import _is_gemini_native, is_rate_limited_error
 from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.models.panel import PanelBreakdown
@@ -33,8 +33,10 @@ from novel_to_comic.state import (
 console = Console()
 
 COST_PER_IMAGE = 0.03  # FLUX.2 Pro via Together AI
+_RATE_LIMIT_RECOVERY_COOLDOWN_SECONDS = 45.0
 
 _HARD_CUTS = ("smash cut", "fade to", "cut to", "scene change", "time jump")
+_SOFT_CONTINUITY = {"smooth_continuation", "match_cut"}
 
 
 def _should_use_prev_panel_image(prev_panel: PanelBreakdown | None) -> bool:
@@ -46,8 +48,15 @@ def _should_use_prev_panel_image(prev_panel: PanelBreakdown | None) -> bool:
     """
     if not prev_panel:
         return False
+    transition_type = (prev_panel.transition_type or "").strip().lower()
+    if transition_type in _SOFT_CONTINUITY:
+        return True
+    if transition_type == "hard_cut":
+        return False
     transition = (prev_panel.transition_note or "").lower()
-    return not any(hard in transition for hard in _HARD_CUTS)
+    if any(hard in transition for hard in _HARD_CUTS):
+        return False
+    return True
 
 
 def _find_style_sample(project_dir: Path, style_template: str) -> Path | None:
@@ -71,6 +80,7 @@ def _load_or_upgrade_prompt(
     project_dir: Path,
     prompt_path: Path,
     story_bible: StoryBible | None,
+    prev_panel: PanelBreakdown | None = None,
 ) -> ImagePrompt:
     prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
     if getattr(prompt, "prompt_version", 1) >= IMAGE_PROMPT_VERSION or story_bible is None:
@@ -81,7 +91,7 @@ def _load_or_upgrade_prompt(
         return prompt
 
     panel = PanelBreakdown.model_validate_json(panel_path.read_text())
-    upgraded = build_image_prompt_spec(config, project_dir, panel, story_bible)
+    upgraded = build_image_prompt_spec(config, project_dir, panel, story_bible, prev_panel)
     prompt_path.write_text(upgraded.model_dump_json(indent=2))
     return upgraded
 
@@ -126,6 +136,7 @@ async def _generate_panel(
     project_dir: Path,
     prompt_path: Path,
     semaphore: asyncio.Semaphore,
+    scene_locks: dict[str, asyncio.Lock],
     style_sample: Path | None,
     scene_to_location: dict[str, str],
     scene_anchors: dict[str, Path],
@@ -148,80 +159,92 @@ async def _generate_panel(
     flux.generate_image_multi_ref so character identity gets the strongest
     positional weight in the Gemini contents list.
     """
-    prompt = _load_or_upgrade_prompt(config, project_dir, prompt_path, story_bible)
+    raw_prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
 
-    output_dir = project_dir / "images" / prompt.scene_id
-    output_path = output_dir / f"panel_{prompt.panel_number:03d}.png"
-    if output_path.exists() and not force:
-        scene_anchors[prompt.scene_id] = output_path
-        return output_path
-
-    # Subject refs: character reference sheets
-    subject_refs = [Path(p) for p in prompt.reference_image_paths if Path(p).exists()]
-
-    # Style / continuity refs: deduped by priority.
-    # Once a scene anchor exists, it carries style + characters + environment
-    # from the same scene, so it supersedes the global style sample and location
-    # plate. HOWEVER, we skip the scene anchor if the previous panel had a hard
-    # cut transition (smash cut, fade, etc.) to avoid blending scenes.
-    style_refs: list[Path] = []
-    scene_anchor = scene_anchors.get(prompt.scene_id)
-
-    if scene_anchor and scene_anchor.exists():
-        prev_panel_path = project_dir / "panels" / prompt.scene_id / f"panel_{prompt.panel_number - 1:03d}.json"
-        prev_panel: PanelBreakdown | None = None
+    prev_panel: PanelBreakdown | None = None
+    if raw_prompt.panel_number > 1:
+        prev_panel_path = project_dir / "panels" / raw_prompt.scene_id / f"panel_{raw_prompt.panel_number - 1:03d}.json"
         if prev_panel_path.exists():
             try:
                 prev_panel = PanelBreakdown.model_validate_json(prev_panel_path.read_text())
             except Exception:
                 pass
 
-        if _should_use_prev_panel_image(prev_panel):
-            style_refs.append(scene_anchor)
-        else:
-            prev_panel = None
+    prompt = _load_or_upgrade_prompt(config, project_dir, prompt_path, story_bible, prev_panel)
 
-    if not style_refs:
-        if style_sample and style_sample.exists():
-            style_refs.append(style_sample)
-        loc_id = scene_to_location.get(prompt.scene_id)
-        if loc_id:
-            plate = project_dir / "plates" / f"{loc_id}.png"
-            if plate.exists():
-                style_refs.append(plate)
+    output_dir = project_dir / "images" / prompt.scene_id
+    output_path = output_dir / f"panel_{prompt.panel_number:03d}.png"
+    scene_lock = scene_locks.setdefault(prompt.scene_id, asyncio.Lock())
 
-    generation_path = output_path
-    if force:
-        generation_path = output_path.with_name(
-            f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
-        )
+    async with scene_lock:
+        if output_path.exists() and not force:
+            scene_anchors[prompt.scene_id] = output_path
+            return output_path
 
-    try:
-        async with semaphore:
-            result = await flux.generate_image_multi_ref(
-                config=config,
-                prompt=render_generation_prompt(prompt, config.style_template),
-                output_path=generation_path,
-                reference_paths=subject_refs,
-                style_refs=style_refs or None,
-                width=prompt.width,
-                height=prompt.height,
-                steps=prompt.steps,
+        # Subject refs: character reference sheets
+        subject_refs = [Path(p) for p in prompt.reference_image_paths if Path(p).exists()]
+
+        # Style / continuity refs: deduped by priority.
+        # Once a scene anchor exists, it carries style + characters + environment
+        # from the same scene, so it supersedes the global style sample and location
+        # plate. HOWEVER, we skip the scene anchor if the previous panel had a hard
+        # cut transition (smash cut, fade, etc.) to avoid blending scenes.
+        style_refs: list[Path] = []
+        scene_anchor = scene_anchors.get(prompt.scene_id)
+
+        if scene_anchor and scene_anchor.exists():
+            prev_panel_path = project_dir / "panels" / prompt.scene_id / f"panel_{prompt.panel_number - 1:03d}.json"
+            prev_panel: PanelBreakdown | None = None
+            if prev_panel_path.exists():
+                try:
+                    prev_panel = PanelBreakdown.model_validate_json(prev_panel_path.read_text())
+                except Exception:
+                    pass
+
+            if _should_use_prev_panel_image(prev_panel):
+                style_refs.append(scene_anchor)
+
+        if not style_refs:
+            if style_sample and style_sample.exists():
+                style_refs.append(style_sample)
+            loc_id = scene_to_location.get(prompt.scene_id)
+            if loc_id:
+                plate = project_dir / "plates" / f"{loc_id}.png"
+                if plate.exists():
+                    style_refs.append(plate)
+
+        generation_path = output_path
+        if force:
+            generation_path = output_path.with_name(
+                f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
             )
-        if force and result:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            generation_path.replace(output_path)
-            result = output_path
-    finally:
-        if force and generation_path.exists():
-            generation_path.unlink(missing_ok=True)
 
-    # Register as scene anchor after each successful generation
-    # This ensures later panels chain to the immediately previous panel
-    if result:
-        scene_anchors[prompt.scene_id] = output_path
+        try:
+            async with semaphore:
+                result = await flux.generate_image_multi_ref(
+                    config=config,
+                    prompt=render_generation_prompt(prompt, config.style_template),
+                    output_path=generation_path,
+                    reference_paths=subject_refs,
+                    style_refs=style_refs or None,
+                    width=prompt.width,
+                    height=prompt.height,
+                    steps=prompt.steps,
+                )
+            if force and result:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                generation_path.replace(output_path)
+                result = output_path
+        finally:
+            if force and generation_path.exists():
+                generation_path.unlink(missing_ok=True)
 
-    return result
+        # Register as scene anchor after each successful generation
+        # This ensures later panels chain to the immediately previous panel
+        if result:
+            scene_anchors[prompt.scene_id] = output_path
+
+        return result
 
 
 async def regenerate_panel_image(
@@ -246,6 +269,7 @@ async def regenerate_panel_image(
         scene_to_location = {s.id: s.location_id for s in story_bible.scenes}
 
     scene_anchors: dict[str, Path] = {}
+    scene_locks: dict[str, asyncio.Lock] = {}
     images_dir = project_dir / "images"
     target_path = images_dir / scene_id / f"panel_{panel_number:03d}.png"
     if images_dir.exists():
@@ -260,6 +284,7 @@ async def regenerate_panel_image(
         project_dir,
         prompt_path,
         semaphore or asyncio.Semaphore(1),
+        scene_locks,
         style_sample,
         scene_to_location,
         scene_anchors,
@@ -328,6 +353,7 @@ async def run(
     #    re-runs and retry-failed runs benefit from existing generations.
     #    Use the LAST panel in sorted order (most recently generated).
     scene_anchors: dict[str, Path] = {}
+    scene_locks: dict[str, asyncio.Lock] = {}
     images_dir = project_dir / "images"
     if images_dir.exists():
         for scene_dir in sorted(images_dir.iterdir()):
@@ -370,13 +396,55 @@ async def run(
                 emit({"type": "log", "stage": "generate", "level": "info",
                       "message": f"Drawing panel batch {first}-{last} of {len(prompt_files)}"})
                 coros = [
-                    _generate_panel(config, project_dir, pf, semaphore,
+                    _generate_panel(config, project_dir, pf, semaphore, scene_locks,
                                     style_sample, scene_to_location, scene_anchors, story_bible)
                     for pf in batch
                 ]
                 results = await asyncio.gather(*coros, return_exceptions=True)
                 for pf, result in zip(batch, results):
                     if isinstance(result, Exception):
+                        recovered = False
+                        if using_google and is_rate_limited_error(result):
+                            msg = (
+                                f"Rate limited while drawing {pf.name}; waiting "
+                                f"{int(_RATE_LIMIT_RECOVERY_COOLDOWN_SECONDS)}s and retrying once."
+                            )
+                            console.print(f"[yellow]{msg}[/yellow]")
+                            emit({"type": "log", "stage": "generate", "level": "warning", "message": msg})
+                            await asyncio.sleep(_RATE_LIMIT_RECOVERY_COOLDOWN_SECONDS)
+                            retry_result = await asyncio.gather(
+                                _generate_panel(
+                                    config,
+                                    project_dir,
+                                    pf,
+                                    semaphore,
+                                    scene_locks,
+                                    style_sample,
+                                    scene_to_location,
+                                    scene_anchors,
+                                    story_bible,
+                                ),
+                                return_exceptions=True,
+                            )
+                            retry_outcome = retry_result[0]
+                            if not isinstance(retry_outcome, Exception):
+                                record_item_done(state, "generate", cost=COST_PER_IMAGE)
+                                emit({
+                                    "type": "log",
+                                    "stage": "generate",
+                                    "level": "dim",
+                                    "message": f"Recovered {pf.parent.name} / {pf.stem.replace('_', ' ')} after cooldown retry",
+                                })
+                                emit({"type": "stage_progress", "stage": "generate",
+                                      "done": state.stages["generate"].items_done,
+                                      "total": state.stages["generate"].items_total})
+                                recovered = True
+                            else:
+                                result = retry_outcome
+                        if recovered:
+                            progress.advance(task)
+                            save_state(state, project_dir)
+                            continue
                         # Unwrap RetryError → actual cause → OS error
                         cause = getattr(result, "__cause__", None) or result
                         msg = f"Failed {pf.name}: {_fmt_error(cause)}"

@@ -19,7 +19,7 @@ export const BASE_VARS: Record<string, string> = {
   "--bubble-border":        "#1A1A1A",
   "--bubble-border-width":  "2px",
   "--bubble-radius":        "14px",
-  "--bubble-font-size":     "19px",
+  "--bubble-font-size":     "24px",
   "--bubble-padding":       "7px 11px",
   "--bubble-max-width":     "52%",
   "--bubble-center-width":  "68%",
@@ -58,7 +58,7 @@ export const THEMES: Record<string, Record<string, string>> = {
     "--caption-border":       "#000000",
     "--caption-color":        "#000000",
     "--bubble-border":        "#000000",
-    "--bubble-font-size":     "21px",
+    "--bubble-font-size":     "25px",
     "--sfx-color":            "#000000",
     "--sfx-shadow":           "transparent",
     "--thought-border-style": "solid",
@@ -93,6 +93,51 @@ export const THEMES: Record<string, Record<string, string>> = {
 /** Merge base vars with theme overrides, return as CSSStyleDeclaration-compatible object */
 export function resolveThemeVars(themeName: string): Record<string, string> {
   return { ...BASE_VARS, ...(THEMES[themeName] ?? {}) };
+}
+
+function normalizePx(value: string | undefined, min: number, max: number): string | undefined {
+  if (!value) return undefined;
+  const match = value.match(/^(\d+(?:\.\d+)?)px$/);
+  if (!match) return undefined;
+  const n = Number(match[1]);
+  if (!Number.isFinite(n)) return undefined;
+  return `${Math.min(max, Math.max(min, n))}px`;
+}
+
+function normalizePct(value: string | undefined, min: number, max: number): string | undefined {
+  if (!value) return undefined;
+  const match = value.match(/^(\d+(?:\.\d+)?)%$/);
+  if (!match) return undefined;
+  const n = Number(match[1]);
+  if (!Number.isFinite(n)) return undefined;
+  return `${Math.min(max, Math.max(min, n))}%`;
+}
+
+export function sanitizeStyleVars(input: Record<string, string> | undefined): Record<string, string> {
+  if (!input) return {};
+  const out: Record<string, string> = { ...input };
+
+  const bubbleFontSize = normalizePx(out["--bubble-font-size"], 16, 54);
+  if (bubbleFontSize) out["--bubble-font-size"] = bubbleFontSize;
+  else delete out["--bubble-font-size"];
+
+  const bubbleRadius = normalizePx(out["--bubble-radius"], 6, 120);
+  if (bubbleRadius) out["--bubble-radius"] = bubbleRadius;
+  else delete out["--bubble-radius"];
+
+  const borderWidth = normalizePx(out["--bubble-border-width"], 1, 10);
+  if (borderWidth) out["--bubble-border-width"] = borderWidth;
+  else delete out["--bubble-border-width"];
+
+  const bubbleMaxWidth = normalizePct(out["--bubble-max-width"], 38, 95);
+  if (bubbleMaxWidth) out["--bubble-max-width"] = bubbleMaxWidth;
+  else delete out["--bubble-max-width"];
+
+  const bubbleCenterWidth = normalizePct(out["--bubble-center-width"], 45, 98);
+  if (bubbleCenterWidth) out["--bubble-center-width"] = bubbleCenterWidth;
+  else delete out["--bubble-center-width"];
+
+  return out;
 }
 
 /** Return CSS variable declarations as a style object for React */
