@@ -32,6 +32,8 @@ _PROMPT_LABELS: dict[str, dict[str, str]] = {
     "en": {
         "composition": "Composition",
         "setting": "Setting",
+        "lighting": "Lighting",
+        "mood": "Mood",
         "key_props": "Key props",
         "expression": "expression",
         "position": "position",
@@ -45,6 +47,8 @@ _PROMPT_LABELS: dict[str, dict[str, str]] = {
     "es": {
         "composition": "Composición",
         "setting": "Escenario",
+        "lighting": "Iluminación",
+        "mood": "Estado de ánimo",
         "key_props": "Objetos clave",
         "expression": "expresión",
         "position": "posición",
@@ -58,6 +62,8 @@ _PROMPT_LABELS: dict[str, dict[str, str]] = {
     "fr": {
         "composition": "Composition",
         "setting": "Décor",
+        "lighting": "Éclairage",
+        "mood": "Ambiance",
         "key_props": "Accessoires clés",
         "expression": "expression",
         "position": "position",
@@ -82,7 +88,7 @@ def _labels(config: Config | None = None) -> dict[str, str]:
 
 _clean = clean
 _shorten = shorten
-IMAGE_PROMPT_VERSION = 7
+IMAGE_PROMPT_VERSION = 9
 
 
 def _character_identity(
@@ -162,6 +168,20 @@ def _panel_props(panel: PanelBreakdown, story_bible: StoryBible) -> list[str]:
     return props
 
 
+def _panel_state_summary(
+    panel: PanelBreakdown,
+) -> str:
+    parts: list[str] = []
+    for char_id in panel.characters_present:
+        action = panel.character_actions.get(char_id, "")
+        expression = panel.character_expressions.get(char_id, "")
+        position = panel.character_positions.get(char_id, "")
+        state_bits = [bit for bit in (action, expression, position) if bit]
+        if state_bits:
+            parts.append(f"{char_id}: {', '.join(state_bits)}")
+    return "; ".join(parts) if parts else "scene continues"
+
+
 def build_continuity_note(
     current_panel: PanelBreakdown,
     prev_panel: PanelBreakdown | None,
@@ -176,31 +196,15 @@ def build_continuity_note(
     if not prev_panel:
         return None
 
-    prev_state_parts: list[str] = []
-    for char_id in prev_panel.characters_present:
-        action = prev_panel.character_actions.get(char_id, "")
-        expression = prev_panel.character_expressions.get(char_id, "")
-        position = prev_panel.character_positions.get(char_id, "")
-        parts = [p for p in [action, expression, position] if p]
-        if parts:
-            prev_state_parts.append(f"{char_id}: {', '.join(parts)}")
-
-    prev_state_str = "; ".join(prev_state_parts) if prev_state_parts else "scene continues"
-
-    curr_action_parts: list[str] = []
-    for char_id in current_panel.characters_present:
-        action = current_panel.character_actions.get(char_id, "")
-        expression = current_panel.character_expressions.get(char_id, "")
-        parts = [p for p in [action, expression] if p]
-        if parts:
-            curr_action_parts.append(f"{char_id}: {', '.join(parts)}")
-
-    curr_str = "; ".join(curr_action_parts) if curr_action_parts else "scene continues"
+    prev_state_str = _panel_state_summary(prev_panel)
+    curr_state_str = _panel_state_summary(current_panel)
+    transition_type = getattr(prev_panel, "transition_type", None) or "unknown"
 
     parts: list[str] = [f"CONTINUING FROM: {prev_state_str}."]
+    parts.append(f"TRANSITION TYPE: {transition_type}.")
     if prev_panel.transition_note:
         parts.append(f"TRANSITION: {prev_panel.transition_note}.")
-    parts.append(f"Now: {curr_str}.")
+    parts.append(f"Now: {curr_state_str}.")
     return " ".join(parts)
 
 
@@ -330,10 +334,17 @@ def _render_panel_prompt_body_parts(
     if composition:
         sentences.append(f"{label_set['composition']}: {_clean(composition)}")
 
-    setting_line_parts = [_clean(setting), _clean(lighting), _clean(mood)]
-    setting_line = "; ".join(part for part in setting_line_parts if part)
-    if setting_line:
-        sentences.append(f"{label_set['setting']}: {setting_line}")
+    setting_text = _clean(setting)
+    if setting_text:
+        sentences.append(f"{label_set['setting']}: {setting_text}")
+
+    lighting_text = _clean(lighting)
+    if lighting_text:
+        sentences.append(f"{label_set['lighting']}: {lighting_text}")
+
+    mood_text = _clean(mood)
+    if mood_text:
+        sentences.append(f"{label_set['mood']}: {mood_text}")
 
     if props:
         sentences.append(f"{label_set['key_props']}: {'; '.join(_clean(prop) for prop in props)}")

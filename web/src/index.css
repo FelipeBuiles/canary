@@ -150,4 +150,22 @@
     height: 2px;
     background: var(--color-ink-black);
   }
+
+  .diff-highlight {
+    animation: flash-change-inline 4.2s ease-out;
+    border-radius: 0.125rem;
+    background: color-mix(in srgb, var(--color-archive-sage) 42%, transparent);
+  }
+}
+
+@keyframes flash-change-inline {
+  0% {
+    background: color-mix(in srgb, var(--color-archive-sage) 42%, transparent);
+  }
+  70% {
+    background: color-mix(in srgb, var(--color-archive-sage) 28%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
 }

@@ -3,6 +3,8 @@ import { computeScale } from "./coordinates";
 
 interface ScaledContainerProps {
   children: React.ReactNode;
+  zoom?: number;
+  onZoomChange?: (zoom: number) => void;
   onScaleChange?: (scale: number) => void;
 }
 
@@ -10,17 +12,16 @@ interface ScaledContainerProps {
  * Renders children at 2480x3508 native size, scaled to fit the viewport
  * via CSS transform. Uses ResizeObserver to track container size.
  */
-export function ScaledContainer({ children, onScaleChange }: ScaledContainerProps) {
+export function ScaledContainer({ children, zoom = 1, onZoomChange, onScaleChange }: ScaledContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [scale, setScale] = useState(0);
+  const [fitScale, setFitScale] = useState(0);
+  const panRef = useRef<{ startX: number; startY: number; left: number; top: number } | null>(null);
 
   const compute = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
-    const s = computeScale(el.clientWidth, el.clientHeight);
-    setScale(s);
-    onScaleChange?.(s);
-  }, [onScaleChange]);
+    setFitScale(computeScale(el.clientWidth, el.clientHeight));
+  }, []);
 
   useEffect(() => {
     compute();
@@ -31,17 +32,94 @@ export function ScaledContainer({ children, onScaleChange }: ScaledContainerProp
     return () => ro.disconnect();
   }, [compute]);
 
+  const scale = fitScale * zoom;
+
+  useEffect(() => {
+    onScaleChange?.(scale);
+  }, [onScaleChange, scale]);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !onZoomChange || fitScale <= 0) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+
+      const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
+      const nextZoom = Math.max(0.5, Math.min(2.5, Number((zoom * zoomFactor).toFixed(3))));
+      if (nextZoom === zoom) return;
+
+      const rect = el.getBoundingClientRect();
+      const xInContent = e.clientX - rect.left + el.scrollLeft;
+      const yInContent = e.clientY - rect.top + el.scrollTop;
+      const ratio = nextZoom / zoom;
+      const nextLeft = xInContent * ratio - (e.clientX - rect.left);
+      const nextTop = yInContent * ratio - (e.clientY - rect.top);
+
+      onZoomChange(nextZoom);
+      requestAnimationFrame(() => {
+        const current = containerRef.current;
+        if (!current) return;
+        current.scrollLeft = nextLeft;
+        current.scrollTop = nextTop;
+      });
+    };
+
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
+  }, [fitScale, onZoomChange, zoom]);
+
   if (scale === 0) {
     return <div ref={containerRef} className="w-full h-full" />;
   }
 
+  function handleMouseDown(e: React.MouseEvent<HTMLDivElement>) {
+    if (zoom <= 1 || e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("[data-editor-selectable]")) return;
+    const el = containerRef.current;
+    if (!el) return;
+    panRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      left: el.scrollLeft,
+      top: el.scrollTop,
+    };
+    el.style.cursor = "grabbing";
+    e.preventDefault();
+  }
+
+  function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
+    const pan = panRef.current;
+    const el = containerRef.current;
+    if (!pan || !el) return;
+    el.scrollLeft = pan.left - (e.clientX - pan.startX);
+    el.scrollTop = pan.top - (e.clientY - pan.startY);
+  }
+
+  function stopPan() {
+    panRef.current = null;
+    const el = containerRef.current;
+    if (el) {
+      el.style.cursor = zoom > 1 ? "grab" : "default";
+    }
+  }
+
   return (
-    <div ref={containerRef} className="w-full h-full flex items-center justify-center overflow-hidden">
+    <div
+      ref={containerRef}
+      className="w-full h-full overflow-auto"
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={stopPan}
+      onMouseLeave={stopPan}
+      style={{ cursor: zoom > 1 ? "grab" : "default" }}
+    >
       <div
         style={{
           width: Math.round(2480 * scale),
           height: Math.round(3508 * scale),
-          flexShrink: 0,
+          margin: "auto",
           position: "relative",
         }}
       >

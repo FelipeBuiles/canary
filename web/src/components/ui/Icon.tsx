@@ -11,6 +11,7 @@ import {
   X,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   Check,
   Play,
   Circle,
@@ -32,6 +33,7 @@ type IconName =
   | "x"
   | "chevron-down"
   | "chevron-left"
+  | "chevron-right"
   | "check"
   | "play"
   | "circle"
@@ -57,6 +59,7 @@ const ICON_MAP = {
   x: X,
   "chevron-down": ChevronDown,
   "chevron-left": ChevronLeft,
+  "chevron-right": ChevronRight,
   check: Check,
   play: Play,
   circle: Circle,

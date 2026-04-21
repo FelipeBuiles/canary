@@ -57,7 +57,7 @@ _BASE_VARS: dict[str, str] = {
     "--bubble-border":        "#1A1A1A",
     "--bubble-border-width":  "2px",
     "--bubble-radius":        "14px",
-    "--bubble-font-size":     "19px",
+    "--bubble-font-size":     "24px",
     "--bubble-padding":       "7px 11px",
     "--bubble-max-width":     "52%",
     "--bubble-center-width":  "68%",
@@ -96,7 +96,7 @@ THEMES: dict[str, dict[str, str]] = {
         "--caption-border":       "#000000",
         "--caption-color":        "#000000",
         "--bubble-border":        "#000000",
-        "--bubble-font-size":     "21px",
+        "--bubble-font-size":     "25px",
         "--sfx-color":            "#000000",
         "--sfx-shadow":           "transparent",
         "--thought-border-style": "solid",
@@ -207,7 +207,9 @@ body {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: center 20%;
+  object-position:
+    calc(50% + var(--panel-art-offset-x, 0px))
+    calc(20% + var(--panel-art-offset-y, 0px));
   display: block;
 }
 
@@ -233,6 +235,8 @@ body {
   font-size: var(--caption-font-size);
   line-height: 1.35;
   letter-spacing: 0.02em;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* ── Speech/thought bubbles — auto (flex-end at panel bottom) ── */
@@ -246,12 +250,18 @@ body {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  gap: 5px;
+  gap: 8px;
   pointer-events: none;
+}
+
+/* Leave headroom so tail-up bubbles don't overlap when stacked */
+.bubble-auto > .bubble.speech.tail-up {
+  margin-top: 14px;
 }
 
 /* ── All bubbles share these base styles ── */
 .bubble {
+  position: relative;
   background: var(--bubble-bg);
   border: var(--bubble-border-width) solid var(--bubble-border);
   border-radius: var(--bubble-radius);
@@ -263,6 +273,8 @@ body {
   max-width: var(--bubble-max-width);
   align-self: flex-start;
   word-break: break-word;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .bubble.right  { align-self: flex-end; }
 .bubble.center { align-self: center; max-width: var(--bubble-center-width); }
@@ -279,18 +291,18 @@ body {
 .bubble.speech.tail-up.center::after {
   content: '';
   position: absolute;
-  top: -14px;
-  border: 8px solid transparent;
-  border-bottom: 14px solid var(--bubble-border);
+  top: -18px;
+  border: 9px solid transparent;
+  border-bottom: 16px solid var(--bubble-border);
 }
 .bubble.speech.tail-up.left::before,
 .bubble.speech.tail-up.right::before,
 .bubble.speech.tail-up.center::before {
   content: '';
   position: absolute;
-  top: -10px;
-  border: 6px solid transparent;
-  border-bottom: 12px solid var(--bubble-bg);
+  top: -14px;
+  border: 7px solid transparent;
+  border-bottom: 14px solid var(--bubble-bg);
   z-index: 1;
 }
 .bubble.speech.tail-up.left::after   { left: 18px; }
@@ -336,6 +348,8 @@ body {
   margin-bottom: 2px;
   font-weight: normal;
   letter-spacing: 0.04em;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* ── Pinned bubble (x/y set by web editor drag-drop) ── */
@@ -380,6 +394,8 @@ body {
   white-space: nowrap;
   z-index: 3;
   pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* ── SFX pinned by web editor (x/y set via inline style) ── */
@@ -449,7 +465,7 @@ _THEME_HEADER = """\
  *    --bubble-border           border colour (#1A1A1A)
  *    --bubble-border-width     (2px)
  *    --bubble-radius           corner radius (14px)
- *    --bubble-font-size        (19px)
+ *    --bubble-font-size        (24px)
  *    --bubble-padding          (7px 11px)
  *    --bubble-max-width        max % of panel width (52%)
  *    --bubble-center-width     max % for centred bubbles (68%)
@@ -491,7 +507,7 @@ def write_theme_css(project_dir: Path, theme_name: str) -> Path:
         if theme_vars:
             var_lines = "\n".join(f"  {k}: {v};" for k, v in theme_vars.items())
         else:
-            var_lines = "  /* base defaults active — uncomment to override: */\n  /* --bubble-font-size: 21px; */"
+            var_lines = "  /* base defaults active — uncomment to override: */\n  /* --bubble-font-size: 24px; */"
         path.write_text(_THEME_HEADER.format(theme_name=theme_name, var_lines=var_lines))
     return path
 
@@ -664,11 +680,23 @@ def _panel_html(
     #   image_url_fn=None  → file:// URI (Playwright server-side export)
     #   image_url_fn=fn    → HTTP URL provided by web server
     if image_url_fn is not None:
-        art_html = f'  <img class="panel-art" src="{_e(image_url_fn(panel.image_path))}" alt="">'
+        style_parts: list[str] = []
+        if panel.image_offset_x is not None:
+            style_parts.append(f"--panel-art-offset-x: {panel.image_offset_x:.0f}px")
+        if panel.image_offset_y is not None:
+            style_parts.append(f"--panel-art-offset-y: {panel.image_offset_y:.0f}px")
+        art_style_attr = f' style="{"; ".join(style_parts)}"' if style_parts else ""
+        art_html = f'  <img class="panel-art" src="{_e(image_url_fn(panel.image_path))}" alt=""{art_style_attr}>'
     else:
         img_path = project_dir / panel.image_path
+        style_parts = []
+        if panel.image_offset_x is not None:
+            style_parts.append(f"--panel-art-offset-x: {panel.image_offset_x:.0f}px")
+        if panel.image_offset_y is not None:
+            style_parts.append(f"--panel-art-offset-y: {panel.image_offset_y:.0f}px")
+        art_style_attr = f' style="{"; ".join(style_parts)}"' if style_parts else ""
         art_html = (
-            f'  <img class="panel-art" src="{img_path.as_uri()}" alt="">'
+            f'  <img class="panel-art" src="{img_path.as_uri()}" alt=""{art_style_attr}>'
             if img_path.exists() else ""
         )
 

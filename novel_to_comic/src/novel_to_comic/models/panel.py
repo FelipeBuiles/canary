@@ -32,6 +32,7 @@ class PanelBreakdown(BaseModel):
     mood: str  # "tense", "hopeful"
     dialogue: list[DialogueLine] = []
     sfx: Optional[str] = None  # "BOOM", "CRACK"
+    transition_type: Optional[str] = None  # "smooth_continuation", "match_cut", "hard_cut"
     transition_note: Optional[str] = None  # "smash cut", "fade"
 
 
@@ -40,6 +41,7 @@ class ScreenplayBeat(BaseModel):
     character_id: Optional[str] = None
     content: str
     direction: Optional[str] = None
+    transition_type: Optional[str] = None  # "smooth_continuation", "match_cut", "hard_cut"
 
 
 class Screenplay(BaseModel):

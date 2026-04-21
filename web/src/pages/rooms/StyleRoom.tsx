@@ -185,6 +185,7 @@ export function StyleRoom() {
   const styleJobIds = useStyleJobIds(projectName);
   const styleJobStatuses = useStyleJobStatuses(projectName);
   const { add, attachJobs, updateJob, remove } = useStyleGenStore();
+  const [sampleError, setSampleError] = useState<string | null>(null);
   const { data: generationJobs } = useGenerationJobs(
     name,
     Object.values(styleJobIds),
@@ -201,8 +202,15 @@ export function StyleRoom() {
     for (const job of generationJobs.jobs) {
       const index = Number(job.payload.index);
       if (!Number.isFinite(index)) continue;
-      if (job.status === "complete" || job.status === "failed") remove(projectName, [index]);
-      else updateJob(projectName, job);
+      if (job.status === "complete") {
+        setSampleError(null);
+        remove(projectName, [index]);
+      } else if (job.status === "failed") {
+        setSampleError(job.error ?? "Sample generation failed");
+        remove(projectName, [index]);
+      } else {
+        updateJob(projectName, job);
+      }
     }
   }, [generationJobs, projectName, updateJob, remove]);
 
@@ -288,6 +296,11 @@ export function StyleRoom() {
             {anyGenerating && (
               <span className="font-meta text-[0.48rem] tracking-[0.16em] text-ink-black/50 self-center">
                 {runningStyleCount > 0 && `${runningStyleCount} RUNNING`}{runningStyleCount > 0 && queuedStyleCount > 0 && " / "}{queuedStyleCount > 0 && `${queuedStyleCount} QUEUED`}
+              </span>
+            )}
+            {sampleError && (
+              <span className="font-meta text-[0.48rem] tracking-[0.16em] text-hero-red self-center">
+                {sampleError}
               </span>
             )}
             <Button

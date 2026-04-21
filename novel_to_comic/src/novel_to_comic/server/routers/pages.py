@@ -2,6 +2,7 @@
 
 import json
 import mimetypes
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -56,6 +57,87 @@ STYLE_VAR_ALLOWLIST = {
 
 
 def _sanitize_style_vars(raw: dict) -> dict[str, str]:
+    color_keys = {
+        "--panel-border",
+        "--panel-bg",
+        "--caption-bg",
+        "--caption-border",
+        "--caption-color",
+        "--bubble-bg",
+        "--bubble-border",
+        "--speaker-color",
+        "--sfx-color",
+        "--sfx-shadow",
+        "--page-num-color",
+    }
+    px_ranges = {
+        "--panel-border-width": (1, 12),
+        "--caption-font-size": (12, 44),
+        "--bubble-border-width": (1, 10),
+        "--bubble-radius": (6, 120),
+        "--bubble-font-size": (16, 54),
+        "--speaker-font-size": (10, 36),
+        "--thought-radius": (18, 180),
+        "--sfx-font-size": (20, 180),
+        "--page-num-font-size": (14, 96),
+    }
+    pct_ranges = {
+        "--bubble-max-width": (38, 95),
+        "--bubble-center-width": (45, 98),
+    }
+
+    def _fmt_num(value: float) -> str:
+        return str(int(value)) if float(value).is_integer() else f"{value:.2f}".rstrip("0").rstrip(".")
+
+    def _parse_px(text: str) -> float | None:
+        match = re.fullmatch(r"(\d+(?:\.\d+)?)px", text)
+        if not match:
+            return None
+        return float(match.group(1))
+
+    def _parse_pct(text: str) -> float | None:
+        match = re.fullmatch(r"(\d+(?:\.\d+)?)%", text)
+        if not match:
+            return None
+        return float(match.group(1))
+
+    def _is_color(text: str) -> bool:
+        return bool(re.fullmatch(r"(?:#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}|transparent)", text))
+
+    def _sanitize_value(key: str, text: str) -> str | None:
+        if key in color_keys:
+            return text if _is_color(text) else None
+        if key in px_ranges:
+            n = _parse_px(text)
+            if n is None:
+                return None
+            lo, hi = px_ranges[key]
+            if n < lo or n > hi:
+                return None
+            return f"{_fmt_num(n)}px"
+        if key in pct_ranges:
+            n = _parse_pct(text)
+            if n is None:
+                return None
+            lo, hi = pct_ranges[key]
+            if n < lo or n > hi:
+                return None
+            return f"{_fmt_num(n)}%"
+        if key == "--bubble-padding":
+            parts = text.split()
+            if len(parts) not in (1, 2):
+                return None
+            parsed: list[float] = []
+            for part in parts:
+                n = _parse_px(part)
+                if n is None or n < 3 or n > 28:
+                    return None
+                parsed.append(n)
+            return " ".join(f"{_fmt_num(n)}px" for n in parsed)
+        if key == "--thought-border-style":
+            return text if text in {"solid", "dashed", "dotted"} else None
+        return None
+
     clean: dict[str, str] = {}
     for key, value in raw.items():
         if key not in STYLE_VAR_ALLOWLIST:
@@ -67,7 +149,9 @@ def _sanitize_style_vars(raw: dict) -> dict[str, str]:
             continue
         if any(token in value.lower() for token in ("url(", "expression(", "javascript:", "</")):
             continue
-        clean[key] = value
+        sanitized = _sanitize_value(key, value)
+        if sanitized is not None:
+            clean[key] = sanitized
     return clean
 
 
@@ -98,7 +182,7 @@ def _fallback_lettering_style(style_template: str) -> dict[str, str]:
             "--bubble-border": "#000000",
             "--bubble-border-width": "2px",
             "--bubble-radius": "24px",
-            "--bubble-font-size": "21px",
+            "--bubble-font-size": "25px",
             "--sfx-color": "#000000",
             "--sfx-shadow": "transparent",
             "--thought-border-style": "solid",
@@ -141,7 +225,7 @@ def _fallback_lettering_style(style_template: str) -> dict[str, str]:
         "--bubble-border": "#1A1A1A",
         "--bubble-border-width": "2px",
         "--bubble-radius": "14px",
-        "--bubble-font-size": "19px",
+        "--bubble-font-size": "24px",
         "--speaker-color": "#664400",
         "--sfx-color": "#CC1111",
         "--sfx-shadow": "#000000",
@@ -293,6 +377,10 @@ def update_page(page_num: int, body: dict, project=Depends(get_project)):
             panel = panel_map.get(panel_patch.get("id", ""))
             if not panel:
                 continue
+            if "image_offset_x" in panel_patch:
+                panel.image_offset_x = panel_patch["image_offset_x"]
+            if "image_offset_y" in panel_patch:
+                panel.image_offset_y = panel_patch["image_offset_y"]
 
             # ── Remove bubbles ──
             remove_ids = panel_patch.get("remove_bubble_ids", [])

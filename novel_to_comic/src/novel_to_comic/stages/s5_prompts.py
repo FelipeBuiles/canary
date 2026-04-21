@@ -39,10 +39,14 @@ async def _process_panel(
     project_dir: Path,
     story_bible: StoryBible,
     panel_path: Path,
-    prev_panel: PanelBreakdown | None = None,
 ) -> ImagePrompt | None:
     """Generate an image prompt for a single panel."""
     panel = PanelBreakdown.model_validate_json(panel_path.read_text())
+    prev_panel: PanelBreakdown | None = None
+    if panel.panel_number > 1:
+        prev_panel_path = project_dir / "panels" / panel.scene_id / f"panel_{panel.panel_number - 1:03d}.json"
+        if prev_panel_path.exists():
+            prev_panel = PanelBreakdown.model_validate_json(prev_panel_path.read_text())
 
     output_dir = project_dir / "prompts" / panel.scene_id
     output_path = output_dir / f"panel_{panel.panel_number:03d}.json"
@@ -99,31 +103,23 @@ async def run(
             ),
         )
 
-        prev_panels: dict[str, PanelBreakdown | None] = {}
-
         with make_progress(on_event) as progress:
             task = progress.add_task("Image prompts", total=len(panel_files))
             for batch_start in range(0, len(panel_files_sorted), config.parallel_batch_size):
                 batch = panel_files_sorted[batch_start:batch_start + config.parallel_batch_size]
-                coros = [
-                    _process_panel(config, project_dir, story_bible, pf, prev_panels.get(pf.parent.name))
-                    for pf in batch
-                ]
+                coros = [_process_panel(config, project_dir, story_bible, pf) for pf in batch]
                 results = await asyncio.gather(*coros, return_exceptions=True)
                 for pf, result in zip(batch, results):
-                    panel = PanelBreakdown.model_validate_json(pf.read_text())
                     if isinstance(result, Exception):
                         console.print(f"[red]Failed {pf.name}: {result}[/red]")
                         emit({"type": "log", "stage": "prompts", "level": "error",
                               "message": f"Failed {pf.name}: {result}"})
                         record_item_failed(state, "prompts", str(pf))
-                        prev_panels[pf.parent.name] = panel
                     else:
                         record_item_done(state, "prompts", cost=0.001)
                         emit({"type": "stage_progress", "stage": "prompts",
                               "done": state.stages["prompts"].items_done,
                               "total": state.stages["prompts"].items_total})
-                        prev_panels[pf.parent.name] = panel
                     progress.advance(task)
                 save_state(state, project_dir)
 

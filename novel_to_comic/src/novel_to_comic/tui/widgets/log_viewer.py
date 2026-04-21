@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from textual.widgets import RichLog
 
-from ..event_bridge import LogEvent
+from ..event_bridge import LogEvent, StageFail
 
 _LEVEL_STYLES = {
     "info": "white",
@@ -37,3 +37,7 @@ class LogViewer(RichLog):
         event.stop()
         style = _LEVEL_STYLES.get(event.level, "white")
         self.write(f"[{style}][{event.stage}] {event.message}[/{style}]")
+
+    def on_stage_fail(self, event: StageFail) -> None:
+        event.stop()
+        self.write(f"[bold red]!!! Stage '{event.stage}' FAILED: {event.message}[/bold red]")

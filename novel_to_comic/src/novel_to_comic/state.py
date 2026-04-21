@@ -1,12 +1,14 @@
 """Pipeline state machine: read/write state.json, track stage progress."""
 
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel, Field
+
+STALE_RUNNING_THRESHOLD = timedelta(minutes=5)
 
 
 class StageStatus(str, Enum):
@@ -139,6 +141,28 @@ def record_item_done(state: PipelineState, stage: str, cost: float = 0.0) -> Non
     s = state.stages[stage]
     s.items_done += 1
     s.cost_usd += cost
+
+
+def is_stale(stage_state: StageState) -> bool:
+    if stage_state.status != StageStatus.RUNNING:
+        return False
+    if stage_state.started_at is None:
+        return False
+    age = datetime.now(timezone.utc) - stage_state.started_at
+    return age > STALE_RUNNING_THRESHOLD
+
+
+def get_stale_stages(state: PipelineState) -> list[str]:
+    return [name for name, s in state.stages.items() if is_stale(s)]
+
+
+def reset_stale_stages(state: PipelineState) -> list[str]:
+    reset = []
+    for name, s in state.stages.items():
+        if is_stale(s):
+            state.stages[name] = StageState()
+            reset.append(name)
+    return reset
 
 
 def record_item_failed(state: PipelineState, stage: str, item_id: str) -> None:

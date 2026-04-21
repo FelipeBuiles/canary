@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { Icon } from "./Icon";
 import { cn } from "../../lib/cn";
 
@@ -9,6 +9,24 @@ interface CollapsibleSectionProps {
   preview?: ReactNode;
   actions?: ReactNode;
   className?: string;
+  storageKey?: string;
+}
+
+function loadExpanded(key: string, fallback: boolean): boolean {
+  try {
+    const stored = localStorage.getItem(`collapse:${key}`);
+    return stored !== null ? stored === "true" : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveExpanded(key: string, value: boolean): void {
+  try {
+    localStorage.setItem(`collapse:${key}`, String(value));
+  } catch {
+    // ignore quota errors
+  }
 }
 
 export function CollapsibleSection({
@@ -18,8 +36,17 @@ export function CollapsibleSection({
   preview,
   actions,
   className,
+  storageKey,
 }: CollapsibleSectionProps) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
+  const [expanded, setExpanded] = useState(() =>
+    storageKey ? loadExpanded(storageKey, defaultExpanded) : defaultExpanded,
+  );
+
+  useEffect(() => {
+    if (storageKey) {
+      saveExpanded(storageKey, expanded);
+    }
+  }, [expanded, storageKey]);
 
   return (
     <div className={cn("border-b border-panel-line", className)}>

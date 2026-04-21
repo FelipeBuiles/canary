@@ -11,6 +11,7 @@ from novel_to_comic.models.story_bible import StoryBible
 from ..deps import get_project
 from ..generation_jobs import (
     enqueue_generation_job,
+    find_active_generation_job,
     generation_job_payload,
     generation_semaphore_for_config,
     prune_finished_generation_jobs,
@@ -160,10 +161,10 @@ def get_styles(project_name: str, project=Depends(get_project)):
 async def suggest_styles(request: Request, project_name: str, project=Depends(get_project)):
     project_dir, config, state = project
 
-    running = request.app.state.running_tasks
-    existing = running.get(project_name)
+    style_running = request.app.state.style_tasks
+    existing = style_running.get(project_name)
     if existing and not existing.done():
-        raise HTTPException(409, "A stage is already running for this project")
+        raise HTTPException(409, "A style operation is already running for this project")
 
     bible = _get_bible(project_dir)
     if not bible:
@@ -189,10 +190,11 @@ async def suggest_styles(request: Request, project_name: str, project=Depends(ge
             queue.put_nowait({"type": "stage_complete", "stage": "style_suggest", "done": 1, "total": 1})
         except Exception as exc:
             queue.put_nowait({"type": "stage_fail", "stage": "style_suggest", "message": str(exc)})
+        finally:
+            style_running.pop(project_name, None)
 
-    from .pipeline import _run_job
-    task = asyncio.create_task(_run_job(project_name, request, _job()))
-    running[project_name] = task
+    task = asyncio.create_task(_job())
+    style_running[project_name] = task
     return {"status": "started"}
 
 
@@ -224,6 +226,16 @@ async def generate_style_samples(
     jobs = []
     prune_finished_generation_jobs(request.app)
     for idx in indices:
+        existing = find_active_generation_job(
+            request.app,
+            project_name=project_name,
+            kind="style_sample",
+            payload={"index": idx},
+        )
+        if existing:
+            jobs.append(generation_job_payload(request.app, existing))
+            continue
+
         s = suggestions[idx - 1]
         template = s.get("template", config.style_template)
         sample_config = config.model_copy(update={"style_template": template})

@@ -118,6 +118,34 @@ def _normalize_screenplay(screenplay: Screenplay, story_bible: StoryBible) -> Sc
     return screenplay.model_copy(update={"characters": visible_characters, "beats": beats})
 
 
+def _transition_type_for_text(text: str) -> str | None:
+    lower = text.lower()
+    hard_markers = ("smash cut", "cut to", "scene change", "time jump", "jump cut")
+    if any(marker in lower for marker in hard_markers):
+        return "hard_cut"
+    if any(marker in lower for marker in ("match cut", "parallel", "echo", "mirrors")):
+        return "match_cut"
+    if any(marker in lower for marker in ("fade", "soft cut", "continue", "continuing", "then")):
+        return "smooth_continuation"
+    return "smooth_continuation"
+
+
+def _annotate_transition_beats(screenplay: Screenplay) -> Screenplay:
+    beats = []
+    for beat in screenplay.beats:
+        if beat.type == "transition":
+            beats.append(
+                beat.model_copy(
+                    update={
+                        "transition_type": _transition_type_for_text(beat.content),
+                    }
+                )
+            )
+        else:
+            beats.append(beat)
+    return screenplay.model_copy(update={"beats": beats})
+
+
 def _localized_system_prompt(config: Config, system_prompt: str) -> str:
     return f"{system_prompt.rstrip()}\n\nLANGUAGE REQUIREMENT:\n{config.generation_language_instruction()}"
 
@@ -154,6 +182,7 @@ async def _process_scene(
     if isinstance(result, list):
         result = result[0]
     screenplay = _normalize_screenplay(Screenplay.model_validate(result), story_bible)
+    screenplay = _annotate_transition_beats(screenplay)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(screenplay.model_dump_json(indent=2))
     return screenplay

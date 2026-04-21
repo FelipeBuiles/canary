@@ -95,9 +95,7 @@ def _similar_cast_members(char: Character, story_bible: StoryBible) -> list[Char
             continue
         other_outfit_tokens = _tokens(other.default_outfit)
         outfit_overlap = len(char_outfit_tokens & other_outfit_tokens)
-        same_gender = _clean(other.gender).lower() == _clean(char.gender).lower()
-        same_age = _clean(other.age_range).lower() == _clean(char.age_range).lower()
-        if same_gender and (outfit_overlap >= 2 or (same_age and outfit_overlap >= 1)):
+        if outfit_overlap >= 1:
             matches.append((outfit_overlap, other))
     return [other for _overlap, other in sorted(matches, key=lambda item: item[0], reverse=True)[:3]]
 

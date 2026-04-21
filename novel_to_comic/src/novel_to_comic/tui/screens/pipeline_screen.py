@@ -152,6 +152,16 @@ class PipelineScreen(Screen):
             except Exception as e:
                 on_event({"type": "log", "stage": stage_name, "level": "error", "message": str(e)})
                 on_event({"type": "stage_fail", "stage": stage_name, "message": str(e)})
+                # Reload state to get the error message
+                try:
+                    fresh = load_state(project_dir)
+                    self.app.state = fresh
+                    state = fresh
+                except Exception:
+                    pass
+                # Show approval screen so user can see error and reset
+                from .approval_screen import ApprovalScreen
+                self.app.push_screen(ApprovalScreen(stage_name))
                 return
 
             # Reload state after each stage

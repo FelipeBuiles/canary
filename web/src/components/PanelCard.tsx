@@ -5,7 +5,7 @@ import { Card } from "./ui/Card";
 import { ImageModal } from "./ui/ImageModal";
 import { useI18n } from "../i18n";
 
-type PanelState = "active" | "inking" | "failed" | "narrative" | "queued" | "regening";
+type PanelState = "active" | "inking" | "failed" | "narrative" | "queued" | "regening" | "stale";
 
 function resolvePanelState(
   status: ImageStatus["status"],
@@ -14,6 +14,7 @@ function resolvePanelState(
 ): PanelState {
   if (regenMode === "queued") return "queued";
   if (regenMode === "running") return "regening";
+  if (status === "stale") return "stale";
   if (status === "failed") return "failed";
   if (status === "pending") return "inking";
   if (hasNarrative) return "narrative";
@@ -23,6 +24,7 @@ function resolvePanelState(
 function statusTone(state: PanelState) {
   if (state === "active" || state === "narrative") return "bg-archive-sage text-ink-black";
   if (state === "inking" || state === "queued" || state === "regening") return "bg-narrator-gold text-ink-black";
+  if (state === "stale") return "bg-hero-red text-bristol";
   return "bg-hero-red text-bristol";
 }
 
@@ -31,6 +33,7 @@ function statusLabel(state: PanelState, t: (text: string) => string) {
   if (state === "inking") return t("PROCESSING");
   if (state === "queued") return t("QUEUED");
   if (state === "regening") return "REGENING";
+  if (state === "stale") return "STALE";
   return t("ERROR");
 }
 
@@ -99,6 +102,27 @@ export function PanelCard({
               <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-bristol/55">
                 APPLYING PRODUCTION LOGIC
               </div>
+            </div>
+          ) : state === "stale" ? (
+            <div className="flex h-full flex-col items-center justify-center bg-hero-red/10 px-3">
+              <div className="font-display text-[1.25rem] font-bold leading-none tracking-[-0.05em] text-hero-red">
+                GENERATION STALE
+              </div>
+              <div className="mt-2 text-center text-[0.72rem] text-hero-red/80">
+                Job tracking was interrupted. Re-run this panel.
+              </div>
+              {onRegenerate && (
+                <Button
+                  size="sm"
+                  className="mt-3 border-hero-red"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRegenerate();
+                  }}
+                >
+                  {t("QUICK RE-DO")}
+                </Button>
+              )}
             </div>
           ) : state === "failed" ? (
             <div className="flex h-full flex-col items-center justify-center bg-hero-red/10">

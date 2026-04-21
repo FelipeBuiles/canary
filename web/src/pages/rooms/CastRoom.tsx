@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { useGenerationJobs, useStoryBible, useRegenRef, useRegenPlate } from "../../api/queries";
+import { useGenerationJobs, useProjectStatus, useStoryBible, useRegenRef, useRegenPlate } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { SectionDivider } from "../../components/SectionDivider";
 import { Card } from "../../components/ui/Card";
@@ -8,6 +8,7 @@ import { Tag } from "../../components/ui/Tag";
 import { Button } from "../../components/ui/Button";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { ImageModal } from "../../components/ui/ImageModal";
+import { useRunAction } from "../../hooks/useRunAction";
 import type { Character, GenerationJob, Location } from "../../types/api";
 
 function queuedLabel(job: GenerationJob | null) {
@@ -17,7 +18,15 @@ function queuedLabel(job: GenerationJob | null) {
   return "QUEUED";
 }
 
-function CharacterCastCard({ character, projectName }: { character: Character; projectName: string }) {
+function CharacterCastCard({
+  character,
+  projectName,
+  stageRegenerating,
+}: {
+  character: Character;
+  projectName: string;
+  stageRegenerating: boolean;
+}) {
   const refUrl = `/api/projects/${encodeURIComponent(projectName)}/files/refs/${encodeURIComponent(character.id)}/sheet.png`;
   const [imgFailed, setImgFailed] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -43,6 +52,13 @@ function CharacterCastCard({ character, projectName }: { character: Character; p
     }
   }, [generationJobs]);
 
+  useEffect(() => {
+    if (!stageRegenerating) {
+      setTimestamp(Date.now());
+      setImgFailed(false);
+    }
+  }, [stageRegenerating]);
+
   const handleRegen = (e: React.MouseEvent) => {
     e.stopPropagation();
     setRegenError(null);
@@ -62,7 +78,16 @@ function CharacterCastCard({ character, projectName }: { character: Character; p
           className="relative border-b-[2px] border-ink-black bg-ink-black cursor-pointer group"
           onClick={() => !imgFailed && setIsModalOpen(true)}
         >
-          {imgFailed ? (
+          {stageRegenerating ? (
+            <div className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-2 bg-ink-black/40">
+              <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-narrator-gold animate-pulse">
+                REGENERATING…
+              </div>
+              <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-bristol/55">
+                REBUILDING CAST REF
+              </div>
+            </div>
+          ) : imgFailed ? (
             <div className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-2 bg-ink-black/40">
               {regenRef.isPending || activeJob ? (
                 <>
@@ -141,15 +166,25 @@ function CharacterCastCard({ character, projectName }: { character: Character; p
   );
 }
 
-function LocationPlateCard({ location, projectName }: { location: Location; projectName: string }) {
+function LocationPlateCard({
+  location,
+  projectName,
+  stageRegenerating,
+}: {
+  location: Location;
+  projectName: string;
+  stageRegenerating: boolean;
+}) {
   const plateUrl = `/api/projects/${encodeURIComponent(projectName)}/files/plates/${encodeURIComponent(location.id)}.png`;
   const [imgFailed, setImgFailed] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [timestamp, setTimestamp] = useState(() => Date.now());
   const [activeJob, setActiveJob] = useState<GenerationJob | null>(null);
-  const [regenError, setRegenError] = useState<string | null>(null);
+  const [localRegenError, setLocalRegenError] = useState<string | null>(null);
   const regenPlate = useRegenPlate();
   const { data: generationJobs } = useGenerationJobs(projectName, activeJob ? [activeJob.id] : []);
+
+  const regenError = localRegenError;
 
   useEffect(() => {
     const job = generationJobs?.jobs[0];
@@ -158,23 +193,30 @@ function LocationPlateCard({ location, projectName }: { location: Location; proj
       setTimestamp(Date.now());
       setImgFailed(false);
       setActiveJob(null);
-      setRegenError(null);
+      setLocalRegenError(null);
     } else if (job.status === "failed") {
       setActiveJob(null);
-      setRegenError(job.error ?? "Regeneration failed");
+      setLocalRegenError(job.error ?? "Regeneration failed");
     } else {
       setActiveJob(job);
     }
   }, [generationJobs]);
 
+  useEffect(() => {
+    if (!stageRegenerating) {
+      setTimestamp(Date.now());
+      setImgFailed(false);
+    }
+  }, [stageRegenerating]);
+
   const handleRegen = (e: React.MouseEvent) => {
     e.stopPropagation();
-    setRegenError(null);
+    setLocalRegenError(null);
     regenPlate.mutate(
       { project: projectName, locId: location.id },
       {
         onSuccess: (data) => setActiveJob(data.job),
-        onError: (err) => setRegenError(err.message),
+        onError: (err) => setLocalRegenError(err.message),
       }
     );
   };
@@ -186,7 +228,16 @@ function LocationPlateCard({ location, projectName }: { location: Location; proj
           className="relative border-b-[2px] border-ink-black bg-ink-black cursor-pointer group"
           onClick={() => !imgFailed && setIsModalOpen(true)}
         >
-          {imgFailed ? (
+          {stageRegenerating ? (
+            <div className="flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 bg-ink-black/40">
+              <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-narrator-gold animate-pulse">
+                REGENERATING…
+              </div>
+              <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-bristol/55">
+                REBUILDING LOCATION PLATE
+              </div>
+            </div>
+          ) : imgFailed ? (
             <div className="flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 bg-ink-black/40">
               {regenPlate.isPending || activeJob ? (
                 <>
@@ -263,6 +314,10 @@ function LocationPlateCard({ location, projectName }: { location: Location; proj
 export function CastRoom() {
   const { name } = useParams<{ name: string }>();
   const { data: bible, isLoading } = useStoryBible(name);
+  const { data: status } = useProjectStatus(name);
+  const { handleRun, isPending } = useRunAction();
+  const isCastStageRunning = status?.stages?.index?.status === "running";
+  const stageRegenerating = isCastStageRunning || isPending;
 
   if (isLoading) {
     return <RoomShell isLoading loadingText="LOADING CAST…" />;
@@ -284,6 +339,16 @@ export function CastRoom() {
         label="CAST / CHARACTER & LOCATION REFS"
         title="CASTING CALL"
         lead="Reference sheets and location plates produced by the casting director — each used as the visual anchor for every downstream panel."
+        actions={(
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => name && handleRun(name, "index", true)}
+            disabled={stageRegenerating}
+          >
+            {stageRegenerating ? "RERUNNING…" : "RERUN CAST"}
+          </Button>
+        )}
       />
 
       <section className="grid gap-6 xl:grid-cols-2">
@@ -294,7 +359,12 @@ export function CastRoom() {
           </h2>
           <div className="mt-5 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {bible.characters.map((char) => (
-              <CharacterCastCard key={char.id} character={char} projectName={name} />
+              <CharacterCastCard
+                key={char.id}
+                character={char}
+                projectName={name}
+                stageRegenerating={stageRegenerating}
+              />
             ))}
           </div>
         </div>
@@ -306,7 +376,12 @@ export function CastRoom() {
           </h2>
           <div className="mt-5 grid gap-5 sm:grid-cols-2">
             {bible.locations.map((loc) => (
-              <LocationPlateCard key={loc.id} location={loc} projectName={name} />
+              <LocationPlateCard
+                key={loc.id}
+                location={loc}
+                projectName={name}
+                stageRegenerating={stageRegenerating}
+              />
             ))}
           </div>
         </div>

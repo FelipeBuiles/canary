@@ -53,6 +53,9 @@ class ApprovalScreen(Screen):
                     "Regenerate Panels", variant="warning", id="regen-btn"
                 )
                 yield Button(
+                    "Reset & Retry", variant="error", id="reset-retry-btn"
+                )
+                yield Button(
                     "Back to Dashboard", variant="default", id="back-btn"
                 )
 
@@ -77,6 +80,17 @@ class ApprovalScreen(Screen):
             f"Cost: ${stage_state.cost_usd:.3f}",
             "",
         ]
+
+        # Show error message if stage failed
+        if stage_state.status == StageStatus.FAILED and stage_state.error:
+            lines.append("[bold red]Error:[/bold red]")
+            lines.append(f"[red]{stage_state.error}[/red]")
+            lines.append("")
+            if stage_state.items_failed:
+                lines.append(f"[dim]Failed items: {len(stage_state.items_failed)}[/dim]")
+                lines.append("")
+            lines.append("[yellow]Use 'Reset & Retry' to re-run this stage.[/yellow]")
+            lines.append("")
 
         # Stage-specific details
         if self._stage == "extract":
@@ -141,6 +155,24 @@ class ApprovalScreen(Screen):
         elif event.button.id == "regen-btn":
             from .regen_screen import RegenScreen
             self.app.push_screen(RegenScreen())
+
+        elif event.button.id == "reset-retry-btn":
+            state = app.state
+            stage_state = state.stages[self._stage]
+            if stage_state.status != StageStatus.FAILED:
+                self.app.notify(
+                    f"Stage '{self._stage}' is not failed, cannot reset.",
+                    severity="error"
+                )
+                return
+            stage_state.status = StageStatus.PENDING
+            stage_state.error = None
+            stage_state.finished_at = None
+            save_state(state, app.project_dir)
+            self.app.notify(f"Stage '{self._stage}' reset to pending.", severity="warning")
+            self.app.pop_screen()
+            from .pipeline_screen import PipelineScreen
+            self.app.push_screen(PipelineScreen())
 
         elif event.button.id == "back-btn":
             self.app.pop_screen()

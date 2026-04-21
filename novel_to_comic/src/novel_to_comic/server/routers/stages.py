@@ -2,15 +2,17 @@
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from novel_to_comic.models.comic_page import ComicPage
 from novel_to_comic.models.panel import PanelBreakdown, Screenplay
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.prompting import render_panel_prompt_body
 from novel_to_comic.state import load_state
 
 from ..deps import get_project
+from ..generation_jobs import find_active_generation_job
 
 router = APIRouter()
 
@@ -176,6 +178,7 @@ def update_prompt(scene_id: str, panel_number: int, body: dict, project=Depends(
         updated = ImagePrompt.model_validate(body)
     except Exception as e:
         raise HTTPException(400, f"Invalid prompt data: {e}")
+    updated.full_prompt = render_panel_prompt_body(updated)
     path.write_text(updated.model_dump_json(indent=2))
     return updated.model_dump()
 
@@ -184,32 +187,43 @@ def update_prompt(scene_id: str, panel_number: int, body: dict, project=Depends(
 
 
 @router.get("/images")
-def list_images(project=Depends(get_project)):
+def list_images(request: Request, project=Depends(get_project)):
     project_dir, config, state = project
     images_dir = project_dir / "images"
     if not images_dir.exists():
         return []
 
-    # Gather failed items from state
     generate_state = state.stages.get("generate")
     failed_items = set(generate_state.items_failed) if generate_state else set()
-
-    # Gather done items from state
-    items_done = generate_state.items_done if generate_state else 0
 
     results = []
     for scene_dir in sorted(images_dir.iterdir()):
         if not scene_dir.is_dir():
             continue
         for img_file in sorted(scene_dir.glob("panel_*.png")):
-            stem = img_file.stem  # e.g. "panel_001"
+            stem = img_file.stem
             panel_num = int(stem.replace("panel_", ""))
             item_key = f"{scene_dir.name}/{stem}"
             is_failed = item_key in failed_items
+
+            if is_failed:
+                status: str = "failed"
+            else:
+                active_job = find_active_generation_job(
+                    request.app,
+                    project_dir.name,
+                    "panel_regen",
+                    {"scene_id": scene_dir.name, "panel_number": panel_num},
+                )
+                if active_job:
+                    status = active_job.status
+                else:
+                    status = "done"
+
             results.append({
                 "scene_id": scene_dir.name,
                 "panel_number": panel_num,
-                "status": "failed" if is_failed else "done",
+                "status": status,
             })
 
     return results

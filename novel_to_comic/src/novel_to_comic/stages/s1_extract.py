@@ -136,11 +136,24 @@ def _normalize_character_anchor_tags(characters: list[dict]) -> list[dict]:
             continue
 
         gender = str(character.get("gender", "")).lower()
-        if not _looks_adult(str(character.get("age_range", "")), anchor):
-            continue
-
         tags = [tag.strip() for tag in anchor.split(",")]
         if not tags:
+            continue
+
+        is_androgynous = any(word in gender for word in ("androgyn", "non-binary", "nonbinary"))
+        if is_androgynous:
+            # Keep explicit ambiguity: avoid forcing binary count/gender tags for
+            # characters extracted as androgynous/non-binary.
+            if tags[0].lower() in {"1man", "1woman", "1boy", "1girl"}:
+                tags[0] = "1other"
+            tags = [
+                tag for tag in tags
+                if tag.lower() not in {"adult male", "adult female", "child male", "child female"}
+            ]
+            character["visual_anchor"] = ", ".join(tag for tag in tags if tag)
+            continue
+
+        if not _looks_adult(str(character.get("age_range", "")), anchor):
             continue
 
         is_female = any(word in gender for word in ("female", "woman", "girl"))

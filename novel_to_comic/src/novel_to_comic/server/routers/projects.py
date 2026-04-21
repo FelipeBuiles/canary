@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFil
 
 from novel_to_comic.config import Config, load_config, save_config
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.state import STAGE_NAMES, create_initial_state, load_state, save_state
+from novel_to_comic.state import STAGE_NAMES, create_initial_state, is_stale, load_state, save_state
 
 from ..deps import get_project, get_projects_dir
 from ..generation_jobs import (
@@ -60,6 +60,7 @@ def _stage_payload(project_dir: Path, name: str, state) -> dict:
         "error": error,
         "started_at": s.started_at.isoformat() if s.started_at else None,
         "finished_at": s.finished_at.isoformat() if s.finished_at else None,
+        "stale": is_stale(s),
     }
 
 

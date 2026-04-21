@@ -1,14 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate, useLocation, Link } from "react-router-dom";
 import {
   useProjectStatus,
   useApproveStage,
   useProjects,
   useRunPipeline,
+  useStyles,
 } from "../api/queries";
 import { usePipelineStore } from "../store/pipeline";
 import { STAGE_ORDER, STAGE_ROUTES } from "../types/api";
-import type { StageStatus, ProjectSummary } from "../types/api";
+import type { StageName, StageStatus, ProjectSummary } from "../types/api";
 import { Button } from "../components/ui/Button";
 import { Icon } from "../components/ui/Icon";
 import { useI18n } from "../i18n";
@@ -29,11 +30,18 @@ function stageIcon(status: StageStatus): "check" | "play" | "alert" | "circle" {
   return "circle";
 }
 
-type NavRoute = "styles" | "settings";
-
-const NAV_ITEMS: { icon: "styles" | "settings"; label: string; route: NavRoute; projectOnly?: boolean }[] = [
-  { icon: "styles", label: "Styles", route: "styles", projectOnly: true },
-];
+type PipelineNavStage = {
+  key: StageName | "style";
+  route: string;
+  label: string;
+  status: StageStatus;
+  itemsDone: number;
+  itemsTotal: number;
+  failedCount: number;
+  error: string | null;
+  needsApproval: boolean;
+  activeStyleLabel?: string | null;
+};
 
 function ProjectSwitcher({
   current,
@@ -70,7 +78,7 @@ function ProjectSwitcher({
           onClick={() => setOpen((v) => !v)}
           className="group flex w-full items-center justify-center p-2 hover:bg-ink-black/5"
         >
-          <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border-[2px] border-ink-black bg-ink-black">
+          <div className="flex h-10 w-10 items-center justify-center overflow-hidden border-[2px] border-ink-black bg-ink-black">
             {coverUrl ? (
               <img src={coverUrl} alt="" className="h-full w-full object-cover" />
             ) : (
@@ -79,7 +87,7 @@ function ProjectSwitcher({
           </div>
         </button>
         {open && (
-          <div className="absolute left-full top-0 z-30 ml-2 flex max-h-[300px] min-w-[200px] flex-col rounded border-[2px] border-ink-black bg-bristol shadow-ink-sm">
+          <div className="absolute left-full top-0 z-30 ml-2 flex max-h-[300px] min-w-[220px] flex-col border-[2px] border-ink-black bg-bristol shadow-ink-sm">
             <Link
               to="/"
               onClick={() => setOpen(false)}
@@ -123,9 +131,9 @@ function ProjectSwitcher({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="group flex w-full items-start gap-2.5 border-b-[2px] border-ink-black bg-bristol p-3 text-left hover:bg-pulp-paper"
+        className="group flex w-full items-start gap-2.5 bg-bristol p-3 text-left hover:bg-pulp-paper"
       >
-        <div className="h-11 w-11 shrink-0 overflow-hidden rounded-full border-[2px] border-ink-black bg-ink-black">
+        <div className="h-11 w-11 shrink-0 overflow-hidden border-[2px] border-ink-black bg-ink-black">
           {coverUrl ? (
             <img src={coverUrl} alt="" className="h-full w-full object-cover" />
           ) : (
@@ -195,6 +203,7 @@ export function SideNav() {
   const location = useLocation();
   const { data: status } = useProjectStatus(name);
   const { data: projects } = useProjects();
+  const { data: stylesData } = useStyles(name);
   const runPipeline = useRunPipeline();
   const connect = usePipelineStore((state) => state.connect);
   const clearEvents = usePipelineStore((state) => state.clearEvents);
@@ -203,7 +212,6 @@ export function SideNav() {
   const { stageName, statusName, t } = useI18n();
 
   const current = projects?.find((p) => p.name === name);
-  const activeRoute = location.pathname.split("/").pop() ?? "";
 
   const handleApprove = (stage: string) => {
     if (!name) return;
@@ -222,19 +230,67 @@ export function SideNav() {
   const settingsPath = name ? `/project/${encodeURIComponent(name)}/settings` : "/settings";
   const isSettingsActive = location.pathname.endsWith("/settings");
 
-  const completedCount = status
-    ? STAGE_ORDER.filter((stage) => status.stages[stage]?.status === "complete").length
-    : 0;
+  const styleSuggestions = stylesData?.suggestions ?? [];
+  const activeStyle = stylesData?.active_index == null
+    ? null
+    : styleSuggestions.find((s) => s.index === stylesData.active_index) ?? null;
+  const styleItemsTotal = styleSuggestions.length;
+  const styleItemsDone = styleSuggestions.filter((s) => s.has_sample).length;
+  const styleStatus: StageStatus = activeStyle
+    ? "complete"
+    : styleItemsTotal > 0
+      ? "awaiting_review"
+      : "pending";
+
+  const pipelineStages = useMemo<PipelineNavStage[]>(() => {
+    const stages: PipelineNavStage[] = [];
+    for (const stage of STAGE_ORDER) {
+      const info = status?.stages[stage];
+      stages.push({
+        key: stage,
+        route: STAGE_ROUTES[stage],
+        label: stageName(stage),
+        status: info?.status ?? "pending",
+        itemsDone: info?.items_done ?? 0,
+        itemsTotal: info?.items_total ?? 0,
+        failedCount: info?.items_failed.length ?? 0,
+        error: info?.error ?? null,
+        needsApproval: info?.status === "awaiting_review",
+      });
+      if (stage === "extract") {
+        stages.push({
+          key: "style",
+          route: "styles",
+          label: t("Styles").toUpperCase(),
+          status: styleStatus,
+          itemsDone: styleItemsDone,
+          itemsTotal: styleItemsTotal,
+          failedCount: 0,
+          error: null,
+          needsApproval: false,
+          activeStyleLabel: activeStyle?.label ?? null,
+        });
+      }
+    }
+    return stages;
+  }, [activeStyle?.label, stageName, status?.stages, styleItemsDone, styleItemsTotal, styleStatus, t]);
+
+  const completedCount = pipelineStages.filter((stage) => stage.status === "complete").length;
 
   const needsApproval = status
     ? STAGE_ORDER.find((stage) => status.stages[stage]?.status === "awaiting_review")
     : null;
+  const styleNeedsSelection =
+    !!name &&
+    status?.stages.extract?.status === "complete" &&
+    styleStatus !== "complete";
 
   const isRunning = status?.is_running ?? false;
 
   const continueButtonLabel = () => {
     if (isRunning) return t("RUNNING…");
     if (needsApproval) return "APPROVE & CONTINUE";
+    if (styleNeedsSelection) return "PICK STYLE";
     return t("CONTINUE");
   };
 
@@ -254,6 +310,8 @@ export function SideNav() {
           },
         }
       );
+    } else if (styleNeedsSelection) {
+      navigate(`/project/${encodeURIComponent(name)}/styles`);
     } else {
       handleRun();
     }
@@ -261,36 +319,41 @@ export function SideNav() {
 
   if (collapsed) {
     return (
-      <aside className="flex h-screen w-[56px] shrink-0 flex-col border-r-[2px] border-ink-black bg-sidebar-tint">
-        <div className="flex flex-col items-center border-b-[2px] border-ink-black py-3">
+      <aside className="flex h-screen w-[72px] shrink-0 flex-col border-r-[2px] border-ink-black bg-sidebar-tint">
+        <div className="flex flex-col items-center border-b-[2px] border-ink-black py-2">
+          <button
+            type="button"
+            onClick={() => setCollapsed(false)}
+            className="mb-2 flex h-8 w-8 items-center justify-center border-[2px] border-ink-black bg-bristol hover:bg-pulp-paper"
+            title="Expand sidebar"
+          >
+            <Icon name="chevron-left" size={13} />
+          </button>
           <ProjectSwitcher current={current} projects={projects} collapsed />
         </div>
 
         <nav aria-label="Pipeline stages" className="flex-1 overflow-y-auto py-2">
-          {name && status && STAGE_ORDER.map((stage) => {
-            const info = status.stages[stage];
-            if (!info) return null;
-            const icon = stageIcon(info.status);
-            const isActive = info.status === "running" || info.status === "awaiting_review";
+          {name && pipelineStages.map((stage) => {
+            const icon = stageIcon(stage.status);
+            const isActive = stage.status === "running" || stage.status === "awaiting_review";
             return (
               <button
-                key={stage}
+                key={stage.key}
                 type="button"
                 onClick={() => {
-                  const route = STAGE_ROUTES[stage];
-                  navigate(`/project/${encodeURIComponent(name)}/${route}`);
+                  navigate(`/project/${encodeURIComponent(name)}/${stage.route}`);
                 }}
                 className={cn(
                   "group relative flex w-full items-center justify-center p-3 transition-colors",
                   isActive ? "bg-ink-black/10" : "hover:bg-ink-black/5",
                 )}
-                title={`${stageName(stage)}: ${statusName(info.status)}`}
+                title={`${stage.label}: ${statusName(stage.status)}`}
               >
                 <div
                   className={cn(
-                    "flex h-8 w-8 items-center justify-center rounded-full border-[2px] border-ink-black",
-                    stageBadgeStyle(info.status),
-                    info.status === "running" && "animate-pulse",
+                    "flex h-8 w-8 items-center justify-center border-[2px] border-ink-black",
+                    stageBadgeStyle(stage.status),
+                    stage.status === "running" && "animate-pulse",
                   )}
                 >
                   <Icon name={icon} size={14} />
@@ -299,162 +362,101 @@ export function SideNav() {
             );
           })}
         </nav>
-
-        <div className="flex flex-col items-center border-t-[2px] border-ink-black py-2">
-          <button
-            type="button"
-            onClick={() => setCollapsed(false)}
-            className="flex h-10 w-10 items-center justify-center rounded-full border-[2px] border-ink-black bg-pulp-paper hover:bg-ink-black/5"
-            title="Expand sidebar"
-          >
-            <Icon name="chevron-down" size={14} className="rotate-90" />
-          </button>
-        </div>
       </aside>
     );
   }
 
   return (
-    <aside className="flex h-screen w-[280px] shrink-0 flex-col border-r-[2px] border-ink-black bg-sidebar-tint">
-      <div className="border-b-[2px] border-ink-black">
-        <ProjectSwitcher current={current} projects={projects} collapsed={false} />
+    <aside className="flex h-screen w-[260px] shrink-0 flex-col border-r-[2px] border-ink-black bg-sidebar-tint">
+      <div className="flex items-stretch border-b-[2px] border-ink-black">
+        <div className="min-w-0 flex-1">
+          <ProjectSwitcher current={current} projects={projects} collapsed={false} />
+        </div>
+        <button
+          type="button"
+          onClick={() => setCollapsed(true)}
+          className="border-l-[2px] border-ink-black bg-pulp-paper px-2 font-meta text-[0.48rem] tracking-[0.14em] text-ink-black/65 hover:bg-bristol"
+          title="Collapse sidebar"
+        >
+          <span className="[writing-mode:vertical-rl] rotate-180">COLLAPSE</span>
+        </button>
       </div>
-
-      <div className="border-b-[2px] border-ink-black bg-pulp-paper px-3 py-2">
-        <div className="flex items-center justify-between">
-          <span className="font-meta text-[0.55rem] tracking-[0.18em] text-ink-black/55">
-            {t("PIPELINE")}
-          </span>
-          <button
-            type="button"
-            onClick={() => setCollapsed(true)}
-            className="rounded border border-ink-black/30 bg-bristol px-1.5 py-0.5 font-meta text-[0.5rem] tracking-[0.14em] text-ink-black/55 hover:bg-ink-black/5"
-          >
-            COLLAPSE
-          </button>
-        </div>
-
-        <div className="mt-2 flex items-center gap-1">
-          {STAGE_ORDER.map((stage, i) => {
-            const info = status?.stages[stage];
-            const stageStatus = info?.status ?? "pending";
-            const isComplete = stageStatus === "complete";
-            const isRunning = stageStatus === "running";
-            return (
-              <div key={stage} className="flex items-center">
-                <div
-                  className={cn(
-                    "flex h-6 w-6 items-center justify-center rounded-full border border-ink-black text-[0.6rem]",
-                    stageBadgeStyle(stageStatus as StageStatus),
-                    isRunning && "animate-pulse",
-                  )}
-                  title={`${stageName(stage)}: ${statusName(stageStatus as StageStatus)}`}
-                >
-                  {stageStatus === "complete" ? (
-                    <Icon name="check" size={10} />
-                  ) : stageStatus === "running" ? (
-                    <Icon name="play" size={8} />
-                  ) : stageStatus === "awaiting_review" || stageStatus === "failed" ? (
-                    <Icon name="alert" size={10} />
-                  ) : (
-                    <Icon name="circle" size={8} />
-                  )}
-                </div>
-                {i < STAGE_ORDER.length - 1 && (
-                  <div className={cn("h-[2px] w-3", isComplete ? "bg-archive-sage" : "bg-ink-black/20")} />
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="mt-2 flex items-center gap-2">
-          <div className="h-1.5 flex-1 overflow-hidden rounded-full border border-ink-black bg-pulp-paper">
-            <div
-              className="h-full bg-archive-sage transition-all duration-300"
-              style={{ width: `${(completedCount / 7) * 100}%` }}
-            />
-          </div>
-          <span className="font-meta text-[0.5rem] tracking-[0.14em] text-ink-black/55">
-            {completedCount}/7
-          </span>
-        </div>
-      </div>
-
-      <nav aria-label="Project tools" className="flex flex-col border-b-[2px] border-ink-black py-1">
-        {NAV_ITEMS.map((item) => {
-          if (item.projectOnly && !name) return null;
-          const isActive = activeRoute === item.route;
-          const to = name ? `/project/${encodeURIComponent(name)}/${item.route}` : `/${item.route}`;
-          return (
-            <button
-              key={item.label}
-              type="button"
-              onClick={() => navigate(to)}
-              className={cn(
-                "flex items-center gap-3 px-4 py-2.5 text-left transition-colors",
-                isActive
-                  ? "bg-hero-red text-bristol"
-                  : "text-ink-black/78 hover:bg-ink-black/5",
-              )}
-            >
-              <Icon name={item.icon} size={14} className={isActive ? "text-bristol" : "text-ink-black/70"} />
-              <span className="font-body text-[0.85rem]">{t(item.label)}</span>
-            </button>
-          );
-        })}
-      </nav>
 
       <nav aria-label="Pipeline stages" className="flex-1 overflow-y-auto">
-        {name && status ? (
+        {name ? (
           <div className="py-1">
-            {STAGE_ORDER.map((stage) => {
-              const info = status.stages[stage];
-              if (!info) return null;
-              const needsApproval = info.status === "awaiting_review";
-              const isActive = info.status === "running" || info.status === "awaiting_review";
-              const route = STAGE_ROUTES[stage];
+            {pipelineStages.map((stage) => {
+              const isActive = stage.status === "running" || stage.status === "awaiting_review";
 
               return (
                 <div
-                  key={stage}
+                  key={stage.key}
                   className={cn(
-                    "flex items-center gap-3 border-b border-ink-black/10 px-4 py-3 transition-colors",
+                    "flex items-stretch border-b border-ink-black/10 transition-colors",
                     isActive && "bg-ink-black/5",
                   )}
                 >
                   <button
                     type="button"
-                    onClick={() => navigate(`/project/${encodeURIComponent(name)}/${route}`)}
-                    className={cn(
-                      "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-[2px] border-ink-black",
-                      stageBadgeStyle(info.status),
-                      info.status === "running" && "animate-pulse",
-                    )}
+                    onClick={() => navigate(`/project/${encodeURIComponent(name)}/${stage.route}`)}
+                    className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left hover:bg-ink-black/5"
                   >
-                    <Icon name={stageIcon(info.status)} size={14} />
+                    <div
+                      className={cn(
+                        "flex h-8 w-8 shrink-0 items-center justify-center border-[2px] border-ink-black",
+                        stageBadgeStyle(stage.status),
+                        stage.status === "running" && "animate-pulse",
+                      )}
+                    >
+                      <Icon name={stageIcon(stage.status)} size={14} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-body text-[0.85rem] font-medium">
+                        {stage.label}
+                      </div>
+                      <div className={cn(
+                        "font-meta text-[0.55rem] tracking-[0.14em]",
+                        stage.status === "complete" ? "text-archive-sage" :
+                        stage.status === "running" ? "text-narrator-gold animate-pulse" :
+                        stage.status === "awaiting_review" || stage.status === "failed" ? "text-hero-red" :
+                        "text-ink-black/45"
+                      )}>
+                        {statusName(stage.status)}
+                        {stage.itemsTotal > 0 && ` · ${stage.itemsDone}/${stage.itemsTotal}`}
+                        {stage.failedCount > 0 && ` · ${stage.failedCount} FAILED`}
+                      </div>
+                      {stage.activeStyleLabel && (
+                        <div className="mt-0.5 truncate font-meta text-[0.5rem] tracking-[0.12em] text-archive-sage">
+                          ACTIVE: {stage.activeStyleLabel.toUpperCase()}
+                        </div>
+                      )}
+                      {stage.error && (
+                        <div className="mt-0.5 truncate font-meta text-[0.5rem] tracking-[0.12em] text-hero-red">
+                          {stage.error}
+                        </div>
+                      )}
+                      {stage.itemsTotal > 0 && (
+                        <div className="mt-1 h-1.5 w-full overflow-hidden border border-ink-black/35 bg-pulp-paper">
+                          <div
+                            className={cn(
+                              "h-full transition-all duration-300",
+                              stage.status === "failed" ? "bg-hero-red" : "bg-archive-sage",
+                            )}
+                            style={{ width: `${Math.max(0, Math.min(100, (stage.itemsDone / stage.itemsTotal) * 100))}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
                   </button>
-                  <div className="min-w-0 flex-1">
-                    <div className="font-body text-[0.9rem] font-medium truncate">
-                      {stageName(stage)}
-                    </div>
-                    <div className={cn(
-                      "font-meta text-[0.6rem] tracking-[0.14em]",
-                      info.status === "complete" ? "text-archive-sage" :
-                      info.status === "running" ? "text-narrator-gold animate-pulse" :
-                      info.status === "awaiting_review" || info.status === "failed" ? "text-hero-red" :
-                      "text-ink-black/45"
-                    )}>
-                      {statusName(info.status)}
-                      {info.status === "running" && info.items_total > 0 && ` (${info.items_done}/${info.items_total})`}
-                    </div>
-                  </div>
-                  {needsApproval && (
+                  {stage.needsApproval && (
                     <Button
-                      onClick={() => handleApprove(stage)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (stage.key !== "style") handleApprove(stage.key);
+                      }}
                       disabled={approveStage.isPending}
                       size="xs"
-                      className="shrink-0"
+                      className="mr-3 self-center shrink-0"
                     >
                       {t("APPROVE")}
                     </Button>
@@ -475,8 +477,8 @@ export function SideNav() {
           <Button
             onClick={handleContinue}
             disabled={isRunning || approveStage.isPending || runPipeline.isPending}
-            size="lg"
-            className="w-full"
+            size="sm"
+            className="w-full py-2"
           >
             {isRunning ? (
               <>
@@ -491,13 +493,24 @@ export function SideNav() {
             )}
           </Button>
         )}
+        <div className="mt-2 flex items-center gap-2">
+          <div className="h-1.5 flex-1 overflow-hidden border border-ink-black bg-pulp-paper">
+            <div
+              className="h-full bg-archive-sage transition-all duration-300"
+              style={{ width: `${(completedCount / Math.max(1, pipelineStages.length)) * 100}%` }}
+            />
+          </div>
+          <span className="font-meta text-[0.5rem] tracking-[0.14em] text-ink-black/55">
+            {completedCount}/{pipelineStages.length}
+          </span>
+        </div>
       </div>
 
       <div className="border-t-[2px] border-ink-black py-2">
         <Link
           to={settingsPath}
           className={cn(
-            "flex items-center gap-3 px-4 py-2.5 text-[0.85rem] transition-colors",
+            "flex items-center gap-2.5 px-4 py-2 text-[0.78rem] transition-colors",
             isSettingsActive
               ? "bg-hero-red text-bristol"
               : "text-ink-black/78 hover:bg-ink-black/5",
@@ -510,7 +523,7 @@ export function SideNav() {
           href="https://github.com/anthropics/canary/issues"
           target="_blank"
           rel="noreferrer"
-          className="flex items-center gap-3 px-4 py-2.5 text-[0.85rem] text-ink-black/78 hover:bg-ink-black/5"
+          className="flex items-center gap-2.5 px-4 py-2 text-[0.78rem] text-ink-black/78 hover:bg-ink-black/5"
         >
           <Icon name="support" size={14} />
           {t("Support")}

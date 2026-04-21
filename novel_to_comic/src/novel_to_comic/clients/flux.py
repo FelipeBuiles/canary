@@ -11,8 +11,15 @@ import io
 import logging
 import time
 from pathlib import Path
+from typing import Any
 
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import (
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+    wait_random_exponential,
+)
 from together import AsyncTogether
 
 from novel_to_comic.config import Config
@@ -61,9 +68,69 @@ def _encode_image_sync(path: Path) -> str:
         return base64.b64encode(f.read()).decode()
 
 
+def _exception_chain(exc: BaseException) -> list[BaseException]:
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    node: BaseException | None = exc
+    while node is not None and id(node) not in seen:
+        seen.add(id(node))
+        chain.append(node)
+        node = getattr(node, "__cause__", None) or getattr(node, "__context__", None)
+    return chain
+
+
+def is_rate_limited_error(exc: BaseException) -> bool:
+    """Return True when an exception chain indicates provider throttling/quota."""
+    tokens = ("429", "resource_exhausted", "rate limit", "quota")
+    for node in _exception_chain(exc):
+        code = getattr(node, "code", None)
+        status = getattr(node, "status", None)
+        if code == 429:
+            return True
+        if isinstance(status, str) and status.upper() == "RESOURCE_EXHAUSTED":
+            return True
+        text = str(node).lower()
+        if any(tok in text for tok in tokens):
+            return True
+        # Some SDK errors put structured details on .args / .response
+        args_text = " ".join(str(a).lower() for a in getattr(node, "args", ()) if a is not None)
+        if any(tok in args_text for tok in tokens):
+            return True
+        response: Any = getattr(node, "response", None)
+        if response is not None:
+            resp_text = str(response).lower()
+            if any(tok in resp_text for tok in tokens):
+                return True
+    return False
+
+
+def _is_retryable_gemini_image_error(exc: BaseException) -> bool:
+    # Always retry on explicit quota/rate-limit failures.
+    if is_rate_limited_error(exc):
+        return True
+    # Retry common transient transport/server failures.
+    transient_tokens = (
+        "deadline exceeded",
+        "timed out",
+        "timeout",
+        "temporarily unavailable",
+        "internal server error",
+        "service unavailable",
+        "connection reset",
+        "connecterror",
+    )
+    chain_text = " ".join(str(node).lower() for node in _exception_chain(exc))
+    return any(tok in chain_text for tok in transient_tokens)
+
+
 # ── Gemini native implementation ──────────────────────────────────────────────
 
-@retry(wait=wait_exponential(min=5, max=120), stop=stop_after_attempt(4))
+@retry(
+    wait=wait_random_exponential(multiplier=4, max=180),
+    stop=stop_after_attempt(8),
+    retry=retry_if_exception(_is_retryable_gemini_image_error),
+    reraise=True,
+)
 async def _generate_gemini_image(
     config: Config,
     prompt: str,

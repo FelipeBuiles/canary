@@ -40,6 +40,7 @@ export interface StageInfo {
   error: string | null;
   started_at: string | null;
   finished_at: string | null;
+  stale: boolean;
 }
 
 export interface ProjectSummary {
@@ -197,6 +198,7 @@ export interface ScreenplayBeat {
   character_id: string | null;
   content: string;
   direction: string | null;
+  transition_type: string | null;
 }
 
 export interface Screenplay {
@@ -220,6 +222,7 @@ export interface PanelBreakdown {
   mood: string;
   dialogue: DialogueLine[];
   sfx: string | null;
+  transition_type: string | null;
   transition_note: string | null;
 }
 
@@ -291,6 +294,8 @@ export interface PagePanel {
   panel_number: number;
   bubbles: Bubble[];
   sfx: Sfx | null;
+  image_offset_x: number | null;
+  image_offset_y: number | null;
   grid_column: string | null;
   grid_row: string | null;
 }
@@ -324,5 +329,5 @@ export interface PanelSceneSummary {
 export interface ImageStatus {
   scene_id: string;
   panel_number: number;
-  status: "done" | "failed" | "pending";
+  status: "done" | "failed" | "pending" | "queued" | "running" | "stale";
 }

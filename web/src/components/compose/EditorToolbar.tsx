@@ -12,6 +12,10 @@ interface EditorToolbarProps {
   canUndo: boolean;
   canRedo: boolean;
   isExporting: boolean;
+  zoomPercent: number;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onZoomReset: () => void;
 }
 
 export function EditorToolbar({
@@ -25,6 +29,10 @@ export function EditorToolbar({
   canUndo,
   canRedo,
   isExporting,
+  zoomPercent,
+  onZoomIn,
+  onZoomOut,
+  onZoomReset,
 }: EditorToolbarProps) {
   const { t } = useI18n();
   return (
@@ -58,6 +66,20 @@ export function EditorToolbar({
       <Button size="sm" variant="outline" onClick={onRedo} disabled={!canRedo}>
         {t("REDO")}
       </Button>
+
+      <div className="mx-1 h-6 w-px bg-ink-black/20" />
+
+      <div className="flex items-center gap-1">
+        <Button size="sm" variant="outline" onClick={onZoomOut} aria-label={t("ZOOM OUT")}>
+          −
+        </Button>
+        <Button size="sm" variant="outline" onClick={onZoomReset}>
+          {Math.round(zoomPercent)}%
+        </Button>
+        <Button size="sm" variant="outline" onClick={onZoomIn} aria-label={t("ZOOM IN")}>
+          +
+        </Button>
+      </div>
 
       <div className="ml-auto flex items-center gap-2">
         <Button

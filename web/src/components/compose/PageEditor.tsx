@@ -7,6 +7,8 @@ import { exceedsThreshold } from "./coordinates";
 interface PageEditorProps {
   page: ComicPage;
   project: string;
+  zoom: number;
+  onZoomChange: (zoom: number) => void;
   selectedId: string | null;
   selectedType: "bubble" | "sfx" | null;
   onSelect: (panelId: string, type: "bubble" | "sfx", elementId: string) => void;
@@ -48,6 +50,8 @@ function closest(el: HTMLElement | null, sel: string): HTMLElement | null {
 export function PageEditor({
   page,
   project,
+  zoom,
+  onZoomChange,
   selectedId,
   selectedType,
   onSelect,
@@ -196,7 +200,7 @@ export function PageEditor({
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
     >
-      <ScaledContainer onScaleChange={handleScaleChange}>
+      <ScaledContainer zoom={zoom} onZoomChange={onZoomChange} onScaleChange={handleScaleChange}>
         <ComicPageCanvas
           page={displayPage}
           selectedElementId={selectedId}

@@ -106,6 +106,9 @@ class PagePanel(BaseModel):
     panel_number: int
     bubbles: list[Bubble] = Field(default_factory=list)
     sfx: Sfx | None = None
+    # Optional panel image offset in px from the default object-position.
+    image_offset_x: float | None = None
+    image_offset_y: float | None = None
     # CSS Grid placement — None = CSS nth-child rules handle it automatically.
     # The web editor sets these when the user rearranges panels on a page.
     grid_column: str | None = None              # e.g. "1 / 3"

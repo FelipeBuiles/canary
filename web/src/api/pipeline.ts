@@ -4,9 +4,13 @@ import type { GenerationJob } from "../types/api";
 export function runPipeline(
   project: string,
   stage?: string,
+  rerun?: boolean,
 ): Promise<{ status: string; stage: string }> {
-  const params = stage ? `?stage=${encodeURIComponent(stage)}` : "";
-  return apiFetch(`/projects/${encodeURIComponent(project)}/run${params}`, {
+  const params = new URLSearchParams();
+  if (stage) params.set("stage", stage);
+  if (rerun) params.set("rerun", "1");
+  const query = params.toString();
+  return apiFetch(`/projects/${encodeURIComponent(project)}/run${query ? `?${query}` : ""}`, {
     method: "POST",
   });
 }
@@ -50,6 +54,12 @@ export function regenPlate(
     `/projects/${encodeURIComponent(project)}/regen-plate?loc_id=${encodeURIComponent(locId)}`,
     { method: "POST" },
   );
+}
+
+export function resetStale(project: string): Promise<{ status: string; reset: string[]; message: string }> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/reset-stale`, {
+    method: "POST",
+  });
 }
 
 export function approveStage(

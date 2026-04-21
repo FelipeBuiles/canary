@@ -37,6 +37,7 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app.state.projects_dir = projects_dir
     app.state.event_queues: dict[str, asyncio.Queue] = {}
     app.state.running_tasks: dict[str, asyncio.Task] = {}
+    app.state.style_tasks: dict[str, asyncio.Task] = {}
     app.state.generation_semaphore = asyncio.Semaphore(1)
     app.state.light_generation_semaphore = asyncio.Semaphore(5)
     app.state.light_generation_semaphores: dict[int, asyncio.Semaphore] = {
@@ -45,6 +46,10 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app.state.generation_queue: asyncio.Queue = asyncio.Queue()
     app.state.generation_jobs = {}
     app.state.generation_job_sequence = 1
+    app.state.generation_job_timeout_seconds = max(
+        1,
+        int(os.environ.get("CANARY_GENERATION_JOB_TIMEOUT_SECONDS", "900")),
+    )
 
     # CORS for Vite dev server
     if dev:
