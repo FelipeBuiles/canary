@@ -34,6 +34,41 @@ STAGE_MAP = {
     "assemble":   "s7_assemble",
 }
 
+_INIT_IMAGE_MODEL_CHOICES: list[tuple[str, str]] = [
+    ("gemini-3-pro-image-preview", "Gemini 3 Pro Image"),
+    ("gemini-2.5-flash-image", "Gemini 2.5 Flash Image"),
+    ("gemini-2.5-pro-image", "Gemini 2.5 Pro Image"),
+    ("gemini-3.1-flash-image-preview", "Gemini 3.1 Flash Image"),
+    ("gemini-3.1-pro-image-preview", "Gemini 3.1 Pro Image"),
+    ("gpt-image-1.5", "OpenAI GPT Image 1.5"),
+    ("gpt-image-2", "OpenAI GPT Image 2"),
+]
+
+
+def _choose_image_model(default_model: str) -> str:
+    """Interactive image model picker for project init."""
+    console.print("\n[bold]Select image generation model[/bold]")
+    default_idx = 0
+    for i, (model_id, label) in enumerate(_INIT_IMAGE_MODEL_CHOICES, 1):
+        default_tag = " [green](default)[/green]" if model_id == default_model else ""
+        if model_id == default_model:
+            default_idx = i
+        console.print(f"  [cyan]{i}[/cyan]. {label} — [dim]{model_id}[/dim]{default_tag}")
+    console.print("  [cyan]0[/cyan]. Custom model id")
+
+    choice = click.prompt("Image model", default=str(default_idx or 0), show_default=True)
+    try:
+        idx = int(str(choice).strip())
+    except ValueError:
+        idx = default_idx or 0
+
+    if idx == 0:
+        return click.prompt("Custom image model id", default=default_model, show_default=True).strip()
+    if 1 <= idx <= len(_INIT_IMAGE_MODEL_CHOICES):
+        return _INIT_IMAGE_MODEL_CHOICES[idx - 1][0]
+    return default_model
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _resolve_project(project: str) -> Path:
@@ -52,6 +87,9 @@ def _load(project: str):
     project_dir = _resolve_project(project)
     try:
         config, env_file = load_config(project_dir)
+        from novel_to_comic.server.telemetry import configure_telemetry
+
+        configure_telemetry()
         state = load_state(project_dir)
     except FileNotFoundError as e:
         raise click.ClickException(str(e))
@@ -119,7 +157,8 @@ def cli():
 @cli.command()
 @click.argument("input_path", type=click.Path(exists=True))
 @click.option("--name", default=None, help="Project name (default: input filename stem)")
-def init(input_path: str, name: str | None):
+@click.option("--image-model", default=None, help="Image model id to set in config.yaml")
+def init(input_path: str, name: str | None, image_model: str | None):
     """Initialise the current directory as a comic project.
 
     INPUT_PATH is the path to your novel file (.txt or .epub).
@@ -148,6 +187,8 @@ def init(input_path: str, name: str | None):
     shutil.copy2(src, dst)
 
     config = Config()
+    selected_image_model = (image_model or "").strip() or _choose_image_model(config.image_model)
+    config.image_model = selected_image_model
     save_config(config, project_dir)
     state = create_initial_state(project_name, str(dst))
     save_state(state, project_dir)
@@ -174,6 +215,7 @@ def init(input_path: str, name: str | None):
     console.print(f"  3. [bold]pipeline run extract[/bold]")
     console.print(f"  4. [bold]pipeline style[/bold]              ← set visual identity before images")
     console.print(f"  5. [bold]pipeline continue --yes[/bold]     ← run remaining stages automatically")
+    console.print(f"\n[dim]Image model set to:[/dim] {config.image_model}")
 
 
 # ── run (single stage or all) ─────────────────────────────────────────────────
@@ -570,19 +612,9 @@ async def _generate_style_sample(
 ) -> None:
     """Generate one sample panel image to preview a style template."""
     from novel_to_comic.clients import flux
+    from novel_to_comic.prompting import build_style_sample_prompt
 
-    first_char = bible.characters[0] if bible.characters else None
-    first_loc  = bible.locations[0]  if bible.locations  else None
-
-    char_desc = (first_char.visual_anchor or first_char.name)[:200] if first_char else "a mysterious cloaked figure"
-    loc_desc  = (first_loc.visual_anchor  or first_loc.name )[:200] if first_loc  else "a dramatic atmospheric setting"
-
-    prompt = (
-        f"{config.style_template}\n\n"
-        f"{char_desc}. Set in: {loc_desc}. "
-        f"Medium shot, eye-level camera, dramatic lighting. "
-        f"No text. No speech bubbles. No captions. Single panel only."
-    )
+    prompt = build_style_sample_prompt(config, bible)
 
     sample_path.parent.mkdir(exist_ok=True)
     try:
@@ -599,6 +631,8 @@ async def _generate_style_samples_parallel(
     suggestions: list[dict],
 ) -> None:
     """Generate sample images for the given suggestion indices."""
+    from novel_to_comic.clients.flux import _is_gemini_native
+
     samples_dir = project_dir / "samples"
     samples_dir.mkdir(exist_ok=True)
 
@@ -609,7 +643,7 @@ async def _generate_style_samples_parallel(
         sample_path = samples_dir / f"style_{idx}.png"
         await _generate_style_sample(sample_config, bible, project_dir, sample_path)
 
-    if config.effective_image_model().strip() and "/" not in config.effective_image_model():
+    if _is_gemini_native(config.effective_image_model()):
         for i in indices:
             await _one(i)
         return
@@ -899,6 +933,9 @@ def serve(host: str, port: int, projects_dir: str, dev: bool):
     from novel_to_comic.server.logging import configure_logging
 
     p = Path(projects_dir).resolve()
+    # Ensure .env is loaded (walking up from --projects-dir) before logging/
+    # telemetry initialization so CANARY_OTEL_ENABLED and OTEL_* vars are visible.
+    load_config(p)
     configure_logging()
     app = create_app(projects_dir=p, dev=dev)
     console.print(f"[bold]Canary dashboard[/bold] → http://{host}:{port}")

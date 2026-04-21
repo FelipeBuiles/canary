@@ -1,12 +1,14 @@
 """Style suggestion, sample generation, and active style selection."""
 
 import asyncio
+import hashlib
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from novel_to_comic.config import Config, load_config, save_config
 from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.prompting import build_style_sample_prompt
 
 from ..deps import get_project
 from ..generation_jobs import (
@@ -18,6 +20,27 @@ from ..generation_jobs import (
 )
 
 router = APIRouter()
+
+
+def _sample_meta_path(sample_path):
+    return sample_path.with_suffix(f"{sample_path.suffix}.meta.json")
+
+
+def _style_sample_meta(config: Config, prompt: str) -> dict:
+    return {
+        "version": 1,
+        "kind": "style_sample",
+        "prompt": prompt,
+        "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        "parameters": {
+            "image_model": config.effective_image_model(),
+            "width": config.image_width,
+            "height": config.image_height,
+            "steps": config.effective_image_steps(),
+            "guidance_scale": config.flux_guidance_scale,
+            "style_template": config.style_template,
+        },
+    }
 
 
 def _load_suggestions(project_dir):
@@ -86,27 +109,17 @@ async def _suggest_styles(config: Config, bible, existing_labels: list[str] | No
 
 async def _generate_style_sample(config, bible, project_dir, sample_path):
     from novel_to_comic.clients import flux
-
-    first_char = bible.characters[0] if bible.characters else None
-    first_loc = bible.locations[0] if bible.locations else None
-
-    char_desc = (first_char.visual_anchor or first_char.name)[:200] if first_char else "a mysterious cloaked figure"
-    loc_desc = (first_loc.visual_anchor or first_loc.name)[:200] if first_loc else "a dramatic atmospheric setting"
-
-    prompt = (
-        f"{config.style_template}\n\n"
-        f"{char_desc}. Set in: {loc_desc}. "
-        f"Medium shot, eye-level camera, dramatic lighting. "
-        f"Portrait 4:5 aspect ratio. Fill the entire frame edge to edge — "
-        f"no letterboxing, no pillarboxing, no border margins. "
-        f"No text. No speech bubbles. No captions. Single panel only."
-    )
+    prompt = build_style_sample_prompt(config, bible)
+    meta = _style_sample_meta(config, prompt)
 
     sample_path.parent.mkdir(exist_ok=True)
     await flux.generate_image(config=config, prompt=prompt, output_path=sample_path)
+    _sample_meta_path(sample_path).write_text(json.dumps(meta, indent=2, sort_keys=True))
 
 
 async def _generate_style_samples_parallel(config, bible, project_dir, indices, suggestions):
+    from novel_to_comic.clients.flux import _is_gemini_native
+
     samples_dir = project_dir / "samples"
     samples_dir.mkdir(exist_ok=True)
 
@@ -117,7 +130,7 @@ async def _generate_style_samples_parallel(config, bible, project_dir, indices, 
         sample_path = samples_dir / f"style_{idx}.png"
         await _generate_style_sample(sample_config, bible, project_dir, sample_path)
 
-    if config.effective_image_model().strip() and "/" not in config.effective_image_model():
+    if _is_gemini_native(config.effective_image_model()):
         for i in indices:
             await _one(i)
         return

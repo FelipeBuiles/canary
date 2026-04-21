@@ -11,14 +11,24 @@ from fastapi import Request, Response
 from rich.console import Console
 from rich.logging import RichHandler
 
+from novel_to_comic.server.telemetry import configure_telemetry
+
 
 api_logger = logging.getLogger("canary.api")
+
+
+def _bool_env(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def configure_logging() -> None:
     """Configure concise terminal logs for `pipeline serve`."""
     level_name = os.environ.get("CANARY_LOG_LEVEL", "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
+    show_time = _bool_env("CANARY_LOG_SHOW_TIME", default=False)
     logging.basicConfig(
         level=level,
         format="%(message)s",
@@ -29,7 +39,7 @@ def configure_logging() -> None:
                 rich_tracebacks=True,
                 show_path=False,
                 show_level=True,
-                show_time=True,
+                show_time=show_time,
             )
         ],
         force=True,
@@ -38,6 +48,7 @@ def configure_logging() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("google_genai").setLevel(logging.WARNING)
     logging.getLogger("google_genai._api_client").setLevel(logging.WARNING)
+    configure_telemetry()
 
 
 def _should_log_request(request: Request, status_code: int, elapsed_ms: float) -> bool:

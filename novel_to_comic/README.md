@@ -154,6 +154,31 @@ max_concurrent_requests: 5
 cost_limit_usd: 50.0          # Optional hard cap
 ```
 
+### 3. Optional: send traces to Grafana Cloud (free tier compatible)
+
+Canary now emits OpenTelemetry spans for outbound model/API calls (Gemini, Together, OpenAI, Anthropic) with redacted structured parameters.
+
+Install web + OTEL extras:
+
+```bash
+pip install -e '.[web,otel]'
+```
+
+Set OTLP environment variables from your Grafana Cloud OpenTelemetry connection tile:
+
+```bash
+export CANARY_OTEL_ENABLED=1
+export OTEL_SERVICE_NAME=canary
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+export OTEL_EXPORTER_OTLP_ENDPOINT='https://<your-otlp-endpoint>'
+export OTEL_EXPORTER_OTLP_HEADERS='Authorization=Basic%20<base64(instance_id:token)>'
+```
+
+Notes:
+- For Python, use `Basic%20` (not `Basic `) in `OTEL_EXPORTER_OTLP_HEADERS`.
+- Keep `CANARY_LOG_INCLUDE_PROMPTS` unset in production to avoid logging prompt text.
+- Console timestamp noise is disabled by default in `pipeline serve`; re-enable with `CANARY_LOG_SHOW_TIME=1`.
+
 ---
 
 ## Usage

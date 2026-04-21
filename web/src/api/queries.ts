@@ -14,6 +14,7 @@ import {
   getPromptsForScene,
   updatePrompt,
   listImages,
+  getImageGenerationMeta,
 } from "./stages";
 import { listPages, getPage, updatePage, replacePage, reflowPages, generatePageStyleVars, translatePageBubbles, triggerExport } from "./pages";
 import { getStyles, suggestStyles, generateStyleSamples, setActiveStyle } from "./styles";
@@ -275,6 +276,18 @@ export function useUpdatePrompt() {
     onSuccess: (_data, { project, sceneId }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "prompts", sceneId] });
     },
+  });
+}
+
+export function useImageGenerationMeta(
+  project: string | undefined,
+  relativeImagePath: string | undefined,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["project", project, "image-generation-meta", relativeImagePath],
+    queryFn: () => getImageGenerationMeta(project!, relativeImagePath!),
+    enabled: !!project && !!relativeImagePath && enabled,
   });
 }
 

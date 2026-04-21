@@ -7,6 +7,7 @@ import type {
   PanelBreakdown,
   ImagePrompt,
   ImageStatus,
+  ImageGenerationMeta,
 } from "../types/api";
 
 // ── Story Bible ──────────────────────────────────────────────────────────────
@@ -99,4 +100,22 @@ export function updatePrompt(
 
 export function listImages(project: string): Promise<ImageStatus[]> {
   return apiFetch(`/projects/${encodeURIComponent(project)}/images`);
+}
+
+export async function getImageGenerationMeta(
+  project: string,
+  relativeImagePath: string,
+): Promise<ImageGenerationMeta | null> {
+  const encodedPath = `${relativeImagePath}.meta.json`
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  try {
+    return await apiFetch(`/projects/${encodeURIComponent(project)}/files/${encodedPath}`);
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("API 404:")) {
+      return null;
+    }
+    throw err;
+  }
 }

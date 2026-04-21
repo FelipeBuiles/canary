@@ -3,12 +3,12 @@
 import json
 import logging
 import os
-import time
 
 from google import genai
 from google.genai import types
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from novel_to_comic.clients.api_logging import log_call_end, log_call_start, payload_summary
 from novel_to_comic.config import Config
 
 logger = logging.getLogger("canary.google")
@@ -66,11 +66,19 @@ async def generate_json(
     max_output_tokens: int | None = None,
 ) -> dict:
     """Call Gemini async and parse the JSON response."""
-    started = time.perf_counter()
-    logger.info(
-        "[bold cyan]Gemini[/] task=json model=[bold]%s[/] provider=[green]%s[/]",
-        model,
-        describe_provider(config),
+    call_id, started = log_call_start(
+        logger,
+        provider="gemini",
+        operation="models.generate_content",
+        params={
+            "model": model,
+            "task": "json",
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+            "provider_mode": describe_provider(config),
+            "response_mime_type": "application/json",
+        },
+        payload=payload_summary(system_prompt=system_prompt, user_content=user_content),
     )
     client = get_client(config)
     gen_config = types.GenerateContentConfig(
@@ -80,19 +88,40 @@ async def generate_json(
     )
     if max_output_tokens is not None:
         gen_config.max_output_tokens = max_output_tokens
-    response = await client.aio.models.generate_content(
-        model=model,
-        contents=user_content,
-        config=gen_config,
-    )
-    if not response.text:
-        raise ValueError(f"Empty response from Gemini ({model})")
-    logger.info(
-        "[bold green]Gemini done[/] task=json model=[bold]%s[/] elapsed=[bold]%.1fs[/]",
-        model,
-        time.perf_counter() - started,
-    )
-    return json.loads(response.text)
+    try:
+        response = await client.aio.models.generate_content(
+            model=model,
+            contents=user_content,
+            config=gen_config,
+        )
+        if not response.text:
+            raise ValueError(f"Empty response from Gemini ({model})")
+        parsed = json.loads(response.text)
+        log_call_end(
+            logger,
+            call_id=call_id,
+            started=started,
+            provider="gemini",
+            operation="models.generate_content",
+            ok=True,
+            result={
+                "response_chars": len(response.text),
+                "candidates": len(getattr(response, "candidates", []) or []),
+                "response_type": type(parsed).__name__,
+            },
+        )
+        return parsed
+    except Exception as e:
+        log_call_end(
+            logger,
+            call_id=call_id,
+            started=started,
+            provider="gemini",
+            operation="models.generate_content",
+            ok=False,
+            error=e,
+        )
+        raise
 
 
 @retry(wait=wait_exponential(min=2, max=60), stop=stop_after_attempt(3))
@@ -104,26 +133,51 @@ async def generate_text(
     temperature: float = 0.7,
 ) -> str:
     """Call Gemini async and return raw text response."""
-    started = time.perf_counter()
-    logger.info(
-        "[bold cyan]Gemini[/] task=text model=[bold]%s[/] provider=[green]%s[/]",
-        model,
-        describe_provider(config),
+    call_id, started = log_call_start(
+        logger,
+        provider="gemini",
+        operation="models.generate_content",
+        params={
+            "model": model,
+            "task": "text",
+            "temperature": temperature,
+            "provider_mode": describe_provider(config),
+        },
+        payload=payload_summary(system_prompt=system_prompt, user_content=user_content),
     )
     client = get_client(config)
-    response = await client.aio.models.generate_content(
-        model=model,
-        contents=user_content,
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            temperature=temperature,
-        ),
-    )
-    if not response.text:
-        raise ValueError(f"Empty response from Gemini ({model})")
-    logger.info(
-        "[bold green]Gemini done[/] task=text model=[bold]%s[/] elapsed=[bold]%.1fs[/]",
-        model,
-        time.perf_counter() - started,
-    )
-    return response.text
+    try:
+        response = await client.aio.models.generate_content(
+            model=model,
+            contents=user_content,
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                temperature=temperature,
+            ),
+        )
+        if not response.text:
+            raise ValueError(f"Empty response from Gemini ({model})")
+        log_call_end(
+            logger,
+            call_id=call_id,
+            started=started,
+            provider="gemini",
+            operation="models.generate_content",
+            ok=True,
+            result={
+                "response_chars": len(response.text),
+                "candidates": len(getattr(response, "candidates", []) or []),
+            },
+        )
+        return response.text
+    except Exception as e:
+        log_call_end(
+            logger,
+            call_id=call_id,
+            started=started,
+            provider="gemini",
+            operation="models.generate_content",
+            ok=False,
+            error=e,
+        )
+        raise
