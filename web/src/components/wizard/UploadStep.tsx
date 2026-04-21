@@ -125,10 +125,12 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
               {t("PROJECT NAME")}
             </label>
             <input
+              name="projectName"
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="My Novel"
+              placeholder="e.g. The Last Question"
+              autoComplete="off"
               className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm font-body focus:outline-none focus:ring-2 focus:ring-hero-red"
               required
             />
@@ -138,7 +140,8 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
             <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
               {t("NOVEL FILE")}
             </label>
-            <div
+            <button
+              type="button"
               onClick={() => fileRef.current?.click()}
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => {
@@ -146,7 +149,8 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
                 const dropped = e.dataTransfer.files[0];
                 if (dropped) setFile(dropped);
               }}
-              className="flex min-h-[120px] cursor-pointer flex-col items-center justify-center border-[2px] border-dashed border-ink-black bg-pulp-paper px-4 py-6 hover:bg-ghost-shadow/30 transition-colors"
+              aria-label={t("DROP FILE OR CLICK TO BROWSE")}
+              className="flex min-h-[120px] w-full cursor-pointer flex-col items-center justify-center border-[2px] border-dashed border-ink-black bg-pulp-paper px-4 py-6 hover:bg-ghost-shadow/30 transition-colors"
             >
               {file ? (
                 <>
@@ -173,9 +177,10 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
                   </div>
                 </>
               )}
-            </div>
+            </button>
             <input
               ref={fileRef}
+              name="novelFile"
               type="file"
               accept=".txt,.epub,.pdf"
               className="hidden"
@@ -191,6 +196,7 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
               {t("OUTPUT LANGUAGE")}
             </label>
             <select
+              name="targetLanguage"
               value={targetLanguage}
               onChange={(e) => setTargetLanguage(e.target.value as LanguageCode)}
               className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
@@ -222,6 +228,7 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
                   {t("COMIC THEME")}
                 </label>
                 <select
+                  name="comicTheme"
                   value={theme}
                   onChange={(e) => setTheme(e.target.value)}
                   className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
@@ -239,6 +246,7 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
                   {t("IMAGE MODEL")}
                 </label>
                 <select
+                  name="imageModel"
                   value={imageModel}
                   onChange={(e) => setImageModel(e.target.value)}
                   className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
@@ -259,6 +267,7 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
                 {t("QUALITY PRESET")}
               </label>
               <select
+                name="renderPreset"
                 value={renderPreset}
                 onChange={(e) => setRenderPreset(e.target.value as RenderPreset)}
                 className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
@@ -276,6 +285,7 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
                 {t("STYLE TEMPLATE")}
               </label>
               <textarea
+                name="styleTemplate"
                 value={styleTemplate}
                 onChange={(e) => setStyleTemplate(e.target.value)}
                 placeholder={t("Leave empty for default style. Override to set visual identity of the comic.")}
@@ -299,25 +309,25 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
                     <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
                       {t("WIDTH")}
                     </label>
-                    <input type="number" value={imageWidth} onChange={(e) => setImageWidth(Number(e.target.value))} min={256} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
+                    <input name="imageWidth" type="number" value={imageWidth} onChange={(e) => setImageWidth(Number(e.target.value))} min={256} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
                   </div>
                   <div>
                     <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
                       {t("HEIGHT")}
                     </label>
-                    <input type="number" value={imageHeight} onChange={(e) => setImageHeight(Number(e.target.value))} min={256} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
+                    <input name="imageHeight" type="number" value={imageHeight} onChange={(e) => setImageHeight(Number(e.target.value))} min={256} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
                   </div>
                   <div>
                     <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
                       {t("PANELS/SCENE")}
                     </label>
-                    <input type="number" value={maxPanelsPerScene} onChange={(e) => setMaxPanelsPerScene(Number(e.target.value))} min={1} max={20} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
+                    <input name="maxPanelsPerScene" type="number" value={maxPanelsPerScene} onChange={(e) => setMaxPanelsPerScene(Number(e.target.value))} min={1} max={20} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
                   </div>
                   <div>
                     <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
                       {t("PANELS/PAGE")}
                     </label>
-                    <input type="number" value={maxPanelsPerPage} onChange={(e) => setMaxPanelsPerPage(Number(e.target.value))} min={1} max={12} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
+                    <input name="maxPanelsPerPage" type="number" value={maxPanelsPerPage} onChange={(e) => setMaxPanelsPerPage(Number(e.target.value))} min={1} max={12} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
                   </div>
                 </div>
 
@@ -326,7 +336,7 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
                     <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
                       {t("STEPS")}
                     </label>
-                    <input type="number" value={imageSteps} onChange={(e) => setImageSteps(Number(e.target.value))} min={1} max={50} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
+                    <input name="imageSteps" type="number" value={imageSteps} onChange={(e) => setImageSteps(Number(e.target.value))} min={1} max={50} className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm" />
                     <p className="mt-1 text-[0.72rem] leading-relaxed text-ink-black/45">
                       Used by diffusion-style models (Together): higher is usually cleaner but slower.
                     </p>
@@ -339,6 +349,7 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
                       IMAGE QUALITY (OPENAI)
                     </label>
                     <select
+                      name="imageQuality"
                       value={imageQuality}
                       onChange={(e) => setImageQuality(e.target.value as "auto" | "low" | "medium" | "high")}
                       className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
@@ -356,7 +367,7 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
         )}
 
         {error && (
-          <div className="mt-4 text-[0.82rem] text-hero-red">{error}</div>
+          <div className="mt-4 text-[0.82rem] text-hero-red" role="alert">{error}</div>
         )}
 
         <div className="mt-6">
