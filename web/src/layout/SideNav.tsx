@@ -212,6 +212,9 @@ export function SideNav() {
   const { stageName, statusName, t } = useI18n();
 
   const current = projects?.find((p) => p.name === name);
+  const currentCoverUrl = current?.has_cover
+    ? `/api/projects/${encodeURIComponent(current.name)}/files/cover/cover.png`
+    : null;
 
   const handleApprove = (stage: string) => {
     if (!name) return;
@@ -286,6 +289,70 @@ export function SideNav() {
     styleStatus !== "complete";
 
   const isRunning = status?.is_running ?? false;
+  const activeStageRoute = pipelineStages.find((stage) =>
+    location.pathname.endsWith(`/${stage.route}`)
+  )?.route ?? pipelineStages[0]?.route ?? "";
+
+  const mobileNav = (
+    <header className="flex shrink-0 items-center gap-2 border-b-[2px] border-ink-black bg-sidebar-tint px-3 py-2 md:hidden">
+      <Link
+        to="/"
+        className="flex min-w-0 flex-1 items-center gap-2"
+        aria-label={name ? t("BACK TO LIBRARY") : t("LIBRARY")}
+      >
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden border-[2px] border-ink-black bg-ink-black text-[0.62rem] text-bristol">
+          {currentCoverUrl ? (
+            <img src={currentCoverUrl} alt="" className="h-full w-full object-cover" />
+          ) : (
+            current?.project_name?.charAt(0) ?? "?"
+          )}
+        </span>
+        <span className="min-w-0">
+          <span className="block truncate font-display text-[0.88rem] font-bold uppercase leading-none tracking-[-0.02em]">
+            {current?.project_name ?? t("PROJECT INDEX")}
+          </span>
+          <span className="mt-1 block font-meta text-[0.48rem] tracking-[0.16em] text-ink-black/55">
+            NOVEL-TO-INK
+          </span>
+        </span>
+      </Link>
+
+      {name && pipelineStages.length > 0 ? (
+        <select
+          aria-label={t("PIPELINE STAGE")}
+          value={activeStageRoute}
+          onChange={(event) => {
+            navigate(`/project/${encodeURIComponent(name)}/${event.target.value}`);
+          }}
+          className="max-w-[9.5rem] border-[2px] border-ink-black bg-bristol px-2 py-2 font-meta text-[0.56rem] tracking-[0.12em]"
+        >
+          {pipelineStages.map((stage) => (
+            <option key={stage.key} value={stage.route}>
+              {stage.label}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <Link
+          to="/new"
+          className="border-[2px] border-ink-black bg-hero-red px-3 py-2 font-meta text-[0.56rem] tracking-[0.12em] text-bristol"
+        >
+          {t("NEW")}
+        </Link>
+      )}
+
+      <Link
+        to={settingsPath}
+        aria-label={t("Settings")}
+        className={cn(
+          "flex h-10 w-10 shrink-0 items-center justify-center border-[2px] border-ink-black",
+          isSettingsActive ? "bg-hero-red text-bristol" : "bg-bristol text-ink-black",
+        )}
+      >
+        <Icon name="settings" size={15} />
+      </Link>
+    </header>
+  );
 
   const continueButtonLabel = () => {
     if (isRunning) return t("RUNNING…");
@@ -319,12 +386,15 @@ export function SideNav() {
 
   if (collapsed) {
     return (
-      <aside className="flex h-screen w-[72px] shrink-0 flex-col border-r-[2px] border-ink-black bg-sidebar-tint">
+      <>
+      {mobileNav}
+      <aside className="hidden h-screen w-[72px] shrink-0 flex-col border-r-[2px] border-ink-black bg-sidebar-tint md:flex">
         <div className="flex flex-col items-center border-b-[2px] border-ink-black py-2">
           <button
             type="button"
             onClick={() => setCollapsed(false)}
             className="mb-2 flex h-8 w-8 items-center justify-center border-[2px] border-ink-black bg-bristol hover:bg-pulp-paper"
+            aria-label="Expand sidebar"
             title="Expand sidebar"
           >
             <Icon name="chevron-left" size={13} />
@@ -363,11 +433,14 @@ export function SideNav() {
           })}
         </nav>
       </aside>
+      </>
     );
   }
 
   return (
-    <aside className="flex h-screen w-[260px] shrink-0 flex-col border-r-[2px] border-ink-black bg-sidebar-tint">
+    <>
+    {mobileNav}
+    <aside className="hidden h-screen w-[260px] shrink-0 flex-col border-r-[2px] border-ink-black bg-sidebar-tint md:flex">
       <div className="flex items-stretch border-b-[2px] border-ink-black">
         <div className="min-w-0 flex-1">
           <ProjectSwitcher current={current} projects={projects} collapsed={false} />
@@ -376,6 +449,7 @@ export function SideNav() {
           type="button"
           onClick={() => setCollapsed(true)}
           className="border-l-[2px] border-ink-black bg-pulp-paper px-2 font-meta text-[0.48rem] tracking-[0.14em] text-ink-black/65 hover:bg-bristol"
+          aria-label="Collapse sidebar"
           title="Collapse sidebar"
         >
           <span className="[writing-mode:vertical-rl] rotate-180">COLLAPSE</span>
@@ -530,5 +604,6 @@ export function SideNav() {
         </a>
       </div>
     </aside>
+    </>
   );
 }

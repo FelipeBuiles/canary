@@ -534,6 +534,9 @@ def _font_face(
     p = FONTS_DIR / filename
     if not p.exists():
         return ""
+    header = p.read_bytes()[:4]
+    if header not in (b"\x00\x01\x00\x00", b"OTTO", b"wOFF", b"wOF2"):
+        return ""
     src = url_fn(filename) if url_fn is not None else p.as_uri()
     return (
         f"@font-face {{\n"

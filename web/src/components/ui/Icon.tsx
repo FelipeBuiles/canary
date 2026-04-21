@@ -17,6 +17,18 @@ import {
   Circle,
   AlertTriangle,
   Loader2,
+  MessageSquare,
+  Cloud,
+  Type,
+  Trash2,
+  Undo2,
+  Redo2,
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
+  FileDown,
+  Archive,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "../../lib/cn";
 
@@ -38,7 +50,19 @@ type IconName =
   | "play"
   | "circle"
   | "alert"
-  | "loader";
+  | "loader"
+  | "speech"
+  | "thought"
+  | "type"
+  | "trash"
+  | "undo"
+  | "redo"
+  | "zoom-in"
+  | "zoom-out"
+  | "reset"
+  | "pdf"
+  | "archive"
+  | "sparkles";
 
 interface IconProps {
   name: IconName;
@@ -65,6 +89,18 @@ const ICON_MAP = {
   circle: Circle,
   alert: AlertTriangle,
   loader: Loader2,
+  speech: MessageSquare,
+  thought: Cloud,
+  type: Type,
+  trash: Trash2,
+  undo: Undo2,
+  redo: Redo2,
+  "zoom-in": ZoomIn,
+  "zoom-out": ZoomOut,
+  reset: RotateCcw,
+  pdf: FileDown,
+  archive: Archive,
+  sparkles: Sparkles,
 };
 
 export function Icon({ name, size = 14, className }: IconProps) {
@@ -79,6 +115,8 @@ export function Icon({ name, size = 14, className }: IconProps) {
       size={size} 
       className={cn("shrink-0", className)} 
       strokeWidth={1.6}
+      aria-hidden="true"
+      focusable="false"
     />
   );
 }

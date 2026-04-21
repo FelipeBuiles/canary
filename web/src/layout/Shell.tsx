@@ -17,9 +17,9 @@ export function Shell() {
       >
         {t("SKIP TO CONTENT")}
       </a>
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 flex-col overflow-hidden md:flex-row">
         <SideNav />
-        <main id="main-content" className="flex-1 overflow-y-auto bg-pulp-paper">
+        <main id="main-content" className="min-w-0 flex-1 overflow-y-auto bg-pulp-paper">
           <div className={cn(
             "flex min-h-full w-full flex-col px-5 py-6",
             !isCompose && "mx-auto max-w-[1318px]"

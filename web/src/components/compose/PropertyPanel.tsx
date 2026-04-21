@@ -121,26 +121,21 @@ export function PropertyPanel({
 }: PropertyPanelProps) {
   const { t } = useI18n();
   const [imagePanelId, setImagePanelId] = useState(page.panels[0]?.id ?? "");
-
-  useEffect(() => {
-    if (!page.panels.length) {
-      setImagePanelId("");
-      return;
-    }
-    if (!page.panels.some((p) => p.id === imagePanelId)) {
-      setImagePanelId(page.panels[0].id);
-    }
-  }, [imagePanelId, page.panels]);
-
   const imagePanel = page.panels.find((p) => p.id === imagePanelId) ?? page.panels[0];
 
   if (!selection) {
     return (
-      <Card className="p-3 space-y-3">
-        <div className="font-meta text-[0.65rem] tracking-[0.18em] text-ink-black/50">
-          {t("PAGE PROPERTIES")}
+      <Card className="max-h-none overflow-hidden md:max-h-[calc(100vh-236px)]">
+        <div className="border-b-[2px] border-ink-black bg-pulp-paper px-3 py-2">
+          <div className="font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/45">
+            INSPECTOR
+          </div>
+          <div className="font-display text-[1rem] font-bold leading-none tracking-[-0.02em] text-ink-black">
+            {t("PAGE PROPERTIES")}
+          </div>
         </div>
 
+        <div className="max-h-none space-y-4 overflow-y-auto p-3 md:max-h-[calc(100vh-292px)]">
         <div>
           <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">{t("THEME")}</label>
           <select
@@ -317,6 +312,7 @@ export function PropertyPanel({
         <div className="text-[0.78rem] text-ink-black/40">
           {t("Click a bubble or SFX on the page to edit its properties.")}
         </div>
+        </div>
       </Card>
     );
   }
@@ -328,11 +324,17 @@ export function PropertyPanel({
     const isPinned = bubble.x != null && bubble.y != null;
 
     return (
-      <Card className="p-3 space-y-3">
-        <div className="font-meta text-[0.65rem] tracking-[0.18em] text-ink-black/50">
-          {t("BUBBLE")}
+      <Card className="max-h-none overflow-hidden md:max-h-[calc(100vh-236px)]">
+        <div className="border-b-[2px] border-ink-black bg-pulp-paper px-3 py-2">
+          <div className="font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/45">
+            INSPECTOR
+          </div>
+          <div className="font-display text-[1rem] font-bold leading-none tracking-[-0.02em] text-ink-black">
+            {t("BUBBLE")}
+          </div>
         </div>
 
+        <div className="max-h-none space-y-4 overflow-y-auto p-3 md:max-h-[calc(100vh-292px)]">
         <div>
           <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">{t("TEXT")}</label>
           <EditableText
@@ -512,6 +514,7 @@ export function PropertyPanel({
             DELETE BUBBLE
           </Button>
         </div>
+        </div>
       </Card>
     );
   }
@@ -523,11 +526,17 @@ export function PropertyPanel({
   const sfxPinned = sfx.x != null && sfx.y != null;
 
   return (
-    <Card className="p-3 space-y-3">
-      <div className="font-meta text-[0.65rem] tracking-[0.18em] text-ink-black/50">
-        SFX
+    <Card className="max-h-none overflow-hidden md:max-h-[calc(100vh-236px)]">
+      <div className="border-b-[2px] border-ink-black bg-pulp-paper px-3 py-2">
+        <div className="font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/45">
+          INSPECTOR
+        </div>
+        <div className="font-display text-[1rem] font-bold leading-none tracking-[-0.02em] text-ink-black">
+          SFX
+        </div>
       </div>
 
+      <div className="max-h-none space-y-4 overflow-y-auto p-3 md:max-h-[calc(100vh-292px)]">
       <div>
         <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">TEXT</label>
         <EditableText
@@ -586,6 +595,7 @@ export function PropertyPanel({
         >
           DELETE SFX
         </Button>
+      </div>
       </div>
     </Card>
   );

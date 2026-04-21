@@ -31,12 +31,14 @@ export function Button({
   size = "md",
   fullWidth = false,
   className,
+  type = "button",
   ...props
 }: ButtonProps) {
   return (
     <button
+      type={type}
       className={cn(
-        "inline-flex min-w-0 items-center justify-center text-center leading-tight",
+        "inline-flex min-w-0 cursor-pointer items-center justify-center gap-2 text-center leading-tight transition-[background-color,color,opacity,transform] duration-150 disabled:cursor-not-allowed",
         VARIANT_STYLES[variant],
         SIZE_STYLES[size],
         fullWidth && "w-full",

@@ -41,14 +41,9 @@ export function ComposeRoom() {
   const redoStack = useComposeStore((s) => s.redoStack);
   const clearHistory = useComposeStore((s) => s.clearHistory);
   const [zoom, setZoom] = useState(1);
-  const [outputLanguage, setOutputLanguage] = useState<"en" | "es" | "fr">("en");
+  const [outputLanguageOverride, setOutputLanguageOverride] = useState<"en" | "es" | "fr" | null>(null);
   const clampZoom = (value: number) => Math.max(0.5, Math.min(2.5, Number(value.toFixed(2))));
-
-  useEffect(() => {
-    if (projectConfig?.target_language) {
-      setOutputLanguage(projectConfig.target_language);
-    }
-  }, [projectConfig?.target_language]);
+  const outputLanguage = outputLanguageOverride ?? projectConfig?.target_language ?? "en";
 
   function setPage(p: number) {
     setSearchParams({ page: String(p) }, { replace: true });
@@ -117,7 +112,7 @@ export function ComposeRoom() {
   }
 
   function handleOutputLanguageChange(targetLanguage: "en" | "es" | "fr") {
-    setOutputLanguage(targetLanguage);
+    setOutputLanguageOverride(targetLanguage);
     if (!name) return;
     updateProjectConfigMut.mutate({
       project: name,
@@ -310,11 +305,12 @@ export function ComposeRoom() {
   const pageNumber = safePage ?? 1;
 
   return (
-    <div className="space-y-3 -mx-5 px-3 max-w-none">
+    <div className="-mx-5 -my-6 flex min-h-[calc(100vh-58px)] flex-col bg-sidebar-tint/55 md:-my-6">
       <ShowcaseHeader
         label="COMPOSE / PAGE EDITOR"
         title="PAGE EDITOR"
         lead="Position bubbles, edit dialogue, adjust layout, and export your comic."
+        className="mx-3 mt-3 shrink-0 md:mx-4 md:mt-4"
         actions={(
           <Button
             size="sm"
@@ -327,64 +323,78 @@ export function ComposeRoom() {
         )}
       />
 
-      <EditorToolbar
-        onAddBubble={handleAddBubble}
-        onAddSfx={handleAddSfx}
-        onDelete={() => {
-          if (selection) handleDeleteElement(selection.panelId, selection.type, selection.elementId);
-        }}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-        onExport={handleExport}
-        hasSelection={!!selection}
-        canUndo={undoStack.length > 0}
-        canRedo={redoStack.length > 0}
-        isExporting={exportMut.isPending}
-        zoomPercent={zoom * 100}
-        onZoomIn={handleZoomIn}
-        onZoomOut={handleZoomOut}
-        onZoomReset={handleZoomReset}
-      />
+      <div className="sticky top-0 z-20 mx-3 mt-3 shrink-0 md:mx-4">
+        <EditorToolbar
+          onAddBubble={handleAddBubble}
+          onAddSfx={handleAddSfx}
+          onDelete={() => {
+            if (selection) handleDeleteElement(selection.panelId, selection.type, selection.elementId);
+          }}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          onExport={handleExport}
+          hasSelection={!!selection}
+          canUndo={undoStack.length > 0}
+          canRedo={redoStack.length > 0}
+          isExporting={exportMut.isPending}
+          zoomPercent={zoom * 100}
+          onZoomIn={handleZoomIn}
+          onZoomOut={handleZoomOut}
+          onZoomReset={handleZoomReset}
+        />
+      </div>
 
-      <div className="flex gap-4 h-[calc(100vh-180px)]">
-        {/* Left: page navigator */}
-        <div className="w-[220px] flex-shrink-0 overflow-y-auto">
+      <div className="grid flex-1 min-h-0 gap-3 p-3 md:grid-cols-[180px_minmax(0,1fr)] md:p-4 xl:grid-cols-[220px_minmax(0,1fr)_340px]">
+        <aside className="min-w-0 md:min-h-0">
           <PageNavigator
             project={name}
             pages={pageList}
             currentPage={pageNumber}
             onSelect={setPage}
           />
-        </div>
+        </aside>
 
-        {/* Center: native React editor (replaces iframe + overlay) */}
-        <div className="flex-1 flex items-center justify-center overflow-hidden bg-ink-black/5 p-4 border-[2px] border-ink-black">
-          {loadingPage ? (
-            <div
-              className="flex items-center justify-center bg-ink-black/5"
-              style={{ aspectRatio: "2480 / 3508", maxHeight: "100%" }}
-            >
-              <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-                LOADING PAGE...
-              </p>
+        <section className="min-w-0 min-h-[560px] overflow-hidden border-[2px] border-ink-black bg-[radial-gradient(circle_at_1px_1px,rgba(27,28,21,0.12)_1px,transparent_0)] [background-size:18px_18px] p-2 shadow-[6px_6px_0_0_var(--color-ghost-shadow)] md:min-h-0 md:p-4">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div>
+              <div className="font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/45">
+                PAGE BENCH
+              </div>
+              <div className="font-display text-[1.1rem] font-bold leading-none tracking-[-0.02em] text-ink-black">
+                Page {String(pageNumber).padStart(2, "0")}
+              </div>
             </div>
-          ) : page ? (
-            <PageEditor
-              page={page}
-              project={name}
-              zoom={zoom}
-              onZoomChange={(nextZoom) => setZoom(clampZoom(nextZoom))}
-              selectedId={selection?.elementId ?? null}
-              selectedType={selection?.type ?? null}
-              onSelect={select}
-              onDeselect={deselect}
-              onDragEnd={handleDragEnd}
-            />
-          ) : null}
-        </div>
+            <div className="hidden font-meta text-[0.52rem] tracking-[0.16em] text-ink-black/45 sm:block">
+              {page?.panels.length ?? 0} PANELS
+            </div>
+          </div>
+          <div className="h-[72vh] min-h-[480px] overflow-hidden border-[2px] border-ink-black bg-pulp-paper/90 p-2 md:h-[calc(100vh-306px)] md:min-h-0">
+            {loadingPage ? (
+              <div
+                className="flex h-full items-center justify-center bg-ink-black/5"
+                style={{ aspectRatio: "2480 / 3508", maxHeight: "100%" }}
+              >
+                <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
+                  LOADING PAGE...
+                </p>
+              </div>
+            ) : page ? (
+              <PageEditor
+                page={page}
+                project={name}
+                zoom={zoom}
+                onZoomChange={(nextZoom) => setZoom(clampZoom(nextZoom))}
+                selectedId={selection?.elementId ?? null}
+                selectedType={selection?.type ?? null}
+                onSelect={select}
+                onDeselect={deselect}
+                onDragEnd={handleDragEnd}
+              />
+            ) : null}
+          </div>
+        </section>
 
-        {/* Right: property panel */}
-        <div className="w-[340px] flex-shrink-0 overflow-y-auto">
+        <aside className="min-w-0 xl:min-h-0">
           {page ? (
             <PropertyPanel
               page={page}
@@ -403,10 +413,8 @@ export function ComposeRoom() {
               onDeleteElement={handleDeleteElement}
               onUnpin={handleUnpin}
             />
-          ) : (
-            <div />
-          )}
-        </div>
+          ) : null}
+        </aside>
       </div>
     </div>
   );
