@@ -189,7 +189,7 @@ export function Library() {
     <div className="space-y-8">
       <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-end">
         <div>
-          <SectionLabel tone="red">{t("COLLECTION VIEW // ARCHIVE")}</SectionLabel>
+          <SectionLabel tone="red">{t("STUDIO // ACTIVE PRODUCTIONS")}</SectionLabel>
           <h1 className="mt-4 max-w-[10ch] display-impact">{t("LIBRARY")}</h1>
           <p className="mt-5 lead-pulp max-w-[44rem]">
             {t("Your narrative multiverse — active productions, archived issues, and new story seeds waiting to be drawn.")}
@@ -213,12 +213,15 @@ export function Library() {
             <StatRow label="LIVE BOARDS">{runningCount}</StatRow>
             <StatRow label="TOTAL INK USAGE">${totalCost.toFixed(2)}</StatRow>
           </div>
+          <p className="mt-3 font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/50">
+            {t("Ink usage = total AI generation cost")}
+          </p>
         </Card>
       </section>
 
       <section>
         <SectionDivider number={1} label="ACTIVE PRODUCTIONS" />
-        <div className="mt-5 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-5 grid gap-5 grid-cols-[repeat(auto-fill,minmax(220px,1fr))]">
           <NewProjectCard />
 
           {projects?.map((project) => (

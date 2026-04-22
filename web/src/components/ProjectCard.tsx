@@ -2,7 +2,11 @@ import { Link } from "react-router-dom";
 import type { ProjectSummary, StageStatus } from "../types/api";
 import { STAGE_ORDER } from "../types/api";
 import { Card } from "./ui/Card";
-import { Tag } from "./ui/Tag";
+import { Icon } from "./ui/Icon";
+import { LazyImage } from "./ui/LazyImage";
+import { Skeleton } from "./ui/Skeleton";
+import { StatusPill } from "./ui/StatusPill";
+import { STATUS_PRESENTATION } from "../lib/statusLabels";
 import { useI18n } from "../i18n";
 
 interface Props {
@@ -28,31 +32,19 @@ function formatCreated(createdAt: string) {
   });
 }
 
-function resolveTone(status: StageStatus) {
-  if (status === "complete") return "bg-bristol text-ink-black";
-  if (status === "awaiting_review") return "bg-hero-red text-bristol";
-  if (status === "running") return "bg-narrator-gold text-ink-black";
-  if (status === "failed") return "bg-hero-red text-bristol";
-  return "bg-pulp-paper text-ink-black";
-}
-
-function resolveTag(status: StageStatus, statusName: (status: StageStatus) => string) {
-  if (status === "complete") return "ACCEPTED";
-  if (status === "pending") return "QUEUE";
-  return statusName(status);
-}
-
 export function ProjectCard({ project, coverPending = false, coverFailed = false }: Props) {
-  const { stageName, statusName, t } = useI18n();
+  const { stageName, t } = useI18n();
   const furthest = project.furthest_stage
     ? STAGE_ORDER.indexOf(project.furthest_stage as (typeof STAGE_ORDER)[number]) + 1
     : 0;
   const status = resolveStatus(project);
+  const presentation = STATUS_PRESENTATION[status];
   const stageLabel = project.furthest_stage
     ? stageName(project.furthest_stage as (typeof STAGE_ORDER)[number])
     : t("ARCHIVE");
   const coverUrl = `/api/projects/${encodeURIComponent(project.name)}/files/cover/cover.png`;
   const progressPct = Math.round((furthest / STAGE_ORDER.length) * 100);
+  const initial = (project.project_name?.[0] ?? project.name[0] ?? "?").toUpperCase();
 
   return (
     <Link
@@ -61,98 +53,90 @@ export function ProjectCard({ project, coverPending = false, coverFailed = false
       className="group block h-full focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
     >
       <Card className="h-full overflow-hidden transition-transform duration-150 group-hover:-translate-y-[2px] group-focus-visible:-translate-y-[2px]">
-        <div className="relative border-b-[2px] border-ink-black bg-ink-black">
+        <div className="relative border-b-[2px] border-ink-black">
           {project.has_cover ? (
-            <img
+            <LazyImage
               src={coverUrl}
               alt={`${project.project_name} cover`}
+              aspect="4/5"
               loading="lazy"
-              className="aspect-[4/5] w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+              containerClassName="w-full"
+              className="transition-transform duration-300 group-hover:scale-[1.02]"
             />
+          ) : coverPending ? (
+            <div className="relative">
+              <Skeleton aspect="4/5" />
+              <div className="pointer-events-none absolute inset-0 flex items-end p-4 benday-paper/40">
+                <div>
+                  <div className="font-meta text-[0.48rem] tracking-[0.2em] text-ink-black/55">
+                    {t("COVER GENERATING")}
+                  </div>
+                  <div className="mt-1 max-w-[10ch] font-display text-[2rem] font-bold leading-[0.88] tracking-[-0.05em] text-ink-black">
+                    {project.project_name}
+                  </div>
+                </div>
+              </div>
+            </div>
           ) : (
-            <div className="flex aspect-[4/5] flex-col justify-end bg-ink-black p-4 text-bristol">
-              <div className="font-meta text-[0.46rem] tracking-[0.18em] text-bristol/45">
-                {coverFailed ? t("COVER FAILED") : coverPending ? t("COVER GENERATING") : t("COVER QUEUED")}
+            <div className="relative flex aspect-[4/5] flex-col justify-end benday-paper p-4">
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <span
+                  aria-hidden="true"
+                  className="font-display font-bold leading-none tracking-[-0.08em] text-ink-black/12"
+                  style={{ fontSize: "9rem" }}
+                >
+                  {initial}
+                </span>
               </div>
-              <div className="mt-2 max-w-[10ch] font-display text-[2.4rem] font-bold leading-[0.86] tracking-[-0.07em] text-bristol">
-                {project.project_name}
-              </div>
-              <div className="mt-4 h-2 border border-bristol/35">
-                <div className="h-full animate-pulse bg-narrator-gold" style={{ width: coverPending ? "60%" : "22%" }} />
+              <div className="relative">
+                <div className="font-meta text-[0.48rem] tracking-[0.2em] text-ink-black/55">
+                  {coverFailed ? t("COVER FAILED") : t("COVER QUEUED")}
+                </div>
+                <div className="mt-1 max-w-[10ch] font-display text-[2rem] font-bold leading-[0.88] tracking-[-0.05em] text-ink-black">
+                  {project.project_name}
+                </div>
               </div>
             </div>
           )}
-
-          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink-black/85 to-transparent p-3 pt-12">
-            <div className="font-meta text-[0.48rem] tracking-[0.18em] text-bristol/70">
-              {stageLabel}
-            </div>
-            <h3 className="mt-1 font-display text-[2rem] font-bold leading-none tracking-[-0.06em] text-bristol">
-              {project.project_name}
-            </h3>
-          </div>
 
           {project.is_running && (
             <div className="absolute left-2 top-2 z-10 animate-pulse bg-hero-red px-2 py-1 font-meta text-[0.48rem] tracking-[0.18em] text-bristol">
               {t("ACTIVE")}
             </div>
           )}
-          <Tag className={`absolute right-2 top-2 ${resolveTone(status)}`}>
-            {resolveTag(status, statusName)}
-          </Tag>
         </div>
 
         <div className="p-3">
-          <div className="grid grid-cols-[1fr_auto] gap-4">
-            <p className="text-[0.78rem] leading-6 text-ink-black/72">
-              {project.has_cover
-                ? t("Project cover, pipeline position, cost, and latest review checkpoint.")
-                : coverFailed
-                  ? t("Cover generation failed; opening the project still gives access to every pipeline room.")
-                  : t("Cover art is being prepared from the story bible and selected visual style.")}
-            </p>
-            <div className="text-right">
-              <div className="font-display text-[1.8rem] font-bold leading-none tracking-[-0.05em] text-ink-black">
-                {furthest}
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="font-meta text-[0.48rem] tracking-[0.2em] text-ink-black/55">
+                {t("CHECKPOINT")}
               </div>
-              <div className="font-meta text-[0.42rem] tracking-[0.14em] text-ink-black/45">
-                {t("OF")} 7
+              <div className="mt-0.5 truncate font-display text-[1.05rem] font-bold uppercase leading-none tracking-[-0.02em] text-ink-black">
+                {stageLabel}
               </div>
             </div>
+            <StatusPill tone={presentation.tone} title={presentation.description}>
+              <Icon name={presentation.icon} size={10} className="mr-1" />
+              {presentation.label}
+            </StatusPill>
           </div>
 
-          <div className="mt-4 h-3 border-[2px] border-ink-black bg-pulp-paper">
+          <div className="mt-3 h-2.5 border-[2px] border-ink-black bg-pulp-paper">
             <div className="h-full bg-archive-sage" style={{ width: `${progressPct}%` }} />
           </div>
 
-          <div className="mt-4 space-y-2 border-t-[2px] border-ink-black pt-3">
-            <div className="flex items-center justify-between text-[0.66rem]">
-              <span className="font-meta tracking-[0.16em] text-ink-black/45">
-                {t("CREATED")}
-              </span>
-              <span className="font-body text-ink-black/78">
-                {formatCreated(project.created_at)}
-              </span>
-            </div>
-            <div className="flex items-center justify-between text-[0.66rem]">
-              <span className="font-meta tracking-[0.16em] text-ink-black/45">
-                {t("CHECKPOINT")}
-              </span>
-              <span className="font-body text-ink-black/78">{stageLabel}</span>
-            </div>
-            <div className="flex items-center justify-between text-[0.66rem]">
-              <span className="font-meta tracking-[0.16em] text-ink-black/45">
-                {t("SPEND")}
-              </span>
-              <span className="font-body text-ink-black/78 tabular-nums">
-                ${project.total_cost_usd.toFixed(2)}
-              </span>
-            </div>
+          <div className="mt-3 flex items-center justify-between border-t-[2px] border-ink-black pt-2 text-[0.66rem]">
+            <span className="font-meta tracking-[0.16em] text-ink-black/45">
+              {formatCreated(project.created_at)}
+            </span>
+            <span className="font-body text-ink-black/80 tabular-nums">
+              ${project.total_cost_usd.toFixed(2)}
+            </span>
           </div>
 
-          <div className="mt-3 flex items-center justify-between border-t border-ink-black/20 pt-3 font-meta text-[0.56rem] tracking-[0.16em] text-hero-red">
-            <span>{t("OPEN FILE")}</span>
-            <span aria-hidden="true">-&gt;</span>
+          <div className="mt-1 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">
+            {furthest}/7 · {project.project_name}
           </div>
         </div>
       </Card>
