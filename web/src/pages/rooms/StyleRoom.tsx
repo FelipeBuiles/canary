@@ -12,10 +12,12 @@ import {
 } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { Card } from "../../components/ui/Card";
-import { Tag } from "../../components/ui/Tag";
 import { Button } from "../../components/ui/Button";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { GenerationDetailsModal } from "../../components/ui/GenerationDetailsModal";
+import { StatusPill } from "../../components/ui/StatusPill";
+import { StateBlock } from "../../components/ui/StateBlock";
+import { Surface } from "../../components/ui/Surface";
 import {
   useStyleGenStore,
   usePendingIndices,
@@ -75,15 +77,20 @@ function StyleCard({
   );
 
   useEffect(() => {
-    if (suggestion.has_sample) setImgFailed(false);
+    if (!suggestion.has_sample) return;
+    const timer = window.setTimeout(() => setImgFailed(false), 0);
+    return () => window.clearTimeout(timer);
   }, [suggestion.has_sample]);
 
   useEffect(() => {
-    if (wasGenerating.current && !isGenerating) {
+    const wasGeneratingValue = wasGenerating.current;
+    wasGenerating.current = isGenerating;
+    if (!wasGeneratingValue || isGenerating) return;
+    const timer = window.setTimeout(() => {
       setImgFailed(false);
       setTimestamp(Date.now());
-    }
-    wasGenerating.current = isGenerating;
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [isGenerating]);
 
   const handleGenerate = (e: React.MouseEvent) => {
@@ -154,9 +161,9 @@ function StyleCard({
             </>
           )}
           {suggestion.is_active && (
-            <Tag className="absolute right-2 top-2 bg-archive-sage text-bristol">
+            <StatusPill tone="sage" className="absolute right-2 top-2">
               ACTIVE
-            </Tag>
+            </StatusPill>
           )}
         </div>
         <div className="flex flex-1 flex-col p-3">
@@ -236,19 +243,22 @@ export function StyleRoom() {
 
   useEffect(() => {
     if (!projectName || !generationJobs?.jobs.length) return;
-    for (const job of generationJobs.jobs) {
-      const index = Number(job.payload.index);
-      if (!Number.isFinite(index)) continue;
-      if (job.status === "complete") {
-        setSampleError(null);
-        remove(projectName, [index]);
-      } else if (job.status === "failed") {
-        setSampleError(job.error ?? "Sample generation failed");
-        remove(projectName, [index]);
-      } else {
-        updateJob(projectName, job);
+    const timer = window.setTimeout(() => {
+      for (const job of generationJobs.jobs) {
+        const index = Number(job.payload.index);
+        if (!Number.isFinite(index)) continue;
+        if (job.status === "complete") {
+          setSampleError(null);
+          remove(projectName, [index]);
+        } else if (job.status === "failed") {
+          setSampleError(job.error ?? "Sample generation failed");
+          remove(projectName, [index]);
+        } else {
+          updateJob(projectName, job);
+        }
       }
-    }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [generationJobs, projectName, updateJob, remove]);
 
   const isSuggesting = suggestionStatus === "running";
@@ -260,27 +270,31 @@ export function StyleRoom() {
       const event = events[i];
       if (event.stage !== "style_suggest") continue;
       if (event.type === "stage_complete") {
-        setSuggestionStatus("idle");
-        setSuggestionError(null);
-        refetchStyles().then(({ data }) => {
-          const all = data?.suggestions ?? [];
-          const newIndices = all.slice(prevSuggestionCount.current).map((s) => s.index);
-          if (newIndices.length === 0) return;
-          add(projectName, newIndices);
-          generateSamples.mutate(
-            { project: projectName, indices: newIndices },
-            {
-              onSuccess: (d) => attachJobs(projectName, d.jobs),
-              onError: () => remove(projectName, newIndices),
-            },
-          );
-        });
-        return;
+        const timer = window.setTimeout(() => {
+          setSuggestionStatus("idle");
+          setSuggestionError(null);
+          refetchStyles().then(({ data }) => {
+            const all = data?.suggestions ?? [];
+            const newIndices = all.slice(prevSuggestionCount.current).map((s) => s.index);
+            if (newIndices.length === 0) return;
+            add(projectName, newIndices);
+            generateSamples.mutate(
+              { project: projectName, indices: newIndices },
+              {
+                onSuccess: (d) => attachJobs(projectName, d.jobs),
+                onError: () => remove(projectName, newIndices),
+              },
+            );
+          });
+        }, 0);
+        return () => window.clearTimeout(timer);
       }
       if (event.type === "stage_fail") {
-        setSuggestionStatus("failed");
-        setSuggestionError(event.message ?? "Style suggestion failed");
-        return;
+        const timer = window.setTimeout(() => {
+          setSuggestionStatus("failed");
+          setSuggestionError(event.message ?? "Style suggestion failed");
+        }, 0);
+        return () => window.clearTimeout(timer);
       }
     }
   }, [events, isSuggesting, refetchStyles, add, attachJobs, generateSamples, projectName, remove]);
@@ -377,14 +391,14 @@ export function StyleRoom() {
       )}
 
       {suggestions.length === 0 ? (
-        <Card className="p-8 text-center">
-          <div className="font-display text-[1.2rem] font-bold text-ink-black/60">
-            {isSuggesting ? "GENERATING STYLE SUGGESTIONS" : "NO STYLE SUGGESTIONS YET"}
-          </div>
-          <div className="mt-2 font-meta text-[0.52rem] tracking-[0.16em] text-ink-black/45">
-            {isSuggesting ? "OPTIONS WILL APPEAR AUTOMATICALLY" : "CLICK \"SUGGEST MORE STYLES\" TO GENERATE 5 OPTIONS"}
-          </div>
-        </Card>
+        <Surface padding="lg">
+          <StateBlock
+            minHeight="min-h-[22vh]"
+            title={isSuggesting ? "GENERATING STYLE SUGGESTIONS" : "NO STYLE SUGGESTIONS YET"}
+            description={isSuggesting ? "Options will appear automatically." : "Click \"Suggest More Styles\" to generate 5 options."}
+            icon="styles"
+          />
+        </Surface>
       ) : (
         <section className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {suggestions.map((s) => (

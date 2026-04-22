@@ -8,6 +8,7 @@ interface PanelCellProps {
   panel: PagePanel;
   panelIndex: number;
   layoutId: string;
+  selectedPanelId: string | null;
   selectedElementId: string | null;
   selectedType: "bubble" | "sfx" | null;
   imageBaseUrl: string;
@@ -22,6 +23,7 @@ export function PanelCell({
   panel,
   panelIndex,
   layoutId,
+  selectedPanelId,
   selectedElementId,
   selectedType,
   imageBaseUrl,
@@ -46,7 +48,7 @@ export function PanelCell({
 
   return (
     <div
-      className="panel"
+      className={`panel${selectedPanelId === panel.id ? " panel-active" : ""}`}
       data-panel-id={panel.id}
       style={gridStyle}
     >

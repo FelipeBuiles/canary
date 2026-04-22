@@ -35,6 +35,10 @@ export function SfxElement({ sfx, panelId, selected }: SfxElementProps) {
       className={classes.join(" ")}
       data-sfx={panelId}
       data-editor-selectable
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
+      aria-label={`SFX: ${sfx.text}`}
       style={Object.keys(style).length > 0 ? style : undefined}
     >
       {sfx.text.toUpperCase()}

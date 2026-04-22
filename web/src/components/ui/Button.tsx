@@ -6,18 +6,18 @@ type Size = "xs" | "sm" | "md" | "lg";
 
 const VARIANT_STYLES: Record<Variant, string> = {
   primary:
-    "border-[2px] border-ink-black bg-hero-red text-bristol disabled:opacity-55",
+    "border-[2px] border-ink-black bg-[linear-gradient(135deg,var(--color-hero-red),#d93537)] text-bristol shadow-panel-red hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-paper-sm active:translate-x-[3px] active:translate-y-[3px] active:shadow-none disabled:opacity-55 disabled:shadow-none disabled:hover:translate-x-0 disabled:hover:translate-y-0",
   secondary:
-    "border-[2px] border-ink-black bg-bristol text-ink-black disabled:opacity-40",
+    "border-[2px] border-ink-black bg-secondary-container text-on-secondary-container hover:bg-bristol active:bg-pulp-paper disabled:opacity-40",
   outline:
-    "border-[2px] border-ink-black bg-pulp-paper text-ink-black disabled:opacity-40",
+    "border-[2px] border-ink-black bg-pulp-paper text-ink-black hover:bg-bristol active:bg-ghost-shadow disabled:opacity-40",
 };
 
 const SIZE_STYLES: Record<Size, string> = {
-  xs: "px-2.5 py-1.5 font-meta text-[0.62rem] tracking-[0.12em]",
-  sm: "px-3.5 py-2 font-meta text-[0.72rem] tracking-[0.14em]",
-  md: "px-4.5 py-2.5 font-meta text-[0.82rem] tracking-[0.14em]",
-  lg: "px-7 py-3 font-display text-[1.05rem] font-bold tracking-[-0.02em]",
+  xs: "min-h-8 px-2.5 py-1.5 font-meta text-[0.62rem] tracking-[0.12em]",
+  sm: "min-h-9 px-3.5 py-2 font-meta text-[0.72rem] tracking-[0.14em]",
+  md: "min-h-11 px-4.5 py-2.5 font-meta text-[0.82rem] tracking-[0.14em]",
+  lg: "min-h-12 px-7 py-3 font-display text-[1.05rem] font-bold tracking-[-0.02em]",
 };
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -38,7 +38,7 @@ export function Button({
     <button
       type={type}
       className={cn(
-        "inline-flex min-w-0 cursor-pointer items-center justify-center gap-2 text-center leading-tight transition-[background-color,color,opacity,transform] duration-150 disabled:cursor-not-allowed",
+        "inline-flex min-w-0 cursor-pointer items-center justify-center gap-2 text-center leading-tight transition-[background-color,box-shadow,color,opacity,transform] duration-150 disabled:cursor-not-allowed",
         VARIANT_STYLES[variant],
         SIZE_STYLES[size],
         fullWidth && "w-full",

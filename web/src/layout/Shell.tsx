@@ -7,6 +7,8 @@ import { useI18n } from "../i18n";
 export function Shell() {
   const location = useLocation();
   const isCompose = location.pathname.endsWith("/compose");
+  const isLibrary = location.pathname === "/";
+  const showDesktopProjectNav = location.pathname.startsWith("/project/");
   const { t } = useI18n();
 
   return (
@@ -18,11 +20,11 @@ export function Shell() {
         {t("SKIP TO CONTENT")}
       </a>
       <div className="flex flex-1 flex-col overflow-hidden md:flex-row">
-        <SideNav />
+        <SideNav showDesktop={showDesktopProjectNav} />
         <main id="main-content" className="min-w-0 flex-1 overflow-y-auto bg-pulp-paper">
           <div className={cn(
             "flex min-h-full w-full flex-col px-5 py-6",
-            !isCompose && "mx-auto max-w-[1318px]"
+            !isCompose && (isLibrary ? "mx-auto max-w-[1500px]" : "mx-auto max-w-[1318px]")
           )}>
             <Outlet />
           </div>

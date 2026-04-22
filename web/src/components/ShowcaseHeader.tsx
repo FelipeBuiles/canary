@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { SectionLabel } from "./SectionLabel";
-import { Card } from "./ui/Card";
+import { Surface } from "./ui/Surface";
 import { cn } from "../lib/cn";
 import { useI18n } from "../i18n";
 
@@ -25,7 +25,7 @@ export function ShowcaseHeader({
 }) {
   const { t } = useI18n();
   return (
-    <Card className={cn("p-5 md:p-6", className)}>
+    <Surface padding="md" className={cn(className)}>
       <div className="flex items-start justify-between gap-4">
         <SectionLabel tone={labelTone}>{t(label)}</SectionLabel>
         {actions}
@@ -34,6 +34,6 @@ export function ShowcaseHeader({
         {t(title)}
       </h1>
       {lead && <div className="mt-4 lead-pulp">{typeof lead === "string" ? t(lead) : lead}</div>}
-    </Card>
+    </Surface>
   );
 }

@@ -197,7 +197,11 @@ function ProjectSwitcher({
   );
 }
 
-export function SideNav() {
+interface SideNavProps {
+  showDesktop?: boolean;
+}
+
+export function SideNav({ showDesktop = true }: SideNavProps) {
   const { name } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
@@ -383,6 +387,10 @@ export function SideNav() {
       handleRun();
     }
   };
+
+  if (!showDesktop) {
+    return <>{mobileNav}</>;
+  }
 
   if (collapsed) {
     return (

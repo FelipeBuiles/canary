@@ -1,4 +1,5 @@
 import { cn } from "../../lib/cn";
+import { Surface } from "./Surface";
 
 interface SceneItem {
   id: string;
@@ -18,7 +19,7 @@ export function SceneSidebar({
   onSelect,
 }: SceneSidebarProps) {
   return (
-    <div className="border-[2px] border-ink-black bg-bristol p-3">
+    <Surface padding="sm" shadow="paper-sm">
       <div className="mb-3 font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/45">
         SCENES
       </div>
@@ -43,6 +44,6 @@ export function SceneSidebar({
           </button>
         ))}
       </div>
-    </div>
+    </Surface>
   );
 }

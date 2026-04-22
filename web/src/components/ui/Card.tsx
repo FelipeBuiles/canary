@@ -32,10 +32,10 @@ export function Card({
   const shadowClass = flat
     ? ""
     : shadow === "sm"
-      ? "shadow-ink-sm"
+      ? "shadow-paper-sm"
       : shadow === "lg"
-        ? "shadow-ink-lg"
-        : "shadow-ink";
+        ? "shadow-ink"
+        : "shadow-paper";
 
   return (
     <div

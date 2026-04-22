@@ -1,4 +1,4 @@
-import { Routes, Route } from "react-router-dom";
+import { Navigate, Routes, Route } from "react-router-dom";
 import { Shell } from "./layout/Shell";
 import { Library } from "./pages/Library";
 import { NewProject } from "./pages/NewProject";
@@ -13,6 +13,7 @@ import { DirectRoom } from "./pages/rooms/DirectRoom";
 import { DrawRoom } from "./pages/rooms/DrawRoom";
 import { ComposeRoom } from "./pages/rooms/ComposeRoom";
 import { StyleRoom } from "./pages/rooms/StyleRoom";
+import { PrimitiveReference } from "./pages/PrimitiveReference";
 import { I18nProvider } from "./i18n";
 
 export function App() {
@@ -21,6 +22,10 @@ export function App() {
       <Routes>
         <Route element={<Shell />}>
           <Route index element={<Library />} />
+          <Route
+            path="dev/primitives"
+            element={import.meta.env.DEV ? <PrimitiveReference /> : <Navigate to="/" replace />}
+          />
           <Route path="new" element={<NewProject />} />
           <Route path="settings" element={<Settings />} />
           <Route path="project/:name/settings" element={<Settings />} />

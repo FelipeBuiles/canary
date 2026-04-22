@@ -51,15 +51,20 @@ function MiniStyleCard({
   const { add, attachJobs, remove } = useStyleGenStore();
 
   useEffect(() => {
-    if (suggestion.has_sample) setImgFailed(false);
+    if (!suggestion.has_sample) return;
+    const timer = window.setTimeout(() => setImgFailed(false), 0);
+    return () => window.clearTimeout(timer);
   }, [suggestion.has_sample]);
 
   useEffect(() => {
-    if (wasGenerating.current && !isGenerating) {
+    const wasGeneratingValue = wasGenerating.current;
+    wasGenerating.current = isGenerating;
+    if (!wasGeneratingValue || isGenerating) return;
+    const timer = window.setTimeout(() => {
       setImgFailed(false);
       setTimestamp(Date.now());
-    }
-    wasGenerating.current = isGenerating;
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [isGenerating]);
 
   const handleGenerate = (e: React.MouseEvent) => {
@@ -191,12 +196,15 @@ export function ReviewStyleStep({ project, onApprove, isApproving }: ReviewStyle
 
   useEffect(() => {
     if (!generationJobs?.jobs.length) return;
-    for (const job of generationJobs.jobs) {
-      const index = Number(job.payload.index);
-      if (!Number.isFinite(index)) continue;
-      if (job.status === "complete" || job.status === "failed") remove(project, [index]);
-      else updateJob(project, job);
-    }
+    const timer = window.setTimeout(() => {
+      for (const job of generationJobs.jobs) {
+        const index = Number(job.payload.index);
+        if (!Number.isFinite(index)) continue;
+        if (job.status === "complete" || job.status === "failed") remove(project, [index]);
+        else updateJob(project, job);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [generationJobs, project, updateJob, remove]);
 
   const suggestions = stylesData?.suggestions ?? [];
@@ -223,7 +231,8 @@ export function ReviewStyleStep({ project, onApprove, isApproving }: ReviewStyle
     if (isLoading || suggestions.length > 0 || isSuggesting) return;
     if (autoSuggestedProjects.has(project)) return;
     autoSuggestedProjects.add(project);
-    startSuggestions();
+    const timer = window.setTimeout(startSuggestions, 0);
+    return () => window.clearTimeout(timer);
   }, [isLoading, suggestions.length, isSuggesting, project, startSuggestions]);
 
   useEffect(() => {
@@ -232,27 +241,31 @@ export function ReviewStyleStep({ project, onApprove, isApproving }: ReviewStyle
       const event = events[i];
       if (event.stage !== "style_suggest") continue;
       if (event.type === "stage_complete") {
-        setSuggestionStatus("idle");
-        setSuggestionError(null);
-        refetchStyles().then(({ data }) => {
-          const all = data?.suggestions ?? [];
-          const newIndices = all.slice(prevSuggestionCount.current).map((s) => s.index);
-          if (newIndices.length === 0) return;
-          add(project, newIndices);
-          generateSamples.mutate(
-            { project, indices: newIndices },
-            {
-              onSuccess: (d) => attachJobs(project, d.jobs),
-              onError: () => remove(project, newIndices),
-            },
-          );
-        });
-        return;
+        const timer = window.setTimeout(() => {
+          setSuggestionStatus("idle");
+          setSuggestionError(null);
+          refetchStyles().then(({ data }) => {
+            const all = data?.suggestions ?? [];
+            const newIndices = all.slice(prevSuggestionCount.current).map((s) => s.index);
+            if (newIndices.length === 0) return;
+            add(project, newIndices);
+            generateSamples.mutate(
+              { project, indices: newIndices },
+              {
+                onSuccess: (d) => attachJobs(project, d.jobs),
+                onError: () => remove(project, newIndices),
+              },
+            );
+          });
+        }, 0);
+        return () => window.clearTimeout(timer);
       }
       if (event.type === "stage_fail") {
-        setSuggestionStatus("failed");
-        setSuggestionError(event.message ?? "Style suggestion failed");
-        return;
+        const timer = window.setTimeout(() => {
+          setSuggestionStatus("failed");
+          setSuggestionError(event.message ?? "Style suggestion failed");
+        }, 0);
+        return () => window.clearTimeout(timer);
       }
     }
   }, [events, isSuggesting, refetchStyles, add, attachJobs, generateSamples, project, remove]);

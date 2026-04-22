@@ -4,6 +4,7 @@ import { CollapsibleSection } from "./ui/CollapsibleSection";
 import { EditableText } from "./ui/EditableText";
 import { Tag } from "./ui/Tag";
 import { ImageModal } from "./ui/ImageModal";
+import { StatusPill } from "./ui/StatusPill";
 import { cn } from "../lib/cn";
 import { renderPanelPromptBody } from "../lib/prompting";
 
@@ -326,8 +327,8 @@ export function PromptLineageCard({
           {prompt.scene_id} / PANEL {String(prompt.panel_number).padStart(2, "0")}
         </div>
         <div className="flex gap-1">
-          <Tag>{prompt.width}×{prompt.height}</Tag>
-          <Tag>{prompt.steps} steps</Tag>
+          <StatusPill tone="pulp">{prompt.width}×{prompt.height}</StatusPill>
+          <StatusPill tone="gold">{prompt.steps} steps</StatusPill>
         </div>
       </div>
 

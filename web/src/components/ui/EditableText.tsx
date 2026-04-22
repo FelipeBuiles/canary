@@ -36,17 +36,13 @@ export function EditableText({
   highlightActive = false,
 }: EditableTextProps) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value);
+  const [draft, setDraft] = useState("");
   const ref = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
+  const displayedDraft = editing ? draft : value;
 
   useEffect(() => {
     if (editing) ref.current?.focus();
   }, [editing]);
-
-  // Sync draft when value prop changes (e.g. after save + refetch)
-  useEffect(() => {
-    if (!editing) setDraft(value);
-  }, [value, editing]);
 
   useEffect(() => {
     if (!editing || !multiline) return;
@@ -54,15 +50,14 @@ export function EditableText({
     if (!el) return;
     el.style.height = "0px";
     el.style.height = `${Math.max(el.scrollHeight, 56)}px`;
-  }, [editing, multiline, draft, value]);
+  }, [editing, multiline, displayedDraft]);
 
   const save = () => {
     setEditing(false);
-    if (draft !== value) onSave(draft);
+    if (displayedDraft !== value) onSave(displayedDraft);
   };
 
   const revert = () => {
-    setDraft(value);
     setEditing(false);
   };
 
@@ -88,7 +83,7 @@ export function EditableText({
         ref={ref as React.RefObject<HTMLTextAreaElement>}
         className={inputClasses}
         rows={1}
-        value={draft}
+        value={displayedDraft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={save}
         onKeyDown={handleKeyDown}
@@ -97,7 +92,7 @@ export function EditableText({
       <input
         ref={ref as React.RefObject<HTMLInputElement>}
         className={inputClasses}
-        value={draft}
+        value={displayedDraft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={save}
         onKeyDown={handleKeyDown}

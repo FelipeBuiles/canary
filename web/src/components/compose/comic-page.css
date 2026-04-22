@@ -29,6 +29,26 @@
   background: var(--panel-bg);
 }
 
+.panel.panel-active {
+  outline: 10px solid rgba(181, 24, 34, 0.32);
+  outline-offset: -10px;
+}
+
+.panel.panel-active::before {
+  content: 'ACTIVE PANEL';
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 8;
+  background: #b51822;
+  color: #fff;
+  padding: 6px 10px;
+  font-family: 'Bangers', fantasy, sans-serif;
+  font-size: 20px;
+  letter-spacing: 0.08em;
+  pointer-events: none;
+}
+
 /* object-position 20% keeps faces/action visible (top-biased) */
 .panel-art {
   width: 100%;
@@ -263,14 +283,24 @@
 .caption[data-editor-selectable],
 .sfx[data-editor-selectable] {
   pointer-events: auto;
-  cursor: pointer;
+  cursor: grab;
   transition: box-shadow 0.12s;
+}
+
+.bubble[data-editor-selectable]:active,
+.caption[data-editor-selectable]:active,
+.sfx[data-editor-selectable]:active {
+  cursor: grabbing;
 }
 
 .bubble[data-editor-selectable]:hover,
 .caption[data-editor-selectable]:hover,
-.sfx[data-editor-selectable]:hover {
+.sfx[data-editor-selectable]:hover,
+.bubble[data-editor-selectable]:focus-visible,
+.caption[data-editor-selectable]:focus-visible,
+.sfx[data-editor-selectable]:focus-visible {
   box-shadow: 0 0 0 2px rgba(181, 24, 34, 0.4);
+  outline: none;
 }
 
 .bubble.selected,

@@ -5,9 +5,9 @@ import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { PanelCard } from "../../components/PanelCard";
 import { PanelDetailModal } from "../../components/PanelDetailModal";
 import { Button } from "../../components/ui/Button";
-import { Card } from "../../components/ui/Card";
 import { StatRow } from "../../components/ui/StatRow";
 import { RoomShell } from "../../components/ui/RoomShell";
+import { Surface, SurfaceHeader } from "../../components/ui/Surface";
 import { StyleCallout } from "../../components/wizard/StyleCallout";
 import { useRunAction } from "../../hooks/useRunAction";
 import { useActiveRegens, useRegenStore } from "../../store/regen";
@@ -271,10 +271,8 @@ export function DrawRoom() {
         </div>
 
         <div className="space-y-4">
-          <Card className="p-3">
-            <div className="border-b-[2px] border-ink-black pb-2 font-display text-[1rem] font-bold tracking-[-0.04em]">
-              REFS
-            </div>
+          <Surface padding="sm" shadow="paper-sm">
+            <SurfaceHeader kicker="VISUAL REFS" title="REFS" className="-m-3 mb-3" />
             <div className="mt-3 border-[2px] border-ink-black bg-ink-black p-3 text-bristol">
               <div className="font-meta text-[0.5rem] tracking-[0.18em] text-bristol/62">SCENE PALETTE</div>
               <div className="mt-3 flex gap-2">
@@ -284,8 +282,8 @@ export function DrawRoom() {
                 <div className="h-7 w-7 border border-bristol bg-[#6d5d58]" />
               </div>
             </div>
-          </Card>
-          <Card className="p-3">
+          </Surface>
+          <Surface padding="sm" shadow="paper-sm">
             <div className="space-y-2">
               <StatRow label="TOTAL PANELS">{displayImages.length}</StatRow>
               <StatRow label="COMPLETED">{images?.filter((i) => i.status === "done").length ?? 0}</StatRow>
@@ -308,7 +306,7 @@ export function DrawRoom() {
                 </StatRow>
               )}
             </div>
-          </Card>
+          </Surface>
         </div>
       </section>
       {selectedPanel && name && (() => {

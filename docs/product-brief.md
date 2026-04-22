@@ -1,6 +1,65 @@
 # Canary — Product Brief
 
-A product brief for designing the future of Canary, a tool that turns novels into comic books. This document focuses on **the product we're building toward**, not what currently exists. Use it to generate UI iterations.
+A product brief for Canary, a tool that turns novels into comic books. This document now tracks both **the product we're building toward** and **the current state of the site**, so UI iterations can start from what actually exists.
+
+**Last status review:** April 22, 2026  
+**Status source:** Current React/FastAPI code in `web/src` and `novel_to_comic/src/novel_to_comic/server`, plus a successful `npm run build` in `web/`.
+
+---
+
+## 0. Current site status
+
+The site is no longer just a dashboard concept. It has a working React shell, project library, project creation flow, per-stage rooms, SSE-backed pipeline progress, artifact viewers/editors, generation job polling, and a functional Stage 7 page editor. It is still an early-MVP local web app: it assumes a local projects directory, local API keys/config, and pipeline artifacts on disk.
+
+### What is done and works now
+
+- **App shell and navigation:** React Router routes for library, new project, settings, dev primitives, and project rooms: Extract, Cast, Adapt, Storyboard, Direct, Draw, Compose, and Styles.
+- **Project library:** Lists project directories from the backend, shows project status/cost/furthest stage, tracks running projects, and can request generated project covers once a story bible exists.
+- **Project creation wizard:** Uploads `.txt`, `.epub`, or `.pdf`, creates a project directory, starts the pipeline, streams progress, pauses at review checkpoints, and supports approve/retry/start-over flows.
+- **Pipeline orchestration:** Backend can run the full pipeline or a specific stage, rerun a stage while clearing downstream outputs, approve checkpoints, reset stale stages, expose stage errors, and stream events over SSE.
+- **Story bible room:** Shows title/author/scenes plus editable character and location cards. Saves story bible changes back to `story_bible.json`.
+- **Cast room:** Shows character reference sheets and location plates from disk, opens images in a modal, and supports queued regeneration of one character ref or one location plate.
+- **Style room:** Suggests visual styles, generates sample images, tracks queued/running sample jobs, shows generation metadata, and writes the active style into project config.
+- **Adapt room:** Shows screenplay scene summaries and a scene-by-scene screenplay viewer.
+- **Storyboard room:** Shows panel breakdowns by scene and supports inline editing for core panel fields such as shot type, camera angle, background description, lighting, mood, and SFX text.
+- **Direct room:** Shows prompt summaries by scene, renders prompt lineage/advanced prompt details, and supports prompt editing. Prompt saves rebuild `full_prompt` through the backend renderer.
+- **Draw room:** Shows generated panel images by scene/all scenes, synthesizes pending/failed placeholders from prompt and stage state, supports single-panel regeneration, polls generation jobs, and opens panel details in a modal.
+- **Compose room:** Provides a real page editor over canonical `assembly/pages/page_NNN.json`: page navigation, zoom, bubble/SFX selection, drag repositioning, add/delete bubble or SFX, undo/redo, panel image offset edits, page theme/layout/style-var edits, reflow by panels-per-page, generated lettering styles, bubble translation, and PDF/CBZ export.
+- **Settings:** Supports UI language locally and project-level config edits for output language, dev/demo mode, comic theme, style template, and image model.
+- **Backend APIs:** REST endpoints exist for projects, project config, pipeline run/approve/events, story bible, screenplays, panels, prompts, images, styles, page JSON, previews/files, translations, reflow, and export.
+- **Build health:** `web` builds successfully with TypeScript and Vite. The current build emitted `web/dist`.
+
+### What is partially done
+
+- **Rooms mental model:** The seven-room structure exists in routing and UI, but invalidation/downstream recovery is mostly handled through rerun buttons and backend output clearing rather than a polished dependency UI.
+- **Review checkpoints:** Extract, Cast/Index, Direct/Prompts, and Draw/Generate are represented in the new-project wizard. There is not yet a full human-review workflow for every stage from project room pages.
+- **Editing:** Several JSON artifacts are editable, but edits do not yet present impact analysis, dirty-state review, or explicit downstream invalidation guidance in the UI.
+- **Live progress:** SSE is wired for active runs and the wizard consumes it. Existing project rooms mostly rely on status polling, rerun buttons, and job polling rather than a unified live activity drawer.
+- **Cost tracking:** Backend state and project cards expose total/stage costs, but the site does not yet show action-level cost previews, budget caps, or per-panel pricing.
+- **Failure handling:** Failed stages/items are visible in status and Draw placeholders, and stale stages can be reset through the API. The UX is not yet comprehensive for all failure modes.
+- **Localization:** UI language and output language controls exist, and existing page bubbles can be translated to English/Spanish/French. Full multi-language export workflows are still limited.
+- **Stage 7 editor:** The visual editor exists and edits canonical page JSON. It is not yet a complete freeform page-layout editor: panel reorder across pages exists in the backend but is not exposed as drag-and-drop, and version history is only in-memory undo/redo.
+- **Bubble tails:** `tail_x`/`tail_y` fields and `SvgTail` exist in the frontend model/editor path, but this still needs to be treated carefully as an MVP feature rather than a finished pinned-tail system.
+- **Style system:** Style suggestions/samples/active style work. The broader preset gallery/theme variant studio described below is only partly represented.
+
+### What is missing or still roadmap
+
+- Hosted accounts/SaaS, auth, cloud project library, team collaboration, and public share links.
+- Batch project management in the web app.
+- User face/likeness insertion.
+- Cost preview before project start and before expensive actions.
+- Pause/cancel controls for active pipeline runs.
+- Source prose side-by-side with screenplay/panel outputs.
+- Add/remove/reorder panels within a scene from the Storyboard room.
+- Save and choose alternate generated panel versions.
+- Bulk panel regeneration from the Draw room.
+- Full drag-and-drop page layout for panels across pages.
+- Persistent version history beyond local undo/redo.
+- Print-preview tooling with bleed marks.
+- Web gallery publishing and embeddable widgets.
+- API key management in the web UI.
+- Model picker with cost/quality comparison per stage.
+- Commenting, approval workflows, read-only review links, and async collaboration.
 
 ---
 
@@ -22,6 +81,13 @@ Canary is the end-to-end studio for turning prose fiction into a finished comic 
 
 **Audience:** Developers, power users, advanced creators, anyone scripting comic generation in batches.
 
+**Implemented today:**
+- `pipeline init` creates a local project, copies the input novel, writes `config.yaml`, `state.json`, and expected artifact folders.
+- `pipeline run [stage]` runs all stages or one stage; supports scene-limited runs for applicable stages, retrying failed image items, and export format selection for assembly.
+- `pipeline approve` and the state machine support human checkpoints.
+- `pipeline continue`, `pipeline status`, `pipeline style`, export/TUI commands, and stale-stage recovery exist in the local engine.
+- The CLI remains the most direct way to run local projects without the React site.
+
 **Future role:**
 - Headless interface to the same engine the web app uses.
 - Used for batch generation, CI integration, scripted workflows, server-side orchestration.
@@ -40,6 +106,12 @@ Canary is the end-to-end studio for turning prose fiction into a finished comic 
 
 **Audience:** Writers, fans, hobbyists, casual creators, students, indie publishers.
 
+**Implemented today:**
+- Local React/Vite app backed by FastAPI.
+- Library, upload/create flow, settings, style selection, seven project rooms, and Stage 7 page editor.
+- Reads/writes real pipeline artifacts from the project directory rather than mock data.
+- Streams active pipeline events over SSE and polls generation jobs for image/style/reference regeneration.
+
 **Future role:**
 - The default surface for everyone who isn't a developer.
 - A focused creative workspace, not a control panel.
@@ -54,13 +126,13 @@ The pipeline has 7 stages. In the product, each stage is a **room** the user mov
 
 | Stage | What the user sees |
 |---|---|
-| 1. **Extract** | "We read your novel. Here's your story bible — characters, locations, plot beats." Editable. |
-| 2. **Cast** | "Here's your cast — meet your characters." Reference sheets per character; user can regenerate or override. |
-| 3. **Adapt** | "Here's the screenplay version of your novel." Scene-by-scene prose → screenplay beats. |
-| 4. **Storyboard** | "Here's how each scene breaks into panels." Editable shot list per scene. |
-| 5. **Direct** | "Here's the brief for each panel." Image prompts, editable. |
-| 6. **Draw** | "Here are your panels." Generated images, regen per-panel, alt versions. |
-| 7. **Compose** | "Here's your comic." Page layouts with bubbles and SFX. The visual editor lives here. |
+| 1. **Extract** | "We read your novel. Here's your story bible — characters, locations, plot beats." Current: story bible viewer/editor exists. |
+| 2. **Cast** | "Here's your cast — meet your characters." Current: character refs and location plates are visible and individually regenerable; uploads/locks are not done. |
+| 3. **Adapt** | "Here's the screenplay version of your novel." Current: scene-by-scene screenplay viewer exists; source prose comparison/editing is not done. |
+| 4. **Storyboard** | "Here's how each scene breaks into panels." Current: editable panel cards exist; add/remove/reorder is not done. |
+| 5. **Direct** | "Here's the brief for each panel." Current: prompt inspector/editor exists with lineage display. |
+| 6. **Draw** | "Here are your panels." Current: panel gallery, failures/pending states, detail modal, and per-panel regen exist; alternates/bulk regen are not done. |
+| 7. **Compose** | "Here's your comic." Current: canonical page JSON editor exists for bubbles, SFX, layout/theme, translation, reflow, and export; full drag-and-drop panel layout and persistent history are not done. |
 
 This rooms-not-buttons mental model is the spine of the future UI.
 
@@ -232,15 +304,3 @@ The drag-and-drop editor is the highest-value UI in the product. Every panel is 
 
 ---
 
-## 8. UI iteration prompts
-
-Use this brief to generate UI iterations in different directions. Suggested frames:
-
-- **"Notion-like"** — calm, content-focused, lots of whitespace, sidebar navigation, inline editing.
-- **"Adobe-like"** — dense panels, tool palettes, professional creative-app vibes.
-- **"Figma-like"** — canvas-first, floating panels, keyboard shortcuts, multi-cursor feel.
-- **"Substack-like"** — writer-first, long-form reading view, minimal chrome.
-- **"Game-launcher-like"** — projects as tiles in a library; the comic is a "game" you're producing.
-- **"Comic-book-skeuomorphic"** — UI inspired by comic panels and gutters; lean into the medium.
-
-For each frame, design at least: project library, story bible editor, panel gallery, and visual page editor.

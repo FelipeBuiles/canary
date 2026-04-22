@@ -8,6 +8,11 @@
   --color-bristol: #ffffff;
   --color-ghost-shadow: #dcdace;
   --color-sidebar-tint: #f6f4e7;
+  --color-surface-container: #f0eee1;
+  --color-surface-variant: #e4e3d6;
+  --color-secondary-container: #d3e4ff;
+  --color-on-secondary-container: #152b4d;
+  --color-outline-ghost: #e4beba;
   --color-archive-sage: #4a7c59;
   --color-chip-red: #f4d2d3;
   --color-chip-gold: #f8edb1;
@@ -16,7 +21,7 @@
   --color-ink-fade: #5d564b;
   --color-preview-tint: #e9e0c9;
 
-  --font-display: "Space Grotesk", sans-serif;
+  --font-display: "Anybody", sans-serif;
   --font-body: "Be Vietnam Pro", sans-serif;
   --font-meta: "Lexend", sans-serif;
 
@@ -27,6 +32,9 @@
   --shadow-ink: 6px 6px 0 0 var(--color-ink-black);
   --shadow-ink-sm: 4px 4px 0 0 var(--color-ink-black);
   --shadow-ink-lg: 8px 8px 0 0 var(--color-ink-black);
+  --shadow-paper: 6px 6px 0 0 var(--color-ghost-shadow);
+  --shadow-paper-sm: 4px 4px 0 0 var(--color-ghost-shadow);
+  --shadow-panel-red: 4px 4px 0 0 color-mix(in srgb, var(--color-hero-red) 62%, var(--color-pulp-paper));
 }
 
 @layer base {
@@ -65,6 +73,11 @@
     outline: 2px solid var(--color-hero-red);
     outline-offset: 2px;
   }
+
+  ::selection {
+    background: var(--color-narrator-gold);
+    color: var(--color-ink-black);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -87,6 +100,101 @@
   .shadow-ink-lg {
     box-shadow: var(--shadow-ink-lg);
   }
+  .shadow-paper {
+    box-shadow: var(--shadow-paper);
+  }
+  .shadow-paper-sm {
+    box-shadow: var(--shadow-paper-sm);
+  }
+  .shadow-panel-red {
+    box-shadow: var(--shadow-panel-red);
+  }
+
+  .benday-paper {
+    background-color: var(--color-sidebar-tint);
+    background-image: radial-gradient(
+      circle at 1px 1px,
+      color-mix(in srgb, var(--color-ink-black) 12%, transparent) 1px,
+      transparent 0
+    );
+    background-size: 18px 18px;
+  }
+
+  .ui-surface {
+    border: 2px solid var(--color-ink-black);
+    background: var(--color-bristol);
+    color: var(--color-ink-black);
+    box-shadow: var(--shadow-paper);
+  }
+
+  .ui-surface-header {
+    border-bottom: 2px solid var(--color-ink-black);
+    background: var(--color-pulp-paper);
+    padding: 0.65rem 0.8rem;
+  }
+
+  .ui-kicker {
+    font-family: var(--font-meta);
+    font-size: 0.52rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--color-ink-black) 45%, transparent);
+  }
+
+  .ui-title {
+    font-family: var(--font-display);
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    color: var(--color-ink-black);
+  }
+
+  .ui-field-label {
+    display: block;
+    margin-bottom: 0.25rem;
+    font-family: var(--font-meta);
+    font-size: 0.6rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--color-ink-black) 55%, transparent);
+  }
+
+  .ui-field {
+    width: 100%;
+    min-height: 2.35rem;
+    border: 2px solid var(--color-ink-black);
+    background: var(--color-pulp-paper);
+    padding: 0.4rem 0.6rem;
+    color: var(--color-ink-black);
+    font-family: var(--font-body);
+    font-size: 0.82rem;
+    line-height: 1.35;
+    transition:
+      background-color 150ms ease,
+      box-shadow 150ms ease,
+      transform 150ms ease;
+  }
+
+  .ui-field:focus {
+    outline: none;
+    box-shadow: inset 0 -3px 0 0 var(--color-hero-red);
+    background: var(--color-bristol);
+  }
+
+  .ui-field:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  .ui-rule {
+    border-top: 2px solid color-mix(in srgb, var(--color-ink-black) 10%, transparent);
+    padding-top: 0.75rem;
+  }
+
+  .ui-soft-rule {
+    border-bottom: 1px solid color-mix(in srgb, var(--color-ink-black) 10%, transparent);
+  }
 
   /* Typography scale — mirrors the "Typography Scale" card in the spec. */
   .display-impact {
@@ -94,7 +202,7 @@
     font-weight: 700;
     font-size: clamp(3.5rem, 8vw, 6.25rem);
     line-height: 0.82;
-    letter-spacing: -0.08em;
+    letter-spacing: -0.045em;
     color: var(--color-ink-black);
     text-wrap: balance;
   }
@@ -104,7 +212,7 @@
     font-weight: 700;
     font-size: clamp(2.25rem, 4vw, 3rem);
     line-height: 0.9;
-    letter-spacing: -0.05em;
+    letter-spacing: -0.035em;
     text-wrap: balance;
   }
 
@@ -113,7 +221,7 @@
     font-weight: 700;
     font-size: 1.35rem;
     line-height: 1;
-    letter-spacing: -0.04em;
+    letter-spacing: -0.025em;
   }
 
   .label-meta {

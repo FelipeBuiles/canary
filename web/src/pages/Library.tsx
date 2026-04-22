@@ -11,6 +11,92 @@ import { useI18n } from "../i18n";
 
 const coverRequestedProjects = new Set<string>();
 
+function NewProjectCard() {
+  const { t } = useI18n();
+
+  return (
+    <Link
+      to="/new"
+      aria-label={t("START NEW PROJECT")}
+      className="group block h-full focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
+    >
+      <Card className="h-full overflow-hidden transition-transform duration-150 group-hover:-translate-y-[2px] group-focus-visible:-translate-y-[2px]">
+        <div className="relative border-b-[2px] border-ink-black bg-bristol">
+          <div className="flex aspect-[4/5] flex-col justify-between benday-paper p-4">
+            <div className="flex items-center justify-between">
+              <div className="border-[2px] border-ink-black bg-hero-red px-2 py-1 font-meta text-[0.48rem] tracking-[0.18em] text-bristol">
+                {t("NEW FILE")}
+              </div>
+              <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
+                00/07
+              </div>
+            </div>
+
+            <div className="mx-auto flex h-20 w-20 items-center justify-center border-[2px] border-dashed border-ink-black bg-pulp-paper text-ink-black/50 transition-colors duration-150 group-hover:bg-narrator-gold group-hover:text-ink-black">
+              <Icon name="plus" size={28} />
+            </div>
+
+            <div>
+              <div className="font-meta text-[0.48rem] tracking-[0.18em] text-ink-black/55">
+                {t("PROJECT SEED")}
+              </div>
+              <h3 className="mt-1 max-w-[9ch] font-display text-[2.15rem] font-bold leading-[0.9] tracking-[-0.06em] text-ink-black">
+                {t("Start new project")}
+              </h3>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-3">
+          <div className="grid grid-cols-[1fr_auto] gap-4">
+            <p className="text-[0.78rem] leading-6 text-ink-black/72">
+              {t("Initialize a new novel-to-comic production pipeline.")}
+            </p>
+            <div className="text-right">
+              <div className="font-display text-[1.8rem] font-bold leading-none tracking-[-0.05em] text-ink-black">
+                0
+              </div>
+              <div className="font-meta text-[0.42rem] tracking-[0.14em] text-ink-black/45">
+                {t("OF")} 7
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 h-3 border-[2px] border-ink-black bg-pulp-paper">
+            <div className="h-full bg-archive-sage" style={{ width: "0%" }} />
+          </div>
+
+          <div className="mt-4 space-y-2 border-t-[2px] border-ink-black pt-3">
+            <div className="flex items-center justify-between text-[0.66rem]">
+              <span className="font-meta tracking-[0.16em] text-ink-black/45">
+                {t("STATUS")}
+              </span>
+              <span className="font-body text-ink-black/78">{t("READY")}</span>
+            </div>
+            <div className="flex items-center justify-between text-[0.66rem]">
+              <span className="font-meta tracking-[0.16em] text-ink-black/45">
+                {t("CHECKPOINT")}
+              </span>
+              <span className="font-body text-ink-black/78">{t("UPLOAD")}</span>
+            </div>
+            <div className="flex items-center justify-between text-[0.66rem]">
+              <span className="font-meta tracking-[0.16em] text-ink-black/45">
+                {t("SPEND")}
+              </span>
+              <span className="font-body text-ink-black/78 tabular-nums">$0.00</span>
+            </div>
+          </div>
+
+          <div className="mt-3 flex items-center justify-between border-t border-ink-black/20 pt-3 font-meta text-[0.56rem] tracking-[0.16em] text-hero-red">
+            <span>{t("OPEN INTAKE")}</span>
+            <span aria-hidden="true">-&gt;</span>
+          </div>
+        </div>
+      </Card>
+    </Link>
+  );
+}
+
 export function Library() {
   const { t } = useI18n();
   const { data: projects, isLoading, error, refetch } = useProjects();
@@ -32,7 +118,9 @@ export function Library() {
         continue;
       }
       coverRequestedProjects.add(project.name);
-      setPendingCovers((current) => new Set(current).add(project.name));
+      window.setTimeout(() => {
+        setPendingCovers((current) => new Set(current).add(project.name));
+      }, 0);
       generateCover.mutate(
         { project: project.name },
         {
@@ -98,31 +186,40 @@ export function Library() {
   }
 
   return (
-    <div className="space-y-10">
-      <section>
-        <SectionLabel tone="red">{t("COLLECTION VIEW // ARCHIVE")}</SectionLabel>
-        <h1 className="mt-4 max-w-[10ch] display-impact">{t("LIBRARY")}</h1>
-        <p className="mt-5 lead-pulp max-w-[44rem]">
-          {t("Your narrative multiverse — active productions, archived issues, and new story seeds waiting to be drawn.")}
-        </p>
+    <div className="space-y-8">
+      <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-end">
+        <div>
+          <SectionLabel tone="red">{t("COLLECTION VIEW // ARCHIVE")}</SectionLabel>
+          <h1 className="mt-4 max-w-[10ch] display-impact">{t("LIBRARY")}</h1>
+          <p className="mt-5 lead-pulp max-w-[44rem]">
+            {t("Your narrative multiverse — active productions, archived issues, and new story seeds waiting to be drawn.")}
+          </p>
+        </div>
+
+        <Card className="p-4 md:p-5" shadow="sm">
+          <div className="mb-4 flex items-center justify-between border-b-[2px] border-ink-black pb-3">
+            <div>
+              <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
+                {t("INDEX SIGNALS")}
+              </div>
+              <div className="mt-1 font-display text-[1.15rem] font-bold uppercase leading-none tracking-[-0.04em]">
+                {t("Studio telemetry")}
+              </div>
+            </div>
+            <Icon name="archive" size={18} className="text-hero-red" />
+          </div>
+          <div className="space-y-3">
+            <StatRow label="ARCHIVE FILES">{projects?.length ?? 0}</StatRow>
+            <StatRow label="LIVE BOARDS">{runningCount}</StatRow>
+            <StatRow label="TOTAL INK USAGE">${totalCost.toFixed(2)}</StatRow>
+          </div>
+        </Card>
       </section>
 
       <section>
         <SectionDivider number={1} label="ACTIVE PRODUCTIONS" />
-        <div className="mt-5 grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
-          <Link to="/new">
-            <Card className="flex min-h-[320px] flex-col items-center justify-center border-dashed p-5">
-              <div className="flex h-14 w-14 items-center justify-center border-[2px] border-dashed border-ink-black text-ink-black/40">
-                <Icon name="plus" size={22} />
-              </div>
-              <div className="mt-4 font-display text-[1rem] font-bold tracking-[-0.04em] text-ink-black/50">
-                {t("START NEW PROJECT")}
-              </div>
-              <p className="mt-2 max-w-[20ch] text-center text-[0.78rem] text-ink-black/40">
-                {t("Initialize a new novel-to-comic production pipeline.")}
-              </p>
-            </Card>
-          </Link>
+        <div className="mt-5 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+          <NewProjectCard />
 
           {projects?.map((project) => (
             <ProjectCard
@@ -138,19 +235,6 @@ export function Library() {
           ))}
         </div>
       </section>
-
-      {projects && projects.length > 0 && (
-        <section>
-          <SectionDivider number={2} label="STUDIO TELEMETRY" />
-          <Card className="mt-5 p-5">
-            <div className="space-y-3">
-              <StatRow label="ARCHIVE FILES">{projects.length}</StatRow>
-              <StatRow label="LIVE BOARDS">{runningCount}</StatRow>
-              <StatRow label="TOTAL INK USAGE">${totalCost.toFixed(2)}</StatRow>
-            </div>
-          </Card>
-        </section>
-      )}
     </div>
   );
 }

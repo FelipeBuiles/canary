@@ -27,7 +27,7 @@ To add signature depth, we use **Ben-Day dot patterns** (using `surface-variant`
 ## 3. Typography: The Editorial Voice
 Typography is the "voice" of this system. We use a dramatic scale shift to differentiate between the "Narrator" (Display) and the "Dialogue" (Body).
 
-*   **Display & Headline (Space Grotesk):** These are your "Sound Effects." Use `display-lg` for hero sections with tight letter-spacing and all-caps styling. It should feel heavy, authoritative, and architectural.
+*   **Display & Headline (Anybody):** These are your "Sound Effects." Use `display-lg` for hero sections with assertive all-caps styling. It should feel heavy, poster-like, and slightly off-kilter without becoming novelty lettering.
 *   **Title & Body (Be Vietnam Pro):** This is your narrative text. It provides a clean, modern contrast to the aggressive headlines, ensuring long-form legibility while maintaining a sophisticated, geometric feel.
 *   **Labels (Lexend):** Used for "Metadata" and technical callouts. Lexend’s hyper-legibility mimics the clarity of classic comic book lettering at small scales.
 

@@ -68,27 +68,34 @@ export function NewProject() {
       const event = events[i];
 
       if (event.type === "stage_complete" && event.stage === state.currentStage) {
-        if (CHECKPOINT_STAGES.has(state.currentStage)) {
-          setState((s) => ({ ...s, phase: "review", errorMessage: null }));
-        } else {
-          advanceToNextStage(state.currentStage);
-        }
-        return;
+        const timer = window.setTimeout(() => {
+          if (CHECKPOINT_STAGES.has(state.currentStage)) {
+            setState((s) => ({ ...s, phase: "review", errorMessage: null }));
+          } else {
+            advanceToNextStage(state.currentStage);
+          }
+        }, 0);
+        return () => window.clearTimeout(timer);
       }
 
       if (event.type === "stage_fail" && event.stage === state.currentStage) {
-        setState((s) => ({
-          ...s,
-          errorMessage: event.message ?? "Stage failed",
-        }));
-        return;
+        const timer = window.setTimeout(() => {
+          setState((s) => ({
+            ...s,
+            errorMessage: event.message ?? "Stage failed",
+          }));
+        }, 0);
+        return () => window.clearTimeout(timer);
       }
 
       if (event.type === "pipeline_done") {
         // Pipeline finished — check if all stages are complete
         const lastStage = STAGE_ORDER[STAGE_ORDER.length - 1];
         if (state.currentStage === lastStage || state.currentStage === "assemble") {
-          setState((s) => ({ ...s, phase: "complete", errorMessage: null }));
+          const timer = window.setTimeout(() => {
+            setState((s) => ({ ...s, phase: "complete", errorMessage: null }));
+          }, 0);
+          return () => window.clearTimeout(timer);
         }
         return;
       }

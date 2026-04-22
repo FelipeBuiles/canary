@@ -5,6 +5,7 @@ import { SectionDivider } from "../../components/SectionDivider";
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
+import { SurfaceHeader } from "../../components/ui/Surface";
 import { EditableText } from "../../components/ui/EditableText";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { useRunAction } from "../../hooks/useRunAction";
@@ -22,28 +23,30 @@ export function CharacterCard({
 
   return (
     <Card className="p-4">
-      <div className="flex items-start justify-between">
-        <div>
+      <SurfaceHeader
+        kicker={character.id.toUpperCase()}
+        title={(
           <EditableText
             value={character.name}
             onSave={(v) => update({ name: v })}
             className="font-display text-[1.15rem] font-bold tracking-[-0.05em] text-ink-black"
           />
-          <div className="mt-1 font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/55 flex items-center gap-1">
-            <EditableText
-              value={character.age_range}
-              onSave={(v) => update({ age_range: v })}
-              className="text-ink-black/55"
-            />
-            <span>&middot;</span>
-            <EditableText
-              value={character.gender}
-              onSave={(v) => update({ gender: v })}
-              className="text-ink-black/55"
-            />
-          </div>
-        </div>
-        <Tag className="bg-pulp-paper">{character.id.toUpperCase()}</Tag>
+        )}
+        actions={<Tag className="bg-pulp-paper">{character.id.toUpperCase()}</Tag>}
+        className="-m-4 mb-3"
+      />
+      <div className="mt-1 flex items-center gap-1 font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/55">
+        <EditableText
+          value={character.age_range}
+          onSave={(v) => update({ age_range: v })}
+          className="text-ink-black/55"
+        />
+        <span>&middot;</span>
+        <EditableText
+          value={character.gender}
+          onSave={(v) => update({ gender: v })}
+          className="text-ink-black/55"
+        />
       </div>
       <div className="mt-3 text-[0.82rem] leading-6 text-ink-black/74">
         <span className="font-meta text-[0.48rem] tracking-[0.18em] text-ink-black/45">VISUAL ANCHOR</span>
@@ -75,14 +78,18 @@ export function LocationCard({
 
   return (
     <Card className="p-4">
-      <div className="flex items-start justify-between">
-        <EditableText
-          value={location.name}
-          onSave={(v) => update({ name: v })}
-          className="font-display text-[1.15rem] font-bold tracking-[-0.05em] text-ink-black"
-        />
-        <Tag className="bg-pulp-paper">{location.id.toUpperCase()}</Tag>
-      </div>
+      <SurfaceHeader
+        kicker={location.id.toUpperCase()}
+        title={(
+          <EditableText
+            value={location.name}
+            onSave={(v) => update({ name: v })}
+            className="font-display text-[1.15rem] font-bold tracking-[-0.05em] text-ink-black"
+          />
+        )}
+        actions={<Tag className="bg-pulp-paper">{location.id.toUpperCase()}</Tag>}
+        className="-m-4 mb-3"
+      />
       <EditableText
         value={location.visual_anchor}
         onSave={(v) => update({ visual_anchor: v })}
