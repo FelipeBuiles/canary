@@ -3,6 +3,7 @@ import { useProjectConfig, useUpdateProjectConfig } from "../api/queries";
 import { SectionLabel } from "../components/SectionLabel";
 import { SectionDivider } from "../components/SectionDivider";
 import { Card } from "../components/ui/Card";
+import { SelectField, SwitchField, TextField } from "../components/ui/Field";
 import { LANGUAGES, useI18n } from "../i18n";
 import type { LanguageCode } from "../i18n";
 
@@ -17,75 +18,6 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
       </div>
       <div className="min-w-0">{children}</div>
     </div>
-  );
-}
-
-function Select<T extends string>({
-  value,
-  onChange,
-  options,
-  disabled,
-}: {
-  value: T;
-  onChange: (v: T) => void;
-  options: { value: T; label: string }[];
-  disabled?: boolean;
-}) {
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value as T)}
-      disabled={disabled}
-      className="w-full max-w-sm border-[2px] border-ink-black bg-bristol px-3 py-2 font-meta text-[0.72rem] tracking-[0.1em] disabled:opacity-60"
-    >
-      {options.map((o) => (
-        <option key={o.value} value={o.value}>{o.label}</option>
-      ))}
-    </select>
-  );
-}
-
-function Toggle({ value, onChange, disabled }: { value: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={value}
-      onClick={() => onChange(!value)}
-      disabled={disabled}
-      className={`relative inline-flex h-7 w-12 items-center border-[2px] border-ink-black transition-colors ${
-        value ? "bg-hero-red" : "bg-bristol"
-      } disabled:opacity-60`}
-    >
-      <span
-        className={`block h-4 w-4 border border-ink-black transition-transform ${
-          value ? "translate-x-[24px] bg-bristol" : "translate-x-[2px] bg-ink-black"
-        }`}
-      />
-    </button>
-  );
-}
-
-function TextInput({
-  value,
-  onChange,
-  placeholder,
-  disabled,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  disabled?: boolean;
-}) {
-  return (
-    <input
-      type="text"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      placeholder={placeholder}
-      disabled={disabled}
-      className="w-full max-w-sm border-[2px] border-ink-black bg-bristol px-3 py-2 font-body text-[0.82rem] disabled:opacity-60"
-    />
   );
 }
 
@@ -115,11 +47,15 @@ export function Settings() {
         <SectionDivider number={1} label="STUDIO" />
         <Card className="mt-5 px-5">
           <Row label={t("UI LANGUAGE")} hint={t("Controls the studio interface language. Stored locally.")}>
-            <Select
+            <SelectField
               value={language}
-              onChange={(v) => setLanguage(v as LanguageCode)}
-              options={LANGUAGES.map((l) => ({ value: l.code, label: l.label }))}
-            />
+              onChange={(e) => setLanguage(e.target.value as LanguageCode)}
+              className="max-w-sm bg-bristol font-meta text-[0.72rem] tracking-[0.1em]"
+            >
+              {LANGUAGES.map((l) => (
+                <option key={l.code} value={l.code}>{l.label}</option>
+              ))}
+            </SelectField>
           </Row>
         </Card>
       </section>
@@ -132,22 +68,27 @@ export function Settings() {
               label={t("OUTPUT LANGUAGE")}
               hint={t("Controls generated dialogue, narration, style suggestions, and prompt artifacts for this project.")}
             >
-              <Select
+              <SelectField
                 value={config?.target_language ?? "en"}
-                onChange={(v) => patch({ target_language: v as LanguageCode })}
-                options={LANGUAGES.map((l) => ({ value: l.code, label: l.label }))}
+                onChange={(e) => patch({ target_language: e.target.value as LanguageCode })}
                 disabled={!config || updating}
-              />
+                className="max-w-sm bg-bristol font-meta text-[0.72rem] tracking-[0.1em]"
+              >
+                {LANGUAGES.map((l) => (
+                  <option key={l.code} value={l.code}>{l.label}</option>
+                ))}
+              </SelectField>
             </Row>
 
             <Row
               label={t("DEV / DEMO MODE")}
               hint={t("Uses the faster image model, fewer steps, and smaller generated files for quick testing.")}
             >
-              <Toggle
-                value={!!config?.dev_mode}
-                onChange={(v) => patch({ dev_mode: v })}
+              <SwitchField
+                checked={!!config?.dev_mode}
+                onCheckedChange={(v) => patch({ dev_mode: v })}
                 disabled={!config || updating}
+                label={t("DEV / DEMO MODE")}
               />
             </Row>
 
@@ -155,29 +96,32 @@ export function Settings() {
               label={t("COMIC THEME")}
               hint={t("Leave empty for default style. Override to set visual identity of the comic.")}
             >
-              <TextInput
+              <TextField
                 value={config?.comic_theme ?? ""}
-                onChange={(v) => patch({ comic_theme: v })}
+                onChange={(e) => patch({ comic_theme: e.target.value })}
                 placeholder="golden-age noir"
                 disabled={!config || updating}
+                className="max-w-sm bg-bristol"
               />
             </Row>
 
             <Row label={t("STYLE TEMPLATE")}>
-              <TextInput
+              <TextField
                 value={config?.style_template ?? ""}
-                onChange={(v) => patch({ style_template: v })}
+                onChange={(e) => patch({ style_template: e.target.value })}
                 placeholder="pulp-comic"
                 disabled={!config || updating}
+                className="max-w-sm bg-bristol"
               />
             </Row>
 
             <Row label={t("IMAGE MODEL")}>
-              <TextInput
+              <TextField
                 value={config?.image_model ?? ""}
-                onChange={(v) => patch({ image_model: v })}
+                onChange={(e) => patch({ image_model: e.target.value })}
                 placeholder="flux-1.1-pro"
                 disabled={!config || updating}
+                className="max-w-sm bg-bristol"
               />
             </Row>
           </Card>

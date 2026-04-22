@@ -7,6 +7,8 @@ import { Tag } from "../../components/ui/Tag";
 import { EditableText } from "../../components/ui/EditableText";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { SceneSidebar } from "../../components/ui/SceneSidebar";
+import { LoadingBlock, StateBlock } from "../../components/ui/StateBlock";
+import { SurfaceHeader } from "../../components/ui/Surface";
 import { useRunAction } from "../../hooks/useRunAction";
 import type { PanelBreakdown } from "../../types/api";
 
@@ -72,34 +74,29 @@ export function StoryboardRoom() {
 
         <div>
           {loadingPanels ? (
-            <div className="flex min-h-[40vh] items-center justify-center">
-              <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-                LOADING…
-              </p>
-            </div>
+            <LoadingBlock label="LOADING…" />
           ) : panels?.length ? (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {panels.map((panel) => (
                 <Card key={`${panel.scene_id}-${panel.panel_number}`}>
-                  <div className="border-b-[2px] border-ink-black bg-preview-tint p-3">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <div className="font-meta text-[0.46rem] tracking-[0.16em] text-ink-black/45">
-                          PANEL {String(panel.panel_number).padStart(2, "0")}
-                        </div>
-                        <EditableText
-                          value={panel.shot_type}
-                          onSave={(v) => handleSavePanel(panel, { shot_type: v })}
-                          className="font-display text-[0.85rem] font-bold tracking-[-0.03em]"
-                        />
-                      </div>
+                  <SurfaceHeader
+                    kicker={`PANEL ${String(panel.panel_number).padStart(2, "0")}`}
+                    title={(
+                      <EditableText
+                        value={panel.shot_type}
+                        onSave={(v) => handleSavePanel(panel, { shot_type: v })}
+                        className="font-display text-[0.85rem] font-bold tracking-[-0.03em]"
+                      />
+                    )}
+                    actions={(
                       <EditableText
                         value={panel.camera_angle}
                         onSave={(v) => handleSavePanel(panel, { camera_angle: v })}
-                        className="border border-ink-black px-2 py-1 font-meta text-[0.44rem] tracking-[0.14em]"
+                        className="border border-ink-black bg-bristol px-2 py-1 font-meta text-[0.44rem] tracking-[0.14em]"
                       />
-                    </div>
-                  </div>
+                    )}
+                    className="bg-preview-tint"
+                  />
                   <div className="space-y-2 p-3">
                     <EditableText
                       value={panel.background_description}
@@ -155,9 +152,7 @@ export function StoryboardRoom() {
               ))}
             </div>
           ) : (
-            <div className="flex min-h-[40vh] items-center justify-center text-[0.82rem] text-ink-black/50">
-              Select a scene to view panel breakdowns.
-            </div>
+            <StateBlock title="SELECT A SCENE" description="Select a scene to view panel breakdowns." icon="draft" />
           )}
         </div>
       </section>

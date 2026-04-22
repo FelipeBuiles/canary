@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useI18n } from "../../i18n";
+import { LoadingBlock, StateBlock } from "./StateBlock";
 
 interface RoomShellProps {
   isLoading?: boolean;
@@ -20,27 +21,16 @@ export function RoomShell({
 }: RoomShellProps) {
   const { t } = useI18n();
   if (isLoading) {
-    return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-          {t(loadingText)}
-        </p>
-      </div>
-    );
+    return <LoadingBlock label={t(loadingText)} />;
   }
 
   if (isEmpty) {
     return (
-      <div className="flex min-h-[40vh] items-center justify-center">
-        <div className="text-center">
-          <div className="font-display text-[1.5rem] font-bold tracking-[-0.05em] text-ink-black/30">
-            {t(emptyTitle)}
-          </div>
-          <p className="mt-2 text-[0.82rem] text-ink-black/50">
-            {t(emptyDescription)}
-          </p>
-        </div>
-      </div>
+      <StateBlock
+        title={t(emptyTitle)}
+        description={t(emptyDescription)}
+        icon="draft"
+      />
     );
   }
 

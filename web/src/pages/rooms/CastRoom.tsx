@@ -8,6 +8,7 @@ import { Tag } from "../../components/ui/Tag";
 import { Button } from "../../components/ui/Button";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { ImageModal } from "../../components/ui/ImageModal";
+import { StatusPill } from "../../components/ui/StatusPill";
 import { useRunAction } from "../../hooks/useRunAction";
 import type { Character, GenerationJob, Location } from "../../types/api";
 
@@ -39,23 +40,29 @@ function CharacterCastCard({
   useEffect(() => {
     const job = generationJobs?.jobs[0];
     if (!job) return;
-    if (job.status === "complete") {
-      setTimestamp(Date.now());
-      setImgFailed(false);
-      setActiveJob(null);
-      setRegenError(null);
-    } else if (job.status === "failed") {
-      setActiveJob(null);
-      setRegenError(job.error ?? "Regeneration failed");
-    } else {
-      setActiveJob(job);
-    }
+    const timer = window.setTimeout(() => {
+      if (job.status === "complete") {
+        setTimestamp(Date.now());
+        setImgFailed(false);
+        setActiveJob(null);
+        setRegenError(null);
+      } else if (job.status === "failed") {
+        setActiveJob(null);
+        setRegenError(job.error ?? "Regeneration failed");
+      } else {
+        setActiveJob(job);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [generationJobs]);
 
   useEffect(() => {
     if (!stageRegenerating) {
-      setTimestamp(Date.now());
-      setImgFailed(false);
+      const timer = window.setTimeout(() => {
+        setTimestamp(Date.now());
+        setImgFailed(false);
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
   }, [stageRegenerating]);
 
@@ -117,9 +124,9 @@ function CharacterCastCard({
                 onError={() => setImgFailed(true)}
               />
               {activeJob && (
-                <div className="absolute inset-x-2 bottom-2 border-[2px] border-ink-black bg-narrator-gold px-2 py-1 text-center font-meta text-[0.48rem] tracking-[0.16em] text-ink-black">
+                <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
                   {queuedLabel(activeJob)}
-                </div>
+                </StatusPill>
               )}
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
                 <Button
@@ -133,9 +140,9 @@ function CharacterCastCard({
               </div>
             </>
           )}
-          <Tag className="absolute right-2 top-2 bg-hero-red text-bristol">
+          <StatusPill tone="red" className="absolute right-2 top-2">
             REF
-          </Tag>
+          </StatusPill>
         </div>
         <div className="p-3">
           <div className="font-display text-[1rem] font-bold tracking-[-0.04em] text-ink-black">
@@ -189,23 +196,29 @@ function LocationPlateCard({
   useEffect(() => {
     const job = generationJobs?.jobs[0];
     if (!job) return;
-    if (job.status === "complete") {
-      setTimestamp(Date.now());
-      setImgFailed(false);
-      setActiveJob(null);
-      setLocalRegenError(null);
-    } else if (job.status === "failed") {
-      setActiveJob(null);
-      setLocalRegenError(job.error ?? "Regeneration failed");
-    } else {
-      setActiveJob(job);
-    }
+    const timer = window.setTimeout(() => {
+      if (job.status === "complete") {
+        setTimestamp(Date.now());
+        setImgFailed(false);
+        setActiveJob(null);
+        setLocalRegenError(null);
+      } else if (job.status === "failed") {
+        setActiveJob(null);
+        setLocalRegenError(job.error ?? "Regeneration failed");
+      } else {
+        setActiveJob(job);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [generationJobs]);
 
   useEffect(() => {
     if (!stageRegenerating) {
-      setTimestamp(Date.now());
-      setImgFailed(false);
+      const timer = window.setTimeout(() => {
+        setTimestamp(Date.now());
+        setImgFailed(false);
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
   }, [stageRegenerating]);
 
@@ -267,9 +280,9 @@ function LocationPlateCard({
                 onError={() => setImgFailed(true)}
               />
               {activeJob && (
-                <div className="absolute inset-x-2 bottom-2 border-[2px] border-ink-black bg-narrator-gold px-2 py-1 text-center font-meta text-[0.48rem] tracking-[0.16em] text-ink-black">
+                <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
                   {queuedLabel(activeJob)}
-                </div>
+                </StatusPill>
               )}
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
                 <Button

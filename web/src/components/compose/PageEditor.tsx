@@ -191,6 +191,34 @@ export function PageEditor({
   const displayPage = dragPreview
     ? applyDragPreview(page, dragPreview)
     : page;
+  const selectedPanelId = selectedId
+    ? page.panels.find((panel) =>
+        panel.bubbles.some((bubble) => bubble.id === selectedId) ||
+        (selectedType === "sfx" && `${panel.id}__sfx` === selectedId)
+      )?.id ?? null
+    : null;
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      const target = e.target as HTMLElement;
+      const selectable = closest(target, "[data-editor-selectable]");
+      if (!selectable) return;
+      e.preventDefault();
+
+      const bubbleId = selectable.getAttribute("data-id");
+      if (bubbleId) {
+        const panelEl = closest(selectable, "[data-panel-id]");
+        const panelId = panelEl?.getAttribute("data-panel-id");
+        if (panelId) onSelect(panelId, "bubble", bubbleId);
+        return;
+      }
+
+      const panelId = selectable.getAttribute("data-sfx");
+      if (panelId) onSelect(panelId, "sfx", `${panelId}__sfx`);
+    },
+    [onSelect],
+  );
 
   return (
     <div
@@ -199,10 +227,12 @@ export function PageEditor({
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
+      onKeyDown={handleKeyDown}
     >
       <ScaledContainer zoom={zoom} onZoomChange={onZoomChange} onScaleChange={handleScaleChange}>
         <ComicPageCanvas
           page={displayPage}
+          selectedPanelId={selectedPanelId}
           selectedElementId={selectedId}
           selectedType={selectedType}
           imageBaseUrl={imageBaseUrl}

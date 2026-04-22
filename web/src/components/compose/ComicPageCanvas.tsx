@@ -5,6 +5,7 @@ import { resolveThemeVars, sanitizeStyleVars } from "./themes";
 
 interface ComicPageCanvasProps {
   page: ComicPage;
+  selectedPanelId: string | null;
   selectedElementId: string | null;
   selectedType: "bubble" | "sfx" | null;
   imageBaseUrl: string;
@@ -17,6 +18,7 @@ interface ComicPageCanvasProps {
  */
 export function ComicPageCanvas({
   page,
+  selectedPanelId,
   selectedElementId,
   selectedType,
   imageBaseUrl,
@@ -52,6 +54,7 @@ export function ComicPageCanvas({
             panel={panel}
             panelIndex={i}
             layoutId={page.layout}
+            selectedPanelId={selectedPanelId}
             selectedElementId={selectedElementId}
             selectedType={selectedType}
             imageBaseUrl={imageBaseUrl}

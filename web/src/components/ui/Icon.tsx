@@ -32,7 +32,7 @@ import {
 } from "lucide-react";
 import { cn } from "../../lib/cn";
 
-type IconName =
+export type IconName =
   | "draft"
   | "assets"
   | "styles"

@@ -5,6 +5,7 @@ import { PromptLineageCard } from "../../components/PromptLineageCard";
 import { Button } from "../../components/ui/Button";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { SceneSidebar } from "../../components/ui/SceneSidebar";
+import { LoadingBlock, StateBlock } from "../../components/ui/StateBlock";
 import { useRunAction } from "../../hooks/useRunAction";
 import type { ImagePrompt } from "../../types/api";
 
@@ -66,11 +67,7 @@ export function DirectRoom() {
 
         <div>
           {loadingPrompts ? (
-            <div className="flex min-h-[40vh] items-center justify-center">
-              <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-                LOADING…
-              </p>
-            </div>
+            <LoadingBlock label="LOADING…" />
           ) : prompts?.length ? (
             <div className="space-y-4">
               {prompts.map((prompt, index) => (
@@ -86,9 +83,7 @@ export function DirectRoom() {
               ))}
             </div>
           ) : (
-            <div className="flex min-h-[40vh] items-center justify-center text-[0.82rem] text-ink-black/50">
-              Select a scene to view image prompts.
-            </div>
+            <StateBlock title="SELECT A SCENE" description="Select a scene to view image prompts." icon="draft" />
           )}
         </div>
       </section>

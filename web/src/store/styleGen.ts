@@ -6,6 +6,12 @@ const EMPTY_JOBS: Record<number, string> = {};
 const EMPTY_STATUS: Record<number, Extract<GenerationJobStatus, "queued" | "running">> = {};
 const EMPTY_QUEUE_POSITIONS: Record<number, number | null> = {};
 
+function omitProject<T>(record: Record<string, T>, project: string): Record<string, T> {
+  const next = { ...record };
+  delete next[project];
+  return next;
+}
+
 interface StyleGenStore {
   /** Set of indices currently generating, keyed by project name */
   pending: Record<string, Set<number>>;
@@ -108,11 +114,12 @@ export const useStyleGenStore = create<StyleGenStore>((set) => ({
         delete nextPositions[i];
       }
       if (next.size === 0) {
-        const { [project]: _, ...rest } = s.pending;
-        const { [project]: _jobs, ...jobIds } = s.jobIds;
-        const { [project]: _statuses, ...statuses } = s.statuses;
-        const { [project]: _positions, ...queuePositions } = s.queuePositions;
-        return { pending: rest, jobIds, statuses, queuePositions };
+        return {
+          pending: omitProject(s.pending, project),
+          jobIds: omitProject(s.jobIds, project),
+          statuses: omitProject(s.statuses, project),
+          queuePositions: omitProject(s.queuePositions, project),
+        };
       }
       return {
         pending: { ...s.pending, [project]: next },

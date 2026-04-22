@@ -6,6 +6,8 @@ import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { SceneSidebar } from "../../components/ui/SceneSidebar";
+import { LoadingBlock, StateBlock } from "../../components/ui/StateBlock";
+import { SurfaceHeader } from "../../components/ui/Surface";
 import { useRunAction } from "../../hooks/useRunAction";
 
 export function AdaptRoom() {
@@ -55,34 +57,24 @@ export function AdaptRoom() {
 
         <Card className="p-4 md:p-5">
           {loadingScript ? (
-            <div className="flex min-h-[40vh] items-center justify-center">
-              <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-                LOADING…
-              </p>
-            </div>
+            <LoadingBlock label="LOADING…" />
           ) : screenplay ? (
             <div>
-              <div className="flex items-center gap-3 border-b-[2px] border-ink-black pb-3">
-                <div>
-                  <div className="font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/45">
-                    LOCATION
+              <SurfaceHeader
+                kicker="LOCATION"
+                title={screenplay.location_id.replace("_", " ").toUpperCase()}
+                actions={(
+                  <div className="text-right">
+                    <div className="ui-kicker">CHARACTERS</div>
+                    <div className="mt-1 flex flex-wrap justify-end gap-1">
+                      {screenplay.characters.map((cid) => (
+                        <Tag key={cid}>{cid}</Tag>
+                      ))}
+                    </div>
                   </div>
-                  <div className="font-display text-[1rem] font-bold tracking-[-0.04em]">
-                    {screenplay.location_id.replace("_", " ").toUpperCase()}
-                  </div>
-                </div>
-                <div className="ml-auto">
-                  <div className="font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/45">
-                    CHARACTERS
-                  </div>
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {screenplay.characters.map((cid) => (
-                      <Tag key={cid}>{cid}</Tag>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
+                )}
+                className="-m-4 mb-4 md:-m-5 md:mb-4"
+              />
               <div className="mt-4 space-y-3">
                 {screenplay.beats.map((beat, i) => (
                   <div
@@ -114,9 +106,7 @@ export function AdaptRoom() {
               </div>
             </div>
           ) : (
-            <div className="flex min-h-[40vh] items-center justify-center text-[0.82rem] text-ink-black/50">
-              Select a scene to view the screenplay.
-            </div>
+            <StateBlock title="SELECT A SCENE" description="Select a scene to view the screenplay." icon="draft" />
           )}
         </Card>
       </section>

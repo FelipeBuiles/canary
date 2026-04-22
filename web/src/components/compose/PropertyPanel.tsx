@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
+import { FieldLabel, SelectField, TextField } from "../ui/Field";
+import { SurfaceHeader } from "../ui/Surface";
 import type { ComicPage, Bubble, Sfx, PagePanel } from "../../types/api";
 import { EditableText } from "../ui/EditableText";
 import { useI18n } from "../../i18n";
@@ -83,7 +85,7 @@ function DebouncedColorInput({ value, onCommit }: DebouncedColorInputProps) {
       }}
       onBlur={flushCommit}
       onPointerUp={flushCommit}
-      className="h-[36px] w-full border-[2px] border-ink-black bg-pulp-paper p-1"
+      className="ui-field h-[36px] p-1"
     />
   );
 }
@@ -126,52 +128,43 @@ export function PropertyPanel({
   if (!selection) {
     return (
       <Card className="max-h-none overflow-hidden md:max-h-[calc(100vh-236px)]">
-        <div className="border-b-[2px] border-ink-black bg-pulp-paper px-3 py-2">
-          <div className="font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/45">
-            INSPECTOR
-          </div>
-          <div className="font-display text-[1rem] font-bold leading-none tracking-[-0.02em] text-ink-black">
-            {t("PAGE PROPERTIES")}
-          </div>
-        </div>
+        <SurfaceHeader kicker="INSPECTOR" title={t("PAGE PROPERTIES")} />
 
         <div className="max-h-none space-y-4 overflow-y-auto p-3 md:max-h-[calc(100vh-292px)]">
         <div>
-          <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">{t("THEME")}</label>
-          <select
+          <FieldLabel>{t("THEME")}</FieldLabel>
+          <SelectField
             value={page.theme}
             onChange={(e) => onUpdatePage({ theme: e.target.value })}
-            className="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.82rem]"
           >
             {THEMES.map((t) => (
               <option key={t} value={t}>{t.toUpperCase()}</option>
             ))}
-          </select>
+          </SelectField>
         </div>
 
         <div>
-          <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">{t("PANELS PER PAGE")}</label>
-          <select
+          <FieldLabel>{t("PANELS PER PAGE")}</FieldLabel>
+          <SelectField
             value={page.panels.length}
             onChange={(e) => onReflowPages(Number(e.target.value))}
-            className="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.82rem]"
           >
             {PANELS_PER_PAGE.map((count) => (
               <option key={count} value={count}>{count} {count === 1 ? t("PANEL") : t("PANELS")} / {t("PAGE")}</option>
             ))}
-          </select>
+          </SelectField>
           <p className="mt-1 text-[0.72rem] leading-snug text-ink-black/45">
             {t("Reflows every panel and updates the page count.")}
           </p>
         </div>
 
-        <div className="border-t-[2px] border-ink-black/10 pt-3">
+        <div className="ui-rule">
           <div className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/45">
             {page.panels.length} {t("PANELS")} / {t("PAGE")} {String(page.page_number).padStart(2, "0")}
           </div>
         </div>
 
-        <div className="border-t-[2px] border-ink-black/10 pt-3 space-y-2">
+        <div className="ui-rule space-y-2">
           <Button
             size="sm"
             variant="primary"
@@ -186,19 +179,18 @@ export function PropertyPanel({
           </p>
         </div>
 
-        <div className="border-t-[2px] border-ink-black/10 pt-3 space-y-2">
-          <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">
+        <div className="ui-rule space-y-2">
+          <FieldLabel>
             {t("OUTPUT BUBBLE LANGUAGE")}
-          </label>
-          <select
+          </FieldLabel>
+          <SelectField
             value={outputLanguage}
             onChange={(e) => onOutputLanguageChange(e.target.value as "en" | "es" | "fr")}
-            className="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.78rem]"
           >
             <option value="en">English (en)</option>
             <option value="es">Español (es)</option>
             <option value="fr">Français (fr)</option>
-          </select>
+          </SelectField>
           <Button
             size="sm"
             variant="secondary"
@@ -214,26 +206,25 @@ export function PropertyPanel({
         </div>
 
         {imagePanel && (
-          <div className="border-t-[2px] border-ink-black/10 pt-3 space-y-2">
+          <div className="ui-rule space-y-2">
             <div className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/45">
               {t("PANEL IMAGE FRAMING")}
             </div>
-            <select
+            <SelectField
               value={imagePanel.id}
               onChange={(e) => setImagePanelId(e.target.value)}
-              className="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.78rem]"
             >
               {page.panels.map((panel, idx) => (
                 <option key={panel.id} value={panel.id}>
                   {t("PANEL")} {idx + 1} ({panel.scene_id}/{panel.panel_number})
                 </option>
               ))}
-            </select>
+            </SelectField>
 
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">X</label>
-                <input
+                <FieldLabel>X</FieldLabel>
+                <TextField
                   type="number"
                   value={imagePanel.image_offset_x ?? 0}
                   min={-1200}
@@ -241,12 +232,11 @@ export function PropertyPanel({
                   onChange={(e) => onUpdatePanel(imagePanel.id, {
                     image_offset_x: Number(e.target.value),
                   })}
-                  className="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.78rem]"
                 />
               </div>
               <div>
-                <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">Y</label>
-                <input
+                <FieldLabel>Y</FieldLabel>
+                <TextField
                   type="number"
                   value={imagePanel.image_offset_y ?? 0}
                   min={-1200}
@@ -254,7 +244,6 @@ export function PropertyPanel({
                   onChange={(e) => onUpdatePanel(imagePanel.id, {
                     image_offset_y: Number(e.target.value),
                   })}
-                  className="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.78rem]"
                 />
               </div>
             </div>
@@ -325,57 +314,48 @@ export function PropertyPanel({
 
     return (
       <Card className="max-h-none overflow-hidden md:max-h-[calc(100vh-236px)]">
-        <div className="border-b-[2px] border-ink-black bg-pulp-paper px-3 py-2">
-          <div className="font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/45">
-            INSPECTOR
-          </div>
-          <div className="font-display text-[1rem] font-bold leading-none tracking-[-0.02em] text-ink-black">
-            {t("BUBBLE")}
-          </div>
-        </div>
+        <SurfaceHeader kicker="INSPECTOR" title={t("BUBBLE")} />
 
         <div className="max-h-none space-y-4 overflow-y-auto p-3 md:max-h-[calc(100vh-292px)]">
         <div>
-          <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">{t("TEXT")}</label>
+          <FieldLabel>{t("TEXT")}</FieldLabel>
           <EditableText
             value={bubble.text}
             onSave={(text) => onUpdateBubble(selection.panelId, bubble.id, { text })}
             multiline
-            inputClassName="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.82rem] min-h-[60px]"
+            inputClassName="ui-field min-h-[60px]"
           />
         </div>
 
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">{t("TYPE")}</label>
-            <select
+            <FieldLabel>{t("TYPE")}</FieldLabel>
+            <SelectField
               value={bubble.type}
               onChange={(e) => onUpdateBubble(selection.panelId, bubble.id, { type: e.target.value as typeof bubble.type })}
-              className="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.78rem]"
             >
               {BUBBLE_TYPES.map((t) => (
                 <option key={t} value={t}>{t.toUpperCase()}</option>
               ))}
-            </select>
+            </SelectField>
           </div>
           <div>
-            <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">{t("SIDE")}</label>
-            <select
+            <FieldLabel>{t("SIDE")}</FieldLabel>
+            <SelectField
               value={bubble.side}
               onChange={(e) => onUpdateBubble(selection.panelId, bubble.id, { side: e.target.value as typeof bubble.side })}
-              className="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.78rem]"
             >
               {SIDES.map((s) => (
                 <option key={s} value={s}>{s.toUpperCase()}</option>
               ))}
-            </select>
+            </SelectField>
           </div>
         </div>
 
         <div>
-          <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">{t("WIDTH")}</label>
+          <FieldLabel>{t("WIDTH")}</FieldLabel>
           <div className="flex items-center gap-2">
-            <input
+            <TextField
               type="number"
               value={bubble.width ?? ""}
               placeholder="Auto"
@@ -383,72 +363,67 @@ export function PropertyPanel({
                 const v = e.target.value ? Number(e.target.value) : null;
                 onUpdateBubble(selection.panelId, bubble.id, { width: v });
               }}
-              className="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.78rem]"
             />
           </div>
         </div>
 
-        <div className="border-t-[2px] border-ink-black/10 pt-3 space-y-3">
+        <div className="ui-rule space-y-3">
           <div className="font-meta text-[0.65rem] tracking-[0.18em] text-ink-black/50">
             {t("BUBBLE STYLE")}
           </div>
 
           <div>
-            <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">FONT</label>
-            <select
+            <FieldLabel>FONT</FieldLabel>
+            <SelectField
               value={bubble.font_family ?? ""}
               onChange={(e) => onUpdateBubble(selection.panelId, bubble.id, { font_family: e.target.value || null })}
-              className="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.78rem]"
             >
               <option value="">THEME DEFAULT</option>
               {FONT_OPTIONS.map((font) => (
                 <option key={font.label} value={font.value}>{font.label.toUpperCase()}</option>
               ))}
-            </select>
+            </SelectField>
           </div>
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">FONT SIZE</label>
-              <input
+              <FieldLabel>FONT SIZE</FieldLabel>
+              <TextField
                 type="number"
                 value={bubble.font_size ?? ""}
                 placeholder="Auto"
                 min={8}
                 max={96}
                 onChange={(e) => onUpdateBubble(selection.panelId, bubble.id, { font_size: e.target.value ? Number(e.target.value) : null })}
-                className="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.78rem]"
               />
             </div>
             <div>
-              <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">BORDER PX</label>
-              <input
+              <FieldLabel>BORDER PX</FieldLabel>
+              <TextField
                 type="number"
                 value={bubble.border_width ?? ""}
                 placeholder="Auto"
                 min={0}
                 max={16}
                 onChange={(e) => onUpdateBubble(selection.panelId, bubble.id, { border_width: e.target.value ? Number(e.target.value) : null })}
-                className="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.78rem]"
               />
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">RADIUS</label>
-              <input
+              <FieldLabel>RADIUS</FieldLabel>
+              <TextField
                 type="number"
                 value={bubble.border_radius ?? ""}
                 placeholder="Auto"
                 min={0}
                 max={120}
                 onChange={(e) => onUpdateBubble(selection.panelId, bubble.id, { border_radius: e.target.value ? Number(e.target.value) : null })}
-                className="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.78rem]"
               />
             </div>
             <div>
-              <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">TEXT</label>
+              <FieldLabel>TEXT</FieldLabel>
               <DebouncedColorInput
                 value={bubble.font_color ?? "#1A1A1A"}
                 onCommit={(value) => onUpdateBubble(selection.panelId, bubble.id, { font_color: value })}
@@ -458,14 +433,14 @@ export function PropertyPanel({
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">FILL</label>
+              <FieldLabel>FILL</FieldLabel>
               <DebouncedColorInput
                 value={bubble.fill_color ?? "#FFFFFF"}
                 onCommit={(value) => onUpdateBubble(selection.panelId, bubble.id, { fill_color: value })}
               />
             </div>
             <div>
-              <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">BORDER</label>
+              <FieldLabel>BORDER</FieldLabel>
               <DebouncedColorInput
                 value={bubble.border_color ?? "#1A1A1A"}
                 onCommit={(value) => onUpdateBubble(selection.panelId, bubble.id, { border_color: value })}
@@ -505,7 +480,7 @@ export function PropertyPanel({
           </div>
         )}
 
-        <div className="border-t-[2px] border-ink-black/10 pt-3">
+        <div className="ui-rule">
           <Button
             variant="outline"
             size="sm"
@@ -527,39 +502,31 @@ export function PropertyPanel({
 
   return (
     <Card className="max-h-none overflow-hidden md:max-h-[calc(100vh-236px)]">
-      <div className="border-b-[2px] border-ink-black bg-pulp-paper px-3 py-2">
-        <div className="font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/45">
-          INSPECTOR
-        </div>
-        <div className="font-display text-[1rem] font-bold leading-none tracking-[-0.02em] text-ink-black">
-          SFX
-        </div>
-      </div>
+      <SurfaceHeader kicker="INSPECTOR" title="SFX" />
 
       <div className="max-h-none space-y-4 overflow-y-auto p-3 md:max-h-[calc(100vh-292px)]">
       <div>
-        <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">TEXT</label>
+        <FieldLabel>TEXT</FieldLabel>
         <EditableText
           value={sfx.text}
           onSave={(text) => onUpdateSfx(selection.panelId, { text })}
-          inputClassName="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.82rem]"
+          inputClassName="ui-field"
         />
       </div>
 
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">ROTATION</label>
-          <input
+          <FieldLabel>ROTATION</FieldLabel>
+          <TextField
             type="number"
             value={sfx.rotation}
             step={1}
             onChange={(e) => onUpdateSfx(selection.panelId, { rotation: Number(e.target.value) })}
-            className="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.78rem]"
           />
         </div>
         <div>
-          <label className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/55 block mb-1">FONT SIZE</label>
-          <input
+          <FieldLabel>FONT SIZE</FieldLabel>
+          <TextField
             type="number"
             value={sfx.font_size ?? ""}
             placeholder="Auto"
@@ -567,7 +534,6 @@ export function PropertyPanel({
               const v = e.target.value ? Number(e.target.value) : null;
               onUpdateSfx(selection.panelId, { font_size: v });
             }}
-            className="w-full border-[2px] border-ink-black bg-pulp-paper px-2 py-1.5 font-body text-[0.78rem]"
           />
         </div>
       </div>
@@ -587,7 +553,7 @@ export function PropertyPanel({
         </div>
       )}
 
-      <div className="border-t-[2px] border-ink-black/10 pt-3">
+      <div className="ui-rule">
         <Button
           variant="outline"
           size="sm"

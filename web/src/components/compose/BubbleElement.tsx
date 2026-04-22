@@ -71,6 +71,10 @@ export function BubbleElement({ bubble, selected }: BubbleElementProps) {
       className={classes.join(" ")}
       data-id={bubble.id}
       data-editor-selectable
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
+      aria-label={`${bubble.type} bubble: ${bubble.text}`}
       style={bubbleStyle(bubble)}
     >
       {bubble.speaker_name && (

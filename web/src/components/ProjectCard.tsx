@@ -55,105 +55,107 @@ export function ProjectCard({ project, coverPending = false, coverFailed = false
   const progressPct = Math.round((furthest / STAGE_ORDER.length) * 100);
 
   return (
-    <Card className="overflow-hidden transition-transform duration-150 hover:-translate-y-[2px]">
-      <div className="relative border-b-[2px] border-ink-black bg-ink-black">
-        {project.has_cover ? (
-          <img
-            src={coverUrl}
-            alt={`${project.project_name} cover`}
-            loading="lazy"
-            className="aspect-[4/5] w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
-          />
-        ) : (
-          <div className="flex aspect-[4/5] flex-col justify-end bg-ink-black p-4 text-bristol">
-            <div className="font-meta text-[0.46rem] tracking-[0.18em] text-bristol/45">
-              {coverFailed ? t("COVER FAILED") : coverPending ? t("COVER GENERATING") : t("COVER QUEUED")}
+    <Link
+      to={`/project/${encodeURIComponent(project.name)}`}
+      aria-label={`${t("OPEN FILE")}: ${project.project_name}`}
+      className="group block h-full focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
+    >
+      <Card className="h-full overflow-hidden transition-transform duration-150 group-hover:-translate-y-[2px] group-focus-visible:-translate-y-[2px]">
+        <div className="relative border-b-[2px] border-ink-black bg-ink-black">
+          {project.has_cover ? (
+            <img
+              src={coverUrl}
+              alt={`${project.project_name} cover`}
+              loading="lazy"
+              className="aspect-[4/5] w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+            />
+          ) : (
+            <div className="flex aspect-[4/5] flex-col justify-end bg-ink-black p-4 text-bristol">
+              <div className="font-meta text-[0.46rem] tracking-[0.18em] text-bristol/45">
+                {coverFailed ? t("COVER FAILED") : coverPending ? t("COVER GENERATING") : t("COVER QUEUED")}
+              </div>
+              <div className="mt-2 max-w-[10ch] font-display text-[2.4rem] font-bold leading-[0.86] tracking-[-0.07em] text-bristol">
+                {project.project_name}
+              </div>
+              <div className="mt-4 h-2 border border-bristol/35">
+                <div className="h-full animate-pulse bg-narrator-gold" style={{ width: coverPending ? "60%" : "22%" }} />
+              </div>
             </div>
-            <div className="mt-2 max-w-[10ch] font-display text-[2.4rem] font-bold leading-[0.86] tracking-[-0.07em] text-bristol">
-              {project.project_name}
-            </div>
-            <div className="mt-4 h-2 border border-bristol/35">
-              <div className="h-full animate-pulse bg-narrator-gold" style={{ width: coverPending ? "60%" : "22%" }} />
-            </div>
-          </div>
-        )}
+          )}
 
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink-black/85 to-transparent p-3 pt-12">
-          <div className="font-meta text-[0.48rem] tracking-[0.18em] text-bristol/70">
-            {stageLabel}
+          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink-black/85 to-transparent p-3 pt-12">
+            <div className="font-meta text-[0.48rem] tracking-[0.18em] text-bristol/70">
+              {stageLabel}
+            </div>
+            <h3 className="mt-1 font-display text-[2rem] font-bold leading-none tracking-[-0.06em] text-bristol">
+              {project.project_name}
+            </h3>
           </div>
-          <h3 className="mt-1 font-display text-[2rem] font-bold leading-none tracking-[-0.06em] text-bristol">
-            {project.project_name}
-          </h3>
-        </div>
 
           {project.is_running && (
             <div className="absolute left-2 top-2 z-10 animate-pulse bg-hero-red px-2 py-1 font-meta text-[0.48rem] tracking-[0.18em] text-bristol">
               {t("ACTIVE")}
             </div>
           )}
-          <Tag
-            className={`absolute right-2 top-2 ${resolveTone(status)}`}
-          >
+          <Tag className={`absolute right-2 top-2 ${resolveTone(status)}`}>
             {resolveTag(status, statusName)}
           </Tag>
-      </div>
+        </div>
 
-      <div className="p-3">
-        <div className="grid grid-cols-[1fr_auto] gap-4">
-          <p className="text-[0.78rem] leading-6 text-ink-black/72">
-            {project.has_cover
-              ? t("Project cover, pipeline position, cost, and latest review checkpoint.")
-              : coverFailed
-                ? t("Cover generation failed; opening the project still gives access to every pipeline room.")
-                : t("Cover art is being prepared from the story bible and selected visual style.")}
-          </p>
-          <div className="text-right">
-            <div className="font-display text-[1.8rem] font-bold leading-none tracking-[-0.05em] text-ink-black">
-              {furthest}
+        <div className="p-3">
+          <div className="grid grid-cols-[1fr_auto] gap-4">
+            <p className="text-[0.78rem] leading-6 text-ink-black/72">
+              {project.has_cover
+                ? t("Project cover, pipeline position, cost, and latest review checkpoint.")
+                : coverFailed
+                  ? t("Cover generation failed; opening the project still gives access to every pipeline room.")
+                  : t("Cover art is being prepared from the story bible and selected visual style.")}
+            </p>
+            <div className="text-right">
+              <div className="font-display text-[1.8rem] font-bold leading-none tracking-[-0.05em] text-ink-black">
+                {furthest}
+              </div>
+              <div className="font-meta text-[0.42rem] tracking-[0.14em] text-ink-black/45">
+                {t("OF")} 7
+              </div>
             </div>
-            <div className="font-meta text-[0.42rem] tracking-[0.14em] text-ink-black/45">
-              {t("OF")} 7
+          </div>
+
+          <div className="mt-4 h-3 border-[2px] border-ink-black bg-pulp-paper">
+            <div className="h-full bg-archive-sage" style={{ width: `${progressPct}%` }} />
+          </div>
+
+          <div className="mt-4 space-y-2 border-t-[2px] border-ink-black pt-3">
+            <div className="flex items-center justify-between text-[0.66rem]">
+              <span className="font-meta tracking-[0.16em] text-ink-black/45">
+                {t("CREATED")}
+              </span>
+              <span className="font-body text-ink-black/78">
+                {formatCreated(project.created_at)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-[0.66rem]">
+              <span className="font-meta tracking-[0.16em] text-ink-black/45">
+                {t("CHECKPOINT")}
+              </span>
+              <span className="font-body text-ink-black/78">{stageLabel}</span>
+            </div>
+            <div className="flex items-center justify-between text-[0.66rem]">
+              <span className="font-meta tracking-[0.16em] text-ink-black/45">
+                {t("SPEND")}
+              </span>
+              <span className="font-body text-ink-black/78 tabular-nums">
+                ${project.total_cost_usd.toFixed(2)}
+              </span>
             </div>
           </div>
-        </div>
 
-        <div className="mt-4 h-3 border-[2px] border-ink-black bg-pulp-paper">
-          <div className="h-full bg-archive-sage" style={{ width: `${progressPct}%` }} />
-        </div>
-
-        <div className="mt-4 space-y-2 border-t-[2px] border-ink-black pt-3">
-          <div className="flex items-center justify-between text-[0.66rem]">
-            <span className="font-meta tracking-[0.16em] text-ink-black/45">
-              {t("CREATED")}
-            </span>
-            <span className="font-body text-ink-black/78">
-              {formatCreated(project.created_at)}
-            </span>
-          </div>
-          <div className="flex items-center justify-between text-[0.66rem]">
-            <span className="font-meta tracking-[0.16em] text-ink-black/45">
-              {t("CHECKPOINT")}
-            </span>
-            <span className="font-body text-ink-black/78">{stageLabel}</span>
-          </div>
-          <div className="flex items-center justify-between text-[0.66rem]">
-            <span className="font-meta tracking-[0.16em] text-ink-black/45">
-              {t("SPEND")}
-            </span>
-            <span className="font-body text-ink-black/78 tabular-nums">
-              ${project.total_cost_usd.toFixed(2)}
-            </span>
+          <div className="mt-3 flex items-center justify-between border-t border-ink-black/20 pt-3 font-meta text-[0.56rem] tracking-[0.16em] text-hero-red">
+            <span>{t("OPEN FILE")}</span>
+            <span aria-hidden="true">-&gt;</span>
           </div>
         </div>
-
-        <Link
-          to={`/project/${encodeURIComponent(project.name)}`}
-          className="mt-3 block border-[2px] border-ink-black bg-hero-red px-4 py-2 text-center font-meta text-[0.62rem] tracking-[0.16em] text-bristol hover:opacity-90"
-        >
-          {t("OPEN FILE")}
-        </Link>
-      </div>
-    </Card>
+      </Card>
+    </Link>
   );
 }

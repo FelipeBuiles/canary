@@ -3,6 +3,7 @@ import type { ImageStatus } from "../types/api";
 import { Button } from "./ui/Button";
 import { Card } from "./ui/Card";
 import { ImageModal } from "./ui/ImageModal";
+import { StatusPill } from "./ui/StatusPill";
 import { useI18n } from "../i18n";
 
 type PanelState = "active" | "inking" | "failed" | "narrative" | "queued" | "regening" | "stale";
@@ -21,11 +22,10 @@ function resolvePanelState(
   return "active";
 }
 
-function statusTone(state: PanelState) {
-  if (state === "active" || state === "narrative") return "bg-archive-sage text-ink-black";
-  if (state === "inking" || state === "queued" || state === "regening") return "bg-narrator-gold text-ink-black";
-  if (state === "stale") return "bg-hero-red text-bristol";
-  return "bg-hero-red text-bristol";
+function statusTone(state: PanelState): "sage" | "gold" | "red" {
+  if (state === "active" || state === "narrative") return "sage";
+  if (state === "inking" || state === "queued" || state === "regening") return "gold";
+  return "red";
 }
 
 function statusLabel(state: PanelState, t: (text: string) => string) {
@@ -177,11 +177,9 @@ export function PanelCard({
           <span className="font-meta text-[0.46rem] tracking-[0.16em] text-ink-black/45">
             PANEL {String(panelNumber).padStart(2, "0")}
           </span>
-          <span
-            className={`border border-ink-black px-2 py-1 font-meta text-[0.44rem] tracking-[0.14em] ${statusTone(state)}`}
-          >
+          <StatusPill tone={statusTone(state)}>
             {statusLabel(state, t)}
-          </span>
+          </StatusPill>
         </div>
       </Card>
       <ImageModal 
