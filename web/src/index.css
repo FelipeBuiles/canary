@@ -20,6 +20,7 @@
   --color-panel-line: #d1c9b5;
   --color-ink-fade: #5d564b;
   --color-preview-tint: #e9e0c9;
+  --color-warn-orange: #c9650a;
 
   --font-display: "Anybody", sans-serif;
   --font-body: "Be Vietnam Pro", sans-serif;
@@ -263,6 +264,27 @@
     animation: flash-change-inline 4.2s ease-out;
     border-radius: 0.125rem;
     background: color-mix(in srgb, var(--color-archive-sage) 42%, transparent);
+  }
+
+  /* Parchment-tone shimmer for async image/content placeholders. */
+  .skeleton-shimmer {
+    background: linear-gradient(
+      90deg,
+      var(--color-surface-container) 25%,
+      var(--color-surface-variant) 50%,
+      var(--color-surface-container) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
   }
 }
 
