@@ -24,7 +24,7 @@ export function Shell() {
         <main id="main-content" className="min-w-0 flex-1 overflow-y-auto bg-pulp-paper">
           <div className={cn(
             "flex min-h-full w-full flex-col px-5 py-6",
-            !isCompose && (isLibrary ? "mx-auto max-w-[1500px]" : "mx-auto max-w-[1318px]")
+            !isCompose && !isLibrary && "mx-auto max-w-[1318px]"
           )}>
             <Outlet />
           </div>
