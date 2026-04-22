@@ -14,6 +14,14 @@ interface UploadStepProps {
 }
 
 const ACCEPTED = [".txt", ".epub", ".pdf"];
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+const PANEL_COST_USD = 0.07;
 const DEFAULT_IMAGE_MODEL = "gemini-3-pro-image-preview";
 const IMAGE_MODEL_OPTIONS: Array<{ value: string; label: string }> = [
   { value: DEFAULT_IMAGE_MODEL, label: "Gemini 3 Pro Image" },
@@ -150,15 +158,26 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
                 if (dropped) setFile(dropped);
               }}
               aria-label={t("DROP FILE OR CLICK TO BROWSE")}
-              className="flex min-h-[120px] w-full cursor-pointer flex-col items-center justify-center border-[2px] border-dashed border-ink-black bg-pulp-paper px-4 py-6 hover:bg-ghost-shadow/30 transition-colors"
+              className={`flex min-h-[120px] w-full cursor-pointer flex-col items-center justify-center border-[2px] border-dashed px-4 py-6 transition-colors ${
+                file && extOk
+                  ? "border-archive-sage bg-chip-sage/40"
+                  : !extOk
+                    ? "border-hero-red bg-chip-red/30"
+                    : "border-ink-black bg-pulp-paper hover:bg-ghost-shadow/30"
+              }`}
             >
               {file ? (
                 <>
+                  {extOk && (
+                    <div className="mb-2 inline-flex h-7 w-7 items-center justify-center rounded-full bg-archive-sage text-bristol">
+                      <Icon name="check" size={14} />
+                    </div>
+                  )}
                   <div className="font-display text-[1rem] font-bold tracking-[-0.04em]">
                     {file.name}
                   </div>
                   <div className="mt-1 font-meta text-[0.5rem] tracking-[0.14em] text-ink-black/50">
-                    {(file.size / 1024 / 1024).toFixed(1)} MB
+                    {formatBytes(file.size)}
                   </div>
                   {!extOk && (
                     <div className="mt-2 text-[0.78rem] text-hero-red">
@@ -206,19 +225,45 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
               ))}
             </select>
             <p className="mt-1 text-[0.72rem] leading-relaxed text-ink-black/45">
-              {t("Controls generated dialogue, narration, style suggestions, and prompt artifacts for this project.")}
+              {t("Controls generated dialogue, narration, style suggestions, and prompt artifacts.")}
             </p>
           </div>
         </div>
 
-        {/* Advanced config toggle */}
+        {/* Advanced config disclosure */}
         <button
           type="button"
           onClick={() => setShowAdvanced(!showAdvanced)}
-          className="mt-4 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/50 hover:text-ink-black transition-colors"
+          aria-expanded={showAdvanced}
+          className="mt-5 flex w-full items-center justify-between gap-3 border-[2px] border-ink-black bg-bristol px-4 py-3 text-left transition-colors hover:bg-ghost-shadow/30"
         >
-          {showAdvanced ? "▼" : "▶"} {t("ADVANCED CONFIGURATION")}
+          <div>
+            <div className="font-display text-[0.95rem] font-bold uppercase leading-none tracking-[-0.02em] text-ink-black">
+              {t("ADVANCED CONFIGURATION")}
+            </div>
+            <div className="mt-1 font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/55">
+              {t("Model selection, panels per scene, style preset")}
+            </div>
+          </div>
+          <span aria-hidden="true" className="font-meta text-[0.7rem] text-ink-black/60">
+            {showAdvanced ? "▼" : "▶"}
+          </span>
         </button>
+
+        {/* Cost preview strip */}
+        <div className="mt-3 flex items-center justify-between gap-3 border-[2px] border-ink-black bg-chip-gold px-4 py-2 shadow-ink-sm">
+          <div>
+            <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60">
+              {t("ESTIMATED GENERATION COST")}
+            </div>
+            <div className="mt-0.5 font-display text-[1.05rem] font-bold leading-none tracking-[-0.03em] text-ink-black tabular-nums">
+              ~${(maxPanelsPerScene * PANEL_COST_USD * 0.5).toFixed(2)}–${(maxPanelsPerScene * PANEL_COST_USD * 0.75).toFixed(2)}
+            </div>
+          </div>
+          <div className="text-right font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/55">
+            {maxPanelsPerScene} {t("panels/scene")}
+          </div>
+        </div>
 
         {showAdvanced && (
           <div className="mt-4 space-y-3 border-t-[2px] border-ink-black pt-4">
