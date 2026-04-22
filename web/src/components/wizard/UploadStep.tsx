@@ -303,7 +303,7 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
                   ))}
                 </select>
                 <p className="mt-1 text-[0.72rem] leading-relaxed text-ink-black/45">
-                  Selected model is persisted to the project config and used by Stage 6.
+                  Selected model is persisted to the project config and used by DRAW.
                 </p>
               </div>
             </div>

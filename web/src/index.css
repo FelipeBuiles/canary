@@ -210,10 +210,11 @@
 
   .display-headline {
     font-family: var(--font-display);
-    font-weight: 700;
-    font-size: clamp(2.25rem, 4vw, 3rem);
-    line-height: 0.9;
-    letter-spacing: -0.035em;
+    font-weight: 900;
+    font-stretch: 75%;
+    font-size: clamp(2.75rem, 5vw, 4.5rem);
+    line-height: 0.82;
+    letter-spacing: -0.055em;
     text-wrap: balance;
   }
 

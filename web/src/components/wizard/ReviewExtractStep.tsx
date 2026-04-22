@@ -1,11 +1,15 @@
+import { useState } from "react";
 import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
 import { SectionLabel } from "../SectionLabel";
 import { StatRow } from "../ui/StatRow";
+import { DestructiveButton } from "../ui/DestructiveButton";
+import { RerunDrawer } from "../ui/RerunDrawer";
 import type { StoryBible, Character, Location } from "../../types/api";
 import { CharacterCard, LocationCard } from "../../pages/rooms/StoryBibleRoom";
 import { useUpdateStoryBible } from "../../api/queries";
 import { useI18n } from "../../i18n";
+import { RERUN_IMPACT } from "../../lib/rerunImpact";
 
 interface ReviewExtractStepProps {
   storyBible: StoryBible | undefined;
@@ -19,6 +23,7 @@ interface ReviewExtractStepProps {
 export function ReviewExtractStep({ storyBible, onApprove, isApproving, onRegenExtract, isRegenerating, project }: ReviewExtractStepProps) {
   const updateBible = useUpdateStoryBible();
   const { t } = useI18n();
+  const [rerunOpen, setRerunOpen] = useState(false);
 
   if (!storyBible) {
     return (
@@ -53,7 +58,7 @@ export function ReviewExtractStep({ storyBible, onApprove, isApproving, onRegenE
         <h1 className="mt-4 display-headline">{t("STORY BIBLE")}</h1>
         <p className="mt-4 lead-pulp max-w-[52ch]">
           Review the extracted story data below. Characters, locations, and scenes
-          will drive all downstream stages.
+          will drive all downstream rooms.
         </p>
       </Card>
 
@@ -107,9 +112,30 @@ export function ReviewExtractStep({ storyBible, onApprove, isApproving, onRegenE
           {isApproving ? t("APPROVING…") : t("APPROVE & CONTINUE")}
         </Button>
         {onRegenExtract && (
-          <Button size="lg" variant="outline" onClick={onRegenExtract} disabled={isApproving || isRegenerating}>
-            {isRegenerating ? t("RE-EXTRACTING…") : t("RE-EXTRACT")}
-          </Button>
+          <>
+            <DestructiveButton
+              size="md"
+              onClick={() => setRerunOpen(true)}
+              disabled={isApproving || isRegenerating}
+            >
+              {isRegenerating ? t("RE-EXTRACTING…") : t("↺ RE-EXTRACT")}
+            </DestructiveButton>
+            <RerunDrawer
+              open={rerunOpen}
+              stageName="Extract"
+              impactStages={RERUN_IMPACT.extract.downstream}
+              estimatedCost={RERUN_IMPACT.extract.cost}
+              costIsPlaceholder={RERUN_IMPACT.extract.costIsPlaceholder}
+              itemsAtRisk="Story bible edits and downstream generated work will be replaced."
+              confirmLabel="Re-extract"
+              busy={isApproving || isRegenerating}
+              onConfirm={() => {
+                onRegenExtract();
+                setRerunOpen(false);
+              }}
+              onClose={() => setRerunOpen(false)}
+            />
+          </>
         )}
       </div>
     </div>

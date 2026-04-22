@@ -1,15 +1,56 @@
+import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useStoryBible, useUpdateStoryBible } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { SectionDivider } from "../../components/SectionDivider";
-import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
 import { SurfaceHeader } from "../../components/ui/Surface";
 import { EditableText } from "../../components/ui/EditableText";
 import { RoomShell } from "../../components/ui/RoomShell";
-import { useRunAction } from "../../hooks/useRunAction";
+import { RerunStageAction } from "../../components/ui/RerunStageAction";
 import type { Character, Location } from "../../types/api";
+
+function VisualAnchorEditor({
+  value,
+  onSave,
+  label = "VISUAL ANCHOR",
+}: {
+  value: string;
+  onSave: (value: string) => void;
+  label?: string;
+}) {
+  const [expanded, setExpanded] = useState(value.length <= 100);
+  const shouldTruncate = value.length > 100;
+  const displayValue = !expanded && shouldTruncate ? `${value.slice(0, 100)}...` : value;
+
+  return (
+    <div className="mt-3 text-[0.82rem] leading-6 text-ink-black/74">
+      <span className="font-meta text-[0.48rem] tracking-[0.18em] text-ink-black/45">{label}</span>
+      {expanded ? (
+        <EditableText
+          value={value}
+          onSave={onSave}
+          multiline
+          className="mt-1 block text-[0.78rem] italic leading-6 text-ink-black/68"
+        />
+      ) : (
+        <p className="mt-1 text-[0.78rem] italic leading-6 text-ink-black/68">
+          {displayValue}
+        </p>
+      )}
+      {shouldTruncate && (
+        <button
+          type="button"
+          onClick={() => setExpanded((next) => !next)}
+          className="mt-1 font-meta text-[0.5rem] tracking-[0.16em] text-hero-red hover:text-ink-black"
+        >
+          {expanded ? "COLLAPSE" : "EXPAND"}
+        </button>
+      )}
+    </div>
+  );
+}
 
 export function CharacterCard({
   character,
@@ -48,15 +89,10 @@ export function CharacterCard({
           className="text-ink-black/55"
         />
       </div>
-      <div className="mt-3 text-[0.82rem] leading-6 text-ink-black/74">
-        <span className="font-meta text-[0.48rem] tracking-[0.18em] text-ink-black/45">VISUAL ANCHOR</span>
-        <EditableText
-          value={character.visual_anchor}
-          onSave={(v) => update({ visual_anchor: v })}
-          multiline
-          className="mt-1 block text-[0.78rem] italic leading-6 text-ink-black/68"
-        />
-      </div>
+      <VisualAnchorEditor
+        value={character.visual_anchor}
+        onSave={(v) => update({ visual_anchor: v })}
+      />
       <div className="mt-3 flex flex-wrap gap-1.5">
         {character.distinguishing_features.map((f) => (
           <Tag key={f}>{f}</Tag>
@@ -90,11 +126,9 @@ export function LocationCard({
         actions={<Tag className="bg-pulp-paper">{location.id.toUpperCase()}</Tag>}
         className="-m-4 mb-3"
       />
-      <EditableText
+      <VisualAnchorEditor
         value={location.visual_anchor}
         onSave={(v) => update({ visual_anchor: v })}
-        multiline
-        className="mt-2 block text-[0.78rem] italic leading-6 text-ink-black/68"
       />
       <div className="mt-3 flex flex-wrap gap-1.5">
         {location.time_of_day && (
@@ -118,7 +152,6 @@ export function StoryBibleRoom() {
   const { name } = useParams<{ name: string }>();
   const { data: bible, isLoading, error } = useStoryBible(name);
   const updateBible = useUpdateStoryBible();
-  const { handleRun, isPending } = useRunAction();
 
   if (isLoading) {
     return <RoomShell isLoading loadingText="LOADING STORY BIBLE…" />;
@@ -129,7 +162,7 @@ export function StoryBibleRoom() {
       <RoomShell
         isEmpty
         emptyTitle="STORY BIBLE NOT AVAILABLE"
-        emptyDescription={error instanceof Error ? error.message : error ? "Failed to load story bible." : "This stage has not been reached yet."}
+        emptyDescription={error instanceof Error ? error.message : error ? "Failed to load story bible." : "This room is not ready yet."}
       />
     );
   }
@@ -156,16 +189,7 @@ export function StoryBibleRoom() {
         label="EXTRACT / STORY BIBLE"
         title={bible.title}
         lead={<>by {bible.author} &middot; {bible.total_scenes} scenes extracted into the narrative frame.</>}
-        actions={(
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => name && handleRun(name, "extract", true)}
-            disabled={isPending}
-          >
-            {isPending ? "RERUNNING…" : "RERUN EXTRACT"}
-          </Button>
-        )}
+        actions={<RerunStageAction project={name} stage="extract" label="Extract" />}
       />
 
       <section className="grid gap-6 xl:grid-cols-2">

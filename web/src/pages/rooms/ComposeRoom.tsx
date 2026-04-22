@@ -4,18 +4,17 @@ import { usePages, usePage, useUpdatePage, useReplacePage, useReflowPages, useGe
 import { downloadExportUrl } from "../../api/pages";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { Button } from "../../components/ui/Button";
+import { RerunStageAction } from "../../components/ui/RerunStageAction";
 import { PageNavigator } from "../../components/compose/PageNavigator";
 import { PropertyPanel } from "../../components/compose/PropertyPanel";
 import { EditorToolbar } from "../../components/compose/EditorToolbar";
 import { PageEditor } from "../../components/compose/PageEditor";
-import { useRunAction } from "../../hooks/useRunAction";
 import { useComposeStore } from "../../store/compose";
 import type { ComicPage, Bubble, Sfx } from "../../types/api";
 import "../../components/compose/comic-page.css";
 
 export function ComposeRoom() {
   const { name } = useParams<{ name: string }>();
-  const { handleRun, isPending } = useRunAction();
   const { data: pageList, isLoading: loadingList } = usePages(name);
   const { data: projectConfig } = useProjectConfig(name);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -42,6 +41,8 @@ export function ComposeRoom() {
   const clearHistory = useComposeStore((s) => s.clearHistory);
   const [zoom, setZoom] = useState(1);
   const [outputLanguageOverride, setOutputLanguageOverride] = useState<"en" | "es" | "fr" | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(() => localStorage.getItem("canary.compose.onboarded") !== "1");
+  const [onboardingStep, setOnboardingStep] = useState(0);
   const clampZoom = (value: number) => Math.max(0.5, Math.min(2.5, Number(value.toFixed(2))));
   const outputLanguage = outputLanguageOverride ?? projectConfig?.target_language ?? "en";
 
@@ -237,6 +238,11 @@ export function ComposeRoom() {
     setZoom(1);
   }
 
+  function dismissOnboarding() {
+    localStorage.setItem("canary.compose.onboarded", "1");
+    setShowOnboarding(false);
+  }
+
   // ── Keyboard shortcuts ───────────────────────────────────────────────────
 
   useEffect(() => {
@@ -275,6 +281,12 @@ export function ComposeRoom() {
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 
+  useEffect(() => {
+    if (!showOnboarding || onboardingStep !== 1) return;
+    const timer = window.setTimeout(() => setOnboardingStep(2), 1200);
+    return () => window.clearTimeout(timer);
+  }, [onboardingStep, showOnboarding]);
+
   // ── Render ───────────────────────────────────────────────────────────────
 
   if (loadingList) {
@@ -295,7 +307,7 @@ export function ComposeRoom() {
             PAGE EDITOR NOT AVAILABLE
           </div>
           <p className="mt-2 text-[0.82rem] text-ink-black/50">
-            Complete the COMPOSE stage first.
+            Complete COMPOSE first.
           </p>
         </div>
       </div>
@@ -311,16 +323,7 @@ export function ComposeRoom() {
         title="PAGE EDITOR"
         lead="Position bubbles, edit dialogue, adjust layout, and export your comic."
         className="mx-3 mt-3 shrink-0 md:mx-4 md:mt-4"
-        actions={(
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => name && handleRun(name, "assemble", true)}
-            disabled={isPending}
-          >
-            {isPending ? "RERUNNING…" : "RERUN COMPOSE"}
-          </Button>
-        )}
+        actions={<RerunStageAction project={name} stage="assemble" label="Compose" />}
       />
 
       <div className="sticky top-0 z-20 mx-3 mt-3 shrink-0 md:mx-4">
@@ -416,6 +419,69 @@ export function ComposeRoom() {
           ) : null}
         </aside>
       </div>
+      {showOnboarding && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-ink-black/60 p-4">
+          <div className="w-full max-w-[560px] border-[2px] border-ink-black bg-pulp-paper p-5 shadow-ink-lg">
+            <div className="font-meta text-[0.55rem] tracking-[0.2em] text-hero-red">
+              COMPOSE CHECKLIST
+            </div>
+            <h2 className="mt-2 font-display text-[2rem] font-bold uppercase leading-none tracking-[-0.04em] text-ink-black">
+              Finish the page pass
+            </h2>
+            <div className="mt-5 space-y-3">
+              {[
+                "Match Lettering to Art",
+                "Review and reposition speech bubbles",
+                "Export your comic",
+              ].map((label, index) => (
+                <div
+                  key={label}
+                  className={`border-[2px] border-ink-black p-3 ${
+                    onboardingStep === index ? "bg-bristol" : onboardingStep > index ? "bg-archive-sage text-bristol" : "bg-pulp-paper"
+                  }`}
+                >
+                  <div className="font-meta text-[0.52rem] tracking-[0.16em]">
+                    STEP {index + 1}
+                  </div>
+                  <div className="mt-1 font-display text-[1rem] font-bold uppercase tracking-[-0.03em]">
+                    {label}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={dismissOnboarding}>
+                Dismiss
+              </Button>
+              {onboardingStep === 0 && (
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    handleGeneratePageStyle();
+                    setOnboardingStep(1);
+                  }}
+                  disabled={generatePageStyleMut.isPending}
+                >
+                  {generatePageStyleMut.isPending ? "MATCHING..." : "Match lettering"}
+                </Button>
+              )}
+              {onboardingStep === 2 && (
+                <>
+                  <Button size="sm" onClick={() => handleExport("pdf")} disabled={exportMut.isPending}>
+                    Export PDF
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => handleExport("cbz")} disabled={exportMut.isPending}>
+                    Export CBZ
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={dismissOnboarding}>
+                    Done
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

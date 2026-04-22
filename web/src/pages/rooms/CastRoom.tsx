@@ -8,8 +8,9 @@ import { Tag } from "../../components/ui/Tag";
 import { Button } from "../../components/ui/Button";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { ImageModal } from "../../components/ui/ImageModal";
+import { LazyImage } from "../../components/ui/LazyImage";
 import { StatusPill } from "../../components/ui/StatusPill";
-import { useRunAction } from "../../hooks/useRunAction";
+import { RerunStageAction } from "../../components/ui/RerunStageAction";
 import type { Character, GenerationJob, Location } from "../../types/api";
 
 function queuedLabel(job: GenerationJob | null) {
@@ -108,19 +109,21 @@ function CharacterCastCard({
               ) : (
                 <>
                   <div className="font-meta text-[0.5rem] tracking-[0.18em] text-bristol/40">NO REF IMAGE</div>
-                  <div className="font-meta text-[0.44rem] tracking-[0.14em] text-bristol/25">RUN CAST STAGE</div>
+                  <div className="font-meta text-[0.44rem] tracking-[0.14em] text-bristol/25">RUN CAST</div>
                 </>
               )}
             </div>
           ) : (
             <>
-              <img
+              <LazyImage
                 src={`${refUrl}?t=${timestamp}`}
                 alt={character.name}
                 loading="lazy"
                 width={320}
                 height={400}
-                className="aspect-[4/5] w-full object-cover hover:opacity-90 transition-opacity"
+                aspect="4/5"
+                containerClassName="aspect-[4/5] w-full"
+                className="object-cover hover:opacity-90 transition-opacity"
                 onError={() => setImgFailed(true)}
               />
               {activeJob && (
@@ -129,14 +132,9 @@ function CharacterCastCard({
                 </StatusPill>
               )}
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                <Button
-                  size="md"
-                  className="border-bristol"
-                  onClick={handleRegen}
-                  disabled={regenRef.isPending || !!activeJob}
-                >
-                  {regenRef.isPending || activeJob ? queuedLabel(activeJob) : "REGENERATE"}
-                </Button>
+                <span className="border-[2px] border-bristol bg-ink-black px-3 py-2 font-meta text-[0.62rem] tracking-[0.16em] text-bristol">
+                  FULL SIZE
+                </span>
               </div>
             </>
           )}
@@ -168,6 +166,15 @@ function CharacterCastCard({
         onClose={() => setIsModalOpen(false)} 
         src={`${refUrl}?t=${timestamp}`} 
         alt={character.name} 
+        actions={(
+          <Button
+            size="md"
+            onClick={handleRegen}
+            disabled={regenRef.isPending || !!activeJob}
+          >
+            {regenRef.isPending || activeJob ? queuedLabel(activeJob) : "REGENERATE"}
+          </Button>
+        )}
       />
     </>
   );
@@ -264,19 +271,21 @@ function LocationPlateCard({
               ) : (
                 <>
                   <div className="font-meta text-[0.5rem] tracking-[0.18em] text-bristol/40">NO PLATE IMAGE</div>
-                  <div className="font-meta text-[0.44rem] tracking-[0.14em] text-bristol/25">RUN CAST STAGE</div>
+                  <div className="font-meta text-[0.44rem] tracking-[0.14em] text-bristol/25">RUN CAST</div>
                 </>
               )}
             </div>
           ) : (
             <>
-              <img
+              <LazyImage
                 src={`${plateUrl}?t=${timestamp}`}
                 alt={location.name}
                 loading="lazy"
                 width={480}
                 height={270}
-                className="aspect-[16/9] w-full object-cover hover:opacity-90 transition-opacity"
+                aspect="16/9"
+                containerClassName="aspect-[16/9] w-full"
+                className="object-cover hover:opacity-90 transition-opacity"
                 onError={() => setImgFailed(true)}
               />
               {activeJob && (
@@ -285,14 +294,9 @@ function LocationPlateCard({
                 </StatusPill>
               )}
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                <Button
-                  size="md"
-                  className="border-bristol"
-                  onClick={handleRegen}
-                  disabled={regenPlate.isPending || !!activeJob}
-                >
-                  {regenPlate.isPending || activeJob ? queuedLabel(activeJob) : "REGENERATE"}
-                </Button>
+                <span className="border-[2px] border-bristol bg-ink-black px-3 py-2 font-meta text-[0.62rem] tracking-[0.16em] text-bristol">
+                  FULL SIZE
+                </span>
               </div>
             </>
           )}
@@ -319,6 +323,15 @@ function LocationPlateCard({
         onClose={() => setIsModalOpen(false)} 
         src={`${plateUrl}?t=${timestamp}`} 
         alt={location.name} 
+        actions={(
+          <Button
+            size="md"
+            onClick={handleRegen}
+            disabled={regenPlate.isPending || !!activeJob}
+          >
+            {regenPlate.isPending || activeJob ? queuedLabel(activeJob) : "REGENERATE"}
+          </Button>
+        )}
       />
     </>
   );
@@ -328,9 +341,8 @@ export function CastRoom() {
   const { name } = useParams<{ name: string }>();
   const { data: bible, isLoading } = useStoryBible(name);
   const { data: status } = useProjectStatus(name);
-  const { handleRun, isPending } = useRunAction();
   const isCastStageRunning = status?.stages?.index?.status === "running";
-  const stageRegenerating = isCastStageRunning || isPending;
+  const stageRegenerating = isCastStageRunning;
 
   if (isLoading) {
     return <RoomShell isLoading loadingText="LOADING CAST…" />;
@@ -341,7 +353,7 @@ export function CastRoom() {
       <RoomShell
         isEmpty
         emptyTitle="CAST NOT AVAILABLE"
-        emptyDescription="Complete the EXTRACT and CAST stages first."
+        emptyDescription="Complete EXTRACT and CAST first."
       />
     );
   }
@@ -352,16 +364,7 @@ export function CastRoom() {
         label="CAST / CHARACTER & LOCATION REFS"
         title="CASTING CALL"
         lead="Reference sheets and location plates produced by the casting director — each used as the visual anchor for every downstream panel."
-        actions={(
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => name && handleRun(name, "index", true)}
-            disabled={stageRegenerating}
-          >
-            {stageRegenerating ? "RERUNNING…" : "RERUN CAST"}
-          </Button>
-        )}
+        actions={<RerunStageAction project={name} stage="index" label="Cast" disabled={stageRegenerating} />}
       />
 
       <section className="grid gap-6 xl:grid-cols-2">

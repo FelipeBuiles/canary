@@ -144,7 +144,7 @@ export function PrimitiveReference() {
               <StateBlock
                 minHeight="min-h-[180px]"
                 title="Not Available"
-                description="This stage has not been reached yet."
+                description="This room is not ready yet."
                 icon="draft"
               />
               <LoadingBlock label="LOADING PANEL GALLERY..." />
@@ -197,6 +197,7 @@ export function PrimitiveReference() {
         stageName="Extract"
         impactStages={["index", "screenplay", "panels", "prompts", "generate", "assemble"]}
         estimatedCost="~$4.10"
+        costIsPlaceholder
         itemsAtRisk="46 generated panels will be lost."
         onConfirm={() => setRerunOpen(false)}
         onClose={() => setRerunOpen(false)}

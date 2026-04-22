@@ -15,6 +15,7 @@ import { Card } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { GenerationDetailsModal } from "../../components/ui/GenerationDetailsModal";
+import { LazyImage } from "../../components/ui/LazyImage";
 import { StatusPill } from "../../components/ui/StatusPill";
 import { StateBlock } from "../../components/ui/StateBlock";
 import { Surface } from "../../components/ui/Surface";
@@ -135,13 +136,15 @@ function StyleCard({
             </div>
           ) : (
             <>
-              <img
+              <LazyImage
                 src={`${sampleUrl}?t=${timestamp}`}
                 alt={suggestion.label}
                 loading="lazy"
                 width={320}
                 height={400}
-                className="block w-full aspect-[4/5] object-cover object-center hover:opacity-90 transition-opacity"
+                aspect="4 / 5"
+                containerClassName="w-full"
+                className="object-cover object-center hover:opacity-90 transition-opacity"
                 onError={() => setImgFailed(true)}
               />
               <div

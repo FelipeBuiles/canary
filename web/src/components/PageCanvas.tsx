@@ -1,4 +1,5 @@
 import type { ComicPage } from "../types/api";
+import { LazyImage } from "./ui/LazyImage";
 
 interface PageCanvasProps {
   page: ComicPage;
@@ -31,12 +32,14 @@ export function PageCanvas({ page, projectName }: PageCanvasProps) {
                 gridRow: panel.grid_row ?? undefined,
               }}
             >
-              <img
+              <LazyImage
                 src={imageUrl}
                 alt={`Panel ${panel.panel_number}`}
                 loading="lazy"
                 width={400}
                 height={600}
+                aspect="2 / 3"
+                containerClassName="w-full"
                 className="h-full w-full object-cover"
               />
 

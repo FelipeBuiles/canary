@@ -3,6 +3,7 @@ import type { ImageStatus } from "../types/api";
 import { Button } from "./ui/Button";
 import { Card } from "./ui/Card";
 import { ImageModal } from "./ui/ImageModal";
+import { LazyImage } from "./ui/LazyImage";
 import { StatusPill } from "./ui/StatusPill";
 import { useI18n } from "../i18n";
 
@@ -140,26 +141,42 @@ export function PanelCard({
             </div>
           ) : (
             <>
-              <img
+              <LazyImage
                 src={imageUrl}
                 alt={`Panel ${panelNumber}`}
                 loading="lazy"
                 width={400}
                 height={500}
+                containerClassName="h-full w-full"
                 className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
               />
-              {state === "active" && onRegenerate && (
+              {state === "active" && (onRegenerate || onPanelClick) && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/60 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150">
-                  <Button
-                    size="md"
-                    className="border-bristol"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onRegenerate();
-                    }}
-                  >
-                    {t("QUICK RE-DO")}
-                  </Button>
+                  {onPanelClick && (
+                    <Button
+                      size="md"
+                      variant="outline"
+                      className="border-bristol"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onPanelClick();
+                      }}
+                    >
+                      {t("VIEW")}
+                    </Button>
+                  )}
+                  {onRegenerate && (
+                    <Button
+                      size="md"
+                      className="border-bristol"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRegenerate();
+                      }}
+                    >
+                      {t("QUICK RE-DO")}
+                    </Button>
+                  )}
                 </div>
               )}
               {state === "narrative" && narrative && (

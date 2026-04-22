@@ -4,6 +4,7 @@ import { Button } from "../ui/Button";
 import { SectionLabel } from "../SectionLabel";
 import { Tag } from "../ui/Tag";
 import { ImageModal } from "../ui/ImageModal";
+import { LazyImage } from "../ui/LazyImage";
 import {
   useGenerationJobs,
   useStyles,
@@ -103,13 +104,15 @@ function MiniStyleCard({
           </div>
         ) : (
           <>
-            <img
+            <LazyImage
               src={`${sampleUrl}?t=${timestamp}`}
               alt={suggestion.label}
               loading="lazy"
               width={200}
               height={250}
-              className="block w-full aspect-[4/5] object-cover object-center cursor-zoom-in"
+              aspect="4 / 5"
+              containerClassName="w-full cursor-zoom-in"
+              className="object-cover object-center"
               onClick={() => setIsModalOpen(true)}
               onError={() => setImgFailed(true)}
             />

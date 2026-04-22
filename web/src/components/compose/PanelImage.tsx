@@ -1,3 +1,5 @@
+import { LazyImage } from "../ui/LazyImage";
+
 interface PanelImageProps {
   /** Full URL to the panel image (HTTP or data URL) */
   src: string;
@@ -13,7 +15,8 @@ export function PanelImage({ src, imageOffsetX, imageOffsetY }: PanelImageProps)
   } as React.CSSProperties;
 
   return (
-    <img
+    <LazyImage
+      containerClassName="panel-art-frame"
       className="panel-art"
       src={src}
       alt=""

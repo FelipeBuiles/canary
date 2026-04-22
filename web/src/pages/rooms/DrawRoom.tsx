@@ -3,19 +3,19 @@ import { useParams } from "react-router-dom";
 import { useGenerationJobs, useImages, useProjectStatus, useRegenPanel, usePromptSummaries } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { PanelCard } from "../../components/PanelCard";
-import { PanelDetailModal } from "../../components/PanelDetailModal";
 import { Button } from "../../components/ui/Button";
+import { ControlGroup } from "../../components/ui/ControlGroup";
+import { ImageModal } from "../../components/ui/ImageModal";
 import { StatRow } from "../../components/ui/StatRow";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { Surface, SurfaceHeader } from "../../components/ui/Surface";
+import { RerunStageAction } from "../../components/ui/RerunStageAction";
 import { StyleCallout } from "../../components/wizard/StyleCallout";
-import { useRunAction } from "../../hooks/useRunAction";
 import { useActiveRegens, useRegenStore } from "../../store/regen";
 import type { ImageStatus } from "../../types/api";
 
 export function DrawRoom() {
   const { name } = useParams<{ name: string }>();
-  const { handleRun, isPending } = useRunAction();
   const projectRegens = useActiveRegens(name ?? "");
   const bustTimestamps = useRegenStore((s) => s.bustTimestamps);
   const errors = useRegenStore((s) => s.errors);
@@ -204,7 +204,7 @@ export function DrawRoom() {
       <RoomShell
         isEmpty
         emptyTitle="PANEL GALLERY NOT AVAILABLE"
-        emptyDescription="Complete the DRAW stage first."
+        emptyDescription="Complete DRAW first."
       />
     );
   }
@@ -215,19 +215,10 @@ export function DrawRoom() {
         label="DRAW / PANEL GALLERY"
         title="PANEL GALLERY"
         lead="Every generated panel at a glance — regenerate individual frames, review failures, switch scenes."
-        actions={(
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => name && handleRun(name, "generate", true)}
-            disabled={isPending}
-          >
-            {isPending ? "RERUNNING…" : "RERUN DRAW"}
-          </Button>
-        )}
+        actions={<RerunStageAction project={name} stage="generate" label="Draw" itemsAtRisk={`${images?.length ?? 0} generated panels will be lost`} />}
       />
       <StyleCallout project={name} />
-      <div className="flex flex-wrap gap-2">
+      <ControlGroup label="FILTER" aria-label="Panel filters">
         <Button variant={!sceneFilter ? "primary" : "outline"} size="sm" onClick={() => setSceneFilter(null)}>
           ALL
         </Button>
@@ -241,7 +232,7 @@ export function DrawRoom() {
             {sceneId.replace("_", " ").toUpperCase()}
           </Button>
         ))}
-      </div>
+      </ControlGroup>
 
       <section className="grid gap-5 xl:grid-cols-[1fr_240px]">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -270,7 +261,7 @@ export function DrawRoom() {
           })}
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-4 xl:sticky xl:top-4 xl:self-start">
           <Surface padding="sm" shadow="paper-sm">
             <SurfaceHeader kicker="VISUAL REFS" title="REFS" className="-m-3 mb-3" />
             <div className="mt-3 border-[2px] border-ink-black bg-ink-black p-3 text-bristol">
@@ -309,37 +300,14 @@ export function DrawRoom() {
           </Surface>
         </div>
       </section>
-      {selectedPanel && name && (() => {
-          const idx = displayImages.findIndex(
-            (img) => img.scene_id === selectedPanel.sceneId && img.panel_number === selectedPanel.panelNumber,
-          );
-          const canGoPrev = idx > 0;
-          const canGoNext = idx >= 0 && idx < displayImages.length - 1;
-          const handlePrev = () => {
-            if (idx > 0) {
-              const prev = displayImages[idx - 1];
-              setSelectedPanel({ sceneId: prev.scene_id, panelNumber: prev.panel_number });
-            }
-          };
-          const handleNext = () => {
-            if (idx >= 0 && idx < displayImages.length - 1) {
-              const next = displayImages[idx + 1];
-              setSelectedPanel({ sceneId: next.scene_id, panelNumber: next.panel_number });
-            }
-          };
-          return (
-            <PanelDetailModal
-              isOpen={!!selectedPanel}
-              onClose={() => setSelectedPanel(null)}
-              onPrev={canGoPrev ? handlePrev : null}
-              onNext={canGoNext ? handleNext : null}
-              project={name}
-              sceneId={selectedPanel.sceneId}
-              panelNumber={selectedPanel.panelNumber}
-              imageUrl={`/api/projects/${encodeURIComponent(name)}/files/images/${selectedPanel.sceneId}/panel_${String(selectedPanel.panelNumber).padStart(3, "0")}.png`}
-            />
-          );
-        })()}
+      {selectedPanel && name && (
+        <ImageModal
+          isOpen={!!selectedPanel}
+          onClose={() => setSelectedPanel(null)}
+          src={`/api/projects/${encodeURIComponent(name)}/files/images/${selectedPanel.sceneId}/panel_${String(selectedPanel.panelNumber).padStart(3, "0")}.png`}
+          alt={`${selectedPanel.sceneId} panel ${selectedPanel.panelNumber}`}
+        />
+      )}
     </RoomShell>
   );
 }

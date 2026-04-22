@@ -6,6 +6,7 @@ import { Card } from "../components/ui/Card";
 import { SelectField, SwitchField, TextField } from "../components/ui/Field";
 import { LANGUAGES, useI18n } from "../i18n";
 import type { LanguageCode } from "../i18n";
+import { useShowDevContent } from "../lib/devContent";
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -26,6 +27,7 @@ export function Settings() {
   const { language, setLanguage, t } = useI18n();
   const { data: config } = useProjectConfig(name);
   const updateConfig = useUpdateProjectConfig();
+  const [showDevContent, setShowDevContent] = useShowDevContent();
 
   const updating = updateConfig.isPending;
   const patch = (data: Parameters<typeof updateConfig.mutate>[0]["data"]) => {
@@ -56,6 +58,17 @@ export function Settings() {
                 <option key={l.code} value={l.code}>{l.label}</option>
               ))}
             </SelectField>
+          </Row>
+
+          <Row
+            label={t("SHOW DEV CONTENT")}
+            hint={t("Shows raw file paths, model names, SHA hashes, and generation parameters for debugging.")}
+          >
+            <SwitchField
+              checked={showDevContent}
+              onCheckedChange={setShowDevContent}
+              label={t("SHOW DEV CONTENT")}
+            />
           </Row>
         </Card>
       </section>

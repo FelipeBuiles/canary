@@ -3,6 +3,7 @@ import { Button } from "../ui/Button";
 import { SectionLabel } from "../SectionLabel";
 import { useRegenPlate, useRegenRef, useStoryBible } from "../../api/queries";
 import { ImageModal } from "../ui/ImageModal";
+import { LazyImage } from "../ui/LazyImage";
 import { StyleCallout } from "./StyleCallout";
 import { useActiveRegens, useRegenStore } from "../../store/regen";
 import { useJobPoller } from "../../hooks/useJobPoller";
@@ -111,14 +112,12 @@ export function ReviewCastStep({ project, onApprove, isApproving }: ReviewCastSt
                     className="relative flex aspect-square cursor-pointer items-center justify-center bg-ink-black/5"
                     onClick={() => setModalImage({ src, alt: c.name })}
                   >
-                    <img
+                    <LazyImage
                       src={src}
                       alt={c.name}
+                      containerClassName="h-full w-full"
                       className="h-full w-full object-cover hover:opacity-90 transition-opacity"
                       loading="lazy"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = "none";
-                      }}
                     />
                     {active && (
                       <div className="absolute inset-0 flex items-center justify-center bg-ink-black/65">
@@ -174,14 +173,12 @@ export function ReviewCastStep({ project, onApprove, isApproving }: ReviewCastSt
                     className="relative flex aspect-video cursor-pointer items-center justify-center bg-ink-black/5"
                     onClick={() => setModalImage({ src, alt: l.name })}
                   >
-                    <img
+                    <LazyImage
                       src={src}
                       alt={l.name}
+                      containerClassName="h-full w-full"
                       className="h-full w-full object-cover hover:opacity-90 transition-opacity"
                       loading="lazy"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = "none";
-                      }}
                     />
                     {active && (
                       <div className="absolute inset-0 flex items-center justify-center bg-ink-black/65">
