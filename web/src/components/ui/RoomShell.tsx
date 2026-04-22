@@ -16,7 +16,7 @@ export function RoomShell({
   loadingText = "LOADING…",
   isEmpty,
   emptyTitle = "NOT AVAILABLE",
-  emptyDescription = "This stage has not been reached yet.",
+  emptyDescription = "This room is not ready yet.",
   children,
 }: RoomShellProps) {
   const { t } = useI18n();
@@ -34,5 +34,5 @@ export function RoomShell({
     );
   }
 
-  return <div className="space-y-5">{children}</div>;
+  return <div className="space-y-10">{children}</div>;
 }

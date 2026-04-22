@@ -4,6 +4,7 @@ import { PromptLineageCard } from "./PromptLineageCard";
 import { Button } from "./ui/Button";
 import { Icon } from "./ui/Icon";
 import { GenerationDetailsModal } from "./ui/GenerationDetailsModal";
+import { LazyImage } from "./ui/LazyImage";
 import { useUpdatePrompt, useRegenPanel, usePromptsForScene, useImageGenerationMeta, useProjectConfig } from "../api/queries";
 import { useRegenStore } from "../store/regen";
 import { useQueryClient } from "@tanstack/react-query";
@@ -202,10 +203,11 @@ export function PanelDetailModal({
         <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[1fr_1fr]">
           <div className="border-r-[2px] border-ink-black p-4 min-h-0">
             <div className="h-full w-full bg-ink-black flex items-center justify-center">
-              <img
+              <LazyImage
                 src={imageUrl}
                 alt={`Panel ${panelNumber}`}
-                className="w-full max-h-full object-contain"
+                containerClassName="h-full w-full"
+                className="object-contain"
               />
             </div>
           </div>

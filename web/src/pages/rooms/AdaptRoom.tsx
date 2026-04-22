@@ -1,22 +1,34 @@
+import { useEffect } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useScreenplays, useScreenplay } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
-import { Button } from "../../components/ui/Button";
-import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { SceneSidebar } from "../../components/ui/SceneSidebar";
 import { LoadingBlock, StateBlock } from "../../components/ui/StateBlock";
 import { SurfaceHeader } from "../../components/ui/Surface";
-import { useRunAction } from "../../hooks/useRunAction";
+import { RerunStageAction } from "../../components/ui/RerunStageAction";
 
 export function AdaptRoom() {
   const { name } = useParams<{ name: string }>();
   const { data: summaries, isLoading: loadingList } = useScreenplays(name);
-  const { handleRun, isPending } = useRunAction();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedScene = searchParams.get("scene");
-  const { data: screenplay, isLoading: loadingScript } = useScreenplay(name, selectedScene);
+  const activeScene = selectedScene ?? summaries?.[0]?.scene_id ?? null;
+  const { data: screenplay, isLoading: loadingScript } = useScreenplay(name, activeScene);
+
+  useEffect(() => {
+    if (selectedScene || !summaries?.[0]?.scene_id) return;
+    setSearchParams({ scene: summaries[0].scene_id }, { replace: true });
+  }, [selectedScene, setSearchParams, summaries]);
+
+  const beatBorderClass = (type: string) => {
+    if (type === "action") return "border-ink-black";
+    if (type === "dialogue") return "border-hero-red";
+    if (type === "direction") return "border-ink-fade";
+    if (type === "sfx") return "border-narrator-gold";
+    return "border-archive-sage";
+  };
 
   return (
     <RoomShell
@@ -24,38 +36,31 @@ export function AdaptRoom() {
       loadingText="LOADING SCREENPLAYS…"
       isEmpty={!summaries?.length || !name}
       emptyTitle="SCREENPLAYS NOT AVAILABLE"
-      emptyDescription="Complete the ADAPT stage first."
+      emptyDescription="Complete ADAPT first."
     >
       <ShowcaseHeader
         label="ADAPT / SCREENPLAY"
         title="SCREENPLAY VIEWER"
         lead="Each scene's prose rendered into beats — action, dialogue, sfx, description — ready to panel."
-        actions={(
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => name && handleRun(name, "screenplay", true)}
-            disabled={isPending}
-          >
-            {isPending ? "RERUNNING…" : "RERUN ADAPT"}
-          </Button>
-        )}
+        actions={name ? <RerunStageAction project={name} stage="screenplay" label="Adapt" /> : null}
       />
 
-      <section className="grid gap-5 xl:grid-cols-[220px_1fr]">
+      <section className="grid border-[2px] border-ink-black bg-bristol xl:grid-cols-[200px_1fr]">
         {summaries && (
-          <SceneSidebar
-            items={summaries.map((s) => ({
-              id: s.scene_id,
-              label: s.scene_id.replace("_", " ").toUpperCase(),
-              count: `${s.beat_count} beats`,
-            }))}
-            activeId={selectedScene ?? summaries[0]?.scene_id ?? ""}
-            onSelect={(id) => setSearchParams({ scene: id }, { replace: true })}
-          />
+          <div className="border-b-[2px] border-ink-black xl:border-b-0 xl:border-r-[2px]">
+            <SceneSidebar
+              items={summaries.map((s) => ({
+                id: s.scene_id,
+                label: s.scene_id.replace("_", " ").toUpperCase(),
+                count: `${s.beat_count} beats`,
+              }))}
+              activeId={activeScene ?? ""}
+              onSelect={(id) => setSearchParams({ scene: id }, { replace: true })}
+            />
+          </div>
         )}
 
-        <Card className="p-4 md:p-5">
+        <div className="min-w-0 p-4 md:p-6">
           {loadingScript ? (
             <LoadingBlock label="LOADING…" />
           ) : screenplay ? (
@@ -79,15 +84,7 @@ export function AdaptRoom() {
                 {screenplay.beats.map((beat, i) => (
                   <div
                     key={i}
-                    className={`border-l-[4px] py-2 pl-4 ${
-                      beat.type === "dialogue"
-                        ? "border-hero-red"
-                        : beat.type === "action"
-                          ? "border-narrator-gold"
-                          : beat.type === "sfx"
-                            ? "border-ink-black"
-                            : "border-archive-sage"
-                    }`}
+                    className={`border-l-[4px] py-2 pl-4 ${beatBorderClass(beat.type)}`}
                   >
                     <div className="font-meta text-[0.46rem] tracking-[0.18em] text-ink-black/45">
                       {beat.type.toUpperCase()}
@@ -108,7 +105,7 @@ export function AdaptRoom() {
           ) : (
             <StateBlock title="SELECT A SCENE" description="Select a scene to view the screenplay." icon="draft" />
           )}
-        </Card>
+        </div>
       </section>
     </RoomShell>
   );

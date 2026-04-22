@@ -1,14 +1,17 @@
 import { useEffect } from "react";
+import type { ReactNode } from "react";
 import { Icon } from "./Icon";
+import { LazyImage } from "./LazyImage";
 
 interface ImageModalProps {
   isOpen: boolean;
   onClose: () => void;
   src: string;
   alt: string;
+  actions?: ReactNode;
 }
 
-export function ImageModal({ isOpen, onClose, src, alt }: ImageModalProps) {
+export function ImageModal({ isOpen, onClose, src, alt, actions }: ImageModalProps) {
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = "hidden";
@@ -34,12 +37,21 @@ export function ImageModal({ isOpen, onClose, src, alt }: ImageModalProps) {
         >
           <Icon name="x" size={24} />
         </button>
-        <img 
+        <LazyImage
           src={src} 
           alt={alt} 
-          className="max-h-[90vh] max-w-[90vw] object-contain border-[4px] border-ink-black bg-bristol"
+          containerClassName="max-h-[90vh] max-w-[90vw] border-[4px] border-ink-black bg-bristol"
+          className="max-h-[90vh] max-w-[90vw] object-contain"
           onClick={(e) => e.stopPropagation()}
         />
+        {actions && (
+          <div
+            className="mt-3 flex justify-end gap-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {actions}
+          </div>
+        )}
       </div>
     </div>
   );

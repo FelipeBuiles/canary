@@ -92,7 +92,7 @@ export function ReviewPromptStep({ project, onApprove, isApproving }: ReviewProm
             NO PROMPTS FOUND
           </div>
           <div className="mt-2 font-meta text-[0.48rem] tracking-[0.16em] text-ink-black/40">
-            RUN THE DIRECT STAGE AGAIN TO BUILD IMAGE PROMPTS
+            RUN DIRECT AGAIN TO BUILD IMAGE PROMPTS
           </div>
         </Card>
       )}

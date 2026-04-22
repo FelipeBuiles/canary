@@ -10,6 +10,7 @@ export interface RerunDrawerProps {
   stageName: string;
   impactStages: StageName[];
   estimatedCost: string;
+  costIsPlaceholder?: boolean;
   itemsAtRisk?: string;
   onConfirm: () => void;
   onClose: () => void;
@@ -22,6 +23,7 @@ export function RerunDrawer({
   stageName,
   impactStages,
   estimatedCost,
+  costIsPlaceholder = false,
   itemsAtRisk,
   onConfirm,
   onClose,
@@ -136,7 +138,7 @@ export function RerunDrawer({
             <div className="mt-2 flex flex-wrap gap-1.5">
               {impactStages.length === 0 ? (
                 <span className="font-meta text-[0.72rem] text-ink-fade">
-                  No downstream stages.
+                  No downstream rooms.
                 </span>
               ) : (
                 impactStages.map((s) => (
@@ -156,7 +158,7 @@ export function RerunDrawer({
             )}
             <div className="mt-3 flex items-baseline gap-3">
               <span className="font-meta text-[0.58rem] tracking-[0.16em] uppercase text-ink-black/60">
-                Estimated cost
+                Estimated cost{costIsPlaceholder ? " (placeholder)" : ""}
               </span>
               <span className="font-display text-[1.1rem] font-bold">
                 {estimatedCost}

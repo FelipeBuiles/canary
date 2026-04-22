@@ -50,6 +50,11 @@
 }
 
 /* object-position 20% keeps faces/action visible (top-biased) */
+.panel-art-frame {
+  position: absolute;
+  inset: 0;
+}
+
 .panel-art {
   width: 100%;
   height: 100%;

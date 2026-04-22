@@ -2,6 +2,7 @@ import { Card } from "../ui/Card";
 import { SectionLabel } from "../SectionLabel";
 import type { PipelineEvent, StageName } from "../../types/api";
 import { STAGE_DISPLAY_NAMES } from "../../types/api";
+import { redactDevText, useShowDevContent } from "../../lib/devContent";
 
 const STAGE_DESCRIPTIONS: Record<StageName, string> = {
   extract: "Reading your novel and building the story bible — characters, locations, scenes, and narrative arcs.",
@@ -43,6 +44,22 @@ const STAGE_STEPS: Partial<Record<StageName, string[]>> = {
   ],
 };
 
+function humanizeEventMessage(message: string) {
+  return message
+    .replace(/\/[^\s"'`]+/g, (match) => {
+      const fileName = match.split("/").filter(Boolean).at(-1);
+      return fileName ? `artifact ${fileName}` : "project artifact";
+    })
+    .replace(/[A-Za-z]:\\[^\s"'`]+/g, (match) => {
+      const fileName = match.split("\\").filter(Boolean).at(-1);
+      return fileName ? `artifact ${fileName}` : "project artifact";
+    });
+}
+
+function eventMessageForDisplay(message: string, showDevContent: boolean) {
+  return showDevContent ? message : redactDevText(humanizeEventMessage(message));
+}
+
 function milestoneState(stage: StageName, index: number, count: number, done: number, total: number) {
   if (stage === "extract") {
     if (done > index) return "done";
@@ -64,6 +81,7 @@ function milestoneState(stage: StageName, index: number, count: number, done: nu
 }
 
 export function ProgressStep({ stage, done, total, events = [] }: ProgressStepProps) {
+  const [showDevContent] = useShowDevContent();
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
   const isIndeterminate = total === 0 || done < total;
   const visualPct = isIndeterminate ? Math.max(pct, 8) : pct;
@@ -73,7 +91,7 @@ export function ProgressStep({ stage, done, total, events = [] }: ProgressStepPr
     .slice(-4)
     .reverse();
   const currentActivity =
-    recentLogs[0]?.message ??
+    (recentLogs[0]?.message ? eventMessageForDisplay(recentLogs[0].message, showDevContent) : null) ??
     (stage === "extract" ? "Preparing extraction run..." : STAGE_DESCRIPTIONS[stage]);
 
   return (
@@ -151,7 +169,7 @@ export function ProgressStep({ stage, done, total, events = [] }: ProgressStepPr
         <div className="mt-4 space-y-1">
           {recentLogs.slice(1).map((event, index) => (
             <div key={`${event.message}-${index}`} className="font-meta text-[0.46rem] tracking-[0.12em] text-ink-black/40">
-              {event.message}
+              {eventMessageForDisplay(event.message ?? "", showDevContent)}
             </div>
           ))}
         </div>

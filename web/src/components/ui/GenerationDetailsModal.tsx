@@ -1,5 +1,7 @@
 import { useEffect } from "react";
+import { redactDevParameters, redactDevText, useShowDevContent } from "../../lib/devContent";
 import { Icon } from "./Icon";
+import { LazyImage } from "./LazyImage";
 
 interface GenerationDetailsModalProps {
   isOpen: boolean;
@@ -20,6 +22,10 @@ export function GenerationDetailsModal({
   parameters,
   isFallback = false,
 }: GenerationDetailsModalProps) {
+  const [showDevContent] = useShowDevContent();
+  const visiblePrompt = showDevContent ? prompt : redactDevText(prompt);
+  const visibleParameters = showDevContent ? parameters : redactDevParameters(parameters);
+
   useEffect(() => {
     if (isOpen) document.body.style.overflow = "hidden";
     else document.body.style.overflow = "";
@@ -59,20 +65,30 @@ export function GenerationDetailsModal({
         <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[1fr_1fr]">
           <div className="min-h-0 border-r-[2px] border-ink-black p-4">
             <div className="flex h-full w-full items-center justify-center bg-ink-black">
-              <img src={imageUrl} alt={title} className="w-full max-h-full object-contain" />
+              <LazyImage
+                src={imageUrl}
+                alt={title}
+                containerClassName="h-full w-full"
+                className="object-contain"
+              />
             </div>
           </div>
           <div className="min-h-0 space-y-4 overflow-y-auto p-4">
+            {!showDevContent && (
+              <div className="border-[2px] border-ink-black bg-chip-gold px-3 py-2 font-meta text-[0.48rem] tracking-[0.14em] text-ink-black/65">
+                DEV CONTENT HIDDEN. ENABLE SHOW DEV CONTENT IN SETTINGS TO VIEW RAW PATHS, MODEL NAMES, SHA HASHES, AND FULL PARAMETERS.
+              </div>
+            )}
             <div>
               <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/50">FULL PROMPT</div>
               <pre className="mt-2 whitespace-pre-wrap border-[2px] border-ink-black bg-bristol p-3 font-mono text-xs leading-relaxed text-ink-black">
-                {prompt}
+                {visiblePrompt}
               </pre>
             </div>
             <div>
               <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/50">PARAMETERS</div>
               <pre className="mt-2 whitespace-pre-wrap border-[2px] border-ink-black bg-bristol p-3 font-mono text-xs leading-relaxed text-ink-black">
-                {JSON.stringify(parameters, null, 2)}
+                {JSON.stringify(visibleParameters, null, 2)}
               </pre>
             </div>
           </div>
