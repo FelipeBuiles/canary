@@ -1,9 +1,14 @@
+import { useState } from "react";
 import { Button } from "../components/ui/Button";
 import { ControlGroup } from "../components/ui/ControlGroup";
+import { DestructiveButton } from "../components/ui/DestructiveButton";
 import { FieldLabel, SelectField, SwitchField, TextAreaField, TextField } from "../components/ui/Field";
 import { Icon } from "../components/ui/Icon";
 import { IconButton } from "../components/ui/IconButton";
 import { LoadingBlock, StateBlock } from "../components/ui/StateBlock";
+import { RerunDrawer } from "../components/ui/RerunDrawer";
+import { ShotDiagram } from "../components/ui/ShotDiagram";
+import { Skeleton } from "../components/ui/Skeleton";
 import { StatusPill } from "../components/ui/StatusPill";
 import { Surface, SurfaceHeader } from "../components/ui/Surface";
 import { Tag } from "../components/ui/Tag";
@@ -20,6 +25,7 @@ const swatches = [
 ];
 
 export function PrimitiveReference() {
+  const [rerunOpen, setRerunOpen] = useState(false);
   return (
     <div className="space-y-8">
       <Surface padding="md">
@@ -146,6 +152,55 @@ export function PrimitiveReference() {
           </div>
         </Surface>
       </section>
+
+      <Surface>
+        <SurfaceHeader
+          kicker="ASYNC / DESTRUCTIVE"
+          title="Loading & Rerun"
+          actions={<StatusPill tone="red">NEW</StatusPill>}
+        />
+        <div className="space-y-6 p-4">
+          <div>
+            <div className="ui-kicker mb-2">SKELETON</div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Skeleton aspect="4/3" />
+              <Skeleton aspect="4/3" />
+              <Skeleton aspect="4/3" />
+            </div>
+          </div>
+          <div>
+            <div className="ui-kicker mb-2">SHOT DIAGRAM</div>
+            <div className="flex flex-wrap gap-4">
+              {["extreme-wide", "wide", "medium-close", "close-up", "extreme-close", "?"].map(
+                (s) => (
+                  <ShotDiagram key={s} shot={s} />
+                ),
+              )}
+            </div>
+          </div>
+          <div>
+            <div className="ui-kicker mb-2">DESTRUCTIVE ACTION</div>
+            <div className="flex flex-wrap items-center gap-3">
+              <DestructiveButton size="xs">↺ Rerun XS</DestructiveButton>
+              <DestructiveButton size="sm">↺ Rerun Sm</DestructiveButton>
+              <DestructiveButton size="md">↺ Rerun Md</DestructiveButton>
+              <Button variant="outline" size="sm" onClick={() => setRerunOpen(true)}>
+                Open Rerun Drawer
+              </Button>
+            </div>
+          </div>
+        </div>
+      </Surface>
+
+      <RerunDrawer
+        open={rerunOpen}
+        stageName="Extract"
+        impactStages={["index", "screenplay", "panels", "prompts", "generate", "assemble"]}
+        estimatedCost="~$4.10"
+        itemsAtRisk="46 generated panels will be lost."
+        onConfirm={() => setRerunOpen(false)}
+        onClose={() => setRerunOpen(false)}
+      />
 
       <Surface padding="md" benday>
         <div className="section-rule">
