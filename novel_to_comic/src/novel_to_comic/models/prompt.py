@@ -15,8 +15,16 @@ class PromptSubject(BaseModel):
 
 class ImagePrompt(BaseModel):
     prompt_version: int = 1
+    planned_panel_id: str | None = None
     scene_id: str
     panel_number: int
+    generation_mode: str | None = None
+    shape_intent: str | None = None
+    aspect_preference: float | None = None
+    aspect_range: list[float] = Field(default_factory=list)
+    crop_policy: str | None = None
+    transition_in: str | None = None
+    transition_out: str | None = None
     full_prompt: str = ""  # v2+: compact panel prompt body, excluding current style
     style: str | None = None
     composition: str | None = None

@@ -43,9 +43,9 @@ export function ComicPageCanvas({
       }}
     >
       <div
-        className="comic-page"
+        className={`comic-page ${page.layout_mode}`}
         style={{
-          ...layout.gridStyle,
+          ...(page.layout_mode === "grid" ? layout.gridStyle : {}),
         }}
       >
         {page.panels.map((panel, i) => (
@@ -54,6 +54,7 @@ export function ComicPageCanvas({
             panel={panel}
             panelIndex={i}
             layoutId={page.layout}
+            layoutMode={page.layout_mode}
             selectedPanelId={selectedPanelId}
             selectedElementId={selectedElementId}
             selectedType={selectedType}

@@ -9,6 +9,7 @@ import { useI18n } from "../i18n";
 const STAGE_COVER_STYLE: Partial<Record<StageName, { bg: string }>> = {
   extract: { bg: "#2d3a2e" },
   index:   { bg: "#0d1a2b" },
+  "layout-plan": { bg: "#1a1530" },
   prompts: { bg: "#1c1408" },
   generate:{ bg: "#0d1425" },
   assemble:{ bg: "#101a12" },
@@ -20,6 +21,7 @@ type ShapeKind = "chevron" | "diamond" | "triangle" | "circle";
 const STAGE_SHAPE: Partial<Record<StageName, ShapeKind>> = {
   extract:  "chevron",
   index:    "circle",
+  "layout-plan": "diamond",
   prompts:  "triangle",
   generate: "diamond",
   assemble: "chevron",

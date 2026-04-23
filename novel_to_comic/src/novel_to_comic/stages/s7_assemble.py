@@ -38,6 +38,13 @@ from novel_to_comic.assembly.html_renderer import (
 )
 from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
+from novel_to_comic.layout_planning import (
+    image_path_for_panel,
+    load_layout_plan,
+    persist_projected_pages,
+    planned_panel_index,
+    planned_panel_to_breakdown,
+)
 from novel_to_comic.models.comic_page import Bubble, ComicPage, PagePanel, Sfx
 from novel_to_comic.models.panel import PanelBreakdown
 from novel_to_comic.models.story_bible import StoryBible
@@ -57,8 +64,26 @@ console = Console()
 
 def _collect_panel_data(
     project_dir: Path,
+    use_layout_plan: bool = True,
 ) -> list[tuple[Path, PanelBreakdown]]:
-    """Scan images/ and panels/ directories, return sorted (img_path, breakdown) pairs."""
+    """Collect ordered (img_path, breakdown) pairs, preferring layout plan ordering."""
+    if use_layout_plan:
+        plan_path = project_dir / "layout_plan" / "layout_plan.json"
+        if plan_path.exists():
+            plan = load_layout_plan(project_dir)
+            panel_lookup = planned_panel_index(plan)
+            panel_data: list[tuple[Path, PanelBreakdown]] = []
+            for page in plan.planned_pages:
+                for panel_id in page.panel_ids:
+                    planned_panel = panel_lookup.get(panel_id)
+                    if planned_panel is None:
+                        continue
+                    img_path = image_path_for_panel(project_dir, planned_panel)
+                    if not img_path.exists():
+                        continue
+                    panel_data.append((img_path, planned_panel_to_breakdown(planned_panel)))
+            return panel_data
+
     images_dir = project_dir / "images"
     panels_dir = project_dir / "panels"
     panel_data: list[tuple[Path, PanelBreakdown]] = []
@@ -87,6 +112,25 @@ def _collect_panel_data(
             panel_data.append((img_path, bd))
 
     return panel_data
+
+
+def _collect_page_groups_from_layout_plan(project_dir: Path) -> list[list[tuple[Path, PanelBreakdown]]]:
+    plan = load_layout_plan(project_dir)
+    panel_lookup = planned_panel_index(plan)
+    page_groups: list[list[tuple[Path, PanelBreakdown]]] = []
+    for page in plan.planned_pages:
+        group: list[tuple[Path, PanelBreakdown]] = []
+        for panel_id in page.panel_ids:
+            planned_panel = panel_lookup.get(panel_id)
+            if planned_panel is None:
+                continue
+            img_path = image_path_for_panel(project_dir, planned_panel)
+            if not img_path.exists():
+                continue
+            group.append((img_path, planned_panel_to_breakdown(planned_panel)))
+        if group:
+            page_groups.append(group)
+    return page_groups
 
 
 def _group_into_pages(
@@ -256,7 +300,8 @@ async def run(
 
     # ── Build phase (panel data → ComicPage JSON) ─────────────────────────────
     if rebuild:
-        panel_data = _collect_panel_data(project_dir)
+        plan_path = project_dir / "layout_plan" / "layout_plan.json"
+        panel_data = _collect_panel_data(project_dir, use_layout_plan=plan_path.exists())
         if not panel_data:
             console.print("[red]No valid panel images found.[/red]")
             emit({"type": "log", "stage": "assemble", "level": "error",
@@ -267,19 +312,29 @@ async def run(
         emit({"type": "stage_begin", "stage": "assemble", "total": len(panel_data)})
         save_state(state, project_dir)
 
-        page_groups = _group_into_pages(panel_data, max_per_page)
+        if plan_path.exists():
+            projected_pages = persist_projected_pages(project_dir, story_bible, theme_name)
+            page_groups = _collect_page_groups_from_layout_plan(project_dir)
+            json_paths = [
+                json_dir / f"page_{page.page_number:03d}.json"
+                for page in projected_pages
+            ]
+        else:
+            page_groups = _group_into_pages(panel_data, max_per_page)
+            json_paths = []
         console.print(
             f"[bold]Building {len(panel_data)} panels → "
-            f"{len(page_groups)} pages ({max_per_page}/page)...[/bold]"
+            f"{len(page_groups)} pages{' from layout plan' if plan_path.exists() else f' ({max_per_page}/page)'}...[/bold]"
         )
         emit({"type": "log", "stage": "assemble", "level": "bold",
               "message": f"Building {len(panel_data)} panels → {len(page_groups)} pages"})
-        json_paths: list[Path] = []
-        for i, group in enumerate(page_groups):
-            comic_page = _build_comic_page(group, i + 1, project_dir, story_bible, theme_name)
-            json_path  = json_dir / f"page_{i + 1:03d}.json"
-            json_path.write_text(comic_page.model_dump_json(indent=2))
-            json_paths.append(json_path)
+        if not plan_path.exists():
+            for i, group in enumerate(page_groups):
+                comic_page = _build_comic_page(group, i + 1, project_dir, story_bible, theme_name)
+                json_path  = json_dir / f"page_{i + 1:03d}.json"
+                json_path.write_text(comic_page.model_dump_json(indent=2))
+                json_paths.append(json_path)
+        for group in page_groups:
             for _ in group:
                 record_item_done(state, "assemble")
                 emit({"type": "stage_progress", "stage": "assemble",
@@ -341,7 +396,7 @@ async def run(
               "done": state.stages["assemble"].items_done,
               "total": state.stages["assemble"].items_total})
         save_state(state, project_dir)
-        console.print("[green]Stage 7 complete.[/green]")
+        console.print("[green]Stage 8 complete.[/green]")
 
     except Exception as e:
         fail_stage(state, "assemble", str(e))

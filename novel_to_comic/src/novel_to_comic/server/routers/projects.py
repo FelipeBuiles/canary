@@ -195,7 +195,7 @@ async def create_project(
 
     # Create directory structure
     project_dir.mkdir(parents=True)
-    for subdir in ["input", "scenes", "refs", "plates", "screenplays", "panels",
+    for subdir in ["input", "scenes", "refs", "plates", "screenplays", "layout_plan", "panels",
                    "prompts", "images", "assembly", "exports", "cover"]:
         (project_dir / subdir).mkdir()
 

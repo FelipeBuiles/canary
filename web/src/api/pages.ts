@@ -1,6 +1,13 @@
 import { apiFetch } from "./client";
 import type { ComicPage, PageSummary, CharacterVoice } from "../types/api";
 
+export interface StructuralPageResponse {
+  layout_plan: Record<string, unknown>;
+  pages: ComicPage[];
+  summary: Record<string, unknown>;
+  page?: ComicPage;
+}
+
 export function listPages(project: string): Promise<PageSummary[]> {
   return apiFetch(`/projects/${encodeURIComponent(project)}/pages/`);
 }
@@ -142,6 +149,16 @@ export function reflowSinglePage(
   return apiFetch(`/projects/${encodeURIComponent(project)}/pages/${pageNum}/reflow`, {
     method: "POST",
     body: JSON.stringify({ layout_preset: layoutPreset }),
+  });
+}
+
+export function applyStructuralOperation(
+  project: string,
+  data: Record<string, unknown>,
+): Promise<StructuralPageResponse> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/structural`, {
+    method: "POST",
+    body: JSON.stringify(data),
   });
 }
 

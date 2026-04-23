@@ -8,6 +8,7 @@ interface PanelCellProps {
   panel: PagePanel;
   panelIndex: number;
   layoutId: string;
+  layoutMode: "grid" | "freeform";
   selectedPanelId: string | null;
   selectedElementId: string | null;
   selectedType: "bubble" | "sfx" | null;
@@ -23,17 +24,30 @@ export function PanelCell({
   panel,
   panelIndex,
   layoutId,
+  layoutMode,
   selectedPanelId,
   selectedElementId,
   selectedType,
   imageBaseUrl,
 }: PanelCellProps) {
-  const gridStyle = resolveGridPlacement(
-    layoutId,
-    panelIndex,
-    panel.grid_column,
-    panel.grid_row,
-  );
+  const gridStyle =
+    layoutMode === "grid"
+      ? resolveGridPlacement(layoutId, panelIndex, panel.grid_column, panel.grid_row)
+      : {};
+  const freeformStyle: React.CSSProperties =
+    layoutMode === "freeform"
+      ? {
+          ...(panel.x != null ? { left: `${Math.round(panel.x)}px` } : {}),
+          ...(panel.y != null ? { top: `${Math.round(panel.y)}px` } : {}),
+          ...(panel.width != null ? { width: `${Math.round(panel.width)}px` } : {}),
+          ...(panel.height != null ? { height: `${Math.round(panel.height)}px` } : {}),
+          ...(panel.z_index != null ? { zIndex: panel.z_index } : {}),
+          ...(panel.clip_path
+            ? { clipPath: panel.clip_path, WebkitClipPath: panel.clip_path }
+            : {}),
+          position: "absolute",
+        }
+      : {};
 
   // Separate bubbles into categories — mirrors Python _panel_html()
   const autoNarration = panel.bubbles.filter(
@@ -50,7 +64,7 @@ export function PanelCell({
     <div
       className={`panel${selectedPanelId === panel.id ? " panel-active" : ""}`}
       data-panel-id={panel.id}
-      style={gridStyle}
+      style={{ ...gridStyle, ...freeformStyle }}
     >
       <PanelImage
         src={imageSrc}

@@ -19,7 +19,7 @@ export function regenPanel(
   project: string,
   sceneId: string,
   panelNumber: number,
-): Promise<{ status: string; job: GenerationJob; scene_id: string; panel_number: number }> {
+): Promise<{ status: string; job: GenerationJob; scene_id: string; panel_number: number; planned_panel_id?: string | null }> {
   return apiFetch(
     `/projects/${encodeURIComponent(project)}/regen?scene_id=${encodeURIComponent(sceneId)}&panel_number=${panelNumber}`,
     { method: "POST" },

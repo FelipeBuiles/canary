@@ -13,10 +13,11 @@ _This file is manually maintained. Update it when stage I/O changes._
 | 1 | Extract | `extract` | Gemini 3.1 Pro | ✅ Yes |
 | 2 | Index | `index` | FLUX/Gemini (image gen) | ✅ Yes |
 | 3 | Screenplay | `screenplay` | Gemini 3.1 Pro | ❌ No |
-| 4 | Panels | `panels` | Gemini 3.1 Flash-Lite | ❌ No |
-| 5 | Prompts | `prompts` | Gemini 3.1 Flash-Lite | ❌ No |
-| 6 | Generate | `generate` | FLUX/Gemini (image gen) | ✅ Yes |
-| 7 | Assemble | `assemble` | None (deterministic) | ❌ No |
+| 4 | Layout Plan | `layout-plan` | None (deterministic) | ❌ No |
+| 5 | Panels | `panels` | Gemini 3.1 Flash-Lite | ❌ No |
+| 6 | Prompts | `prompts` | Gemini 3.1 Flash-Lite | ❌ No |
+| 7 | Generate | `generate` | FLUX/Gemini (image gen) | ✅ Yes |
+| 8 | Assemble | `assemble` | None (deterministic) | ❌ No |
 
 Checkpoint stages pause at `awaiting_review` state. Advance with `pipeline approve <stage>` or the TUI/web approval screen.
 
@@ -63,35 +64,47 @@ Checkpoint stages pause at `awaiting_review` state. Advance with `pipeline appro
 
 ---
 
-## Stage 4 — Panels (`s4_panels.py`)
+## Stage 4 — Layout Plan (`s4_layout_plan.py`)
 
 **Reads:**
 - `screenplays/scene_NNN.json`
 - `story_bible.json`
 
 **Writes:**
-- `panels/scene_NNN/panel_NNN.json` (one `PanelBreakdown` JSON per panel)
+- `layout_plan/layout_plan.json` (one `LayoutPlan` JSON per project)
 
-**What it does:** Converts each screenplay beat sequence into panel-by-panel breakdowns. Specifies shot type, camera angle, character positions, expressions, dialogue, and SFX per panel.
+**What it does:** Creates the planner-owned structural artifact for the project. Phase 1 is deterministic and heuristic-driven: it derives stable beat IDs, planned panel IDs, planned page IDs, semantic shape intent, and scene-contained page assignments from screenplay beats.
 
 ---
 
-## Stage 5 — Prompts (`s5_prompts.py`)
+## Stage 5 — Panels (`s4_panels.py`)
 
 **Reads:**
-- `panels/scene_NNN/panel_NNN.json`
+- `layout_plan/layout_plan.json`
+
+**Writes:**
+- `panels/scene_NNN/panel_NNN.json` (one `PanelBreakdown` JSON per panel)
+
+**What it does:** Compatibility projection only. Converts `PlannedPanel` records from the layout plan into legacy `PanelBreakdown` files so storyboard-facing tools can keep working during migration.
+
+---
+
+## Stage 6 — Prompts (`s5_prompts.py`)
+
+**Reads:**
+- `layout_plan/layout_plan.json`
 - `story_bible.json` (for character/location visual anchors)
 - `refs/char_NNN/*.png` (reference image paths for multi-reference injection)
 - `plates/loc_NNN.png` (plate paths)
 
 **Writes:**
-- `prompts/scene_NNN/panel_NNN.json` (one `ImagePrompt` JSON per panel)
+- `prompts/scene_NNN/panel_NNN.json` (one planner-keyed `ImagePrompt` JSON per planned panel, stored at compatibility paths)
 
-**What it does:** Assembles the complete image generation prompt for each panel. Injects `visual_anchor` fields verbatim, style template, and reference image paths. The `full_prompt` string is what goes directly to the image model.
+**What it does:** Assembles the complete image generation prompt for each planned panel. Injects `visual_anchor` fields verbatim, style template, and reference image paths. Prompt metadata now carries `planned_panel_id`, shape intent, generation mode, and crop/framing contract.
 
 ---
 
-## Stage 6 — Generate (`s6_generate.py`)
+## Stage 7 — Generate (`s6_generate.py`)
 
 **Reads:**
 - `prompts/scene_NNN/panel_NNN.json`
@@ -101,15 +114,16 @@ Checkpoint stages pause at `awaiting_review` state. Advance with `pipeline appro
 **Writes:**
 - `images/scene_NNN/panel_NNN.png`
 
-**What it does:** Runs image generation. Routes to Gemini via Vertex AI or Together AI (FLUX) based on model name. Runs async with rate limiting. Pauses for human review of generated panels before Stage 7.
+**What it does:** Runs image generation against planner-owned prompt contracts. Routes to Gemini via Vertex AI or Together AI (FLUX) based on model name. Generated image metadata now records `planned_panel_id` and the prompt contract that produced the asset. Pauses for human review before Stage 8.
 
 ---
 
-## Stage 7 — Assemble (`s7_assemble.py`)
+## Stage 8 — Assemble (`s7_assemble.py`)
 
 **Reads:**
 - `images/scene_NNN/panel_NNN.png`
-- `panels/scene_NNN/panel_NNN.json` (for dialogue, SFX, layout hints)
+- `layout_plan/layout_plan.json`
+- `panels/scene_NNN/panel_NNN.json` (compatibility fallback only)
 - `story_bible.json` (character names for bubble attribution)
 
 **Writes:**
@@ -119,7 +133,7 @@ Checkpoint stages pause at `awaiting_review` state. Advance with `pipeline appro
 - `assembly/theme.css` (written on first run; user can edit freely)
 - `exports/comic.pdf` and/or `exports/comic.cbz` (on export)
 
-**What it does:** Groups panels into pages (up to `max_panels_per_page`), builds ComicPage JSON, renders HTML with the theme system, and screenshots to PNG via Playwright. The `page_NNN.json` file is the editing surface for the future web drag-and-drop editor.
+**What it does:** Projects planned pages from the layout plan into `ComicPage` JSON, then renders HTML with the theme system and screenshots to PNG via Playwright. The `page_NNN.json` file remains the Stage 7/8 presentation editing surface.
 
 ---
 

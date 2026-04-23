@@ -11,6 +11,10 @@ interface PropertyPanelProps {
   page: ComicPage;
   selection: { panelId: string; type: "bubble" | "sfx"; elementId: string } | null;
   onUpdatePanel: (panelId: string, patch: Partial<PagePanel>) => void;
+  onUpdatePanelStructure: (
+    plannedPanelId: string,
+    patch: { importance?: string | null; shape_intent?: string | null; generation_mode?: string | null },
+  ) => void;
   onUpdateBubble: (panelId: string, bubbleId: string, patch: Partial<Bubble>) => void;
   onUpdateSfx: (panelId: string, patch: Partial<Sfx>) => void;
   onUpdatePage: (patch: Partial<ComicPage>) => void;
@@ -29,6 +33,9 @@ const THEMES = ["default", "noir", "manga", "vintage", "painted"];
 const PANELS_PER_PAGE = [1, 2, 3, 4, 5, 6];
 const BUBBLE_TYPES = ["speech", "thought", "narration"] as const;
 const SIDES = ["left", "right", "center"] as const;
+const PANEL_IMPORTANCE_OPTIONS = ["standard", "accent", "hero", "splash", "inset"] as const;
+const PANEL_SHAPE_OPTIONS = ["rect", "wide", "tall", "panorama", "bleed", "irregular"] as const;
+const GENERATION_MODE_OPTIONS = ["master", "exact"] as const;
 const FONT_OPTIONS = [
   { label: "Comic Neue", value: "'ComicNeue', 'Comic Neue', 'Comic Sans MS', cursive, sans-serif" },
   { label: "Bangers", value: "'Bangers', 'Arial Narrow', fantasy, sans-serif" },
@@ -108,6 +115,7 @@ export function PropertyPanel({
   page,
   selection,
   onUpdatePanel,
+  onUpdatePanelStructure,
   onUpdateBubble,
   onUpdateSfx,
   onUpdatePage,
@@ -295,6 +303,56 @@ export function PropertyPanel({
                 {t("RESET")}
               </Button>
             </div>
+
+            {imagePanel.planned_panel_id && (
+              <div className="ui-rule space-y-2">
+                <div className="font-meta text-[0.6rem] tracking-[0.14em] text-ink-black/45">
+                  {t("PLANNER OVERRIDES")}
+                </div>
+                <div>
+                  <FieldLabel>{t("VISUAL EMPHASIS")}</FieldLabel>
+                  <SelectField
+                    value={imagePanel.importance ?? "standard"}
+                    onChange={(e) => onUpdatePanelStructure(imagePanel.planned_panel_id!, {
+                      importance: e.target.value,
+                    })}
+                  >
+                    {PANEL_IMPORTANCE_OPTIONS.map((option) => (
+                      <option key={option} value={option}>{option.toUpperCase()}</option>
+                    ))}
+                  </SelectField>
+                </div>
+                <div>
+                  <FieldLabel>{t("PANEL SHAPE")}</FieldLabel>
+                  <SelectField
+                    value={imagePanel.shape_intent ?? "rect"}
+                    onChange={(e) => onUpdatePanelStructure(imagePanel.planned_panel_id!, {
+                      shape_intent: e.target.value,
+                    })}
+                  >
+                    {PANEL_SHAPE_OPTIONS.map((option) => (
+                      <option key={option} value={option}>{option.toUpperCase()}</option>
+                    ))}
+                  </SelectField>
+                </div>
+                <div>
+                  <FieldLabel>{t("IMAGE FRAMING")}</FieldLabel>
+                  <SelectField
+                    value={imagePanel.generation_mode ?? "master"}
+                    onChange={(e) => onUpdatePanelStructure(imagePanel.planned_panel_id!, {
+                      generation_mode: e.target.value,
+                    })}
+                  >
+                    {GENERATION_MODE_OPTIONS.map((option) => (
+                      <option key={option} value={option}>{option.toUpperCase()}</option>
+                    ))}
+                  </SelectField>
+                </div>
+                <p className="text-[0.72rem] leading-snug text-ink-black/45">
+                  {t("These edits write back to the layout plan, then reproject Compose. Existing images stay in place until you explicitly redraw affected panels.")}
+                </p>
+              </div>
+            )}
           </div>
         )}
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from novel_to_comic.models.comic_page import ComicPage
+from novel_to_comic.models.layout_plan import LayoutPlan
 from novel_to_comic.models.panel import PanelBreakdown, Screenplay
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.models.story_bible import StoryBible
@@ -76,6 +77,18 @@ def get_screenplay(scene_id: str, project=Depends(get_project)):
     if not path.exists():
         raise HTTPException(404, f"Screenplay for {scene_id} not found")
     return Screenplay.model_validate_json(path.read_text()).model_dump()
+
+
+# ── Panel Breakdowns (STORYBOARD) ─────────────────────────────────────────────
+
+
+@router.get("/layout-plan")
+def get_layout_plan(project=Depends(get_project)):
+    project_dir, config, state = project
+    path = project_dir / "layout_plan" / "layout_plan.json"
+    if not path.exists():
+        raise HTTPException(404, "Layout plan not found")
+    return LayoutPlan.model_validate_json(path.read_text()).model_dump()
 
 
 # ── Panel Breakdowns (STORYBOARD) ─────────────────────────────────────────────
@@ -220,9 +233,18 @@ def list_images(request: Request, project=Depends(get_project)):
                 else:
                     status = "done"
 
+            prompt_path = project_dir / "prompts" / scene_dir.name / f"{stem}.json"
+            planned_panel_id = None
+            if prompt_path.exists():
+                try:
+                    planned_panel_id = ImagePrompt.model_validate_json(prompt_path.read_text()).planned_panel_id
+                except Exception:
+                    planned_panel_id = None
+
             results.append({
                 "scene_id": scene_dir.name,
                 "panel_number": panel_num,
+                "planned_panel_id": planned_panel_id,
                 "status": status,
             })
 

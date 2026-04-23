@@ -40,6 +40,10 @@ interface LayoutModeProps {
   onZoomOut: () => void;
   onZoomReset: () => void;
   onUpdatePanel: (panelId: string, patch: Partial<PagePanel>) => void;
+  onUpdatePanelStructure: (
+    plannedPanelId: string,
+    patch: { importance?: string | null; shape_intent?: string | null; generation_mode?: string | null },
+  ) => void;
   onUpdateBubble: (panelId: string, bubbleId: string, patch: Partial<Bubble>) => void;
   onUpdateSfx: (panelId: string, patch: Partial<Sfx>) => void;
   onUpdatePage: (patch: Partial<ComicPage>) => void;
@@ -81,6 +85,7 @@ export function LayoutMode({
   onZoomOut,
   onZoomReset,
   onUpdatePanel,
+  onUpdatePanelStructure,
   onUpdateBubble,
   onUpdateSfx,
   onUpdatePage,
@@ -144,6 +149,7 @@ export function LayoutMode({
         page={page}
         selection={selection}
         onUpdatePanel={onUpdatePanel}
+        onUpdatePanelStructure={onUpdatePanelStructure}
         onUpdateBubble={onUpdateBubble}
         onUpdateSfx={onUpdateSfx}
         onUpdatePage={onUpdatePage}

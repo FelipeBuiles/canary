@@ -3,6 +3,7 @@ import type {
   StoryBible,
   ScreenplaySummary,
   Screenplay,
+  LayoutPlan,
   PanelSceneSummary,
   PanelBreakdown,
   ImagePrompt,
@@ -36,6 +37,10 @@ export function getScreenplay(
   return apiFetch(
     `/projects/${encodeURIComponent(project)}/screenplays/${encodeURIComponent(sceneId)}`,
   );
+}
+
+export function getLayoutPlan(project: string): Promise<LayoutPlan> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/layout-plan`);
 }
 
 // ── Panels ────────────────────────────────────────────────────────────────────

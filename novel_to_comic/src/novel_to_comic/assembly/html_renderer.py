@@ -172,9 +172,18 @@ body {
 .comic-page {
   width: 100%;
   height: calc(100% - 48px);
+}
+
+.comic-page.grid {
   padding: var(--margin);
   display: grid;
   gap: var(--gutter);
+}
+
+.comic-page.freeform {
+  position: relative;
+  padding: 0;
+  display: block;
 }
 
 .layout-1 { grid-template-rows: 1fr; grid-template-columns: 1fr; }
@@ -703,13 +712,28 @@ def _panel_html(
     ``character_voices`` maps character_id → style dict for per-character
     bubble styling.
     """
-    # Grid placement (inline style beats CSS nth-child rules)
-    grid_parts: list[str] = []
+    # Grid and freeform placement.
+    style_parts: list[str] = []
     if panel.grid_column:
-        grid_parts.append(f"grid-column: {panel.grid_column}")
+        style_parts.append(f"grid-column: {panel.grid_column}")
     if panel.grid_row:
-        grid_parts.append(f"grid-row: {panel.grid_row}")
-    style_attr = f' style="{"; ".join(grid_parts)}"' if grid_parts else ""
+        style_parts.append(f"grid-row: {panel.grid_row}")
+    if panel.x is not None:
+        style_parts.append(f"left: {panel.x:.0f}px")
+    if panel.y is not None:
+        style_parts.append(f"top: {panel.y:.0f}px")
+    if panel.width is not None:
+        style_parts.append(f"width: {panel.width:.0f}px")
+    if panel.height is not None:
+        style_parts.append(f"height: {panel.height:.0f}px")
+    if panel.x is not None or panel.y is not None or panel.width is not None or panel.height is not None:
+        style_parts.append("position: absolute")
+    if panel.clip_path:
+        style_parts.append(f"clip-path: {panel.clip_path}")
+        style_parts.append(f"-webkit-clip-path: {panel.clip_path}")
+    if panel.z_index is not None:
+        style_parts.append(f"z-index: {panel.z_index}")
+    style_attr = f' style="{"; ".join(style_parts)}"' if style_parts else ""
 
     # Panel image — resolve src depending on rendering context:
     #   image_url_fn=None  → file:// URI (Playwright server-side export)
@@ -856,7 +880,7 @@ def build_page_html(
 </style>
 </head>
 <body>
-<div class="comic-page {layout_cls}" data-page="{comic_page.page_number}">
+<div class="comic-page {comic_page.layout_mode} {layout_cls}" data-page="{comic_page.page_number}">
 {panels_html}
 </div>
 <div class="page-number">{comic_page.page_number}</div>

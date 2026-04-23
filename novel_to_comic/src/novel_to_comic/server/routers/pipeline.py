@@ -35,9 +35,10 @@ router = APIRouter()
 logger = logging.getLogger("canary.pipeline")
 
 _RERUN_CLEAN_PATHS: dict[str, tuple[str, ...]] = {
-    "extract": ("story_bible.json", "scenes", "refs", "plates", "screenplays", "panels", "prompts", "images", "assembly", "exports"),
-    "index": ("refs", "plates", "screenplays", "panels", "prompts", "images", "assembly", "exports"),
-    "screenplay": ("screenplays", "panels", "prompts", "images", "assembly", "exports"),
+    "extract": ("story_bible.json", "scenes", "refs", "plates", "screenplays", "layout_plan", "panels", "prompts", "images", "assembly", "exports"),
+    "index": ("refs", "plates", "screenplays", "layout_plan", "panels", "prompts", "images", "assembly", "exports"),
+    "screenplay": ("screenplays", "layout_plan", "panels", "prompts", "images", "assembly", "exports"),
+    "layout-plan": ("layout_plan", "panels", "prompts", "images", "assembly", "exports"),
     "panels": ("panels", "prompts", "images", "assembly", "exports"),
     "prompts": ("prompts", "images", "assembly", "exports"),
     "generate": ("images", "assembly", "exports"),
@@ -49,12 +50,13 @@ def _stage_runner(stage: str, config, project_dir, state):
     """Import and return the async run() coroutine for a given stage."""
     from novel_to_comic.stages import (
         s1_extract, s2_index, s3_screenplay,
-        s4_panels, s5_prompts, s6_generate, s7_assemble,
+        s4_layout_plan, s4_panels, s5_prompts, s6_generate, s7_assemble,
     )
     runners = {
         "extract":    lambda on_event: s1_extract.run(config, project_dir, state, on_event=on_event),
         "index":      lambda on_event: s2_index.run(config, project_dir, state, on_event=on_event),
         "screenplay": lambda on_event: s3_screenplay.run(config, project_dir, state, on_event=on_event),
+        "layout-plan": lambda on_event: s4_layout_plan.run(config, project_dir, state, on_event=on_event),
         "panels":     lambda on_event: s4_panels.run(config, project_dir, state, on_event=on_event),
         "prompts":    lambda on_event: s5_prompts.run(config, project_dir, state, on_event=on_event),
         "generate":   lambda on_event: s6_generate.run(config, project_dir, state, on_event=on_event),
@@ -311,6 +313,13 @@ async def regen_panel(
     prompt_path = project_dir / "prompts" / scene_id / f"panel_{panel_number:03d}.json"
     if not prompt_path.exists():
         raise HTTPException(404, f"Prompt not found: {scene_id}/panel_{panel_number:03d}")
+    planned_panel_id = None
+    try:
+        from novel_to_comic.models.prompt import ImagePrompt
+
+        planned_panel_id = ImagePrompt.model_validate_json(prompt_path.read_text()).planned_panel_id
+    except Exception:
+        planned_panel_id = None
 
     async def _runner() -> None:
         from novel_to_comic.stages import s6_generate
@@ -333,6 +342,7 @@ async def regen_panel(
             "job": generation_job_payload(request.app, existing),
             "scene_id": scene_id,
             "panel_number": panel_number,
+            "planned_panel_id": planned_panel_id,
         }
 
     prune_finished_generation_jobs(request.app)
@@ -350,6 +360,7 @@ async def regen_panel(
         "job": generation_job_payload(request.app, job),
         "scene_id": scene_id,
         "panel_number": panel_number,
+        "planned_panel_id": planned_panel_id,
     }
 
 

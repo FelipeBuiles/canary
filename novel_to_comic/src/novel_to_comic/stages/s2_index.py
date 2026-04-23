@@ -484,6 +484,9 @@ async def _generate_character_refs(
             except Exception as e:
                 cause = e.last_attempt.exception() if isinstance(e, RetryError) else e
                 console.print(f"[red]Failed ref sheet for {char.name}: {cause}[/red]")
+                record_item_failed(state, "index", char.id)
+                emit({"type": "log", "stage": "index", "level": "error",
+                      "message": f"Failed ref sheet for {char.name}: {cause}"})
             progress.advance(task)
 
 

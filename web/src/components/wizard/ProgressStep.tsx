@@ -8,6 +8,7 @@ const STAGE_DESCRIPTIONS: Record<StageName, string> = {
   extract: "Reading your novel and building the story bible — characters, locations, scenes, and narrative arcs.",
   index: "Generating character reference sheets and location background plates from the story bible.",
   screenplay: "Converting scene prose into screenplay format with dialogue, action, and direction beats.",
+  "layout-plan": "Planning canonical comic structure from screenplay beats — panel importance, shape intent, and page assignment.",
   panels: "Breaking screenplays into individual panel descriptions — shot types, camera angles, and compositions.",
   prompts: "Assembling image generation prompts from panel descriptions, character anchors, and location references.",
   generate: "Drawing every panel — the longest stage. Each image is generated from its assembled prompt.",
