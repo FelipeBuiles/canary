@@ -49,6 +49,7 @@ export interface StageInfo {
 export interface ProjectSummary {
   name: string;
   project_name: string;
+  author?: string | null;
   created_at: string;
   total_cost_usd: number;
   furthest_stage: string | null;
@@ -341,4 +342,16 @@ export interface ImageGenerationMeta {
   prompt: string;
   prompt_sha256: string;
   parameters: Record<string, unknown>;
+}
+
+export interface CharacterVoice {
+  character_id: string;
+  character_name: string;
+  font_family?: string | null;
+  font_size?: number | null;
+  font_color?: string | null;
+  fill_color?: string | null;
+  border_color?: string | null;
+  border_width?: number | null;
+  border_radius?: number | null;
 }

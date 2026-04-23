@@ -11,7 +11,6 @@ import {
   useStoryBible,
 } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
-import { Card } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { GenerationDetailsModal } from "../../components/ui/GenerationDetailsModal";
@@ -110,13 +109,16 @@ function StyleCard({
 
   return (
     <>
-      <Card
-        shadow="lg"
-        className={`flex flex-col ${isActive ? "border-[3px]" : ""}`}
+      <article
+        className={`flex min-h-[520px] flex-col bg-bristol transition-[box-shadow,border-color] duration-150 ${
+          isActive
+            ? "border-[3px] border-ink-black shadow-ink"
+            : "border-[3px] border-ink-black/8 shadow-none"
+        }`}
       >
-        <div className="relative border-b-[2px] border-ink-black">
+        <div className="relative bg-surface-container">
           {imgFailed ? (
-            <div className="flex aspect-[4/3] w-full flex-col items-center justify-center bg-surface-container">
+            <div className="flex aspect-[4/5] w-full flex-col items-center justify-center">
               {isGenerating && (
                 <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 animate-pulse">
                   {queueState === "queued" ? "QUEUED" : "GENERATING…"}
@@ -130,8 +132,8 @@ function StyleCard({
                 alt={suggestion.label}
                 loading="lazy"
                 width={320}
-                height={240}
-                aspect="4 / 3"
+                height={400}
+                aspect="4 / 5"
                 containerClassName="w-full"
                 className="object-cover object-center transition-opacity group-hover:opacity-90"
                 onError={() => setImgFailed(true)}
@@ -148,7 +150,7 @@ function StyleCard({
 
           {/* ACTIVE badge */}
           {isActive && (
-            <div className="absolute left-0 top-0 bg-hero-red px-2 py-1 font-meta text-[0.5rem] tracking-[0.18em] text-bristol">
+            <div className="absolute left-5 top-5 bg-hero-red px-4 py-2 font-meta text-[0.68rem] tracking-[0.18em] text-bristol">
               ACTIVE
             </div>
           )}
@@ -159,42 +161,41 @@ function StyleCard({
             onClick={handleGenerate}
             disabled={isGenerating}
             title={suggestion.has_sample ? "Regenerate sample" : "Generate sample"}
-            className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center bg-ink-black/55 text-bristol transition-opacity hover:bg-ink-black disabled:opacity-40"
+            className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center bg-ink-black/55 text-bristol transition-colors hover:bg-ink-black disabled:opacity-40"
           >
-            <span className="font-meta text-[0.5rem]">↺</span>
+            <span className="font-meta text-[0.78rem]">↺</span>
           </button>
         </div>
 
-        <div className="flex flex-1 flex-col p-3">
-          <div className="font-display text-[1rem] font-bold tracking-[-0.04em] text-ink-black">
+        <div className="flex flex-1 flex-col bg-bristol p-6">
+          <div className="font-display text-[1.35rem] font-bold leading-tight tracking-[-0.04em] text-ink-black">
             {suggestion.label}
           </div>
-          <p className="mt-2 flex-1 font-body text-[0.78rem] leading-relaxed text-ink-black/70 line-clamp-3">
+          <p className="mt-3 flex-1 font-body text-[1rem] font-semibold leading-relaxed text-ink-black/68 line-clamp-4">
             {suggestion.template}
           </p>
-          <div className="mt-3 border-t-[2px] border-ink-black pt-3">
+          <div className="mt-8">
             {isActive ? (
               <button
                 type="button"
                 disabled
-                className="inline-flex w-full items-center justify-center gap-1.5 bg-hero-red px-3 py-2 font-meta text-[0.62rem] tracking-[0.14em] text-bristol disabled:cursor-default"
+                className="inline-flex min-h-14 w-full items-center justify-center gap-2 bg-hero-red px-5 py-3 font-meta text-[0.9rem] tracking-[0.18em] text-bristol disabled:cursor-default"
               >
                 ✓ SELECTED
               </button>
             ) : (
-              <Button
-                size="sm"
-                variant="primary"
-                className="w-full"
+              <button
+                type="button"
+                className="inline-flex min-h-14 w-full items-center justify-center bg-hero-red px-5 py-3 font-meta text-[0.9rem] tracking-[0.18em] text-bristol transition-colors hover:bg-hero-red/90 disabled:cursor-not-allowed disabled:opacity-45"
                 onClick={() => setActive.mutate({ project: projectName, index: suggestion.index })}
                 disabled={isGenerating}
               >
                 SELECT
-              </Button>
+              </button>
             )}
           </div>
         </div>
-      </Card>
+      </article>
       <GenerationDetailsModal
         isOpen={isDetailsOpen}
         onClose={() => setIsDetailsOpen(false)}

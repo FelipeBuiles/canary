@@ -1,9 +1,5 @@
-import { Button } from "../ui/Button";
-import { ControlGroup } from "../ui/ControlGroup";
 import { Icon } from "../ui/Icon";
-import { IconButton } from "../ui/IconButton";
-import { Surface } from "../ui/Surface";
-import { useI18n } from "../../i18n";
+import { cn } from "../../lib/cn";
 
 interface EditorToolbarProps {
   onAddBubble: (type: "speech" | "thought" | "narration") => void;
@@ -11,12 +7,17 @@ interface EditorToolbarProps {
   onDelete: () => void;
   onUndo: () => void;
   onRedo: () => void;
-  onExport: (format: "pdf" | "cbz") => void;
+  onTryLayouts: () => void;
+  onSelectNarration: () => void;
+  onSelectBySpeaker: () => void;
   hasSelection: boolean;
   canUndo: boolean;
   canRedo: boolean;
-  isExporting: boolean;
   zoomPercent: number;
+  selectedSpeakerLabel?: string | null;
+  panelCount: number;
+  bubbleCount: number;
+  sfxCount: number;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onZoomReset: () => void;
@@ -28,107 +29,101 @@ export function EditorToolbar({
   onDelete,
   onUndo,
   onRedo,
-  onExport,
+  onTryLayouts,
+  onSelectNarration,
+  onSelectBySpeaker,
   hasSelection,
   canUndo,
   canRedo,
-  isExporting,
   zoomPercent,
+  selectedSpeakerLabel,
+  panelCount,
+  bubbleCount,
+  sfxCount,
   onZoomIn,
   onZoomOut,
   onZoomReset,
 }: EditorToolbarProps) {
-  const { t } = useI18n();
+  function ToolbarButton({
+    label,
+    shortcut,
+    icon,
+    onClick,
+    disabled = false,
+    emphasized = false,
+  }: {
+    label: string;
+    shortcut?: string;
+    icon?: React.ReactNode;
+    onClick: () => void;
+    disabled?: boolean;
+    emphasized?: boolean;
+  }) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        className={cn(
+          "inline-flex h-8 items-center gap-2 border border-ink-black/20 bg-pulp-paper px-2.5 font-meta text-[0.56rem] tracking-[0.12em] text-ink-black transition-colors hover:bg-bristol disabled:cursor-not-allowed disabled:opacity-35",
+          emphasized && "border-ink-black/35 bg-bristol",
+        )}
+      >
+        {icon}
+        <span>{label}</span>
+        {shortcut && (
+          <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center border border-ink-black/15 px-1 text-[0.44rem] text-ink-black/45">
+            {shortcut}
+          </span>
+        )}
+      </button>
+    );
+  }
+
   return (
-    <Surface className="flex flex-wrap items-center gap-1.5 p-2 sm:gap-2" shadow="paper-sm">
-      <ControlGroup label={t("LETTERING")} aria-label={t("ADD LETTERING")}>
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => onAddBubble("speech")}
-          aria-label={t("ADD SPEECH BUBBLE")}
-          title={t("ADD SPEECH BUBBLE")}
-          className="px-2.5 sm:px-3.5"
-        >
-          <Icon name="speech" size={14} />
-          <span className="hidden sm:inline">{t("SPEECH")}</span>
-        </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => onAddBubble("thought")}
-          aria-label={t("ADD THOUGHT BUBBLE")}
-          title={t("ADD THOUGHT BUBBLE")}
-          className="px-2.5 sm:px-3.5"
-        >
-          <Icon name="thought" size={14} />
-          <span className="hidden sm:inline">{t("THOUGHT")}</span>
-        </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => onAddBubble("narration")}
-          aria-label={t("ADD NARRATION BOX")}
-          title={t("ADD NARRATION BOX")}
-          className="px-2.5 sm:px-3.5"
-        >
-          <Icon name="type" size={14} />
-          <span className="hidden sm:inline">{t("NARRATION")}</span>
-        </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={onAddSfx}
-          aria-label={t("ADD SOUND EFFECT")}
-          title={t("ADD SOUND EFFECT")}
-          className="px-2.5 sm:px-3.5"
-        >
-          <Icon name="sparkles" size={14} />
-          <span className="hidden sm:inline">SFX</span>
-        </Button>
-      </ControlGroup>
+    <div className="flex min-h-10 flex-wrap items-center gap-x-3 gap-y-2 border-y border-ink-black/20 bg-pulp-paper px-3 py-2">
+      <div className="flex items-center gap-1.5">
+        <span className="font-meta text-[0.52rem] tracking-[0.16em] text-ink-black/45">ADD:</span>
+        <ToolbarButton label="SPEECH" shortcut="B" icon={<Icon name="speech" size={12} />} onClick={() => onAddBubble("speech")} />
+        <ToolbarButton label="THOUGHT" shortcut="T" icon={<Icon name="thought" size={12} />} onClick={() => onAddBubble("thought")} />
+        <ToolbarButton label="NARRATION" shortcut="N" icon={<Icon name="type" size={12} />} onClick={() => onAddBubble("narration")} />
+        <ToolbarButton label="SFX" shortcut="X" icon={<Icon name="sparkles" size={12} />} onClick={onAddSfx} />
+      </div>
 
-      <ControlGroup aria-label={t("EDIT HISTORY")}>
-        <Button size="sm" variant="outline" onClick={onDelete} disabled={!hasSelection} aria-label={t("DELETE SELECTED")} title={t("DELETE SELECTED")}>
-          <Icon name="trash" size={14} />
-          <span className="hidden sm:inline">{t("DELETE")}</span>
-        </Button>
-        <IconButton icon="undo" label={t("UNDO")} onClick={onUndo} disabled={!canUndo} />
-        <IconButton icon="redo" label={t("REDO")} onClick={onRedo} disabled={!canRedo} />
-      </ControlGroup>
+      <div className="flex items-center gap-1.5">
+        <span className="font-meta text-[0.52rem] tracking-[0.16em] text-ink-black/45">BULK:</span>
+        <ToolbarButton label="ALL NARRATION" onClick={onSelectNarration} />
+        <ToolbarButton
+          label={selectedSpeakerLabel ? `ALL BY ${selectedSpeakerLabel.toUpperCase()}` : "ALL BY SPEAKER"}
+          onClick={onSelectBySpeaker}
+          disabled={!selectedSpeakerLabel}
+        />
+      </div>
 
-      <ControlGroup aria-label={t("ZOOM CONTROLS")}>
-        <IconButton icon="zoom-out" label={t("ZOOM OUT")} onClick={onZoomOut} />
-        <Button size="sm" variant="outline" onClick={onZoomReset} title={t("RESET ZOOM")} className="min-w-16 px-2 sm:min-w-20 sm:px-3.5">
-          <span className="sr-only">{t("RESET ZOOM")}</span>
-          {Math.round(zoomPercent)}%
-        </Button>
-        <IconButton icon="zoom-in" label={t("ZOOM IN")} onClick={onZoomIn} />
-      </ControlGroup>
-
-      <ControlGroup className="ml-auto" bleed aria-label={t("EXPORT")}>
-        <Button
-          size="sm"
-          variant="primary"
-          onClick={() => onExport("pdf")}
-          disabled={isExporting}
-        >
-          <Icon name="pdf" size={14} />
-          <span className="hidden sm:inline">{isExporting ? t("EXPORTING…") : t("EXPORT PDF")}</span>
-          <span className="sm:hidden">PDF</span>
-        </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => onExport("cbz")}
-          disabled={isExporting}
-          aria-label={t("EXPORT CBZ")}
-          title={t("EXPORT CBZ")}
-        >
-          <Icon name="archive" size={14} />
-          <span className="hidden sm:inline">CBZ</span>
-        </Button>
-      </ControlGroup>
-    </Surface>
+      <div className="ml-auto flex items-center gap-1.5">
+        <ToolbarButton label="DELETE" icon={<Icon name="trash" size={12} />} onClick={onDelete} disabled={!hasSelection} />
+        <ToolbarButton label="UNDO" icon={<Icon name="undo" size={12} />} onClick={onUndo} disabled={!canUndo} />
+        <ToolbarButton label="REDO" icon={<Icon name="redo" size={12} />} onClick={onRedo} disabled={!canRedo} />
+        <ToolbarButton label="TRY LAYOUTS" shortcut="⌘L" icon={<Icon name="assets" size={12} />} onClick={onTryLayouts} emphasized />
+        <div className="flex items-center gap-1">
+          <ToolbarButton label="" icon={<Icon name="zoom-out" size={12} />} onClick={onZoomOut} />
+          <button
+            type="button"
+            onClick={onZoomReset}
+            className="inline-flex h-8 min-w-[54px] items-center justify-center border border-ink-black/20 bg-bristol px-2 font-meta text-[0.56rem] tracking-[0.12em] text-ink-black"
+          >
+            {Math.round(zoomPercent)}%
+          </button>
+          <ToolbarButton label="" icon={<Icon name="zoom-in" size={12} />} onClick={onZoomIn} />
+        </div>
+        <div className="hidden items-center gap-2 pl-3 font-meta text-[0.52rem] tracking-[0.16em] text-ink-black/38 xl:flex">
+          <span>{panelCount} PANELS</span>
+          <span>·</span>
+          <span>{bubbleCount} BUBBLES</span>
+          <span>·</span>
+          <span>{sfxCount} SFX</span>
+        </div>
+      </div>
+    </div>
   );
 }

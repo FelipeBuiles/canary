@@ -17,6 +17,98 @@ function titleCaseShot(value: string) {
     .join("-");
 }
 
+function PanelMetadata({
+  panel,
+  onSave,
+}: {
+  panel: PanelBreakdown;
+  onSave: (patch: Partial<PanelBreakdown>) => void;
+}) {
+  type MetadataKey = keyof Pick<PanelBreakdown, "lighting" | "mood" | "sfx" | "transition_note">;
+  const allItems: {
+    key: MetadataKey;
+    value?: string | null;
+  }[] = [
+    { key: "lighting", value: panel.lighting },
+    { key: "mood", value: panel.mood },
+    { key: "sfx", value: panel.sfx },
+    { key: "transition_note", value: panel.transition_note },
+  ];
+  const items = allItems.filter((item) => item.value);
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.82rem] font-semibold text-ink-black/45">
+      {items.map((item, index) => (
+        <div key={item.key} className="flex items-center gap-3">
+          {index > 0 && <span className="text-panel-line">·</span>}
+          <EditableText
+            value={item.value ?? ""}
+            onSave={(v) => onSave({ [item.key]: v })}
+            className="font-body"
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function StoryboardPanelCard({
+  panel,
+  onSave,
+}: {
+  panel: PanelBreakdown;
+  onSave: (patch: Partial<PanelBreakdown>) => void;
+}) {
+  return (
+    <article className="min-h-[252px] border-[2px] border-ink-black/8 bg-pulp-paper px-6 py-6 transition-colors duration-150 hover:border-ink-black/24">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-4">
+          <ShotDiagram shot={panel.shot_type} size={28} className="shrink-0 [&>span]:hidden" />
+          <EditableText
+            value={titleCaseShot(panel.shot_type)}
+            onSave={(v) => onSave({ shot_type: v })}
+            className="font-meta text-[0.86rem] font-bold tracking-[0.2em] text-ink-black"
+          />
+        </div>
+        <EditableText
+          value={panel.camera_angle}
+          onSave={(v) => onSave({ camera_angle: v })}
+          className="shrink-0 font-body text-[0.86rem] font-semibold text-ink-black/45"
+        />
+      </div>
+
+      <div className="mt-6">
+        <div className="font-meta text-[0.72rem] font-bold tracking-[0.16em] text-ink-black/45">
+          PANEL {String(panel.panel_number).padStart(2, "0")}
+        </div>
+        <EditableText
+          value={panel.background_description}
+          onSave={(v) => onSave({ background_description: v })}
+          multiline
+          className="mt-2 block text-[1.08rem] font-semibold leading-7 text-ink-black/70"
+        />
+        <div className="mt-4 flex flex-wrap gap-1.5">
+          {panel.characters_present.map((cid) => (
+            <span key={cid} className="bg-surface-container px-3 py-1 font-meta text-[0.68rem] font-bold leading-none tracking-[0.08em] text-ink-black">
+              {cid}
+            </span>
+          ))}
+        </div>
+        {panel.dialogue.length > 0 && (
+          <div className="mt-4 space-y-2">
+            {panel.dialogue.map((d, i) => (
+              <div key={i} className="border-l-[3px] border-hero-red py-0.5 pl-4 text-[1rem] font-semibold italic leading-7 text-ink-black/78">
+                "{d.text}"
+              </div>
+            ))}
+          </div>
+        )}
+        <PanelMetadata panel={panel} onSave={onSave} />
+      </div>
+    </article>
+  );
+}
+
 export function StoryboardRoom() {
   const { name } = useParams<{ name: string }>();
   const { data: summaries, isLoading } = usePanelSummaries(name);
@@ -43,115 +135,52 @@ export function StoryboardRoom() {
       emptyTitle="PANEL BREAKDOWNS NOT AVAILABLE"
       emptyDescription="Complete STORYBOARD first."
     >
-      <ShowcaseHeader
-        label="STORYBOARD / PANEL BREAKDOWN"
-        title="PANEL BREAKDOWNS"
-        lead="Shot-by-shot blocking with camera, lighting, and dialogue — the blueprint the artist hands to the penciller."
-        actions={name ? <RerunStageAction project={name} stage="panels" label="Storyboard" /> : null}
-      />
+      <div className="flex h-[calc(100vh-3rem)] min-h-0 flex-col gap-10 md:h-[calc(100vh-5rem)]">
+        <ShowcaseHeader
+          label="STORYBOARD / PANEL BREAKDOWN"
+          title="PANEL BREAKDOWNS"
+          lead="Shot-by-shot blocking with camera, lighting, and dialogue — the blueprint the artist hands to the penciller."
+          actions={name ? <RerunStageAction project={name} stage="panels" label="Storyboard" /> : null}
+        />
 
-      <section className="grid border-[2px] border-ink-black bg-bristol xl:grid-cols-[200px_1fr]">
-        {summaries && (
-          <div className="border-b-[2px] border-ink-black xl:border-b-0 xl:border-r-[2px]">
-            <SceneSidebar
-              items={summaries.map((s) => ({
-                id: s.scene_id,
-                label: s.scene_id.replace(/_/g, " ").toUpperCase(),
-                count: `${s.panel_count} beats`,
-              }))}
-              activeId={activeScene ?? ""}
-              onSelect={(id) => setSearchParams({ scene: id }, { replace: true })}
-            />
-          </div>
-        )}
-
-        <div className="min-w-0 p-5 md:p-7">
-          {loadingPanels ? (
-            <LoadingBlock label="LOADING…" />
-          ) : panels?.length ? (
-            <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-              {panels.map((panel) => (
-                <div
-                  key={`${panel.scene_id}-${panel.panel_number}`}
-                  className="min-h-[230px] border-[2px] border-ink-black bg-pulp-paper p-5 shadow-paper-sm"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <ShotDiagram shot={panel.shot_type} size={26} className="shrink-0 [&>span]:hidden" />
-                      <EditableText
-                        value={titleCaseShot(panel.shot_type)}
-                        onSave={(v) => handleSavePanel(panel, { shot_type: v })}
-                        className="font-meta text-[0.7rem] tracking-[0.2em] text-ink-black"
-                      />
-                    </div>
-                    <EditableText
-                      value={panel.camera_angle}
-                      onSave={(v) => handleSavePanel(panel, { camera_angle: v })}
-                      className="shrink-0 font-meta text-[0.58rem] tracking-[0.12em] text-ink-black/45"
-                    />
-                  </div>
-
-                  <div className="mt-5 space-y-3">
-                    <div className="font-meta text-[0.58rem] tracking-[0.14em] text-ink-black/45">
-                      PANEL {String(panel.panel_number).padStart(2, "0")}
-                    </div>
-                    <EditableText
-                      value={panel.background_description}
-                      onSave={(v) => handleSavePanel(panel, { background_description: v })}
-                      multiline
-                      className="block text-[1rem] leading-6 text-ink-black/74"
-                    />
-                    <div className="flex flex-wrap gap-1">
-                      {panel.characters_present.map((cid) => (
-                        <span key={cid} className="border border-ink-black/25 bg-surface-container px-2 py-0.5 font-meta text-[0.54rem] tracking-[0.1em] text-ink-black">
-                          {cid}
-                        </span>
-                      ))}
-                    </div>
-                    {panel.dialogue.length > 0 && (
-                      <div className="space-y-2">
-                        {panel.dialogue.map((d, i) => (
-                          <div key={i} className="border-l-[2px] border-hero-red py-0.5 pl-3 text-[0.9rem] italic leading-6 text-ink-black/78">
-                            "{d.text}"
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[0.72rem] text-ink-black/45">
-                      <EditableText
-                        value={panel.lighting}
-                        onSave={(v) => handleSavePanel(panel, { lighting: v })}
-                        className="font-meta tracking-[0.14em]"
-                      />
-                      <EditableText
-                        value={panel.mood}
-                        onSave={(v) => handleSavePanel(panel, { mood: v })}
-                        className="font-meta tracking-[0.14em]"
-                      />
-                      {panel.sfx && (
-                        <EditableText
-                          value={panel.sfx}
-                          onSave={(v) => handleSavePanel(panel, { sfx: v })}
-                          className="font-meta tracking-[0.14em]"
-                        />
-                      )}
-                      {panel.transition_note && (
-                        <EditableText
-                          value={panel.transition_note}
-                          onSave={(v) => handleSavePanel(panel, { transition_note: v })}
-                          className="font-meta tracking-[0.14em]"
-                        />
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
+        <section className="grid min-h-0 flex-1 grid-rows-[minmax(132px,30%)_minmax(0,1fr)] overflow-hidden border-[2px] border-ink-black bg-bristol xl:grid-cols-[300px_minmax(0,1fr)] xl:grid-rows-none">
+          {summaries && (
+            <div className="min-h-0 border-b-[2px] border-ink-black xl:border-b-0 xl:border-r-[2px]">
+              <SceneSidebar
+                items={summaries.map((s) => ({
+                  id: s.scene_id,
+                  label: s.scene_id.replace(/_/g, " ").toUpperCase(),
+                  count: `${s.panel_count} beats`,
+                }))}
+                activeId={activeScene ?? ""}
+                onSelect={(id) => setSearchParams({ scene: id }, { replace: true })}
+              />
             </div>
-          ) : (
-            <StateBlock title="SELECT A SCENE" description="Select a scene to view panel breakdowns." icon="draft" />
           )}
-        </div>
-      </section>
+
+          <div className="min-h-0 min-w-0 overflow-hidden">
+            {loadingPanels ? (
+              <div className="p-6"><LoadingBlock label="LOADING…" /></div>
+            ) : panels?.length ? (
+              <div className="h-full min-h-0 overflow-y-auto p-6 md:p-8">
+                <div className="grid gap-6 lg:grid-cols-2 2xl:grid-cols-3">
+                  {panels.map((panel) => (
+                    <StoryboardPanelCard
+                      key={`${panel.scene_id}-${panel.panel_number}`}
+                      panel={panel}
+                      onSave={(patch) => handleSavePanel(panel, patch)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="p-6">
+                <StateBlock title="SELECT A SCENE" description="Select a scene to view panel breakdowns." icon="draft" />
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
     </RoomShell>
   );
 }

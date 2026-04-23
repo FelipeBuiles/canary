@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listProjects, getProjectStatus, createProject, generateProjectCover } from "./projects";
 import { runPipeline, approveStage, regenPanel, regenRef, regenPlate, getGenerationJobs, regenExtract, resetStale } from "./pipeline";
-import type { ConfigOverrides, StoryBible } from "../types/api";
+import type { ConfigOverrides, StoryBible, CharacterVoice } from "../types/api";
 import {
   getStoryBible,
   updateStoryBible,
@@ -16,7 +16,7 @@ import {
   listImages,
   getImageGenerationMeta,
 } from "./stages";
-import { listPages, getPage, updatePage, replacePage, reflowPages, generatePageStyleVars, translatePageBubbles, triggerExport } from "./pages";
+import { listPages, getPage, updatePage, replacePage, reflowPages, generatePageStyleVars, translatePageBubbles, setTheme, applyBubblePreset, getBubblePresets, translateSinglePageBubbles, getCharacterVoices, putCharacterVoice, deleteCharacterVoice, reflowSinglePage, triggerExport } from "./pages";
 import { getStyles, suggestStyles, generateStyleSamples, setActiveStyle } from "./styles";
 import { getProjectConfig, updateProjectConfig } from "./config";
 
@@ -175,11 +175,11 @@ export function useGenerationJobs(project: string | undefined, ids: string[]) {
 
 // ── Story Bible (EXTRACT) ─────────────────────────────────────────────────────
 
-export function useStoryBible(project: string | undefined) {
+export function useStoryBible(project: string | undefined, enabled = true) {
   return useQuery({
     queryKey: ["project", project, "story-bible"],
     queryFn: () => getStoryBible(project!),
-    enabled: !!project,
+    enabled: !!project && enabled,
   });
 }
 
@@ -373,6 +373,107 @@ export function useTranslatePageBubbles() {
     onSuccess: (_data, { project }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
       qc.invalidateQueries({ queryKey: ["project", project, "config"] });
+    },
+  });
+}
+
+export function useSetTheme() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, theme }: { project: string; theme: string }) =>
+      setTheme(project, theme),
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
+    },
+  });
+}
+
+export function useBubblePresets(project: string | undefined) {
+  return useQuery({
+    queryKey: ["project", project, "bubble-presets"],
+    queryFn: () => getBubblePresets(project!),
+    enabled: !!project,
+  });
+}
+
+export function useApplyBubblePreset() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, presetName }: { project: string; presetName: string }) =>
+      applyBubblePreset(project, presetName),
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
+    },
+  });
+}
+
+export function useTranslateSinglePageBubbles() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, pageNum, targetLanguage }: { project: string; pageNum: number; targetLanguage?: "en" | "es" | "fr" }) =>
+      translateSinglePageBubbles(project, pageNum, targetLanguage),
+    onSuccess: (_data, { project, pageNum }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "pages", pageNum] });
+      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
+    },
+  });
+}
+
+export function useCharacterVoices(project: string | undefined) {
+  return useQuery({
+    queryKey: ["project", project, "character-voices"],
+    queryFn: () => getCharacterVoices(project!),
+    enabled: !!project,
+  });
+}
+
+export function usePutCharacterVoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, voice }: { project: string; voice: CharacterVoice }) =>
+      putCharacterVoice(project, voice),
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "character-voices"] });
+      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
+    },
+  });
+}
+
+export function useDeleteCharacterVoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, characterId }: { project: string; characterId: string }) =>
+      deleteCharacterVoice(project, characterId),
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "character-voices"] });
+      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
+    },
+  });
+}
+
+export function useReflowSinglePage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, pageNum, layoutPreset }: { project: string; pageNum: number; layoutPreset: string }) =>
+      reflowSinglePage(project, pageNum, layoutPreset),
+    onSuccess: (data, { project, pageNum }) => {
+      qc.setQueryData(["project", project, "pages", pageNum], data);
+      qc.setQueriesData(
+        { queryKey: ["project", project, "pages"] },
+        (existing: import("../types/api").PageSummary[] | undefined) =>
+          existing?.map((summary) =>
+            summary.page_number === pageNum
+              ? {
+                  ...summary,
+                  panel_count: data.panels.length,
+                  layout: data.layout,
+                  theme: data.theme,
+                }
+              : summary,
+          ) ?? existing,
+      );
+      qc.invalidateQueries({ queryKey: ["project", project, "pages", pageNum] });
+      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
     },
   });
 }

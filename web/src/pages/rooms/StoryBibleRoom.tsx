@@ -2,8 +2,6 @@ import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useStoryBible, useUpdateStoryBible } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
-import { SectionDivider } from "../../components/SectionDivider";
-import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
 import { EditableText } from "../../components/ui/EditableText";
 import { RoomShell } from "../../components/ui/RoomShell";
@@ -19,35 +17,67 @@ function VisualAnchorEditor({
   onSave: (value: string) => void;
   label?: string;
 }) {
-  const [expanded, setExpanded] = useState(value.length <= 100);
-  const shouldTruncate = value.length > 100;
-  const displayValue = !expanded && shouldTruncate ? `${value.slice(0, 100)}...` : value;
+  const truncateAt = 120;
+  const [expanded, setExpanded] = useState(value.length <= truncateAt);
+  const shouldTruncate = value.length > truncateAt;
+  const displayValue = !expanded && shouldTruncate ? `${value.slice(0, truncateAt).trim()}...` : value;
 
   return (
-    <div className="mt-3 text-[0.82rem] leading-6 text-ink-black/74">
-      <span className="font-meta text-[0.48rem] tracking-[0.18em] text-ink-black/45">{label}</span>
+    <div className="mt-5 text-[1.05rem] font-semibold leading-8 text-ink-black/70">
+      <span className="block font-meta text-[0.68rem] font-bold tracking-[0.22em] text-ink-black/45">{label}</span>
       {expanded ? (
         <EditableText
           value={value}
           onSave={onSave}
           multiline
-          className="mt-1 block text-[0.78rem] italic leading-6 text-ink-black/68"
+          className="mt-2 block max-w-[72ch] text-[1.05rem] font-semibold leading-8 text-ink-black/70"
         />
       ) : (
-        <p className="mt-1 text-[0.78rem] italic leading-6 text-ink-black/68">
+        <p className="mt-2 max-w-[72ch]">
           {displayValue}
+          {" "}
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="font-meta text-[0.72rem] tracking-[0.14em] text-hero-red hover:text-ink-black"
+          >
+            expand
+          </button>
         </p>
       )}
-      {shouldTruncate && (
+      {expanded && shouldTruncate && (
         <button
           type="button"
-          onClick={() => setExpanded((next) => !next)}
-          className="mt-1 font-meta text-[0.5rem] tracking-[0.16em] text-hero-red hover:text-ink-black"
+          onClick={() => setExpanded(false)}
+          className="mt-2 font-meta text-[0.72rem] tracking-[0.14em] text-hero-red hover:text-ink-black"
         >
-          {expanded ? "COLLAPSE" : "EXPAND"}
+          collapse
         </button>
       )}
     </div>
+  );
+}
+
+function EntitySectionHeader({
+  number,
+  label,
+  title,
+}: {
+  number: number;
+  label: string;
+  title: string;
+}) {
+  return (
+    <header className="mb-7 border-b-[2px] border-ink-black pb-4">
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
+        <div className="font-meta text-[0.82rem] tracking-[0.24em] text-ink-black/52">
+          SECTION {String(number).padStart(2, "0")} // {label}
+        </div>
+        <h2 className="font-display text-[1.9rem] font-black uppercase leading-none tracking-[-0.05em] text-ink-black">
+          {title}
+        </h2>
+      </div>
+    </header>
   );
 }
 
@@ -62,16 +92,18 @@ export function CharacterCard({
     onSave({ ...character, ...patch });
 
   return (
-    <Card shadow="lg" className="p-4">
-      <div className="flex items-start justify-between gap-2">
+    <article className="border-[2px] border-ink-black/8 bg-bristol px-7 py-6 transition-colors duration-150 hover:border-ink-black/24">
+      <div className="flex items-start justify-between gap-4">
         <EditableText
           value={character.name}
           onSave={(v) => update({ name: v })}
-          className="font-display text-[1.15rem] font-bold uppercase tracking-[-0.05em] text-ink-black leading-none"
+          className="font-display text-[1.55rem] font-black uppercase leading-none tracking-[-0.05em] text-ink-black"
         />
-        <Tag className="shrink-0 bg-pulp-paper">{character.id.toUpperCase()}</Tag>
+        <Tag className="shrink-0 border-transparent bg-surface-container px-4 text-[0.66rem] text-ink-black/48">
+          {character.id.toUpperCase()}
+        </Tag>
       </div>
-      <div className="mt-1.5 flex items-center gap-1 font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/55">
+      <div className="mt-3 flex items-center gap-2 font-body text-[1rem] font-semibold text-ink-black/50">
         <EditableText
           value={character.age_range}
           onSave={(v) => update({ age_range: v })}
@@ -90,10 +122,12 @@ export function CharacterCard({
       />
       <div className="mt-3 flex flex-wrap gap-1.5">
         {character.distinguishing_features.map((f) => (
-          <Tag key={f}>{f}</Tag>
+          <Tag key={f} className="border-transparent bg-surface-container px-4 text-[0.66rem] text-ink-black/70">
+            {f}
+          </Tag>
         ))}
       </div>
-    </Card>
+    </article>
   );
 }
 
@@ -108,14 +142,16 @@ export function LocationCard({
     onSave({ ...location, ...patch });
 
   return (
-    <Card shadow="lg" className="p-4">
-      <div className="flex items-start justify-between gap-2">
+    <article className="border-[2px] border-ink-black/8 bg-bristol px-7 py-6 transition-colors duration-150 hover:border-ink-black/24">
+      <div className="flex items-start justify-between gap-4">
         <EditableText
           value={location.name}
           onSave={(v) => update({ name: v })}
-          className="font-display text-[1.15rem] font-bold uppercase tracking-[-0.05em] text-ink-black leading-none"
+          className="font-display text-[1.55rem] font-black uppercase leading-none tracking-[-0.05em] text-ink-black"
         />
-        <Tag className="shrink-0 bg-pulp-paper">{location.id.toUpperCase()}</Tag>
+        <Tag className="shrink-0 border-transparent bg-surface-container px-4 text-[0.66rem] text-ink-black/48">
+          {location.id.toUpperCase()}
+        </Tag>
       </div>
       <VisualAnchorEditor
         value={location.visual_anchor}
@@ -126,16 +162,16 @@ export function LocationCard({
           <EditableText
             value={location.time_of_day}
             onSave={(v) => update({ time_of_day: v })}
-            className="border border-ink-black px-2 py-1 font-meta text-[0.44rem] tracking-[0.14em]"
+            className="bg-surface-container px-4 py-1.5 font-meta text-[0.66rem] font-bold tracking-[0.14em] text-ink-black/70"
           />
         )}
         <EditableText
           value={location.mood}
           onSave={(v) => update({ mood: v })}
-          className="border border-ink-black px-2 py-1 font-meta text-[0.44rem] tracking-[0.14em]"
+          className="bg-surface-container px-4 py-1.5 font-meta text-[0.66rem] font-bold tracking-[0.14em] text-ink-black/70"
         />
       </div>
-    </Card>
+    </article>
   );
 }
 
@@ -186,11 +222,8 @@ export function StoryBibleRoom() {
       <div className="grid gap-10 xl:grid-cols-2">
         {/* Characters */}
         <section>
-          <SectionDivider number={1} label="DRAMATIS PERSONAE" />
-          <h2 className="mt-2 font-display text-[1.4rem] font-bold uppercase leading-none tracking-[-0.03em]">
-            Character Entities
-          </h2>
-          <div className="mt-5 grid gap-5 sm:grid-cols-2">
+          <EntitySectionHeader number={1} label="DRAMATIS PERSONAE" title="Character Entities" />
+          <div className="grid gap-5">
             {bible.characters.map((char) => (
               <CharacterCard
                 key={char.id}
@@ -203,11 +236,8 @@ export function StoryBibleRoom() {
 
         {/* Locations */}
         <section>
-          <SectionDivider number={2} label="THE WORLD STAGE" />
-          <h2 className="mt-2 font-display text-[1.4rem] font-bold uppercase leading-none tracking-[-0.03em]">
-            Location Nodes
-          </h2>
-          <div className="mt-5 grid gap-5 sm:grid-cols-2">
+          <EntitySectionHeader number={2} label="THE WORLD STAGE" title="Location Nodes" />
+          <div className="grid gap-5">
             {bible.locations.map((loc) => (
               <LocationCard
                 key={loc.id}

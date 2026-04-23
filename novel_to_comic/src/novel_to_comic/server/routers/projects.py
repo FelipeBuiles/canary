@@ -95,6 +95,16 @@ def _active_project_cover_job(request: Request, project_name: str):
     return None
 
 
+def _story_bible_author(project_dir: Path) -> str | None:
+    bible_path = project_dir / "story_bible.json"
+    if not bible_path.exists():
+        return None
+    try:
+        return StoryBible.model_validate_json(bible_path.read_text()).author
+    except Exception:
+        return None
+
+
 def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
     suggestions_path = project_dir / "samples" / "style_suggestions.json"
     if suggestions_path.exists():
@@ -244,6 +254,7 @@ def list_projects(request: Request, projects_dir: Path = Depends(get_projects_di
         results.append({
             "name": d.name,
             "project_name": state.project_name,
+            "author": _story_bible_author(d),
             "created_at": state.created_at.isoformat(),
             "total_cost_usd": state.total_cost_usd,
             "furthest_stage": furthest,

@@ -9,8 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
 from novel_to_comic.config import Config, LANGUAGE_NAMES, save_config
-from novel_to_comic.assembly.html_renderer import build_page_html, resolve_theme, write_theme_css
-from novel_to_comic.models.comic_page import Bubble, ComicPage, Sfx
+from novel_to_comic.assembly.html_renderer import build_page_html, resolve_theme, write_theme_css, THEMES
+from novel_to_comic.models.comic_page import Bubble, ComicPage, Sfx, BUBBLE_PRESETS, CharacterVoice
 
 from ..deps import get_project
 
@@ -468,6 +468,73 @@ async def generate_page_style_vars(request: Request, project=Depends(get_project
     return {"status": "updated", "style_vars": style_vars, "pages": _page_summaries(project_dir)}
 
 
+@router.post("/pages/set-theme")
+def set_theme(body: dict, project=Depends(get_project)):
+    """Bulk-set the theme for all pages at once."""
+    project_dir, config, state = project
+    theme = body.get("theme", "default")
+    if theme not in THEMES:
+        raise HTTPException(400, f"Invalid theme. Must be one of: {', '.join(THEMES.keys())}")
+
+    pd = _pages_dir(project_dir)
+    page_paths = sorted(pd.glob("page_*.json"))
+    if not page_paths:
+        raise HTTPException(404, "No pages found")
+
+    updated = 0
+    for path in page_paths:
+        cp = ComicPage.model_validate_json(path.read_text())
+        cp.theme = theme
+        path.write_text(cp.model_dump_json(indent=2))
+        updated += 1
+
+    return {"status": "ok", "theme": theme, "updated": updated}
+
+
+@router.get("/pages/bubble-presets")
+def get_bubble_presets(project=Depends(get_project)):
+    """Return the current bubble preset map."""
+    return BUBBLE_PRESETS
+
+
+@router.post("/pages/apply-bubble-preset")
+def apply_bubble_preset(body: dict, project=Depends(get_project)):
+    """Apply a bubble preset to all bubbles of that type across all pages."""
+    project_dir, config, state = project
+    preset_name = body.get("preset_name", "")
+    if preset_name not in BUBBLE_PRESETS:
+        raise HTTPException(400, f"Invalid preset. Must be one of: {', '.join(BUBBLE_PRESETS.keys())}")
+
+    preset = BUBBLE_PRESETS[preset_name]
+    pd = _pages_dir(project_dir)
+    page_paths = sorted(pd.glob("page_*.json"))
+    if not page_paths:
+        raise HTTPException(404, "No pages found")
+
+    updated_bubbles = 0
+    for path in page_paths:
+        cp = ComicPage.model_validate_json(path.read_text())
+        changed = False
+        for panel in cp.panels:
+            for bubble in panel.bubbles:
+                if bubble.type == preset_name:
+                    for field, value in preset.items():
+                        if field == "border_radius":
+                            bubble.border_radius = int(value)
+                        elif field == "border_width":
+                            bubble.border_width = int(value)
+                        elif field == "border_color":
+                            bubble.border_color = value
+                        elif field == "fill_color":
+                            bubble.fill_color = value
+                    changed = True
+                    updated_bubbles += 1
+        if changed:
+            path.write_text(cp.model_dump_json(indent=2))
+
+    return {"status": "ok", "preset_name": preset_name, "updated_bubbles": updated_bubbles}
+
+
 @router.post("/pages/translate-bubbles")
 async def translate_page_bubbles(body: dict, project=Depends(get_project)):
     """Translate all existing editable bubble/narration text across assembled pages."""
@@ -519,6 +586,87 @@ async def translate_page_bubbles(body: dict, project=Depends(get_project)):
         "updated": updated,
         "pages": _page_summaries(project_dir),
     }
+
+
+@router.post("/pages/{page_num}/translate-bubbles")
+async def translate_single_page_bubbles(page_num: int, body: dict, project=Depends(get_project)):
+    """Translate bubble/narration text for a single page."""
+    project_dir, config, state = project
+    target_language = body.get("target_language")
+    if target_language is not None:
+        if target_language not in LANGUAGE_NAMES:
+            raise HTTPException(400, "target_language must be one of: en, es, fr")
+        config.target_language = target_language
+        save_config(config, project_dir)
+
+    cp = _load_page(project_dir, page_num)
+    items: list[dict] = []
+    for panel in cp.panels:
+        for bubble in panel.bubbles:
+            text = bubble.text.strip()
+            if text:
+                items.append({
+                    "id": f"{cp.page_number}:{panel.id}:{bubble.id}",
+                    "type": bubble.type,
+                    "speaker": bubble.speaker_name,
+                    "text": bubble.text,
+                })
+
+    translations = await _translate_text_items(config, items)
+    updated = 0
+    for panel in cp.panels:
+        for bubble in panel.bubbles:
+            item_id = f"{cp.page_number}:{panel.id}:{bubble.id}"
+            translated = translations.get(item_id)
+            if translated and translated != bubble.text:
+                bubble.text = translated
+                updated += 1
+
+    if updated:
+        path = _pages_dir(project_dir) / f"page_{page_num:03d}.json"
+        path.write_text(cp.model_dump_json(indent=2))
+
+    return {
+        "status": "ok",
+        "target_language": config.language_code(),
+        "updated": updated,
+        "page": cp.model_dump(),
+    }
+
+
+LAYOUT_PRESETS: dict[str, list[tuple[str, str]]] = {
+    "2x2": [("1/2", "1/2"), ("2/3", "1/2"), ("1/2", "2/3"), ("2/3", "2/3")],
+    "2x3": [("1/2", "1/2"), ("2/3", "1/2"), ("1/2", "2/3"), ("2/3", "2/3"), ("1/2", "3/4"), ("2/3", "3/4")],
+    "3x2": [("1/3", "1/2"), ("2/4", "1/2"), ("1/3", "2/3"), ("2/4", "2/3"), ("1/3", "3/4"), ("2/4", "3/4")],
+    "splash+4": [("1/3", "1/3"), ("1/2", "3/4"), ("2/3", "3/4"), ("1/2", "4/5"), ("2/3", "4/5")],
+    "vertical_trio": [("1/2", "1/2"), ("1/2", "2/3"), ("1/2", "3/4")],
+    "wide_opening": [("1/3", "1/2")],
+}
+
+
+@router.post("/pages/{page_num}/reflow")
+def reflow_single_page(page_num: int, body: dict, project=Depends(get_project)):
+    """Reflow a single page's panels to a given layout preset."""
+    project_dir, config, state = project
+    preset_name = body.get("layout_preset", "")
+    if preset_name not in LAYOUT_PRESETS:
+        raise HTTPException(400, f"Invalid layout preset. Must be one of: {', '.join(LAYOUT_PRESETS.keys())}")
+
+    preset = LAYOUT_PRESETS[preset_name]
+    cp = _load_page(project_dir, page_num)
+
+    for i, panel in enumerate(cp.panels):
+        if i < len(preset):
+            panel.grid_column = preset[i][0]
+            panel.grid_row = preset[i][1]
+        else:
+            panel.grid_column = None
+            panel.grid_row = None
+
+    cp.layout = str(len(cp.panels)) if len(cp.panels) <= 6 else "many"
+    path = _pages_dir(project_dir) / f"page_{page_num:03d}.json"
+    path.write_text(cp.model_dump_json(indent=2))
+    return cp.model_dump()
 
 
 @router.post("/pages/reflow")
@@ -614,6 +762,67 @@ def reorder_panels(body: dict, project=Depends(get_project)):
     return {"status": "ok"}
 
 
+# ── Character Voices ──────────────────────────────────────────────────────────
+
+
+def _voices_path(project_dir: Path) -> Path:
+    return project_dir / "assembly" / "character_voices.json"
+
+
+def _load_voices(project_dir: Path) -> dict[str, dict]:
+    path = _voices_path(project_dir)
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text())
+
+
+def _save_voices(project_dir: Path, voices: dict[str, dict]) -> None:
+    path = _voices_path(project_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(voices, indent=2))
+
+
+@router.get("/pages/character-voices")
+def get_character_voices(project=Depends(get_project)):
+    """Return all character voice presets."""
+    project_dir, config, state = project
+    return _load_voices(project_dir)
+
+
+@router.put("/pages/character-voices/{character_id}")
+def put_character_voice(character_id: str, body: dict, project=Depends(get_project)):
+    """Upsert a voice style for a character."""
+    project_dir, config, state = project
+    voice = CharacterVoice(
+        character_id=character_id,
+        character_name=body.get("character_name", character_id),
+        font_family=body.get("font_family"),
+        font_size=body.get("font_size"),
+        font_color=body.get("font_color"),
+        fill_color=body.get("fill_color"),
+        border_color=body.get("border_color"),
+        border_width=body.get("border_width"),
+        border_radius=body.get("border_radius"),
+    )
+    voices = _load_voices(project_dir)
+    voices[character_id] = voice.model_dump(exclude_none=True)
+    voices[character_id]["character_id"] = character_id
+    voices[character_id]["character_name"] = voice.character_name
+    _save_voices(project_dir, voices)
+    return voice.model_dump()
+
+
+@router.delete("/pages/character-voices/{character_id}")
+def delete_character_voice(character_id: str, project=Depends(get_project)):
+    """Remove a character voice preset."""
+    project_dir, config, state = project
+    voices = _load_voices(project_dir)
+    if character_id in voices:
+        del voices[character_id]
+        _save_voices(project_dir, voices)
+    return {"status": "ok"}
+
+
 # ── HTML preview ─────────────────────────────────────────────────────────────
 
 
@@ -625,11 +834,13 @@ def page_preview(page_num: int, project_name: str, project=Depends(get_project))
     theme_name = resolve_theme(config)
     css_path = write_theme_css(project_dir, theme_name)
     custom_css = css_path.read_text()
+    character_voices = _load_voices(project_dir)
 
     html = build_page_html(
         cp,
         project_dir,
         custom_css,
+        character_voices=character_voices,
         image_url_fn=lambda rel: f"/api/projects/{project_name}/files/{rel}",
         font_url_fn=lambda filename: f"/static/fonts/{filename}",
     )

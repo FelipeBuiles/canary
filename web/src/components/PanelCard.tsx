@@ -1,10 +1,7 @@
 import { useState } from "react";
 import type { ImageStatus } from "../types/api";
-import { Button } from "./ui/Button";
-import { Card } from "./ui/Card";
 import { ImageModal } from "./ui/ImageModal";
 import { LazyImage } from "./ui/LazyImage";
-import { StatusPill } from "./ui/StatusPill";
 import { useI18n } from "../i18n";
 
 type PanelState = "active" | "inking" | "failed" | "narrative" | "queued" | "regening" | "stale";
@@ -21,12 +18,6 @@ function resolvePanelState(
   if (status === "pending") return "inking";
   if (hasNarrative) return "narrative";
   return "active";
-}
-
-function statusTone(state: PanelState): "sage" | "gold" | "red" {
-  if (state === "active" || state === "narrative") return "sage";
-  if (state === "inking" || state === "queued" || state === "regening") return "gold";
-  return "red";
 }
 
 function statusLabel(state: PanelState, t: (text: string) => string) {
@@ -81,13 +72,13 @@ export function PanelCard({
 
   return (
     <>
-      <Card>
+      <article className="group/panel min-w-0">
         <div
-          className="relative aspect-[4/5] overflow-hidden border-b-[2px] border-ink-black bg-ink-black group cursor-pointer"
+          className="relative aspect-[4/5] overflow-hidden border-[2px] border-transparent bg-surface-container transition-colors duration-150 group-hover/panel:border-ink-black"
           onClick={handleClick}
         >
           {state === "queued" || state === "regening" ? (
-            <div className="flex h-full flex-col items-center justify-center">
+            <div className="flex h-full flex-col items-center justify-center bg-ink-black/80">
               <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-narrator-gold animate-pulse">
                 {state === "queued" ? t("QUEUED") : t("REGENING…")}
               </div>
@@ -96,7 +87,7 @@ export function PanelCard({
               </div>
             </div>
           ) : state === "inking" ? (
-            <div className="flex h-full flex-col items-center justify-center">
+            <div className="flex h-full flex-col items-center justify-center bg-ink-black/80">
               <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-narrator-gold animate-pulse">
                 INKING…
               </div>
@@ -113,16 +104,16 @@ export function PanelCard({
                 Job tracking was interrupted. Re-run this panel.
               </div>
               {onRegenerate && (
-                <Button
-                  size="sm"
-                  className="mt-3 border-hero-red"
+                <button
+                  type="button"
+                  className="mt-3 border border-hero-red px-4 py-2 font-meta text-[0.62rem] tracking-[0.14em] text-hero-red transition-colors hover:bg-hero-red hover:text-bristol"
                   onClick={(e) => {
                     e.stopPropagation();
                     onRegenerate();
                   }}
                 >
                   {t("QUICK RE-DO")}
-                </Button>
+                </button>
               )}
             </div>
           ) : state === "failed" ? (
@@ -148,37 +139,8 @@ export function PanelCard({
                 width={400}
                 height={500}
                 containerClassName="h-full w-full"
-                className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                className="h-full w-full object-cover transition-transform duration-300 group-hover/panel:scale-[1.02]"
               />
-              {state === "active" && (onRegenerate || onPanelClick) && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/60 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150">
-                  {onPanelClick && (
-                    <Button
-                      size="md"
-                      variant="outline"
-                      className="border-bristol"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onPanelClick();
-                      }}
-                    >
-                      {t("VIEW")}
-                    </Button>
-                  )}
-                  {onRegenerate && (
-                    <Button
-                      size="md"
-                      className="border-bristol"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onRegenerate();
-                      }}
-                    >
-                      {t("QUICK RE-DO")}
-                    </Button>
-                  )}
-                </div>
-              )}
               {state === "narrative" && narrative && (
                 <div className="absolute bottom-0 left-0 right-0 bg-ink-black/75 p-3">
                   <div className="text-[0.72rem] leading-5 text-bristol/90">
@@ -188,17 +150,52 @@ export function PanelCard({
               )}
             </>
           )}
-        </div>
 
-        <div className="flex items-center justify-between p-2">
-          <span className="font-meta text-[0.46rem] tracking-[0.16em] text-ink-black/45">
-            PANEL {String(panelNumber).padStart(2, "0")}
-          </span>
-          <StatusPill tone={statusTone(state)}>
-            {statusLabel(state, t)}
-          </StatusPill>
+          {state !== "failed" && state !== "stale" && state !== "queued" && state !== "regening" && state !== "inking" && (
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 bg-ink-black/62 opacity-0 transition-opacity duration-150 group-hover/panel:opacity-100">
+              {onPanelClick && (
+                <button
+                  type="button"
+                  className="pointer-events-auto border border-bristol bg-bristol px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-ink-black transition-colors hover:bg-pulp-paper"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPanelClick();
+                  }}
+                >
+                  View
+                </button>
+              )}
+              {onRegenerate && (
+                <button
+                  type="button"
+                  className="pointer-events-auto border border-bristol/45 bg-transparent px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-bristol transition-colors hover:border-bristol hover:bg-bristol/10"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRegenerate();
+                  }}
+                >
+                  Regen
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="absolute bottom-0 left-0 right-0 flex h-8 items-center justify-between bg-ink-black/82 px-3">
+            <span className="font-body text-[0.76rem] font-semibold text-bristol/70">
+              Panel {String(panelNumber).padStart(2, "0")}
+            </span>
+            <span className={`flex h-5 min-w-5 items-center justify-center px-1.5 font-meta text-[0.56rem] tracking-[0.1em] text-bristol ${
+              state === "failed" || state === "stale"
+                ? "bg-hero-red"
+                : state === "inking" || state === "queued" || state === "regening"
+                  ? "bg-narrator-gold text-ink-black"
+                  : "bg-archive-sage"
+            }`}>
+              {state === "active" || state === "narrative" ? "✓" : statusLabel(state, t)}
+            </span>
+          </div>
         </div>
-      </Card>
+      </article>
       <ImageModal 
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)} 

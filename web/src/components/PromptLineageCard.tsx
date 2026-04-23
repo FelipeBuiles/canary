@@ -46,14 +46,15 @@ function SubjectRow({
         </span>
       </button>
       {expanded && (
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1 pb-2 pl-4 text-[0.75rem]">
+        <div className="grid grid-cols-[minmax(7rem,0.55fr)_minmax(0,1.45fr)] gap-x-4 gap-y-1 pb-2 pl-4 text-[0.75rem]">
           {editable ? (
             <>
               <span className="text-ink-black/45">identity</span>
               <EditableText
                 value={subject.identity}
                 onSave={(v) => onSave?.({ identity: v }, "identity", subject.identity ?? "")}
-                className={cn("text-[0.75rem]")}
+                multiline
+                className={cn("w-full text-[0.75rem] leading-5")}
                 highlightActive={isHighlighted("identity")}
                 highlightFrom={highlightFrom("identity")}
               />
@@ -61,7 +62,8 @@ function SubjectRow({
               <EditableText
                 value={subject.action}
                 onSave={(v) => onSave?.({ action: v }, "action", subject.action ?? "")}
-                className={cn("text-[0.75rem]")}
+                multiline
+                className={cn("w-full text-[0.75rem] leading-5")}
                 highlightActive={isHighlighted("action")}
                 highlightFrom={highlightFrom("action")}
               />
@@ -69,7 +71,8 @@ function SubjectRow({
               <EditableText
                 value={subject.expression}
                 onSave={(v) => onSave?.({ expression: v }, "expression", subject.expression ?? "")}
-                className={cn("text-[0.75rem]")}
+                multiline
+                className={cn("w-full text-[0.75rem] leading-5")}
                 highlightActive={isHighlighted("expression")}
                 highlightFrom={highlightFrom("expression")}
               />
@@ -77,7 +80,7 @@ function SubjectRow({
               <EditableText
                 value={subject.position}
                 onSave={(v) => onSave?.({ position: v }, "position", subject.position ?? "")}
-                className={cn("text-[0.75rem]")}
+                className={cn("w-full text-[0.75rem] leading-5")}
                 highlightActive={isHighlighted("position")}
                 highlightFrom={highlightFrom("position")}
               />

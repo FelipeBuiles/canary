@@ -1,27 +1,71 @@
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { usePages, usePage, useUpdatePage, useReplacePage, useReflowPages, useGeneratePageStyleVars, useTranslatePageBubbles, useExport, useProjectConfig, useUpdateProjectConfig } from "../../api/queries";
+import {
+  usePages,
+  usePage,
+  useUpdatePage,
+  useReplacePage,
+  useReflowPages,
+  useGeneratePageStyleVars,
+  useTranslatePageBubbles,
+  useExport,
+  useProjectConfig,
+  useUpdateProjectConfig,
+} from "../../api/queries";
 import { downloadExportUrl } from "../../api/pages";
-import { ShowcaseHeader } from "../../components/ShowcaseHeader";
-import { Button } from "../../components/ui/Button";
 import { RerunStageAction } from "../../components/ui/RerunStageAction";
-import { PageNavigator } from "../../components/compose/PageNavigator";
-import { PropertyPanel } from "../../components/compose/PropertyPanel";
-import { EditorToolbar } from "../../components/compose/EditorToolbar";
-import { PageEditor } from "../../components/compose/PageEditor";
+import { ComposeHeader } from "../../components/compose/ComposeHeader";
+import { ModeSwitcher } from "../../components/compose/ModeSwitcher";
+import { ScriptMode } from "../../components/compose/ScriptMode";
+import { LayoutMode } from "../../components/compose/LayoutMode";
+import { StyleMode } from "../../components/compose/StyleMode";
+import { PreviewMode } from "../../components/compose/PreviewMode";
+import { CommandPalette } from "../../components/compose/CommandPalette";
+import { TryLayoutsModal } from "../../components/compose/TryLayoutsModal";
+import { useAllPages } from "../../hooks/useAllPages";
 import { useComposeStore } from "../../store/compose";
-import type { ComicPage, Bubble, Sfx } from "../../types/api";
+import type { ComicPage, Bubble, Sfx, PagePanel } from "../../types/api";
+import type { ComposeMode } from "../../components/compose/compose-types";
 import "../../components/compose/comic-page.css";
+
+function isInputFocused() {
+  const el = document.activeElement as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
+}
 
 export function ComposeRoom() {
   const { name } = useParams<{ name: string }>();
-  const { data: pageList, isLoading: loadingList } = usePages(name);
-  const { data: projectConfig } = useProjectConfig(name);
+
+  // ── Mode state ───────────────────────────────────────────────────────────
+  const [mode, setMode] = useState<ComposeMode>("script");
+  const [cmdkOpen, setCmdkOpen] = useState(false);
+  const [tryLayoutsOpen, setTryLayoutsOpen] = useState(false);
+  const [inspectorMode, setInspectorMode] = useState<"floating" | "fixed">(() => {
+    const saved = window.localStorage.getItem("canary.compose.inspector-mode");
+    return saved === "fixed" ? "fixed" : "floating";
+  });
+
+  // ── Page state (URL param for Layout mode deep-link, localStorage persist) ──
   const [searchParams, setSearchParams] = useSearchParams();
   const currentPage = Number(searchParams.get("page") ?? 1);
+
+  const { data: pageList, isLoading: loadingList } = usePages(name);
   const safePage = pageList?.length ? Math.min(currentPage, pageList.length) : undefined;
   const { data: page, isLoading: loadingPage } = usePage(name, safePage);
 
+  // Fetch all pages for Script/Preview modes
+  const { pages: allPages, isLoading: loadingAllPages } = useAllPages(name, pageList);
+
+  // Current page index (0-based) derived from URL param
+  const pageIdx = (safePage ?? 1) - 1;
+
+  const { data: projectConfig } = useProjectConfig(name);
+  const [outputLanguageOverride, setOutputLanguageOverride] = useState<"en" | "es" | "fr" | null>(null);
+  const outputLanguage = outputLanguageOverride ?? projectConfig?.target_language ?? "en";
+
+  // ── Mutations ────────────────────────────────────────────────────────────
   const updatePageMut = useUpdatePage();
   const replacePageMut = useReplacePage();
   const reflowPagesMut = useReflowPages();
@@ -30,6 +74,7 @@ export function ComposeRoom() {
   const updateProjectConfigMut = useUpdateProjectConfig();
   const exportMut = useExport();
 
+  // ── Compose store ────────────────────────────────────────────────────────
   const selection = useComposeStore((s) => s.selection);
   const select = useComposeStore((s) => s.select);
   const deselect = useComposeStore((s) => s.deselect);
@@ -39,48 +84,42 @@ export function ComposeRoom() {
   const undoStack = useComposeStore((s) => s.undoStack);
   const redoStack = useComposeStore((s) => s.redoStack);
   const clearHistory = useComposeStore((s) => s.clearHistory);
-  const [zoom, setZoom] = useState(1);
-  const [outputLanguageOverride, setOutputLanguageOverride] = useState<"en" | "es" | "fr" | null>(null);
-  const [showOnboarding, setShowOnboarding] = useState(() => localStorage.getItem("canary.compose.onboarded") !== "1");
-  const [onboardingStep, setOnboardingStep] = useState(0);
-  const clampZoom = (value: number) => Math.max(0.5, Math.min(2.5, Number(value.toFixed(2))));
-  const outputLanguage = outputLanguageOverride ?? projectConfig?.target_language ?? "en";
 
-  function setPage(p: number) {
+  // ── Zoom ─────────────────────────────────────────────────────────────────
+  const [zoom, setZoom] = useState(1);
+  const clampZoom = (v: number) => Math.max(0.5, Math.min(2.5, Number(v.toFixed(2))));
+
+  // ── Page navigation ──────────────────────────────────────────────────────
+  function setPageNum(p: number, opts?: { preserveSelection?: boolean }) {
     setSearchParams({ page: String(p) }, { replace: true });
-    deselect();
+    if (!opts?.preserveSelection) deselect();
     clearHistory();
     setZoom(1);
   }
 
   // ── Mutations ────────────────────────────────────────────────────────────
 
-  function patchPage(patch: Partial<ComicPage>) {
-    if (!name || !safePage || !page) return;
-    pushUndo(page);
-    updatePageMut.mutate({
-      project: name,
-      pageNum: safePage,
-      data: patch,
-    });
+  function patchPage(patch: Partial<ComicPage>, targetPageNum?: number) {
+    const pNum = targetPageNum ?? safePage;
+    if (!name || !pNum) return;
+    const targetPage = targetPageNum ? allPages[targetPageNum - 1] : page;
+    if (targetPage) pushUndo(targetPage);
+    updatePageMut.mutate({ project: name, pageNum: pNum, data: patch });
   }
 
-  function handleUpdateBubble(panelId: string, bubbleId: string, bPatch: Partial<Bubble>) {
-    patchPage({
-      panels: [{ id: panelId, bubbles: [{ id: bubbleId, ...bPatch }] }] as ComicPage["panels"],
-    });
+  function handleUpdateBubble(panelId: string, bubbleId: string, bPatch: Partial<Bubble>, targetPageNum?: number) {
+    patchPage(
+      { panels: [{ id: panelId, bubbles: [{ id: bubbleId, ...bPatch }] }] as ComicPage["panels"] },
+      targetPageNum,
+    );
   }
 
   function handleUpdateSfx(panelId: string, sPatch: Partial<Sfx>) {
-    patchPage({
-      panels: [{ id: panelId, sfx: sPatch }] as ComicPage["panels"],
-    });
+    patchPage({ panels: [{ id: panelId, sfx: sPatch }] as ComicPage["panels"] });
   }
 
-  function handleUpdatePanel(panelId: string, pPatch: Partial<ComicPage["panels"][number]>) {
-    patchPage({
-      panels: [{ id: panelId, ...pPatch }] as ComicPage["panels"],
-    });
+  function handleUpdatePanel(panelId: string, pPatch: Partial<PagePanel>) {
+    patchPage({ panels: [{ id: panelId, ...pPatch }] as ComicPage["panels"] });
   }
 
   function handleUpdatePageProps(patch: Partial<ComicPage>) {
@@ -95,7 +134,7 @@ export function ComposeRoom() {
         onSuccess: (pages) => {
           clearHistory();
           const lastPage = pages.at(-1)?.page_number ?? 1;
-          if (currentPage > lastPage) setPage(lastPage);
+          if (currentPage > lastPage) setPageNum(lastPage);
         },
       },
     );
@@ -115,23 +154,16 @@ export function ComposeRoom() {
   function handleOutputLanguageChange(targetLanguage: "en" | "es" | "fr") {
     setOutputLanguageOverride(targetLanguage);
     if (!name) return;
-    updateProjectConfigMut.mutate({
-      project: name,
-      data: { target_language: targetLanguage },
-    });
+    updateProjectConfigMut.mutate({ project: name, data: { target_language: targetLanguage } });
   }
 
   function handleDeleteElement(panelId: string, type: "bubble" | "sfx", elementId: string) {
     if (!name || !safePage || !page) return;
     pushUndo(page);
     if (type === "bubble") {
-      patchPage({
-        panels: [{ id: panelId, remove_bubble_ids: [elementId] }] as unknown as ComicPage["panels"],
-      });
+      patchPage({ panels: [{ id: panelId, remove_bubble_ids: [elementId] }] as unknown as ComicPage["panels"] });
     } else {
-      patchPage({
-        panels: [{ id: panelId, remove_sfx: true }] as unknown as ComicPage["panels"],
-      });
+      patchPage({ panels: [{ id: panelId, remove_sfx: true }] as unknown as ComicPage["panels"] });
     }
     deselect();
   }
@@ -144,25 +176,14 @@ export function ComposeRoom() {
     }
   }
 
-  function handleDragEnd(
-    panelId: string,
-    type: "bubble" | "sfx",
-    elementId: string,
-    x: number,
-    y: number,
-  ) {
-    if (type === "bubble") {
-      handleUpdateBubble(panelId, elementId, { x, y });
-    } else {
-      handleUpdateSfx(panelId, { x, y });
-    }
+  function handleDragEnd(panelId: string, type: "bubble" | "sfx", elementId: string, x: number, y: number) {
+    if (type === "bubble") handleUpdateBubble(panelId, elementId, { x, y });
+    else handleUpdateSfx(panelId, { x, y });
   }
 
   function handleAddBubble(bubbleType: "speech" | "thought" | "narration") {
     if (!page || !name || !safePage) return;
-    const targetPanel = selection?.panelId
-      ? page.panels.find((p) => p.id === selection.panelId)
-      : page.panels[0];
+    const targetPanel = selection?.panelId ? page.panels.find((p) => p.id === selection.panelId) : page.panels[0];
     if (!targetPanel) return;
     pushUndo(page);
     const newBubble = {
@@ -171,110 +192,87 @@ export function ComposeRoom() {
       text: bubbleType === "narration" ? "Narration text..." : "Dialogue...",
       side: "left" as const,
     };
-    patchPage({
-      panels: [{ id: targetPanel.id, bubbles: [newBubble] }] as unknown as ComicPage["panels"],
-    });
+    patchPage({ panels: [{ id: targetPanel.id, bubbles: [newBubble] }] as unknown as ComicPage["panels"] });
   }
 
   function handleAddSfx() {
     if (!page || !name || !safePage) return;
-    const targetPanel = selection?.panelId
-      ? page.panels.find((p) => p.id === selection.panelId)
-      : page.panels[0];
+    const targetPanel = selection?.panelId ? page.panels.find((p) => p.id === selection.panelId) : page.panels[0];
     if (!targetPanel) return;
     pushUndo(page);
-    patchPage({
-      panels: [{ id: targetPanel.id, sfx: { text: "KRAK!" } }] as unknown as ComicPage["panels"],
-    });
+    patchPage({ panels: [{ id: targetPanel.id, sfx: { text: "KRAK!" } }] as unknown as ComicPage["panels"] });
   }
 
   function handleUndo() {
     const prev = popUndo();
     if (!prev || !name || !safePage || !page) return;
-    useComposeStore.setState((s) => ({
-      redoStack: [...s.redoStack, structuredClone(page)],
-    }));
-    replacePageMut.mutate({
-      project: name,
-      pageNum: safePage,
-      data: prev,
-    });
+    useComposeStore.setState((s) => ({ redoStack: [...s.redoStack, structuredClone(page)] }));
+    replacePageMut.mutate({ project: name, pageNum: safePage, data: prev });
   }
 
   function handleRedo() {
     const next = popRedo();
     if (!next || !name || !safePage || !page) return;
-    useComposeStore.setState((s) => ({
-      undoStack: [...s.undoStack, structuredClone(page)],
-    }));
-    replacePageMut.mutate({
-      project: name,
-      pageNum: safePage,
-      data: next,
-    });
+    useComposeStore.setState((s) => ({ undoStack: [...s.undoStack, structuredClone(page)] }));
+    replacePageMut.mutate({ project: name, pageNum: safePage, data: next });
   }
 
   function handleExport(format: "pdf" | "cbz") {
     if (!name) return;
     exportMut.mutate(
       { project: name, format },
-      {
-        onSuccess: () => {
-          window.open(downloadExportUrl(name, format), "_blank");
-        },
-      },
+      { onSuccess: () => { window.open(downloadExportUrl(name, format), "_blank"); } },
     );
   }
 
-  function handleZoomIn() {
-    setZoom((z) => clampZoom(z + 0.1));
-  }
-
-  function handleZoomOut() {
-    setZoom((z) => clampZoom(z - 0.1));
-  }
-
-  function handleZoomReset() {
-    setZoom(1);
-  }
-
-  function dismissOnboarding() {
-    localStorage.setItem("canary.compose.onboarded", "1");
-    setShowOnboarding(false);
-  }
-
   // ── Keyboard shortcuts ───────────────────────────────────────────────────
-
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Delete" || e.key === "Backspace") {
-        if ((e.target as HTMLElement).tagName === "INPUT" || (e.target as HTMLElement).tagName === "TEXTAREA") return;
-        if (selection && page) {
-          handleDeleteElement(selection.panelId, selection.type, selection.elementId);
+      // Mode switching — only when not typing
+      if (!isInputFocused() && !cmdkOpen) {
+        if (e.key === "1") { setMode("script"); return; }
+        if (e.key === "2") { setMode("layout"); return; }
+        if (e.key === "3") { setMode("style"); return; }
+        if (e.key === "4") { setMode("preview"); return; }
+      }
+      // Global shortcuts
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") { e.preventDefault(); setCmdkOpen((o) => !o); return; }
+      if ((e.metaKey || e.ctrlKey) && e.key === "e") { e.preventDefault(); setMode("preview"); return; }
+      if ((e.metaKey || e.ctrlKey) && e.key === "m") { e.preventDefault(); handleGeneratePageStyle(); return; }
+      if ((e.metaKey || e.ctrlKey) && e.key === "l") { e.preventDefault(); setTryLayoutsOpen(true); return; }
+      if (e.key === "Escape") { if (cmdkOpen) { setCmdkOpen(false); return; } deselect(); return; }
+      // Layout mode shortcuts
+      if (mode === "layout" && !isInputFocused()) {
+        if (e.key === "b" || e.key === "B") { handleAddBubble("speech"); return; }
+        if (e.key === "t" && !e.shiftKey) { handleAddBubble("thought"); return; }
+        if (e.key === "n" && !e.shiftKey) { handleAddBubble("narration"); return; }
+        if (e.key === "x" || e.key === "X") { handleAddSfx(); return; }
+        if (e.key === "N" && e.shiftKey) {
+          const narration = page?.panels.flatMap((panel) =>
+            panel.bubbles
+              .filter((bubble) => bubble.type === "narration")
+              .map((bubble) => ({ panelId: panel.id, bubbleId: bubble.id }))
+          )[0];
+          if (narration) select(narration.panelId, "bubble", narration.bubbleId);
+          return;
         }
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
-        e.preventDefault();
-        handleUndo();
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key === "z" && e.shiftKey) {
-        e.preventDefault();
-        handleRedo();
-      }
-      if (e.key === "Escape") {
-        deselect();
-      }
-      if ((e.metaKey || e.ctrlKey) && (e.key === "=" || e.key === "+")) {
-        e.preventDefault();
-        handleZoomIn();
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key === "-") {
-        e.preventDefault();
-        handleZoomOut();
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key === "0") {
-        e.preventDefault();
-        handleZoomReset();
+        if (e.key === "T" && e.shiftKey) {
+          const thought = page?.panels.flatMap((panel) =>
+            panel.bubbles
+              .filter((bubble) => bubble.type === "thought")
+              .map((bubble) => ({ panelId: panel.id, bubbleId: bubble.id }))
+          )[0];
+          if (thought) select(thought.panelId, "bubble", thought.bubbleId);
+          return;
+        }
+        if (e.key === "Delete" || e.key === "Backspace") {
+          if (selection && page) handleDeleteElement(selection.panelId, selection.type, selection.elementId);
+        }
+        if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) { e.preventDefault(); handleUndo(); }
+        if ((e.metaKey || e.ctrlKey) && e.key === "z" && e.shiftKey) { e.preventDefault(); handleRedo(); }
+        if ((e.metaKey || e.ctrlKey) && (e.key === "=" || e.key === "+")) { e.preventDefault(); setZoom((z) => clampZoom(z + 0.1)); }
+        if ((e.metaKey || e.ctrlKey) && e.key === "-") { e.preventDefault(); setZoom((z) => clampZoom(z - 0.1)); }
+        if ((e.metaKey || e.ctrlKey) && e.key === "0") { e.preventDefault(); setZoom(1); }
       }
     }
     window.addEventListener("keydown", onKeyDown);
@@ -282,10 +280,15 @@ export function ComposeRoom() {
   });
 
   useEffect(() => {
-    if (!showOnboarding || onboardingStep !== 1) return;
-    const timer = window.setTimeout(() => setOnboardingStep(2), 1200);
-    return () => window.clearTimeout(timer);
-  }, [onboardingStep, showOnboarding]);
+    window.localStorage.setItem("canary.compose.inspector-mode", inspectorMode);
+  }, [inspectorMode]);
+
+  // ── Script → Layout deep-link ────────────────────────────────────────────
+  function handleSwitchToLayout(targetPageNum: number, panelId: string, bubbleId: string) {
+    setPageNum(targetPageNum, { preserveSelection: true });
+    setMode("layout");
+    select(panelId, "bubble", bubbleId);
+  }
 
   // ── Render ───────────────────────────────────────────────────────────────
 
@@ -306,9 +309,7 @@ export function ComposeRoom() {
           <div className="font-display text-[1.5rem] font-bold tracking-[-0.05em] text-ink-black/30">
             PAGE EDITOR NOT AVAILABLE
           </div>
-          <p className="mt-2 text-[0.82rem] text-ink-black/50">
-            Complete COMPOSE first.
-          </p>
+          <p className="mt-2 text-[0.82rem] text-ink-black/50">Complete COMPOSE first.</p>
         </div>
       </div>
     );
@@ -317,170 +318,131 @@ export function ComposeRoom() {
   const pageNumber = safePage ?? 1;
 
   return (
-    <div className="-mx-5 -my-6 flex min-h-[calc(100vh-58px)] flex-col bg-sidebar-tint/55 md:-my-6">
-      <ShowcaseHeader
-        label="COMPOSE / PAGE EDITOR"
-        title="PAGE EDITOR"
-        lead="Position bubbles, edit dialogue, adjust layout, and export your comic."
-        className="mx-3 mt-3 shrink-0 md:mx-4 md:mt-4"
-        actions={<RerunStageAction project={name} stage="assemble" label="Compose" />}
+    <div className="-mx-5 -my-6 flex min-h-[calc(100vh-58px)] flex-col md:-my-6">
+      {/* Persistent header with Export CTA */}
+      <ComposeHeader
+        mode={mode}
+        isExporting={exportMut.isPending}
+        onExport={handleExport}
+        onOpenCmdk={() => setCmdkOpen(true)}
+        onPreview={() => setMode("preview")}
       />
 
-      <div className="sticky top-0 z-20 mx-3 mt-3 shrink-0 md:mx-4">
-        <EditorToolbar
+      {/* Rerun action — placed outside header to keep it subtle */}
+      <div className="shrink-0 border-b-[2px] border-ink-black bg-surface-container px-6 py-1.5 flex items-center justify-end gap-3">
+        <RerunStageAction project={name} stage="assemble" label="Compose" />
+      </div>
+
+      {/* Mode tab switcher */}
+      <ModeSwitcher mode={mode} onModeChange={setMode} />
+
+      {/* Mode content — fills remaining height */}
+      {mode === "script" && (
+        <ScriptMode
+          project={name}
+          pages={allPages}
+          isLoading={loadingAllPages}
+          pageIdx={pageIdx}
+          outputLanguage={outputLanguage}
+          onPageSelect={(idx) => setPageNum(idx + 1)}
+          onUpdateBubble={(pageNum, panelId, bubbleId, patch) =>
+            handleUpdateBubble(panelId, bubbleId, patch, pageNum)
+          }
+          onSwitchToLayout={handleSwitchToLayout}
+        />
+      )}
+
+      {mode === "layout" && (
+        <LayoutMode
+          project={name}
+          pageList={pageList}
+          page={page}
+          pageNumber={pageNumber}
+          isLoadingPage={loadingPage}
+          zoom={zoom}
+          selection={selection}
+          undoStack={undoStack}
+          redoStack={redoStack}
+          isGeneratingPageStyle={generatePageStyleMut.isPending}
+          isTranslatingBubbles={translateBubblesMut.isPending}
+          outputLanguage={outputLanguage}
+          onPageSelect={setPageNum}
           onAddBubble={handleAddBubble}
           onAddSfx={handleAddSfx}
-          onDelete={() => {
-            if (selection) handleDeleteElement(selection.panelId, selection.type, selection.elementId);
-          }}
+          onDelete={() => { if (selection) handleDeleteElement(selection.panelId, selection.type, selection.elementId); }}
           onUndo={handleUndo}
           onRedo={handleRedo}
-          onExport={handleExport}
-          hasSelection={!!selection}
-          canUndo={undoStack.length > 0}
-          canRedo={redoStack.length > 0}
-          isExporting={exportMut.isPending}
-          zoomPercent={zoom * 100}
-          onZoomIn={handleZoomIn}
-          onZoomOut={handleZoomOut}
-          onZoomReset={handleZoomReset}
+          onTryLayouts={() => setTryLayoutsOpen(true)}
+          onSelect={select}
+          onDeselect={deselect}
+          onDragEnd={handleDragEnd}
+          onZoomChange={(z) => setZoom(clampZoom(z))}
+          onZoomIn={() => setZoom((z) => clampZoom(z + 0.1))}
+          onZoomOut={() => setZoom((z) => clampZoom(z - 0.1))}
+          onZoomReset={() => setZoom(1)}
+          onUpdatePanel={handleUpdatePanel}
+          onUpdateBubble={handleUpdateBubble}
+          onUpdateSfx={handleUpdateSfx}
+          onUpdatePage={handleUpdatePageProps}
+          onReflowPages={handleReflowPages}
+          onGeneratePageStyle={handleGeneratePageStyle}
+          onOutputLanguageChange={handleOutputLanguageChange}
+          onTranslateBubbles={handleTranslateBubbles}
+          onDeleteElement={handleDeleteElement}
+          onUnpin={handleUnpin}
+          inspectorMode={inspectorMode}
+          onInspectorModeChange={setInspectorMode}
         />
-      </div>
+      )}
 
-      <div className="grid flex-1 min-h-0 gap-3 p-3 md:grid-cols-[180px_minmax(0,1fr)] md:p-4 xl:grid-cols-[220px_minmax(0,1fr)_340px]">
-        <aside className="min-w-0 md:min-h-0">
-          <PageNavigator
-            project={name}
-            pages={pageList}
-            currentPage={pageNumber}
-            onSelect={setPage}
-          />
-        </aside>
+      {mode === "style" && (
+        <StyleMode
+          project={name}
+          isMatchingStyle={generatePageStyleMut.isPending}
+          isTranslatingBubbles={translateBubblesMut.isPending}
+          outputLanguage={outputLanguage}
+          pageCount={pageList.length}
+          onMatchStyle={handleGeneratePageStyle}
+          onTranslateBubbles={handleTranslateBubbles}
+          onOutputLanguageChange={handleOutputLanguageChange}
+        />
+      )}
 
-        <section className="min-w-0 min-h-[560px] overflow-hidden border-[2px] border-ink-black bg-[radial-gradient(circle_at_1px_1px,rgba(27,28,21,0.12)_1px,transparent_0)] [background-size:18px_18px] p-2 shadow-[6px_6px_0_0_var(--color-ghost-shadow)] md:min-h-0 md:p-4">
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <div>
-              <div className="font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/45">
-                PAGE BENCH
-              </div>
-              <div className="font-display text-[1.1rem] font-bold leading-none tracking-[-0.02em] text-ink-black">
-                Page {String(pageNumber).padStart(2, "0")}
-              </div>
-            </div>
-            <div className="hidden font-meta text-[0.52rem] tracking-[0.16em] text-ink-black/45 sm:block">
-              {page?.panels.length ?? 0} PANELS
-            </div>
-          </div>
-          <div className="h-[72vh] min-h-[480px] overflow-hidden border-[2px] border-ink-black bg-pulp-paper/90 p-2 md:h-[calc(100vh-306px)] md:min-h-0">
-            {loadingPage ? (
-              <div
-                className="flex h-full items-center justify-center bg-ink-black/5"
-                style={{ aspectRatio: "2480 / 3508", maxHeight: "100%" }}
-              >
-                <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-                  LOADING PAGE...
-                </p>
-              </div>
-            ) : page ? (
-              <PageEditor
-                page={page}
-                project={name}
-                zoom={zoom}
-                onZoomChange={(nextZoom) => setZoom(clampZoom(nextZoom))}
-                selectedId={selection?.elementId ?? null}
-                selectedType={selection?.type ?? null}
-                onSelect={select}
-                onDeselect={deselect}
-                onDragEnd={handleDragEnd}
-              />
-            ) : null}
-          </div>
-        </section>
+      {mode === "preview" && (
+        <PreviewMode
+          project={name}
+          pages={allPages}
+          pageList={pageList}
+          isLoading={loadingAllPages}
+          pageIdx={pageIdx}
+          isExporting={exportMut.isPending}
+          onPageSelect={(idx) => setPageNum(idx + 1)}
+          onExport={handleExport}
+        />
+      )}
 
-        <aside className="min-w-0 xl:min-h-0">
-          {page ? (
-            <PropertyPanel
-              page={page}
-              selection={selection}
-              onUpdatePanel={handleUpdatePanel}
-              onUpdateBubble={handleUpdateBubble}
-              onUpdateSfx={handleUpdateSfx}
-              onUpdatePage={handleUpdatePageProps}
-              onReflowPages={handleReflowPages}
-              onGeneratePageStyle={handleGeneratePageStyle}
-              outputLanguage={outputLanguage}
-              onOutputLanguageChange={handleOutputLanguageChange}
-              onTranslateBubbles={handleTranslateBubbles}
-              isGeneratingPageStyle={generatePageStyleMut.isPending}
-              isTranslatingBubbles={translateBubblesMut.isPending}
-              onDeleteElement={handleDeleteElement}
-              onUnpin={handleUnpin}
-            />
-          ) : null}
-        </aside>
-      </div>
-      {showOnboarding && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-ink-black/60 p-4">
-          <div className="w-full max-w-[560px] border-[2px] border-ink-black bg-pulp-paper p-5 shadow-ink-lg">
-            <div className="font-meta text-[0.55rem] tracking-[0.2em] text-hero-red">
-              COMPOSE CHECKLIST
-            </div>
-            <h2 className="mt-2 font-display text-[2rem] font-bold uppercase leading-none tracking-[-0.04em] text-ink-black">
-              Finish the page pass
-            </h2>
-            <div className="mt-5 space-y-3">
-              {[
-                "Match Lettering to Art",
-                "Review and reposition speech bubbles",
-                "Export your comic",
-              ].map((label, index) => (
-                <div
-                  key={label}
-                  className={`border-[2px] border-ink-black p-3 ${
-                    onboardingStep === index ? "bg-bristol" : onboardingStep > index ? "bg-archive-sage text-bristol" : "bg-pulp-paper"
-                  }`}
-                >
-                  <div className="font-meta text-[0.52rem] tracking-[0.16em]">
-                    STEP {index + 1}
-                  </div>
-                  <div className="mt-1 font-display text-[1rem] font-bold uppercase tracking-[-0.03em]">
-                    {label}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="mt-5 flex flex-wrap justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={dismissOnboarding}>
-                Dismiss
-              </Button>
-              {onboardingStep === 0 && (
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    handleGeneratePageStyle();
-                    setOnboardingStep(1);
-                  }}
-                  disabled={generatePageStyleMut.isPending}
-                >
-                  {generatePageStyleMut.isPending ? "MATCHING..." : "Match lettering"}
-                </Button>
-              )}
-              {onboardingStep === 2 && (
-                <>
-                  <Button size="sm" onClick={() => handleExport("pdf")} disabled={exportMut.isPending}>
-                    Export PDF
-                  </Button>
-                  <Button size="sm" variant="secondary" onClick={() => handleExport("cbz")} disabled={exportMut.isPending}>
-                    Export CBZ
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={dismissOnboarding}>
-                    Done
-                  </Button>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
+      {/* Command palette */}
+      {cmdkOpen && (
+        <CommandPalette
+          onClose={() => setCmdkOpen(false)}
+          onSwitchMode={setMode}
+          onExport={handleExport}
+          onMatchStyle={handleGeneratePageStyle}
+          onTranslate={() => handleTranslateBubbles(outputLanguage)}
+          onAddBubble={handleAddBubble}
+          onAddSfx={handleAddSfx}
+          onTryLayouts={() => setTryLayoutsOpen(true)}
+        />
+      )}
+
+      {/* Try Layouts modal */}
+      {tryLayoutsOpen && name && safePage && (
+        <TryLayoutsModal
+          project={name}
+          pageNum={safePage}
+          page={page}
+          onClose={() => setTryLayoutsOpen(false)}
+        />
       )}
     </div>
   );

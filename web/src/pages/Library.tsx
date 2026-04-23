@@ -2,9 +2,6 @@ import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useGenerateProjectCover, useProjects } from "../api/queries";
 import { ProjectCard } from "../components/ProjectCard";
-import { SectionLabel } from "../components/SectionLabel";
-import { SectionDivider } from "../components/SectionDivider";
-import { Card } from "../components/ui/Card";
 import { StatRow } from "../components/ui/StatRow";
 import { Icon } from "../components/ui/Icon";
 import { useI18n } from "../i18n";
@@ -20,15 +17,15 @@ function NewProjectCard() {
       aria-label={t("START NEW PROJECT")}
       className="group block h-full focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
     >
-      <div className="flex h-full min-h-[280px] flex-col items-center justify-center gap-4 border-[2px] border-dashed border-ink-black/30 bg-bristol p-8 transition-colors duration-150 group-hover:border-ink-black/60 group-hover:bg-ghost-shadow/20 group-focus-visible:border-ink-black">
-        <div className="flex h-14 w-14 items-center justify-center border-[2px] border-ink-black/25 text-ink-black/35 transition-colors duration-150 group-hover:border-ink-black group-hover:bg-narrator-gold group-hover:text-ink-black">
-          <Icon name="plus" size={24} />
+      <div className="flex h-full min-h-[390px] flex-col items-center justify-center gap-6 border-[3px] border-dashed border-ink-black/10 bg-transparent p-6 transition-colors duration-150 group-hover:border-ink-black/35 group-hover:bg-bristol/35 group-focus-visible:border-ink-black">
+        <div className="flex h-20 w-20 items-center justify-center border-[3px] border-ink-black/38 text-ink-black/55 transition-colors duration-150 group-hover:border-ink-black group-hover:bg-narrator-gold group-hover:text-ink-black">
+          <Icon name="plus" size={30} />
         </div>
         <div className="text-center">
-          <h3 className="font-display text-[1.1rem] font-bold uppercase leading-none tracking-[-0.03em] text-ink-black">
+          <h3 className="font-display text-[1.42rem] font-black uppercase leading-none tracking-[-0.055em] text-ink-black">
             {t("NEW PRODUCTION")}
           </h3>
-          <p className="mt-1.5 font-body text-[0.78rem] text-ink-black/50">
+          <p className="mt-3 font-body text-[0.96rem] font-semibold text-ink-black/45">
             {t("Upload a novel to start")}
           </p>
         </div>
@@ -126,27 +123,31 @@ export function Library() {
   }
 
   return (
-    <div className="space-y-8">
-      <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-end">
+    <div className="space-y-20">
+      <section className="grid gap-12 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start">
         <div>
-          <SectionLabel tone="red">{t("STUDIO // ACTIVE PRODUCTIONS")}</SectionLabel>
-          <h1 className="mt-4 max-w-[10ch] display-impact">{t("LIBRARY")}</h1>
-          <p className="mt-5 lead-pulp max-w-[44rem]">
+          <div className="inline-flex bg-hero-red px-4 py-1.5 font-meta text-[0.56rem] tracking-[0.22em] text-bristol uppercase">
+            {t("STUDIO // ACTIVE PRODUCTIONS")}
+          </div>
+          <h1 className="mt-5 max-w-[10ch] font-display text-[clamp(5.25rem,11vw,9rem)] font-black uppercase leading-[0.78] tracking-[-0.065em] text-ink-black">
+            {t("LIBRARY")}
+          </h1>
+          <p className="mt-9 max-w-[49rem] border-l-[4px] border-hero-red pl-8 text-[1.28rem] font-semibold leading-10 text-ink-black/68">
             {t("Your narrative multiverse — active productions, archived issues, and new story seeds waiting to be drawn.")}
           </p>
         </div>
 
-        <Card className="p-4 md:p-5" shadow="lg">
-          <div className="mb-4 flex items-center justify-between border-b-[2px] border-ink-black pb-3">
+        <aside className="border-[3px] border-ink-black bg-bristol px-7 py-7">
+          <div className="mb-5 flex items-center justify-between border-b border-panel-line pb-5">
             <div>
-              <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
+              <div className="font-meta text-[0.7rem] tracking-[0.24em] text-ink-black/45">
                 {t("INDEX SIGNALS")}
               </div>
-              <div className="mt-1 font-display text-[1.15rem] font-bold uppercase leading-none tracking-[-0.04em]">
+              <div className="mt-1 font-display text-[1.35rem] font-black uppercase leading-none tracking-[-0.04em]">
                 {t("Studio telemetry")}
               </div>
             </div>
-            <Icon name="archive" size={18} className="text-hero-red" />
+            <Icon name="sparkles" size={18} className="text-narrator-gold" />
           </div>
           <div className="space-y-3">
             <StatRow label="ARCHIVE FILES">{projects?.length ?? 0}</StatRow>
@@ -156,12 +157,11 @@ export function Library() {
           <p className="mt-3 font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/50">
             {t("Ink usage = total AI generation cost")}
           </p>
-        </Card>
+        </aside>
       </section>
 
       <section>
-        <SectionDivider number={1} label="ACTIVE PRODUCTIONS" />
-        <div className="mt-5 grid gap-5 grid-cols-[repeat(auto-fill,minmax(220px,1fr))]">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-7">
           <NewProjectCard />
 
           {projects?.map((project) => (

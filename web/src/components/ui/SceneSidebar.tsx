@@ -18,11 +18,11 @@ export function SceneSidebar({
   onSelect,
 }: SceneSidebarProps) {
   return (
-    <div className="h-full bg-bristol">
-      <div className="border-b-[2px] border-ink-black px-4 py-2 font-meta text-[0.5rem] tracking-[0.22em] text-ink-black/45">
+    <div className="flex h-full min-h-0 flex-col bg-bristol">
+      <div className="shrink-0 border-b border-panel-line px-5 py-4 font-meta text-[0.68rem] tracking-[0.22em] text-ink-black/45">
         SCENE
       </div>
-      <div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {items.map((s) => {
           const isActive = s.id === activeId;
           return (
@@ -44,12 +44,12 @@ export function SceneSidebar({
                   isActive ? "bg-ink-black/30" : "bg-transparent",
                 )}
               />
-              <span className="flex-1 px-4 py-3">
-                <span className="block font-display text-[0.78rem] font-bold uppercase leading-tight tracking-[-0.02em]">
+              <span className="flex-1 px-5 py-5">
+                <span className="block font-display text-[1.02rem] font-bold uppercase leading-tight tracking-[0.08em]">
                   {s.label}
                 </span>
                 <span className={cn(
-                  "mt-0.5 block font-meta text-[0.52rem] tracking-[0.12em]",
+                  "mt-1.5 block font-body text-[0.9rem] font-semibold",
                   isActive ? "text-bristol/70" : "text-ink-black/45",
                 )}>
                   {s.count}
