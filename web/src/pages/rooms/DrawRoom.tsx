@@ -3,12 +3,9 @@ import { useParams } from "react-router-dom";
 import { useGenerationJobs, useImages, useProjectStatus, useRegenPanel, usePromptSummaries } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { PanelCard } from "../../components/PanelCard";
-import { Button } from "../../components/ui/Button";
-import { ControlGroup } from "../../components/ui/ControlGroup";
-import { ImageModal } from "../../components/ui/ImageModal";
+import { PanelDetailModal } from "../../components/PanelDetailModal";
 import { StatRow } from "../../components/ui/StatRow";
 import { RoomShell } from "../../components/ui/RoomShell";
-import { Surface, SurfaceHeader } from "../../components/ui/Surface";
 import { RerunStageAction } from "../../components/ui/RerunStageAction";
 import { StyleCallout } from "../../components/wizard/StyleCallout";
 import { useActiveRegens, useRegenStore } from "../../store/regen";
@@ -209,6 +206,29 @@ export function DrawRoom() {
     );
   }
 
+  const selectedPanelIndex = selectedPanel
+    ? displayImages.findIndex(
+        (img) => img.scene_id === selectedPanel.sceneId && img.panel_number === selectedPanel.panelNumber,
+      )
+    : -1;
+  const selectedPanelImage = selectedPanelIndex >= 0 ? displayImages[selectedPanelIndex] : null;
+  const prevPanel = selectedPanelIndex > 0 ? displayImages[selectedPanelIndex - 1] : null;
+  const nextPanel = selectedPanelIndex >= 0 && selectedPanelIndex < displayImages.length - 1
+    ? displayImages[selectedPanelIndex + 1]
+    : null;
+  const selectedPanelKey = selectedPanel
+    ? `${selectedPanel.sceneId}-${selectedPanel.panelNumber}`
+    : null;
+  const selectedPanelBust = selectedPanelKey && name
+    ? bustTimestamps[`${name}/${selectedPanelKey}`]
+    : undefined;
+  const selectedPanelBaseUrl = selectedPanel
+    ? `/api/projects/${encodeURIComponent(name!)}/files/images/${selectedPanel.sceneId}/panel_${String(selectedPanel.panelNumber).padStart(3, "0")}.png`
+    : "";
+  const selectedPanelImageUrl = selectedPanelBust
+    ? `${selectedPanelBaseUrl}?t=${selectedPanelBust}`
+    : selectedPanelBaseUrl;
+
   return (
     <RoomShell>
       <ShowcaseHeader
@@ -218,24 +238,40 @@ export function DrawRoom() {
         actions={<RerunStageAction project={name} stage="generate" label="Draw" itemsAtRisk={`${images?.length ?? 0} generated panels will be lost`} />}
       />
       <StyleCallout project={name} />
-      <ControlGroup label="FILTER" aria-label="Panel filters">
-        <Button variant={!sceneFilter ? "primary" : "outline"} size="sm" onClick={() => setSceneFilter(null)}>
+      <div className="flex max-w-full overflow-x-auto" role="tablist" aria-label="Panel filters">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={!sceneFilter}
+          onClick={() => setSceneFilter(null)}
+          className={`min-h-12 shrink-0 border-[2px] border-r-0 border-ink-black px-7 font-meta text-[0.7rem] tracking-[0.18em] transition-colors ${
+            !sceneFilter
+              ? "bg-ink-black text-bristol"
+              : "bg-pulp-paper text-ink-black hover:bg-bristol"
+          }`}
+        >
           ALL
-        </Button>
+        </button>
         {scenes.map((sceneId) => (
-          <Button
+          <button
             key={sceneId}
-            variant={sceneFilter === sceneId ? "primary" : "outline"}
-            size="sm"
+            type="button"
+            role="tab"
+            aria-selected={sceneFilter === sceneId}
             onClick={() => setSceneFilter(sceneId)}
+            className={`min-h-12 shrink-0 border-[2px] border-r-0 border-ink-black px-8 font-meta text-[0.7rem] tracking-[0.18em] transition-colors last:border-r-[2px] ${
+              sceneFilter === sceneId
+                ? "bg-ink-black text-bristol"
+                : "bg-pulp-paper text-ink-black hover:bg-bristol"
+            }`}
           >
             {sceneId.replace("_", " ").toUpperCase()}
-          </Button>
+          </button>
         ))}
-      </ControlGroup>
+      </div>
 
-      <section className="grid gap-5 xl:grid-cols-[1fr_240px]">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <section className="grid items-start gap-8 xl:grid-cols-[minmax(0,1fr)_280px]">
+        <div className="grid gap-x-5 gap-y-7 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
           {displayImages.map((img) => {
             const key = `${img.scene_id}-${img.panel_number}`;
             const bust = name ? bustTimestamps[`${name}/${key}`] : undefined;
@@ -261,21 +297,12 @@ export function DrawRoom() {
           })}
         </div>
 
-        <div className="space-y-4 xl:sticky xl:top-4 xl:self-start">
-          <Surface padding="sm" shadow="paper-sm">
-            <SurfaceHeader kicker="VISUAL REFS" title="REFS" className="-m-3 mb-3" />
-            <div className="mt-3 border-[2px] border-ink-black bg-ink-black p-3 text-bristol">
-              <div className="font-meta text-[0.5rem] tracking-[0.18em] text-bristol/62">SCENE PALETTE</div>
-              <div className="mt-3 flex gap-2">
-                <div className="h-7 w-7 border border-bristol bg-[#24261d]" />
-                <div className="h-7 w-7 border border-bristol bg-hero-red" />
-                <div className="h-7 w-7 border border-bristol bg-bristol" />
-                <div className="h-7 w-7 border border-bristol bg-[#6d5d58]" />
-              </div>
+        <aside className="xl:sticky xl:top-4 xl:self-start">
+          <div className="border-[2px] border-ink-black/10 bg-bristol p-6">
+            <div className="mb-5 font-meta text-[0.62rem] tracking-[0.26em] text-ink-black/45">
+              SESSION STATS
             </div>
-          </Surface>
-          <Surface padding="sm" shadow="paper-sm">
-            <div className="space-y-2">
+            <div className="space-y-3">
               <StatRow label="TOTAL PANELS">{displayImages.length}</StatRow>
               <StatRow label="COMPLETED">{images?.filter((i) => i.status === "done").length ?? 0}</StatRow>
               <StatRow label="FAILED">{images?.filter((i) => i.status === "failed").length ?? 0}</StatRow>
@@ -297,15 +324,19 @@ export function DrawRoom() {
                 </StatRow>
               )}
             </div>
-          </Surface>
-        </div>
+          </div>
+        </aside>
       </section>
-      {selectedPanel && name && (
-        <ImageModal
+      {selectedPanel && selectedPanelImage && name && (
+        <PanelDetailModal
           isOpen={!!selectedPanel}
           onClose={() => setSelectedPanel(null)}
-          src={`/api/projects/${encodeURIComponent(name)}/files/images/${selectedPanel.sceneId}/panel_${String(selectedPanel.panelNumber).padStart(3, "0")}.png`}
-          alt={`${selectedPanel.sceneId} panel ${selectedPanel.panelNumber}`}
+          onPrev={prevPanel ? () => setSelectedPanel({ sceneId: prevPanel.scene_id, panelNumber: prevPanel.panel_number }) : null}
+          onNext={nextPanel ? () => setSelectedPanel({ sceneId: nextPanel.scene_id, panelNumber: nextPanel.panel_number }) : null}
+          project={name}
+          sceneId={selectedPanel.sceneId}
+          panelNumber={selectedPanel.panelNumber}
+          imageUrl={selectedPanelImageUrl}
         />
       )}
     </RoomShell>

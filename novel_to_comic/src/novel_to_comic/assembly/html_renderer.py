@@ -611,8 +611,13 @@ def _resolve_tail_direction(bubble: Bubble) -> str:
     return "up"  # default: bubble at bottom → tail points up
 
 
-def _bubble_html(bubble: Bubble) -> str:
-    """Render one Bubble to an HTML element string."""
+def _bubble_html(bubble: Bubble, character_voices: dict[str, dict] | None = None) -> str:
+    """Render one Bubble to an HTML element string.
+
+    ``character_voices`` maps character_id → style dict. When a bubble has
+    a speaker_id matching a voice, the voice style is applied first, then
+    per-bubble overrides take precedence.
+    """
     classes = ["bubble", bubble.type, bubble.side]
     inline: list[str] = []
     has_svg_tail = False
@@ -623,6 +628,29 @@ def _bubble_html(bubble: Bubble) -> str:
         inline.append(f"top:  {bubble.y:.0f}px")
     if bubble.width is not None:
         inline.append(f"width: {bubble.width:.0f}px")
+
+    # Apply character voice first (lower priority than per-bubble overrides)
+    voice = (character_voices or {}).get(bubble.speaker_id or "") if bubble.speaker_id else None
+    if voice:
+        if voice.get("font_family") and not getattr(bubble, "font_family", None):
+            inline.append(f"font-family: {voice['font_family']}")
+        if voice.get("font_size") is not None and getattr(bubble, "font_size", None) is None:
+            inline.append(f"font-size: {voice['font_size']}px")
+        if voice.get("font_color") and not getattr(bubble, "font_color", None):
+            inline.append(f"color: {voice['font_color']}")
+        if voice.get("fill_color") and not getattr(bubble, "fill_color", None):
+            inline.append(f"background: {voice['fill_color']}")
+            inline.append(f"--bubble-bg: {voice['fill_color']}")
+        if voice.get("border_color") and not getattr(bubble, "border_color", None):
+            inline.append(f"border-color: {voice['border_color']}")
+            inline.append(f"--bubble-border: {voice['border_color']}")
+        if voice.get("border_width") is not None and getattr(bubble, "border_width", None) is None:
+            inline.append(f"border-width: {voice['border_width']}px")
+            inline.append(f"--bubble-border-width: {voice['border_width']}px")
+        if voice.get("border_radius") is not None and getattr(bubble, "border_radius", None) is None:
+            inline.append(f"border-radius: {voice['border_radius']}px")
+
+    # Per-bubble overrides (higher priority)
     if getattr(bubble, "font_family", None):
         inline.append(f"font-family: {bubble.font_family}")
     if getattr(bubble, "font_size", None) is not None:
@@ -663,6 +691,7 @@ def _panel_html(
     panel: PagePanel,
     project_dir: Path,
     image_url_fn: Callable[[str], str] | None = None,
+    character_voices: dict[str, dict] | None = None,
 ) -> str:
     """Render one PagePanel to an HTML element string.
 
@@ -670,6 +699,9 @@ def _panel_html(
     ``panel.image_path``) to whatever URL the current rendering context needs.
     The web dashboard passes an HTTP URL builder; CLI/Playwright passes None
     and falls back to ``file://`` URIs.
+
+    ``character_voices`` maps character_id → style dict for per-character
+    bubble styling.
     """
     # Grid placement (inline style beats CSS nth-child rules)
     grid_parts: list[str] = []
@@ -722,11 +754,11 @@ def _panel_html(
     # Auto speech/thought → .bubble-auto flex container at bottom
     auto_html = ""
     if auto_speech:
-        items = "\n".join(f"    {_bubble_html(b)}" for b in auto_speech)
+        items = "\n".join(f"    {_bubble_html(b, character_voices)}" for b in auto_speech)
         auto_html = f'  <div class="bubble-auto">\n{items}\n  </div>'
 
     # Pinned bubbles → absolute within panel
-    pinned_html = "\n".join(f"  {_bubble_html(b)}" for b in pinned)
+    pinned_html = "\n".join(f"  {_bubble_html(b, character_voices)}" for b in pinned)
 
     # SFX
     sfx_html = ""
@@ -772,6 +804,7 @@ def build_page_html(
     custom_css: str = "",
     image_url_fn: Callable[[str], str] | None = None,
     font_url_fn: Callable[[str], str] | None = None,
+    character_voices: dict[str, dict] | None = None,
 ) -> str:
     """Return a complete, self-contained HTML document for one comic page.
 
@@ -795,7 +828,7 @@ def build_page_html(
     )
 
     panels_html = "\n".join(
-        _panel_html(panel, project_dir, image_url_fn)
+        _panel_html(panel, project_dir, image_url_fn, character_voices)
         for panel in comic_page.panels
     )
 

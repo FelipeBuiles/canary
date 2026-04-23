@@ -38,23 +38,24 @@ export function EditableText({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const ref = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
-  const displayedDraft = editing ? draft : value;
 
   useEffect(() => {
-    if (editing) ref.current?.focus();
+    if (!editing) return;
+    ref.current?.focus();
+    ref.current?.setSelectionRange(ref.current.value.length, ref.current.value.length);
   }, [editing]);
 
   useEffect(() => {
     if (!editing || !multiline) return;
     const el = ref.current as HTMLTextAreaElement | null;
     if (!el) return;
-    el.style.height = "0px";
-    el.style.height = `${Math.max(el.scrollHeight, 56)}px`;
-  }, [editing, multiline, displayedDraft]);
+    el.style.height = "auto";
+    el.style.height = `${Math.max(el.scrollHeight, 40)}px`;
+  }, [editing, multiline, draft]);
 
   const save = () => {
     setEditing(false);
-    if (displayedDraft !== value) onSave(displayedDraft);
+    if (draft !== value) onSave(draft);
   };
 
   const revert = () => {
@@ -66,39 +67,15 @@ export function EditableText({
       e.preventDefault();
       save();
     }
+    if (e.key === "Enter" && multiline && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      save();
+    }
     if (e.key === "Escape") {
+      e.preventDefault();
       revert();
     }
   };
-
-  if (editing) {
-    const inputClasses = cn(
-      "w-full rounded-sm border-[2px] border-ink-black bg-white px-2 py-1 outline-none",
-      multiline && "block overflow-hidden resize-none",
-      className,
-      inputClassName,
-    );
-    return multiline ? (
-      <textarea
-        ref={ref as React.RefObject<HTMLTextAreaElement>}
-        className={inputClasses}
-        rows={1}
-        value={displayedDraft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={save}
-        onKeyDown={handleKeyDown}
-      />
-    ) : (
-      <input
-        ref={ref as React.RefObject<HTMLInputElement>}
-        className={inputClasses}
-        value={displayedDraft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={save}
-        onKeyDown={handleKeyDown}
-      />
-    );
-  }
 
   const changedSlice = highlightActive && highlightFrom != null
     ? getChangedSlice(highlightFrom, value)
@@ -116,13 +93,51 @@ export function EditableText({
     );
   };
 
+  const sharedWrapperClasses = cn(
+    "min-w-0 cursor-text transition-colors",
+    multiline ? "block whitespace-pre-wrap" : "inline-block max-w-full align-baseline",
+    className,
+  );
+
+  if (editing) {
+    const inputClasses = cn(
+      "min-w-0 border-[2px] border-ink-black bg-bristol px-2 py-1 text-inherit outline-none shadow-none",
+      "focus:shadow-[inset_0_-3px_0_0_var(--color-hero-red)]",
+      multiline
+        ? "block w-full resize-none overflow-hidden whitespace-pre-wrap break-words [line-height:inherit]"
+        : "inline-block w-full max-w-full [line-height:inherit]",
+      inputClassName,
+    );
+
+    return (
+      <span className={sharedWrapperClasses}>
+        {multiline ? (
+          <textarea
+            ref={ref as React.RefObject<HTMLTextAreaElement>}
+            className={inputClasses}
+            rows={1}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={save}
+            onKeyDown={handleKeyDown}
+          />
+        ) : (
+          <input
+            ref={ref as React.RefObject<HTMLInputElement>}
+            className={inputClasses}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={save}
+            onKeyDown={handleKeyDown}
+          />
+        )}
+      </span>
+    );
+  }
+
   return (
     <span
-      className={cn(
-        "cursor-text hover:bg-ink-black/5 rounded-sm transition-colors",
-        multiline && "whitespace-pre-wrap",
-        className,
-      )}
+      className={sharedWrapperClasses}
       onClick={() => {
         setDraft(value);
         setEditing(true);

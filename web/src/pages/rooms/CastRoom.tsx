@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useGenerationJobs, useProjectStatus, useStoryBible, useRegenRef, useRegenPlate } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
-import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
 import { Button } from "../../components/ui/Button";
 import { DestructiveButton } from "../../components/ui/DestructiveButton";
@@ -81,9 +80,9 @@ function CharacterCastCard({
 
   return (
     <>
-      <Card shadow="lg">
+      <article className="group/cast-card overflow-hidden border-[3px] border-ink-black/8 bg-bristol transition-colors duration-150 hover:border-ink-black">
         <div 
-          className="relative border-b-[2px] border-ink-black cursor-pointer group"
+          className="relative cursor-pointer bg-surface-container"
           onClick={() => !imgFailed && setIsModalOpen(true)}
         >
           {stageRegenerating ? (
@@ -123,7 +122,7 @@ function CharacterCastCard({
                 height={400}
                 aspect="4/5"
                 containerClassName="aspect-[4/5] w-full"
-                className="object-cover hover:opacity-90 transition-opacity"
+                className="object-cover transition-opacity group-hover/cast-card:opacity-90"
                 onError={() => setImgFailed(true)}
               />
               {activeJob && (
@@ -131,25 +130,25 @@ function CharacterCastCard({
                   {queuedLabel(activeJob)}
                 </StatusPill>
               )}
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                <span className="border-[2px] border-bristol bg-ink-black px-3 py-2 font-meta text-[0.62rem] tracking-[0.16em] text-bristol">
-                  FULL SIZE
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/42 opacity-0 transition-opacity duration-150 group-hover/cast-card:opacity-100">
+                <span className="border border-bristol bg-transparent px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-bristol">
+                  ↗ Full size
                 </span>
               </div>
             </>
           )}
-          <StatusPill tone="red" className="absolute right-2 top-2">
+          <StatusPill tone="red" className="absolute right-4 top-4">
             REF
           </StatusPill>
         </div>
-        <div className="p-3">
-          <div className="font-display text-[1rem] font-bold tracking-[-0.04em] text-ink-black">
+        <div className="bg-bristol p-5">
+          <div className="font-display text-[1.35rem] font-bold uppercase leading-none tracking-[-0.04em] text-ink-black">
             {character.name}
           </div>
-          <div className="mt-1 font-meta text-[0.48rem] tracking-[0.16em] text-ink-black/55">
+          <div className="mt-2 font-body text-[0.92rem] font-semibold text-ink-black/55">
             {character.age_range} &middot; {character.gender}
           </div>
-          <div className="mt-3 flex flex-wrap gap-1.5">
+          <div className="mt-4 flex flex-wrap gap-1.5">
             {character.distinguishing_features.slice(0, 3).map((f) => (
               <Tag key={f}>{f}</Tag>
             ))}
@@ -160,7 +159,7 @@ function CharacterCastCard({
             </div>
           )}
         </div>
-      </Card>
+      </article>
       <ImageModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -249,9 +248,9 @@ function LocationPlateCard({
 
   return (
     <>
-      <Card shadow="lg">
+      <article className="group/cast-card overflow-hidden border-[3px] border-ink-black/8 bg-bristol transition-colors duration-150 hover:border-ink-black">
         <div 
-          className="relative border-b-[2px] border-ink-black cursor-pointer group"
+          className="relative cursor-pointer bg-surface-container"
           onClick={() => !imgFailed && setIsModalOpen(true)}
         >
           {stageRegenerating ? (
@@ -291,7 +290,7 @@ function LocationPlateCard({
                 height={270}
                 aspect="16/9"
                 containerClassName="aspect-[16/9] w-full"
-                className="object-cover hover:opacity-90 transition-opacity"
+                className="object-cover transition-opacity group-hover/cast-card:opacity-90"
                 onError={() => setImgFailed(true)}
               />
               {activeJob && (
@@ -299,19 +298,19 @@ function LocationPlateCard({
                   {queuedLabel(activeJob)}
                 </StatusPill>
               )}
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                <span className="border-[2px] border-bristol bg-ink-black px-3 py-2 font-meta text-[0.62rem] tracking-[0.16em] text-bristol">
-                  FULL SIZE
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/42 opacity-0 transition-opacity duration-150 group-hover/cast-card:opacity-100">
+                <span className="border border-bristol bg-transparent px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-bristol">
+                  ↗ Full size
                 </span>
               </div>
             </>
           )}
         </div>
-        <div className="p-3">
-          <div className="font-display text-[1rem] font-bold tracking-[-0.04em] text-ink-black">
+        <div className="bg-bristol p-5">
+          <div className="font-display text-[1.35rem] font-bold uppercase leading-none tracking-[-0.04em] text-ink-black">
             {location.name}
           </div>
-          <div className="mt-2 flex flex-wrap gap-1.5">
+          <div className="mt-4 flex flex-wrap gap-1.5">
             {location.time_of_day && (
               <Tag>{location.time_of_day}</Tag>
             )}
@@ -323,7 +322,7 @@ function LocationPlateCard({
             </div>
           )}
         </div>
-      </Card>
+      </article>
       <ImageModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}

@@ -1,10 +1,8 @@
 import { Link } from "react-router-dom";
 import type { ProjectSummary, StageStatus, StageName } from "../types/api";
 import { STAGE_ORDER } from "../types/api";
-import { Card } from "./ui/Card";
 import { LazyImage } from "./ui/LazyImage";
 import { Skeleton } from "./ui/Skeleton";
-import { StatusPill } from "./ui/StatusPill";
 import { STATUS_PRESENTATION } from "../lib/statusLabels";
 import { useI18n } from "../i18n";
 
@@ -28,7 +26,7 @@ const STAGE_SHAPE: Partial<Record<StageName, ShapeKind>> = {
 };
 
 function CoverShape({ kind }: { kind: ShapeKind }) {
-  const cls = "h-20 w-20 text-white/12";
+  const cls = "h-24 w-24 text-white/12";
   const stroke = { stroke: "currentColor", fill: "none", strokeWidth: "1.5" };
   if (kind === "circle")
     return <svg viewBox="0 0 100 100" className={cls} {...stroke}><circle cx="50" cy="50" r="34"/></svg>;
@@ -51,6 +49,12 @@ function resolveStatus(project: ProjectSummary): StageStatus {
   return "pending";
 }
 
+function statusClass(tone: string) {
+  if (tone === "gold") return "bg-narrator-gold text-ink-black";
+  if (tone === "sage") return "bg-archive-sage text-bristol";
+  if (tone === "red") return "bg-hero-red text-bristol";
+  return "bg-surface-container text-ink-black";
+}
 
 export function ProjectCard({ project, coverPending = false }: Props) {
   const { stageName, t } = useI18n();
@@ -65,6 +69,7 @@ export function ProjectCard({ project, coverPending = false }: Props) {
   const coverStyle = stageKey ? STAGE_COVER_STYLE[stageKey] : undefined;
   const coverBg = coverStyle?.bg ?? FALLBACK_BG;
   const shapeKind: ShapeKind = (stageKey ? STAGE_SHAPE[stageKey] : undefined) ?? "circle";
+  const byline = project.author ? `by ${project.author}` : "author pending";
 
   return (
     <Link
@@ -72,22 +77,22 @@ export function ProjectCard({ project, coverPending = false }: Props) {
       aria-label={`${t("OPEN FILE")}: ${project.project_name}`}
       className="group block h-full focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
     >
-      <Card shadow="lg" className="h-full overflow-hidden transition-transform duration-150 group-hover:-translate-y-[2px] group-hover:shadow-ink-sm group-focus-visible:-translate-y-[2px]">
-        <div className="relative border-b-[2px] border-ink-black">
+      <article className="h-full overflow-hidden border-[3px] border-ink-black/8 bg-bristol transition-[border-color,box-shadow] duration-150 group-hover:border-ink-black group-hover:shadow-paper-sm group-focus-visible:border-ink-black group-focus-visible:shadow-paper-sm">
+        <div className="relative border-b-[2px] border-ink-black/8 transition-colors duration-150 group-hover:border-ink-black group-focus-visible:border-ink-black">
           {project.has_cover ? (
             <LazyImage
               src={coverUrl}
               alt={`${project.project_name} cover`}
-              aspect="4/5"
+              aspect="6 / 5"
               loading="lazy"
               containerClassName="w-full"
               className="transition-transform duration-300 group-hover:scale-[1.02]"
             />
           ) : coverPending ? (
-            <Skeleton aspect="4/5" />
+            <Skeleton aspect="6 / 5" />
           ) : (
             <div
-              className="relative flex aspect-[4/5] items-center justify-center"
+              className="relative flex aspect-[6/5] items-center justify-center bg-[radial-gradient(circle_at_1px_1px,rgba(255,255,255,0.08)_1px,transparent_0)] [background-size:24px_24px]"
               style={{ backgroundColor: coverBg }}
             >
               <CoverShape kind={shapeKind} />
@@ -95,27 +100,36 @@ export function ProjectCard({ project, coverPending = false }: Props) {
           )}
 
           {stageLabel && (
-            <div className={`absolute bottom-2 left-2 z-10 px-2 py-0.5 font-meta text-[0.42rem] tracking-[0.18em] text-bristol ${project.is_running ? "animate-pulse bg-hero-red" : "bg-ink-black/70"}`}>
+            <div className={`absolute bottom-0 left-0 z-10 px-5 py-3 font-meta text-[0.82rem] tracking-[0.22em] text-bristol ${project.is_running ? "animate-pulse bg-hero-red" : "bg-ink-black/70"}`}>
               {stageLabel}
             </div>
           )}
         </div>
 
-        <div className="p-3">
-          <h3 className="truncate font-display text-[1.1rem] font-bold uppercase leading-none tracking-[-0.03em] text-ink-black">
+        <div className="p-4">
+          <h3
+            title={project.project_name}
+            className="truncate font-display text-[1.34rem] font-black uppercase leading-none tracking-[-0.055em] text-ink-black"
+          >
             {project.project_name}
           </h3>
+          <p className="mt-2 truncate font-body text-[0.86rem] font-semibold leading-tight text-ink-black/55">
+            {byline}
+          </p>
 
-          <div className="mt-2.5 flex items-center justify-between gap-2">
-            <StatusPill tone={presentation.tone} title={presentation.description}>
+          <div className="mt-3 flex items-center justify-between gap-4">
+            <span
+              title={presentation.description}
+              className={`inline-flex min-h-7 items-center px-3.5 font-meta text-[0.66rem] font-bold leading-none tracking-[0.2em] uppercase ${statusClass(presentation.tone)}`}
+            >
               {presentation.label}
-            </StatusPill>
-            <span className="font-body text-[0.78rem] text-ink-black/70 tabular-nums">
+            </span>
+            <span className="font-body text-[0.86rem] font-bold leading-none text-ink-black/55 tabular-nums">
               ${project.total_cost_usd.toFixed(2)}
             </span>
           </div>
         </div>
-      </Card>
+      </article>
     </Link>
   );
 }

@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import type { ComicPage, PageSummary } from "../types/api";
+import type { ComicPage, PageSummary, CharacterVoice } from "../types/api";
 
 export function listPages(project: string): Promise<PageSummary[]> {
   return apiFetch(`/projects/${encodeURIComponent(project)}/pages/`);
@@ -69,6 +69,79 @@ export function translatePageBubbles(
   return apiFetch(`/projects/${encodeURIComponent(project)}/pages/translate-bubbles`, {
     method: "POST",
     body: JSON.stringify(targetLanguage ? { target_language: targetLanguage } : {}),
+  });
+}
+
+export function setTheme(
+  project: string,
+  theme: string,
+): Promise<{ status: string; theme: string; updated: number }> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/set-theme`, {
+    method: "POST",
+    body: JSON.stringify({ theme }),
+  });
+}
+
+export function applyBubblePreset(
+  project: string,
+  presetName: string,
+): Promise<{ status: string; preset_name: string; updated_bubbles: number }> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/apply-bubble-preset`, {
+    method: "POST",
+    body: JSON.stringify({ preset_name: presetName }),
+  });
+}
+
+export function getBubblePresets(
+  project: string,
+): Promise<Record<string, Record<string, string>>> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/bubble-presets`);
+}
+
+export function translateSinglePageBubbles(
+  project: string,
+  pageNum: number,
+  targetLanguage?: "en" | "es" | "fr",
+): Promise<{ status: string; target_language: string; updated: number; page: ComicPage }> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/${pageNum}/translate-bubbles`, {
+    method: "POST",
+    body: JSON.stringify(targetLanguage ? { target_language: targetLanguage } : {}),
+  });
+}
+
+export function getCharacterVoices(
+  project: string,
+): Promise<Record<string, CharacterVoice>> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/character-voices`);
+}
+
+export function putCharacterVoice(
+  project: string,
+  voice: CharacterVoice,
+): Promise<CharacterVoice> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/character-voices/${encodeURIComponent(voice.character_id)}`, {
+    method: "PUT",
+    body: JSON.stringify(voice),
+  });
+}
+
+export function deleteCharacterVoice(
+  project: string,
+  characterId: string,
+): Promise<{ status: string }> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/character-voices/${encodeURIComponent(characterId)}`, {
+    method: "DELETE",
+  });
+}
+
+export function reflowSinglePage(
+  project: string,
+  pageNum: number,
+  layoutPreset: string,
+): Promise<ComicPage> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/${pageNum}/reflow`, {
+    method: "POST",
+    body: JSON.stringify({ layout_preset: layoutPreset }),
   });
 }
 

@@ -19,11 +19,11 @@ function SummaryTile({
   onSave?: (value: string) => void;
 }) {
   return (
-    <div className="bg-surface-container px-4 py-3">
-      <div className="font-meta text-[0.58rem] tracking-[0.18em] text-ink-black/45">
+    <div className="bg-surface-container px-5 py-5">
+      <div className="font-meta text-[0.72rem] font-bold tracking-[0.2em] text-ink-black/45">
         {label}
       </div>
-      <div className="mt-2 text-[1rem] leading-6 text-ink-black/82">
+      <div className="mt-2 text-[1.08rem] font-semibold leading-7 text-ink-black/84">
         {onSave ? (
           <EditableText value={value || "—"} onSave={onSave} multiline />
         ) : (
@@ -52,7 +52,7 @@ function DirectPromptDetail({
   }
 
   return (
-    <div>
+    <div className="min-w-0">
       <div className="grid gap-5 md:grid-cols-2">
         <SummaryTile
           label="STYLE"
@@ -73,14 +73,14 @@ function DirectPromptDetail({
       </div>
 
       <div className="mt-7">
-        <div className="mb-3 font-meta text-[0.58rem] tracking-[0.18em] text-ink-black/45">
+        <div className="mb-3 font-meta text-[0.72rem] font-bold tracking-[0.2em] text-ink-black/45">
           ASSEMBLED PROMPT
         </div>
         <EditableText
           value={prompt.full_prompt}
           onSave={(full_prompt) => onSave({ full_prompt })}
           multiline
-          className="block min-h-[300px] whitespace-pre-wrap bg-ink-black px-5 py-5 font-meta text-[0.78rem] leading-7 text-pulp-paper/80"
+          className="block min-h-[300px] whitespace-pre-wrap bg-ink-black px-7 py-7 font-body text-[1rem] font-semibold leading-8 text-pulp-paper/82"
           inputClassName="min-h-[300px] bg-ink-black text-pulp-paper"
         />
       </div>
@@ -132,62 +132,66 @@ export function DirectRoom() {
       emptyTitle="IMAGE PROMPTS NOT AVAILABLE"
       emptyDescription="Complete DIRECT first."
     >
-      <ShowcaseHeader
-        label="DIRECT / IMAGE PROMPTS"
-        title="IMAGE PROMPTS"
-        lead="Compiled prompts with character and location refs baked in — the last human-readable artifact before image generation."
-        actions={name ? <RerunStageAction project={name} stage="prompts" label="Direct" /> : null}
-      />
+      <div className="flex h-[calc(100vh-3rem)] min-h-0 flex-col gap-10 md:h-[calc(100vh-5rem)]">
+        <ShowcaseHeader
+          label="DIRECT / IMAGE PROMPTS"
+          title="IMAGE PROMPTS"
+          lead="Compiled prompts with character and location refs baked in — the last human-readable artifact before image generation."
+          actions={name ? <RerunStageAction project={name} stage="prompts" label="Direct" /> : null}
+        />
 
-      <section className="grid border-[2px] border-ink-black bg-bristol xl:grid-cols-[200px_1fr]">
-        {summaries && (
-          <div className="border-b-[2px] border-ink-black xl:border-b-0 xl:border-r-[2px]">
-            <SceneSidebar
-              items={summaries.map((s) => ({
-                id: s.scene_id,
-                label: s.scene_id.replace(/_/g, " ").toUpperCase(),
-                count: `${s.prompt_count} prompts`,
-              }))}
-              activeId={activeScene ?? ""}
-              onSelect={selectScene}
-            />
-          </div>
-        )}
-
-        <div className="min-w-0 p-5 md:p-8">
-          {loadingPrompts ? (
-            <LoadingBlock label="LOADING…" />
-          ) : activePrompt && prompts?.length ? (
-            <>
-              <div className="mb-7 flex overflow-x-auto">
-                {prompts.map((prompt) => {
-                  const isActive = prompt.panel_number === activePrompt.panel_number;
-                  return (
-                    <button
-                      key={`${prompt.scene_id}-${prompt.panel_number}`}
-                      type="button"
-                      onClick={() => selectPanel(prompt.panel_number)}
-                      className={
-                        isActive
-                          ? "bg-ink-black px-6 py-3 font-meta text-[0.7rem] tracking-[0.12em] text-pulp-paper"
-                          : "border-y border-r border-panel-line bg-pulp-paper px-6 py-3 font-meta text-[0.7rem] tracking-[0.12em] text-ink-black/62 hover:bg-surface-container"
-                      }
-                    >
-                      Panel {String(prompt.panel_number).padStart(2, "0")}
-                    </button>
-                  );
-                })}
-              </div>
-              <DirectPromptDetail
-                prompt={activePrompt}
-                onSave={(patch) => handleSavePrompt(activePrompt, patch)}
+        <section className="grid min-h-0 flex-1 grid-rows-[minmax(132px,30%)_minmax(0,1fr)] overflow-hidden border-[2px] border-ink-black bg-bristol xl:grid-cols-[300px_minmax(0,1fr)] xl:grid-rows-none">
+          {summaries && (
+            <div className="min-h-0 border-b-[2px] border-ink-black xl:border-b-0 xl:border-r-[2px]">
+              <SceneSidebar
+                items={summaries.map((s) => ({
+                  id: s.scene_id,
+                  label: s.scene_id.replace(/_/g, " ").toUpperCase(),
+                  count: `${s.prompt_count} prompts`,
+                }))}
+                activeId={activeScene ?? ""}
+                onSelect={selectScene}
               />
-            </>
-          ) : (
-            <StateBlock title="SELECT A SCENE" description="Select a scene to view image prompts." icon="draft" />
+            </div>
           )}
-        </div>
-      </section>
+
+          <div className="min-h-0 min-w-0 overflow-hidden">
+            {loadingPrompts ? (
+              <div className="p-6"><LoadingBlock label="LOADING…" /></div>
+            ) : activePrompt && prompts?.length ? (
+              <div className="h-full min-h-0 overflow-y-auto px-6 py-8 md:px-8">
+                <div className="mb-7 flex max-w-full overflow-x-auto" role="tablist" aria-label="Prompt panels">
+                  {prompts.map((prompt) => {
+                    const isActive = prompt.panel_number === activePrompt.panel_number;
+                    return (
+                      <button
+                        key={`${prompt.scene_id}-${prompt.panel_number}`}
+                        type="button"
+                        onClick={() => selectPanel(prompt.panel_number)}
+                        className={
+                          isActive
+                            ? "shrink-0 bg-ink-black px-7 py-3 font-meta text-[0.82rem] font-bold tracking-[0.12em] text-pulp-paper"
+                            : "shrink-0 border-y border-r border-panel-line bg-pulp-paper px-7 py-3 font-meta text-[0.82rem] font-bold tracking-[0.12em] text-ink-black/62 hover:bg-surface-container"
+                        }
+                      >
+                        Panel {String(prompt.panel_number).padStart(2, "0")}
+                      </button>
+                    );
+                  })}
+                </div>
+                <DirectPromptDetail
+                  prompt={activePrompt}
+                  onSave={(patch) => handleSavePrompt(activePrompt, patch)}
+                />
+              </div>
+            ) : (
+              <div className="p-6">
+                <StateBlock title="SELECT A SCENE" description="Select a scene to view image prompts." icon="draft" />
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
     </RoomShell>
   );
 }
