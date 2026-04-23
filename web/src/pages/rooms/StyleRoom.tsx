@@ -16,7 +16,6 @@ import { Button } from "../../components/ui/Button";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { GenerationDetailsModal } from "../../components/ui/GenerationDetailsModal";
 import { LazyImage } from "../../components/ui/LazyImage";
-import { StatusPill } from "../../components/ui/StatusPill";
 import { StateBlock } from "../../components/ui/StateBlock";
 import { Surface } from "../../components/ui/Surface";
 import {
@@ -107,28 +106,34 @@ function StyleCard({
     );
   };
 
+  const isActive = suggestion.is_active;
+
   return (
     <>
-      <Card shadow="lg" className="flex flex-col">
+      {/* Active card gets a ring treatment via outline */}
+      <Card
+        shadow="lg"
+        className={`flex flex-col ${isActive ? "outline outline-[3px] outline-offset-[2px] outline-hero-red" : ""}`}
+      >
         <div
           className="relative border-b-[2px] border-ink-black bg-ink-black cursor-pointer group"
           onClick={() => !imgFailed && setIsDetailsOpen(true)}
         >
           {imgFailed ? (
-            <div className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-2 bg-ink-black/40">
+            <div className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-3 bg-ink-black/50">
               {isGenerating ? (
                 <>
                   <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-narrator-gold animate-pulse">
                     {queueState === "queued" ? "QUEUED" : "GENERATING…"}
                   </div>
-                  <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-bristol/55">
+                  <div className="font-meta text-[0.5rem] tracking-[0.18em] text-bristol/55">
                     {queueState === "queued" ? "WAITING FOR GENERATOR" : "STYLE SAMPLE IN PROGRESS"}
                   </div>
                 </>
               ) : (
                 <>
-                  <div className="font-meta text-[0.5rem] tracking-[0.18em] text-bristol/40">NO SAMPLE YET</div>
-                  <Button size="xs" variant="secondary" className="mt-2" onClick={handleGenerate}>
+                  <div className="font-meta text-[0.56rem] tracking-[0.18em] text-bristol/40">NO SAMPLE YET</div>
+                  <Button size="sm" variant="secondary" onClick={handleGenerate}>
                     GENERATE SAMPLE
                   </Button>
                 </>
@@ -144,7 +149,7 @@ function StyleCard({
                 height={400}
                 aspect="4 / 5"
                 containerClassName="w-full"
-                className="object-cover object-center hover:opacity-90 transition-opacity"
+                className="object-cover object-center transition-opacity group-hover:opacity-90"
                 onError={() => setImgFailed(true)}
               />
               <div
@@ -163,46 +168,64 @@ function StyleCard({
               </div>
             </>
           )}
-          {suggestion.is_active && (
-            <StatusPill tone="sage" className="absolute right-2 top-2">
+          {/* ACTIVE badge: top-left, red */}
+          {isActive && (
+            <div className="absolute left-0 top-0 bg-hero-red px-2 py-1 font-meta text-[0.5rem] tracking-[0.18em] text-bristol">
               ACTIVE
-            </StatusPill>
+            </div>
           )}
         </div>
+
         <div className="flex flex-1 flex-col p-3">
-          <div className="flex items-start justify-between gap-2">
-            <div className="font-display text-[1rem] font-bold tracking-[-0.04em] text-ink-black">
-              {suggestion.label}
-            </div>
-            <div className="font-meta text-[0.42rem] tracking-[0.14em] text-ink-black/45 shrink-0">
-              #{suggestion.index}
-            </div>
+          <div className="font-display text-[1rem] font-bold tracking-[-0.04em] text-ink-black">
+            {suggestion.label}
           </div>
-          <p className="mt-2 font-body text-[0.78rem] leading-relaxed text-ink-black/70 line-clamp-4">
+          <p className="mt-2 flex-1 font-body text-[0.78rem] leading-relaxed text-ink-black/70 line-clamp-4">
             {suggestion.template}
           </p>
-          <div className="mt-auto flex flex-wrap gap-2 pt-3">
-            <Button
-              size="sm"
-              variant={suggestion.is_active ? "secondary" : "primary"}
-              className="min-w-[min(7.5rem,100%)] flex-1 whitespace-nowrap"
-              onClick={suggestion.is_active ? handleGenerate : () => setActive.mutate({ project: projectName, index: suggestion.index })}
-              disabled={suggestion.is_active && isGenerating}
-            >
-              {suggestion.is_active
-                ? (isGenerating ? (queueState === "queued" ? "QUEUED" : "GENERATING…") : "REGENERATE")
-                : "SELECT"}
-            </Button>
-            {!suggestion.is_active && (
-              <Button
-                size="sm"
-                variant="secondary"
-                className="min-w-[min(7.5rem,100%)] flex-1 whitespace-nowrap"
-                onClick={handleGenerate}
-                disabled={isGenerating}
-              >
-                {isGenerating ? (queueState === "queued" ? "QUEUED" : "GENERATING…") : "REGENERATE"}
-              </Button>
+          <div className="mt-3 flex flex-wrap gap-2 border-t-[2px] border-ink-black pt-3">
+            {isActive ? (
+              /* Active: locked SELECTED state + separate REGENERATE */
+              <>
+                <button
+                  type="button"
+                  disabled
+                  className="inline-flex flex-1 items-center justify-center gap-1.5 border-[2px] border-archive-sage bg-archive-sage/15 px-3 py-2 font-meta text-[0.62rem] tracking-[0.14em] text-archive-sage disabled:cursor-default"
+                >
+                  ✓ SELECTED
+                </button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1 whitespace-nowrap"
+                  onClick={handleGenerate}
+                  disabled={isGenerating}
+                >
+                  {isGenerating ? (queueState === "queued" ? "QUEUED" : "GENERATING…") : "REGENERATE"}
+                </Button>
+              </>
+            ) : (
+              /* Non-active: SELECT primary + GENERATE SAMPLE outline */
+              <>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  className="flex-1 whitespace-nowrap"
+                  onClick={() => setActive.mutate({ project: projectName, index: suggestion.index })}
+                  disabled={isGenerating}
+                >
+                  SELECT
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1 whitespace-nowrap"
+                  onClick={handleGenerate}
+                  disabled={isGenerating}
+                >
+                  {isGenerating ? (queueState === "queued" ? "QUEUED" : "GENERATING…") : "SAMPLE"}
+                </Button>
+              </>
             )}
           </div>
         </div>

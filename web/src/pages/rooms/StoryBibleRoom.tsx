@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useStoryBible, useUpdateStoryBible } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
-import { SectionDivider } from "../../components/SectionDivider";
 import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
 import { SurfaceHeader } from "../../components/ui/Surface";
@@ -183,21 +182,34 @@ export function StoryBibleRoom() {
     updateBible.mutate({ project: name, data: newBible });
   };
 
+  const totalChars = bible.characters.length;
+  const totalLocs = bible.locations.length;
+
   return (
     <RoomShell>
       <ShowcaseHeader
         label="EXTRACT / STORY BIBLE"
-        title={bible.title}
-        lead={<>by {bible.author} &middot; {bible.total_scenes} scenes extracted into the narrative frame.</>}
+        title="STORY BIBLE"
+        lead={<>
+          <span className="font-display font-bold not-italic">&ldquo;{bible.title}&rdquo;</span>
+          {" "}by {bible.author} &mdash; {bible.total_scenes} scenes, {totalChars} character{totalChars !== 1 ? "s" : ""}, {totalLocs} location{totalLocs !== 1 ? "s" : ""} extracted.
+        </>}
         actions={<RerunStageAction project={name} stage="extract" label="Extract" />}
       />
 
-      <section className="grid gap-6 xl:grid-cols-2">
-        <div>
-          <SectionDivider number={1} label="DRAMATIS PERSONAE" />
-          <h2 className="mt-3 font-display text-[2.25rem] font-bold leading-none tracking-[-0.06em] text-ink-black">
-            CHARACTER ENTITIES
-          </h2>
+      <div className="grid gap-10 xl:grid-cols-2">
+        {/* Characters */}
+        <section>
+          <div className="flex items-center gap-3 border-b-[2px] border-ink-black pb-3">
+            <div className="flex h-7 w-7 items-center justify-center bg-hero-red font-display text-[0.75rem] font-black text-bristol">
+              01
+            </div>
+            <div>
+              <div className="font-meta text-[0.46rem] tracking-[0.18em] text-ink-black/45">DRAMATIS PERSONAE</div>
+              <div className="font-display text-[1.05rem] font-bold uppercase leading-none tracking-[-0.03em]">Character Entities</div>
+            </div>
+            <span className="ml-auto font-display text-[1.5rem] font-bold leading-none tracking-[-0.06em] text-ink-black/20">{totalChars}</span>
+          </div>
           <div className="mt-5 grid gap-5 sm:grid-cols-2">
             {bible.characters.map((char) => (
               <CharacterCard
@@ -207,13 +219,20 @@ export function StoryBibleRoom() {
               />
             ))}
           </div>
-        </div>
+        </section>
 
-        <div>
-          <SectionDivider number={2} label="THE WORLD STAGE" />
-          <h2 className="mt-3 font-display text-[2.25rem] font-bold leading-none tracking-[-0.06em] text-ink-black">
-            LOCATION NODES
-          </h2>
+        {/* Locations */}
+        <section>
+          <div className="flex items-center gap-3 border-b-[2px] border-ink-black pb-3">
+            <div className="flex h-7 w-7 items-center justify-center bg-ink-black font-display text-[0.75rem] font-black text-bristol">
+              02
+            </div>
+            <div>
+              <div className="font-meta text-[0.46rem] tracking-[0.18em] text-ink-black/45">THE WORLD STAGE</div>
+              <div className="font-display text-[1.05rem] font-bold uppercase leading-none tracking-[-0.03em]">Location Nodes</div>
+            </div>
+            <span className="ml-auto font-display text-[1.5rem] font-bold leading-none tracking-[-0.06em] text-ink-black/20">{totalLocs}</span>
+          </div>
           <div className="mt-5 grid gap-5 sm:grid-cols-2">
             {bible.locations.map((loc) => (
               <LocationCard
@@ -223,8 +242,8 @@ export function StoryBibleRoom() {
               />
             ))}
           </div>
-        </div>
-      </section>
+        </section>
+      </div>
     </RoomShell>
   );
 }
