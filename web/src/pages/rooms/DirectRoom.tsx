@@ -41,12 +41,10 @@ function DirectPromptDetail({
   prompt: ImagePrompt;
   onSave: (patch: Partial<ImagePrompt>) => void;
 }) {
-  const characterTokens = (prompt.subjects ?? [])
-    .map((subject) => subject.character_id)
-    .filter((id): id is string => !!id);
-  const characterSummary = characterTokens.length > 0
-    ? characterTokens.map((id) => `[${id}]`).join(" · ")
-    : "No character refs";
+  const characterSummary = (prompt.subjects ?? [])
+    .filter((s) => s.character_id)
+    .map((s) => s.name ? `${s.name} (${s.character_id})` : s.character_id!)
+    .join(" · ") || "No character refs";
 
   function saveStructuredPatch(patch: Partial<ImagePrompt>) {
     const next = { ...prompt, ...patch };
@@ -147,7 +145,7 @@ export function DirectRoom() {
             <SceneSidebar
               items={summaries.map((s) => ({
                 id: s.scene_id,
-                label: s.scene_id.replace("_", " ").toUpperCase(),
+                label: s.scene_id.replace(/_/g, " ").toUpperCase(),
                 count: `${s.prompt_count} prompts`,
               }))}
               activeId={activeScene ?? ""}

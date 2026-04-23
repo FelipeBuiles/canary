@@ -20,79 +20,19 @@ function NewProjectCard() {
       aria-label={t("START NEW PROJECT")}
       className="group block h-full focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
     >
-      <Card shadow="lg" className="h-full overflow-hidden transition-transform duration-150 group-hover:-translate-y-[2px] group-hover:shadow-ink-sm group-focus-visible:-translate-y-[2px]">
-        <div className="relative border-b-[2px] border-ink-black bg-bristol">
-          <div className="flex aspect-[4/5] flex-col justify-between benday-paper p-4">
-            <div className="flex items-center justify-between">
-              <div className="border-[2px] border-ink-black bg-hero-red px-2 py-1 font-meta text-[0.48rem] tracking-[0.18em] text-bristol">
-                {t("NEW FILE")}
-              </div>
-              <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
-                00/07
-              </div>
-            </div>
-
-            <div className="mx-auto flex h-20 w-20 items-center justify-center border-[2px] border-dashed border-ink-black bg-pulp-paper text-ink-black/50 transition-colors duration-150 group-hover:bg-narrator-gold group-hover:text-ink-black">
-              <Icon name="plus" size={28} />
-            </div>
-
-            <div>
-              <div className="font-meta text-[0.48rem] tracking-[0.18em] text-ink-black/55">
-                {t("PROJECT SEED")}
-              </div>
-              <h3 className="mt-1 max-w-[9ch] font-display text-[2.15rem] font-bold leading-[0.9] tracking-[-0.06em] text-ink-black">
-                {t("Start new project")}
-              </h3>
-            </div>
-          </div>
+      <div className="flex h-full min-h-[280px] flex-col items-center justify-center gap-4 border-[2px] border-dashed border-ink-black/30 bg-bristol p-8 transition-colors duration-150 group-hover:border-ink-black/60 group-hover:bg-ghost-shadow/20 group-focus-visible:border-ink-black">
+        <div className="flex h-14 w-14 items-center justify-center border-[2px] border-ink-black/25 text-ink-black/35 transition-colors duration-150 group-hover:border-ink-black group-hover:bg-narrator-gold group-hover:text-ink-black">
+          <Icon name="plus" size={24} />
         </div>
-
-        <div className="p-3">
-          <div className="grid grid-cols-[1fr_auto] gap-4">
-            <p className="text-[0.78rem] leading-6 text-ink-black/72">
-              {t("Initialize a new novel-to-comic production pipeline.")}
-            </p>
-            <div className="text-right">
-              <div className="font-display text-[1.8rem] font-bold leading-none tracking-[-0.05em] text-ink-black">
-                0
-              </div>
-              <div className="font-meta text-[0.42rem] tracking-[0.14em] text-ink-black/45">
-                {t("OF")} 7
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-4 h-3 border-[2px] border-ink-black bg-pulp-paper">
-            <div className="h-full bg-archive-sage" style={{ width: "0%" }} />
-          </div>
-
-          <div className="mt-4 space-y-2 border-t-[2px] border-ink-black pt-3">
-            <div className="flex items-center justify-between text-[0.66rem]">
-              <span className="font-meta tracking-[0.16em] text-ink-black/45">
-                {t("STATUS")}
-              </span>
-              <span className="font-body text-ink-black/78">{t("READY")}</span>
-            </div>
-            <div className="flex items-center justify-between text-[0.66rem]">
-              <span className="font-meta tracking-[0.16em] text-ink-black/45">
-                {t("CHECKPOINT")}
-              </span>
-              <span className="font-body text-ink-black/78">{t("UPLOAD")}</span>
-            </div>
-            <div className="flex items-center justify-between text-[0.66rem]">
-              <span className="font-meta tracking-[0.16em] text-ink-black/45">
-                {t("SPEND")}
-              </span>
-              <span className="font-body text-ink-black/78 tabular-nums">$0.00</span>
-            </div>
-          </div>
-
-          <div className="mt-3 flex items-center justify-between border-t border-ink-black/20 pt-3 font-meta text-[0.56rem] tracking-[0.16em] text-hero-red">
-            <span>{t("OPEN INTAKE")}</span>
-            <span aria-hidden="true">-&gt;</span>
-          </div>
+        <div className="text-center">
+          <h3 className="font-display text-[1.1rem] font-bold uppercase leading-none tracking-[-0.03em] text-ink-black">
+            {t("NEW PRODUCTION")}
+          </h3>
+          <p className="mt-1.5 font-body text-[0.78rem] text-ink-black/50">
+            {t("Upload a novel to start")}
+          </p>
         </div>
-      </Card>
+      </div>
     </Link>
   );
 }
@@ -233,7 +173,6 @@ export function Library() {
                 project.cover_job?.status === "queued" ||
                 project.cover_job?.status === "running"
               }
-              coverFailed={project.cover_job?.status === "failed"}
             />
           ))}
         </div>

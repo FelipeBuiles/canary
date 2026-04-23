@@ -6,8 +6,14 @@ import { Tag } from "../../components/ui/Tag";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { SceneSidebar } from "../../components/ui/SceneSidebar";
 import { LoadingBlock, StateBlock } from "../../components/ui/StateBlock";
-import { SurfaceHeader } from "../../components/ui/Surface";
 import { RerunStageAction } from "../../components/ui/RerunStageAction";
+
+const BEAT_LABEL: Record<string, string> = {
+  action: "ACTION",
+  dialogue: "DIALOGUE",
+  direction: "STAGE DIR.",
+  sfx: "SFX",
+};
 
 export function AdaptRoom() {
   const { name } = useParams<{ name: string }>();
@@ -21,14 +27,6 @@ export function AdaptRoom() {
     if (selectedScene || !summaries?.[0]?.scene_id) return;
     setSearchParams({ scene: summaries[0].scene_id }, { replace: true });
   }, [selectedScene, setSearchParams, summaries]);
-
-  const beatBorderClass = (type: string) => {
-    if (type === "action") return "border-ink-black";
-    if (type === "dialogue") return "border-hero-red";
-    if (type === "direction") return "border-ink-fade";
-    if (type === "sfx") return "border-narrator-gold";
-    return "border-archive-sage";
-  };
 
   return (
     <RoomShell
@@ -51,7 +49,7 @@ export function AdaptRoom() {
             <SceneSidebar
               items={summaries.map((s) => ({
                 id: s.scene_id,
-                label: s.scene_id.replace("_", " ").toUpperCase(),
+                label: s.scene_id.replace(/_/g, " ").toUpperCase(),
                 count: `${s.beat_count} beats`,
               }))}
               activeId={activeScene ?? ""}
@@ -60,50 +58,57 @@ export function AdaptRoom() {
           </div>
         )}
 
-        <div className="min-w-0 p-4 md:p-6">
+        <div className="min-w-0 overflow-y-auto">
           {loadingScript ? (
-            <LoadingBlock label="LOADING…" />
+            <div className="p-6"><LoadingBlock label="LOADING…" /></div>
           ) : screenplay ? (
             <div>
-              <SurfaceHeader
-                kicker="LOCATION"
-                title={screenplay.location_id.replace("_", " ").toUpperCase()}
-                actions={(
-                  <div className="text-right">
-                    <div className="ui-kicker">CHARACTERS</div>
-                    <div className="mt-1 flex flex-wrap justify-end gap-1">
-                      {screenplay.characters.map((cid) => (
-                        <Tag key={cid}>{cid}</Tag>
-                      ))}
-                    </div>
+              {/* Location + character header row */}
+              <div className="flex items-start justify-between gap-4 border-b border-ink-black/15 px-6 py-4">
+                <div>
+                  <div className="font-meta text-[0.46rem] tracking-[0.18em] text-ink-black/45">
+                    LOCATION
                   </div>
-                )}
-                className="-m-4 mb-4 md:-m-5 md:mb-4"
-              />
-              <div className="mt-4 space-y-3">
-                {screenplay.beats.map((beat, i) => (
-                  <div
-                    key={i}
-                    className={`border-l-[4px] py-2 pl-4 ${beatBorderClass(beat.type)}`}
-                  >
-                    <div className="font-meta text-[0.46rem] tracking-[0.18em] text-ink-black/45">
-                      {beat.type.toUpperCase()}
-                      {beat.character_id && ` — ${beat.character_id}`}
-                    </div>
-                    <div className="mt-1 text-[0.85rem] leading-6 text-ink-black/80">
-                      {beat.content}
-                    </div>
-                    {beat.direction && (
-                      <div className="mt-1 text-[0.72rem] italic text-ink-black/50">
-                        {beat.direction}
+                  <div className="mt-0.5 font-meta text-[0.68rem] tracking-[0.1em] text-ink-black">
+                    {screenplay.location_id.toUpperCase()}
+                  </div>
+                </div>
+                <div className="flex flex-wrap justify-end gap-1 pt-0.5">
+                  {screenplay.characters.map((cid) => (
+                    <Tag key={cid}>{cid}</Tag>
+                  ))}
+                </div>
+              </div>
+
+              {/* Beats */}
+              <div>
+                {screenplay.beats.map((beat, i) => {
+                  const isDialogue = beat.type === "dialogue";
+                  const isDirection = beat.type === "direction";
+                  const labelText = BEAT_LABEL[beat.type] ?? beat.type.toUpperCase();
+                  const fullLabel = isDialogue && beat.character_id
+                    ? `${labelText} — ${beat.character_id}`
+                    : labelText;
+                  return (
+                    <div key={i} className="border-b border-ink-black/15 px-6 py-3">
+                      <div className={`font-meta text-[0.46rem] tracking-[0.18em] ${isDialogue ? "text-hero-red" : "text-ink-black/45"}`}>
+                        {fullLabel}
                       </div>
-                    )}
-                  </div>
-                ))}
+                      <div className={`mt-1 text-[0.85rem] leading-6 ${isDirection ? "italic text-ink-black/55" : "text-ink-black/80"}`}>
+                        {beat.content}
+                      </div>
+                      {beat.direction && (
+                        <div className="mt-1 text-[0.72rem] italic text-ink-black/50">
+                          {beat.direction}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ) : (
-            <StateBlock title="SELECT A SCENE" description="Select a scene to view the screenplay." icon="draft" />
+            <div className="p-6"><StateBlock title="SELECT A SCENE" description="Select a scene to view the screenplay." icon="draft" /></div>
           )}
         </div>
       </section>

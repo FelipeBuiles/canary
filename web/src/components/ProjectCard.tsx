@@ -1,18 +1,47 @@
 import { Link } from "react-router-dom";
-import type { ProjectSummary, StageStatus } from "../types/api";
+import type { ProjectSummary, StageStatus, StageName } from "../types/api";
 import { STAGE_ORDER } from "../types/api";
 import { Card } from "./ui/Card";
-import { Icon } from "./ui/Icon";
 import { LazyImage } from "./ui/LazyImage";
 import { Skeleton } from "./ui/Skeleton";
 import { StatusPill } from "./ui/StatusPill";
 import { STATUS_PRESENTATION } from "../lib/statusLabels";
 import { useI18n } from "../i18n";
 
+const STAGE_COVER_STYLE: Partial<Record<StageName, { bg: string }>> = {
+  extract: { bg: "#2d3a2e" },
+  index:   { bg: "#0d1a2b" },
+  prompts: { bg: "#1c1408" },
+  generate:{ bg: "#0d1425" },
+  assemble:{ bg: "#101a12" },
+};
+const FALLBACK_BG = "#111827";
+
+type ShapeKind = "chevron" | "diamond" | "triangle" | "circle";
+
+const STAGE_SHAPE: Partial<Record<StageName, ShapeKind>> = {
+  extract:  "chevron",
+  index:    "circle",
+  prompts:  "triangle",
+  generate: "diamond",
+  assemble: "chevron",
+};
+
+function CoverShape({ kind }: { kind: ShapeKind }) {
+  const cls = "h-20 w-20 text-white/12";
+  const stroke = { stroke: "currentColor", fill: "none", strokeWidth: "1.5" };
+  if (kind === "circle")
+    return <svg viewBox="0 0 100 100" className={cls} {...stroke}><circle cx="50" cy="50" r="34"/></svg>;
+  if (kind === "diamond")
+    return <svg viewBox="0 0 100 100" className={cls} {...stroke}><polygon points="50,14 86,50 50,86 14,50"/></svg>;
+  if (kind === "triangle")
+    return <svg viewBox="0 0 100 100" className={cls} {...stroke}><polygon points="50,16 84,82 16,82"/></svg>;
+  return <svg viewBox="0 0 100 100" className={cls} {...stroke}><polyline points="22,52 42,68 78,34"/></svg>;
+}
+
 interface Props {
   project: ProjectSummary;
   coverPending?: boolean;
-  coverFailed?: boolean;
 }
 
 function resolveStatus(project: ProjectSummary): StageStatus {
@@ -22,29 +51,20 @@ function resolveStatus(project: ProjectSummary): StageStatus {
   return "pending";
 }
 
-function formatCreated(createdAt: string) {
-  const date = new Date(createdAt);
-  if (Number.isNaN(date.getTime())) return "ARCHIVE ACTIVE";
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "2-digit",
-    year: "numeric",
-  });
-}
 
-export function ProjectCard({ project, coverPending = false, coverFailed = false }: Props) {
+export function ProjectCard({ project, coverPending = false }: Props) {
   const { stageName, t } = useI18n();
-  const furthest = project.furthest_stage
-    ? STAGE_ORDER.indexOf(project.furthest_stage as (typeof STAGE_ORDER)[number]) + 1
-    : 0;
   const status = resolveStatus(project);
   const presentation = STATUS_PRESENTATION[status];
   const stageLabel = project.furthest_stage
     ? stageName(project.furthest_stage as (typeof STAGE_ORDER)[number])
-    : t("ARCHIVE");
+    : null;
   const coverUrl = `/api/projects/${encodeURIComponent(project.name)}/files/cover/cover.png`;
-  const progressPct = Math.round((furthest / STAGE_ORDER.length) * 100);
-  const initial = (project.project_name?.[0] ?? project.name[0] ?? "?").toUpperCase();
+
+  const stageKey = project.furthest_stage as StageName | null;
+  const coverStyle = stageKey ? STAGE_COVER_STYLE[stageKey] : undefined;
+  const coverBg = coverStyle?.bg ?? FALLBACK_BG;
+  const shapeKind: ShapeKind = (stageKey ? STAGE_SHAPE[stageKey] : undefined) ?? "circle";
 
   return (
     <Link
@@ -64,79 +84,35 @@ export function ProjectCard({ project, coverPending = false, coverFailed = false
               className="transition-transform duration-300 group-hover:scale-[1.02]"
             />
           ) : coverPending ? (
-            <div className="relative">
-              <Skeleton aspect="4/5" />
-              <div className="pointer-events-none absolute inset-0 flex items-end p-4 benday-paper/40">
-                <div>
-                  <div className="font-meta text-[0.48rem] tracking-[0.2em] text-ink-black/55">
-                    {t("COVER GENERATING")}
-                  </div>
-                  <div className="mt-1 max-w-[10ch] font-display text-[2rem] font-bold leading-[0.88] tracking-[-0.05em] text-ink-black">
-                    {project.project_name}
-                  </div>
-                </div>
-              </div>
-            </div>
+            <Skeleton aspect="4/5" />
           ) : (
-            <div className="relative flex aspect-[4/5] flex-col justify-end benday-paper p-4">
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                <span
-                  aria-hidden="true"
-                  className="font-display font-bold leading-none tracking-[-0.08em] text-ink-black/12"
-                  style={{ fontSize: "9rem" }}
-                >
-                  {initial}
-                </span>
-              </div>
-              <div className="relative">
-                <div className="font-meta text-[0.48rem] tracking-[0.2em] text-ink-black/55">
-                  {coverFailed ? t("COVER FAILED") : t("COVER QUEUED")}
-                </div>
-                <div className="mt-1 max-w-[10ch] font-display text-[2rem] font-bold leading-[0.88] tracking-[-0.05em] text-ink-black">
-                  {project.project_name}
-                </div>
-              </div>
+            <div
+              className="relative flex aspect-[4/5] items-center justify-center"
+              style={{ backgroundColor: coverBg }}
+            >
+              <CoverShape kind={shapeKind} />
             </div>
           )}
 
-          {project.is_running && (
-            <div className="absolute left-2 top-2 z-10 animate-pulse bg-hero-red px-2 py-1 font-meta text-[0.48rem] tracking-[0.18em] text-bristol">
-              {t("ACTIVE")}
+          {stageLabel && (
+            <div className={`absolute bottom-2 left-2 z-10 px-2 py-0.5 font-meta text-[0.42rem] tracking-[0.18em] text-bristol ${project.is_running ? "animate-pulse bg-hero-red" : "bg-ink-black/70"}`}>
+              {stageLabel}
             </div>
           )}
         </div>
 
         <div className="p-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0 flex-1">
-              <div className="font-meta text-[0.48rem] tracking-[0.2em] text-ink-black/55">
-                {t("CHECKPOINT")}
-              </div>
-              <div className="mt-0.5 truncate font-display text-[1.05rem] font-bold uppercase leading-none tracking-[-0.02em] text-ink-black">
-                {stageLabel}
-              </div>
-            </div>
+          <h3 className="truncate font-display text-[1.1rem] font-bold uppercase leading-none tracking-[-0.03em] text-ink-black">
+            {project.project_name}
+          </h3>
+
+          <div className="mt-2.5 flex items-center justify-between gap-2">
             <StatusPill tone={presentation.tone} title={presentation.description}>
-              <Icon name={presentation.icon} size={10} className="mr-1" />
               {presentation.label}
             </StatusPill>
-          </div>
-
-          <div className="mt-3 h-2.5 border-[2px] border-ink-black bg-pulp-paper">
-            <div className="h-full bg-archive-sage" style={{ width: `${progressPct}%` }} />
-          </div>
-
-          <div className="mt-3 flex items-center justify-between border-t-[2px] border-ink-black pt-2 text-[0.66rem]">
-            <span className="font-meta tracking-[0.16em] text-ink-black/45">
-              {formatCreated(project.created_at)}
-            </span>
-            <span className="font-body text-ink-black/80 tabular-nums">
+            <span className="font-body text-[0.78rem] text-ink-black/70 tabular-nums">
               ${project.total_cost_usd.toFixed(2)}
             </span>
-          </div>
-
-          <div className="mt-1 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">
-            {furthest}/7 · {project.project_name}
           </div>
         </div>
       </Card>

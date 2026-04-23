@@ -56,7 +56,7 @@ export function StoryboardRoom() {
             <SceneSidebar
               items={summaries.map((s) => ({
                 id: s.scene_id,
-                label: s.scene_id.replace("_", " ").toUpperCase(),
+                label: s.scene_id.replace(/_/g, " ").toUpperCase(),
                 count: `${s.panel_count} beats`,
               }))}
               activeId={activeScene ?? ""}
@@ -103,7 +103,7 @@ export function StoryboardRoom() {
                     />
                     <div className="flex flex-wrap gap-1">
                       {panel.characters_present.map((cid) => (
-                        <span key={cid} className="bg-surface-container px-2 py-1 font-meta text-[0.54rem] tracking-[0.1em] text-ink-black">
+                        <span key={cid} className="border border-ink-black/25 bg-surface-container px-2 py-0.5 font-meta text-[0.54rem] tracking-[0.1em] text-ink-black">
                           {cid}
                         </span>
                       ))}

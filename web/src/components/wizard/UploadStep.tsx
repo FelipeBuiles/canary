@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
@@ -36,6 +37,7 @@ type RenderPreset = "fast_draft" | "balanced" | "high_quality";
 
 export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
   const { language, t } = useI18n();
+  const navigate = useNavigate();
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [targetLanguage, setTargetLanguage] = useState<LanguageCode>(language);
@@ -415,13 +417,21 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
           <div className="mt-4 text-[0.82rem] text-hero-red" role="alert">{error}</div>
         )}
 
-        <div className="mt-6">
+        <div className="mt-6 flex items-center gap-3">
           <Button
             type="submit"
             size="lg"
             disabled={!file || !name.trim() || !extOk || isPending}
           >
             {isPending ? t("CREATING…") : t("CREATE PROJECT")}
+          </Button>
+          <Button
+            type="button"
+            size="lg"
+            variant="outline"
+            onClick={() => navigate("/")}
+          >
+            {t("BACK")}
           </Button>
         </div>
       </Card>

@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useGenerationJobs, useProjectStatus, useStoryBible, useRegenRef, useRegenPlate } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
-import { SectionDivider } from "../../components/SectionDivider";
 import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
 import { Button } from "../../components/ui/Button";
@@ -84,33 +83,33 @@ function CharacterCastCard({
     <>
       <Card shadow="lg">
         <div 
-          className="relative border-b-[2px] border-ink-black bg-ink-black cursor-pointer group"
+          className="relative border-b-[2px] border-ink-black cursor-pointer group"
           onClick={() => !imgFailed && setIsModalOpen(true)}
         >
           {stageRegenerating ? (
-            <div className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-2 bg-ink-black/40">
-              <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-narrator-gold animate-pulse">
+            <div className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-2 bg-surface-container">
+              <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
                 REGENERATING…
               </div>
-              <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-bristol/55">
+              <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
                 REBUILDING CAST REF
               </div>
             </div>
           ) : imgFailed ? (
-            <div className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-2 bg-ink-black/40">
+            <div className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-2 bg-surface-container">
               {regenRef.isPending || activeJob ? (
                 <>
-                  <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-narrator-gold animate-pulse">
+                  <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
                     {queuedLabel(activeJob)}
                   </div>
-                  <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-bristol/55">
+                  <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
                     GENERATING NEW REF
                   </div>
                 </>
               ) : (
                 <>
-                  <div className="font-meta text-[0.5rem] tracking-[0.18em] text-bristol/40">NO REF IMAGE</div>
-                  <div className="font-meta text-[0.44rem] tracking-[0.14em] text-bristol/25">RUN CAST</div>
+                  <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">NO REF IMAGE</div>
+                  <div className="font-meta text-[0.44rem] tracking-[0.14em] text-ink-black/30">RUN CAST</div>
                 </>
               )}
             </div>
@@ -252,33 +251,33 @@ function LocationPlateCard({
     <>
       <Card shadow="lg">
         <div 
-          className="relative border-b-[2px] border-ink-black bg-ink-black cursor-pointer group"
+          className="relative border-b-[2px] border-ink-black cursor-pointer group"
           onClick={() => !imgFailed && setIsModalOpen(true)}
         >
           {stageRegenerating ? (
-            <div className="flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 bg-ink-black/40">
-              <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-narrator-gold animate-pulse">
+            <div className="flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 bg-surface-container">
+              <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
                 REGENERATING…
               </div>
-              <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-bristol/55">
+              <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
                 REBUILDING LOCATION PLATE
               </div>
             </div>
           ) : imgFailed ? (
-            <div className="flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 bg-ink-black/40">
+            <div className="flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 bg-surface-container">
               {regenPlate.isPending || activeJob ? (
                 <>
-                  <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-narrator-gold animate-pulse">
+                  <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
                     {queuedLabel(activeJob)}
                   </div>
-                  <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-bristol/55">
+                  <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
                     GENERATING NEW PLATE
                   </div>
                 </>
               ) : (
                 <>
-                  <div className="font-meta text-[0.5rem] tracking-[0.18em] text-bristol/40">NO PLATE IMAGE</div>
-                  <div className="font-meta text-[0.44rem] tracking-[0.14em] text-bristol/25">RUN CAST</div>
+                  <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">NO PLATE IMAGE</div>
+                  <div className="font-meta text-[0.44rem] tracking-[0.14em] text-ink-black/30">RUN CAST</div>
                 </>
               )}
             </div>
@@ -380,13 +379,12 @@ export function CastRoom() {
         actions={<RerunStageAction project={name} stage="index" label="Cast" disabled={stageRegenerating} />}
       />
 
-      <section className="grid gap-6 xl:grid-cols-2">
+      <section className="grid gap-10 xl:grid-cols-2">
         <div>
-          <SectionDivider number={1} label="DRAMATIS PERSONAE" />
-          <h2 className="mt-3 font-display text-[2.25rem] font-bold leading-none tracking-[-0.06em] text-ink-black">
+          <h2 className="border-b-[2px] border-ink-black pb-3 font-display text-[2.25rem] font-bold uppercase leading-none tracking-[-0.06em] text-ink-black">
             CHARACTER REFS
           </h2>
-          <div className="mt-5 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-5 grid gap-5 sm:grid-cols-2">
             {bible.characters.map((char) => (
               <CharacterCastCard
                 key={char.id}
@@ -399,8 +397,7 @@ export function CastRoom() {
         </div>
 
         <div>
-          <SectionDivider number={2} label="THE WORLD STAGE" />
-          <h2 className="mt-3 font-display text-[2.25rem] font-bold leading-none tracking-[-0.06em] text-ink-black">
+          <h2 className="border-b-[2px] border-ink-black pb-3 font-display text-[2.25rem] font-bold uppercase leading-none tracking-[-0.06em] text-ink-black">
             LOCATION PLATES
           </h2>
           <div className="mt-5 grid gap-5 sm:grid-cols-2">
