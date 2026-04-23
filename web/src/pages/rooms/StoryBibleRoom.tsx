@@ -63,7 +63,7 @@ export function CharacterCard({
     onSave({ ...character, ...patch });
 
   return (
-    <Card className="p-4">
+    <Card shadow="lg" className="p-4">
       <SurfaceHeader
         kicker={character.id.toUpperCase()}
         title={(
@@ -113,7 +113,7 @@ export function LocationCard({
     onSave({ ...location, ...patch });
 
   return (
-    <Card className="p-4">
+    <Card shadow="lg" className="p-4">
       <SurfaceHeader
         kicker={location.id.toUpperCase()}
         title={(

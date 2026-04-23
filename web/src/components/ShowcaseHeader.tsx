@@ -23,7 +23,7 @@ export function ShowcaseHeader({
 }) {
   const { t } = useI18n();
   return (
-    <section className={cn("border-[2px] border-ink-black bg-bristol px-6 py-7 md:px-10 md:py-10", className)}>
+    <section className={cn("border-[2px] border-ink-black bg-bristol px-6 py-7 shadow-ink md:px-10 md:py-10", className)}>
       <div className="flex items-start justify-between gap-4">
         <div
           className={cn(

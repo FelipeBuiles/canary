@@ -6,6 +6,7 @@ import { SectionDivider } from "../../components/SectionDivider";
 import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
 import { Button } from "../../components/ui/Button";
+import { DestructiveButton } from "../../components/ui/DestructiveButton";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { ImageModal } from "../../components/ui/ImageModal";
 import { LazyImage } from "../../components/ui/LazyImage";
@@ -81,7 +82,7 @@ function CharacterCastCard({
 
   return (
     <>
-      <Card>
+      <Card shadow="lg">
         <div 
           className="relative border-b-[2px] border-ink-black bg-ink-black cursor-pointer group"
           onClick={() => !imgFailed && setIsModalOpen(true)}
@@ -161,19 +162,25 @@ function CharacterCastCard({
           )}
         </div>
       </Card>
-      <ImageModal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
-        src={`${refUrl}?t=${timestamp}`} 
-        alt={character.name} 
+      <ImageModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        src={`${refUrl}?t=${timestamp}`}
+        alt={character.name}
+        title={character.name.toUpperCase()}
         actions={(
-          <Button
-            size="md"
-            onClick={handleRegen}
-            disabled={regenRef.isPending || !!activeJob}
-          >
-            {regenRef.isPending || activeJob ? queuedLabel(activeJob) : "REGENERATE"}
-          </Button>
+          <>
+            <Button variant="outline" size="sm" onClick={() => setIsModalOpen(false)}>
+              CLOSE
+            </Button>
+            <DestructiveButton
+              size="sm"
+              onClick={handleRegen}
+              disabled={regenRef.isPending || !!activeJob}
+            >
+              {regenRef.isPending || activeJob ? queuedLabel(activeJob) : "REGENERATE"}
+            </DestructiveButton>
+          </>
         )}
       />
     </>
@@ -243,7 +250,7 @@ function LocationPlateCard({
 
   return (
     <>
-      <Card>
+      <Card shadow="lg">
         <div 
           className="relative border-b-[2px] border-ink-black bg-ink-black cursor-pointer group"
           onClick={() => !imgFailed && setIsModalOpen(true)}
@@ -318,19 +325,25 @@ function LocationPlateCard({
           )}
         </div>
       </Card>
-      <ImageModal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
-        src={`${plateUrl}?t=${timestamp}`} 
-        alt={location.name} 
+      <ImageModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        src={`${plateUrl}?t=${timestamp}`}
+        alt={location.name}
+        title={location.name.toUpperCase()}
         actions={(
-          <Button
-            size="md"
-            onClick={handleRegen}
-            disabled={regenPlate.isPending || !!activeJob}
-          >
-            {regenPlate.isPending || activeJob ? queuedLabel(activeJob) : "REGENERATE"}
-          </Button>
+          <>
+            <Button variant="outline" size="sm" onClick={() => setIsModalOpen(false)}>
+              CLOSE
+            </Button>
+            <DestructiveButton
+              size="sm"
+              onClick={handleRegen}
+              disabled={regenPlate.isPending || !!activeJob}
+            >
+              {regenPlate.isPending || activeJob ? queuedLabel(activeJob) : "REGENERATE"}
+            </DestructiveButton>
+          </>
         )}
       />
     </>
