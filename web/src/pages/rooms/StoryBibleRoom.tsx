@@ -2,9 +2,9 @@ import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useStoryBible, useUpdateStoryBible } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
+import { SectionDivider } from "../../components/SectionDivider";
 import { Card } from "../../components/ui/Card";
 import { Tag } from "../../components/ui/Tag";
-import { SurfaceHeader } from "../../components/ui/Surface";
 import { EditableText } from "../../components/ui/EditableText";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { RerunStageAction } from "../../components/ui/RerunStageAction";
@@ -63,19 +63,15 @@ export function CharacterCard({
 
   return (
     <Card shadow="lg" className="p-4">
-      <SurfaceHeader
-        kicker={character.id.toUpperCase()}
-        title={(
-          <EditableText
-            value={character.name}
-            onSave={(v) => update({ name: v })}
-            className="font-display text-[1.15rem] font-bold tracking-[-0.05em] text-ink-black"
-          />
-        )}
-        actions={<Tag className="bg-pulp-paper">{character.id.toUpperCase()}</Tag>}
-        className="-m-4 mb-3"
-      />
-      <div className="mt-1 flex items-center gap-1 font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/55">
+      <div className="flex items-start justify-between gap-2">
+        <EditableText
+          value={character.name}
+          onSave={(v) => update({ name: v })}
+          className="font-display text-[1.15rem] font-bold uppercase tracking-[-0.05em] text-ink-black leading-none"
+        />
+        <Tag className="shrink-0 bg-pulp-paper">{character.id.toUpperCase()}</Tag>
+      </div>
+      <div className="mt-1.5 flex items-center gap-1 font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/55">
         <EditableText
           value={character.age_range}
           onSave={(v) => update({ age_range: v })}
@@ -113,18 +109,14 @@ export function LocationCard({
 
   return (
     <Card shadow="lg" className="p-4">
-      <SurfaceHeader
-        kicker={location.id.toUpperCase()}
-        title={(
-          <EditableText
-            value={location.name}
-            onSave={(v) => update({ name: v })}
-            className="font-display text-[1.15rem] font-bold tracking-[-0.05em] text-ink-black"
-          />
-        )}
-        actions={<Tag className="bg-pulp-paper">{location.id.toUpperCase()}</Tag>}
-        className="-m-4 mb-3"
-      />
+      <div className="flex items-start justify-between gap-2">
+        <EditableText
+          value={location.name}
+          onSave={(v) => update({ name: v })}
+          className="font-display text-[1.15rem] font-bold uppercase tracking-[-0.05em] text-ink-black leading-none"
+        />
+        <Tag className="shrink-0 bg-pulp-paper">{location.id.toUpperCase()}</Tag>
+      </div>
       <VisualAnchorEditor
         value={location.visual_anchor}
         onSave={(v) => update({ visual_anchor: v })}
@@ -182,34 +174,22 @@ export function StoryBibleRoom() {
     updateBible.mutate({ project: name, data: newBible });
   };
 
-  const totalChars = bible.characters.length;
-  const totalLocs = bible.locations.length;
-
   return (
     <RoomShell>
       <ShowcaseHeader
         label="EXTRACT / STORY BIBLE"
-        title="STORY BIBLE"
-        lead={<>
-          <span className="font-display font-bold not-italic">&ldquo;{bible.title}&rdquo;</span>
-          {" "}by {bible.author} &mdash; {bible.total_scenes} scenes, {totalChars} character{totalChars !== 1 ? "s" : ""}, {totalLocs} location{totalLocs !== 1 ? "s" : ""} extracted.
-        </>}
+        title={bible.title}
+        lead={`by ${bible.author} · ${bible.total_scenes} scene${bible.total_scenes !== 1 ? "s" : ""} extracted into the narrative frame.`}
         actions={<RerunStageAction project={name} stage="extract" label="Extract" />}
       />
 
       <div className="grid gap-10 xl:grid-cols-2">
         {/* Characters */}
         <section>
-          <div className="flex items-center gap-3 border-b-[2px] border-ink-black pb-3">
-            <div className="flex h-7 w-7 items-center justify-center bg-hero-red font-display text-[0.75rem] font-black text-bristol">
-              01
-            </div>
-            <div>
-              <div className="font-meta text-[0.46rem] tracking-[0.18em] text-ink-black/45">DRAMATIS PERSONAE</div>
-              <div className="font-display text-[1.05rem] font-bold uppercase leading-none tracking-[-0.03em]">Character Entities</div>
-            </div>
-            <span className="ml-auto font-display text-[1.5rem] font-bold leading-none tracking-[-0.06em] text-ink-black/20">{totalChars}</span>
-          </div>
+          <SectionDivider number={1} label="DRAMATIS PERSONAE" />
+          <h2 className="mt-2 font-display text-[1.4rem] font-bold uppercase leading-none tracking-[-0.03em]">
+            Character Entities
+          </h2>
           <div className="mt-5 grid gap-5 sm:grid-cols-2">
             {bible.characters.map((char) => (
               <CharacterCard
@@ -223,16 +203,10 @@ export function StoryBibleRoom() {
 
         {/* Locations */}
         <section>
-          <div className="flex items-center gap-3 border-b-[2px] border-ink-black pb-3">
-            <div className="flex h-7 w-7 items-center justify-center bg-ink-black font-display text-[0.75rem] font-black text-bristol">
-              02
-            </div>
-            <div>
-              <div className="font-meta text-[0.46rem] tracking-[0.18em] text-ink-black/45">THE WORLD STAGE</div>
-              <div className="font-display text-[1.05rem] font-bold uppercase leading-none tracking-[-0.03em]">Location Nodes</div>
-            </div>
-            <span className="ml-auto font-display text-[1.5rem] font-bold leading-none tracking-[-0.06em] text-ink-black/20">{totalLocs}</span>
-          </div>
+          <SectionDivider number={2} label="THE WORLD STAGE" />
+          <h2 className="mt-2 font-display text-[1.4rem] font-bold uppercase leading-none tracking-[-0.03em]">
+            Location Nodes
+          </h2>
           <div className="mt-5 grid gap-5 sm:grid-cols-2">
             {bible.locations.map((loc) => (
               <LocationCard
