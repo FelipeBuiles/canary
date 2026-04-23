@@ -20,7 +20,7 @@ function NewProjectCard() {
       aria-label={t("START NEW PROJECT")}
       className="group block h-full focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
     >
-      <Card className="h-full overflow-hidden transition-transform duration-150 group-hover:-translate-y-[2px] group-focus-visible:-translate-y-[2px]">
+      <Card shadow="lg" className="h-full overflow-hidden transition-transform duration-150 group-hover:-translate-y-[2px] group-hover:shadow-ink-sm group-focus-visible:-translate-y-[2px]">
         <div className="relative border-b-[2px] border-ink-black bg-bristol">
           <div className="flex aspect-[4/5] flex-col justify-between benday-paper p-4">
             <div className="flex items-center justify-between">
@@ -196,7 +196,7 @@ export function Library() {
           </p>
         </div>
 
-        <Card className="p-4 md:p-5" shadow="sm">
+        <Card className="p-4 md:p-5" shadow="lg">
           <div className="mb-4 flex items-center justify-between border-b-[2px] border-ink-black pb-3">
             <div>
               <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">

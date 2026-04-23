@@ -52,7 +52,7 @@ export function ProjectCard({ project, coverPending = false, coverFailed = false
       aria-label={`${t("OPEN FILE")}: ${project.project_name}`}
       className="group block h-full focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
     >
-      <Card className="h-full overflow-hidden transition-transform duration-150 group-hover:-translate-y-[2px] group-focus-visible:-translate-y-[2px]">
+      <Card shadow="lg" className="h-full overflow-hidden transition-transform duration-150 group-hover:-translate-y-[2px] group-hover:shadow-ink-sm group-focus-visible:-translate-y-[2px]">
         <div className="relative border-b-[2px] border-ink-black">
           {project.has_cover ? (
             <LazyImage

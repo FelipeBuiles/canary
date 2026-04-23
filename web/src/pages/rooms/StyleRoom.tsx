@@ -109,7 +109,7 @@ function StyleCard({
 
   return (
     <>
-      <Card className="flex flex-col">
+      <Card shadow="lg" className="flex flex-col">
         <div
           className="relative border-b-[2px] border-ink-black bg-ink-black cursor-pointer group"
           onClick={() => !imgFailed && setIsDetailsOpen(true)}
