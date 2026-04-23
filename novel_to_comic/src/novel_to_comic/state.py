@@ -31,7 +31,7 @@ class StageState(BaseModel):
     error: Optional[str] = None
 
 
-STAGE_NAMES = ["extract", "index", "screenplay", "panels", "prompts", "generate", "assemble"]
+STAGE_NAMES = ["extract", "index", "screenplay", "layout-plan", "panels", "prompts", "generate", "assemble"]
 CHECKPOINT_STAGES = {"extract", "index", "prompts", "generate"}
 
 

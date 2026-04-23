@@ -7,6 +7,7 @@ import {
   updateStoryBible,
   listScreenplays,
   getScreenplay,
+  getLayoutPlan,
   listPanelSummaries,
   getPanelsForScene,
   updatePanel,
@@ -16,7 +17,7 @@ import {
   listImages,
   getImageGenerationMeta,
 } from "./stages";
-import { listPages, getPage, updatePage, replacePage, reflowPages, generatePageStyleVars, translatePageBubbles, setTheme, applyBubblePreset, getBubblePresets, translateSinglePageBubbles, getCharacterVoices, putCharacterVoice, deleteCharacterVoice, reflowSinglePage, triggerExport } from "./pages";
+import { listPages, getPage, updatePage, replacePage, reflowPages, generatePageStyleVars, translatePageBubbles, setTheme, applyBubblePreset, getBubblePresets, translateSinglePageBubbles, getCharacterVoices, putCharacterVoice, deleteCharacterVoice, reflowSinglePage, triggerExport, applyStructuralOperation } from "./pages";
 import { getStyles, suggestStyles, generateStyleSamples, setActiveStyle } from "./styles";
 import { getProjectConfig, updateProjectConfig } from "./config";
 
@@ -215,6 +216,14 @@ export function useScreenplay(
   });
 }
 
+export function useLayoutPlan(project: string | undefined) {
+  return useQuery({
+    queryKey: ["project", project, "layout-plan"],
+    queryFn: () => getLayoutPlan(project!),
+    enabled: !!project,
+  });
+}
+
 // ── Panels (STORYBOARD) ───────────────────────────────────────────────────────
 
 export function usePanelSummaries(project: string | undefined) {
@@ -351,6 +360,7 @@ export function useReflowPages() {
       reflowPages(project, panelsPerPage),
     onSuccess: (_data, { project }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
+      qc.invalidateQueries({ queryKey: ["project", project, "layout-plan"] });
     },
   });
 }
@@ -474,6 +484,22 @@ export function useReflowSinglePage() {
       );
       qc.invalidateQueries({ queryKey: ["project", project, "pages", pageNum] });
       qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
+      qc.invalidateQueries({ queryKey: ["project", project, "layout-plan"] });
+    },
+  });
+}
+
+export function useApplyStructuralOperation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, data }: { project: string; data: Record<string, unknown> }) =>
+      applyStructuralOperation(project, data),
+    onSuccess: (data, { project }) => {
+      if (data.page) {
+        qc.setQueryData(["project", project, "pages", data.page.page_number], data.page);
+      }
+      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
+      qc.invalidateQueries({ queryKey: ["project", project, "layout-plan"] });
     },
   });
 }

@@ -10,7 +10,18 @@ from fastapi.responses import FileResponse, HTMLResponse
 
 from novel_to_comic.config import Config, LANGUAGE_NAMES, save_config
 from novel_to_comic.assembly.html_renderer import build_page_html, resolve_theme, write_theme_css, THEMES
+from novel_to_comic.layout_planning import (
+    apply_page_layout_preset,
+    apply_panel_override,
+    dump_structural_response,
+    load_layout_plan,
+    persist_projected_pages,
+    repaginate_layout_plan,
+    reorder_planned_pages,
+    save_layout_plan,
+)
 from novel_to_comic.models.comic_page import Bubble, ComicPage, Sfx, BUBBLE_PRESETS, CharacterVoice
+from novel_to_comic.models.story_bible import StoryBible
 
 from ..deps import get_project
 
@@ -26,6 +37,18 @@ def _load_page(project_dir: Path, page_num: int) -> ComicPage:
     if not path.exists():
         raise HTTPException(404, f"Page {page_num} not found")
     return ComicPage.model_validate_json(path.read_text())
+
+
+def _load_story_bible(project_dir: Path) -> StoryBible:
+    path = project_dir / "story_bible.json"
+    if not path.exists():
+        raise HTTPException(404, "Story bible not found")
+    return StoryBible.model_validate_json(path.read_text())
+
+
+def _project_structural_pages(project_dir: Path, config: Config) -> list[ComicPage]:
+    story_bible = _load_story_bible(project_dir)
+    return persist_projected_pages(project_dir, story_bible, resolve_theme(config))
 
 
 STYLE_VAR_ALLOWLIST = {
@@ -646,67 +669,32 @@ LAYOUT_PRESETS: dict[str, list[tuple[str, str]]] = {
 
 @router.post("/pages/{page_num}/reflow")
 def reflow_single_page(page_num: int, body: dict, project=Depends(get_project)):
-    """Reflow a single page's panels to a given layout preset."""
+    """Apply a planner-backed layout preset to a single page, then reproject."""
     project_dir, config, state = project
     preset_name = body.get("layout_preset", "")
     if preset_name not in LAYOUT_PRESETS:
         raise HTTPException(400, f"Invalid layout preset. Must be one of: {', '.join(LAYOUT_PRESETS.keys())}")
-
-    preset = LAYOUT_PRESETS[preset_name]
-    cp = _load_page(project_dir, page_num)
-
-    for i, panel in enumerate(cp.panels):
-        if i < len(preset):
-            panel.grid_column = preset[i][0]
-            panel.grid_row = preset[i][1]
-        else:
-            panel.grid_column = None
-            panel.grid_row = None
-
-    cp.layout = str(len(cp.panels)) if len(cp.panels) <= 6 else "many"
-    path = _pages_dir(project_dir) / f"page_{page_num:03d}.json"
-    path.write_text(cp.model_dump_json(indent=2))
-    return cp.model_dump()
+    plan = load_layout_plan(project_dir)
+    try:
+        apply_page_layout_preset(plan, page_num, preset_name)
+    except KeyError as exc:
+        raise HTTPException(404, f"Page {page_num} not found in layout plan") from exc
+    save_layout_plan(project_dir, plan)
+    _project_structural_pages(project_dir, config)
+    return _load_page(project_dir, page_num).model_dump()
 
 
 @router.post("/pages/reflow")
 def reflow_pages(body: dict, project=Depends(get_project)):
-    """Redistribute all panels into pages with N panels per page."""
+    """Repaginate through the planner, then regenerate projected pages."""
     project_dir, config, state = project
     panels_per_page = int(body.get("panels_per_page", 0))
     if panels_per_page < 1 or panels_per_page > 6:
         raise HTTPException(400, "panels_per_page must be between 1 and 6")
-
-    pd = _pages_dir(project_dir)
-    page_paths = sorted(pd.glob("page_*.json"))
-    if not page_paths:
-        raise HTTPException(404, "No pages found")
-
-    source_pages = [ComicPage.model_validate_json(path.read_text()) for path in page_paths]
-    all_panels = []
-    for cp in source_pages:
-        for panel in cp.panels:
-            panel.grid_column = None
-            panel.grid_row = None
-            all_panels.append(panel)
-
-    theme = source_pages[0].theme
-    layout = str(panels_per_page)
-    new_count = 0
-    for start in range(0, len(all_panels), panels_per_page):
-        new_count += 1
-        chunk = all_panels[start:start + panels_per_page]
-        cp = ComicPage(
-            page_number=new_count,
-            theme=theme,
-            layout=layout,
-            panels=chunk,
-        )
-        (pd / f"page_{new_count:03d}.json").write_text(cp.model_dump_json(indent=2))
-
-    for stale in page_paths[new_count:]:
-        stale.unlink()
-
+    plan = load_layout_plan(project_dir)
+    repaginate_layout_plan(plan, panels_per_page=panels_per_page)
+    save_layout_plan(project_dir, plan)
+    _project_structural_pages(project_dir, config)
     return _page_summaries(project_dir)
 
 
@@ -734,32 +722,65 @@ def reorder_panels(body: dict, project=Depends(get_project)):
     if not pages_spec:
         raise HTTPException(400, "Provide non-empty 'pages' list")
 
-    pd = _pages_dir(project_dir)
+    plan = load_layout_plan(project_dir)
+    reorder_planned_pages(plan, pages_spec)
+    save_layout_plan(project_dir, plan)
+    pages = _project_structural_pages(project_dir, config)
+    return dump_structural_response(plan, pages)
 
-    # Collect all panels from affected pages into a flat map
-    affected_nums = {p["page_number"] for p in pages_spec}
-    all_panels = {}
-    for num in affected_nums:
-        path = pd / f"page_{num:03d}.json"
-        if not path.exists():
-            raise HTTPException(404, f"Page {num} not found")
-        cp = ComicPage.model_validate_json(path.read_text())
-        for panel in cp.panels:
-            all_panels[panel.id] = panel
 
-    # Redistribute panels
-    for page_spec in pages_spec:
-        num = page_spec["page_number"]
-        panel_ids = page_spec["panel_ids"]
-        path = pd / f"page_{num:03d}.json"
-        cp = ComicPage.model_validate_json(path.read_text())
-        new_panels = [all_panels[pid] for pid in panel_ids if pid in all_panels]
-        cp.panels = new_panels
-        count = len(new_panels)
-        cp.layout = str(min(count, 6)) if count <= 6 else "many"
-        path.write_text(cp.model_dump_json(indent=2))
+@router.post("/pages/structural")
+def apply_structural_operation(body: dict, project=Depends(get_project)):
+    """Apply planner-backed structural edits from Compose and reproject pages."""
+    project_dir, config, state = project
+    operation = body.get("operation", "")
+    if not operation:
+        raise HTTPException(400, "Missing operation")
 
-    return {"status": "ok"}
+    plan = load_layout_plan(project_dir)
+
+    try:
+        if operation == "panel_override":
+            panel_id = body.get("planned_panel_id", "")
+            if not panel_id:
+                raise HTTPException(400, "planned_panel_id is required")
+            apply_panel_override(
+                plan,
+                panel_id,
+                importance=body.get("importance"),
+                shape_intent=body.get("shape_intent"),
+                generation_mode=body.get("generation_mode"),
+            )
+        elif operation == "page_layout_preset":
+            page_number = int(body.get("page_number", 0))
+            preset_name = body.get("layout_preset", "")
+            if preset_name not in LAYOUT_PRESETS:
+                raise HTTPException(400, f"Invalid layout preset. Must be one of: {', '.join(LAYOUT_PRESETS.keys())}")
+            apply_page_layout_preset(plan, page_number, preset_name)
+        elif operation == "repaginate":
+            panels_per_page = int(body.get("panels_per_page", 0))
+            if panels_per_page < 1 or panels_per_page > 6:
+                raise HTTPException(400, "panels_per_page must be between 1 and 6")
+            repaginate_layout_plan(plan, panels_per_page=panels_per_page)
+        elif operation == "reorder":
+            pages_spec = body.get("pages", [])
+            if not pages_spec:
+                raise HTTPException(400, "Provide non-empty 'pages' list")
+            reorder_planned_pages(plan, pages_spec)
+        else:
+            raise HTTPException(400, f"Unknown operation: {operation}")
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+    save_layout_plan(project_dir, plan)
+    pages = _project_structural_pages(project_dir, config)
+    response = dump_structural_response(plan, pages)
+    page_number = body.get("page_number")
+    if isinstance(page_number, (int, float)):
+        page = next((page for page in pages if page.page_number == int(page_number)), None)
+        if page is not None:
+            response["page"] = page.model_dump()
+    return response
 
 
 # ── Character Voices ──────────────────────────────────────────────────────────

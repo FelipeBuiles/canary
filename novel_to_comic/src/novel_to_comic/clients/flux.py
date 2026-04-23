@@ -585,19 +585,21 @@ async def generate_image(
 ) -> Path:
     """Generate a single image, routing to Gemini or Together AI.
 
-    ref_type is retained for call-site readability; Gemini receives any
-    reference image as normal image context.
+    ref_type controls whether the reference image is treated as a subject
+    (character identity) or style reference by the Gemini provider.
     """
     config = _generation_config(config)
     width, height = _effective_dimensions(config, width, height)
     steps = config.effective_image_steps(steps)
-    refs = [reference_image_path] if reference_image_path else None
+    is_style = ref_type == "style"
+    refs = None if is_style else ([reference_image_path] if reference_image_path else None)
+    srefs = [reference_image_path] if (is_style and reference_image_path) else None
     provider = _provider_for_model(config.image_model)
     if provider == "gemini":
-        result = await _generate_gemini_image(config, prompt, output_path, refs, width, height)
+        result = await _generate_gemini_image(config, prompt, output_path, refs, width, height, srefs)
         return await _downscale_dev_output(config, result, width, height)
     if provider == "openai":
-        result = await _generate_openai_image(config, prompt, output_path, width, height, refs, None)
+        result = await _generate_openai_image(config, prompt, output_path, width, height, refs, srefs)
         return await _downscale_dev_output(config, result, width, height)
     result = await _generate_together_image(config, prompt, output_path, width, height, steps, refs)
     return await _downscale_dev_output(config, result, width, height)

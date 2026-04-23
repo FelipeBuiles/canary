@@ -101,9 +101,12 @@ class PagePanel(BaseModel):
     """One panel cell on a comic page."""
 
     id: str                                     # e.g. "scene_001-003"
+    planned_panel_id: str | None = None
     image_path: str                             # relative to project_dir
     scene_id: str
     panel_number: int
+    importance: str | None = None
+    generation_mode: str | None = None
     bubbles: list[Bubble] = Field(default_factory=list)
     sfx: Sfx | None = None
     # Optional panel image offset in px from the default object-position.
@@ -113,6 +116,14 @@ class PagePanel(BaseModel):
     # The web editor sets these when the user rearranges panels on a page.
     grid_column: str | None = None              # e.g. "1 / 3"
     grid_row: str | None = None
+    # Absolute page geometry, used for planner-driven and irregular layouts.
+    x: float | None = None
+    y: float | None = None
+    width: float | None = None
+    height: float | None = None
+    clip_path: str | None = None
+    z_index: int | None = None
+    shape_intent: str | None = None
 
 
 class ComicPage(BaseModel):
@@ -123,8 +134,10 @@ class ComicPage(BaseModel):
     """
 
     page_number: int
+    source_page_id: str | None = None
     theme: str = "default"
     layout: str = "4"                           # "1"–"6" or "many"
+    layout_mode: Literal["grid", "freeform"] = "grid"
     style_vars: dict[str, str] = Field(default_factory=dict)
     panels: list[PagePanel] = Field(default_factory=list)
 

@@ -28,6 +28,7 @@ STAGE_MAP = {
     "extract":    "s1_extract",
     "index":      "s2_index",
     "screenplay": "s3_screenplay",
+    "layout-plan": "s4_layout_plan",
     "panels":     "s4_panels",
     "prompts":    "s5_prompts",
     "generate":   "s6_generate",
@@ -120,12 +121,13 @@ def _load(project: str):
 def _stage_runners(config, project_dir, state, scene_ids=None, formats=None, retry_failed=False):
     from novel_to_comic.stages import (
         s1_extract, s2_index, s3_screenplay,
-        s4_panels, s5_prompts, s6_generate, s7_assemble,
+        s4_layout_plan, s4_panels, s5_prompts, s6_generate, s7_assemble,
     )
     return {
         "extract":    lambda: s1_extract.run(config, project_dir, state),
         "index":      lambda: s2_index.run(config, project_dir, state),
         "screenplay": lambda: s3_screenplay.run(config, project_dir, state, scene_ids),
+        "layout-plan": lambda: s4_layout_plan.run(config, project_dir, state, scene_ids),
         "panels":     lambda: s4_panels.run(config, project_dir, state, scene_ids),
         "prompts":    lambda: s5_prompts.run(config, project_dir, state, scene_ids),
         "generate":   lambda: s6_generate.run(config, project_dir, state, scene_ids, retry_failed),
@@ -179,7 +181,7 @@ def init(input_path: str, name: str | None, image_model: str | None):
             f"Delete state.json first, or cd into an empty directory."
         )
 
-    for subdir in ["input", "scenes", "refs", "plates", "screenplays", "panels",
+    for subdir in ["input", "scenes", "refs", "plates", "screenplays", "layout_plan", "panels",
                    "prompts", "images", "assembly", "exports"]:
         (project_dir / subdir).mkdir(exist_ok=True)
 
@@ -232,7 +234,7 @@ def run(stage: str | None, project: str, scene: str | None,
         retry_failed: bool, export_formats: str | None):
     """Run a single pipeline stage, or all stages if STAGE is omitted.
 
-    Valid stages: extract index screenplay panels prompts generate assemble
+    Valid stages: extract index screenplay layout-plan panels prompts generate assemble
 
     Examples:
         pipeline run                        # run all from current dir

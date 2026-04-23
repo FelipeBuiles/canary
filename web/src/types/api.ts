@@ -2,6 +2,7 @@ export type StageName =
   | "extract"
   | "index"
   | "screenplay"
+  | "layout-plan"
   | "panels"
   | "prompts"
   | "generate"
@@ -96,6 +97,7 @@ export const STAGE_ORDER: StageName[] = [
   "extract",
   "index",
   "screenplay",
+  "layout-plan",
   "panels",
   "prompts",
   "generate",
@@ -106,6 +108,7 @@ export const STAGE_DISPLAY_NAMES: Record<StageName, string> = {
   extract: "EXTRACT",
   index: "CAST",
   screenplay: "ADAPT",
+  "layout-plan": "PLAN",
   panels: "STORYBOARD",
   prompts: "DIRECT",
   generate: "DRAW",
@@ -116,6 +119,7 @@ export const STAGE_ROUTES: Record<StageName, string> = {
   extract: "extract",
   index: "cast",
   screenplay: "adapt",
+  "layout-plan": "storyboard",
   panels: "storyboard",
   prompts: "direct",
   generate: "draw",
@@ -230,6 +234,87 @@ export interface PanelBreakdown {
   transition_note: string | null;
 }
 
+export interface LayoutPlanBeatRef {
+  beat_id: string;
+  scene_id: string;
+  beat_index: number;
+  type: string;
+  character_id: string | null;
+  content: string;
+  direction: string | null;
+  transition_type: string | null;
+  emphasis_hint?: string | null;
+  shot_hint?: string | null;
+  transition_significance?: string | null;
+}
+
+export interface PanelGeometry {
+  panel_id: string;
+  shape_intent: string;
+  region: number[];
+  polygon: number[][];
+  aspect_ratio: number | null;
+  bleed: boolean;
+  z_index: number;
+}
+
+export interface PlannedPanel {
+  panel_id: string;
+  scene_id: string;
+  panel_number: number;
+  beat_ids: string[];
+  importance: string;
+  shape_intent: string;
+  aspect_preference: number | null;
+  aspect_range: number[];
+  crop_policy: string;
+  dialogue_load: number;
+  caption_load: number;
+  transition_in: string | null;
+  transition_out: string | null;
+  generation_mode: string;
+  shot_type: string;
+  camera_angle: string;
+  characters_present: string[];
+  character_actions: Record<string, string>;
+  character_expressions: Record<string, string>;
+  character_positions: Record<string, string>;
+  background_description: string;
+  lighting: string;
+  mood: string;
+  dialogue: DialogueLine[];
+  sfx: string | null;
+}
+
+export interface PlannedPage {
+  page_id: string;
+  page_number: number;
+  panel_ids: string[];
+  panel_geometries: PanelGeometry[];
+  scene_ids: string[];
+  scene_boundary_mode: string;
+  page_rhythm_role: string;
+  spread_id: string | null;
+  cross_scene_reason: string | null;
+}
+
+export interface LayoutPlan {
+  schema_version: number;
+  metadata: {
+    planner_version: number;
+    planning_mode: string;
+    source_screenplay_hash: string;
+    source_scene_ids: string[];
+    max_panels_per_page: number;
+  };
+  beats: LayoutPlanBeatRef[];
+  planned_panels: PlannedPanel[];
+  planned_pages: PlannedPage[];
+  warnings: string[];
+  user_overrides: Record<string, unknown>;
+  regeneration_impact: Record<string, string>;
+}
+
 export interface PromptSubject {
   character_id: string | null;
   name: string;
@@ -241,8 +326,16 @@ export interface PromptSubject {
 
 export interface ImagePrompt {
   prompt_version?: number;
+  planned_panel_id?: string | null;
   scene_id: string;
   panel_number: number;
+  generation_mode?: string | null;
+  shape_intent?: string | null;
+  aspect_preference?: number | null;
+  aspect_range?: number[];
+  crop_policy?: string | null;
+  transition_in?: string | null;
+  transition_out?: string | null;
   full_prompt: string;
   style?: string | null;
   composition?: string | null;
@@ -293,21 +386,33 @@ export interface Sfx {
 
 export interface PagePanel {
   id: string;
+  planned_panel_id: string | null;
   image_path: string;
   scene_id: string;
   panel_number: number;
+  importance: string | null;
+  generation_mode: string | null;
   bubbles: Bubble[];
   sfx: Sfx | null;
   image_offset_x: number | null;
   image_offset_y: number | null;
   grid_column: string | null;
   grid_row: string | null;
+  x: number | null;
+  y: number | null;
+  width: number | null;
+  height: number | null;
+  clip_path: string | null;
+  z_index: number | null;
+  shape_intent: string | null;
 }
 
 export interface ComicPage {
   page_number: number;
+  source_page_id: string | null;
   theme: string;
   layout: string;
+  layout_mode: "grid" | "freeform";
   style_vars: Record<string, string>;
   panels: PagePanel[];
 }
@@ -333,6 +438,7 @@ export interface PanelSceneSummary {
 export interface ImageStatus {
   scene_id: string;
   panel_number: number;
+  planned_panel_id?: string | null;
   status: "done" | "failed" | "pending" | "queued" | "running" | "stale";
 }
 

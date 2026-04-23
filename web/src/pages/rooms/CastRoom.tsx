@@ -95,7 +95,10 @@ function CharacterCastCard({
               </div>
             </div>
           ) : imgFailed ? (
-            <div className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-2 bg-surface-container">
+            <div
+              className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-2 bg-surface-container"
+              onClick={handleRegen}
+            >
               {regenRef.isPending || activeJob ? (
                 <>
                   <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
@@ -108,7 +111,7 @@ function CharacterCastCard({
               ) : (
                 <>
                   <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">NO REF IMAGE</div>
-                  <div className="font-meta text-[0.44rem] tracking-[0.14em] text-ink-black/30">RUN CAST</div>
+                  <DestructiveButton size="sm" onClick={handleRegen}>GENERATE</DestructiveButton>
                 </>
               )}
             </div>
@@ -276,7 +279,7 @@ function LocationPlateCard({
               ) : (
                 <>
                   <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">NO PLATE IMAGE</div>
-                  <div className="font-meta text-[0.44rem] tracking-[0.14em] text-ink-black/30">RUN CAST</div>
+                  <DestructiveButton size="sm" onClick={handleRegen}>GENERATE</DestructiveButton>
                 </>
               )}
             </div>

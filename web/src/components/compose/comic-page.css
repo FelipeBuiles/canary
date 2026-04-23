@@ -16,9 +16,18 @@
 .comic-page {
   width: 100%;
   height: calc(100% - 48px);
+}
+
+.comic-page.grid {
   padding: var(--margin);
   display: grid;
   gap: var(--gutter);
+}
+
+.comic-page.freeform {
+  position: relative;
+  padding: 0;
+  display: block;
 }
 
 /* ── Panel ── */

@@ -6,6 +6,7 @@ import {
   useUpdatePage,
   useReplacePage,
   useReflowPages,
+  useApplyStructuralOperation,
   useGeneratePageStyleVars,
   useTranslatePageBubbles,
   useExport,
@@ -69,6 +70,7 @@ export function ComposeRoom() {
   const updatePageMut = useUpdatePage();
   const replacePageMut = useReplacePage();
   const reflowPagesMut = useReflowPages();
+  const structuralOpMut = useApplyStructuralOperation();
   const generatePageStyleMut = useGeneratePageStyleVars();
   const translateBubblesMut = useTranslatePageBubbles();
   const updateProjectConfigMut = useUpdateProjectConfig();
@@ -124,6 +126,25 @@ export function ComposeRoom() {
 
   function handleUpdatePageProps(patch: Partial<ComicPage>) {
     patchPage(patch);
+  }
+
+  function handleUpdatePanelStructure(
+    plannedPanelId: string,
+    patch: { importance?: string | null; shape_intent?: string | null; generation_mode?: string | null },
+  ) {
+    if (!name || !safePage) return;
+    clearHistory();
+    structuralOpMut.mutate({
+      project: name,
+      data: {
+        operation: "panel_override",
+        page_number: safePage,
+        planned_panel_id: plannedPanelId,
+        importance: patch.importance ?? undefined,
+        shape_intent: patch.shape_intent ?? undefined,
+        generation_mode: patch.generation_mode ?? undefined,
+      },
+    });
   }
 
   function handleReflowPages(panelsPerPage: number) {
@@ -381,6 +402,7 @@ export function ComposeRoom() {
           onZoomOut={() => setZoom((z) => clampZoom(z - 0.1))}
           onZoomReset={() => setZoom(1)}
           onUpdatePanel={handleUpdatePanel}
+          onUpdatePanelStructure={handleUpdatePanelStructure}
           onUpdateBubble={handleUpdateBubble}
           onUpdateSfx={handleUpdateSfx}
           onUpdatePage={handleUpdatePageProps}

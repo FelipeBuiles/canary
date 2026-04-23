@@ -17,10 +17,10 @@ from novel_to_comic.clients import flux
 from novel_to_comic.clients.flux import _is_gemini_native, is_rate_limited_error
 from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
-from novel_to_comic.models.panel import PanelBreakdown
+from novel_to_comic.layout_planning import load_layout_plan, prompt_path_for_panel, scene_panel_map
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.prompting import IMAGE_PROMPT_VERSION, build_image_prompt_spec, render_generation_prompt
+from novel_to_comic.prompting import IMAGE_PROMPT_VERSION, build_planned_panel_prompt_spec, render_generation_prompt
 from novel_to_comic.state import (
     PipelineState,
     begin_stage,
@@ -54,16 +54,16 @@ def _write_generation_meta(image_path: Path, payload: dict) -> None:
     _meta_path(image_path).write_text(json.dumps(payload, indent=2, sort_keys=True))
 
 
-def _should_use_prev_panel_image(prev_panel: PanelBreakdown | None) -> bool:
+def _should_use_prev_panel_image(prev_transition_type: str | None) -> bool:
     """Return True if the previous panel's image should be used as a style reference.
 
     Hard cuts (smash cut, fade to, cut to, scene change, time jump) can make the
     previous panel image actively harmful — the model might blend the previous scene
     into the new one. Only use the previous panel image for smooth transitions.
     """
-    if not prev_panel:
+    if not prev_transition_type:
         return False
-    transition_type = (prev_panel.transition_type or "").strip().lower()
+    transition_type = (prev_transition_type or "").strip().lower()
     if transition_type in _SOFT_CONTINUITY:
         return True
     return False
@@ -94,18 +94,22 @@ def _load_or_upgrade_prompt(
     project_dir: Path,
     prompt_path: Path,
     story_bible: StoryBible | None,
-    prev_panel: PanelBreakdown | None = None,
+    planned_panel=None,
+    prev_planned_panel=None,
 ) -> ImagePrompt:
     prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
-    if getattr(prompt, "prompt_version", 1) >= IMAGE_PROMPT_VERSION or story_bible is None:
+    if (
+        getattr(prompt, "prompt_version", 1) >= IMAGE_PROMPT_VERSION
+        and getattr(prompt, "planned_panel_id", None)
+    ) or story_bible is None:
         return prompt
 
-    panel_path = project_dir / "panels" / prompt.scene_id / f"panel_{prompt.panel_number:03d}.json"
-    if not panel_path.exists():
+    if planned_panel is None:
         return prompt
 
-    panel = PanelBreakdown.model_validate_json(panel_path.read_text())
-    upgraded = build_image_prompt_spec(config, project_dir, panel, story_bible, prev_panel)
+    upgraded = build_planned_panel_prompt_spec(
+        config, project_dir, planned_panel, story_bible, prev_planned_panel
+    )
     prompt_path.write_text(upgraded.model_dump_json(indent=2))
     return upgraded
 
@@ -186,16 +190,7 @@ async def _generate_panel(
         if prev_event:
             await prev_event.wait()
 
-        prev_panel: PanelBreakdown | None = None
-        if raw_prompt.panel_number > 1:
-            prev_panel_path = project_dir / "panels" / raw_prompt.scene_id / f"panel_{raw_prompt.panel_number - 1:03d}.json"
-            if prev_panel_path.exists():
-                try:
-                    prev_panel = PanelBreakdown.model_validate_json(prev_panel_path.read_text())
-                except Exception:
-                    pass
-
-        prompt = _load_or_upgrade_prompt(config, project_dir, prompt_path, story_bible, prev_panel)
+        prompt = _load_or_upgrade_prompt(config, project_dir, prompt_path, story_bible)
 
         output_dir = project_dir / "images" / prompt.scene_id
         output_path = output_dir / f"panel_{prompt.panel_number:03d}.png"
@@ -213,15 +208,15 @@ async def _generate_panel(
             # non-adjacent panels and keeps continuity deterministic.
             style_refs: list[Path] = []
             if _use_continuity_refs(config) and prompt.panel_number > 1:
-                prev_panel_path = project_dir / "panels" / prompt.scene_id / f"panel_{prompt.panel_number - 1:03d}.json"
-                prev_panel = None
-                if prev_panel_path.exists():
-                    try:
-                        prev_panel = PanelBreakdown.model_validate_json(prev_panel_path.read_text())
-                    except Exception:
-                        pass
                 prev_image = output_dir / f"panel_{prompt.panel_number - 1:03d}.png"
-                if prev_image.exists() and _should_use_prev_panel_image(prev_panel):
+                prev_prompt_path = prompt_path.parent / f"panel_{prompt.panel_number - 1:03d}.json"
+                prev_prompt = None
+                if prev_prompt_path.exists():
+                    try:
+                        prev_prompt = ImagePrompt.model_validate_json(prev_prompt_path.read_text())
+                    except Exception:
+                        prev_prompt = None
+                if prev_image.exists() and _should_use_prev_panel_image(getattr(prev_prompt, "transition_out", None)):
                     style_refs.append(prev_image)
 
             if not style_refs:
@@ -245,6 +240,7 @@ async def _generate_panel(
                 "prompt": generation_prompt,
                 "prompt_sha256": hashlib.sha256(generation_prompt.encode("utf-8")).hexdigest(),
                 "parameters": {
+                    "planned_panel_id": prompt.planned_panel_id,
                     "scene_id": prompt.scene_id,
                     "panel_number": prompt.panel_number,
                     "image_model": config.effective_image_model(),
@@ -342,6 +338,13 @@ async def run(
     emit = on_event or _NOOP
     prompts_dir = project_dir / "prompts"
     prompt_files: list[Path] = []
+    story_bible: StoryBible | None = None
+    plan = None
+    panels_by_scene = {}
+    plan_path = project_dir / "layout_plan" / "layout_plan.json"
+    if plan_path.exists():
+        plan = load_layout_plan(project_dir)
+        panels_by_scene = scene_panel_map(plan)
 
     target_scenes = set(scene_ids) if scene_ids else None
     target_panels = set(panel_numbers) if panel_numbers else None
@@ -369,6 +372,22 @@ async def run(
                         continue
                 prompt_files.append(pf)
 
+    if (project_dir / "story_bible.json").exists():
+        story_bible = StoryBible.model_validate_json((project_dir / "story_bible.json").read_text())
+
+    if story_bible is not None and plan is not None:
+        for scene_panels in panels_by_scene.values():
+            for index, panel in enumerate(scene_panels):
+                prompt_path = prompt_path_for_panel(project_dir, panel)
+                if not prompt_path.exists():
+                    continue
+                prev_panel = scene_panels[index - 1] if index > 0 else None
+                existing = ImagePrompt.model_validate_json(prompt_path.read_text())
+                if getattr(existing, "planned_panel_id", None) == panel.panel_id and getattr(existing, "prompt_version", 1) >= IMAGE_PROMPT_VERSION:
+                    continue
+                upgraded = build_planned_panel_prompt_spec(config, project_dir, panel, story_bible, prev_panel)
+                prompt_path.write_text(upgraded.model_dump_json(indent=2))
+
     # ── Consistency context ───────────────────────────────────────────────────
     # 1. Global style anchor
     style_sample = _find_style_sample(project_dir, config.style_template)
@@ -379,7 +398,6 @@ async def run(
 
     # 2. Scene → location mapping (for location plate lookup)
     scene_to_location: dict[str, str] = {}
-    story_bible: StoryBible | None = None
     bible_path = project_dir / "story_bible.json"
     if bible_path.exists():
         story_bible = StoryBible.model_validate_json(bible_path.read_text())
@@ -499,7 +517,7 @@ async def run(
               "done": state.stages["generate"].items_done,
               "total": state.stages["generate"].items_total})
         save_state(state, project_dir)
-        console.print("[yellow]Stage 6 complete — awaiting review.[/yellow]")
+        console.print("[yellow]Stage 7 complete — awaiting review.[/yellow]")
         console.print("Review generated panels in: images/")
         console.print("Run [bold]pipeline approve --project . --stage generate[/bold] to continue.")
 

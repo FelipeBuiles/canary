@@ -12,23 +12,28 @@ export interface RerunImpact {
 // backend-derived stage history or project cost estimates when available.
 export const RERUN_IMPACT: Record<RerunStageKey, RerunImpact> = {
   extract: {
-    downstream: ["index", "screenplay", "panels", "prompts", "generate", "assemble"],
+    downstream: ["index", "screenplay", "layout-plan", "panels", "prompts", "generate", "assemble"],
     cost: "~$4.10",
     costIsPlaceholder: true,
   },
   style: {
-    downstream: ["index", "screenplay", "panels", "prompts", "generate", "assemble"],
+    downstream: ["index", "screenplay", "layout-plan", "panels", "prompts", "generate", "assemble"],
     cost: "~$0.30",
     costIsPlaceholder: true,
   },
   index: {
-    downstream: ["screenplay", "panels", "prompts", "generate", "assemble"],
+    downstream: ["screenplay", "layout-plan", "panels", "prompts", "generate", "assemble"],
     cost: "~$0.80",
     costIsPlaceholder: true,
   },
   screenplay: {
-    downstream: ["panels", "prompts", "generate", "assemble"],
+    downstream: ["layout-plan", "panels", "prompts", "generate", "assemble"],
     cost: "~$0.25",
+    costIsPlaceholder: true,
+  },
+  "layout-plan": {
+    downstream: ["panels", "prompts", "generate", "assemble"],
+    cost: "~$0.05",
     costIsPlaceholder: true,
   },
   panels: {
