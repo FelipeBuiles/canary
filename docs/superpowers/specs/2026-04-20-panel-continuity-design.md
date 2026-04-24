@@ -7,7 +7,7 @@
 
 Each panel is currently generated independently without explicit knowledge of what characters were doing in the previous panel. This causes continuity breaks — a character can be "lying in a hospital bed" in panel 1, a close-up face in panel 2 (model reinvents them standing), and back in bed in panel 3.
 
-The solution is a two-stage continuity chain: Stage 5 builds a narrative continuity note from the previous panel's breakdown, and Stage 6 fixes the scene anchor mechanism to chain to the immediately previous panel instead of the first successful one.
+The solution is a two-stage continuity chain: Stage 6 builds a narrative continuity note from the previous panel's breakdown, and Stage 7 fixes the scene anchor mechanism to chain to the immediately previous panel instead of the first successful one.
 
 ---
 
@@ -24,7 +24,7 @@ The solution is a two-stage continuity chain: Stage 5 builds a narrative continu
 
 ## Solution: Two-Stage Continuity
 
-### Stage 5 — Build Continuity Note
+### Stage 6 — Build Continuity Note
 
 **File:** `novel_to_comic/src/novel_to_comic/prompting.py`
 
@@ -127,9 +127,9 @@ def render_generation_prompt(prompt: ImagePrompt, style_template: str) -> str:
 
 ---
 
-### Stage 6 — Conditional Scene Anchor + Continuity
+### Stage 7 — Conditional Scene Anchor + Continuity
 
-**File:** `novel_to_comic/src/novel_to_comic/stages/s6_generate.py`
+**File:** `novel_to_comic/src/novel_to_comic/stages/s7_generate.py`
 
 **Scene anchor chaining (fix as described above):**
 ```python
@@ -186,6 +186,6 @@ No data migration needed.
 3. Update `build_image_prompt_spec()` to accept `prev_panel` and build continuity note
 4. Update `s5_prompts.py` to pass previous panel when building prompts
 5. Update `render_generation_prompt()` to append continuity note
-6. Implement `_should_use_prev_panel_image()` in `s6_generate.py`
+6. Implement `_should_use_prev_panel_image()` in `s7_generate.py`
 7. Update scene anchor logic to chain and use conditional previous panel image
 8. Test with a multi-panel scene, verify continuity note appears and hard cuts skip image reference

@@ -1,5 +1,5 @@
 import { useParams, useSearchParams } from "react-router-dom";
-import { usePanelSummaries, usePanelsForScene, useUpdatePanel } from "../../api/queries";
+import { usePanelSummaries, usePanelsForScene, useUpdatePanel, useProjectStatus } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { EditableText } from "../../components/ui/EditableText";
 import { LoadingBlock, StateBlock } from "../../components/ui/StateBlock";
@@ -7,6 +7,7 @@ import { RerunStageAction } from "../../components/ui/RerunStageAction";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { SceneSidebar } from "../../components/ui/SceneSidebar";
 import { ShotDiagram } from "../../components/ui/ShotDiagram";
+import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
 import type { PanelBreakdown } from "../../types/api";
 
 function titleCaseShot(value: string) {
@@ -112,11 +113,14 @@ function StoryboardPanelCard({
 export function StoryboardRoom() {
   const { name } = useParams<{ name: string }>();
   const { data: summaries, isLoading } = usePanelSummaries(name);
+  const { data: status } = useProjectStatus(name);
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedScene = searchParams.get("scene");
   const activeScene = selectedScene ?? summaries?.[0]?.scene_id;
   const { data: panels, isLoading: loadingPanels } = usePanelsForScene(name, activeScene);
   const updatePanel = useUpdatePanel();
+  const stageInfo = status?.stages?.storyboard;
+  const stageStatus = stageInfo?.status ?? "pending";
 
   const handleSavePanel = (panel: PanelBreakdown, patch: Partial<PanelBreakdown>) => {
     if (!name || !activeScene) return;
@@ -127,20 +131,31 @@ export function StoryboardRoom() {
     });
   };
 
+  if (isLoading || (!summaries?.length && stageStatus !== "pending")) {
+    return <RoomShell isLoading loadingText="LOADING PANEL BREAKDOWNS…" />;
+  }
+
+  if (!summaries?.length || !name) {
+    return (
+      <RoomShell>
+        <StagePlaceholder
+          stage="storyboard"
+          status={stageStatus}
+          itemsDone={stageInfo?.items_done}
+          itemsTotal={stageInfo?.items_total}
+        />
+      </RoomShell>
+    );
+  }
+
   return (
-    <RoomShell
-      isLoading={isLoading}
-      loadingText="LOADING PANEL BREAKDOWNS…"
-      isEmpty={!summaries?.length || !name}
-      emptyTitle="PANEL BREAKDOWNS NOT AVAILABLE"
-      emptyDescription="Complete STORYBOARD first."
-    >
+    <RoomShell>
       <div className="flex h-[calc(100vh-3rem)] min-h-0 flex-col gap-10 md:h-[calc(100vh-5rem)]">
         <ShowcaseHeader
           label="STORYBOARD / PANEL BREAKDOWN"
           title="PANEL BREAKDOWNS"
           lead="Shot-by-shot blocking with camera, lighting, and dialogue — the blueprint the artist hands to the penciller."
-          actions={name ? <RerunStageAction project={name} stage="panels" label="Storyboard" /> : null}
+          actions={name ? <RerunStageAction project={name} stage="storyboard" label="Storyboard" /> : null}
         />
 
         <section className="grid min-h-0 flex-1 grid-rows-[minmax(132px,30%)_minmax(0,1fr)] overflow-hidden border-[2px] border-ink-black bg-bristol xl:grid-cols-[300px_minmax(0,1fr)] xl:grid-rows-none">

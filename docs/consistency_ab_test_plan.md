@@ -13,14 +13,14 @@ This will identify the exact compute costs, generation latency, and (crucially) 
 ---
 
 ## Prerequisites
-*   A fully processed sample project (e.g., `projects/one-of-these-days`) that has completed Stage 5 (Prompts).
+*   A fully processed sample project (e.g., `projects/one-of-these-days`) that has completed Stage 6 (Direct).
 *   A valid Replicate API key (for PuLID).
 *   A valid Fal.ai API key (for LoRA).
 
 ---
 
 ## Test Subject Selection
-We will manually select two prompt files from `projects/{project}/prompts/` to use as our constant variables:
+We will manually select two prompt files from `projects/{project}/direct/` to use as our constant variables:
 1.  **Subject A (Single Character):** A panel featuring only the protagonist (e.g., `char_001`).
 2.  **Subject B (Multi-Character):** A panel featuring the protagonist and a second character (e.g., `char_001` and `char_002`) interacting in the same frame.
 

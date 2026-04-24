@@ -299,11 +299,11 @@ async def run(
     emit = on_event or _NOOP
     story_bible = _load_story_bible(project_dir)
     ids = scene_ids or [scene.id for scene in story_bible.scenes]
-    layout_plan_dir = project_dir / "layout_plan"
+    layout_plan_dir = project_dir / "plan"
     layout_plan_path = layout_plan_dir / "layout_plan.json"
 
-    begin_stage(state, "layout-plan", total=len(ids))
-    emit({"type": "stage_begin", "stage": "layout-plan", "total": len(ids)})
+    begin_stage(state, "plan", total=len(ids))
+    emit({"type": "stage_begin", "stage": "plan", "total": len(ids)})
     save_state(state, project_dir)
 
     try:
@@ -313,24 +313,24 @@ async def run(
             layout_plan_dir.mkdir(parents=True, exist_ok=True)
             layout_plan_path.write_text(plan.model_dump_json(indent=2))
             for scene_id in ids:
-                record_item_done(state, "layout-plan")
+                record_item_done(state, "plan")
                 emit(
                     {
                         "type": "stage_progress",
-                        "stage": "layout-plan",
-                        "done": state.stages["layout-plan"].items_done,
-                        "total": state.stages["layout-plan"].items_total,
+                        "stage": "plan",
+                        "done": state.stages["plan"].items_done,
+                        "total": state.stages["plan"].items_total,
                     }
                 )
                 progress.advance(task)
 
-        complete_stage(state, "layout-plan")
+        complete_stage(state, "plan")
         emit(
             {
                 "type": "stage_complete",
-                "stage": "layout-plan",
-                "done": state.stages["layout-plan"].items_done,
-                "total": state.stages["layout-plan"].items_total,
+                "stage": "plan",
+                "done": state.stages["plan"].items_done,
+                "total": state.stages["plan"].items_total,
             }
         )
         save_state(state, project_dir)
@@ -342,7 +342,7 @@ async def run(
         emit(
             {
                 "type": "log",
-                "stage": "layout-plan",
+                "stage": "plan",
                 "level": "info",
                 "message": (
                     f"Wrote {layout_plan_path.relative_to(project_dir)} "
@@ -352,7 +352,7 @@ async def run(
         )
 
     except Exception as exc:
-        fail_stage(state, "layout-plan", str(exc))
-        emit({"type": "stage_fail", "stage": "layout-plan", "message": str(exc)})
+        fail_stage(state, "plan", str(exc))
+        emit({"type": "stage_fail", "stage": "plan", "message": str(exc)})
         save_state(state, project_dir)
         raise

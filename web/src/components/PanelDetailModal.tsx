@@ -104,7 +104,7 @@ export function PanelDetailModal({
         sceneId,
         data: draft,
       });
-      queryClient.invalidateQueries({ queryKey: ["project", project, "prompts", sceneId] });
+      queryClient.invalidateQueries({ queryKey: ["project", project, "direct", sceneId] });
 
       const key = `${sceneId}-${panelNumber}`;
       begin(project, key);

@@ -1,9 +1,10 @@
-"""Image generation: routes to Gemini native, OpenAI, or Together AI.
+"""Image generation: routes to Gemini native, OpenAI, Together AI, or OpenRouter.
 
-Routing rule (checked in order):
-  - model name contains '/'       →  Together AI (FLUX / SD / etc.)
-  - model name starts gpt-image-* →  OpenAI Images API
-  - otherwise                      →  Gemini via google-genai
+Routing rule:
+  - config.image_provider == "gemini"     →  Gemini via google-genai
+  - config.image_provider == "openai"     →  OpenAI Images API
+  - config.image_provider == "openrouter" →  OpenRouter (OpenAI API-compatible endpoint)
+  - config.image_provider == "together"   →  Together AI
 """
 
 import asyncio
@@ -29,25 +30,6 @@ from novel_to_comic.clients.gemini import describe_provider, get_client
 
 logger = logging.getLogger("canary.google")
 image_logger = logging.getLogger("canary.image")
-
-
-# ── Routing helpers ───────────────────────────────────────────────────────────
-
-def _provider_for_model(model: str) -> str:
-    """Return provider key for an image model identifier."""
-    value = model.strip().lower()
-    if not value:
-        return "unknown"
-    if "/" in value:
-        return "together"
-    if value.startswith("gpt-image-") or value == "chatgpt-image-latest":
-        return "openai"
-    return "gemini"
-
-
-def _is_gemini_native(model: str) -> bool:
-    """Gemini generateContent path — not Together/OpenAI."""
-    return _provider_for_model(model) == "gemini"
 
 
 # ── Together AI capability flags ──────────────────────────────────────────────
@@ -79,6 +61,13 @@ def _get_together_client(config: Config) -> AsyncTogether:
 
 def _get_openai_client(config: Config) -> AsyncOpenAI:
     return AsyncOpenAI(api_key=config.openai_api_key)
+
+
+def _get_openrouter_client(config: Config) -> AsyncOpenAI:
+    return AsyncOpenAI(
+        api_key=config.openrouter_api_key,
+        base_url="https://openrouter.ai/api/v1",
+    )
 
 
 def _encode_image_sync(path: Path) -> str:
@@ -537,6 +526,103 @@ async def _generate_openai_image(
                 pass
 
 
+# ── OpenRouter implementation ───────────────────────────────────────────────────
+
+_OPENROUTER_IMG2IMG_MODELS: frozenset = frozenset({
+    "stability-ai/stable-diffusion-xl-base-1.0",
+    "stability-ai/sd3.5-medium",
+    "stability-ai/sd3-large",
+    "playgroundai/playground-v2.5",
+    "playgroundai/playground-v2",
+})
+
+
+def _supports_openrouter_img2img(model: str) -> bool:
+    return model.lower() in _OPENROUTER_IMG2IMG_MODELS
+
+
+@retry(wait=wait_exponential(min=5, max=120), stop=stop_after_attempt(5))
+async def _generate_openrouter_image(
+    config: Config,
+    prompt: str,
+    output_path: Path,
+    width: int | None = None,
+    height: int | None = None,
+    reference_paths: list[Path] | None = None,
+    style_refs: list[Path] | None = None,
+) -> Path:
+    """Generate image via OpenRouter (OpenAI API-compatible endpoint).
+
+    Reference images are passed as image_url for models that support img2img.
+    """
+    subject_refs = [p for p in (reference_paths or []) if p.exists()]
+    aux_refs = [p for p in (style_refs or []) if p.exists()]
+    # OpenRouter's images.generate compatibility path only supports one
+    # image_url here. Prefer the style anchor when present; character identity
+    # still comes through the written visual anchors in the prompt.
+    edit_refs = (aux_refs or subject_refs)[:1]
+    call_id, started = log_call_start(
+        image_logger,
+        provider="openrouter",
+        operation="images.generate",
+        params={
+            "model": config.image_model,
+            "subject_refs": len(subject_refs),
+            "style_refs": len(aux_refs),
+            "edit_refs": len(edit_refs),
+            "width": width or config.image_width,
+            "height": height or config.image_height,
+        },
+        payload=image_payload_summary(prompt),
+    )
+    client = _get_openrouter_client(config)
+    w = width or config.image_width
+    h = height or config.image_height
+    size = _openai_size_for_dims(w, h)
+
+    kwargs: dict = {
+        "model": config.image_model,
+        "prompt": prompt,
+        "size": size,
+        "response_format": "b64_json",
+    }
+
+    # Add reference image as image_url for img2img models
+    if edit_refs and _supports_openrouter_img2img(config.image_model):
+        encoded = f"data:image/png;base64,{await asyncio.to_thread(_encode_image_sync, edit_refs[0])}"
+        kwargs["image_url"] = encoded
+
+    try:
+        response = await client.images.generate(**kwargs)
+        if not response.data or not response.data[0].b64_json:
+            raise ValueError("Empty image response from OpenRouter")
+
+        image_data = base64.b64decode(response.data[0].b64_json)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(output_path.write_bytes, image_data)
+        log_call_end(
+            image_logger,
+            call_id=call_id,
+            started=started,
+            provider="openrouter",
+            operation="images.generate",
+            ok=True,
+            result={"image_bytes": len(image_data)},
+        )
+        return output_path
+    except Exception as e:
+        log_call_end(
+            image_logger,
+            call_id=call_id,
+            started=started,
+            provider="openrouter",
+            operation="images.generate",
+            ok=False,
+            error=e,
+        )
+        raise
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
@@ -545,7 +631,7 @@ def _generation_config(config: Config) -> Config:
     if model.lower().startswith("imagen-"):
         raise ValueError(
             "Imagen image models are no longer supported. Use a Gemini image "
-            "model such as gemini-3-pro-image-preview or a Together AI model path."
+            "model such as gemini-3-pro-image-preview or a supported provider model path."
         )
     if model != config.image_model:
         return config.model_copy(update={"image_model": model})
@@ -583,7 +669,7 @@ async def generate_image(
     reference_image_path: Path | None = None,
     ref_type: str = "subject",
 ) -> Path:
-    """Generate a single image, routing to Gemini or Together AI.
+    """Generate a single image using the configured image provider.
 
     ref_type controls whether the reference image is treated as a subject
     (character identity) or style reference by the Gemini provider.
@@ -594,13 +680,18 @@ async def generate_image(
     is_style = ref_type == "style"
     refs = None if is_style else ([reference_image_path] if reference_image_path else None)
     srefs = [reference_image_path] if (is_style and reference_image_path) else None
-    provider = _provider_for_model(config.image_model)
+    provider = config.image_provider
     if provider == "gemini":
         result = await _generate_gemini_image(config, prompt, output_path, refs, width, height, srefs)
         return await _downscale_dev_output(config, result, width, height)
     if provider == "openai":
         result = await _generate_openai_image(config, prompt, output_path, width, height, refs, srefs)
         return await _downscale_dev_output(config, result, width, height)
+    if provider == "openrouter":
+        result = await _generate_openrouter_image(config, prompt, output_path, width, height, refs, srefs)
+        return await _downscale_dev_output(config, result, width, height)
+    if provider != "together":
+        raise ValueError(f"Unsupported image provider: {provider}")
     result = await _generate_together_image(config, prompt, output_path, width, height, steps, refs)
     return await _downscale_dev_output(config, result, width, height)
 
@@ -627,7 +718,7 @@ async def generate_image_multi_ref(
     config = _generation_config(config)
     width, height = _effective_dimensions(config, width, height)
     steps = config.effective_image_steps(steps)
-    provider = _provider_for_model(config.image_model)
+    provider = config.image_provider
     if provider == "gemini":
         result = await _generate_gemini_image(config, prompt, output_path, reference_paths, width, height, style_refs)
         return await _downscale_dev_output(config, result, width, height)
@@ -642,5 +733,12 @@ async def generate_image_multi_ref(
             style_refs,
         )
         return await _downscale_dev_output(config, result, width, height)
+    if provider == "openrouter":
+        result = await _generate_openrouter_image(
+            config, prompt, output_path, width, height, reference_paths, style_refs
+        )
+        return await _downscale_dev_output(config, result, width, height)
+    if provider != "together":
+        raise ValueError(f"Unsupported image provider: {provider}")
     result = await _generate_together_image(config, prompt, output_path, width, height, steps, reference_paths)
     return await _downscale_dev_output(config, result, width, height)

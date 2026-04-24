@@ -12,6 +12,7 @@ interface RerunStageActionProps {
   label: string;
   disabled?: boolean;
   itemsAtRisk?: string;
+  className?: string;
 }
 
 export function RerunStageAction({
@@ -20,6 +21,7 @@ export function RerunStageAction({
   label,
   disabled = false,
   itemsAtRisk,
+  className,
 }: RerunStageActionProps) {
   const [open, setOpen] = useState(false);
   const { handleRun, isPending } = useRunAction();
@@ -37,6 +39,7 @@ export function RerunStageAction({
         size="sm"
         onClick={() => setOpen(true)}
         disabled={busy}
+        className={className}
       >
         {busy ? "Rerunning…" : `↺ Rerun ${label}`}
       </DestructiveButton>

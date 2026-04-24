@@ -85,7 +85,7 @@ def get_screenplay(scene_id: str, project=Depends(get_project)):
 @router.get("/layout-plan")
 def get_layout_plan(project=Depends(get_project)):
     project_dir, config, state = project
-    path = project_dir / "layout_plan" / "layout_plan.json"
+    path = project_dir / "plan" / "layout_plan.json"
     if not path.exists():
         raise HTTPException(404, "Layout plan not found")
     return LayoutPlan.model_validate_json(path.read_text()).model_dump()
@@ -97,7 +97,7 @@ def get_layout_plan(project=Depends(get_project)):
 @router.get("/panels")
 def list_panels(project=Depends(get_project)):
     project_dir, config, state = project
-    panels_dir = project_dir / "panels"
+    panels_dir = project_dir / "storyboard"
     if not panels_dir.exists():
         return []
     results = []
@@ -116,7 +116,7 @@ def list_panels(project=Depends(get_project)):
 @router.get("/panels/{scene_id}")
 def get_panels_for_scene(scene_id: str, project=Depends(get_project)):
     project_dir, config, state = project
-    scene_dir = project_dir / "panels" / scene_id
+    scene_dir = project_dir / "storyboard" / scene_id
     if not scene_dir.is_dir():
         raise HTTPException(404, f"Panels for {scene_id} not found")
     results = []
@@ -132,7 +132,7 @@ def get_panels_for_scene(scene_id: str, project=Depends(get_project)):
 @router.put("/panels/{scene_id}/{panel_number}")
 def update_panel(scene_id: str, panel_number: int, body: dict, project=Depends(get_project)):
     project_dir, config, state = project
-    path = project_dir / "panels" / scene_id / f"panel_{panel_number:03d}.json"
+    path = project_dir / "storyboard" / scene_id / f"panel_{panel_number:03d}.json"
     if not path.exists():
         raise HTTPException(404, f"Panel {scene_id}/{panel_number} not found")
     try:
@@ -149,7 +149,7 @@ def update_panel(scene_id: str, panel_number: int, body: dict, project=Depends(g
 @router.get("/prompts")
 def list_prompts(project=Depends(get_project)):
     project_dir, config, state = project
-    prompts_dir = project_dir / "prompts"
+    prompts_dir = project_dir / "direct"
     if not prompts_dir.exists():
         return []
     results = []
@@ -168,7 +168,7 @@ def list_prompts(project=Depends(get_project)):
 @router.get("/prompts/{scene_id}")
 def get_prompts_for_scene(scene_id: str, project=Depends(get_project)):
     project_dir, config, state = project
-    scene_dir = project_dir / "prompts" / scene_id
+    scene_dir = project_dir / "direct" / scene_id
     if not scene_dir.is_dir():
         raise HTTPException(404, f"Prompts for {scene_id} not found")
     results = []
@@ -184,7 +184,7 @@ def get_prompts_for_scene(scene_id: str, project=Depends(get_project)):
 @router.put("/prompts/{scene_id}/{panel_number}")
 def update_prompt(scene_id: str, panel_number: int, body: dict, project=Depends(get_project)):
     project_dir, config, state = project
-    path = project_dir / "prompts" / scene_id / f"panel_{panel_number:03d}.json"
+    path = project_dir / "direct" / scene_id / f"panel_{panel_number:03d}.json"
     if not path.exists():
         raise HTTPException(404, f"Prompt {scene_id}/{panel_number} not found")
     try:
@@ -202,11 +202,11 @@ def update_prompt(scene_id: str, panel_number: int, body: dict, project=Depends(
 @router.get("/images")
 def list_images(request: Request, project=Depends(get_project)):
     project_dir, config, state = project
-    images_dir = project_dir / "images"
+    images_dir = project_dir / "draw"
     if not images_dir.exists():
         return []
 
-    generate_state = state.stages.get("generate")
+    generate_state = state.stages.get("draw")
     failed_items = set(generate_state.items_failed) if generate_state else set()
 
     results = []
@@ -233,7 +233,7 @@ def list_images(request: Request, project=Depends(get_project)):
                 else:
                     status = "done"
 
-            prompt_path = project_dir / "prompts" / scene_dir.name / f"{stem}.json"
+            prompt_path = project_dir / "direct" / scene_dir.name / f"{stem}.json"
             planned_panel_id = None
             if prompt_path.exists():
                 try:

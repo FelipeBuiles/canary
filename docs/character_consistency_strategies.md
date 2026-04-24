@@ -7,7 +7,7 @@ This document outlines four technical architectures for achieving character cons
 
 ### Architecture Impact
 *   **Stage 2:** Must be updated to guarantee `front.png` is a tight, high-resolution, unobstructed headshot.
-*   **Stage 6 / Clients:** Add a new router in `clients/flux.py` to hit a dedicated serverless GPU endpoint (e.g., Replicate `lucataco/flux-pulid`). The reference image is passed as a base64 payload alongside the text prompt.
+*   **Stage 7:** Add a new image provider implementation to handle PuLID calls to a dedicated serverless GPU endpoint (e.g., Replicate `lucataco/flux-pulid`). The reference image is passed as a base64 payload alongside the text prompt.
 
 ### Economics & Performance
 *   **Cost:** High. Requires A100/H100 compute time per image. ~$0.04 to $0.06 per panel.
@@ -25,7 +25,7 @@ This document outlines four technical architectures for achieving character cons
 ### Architecture Impact
 *   **Stage 2:** Must generate 5-10 varied images of the character (front, side, action, various expressions).
 *   **New Stage (2.5):** Call a training API (Fal.ai, Together AI) uploading the images. Wait for the API to return a `lora_id` (e.g., `lora_hero_123`). Store this in the `StoryBible`.
-*   **Stage 6:** Standard generation calls, but injecting `<lora:hero_123:0.8>` into the prompt or API payload.
+*   **Stage 7:** Standard generation calls, but injecting `<lora:hero_123:0.8>` into the prompt or API payload.
 
 ### Economics & Performance
 *   **Cost:** Medium overall, but front-loaded. ~$1.00 to $2.00 to train the LoRA per character. Panel generation remains cheap (~$0.003 to $0.03).
@@ -41,7 +41,7 @@ This document outlines four technical architectures for achieving character cons
 *Allow the base text-to-image model to generate random faces, then use a dedicated facial-recognition API to swap them out in post-production.*
 
 ### Architecture Impact
-*   **Stage 6:** Requires a two-step process. 
+*   **Stage 7:** Requires a two-step process. 
     1. Generate the panel normally via Together/Gemini.
     2. If characters are present, call a Face Swap API (e.g., InsightFace on Replicate), passing the generated panel and the character's `front.png`.
 
@@ -60,7 +60,7 @@ This document outlines four technical architectures for achieving character cons
 
 ### Architecture Impact
 *   **Stage 1:** Modify the extraction prompt. Instead of prose ("A tall man wearing a red coat..."), force the LLM to output a strict, comma-separated list of Danbooru-style tags: `1boy, tall, red coat, black hair, green eyes`.
-*   **Stage 6:** No changes required. The optimized tags are injected into the image prompts.
+*   **Stage 7:** No changes required. The optimized tags are injected into the image prompts.
 
 ### Economics & Performance
 *   **Cost:** Zero additional cost.

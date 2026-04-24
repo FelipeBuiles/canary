@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useProjectConfig, useUpdateProjectConfig } from "../api/queries";
 import { SectionLabel } from "../components/SectionLabel";
@@ -7,6 +8,16 @@ import { SelectField, SwitchField, TextField } from "../components/ui/Field";
 import { LANGUAGES, useI18n } from "../i18n";
 import type { LanguageCode } from "../i18n";
 import { useShowDevContent } from "../lib/devContent";
+import type { ConfigOverrides } from "../types/api";
+
+type ImageProvider = NonNullable<ConfigOverrides["image_provider"]>;
+
+const IMAGE_PROVIDER_OPTIONS: Array<{ value: ImageProvider; label: string }> = [
+  { value: "gemini", label: "Gemini" },
+  { value: "openai", label: "OpenAI" },
+  { value: "openrouter", label: "OpenRouter" },
+  { value: "together", label: "Together AI" },
+];
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -19,6 +30,39 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
       </div>
       <div className="min-w-0">{children}</div>
     </div>
+  );
+}
+
+function ImageModelField({
+  disabled,
+  onCommit,
+  value,
+}: {
+  disabled: boolean;
+  onCommit: (value: string) => void;
+  value: string;
+}) {
+  const [draft, setDraft] = useState(value);
+  const commit = () => {
+    const nextModel = draft.trim();
+    if (nextModel && nextModel !== value) onCommit(nextModel);
+  };
+
+  return (
+    <TextField
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          commit();
+          e.currentTarget.blur();
+        }
+      }}
+      placeholder="flux-1.1-pro"
+      disabled={disabled}
+      className="max-w-sm bg-bristol"
+    />
   );
 }
 
@@ -128,13 +172,28 @@ export function Settings() {
               />
             </Row>
 
-            <Row label={t("IMAGE MODEL")}>
-              <TextField
-                value={config?.image_model ?? ""}
-                onChange={(e) => patch({ image_model: e.target.value })}
-                placeholder="flux-1.1-pro"
+            <Row
+              label="IMAGE PROVIDER"
+              hint="Routes image generation through the selected provider instead of inferring it from the model name."
+            >
+              <SelectField
+                value={config?.image_provider ?? "gemini"}
+                onChange={(e) => patch({ image_provider: e.target.value as ImageProvider })}
                 disabled={!config || updating}
-                className="max-w-sm bg-bristol"
+                className="max-w-sm bg-bristol font-meta text-[0.72rem] tracking-[0.1em]"
+              >
+                {IMAGE_PROVIDER_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </SelectField>
+            </Row>
+
+            <Row label={t("IMAGE MODEL")}>
+              <ImageModelField
+                key={`${name}:${config?.image_model ?? ""}`}
+                value={config?.image_model ?? ""}
+                onCommit={(image_model) => patch({ image_model })}
+                disabled={!config}
               />
             </Row>
           </Card>

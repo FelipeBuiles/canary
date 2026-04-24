@@ -1,13 +1,13 @@
 import { Navigate, Routes, Route } from "react-router-dom";
 import { Shell } from "./layout/Shell";
 import { Library } from "./pages/Library";
-import { NewProject } from "./pages/NewProject";
 import { Settings } from "./pages/Settings";
 import { ProjectRooms } from "./layout/ProjectRooms";
 import { NavigateToRoom } from "./pages/NavigateToRoom";
 import { StoryBibleRoom } from "./pages/rooms/StoryBibleRoom";
 import { CastRoom } from "./pages/rooms/CastRoom";
 import { AdaptRoom } from "./pages/rooms/AdaptRoom";
+import { PlanRoom } from "./pages/rooms/PlanRoom";
 import { StoryboardRoom } from "./pages/rooms/StoryboardRoom";
 import { DirectRoom } from "./pages/rooms/DirectRoom";
 import { DrawRoom } from "./pages/rooms/DrawRoom";
@@ -26,7 +26,6 @@ export function App() {
             path="dev/primitives"
             element={import.meta.env.DEV ? <PrimitiveReference /> : <Navigate to="/" replace />}
           />
-          <Route path="new" element={<NewProject />} />
           <Route path="settings" element={<Settings />} />
           <Route path="project/:name/settings" element={<Settings />} />
           <Route path="project/:name" element={<ProjectRooms />}>
@@ -34,6 +33,7 @@ export function App() {
             <Route path="extract" element={<StoryBibleRoom />} />
             <Route path="cast" element={<CastRoom />} />
             <Route path="adapt" element={<AdaptRoom />} />
+            <Route path="plan" element={<PlanRoom />} />
             <Route path="storyboard" element={<StoryboardRoom />} />
             <Route path="direct" element={<DirectRoom />} />
             <Route path="draw" element={<DrawRoom />} />

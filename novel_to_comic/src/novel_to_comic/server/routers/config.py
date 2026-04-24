@@ -9,7 +9,13 @@ from ..deps import get_project
 router = APIRouter()
 
 # Fields that should never be returned or set via the API
-_SECRET_FIELDS = {"gemini_api_key", "anthropic_api_key", "together_api_key", "openai_api_key"}
+_SECRET_FIELDS = {
+    "gemini_api_key",
+    "anthropic_api_key",
+    "together_api_key",
+    "openai_api_key",
+    "openrouter_api_key",
+}
 
 
 @router.get("/")

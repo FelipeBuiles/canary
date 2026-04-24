@@ -1,201 +1,239 @@
 # Canary — Detailed Agent Context
 
-This file is the detailed reference for agentic coding sessions. The root
-`AGENTS.md` and `CLAUDE.md` files intentionally stay short to reduce repeated
-context cost. Open this file when work touches pipeline architecture, stage
-contracts, generation, assembly, or project artifacts.
+Detailed reference for agentic coding sessions. The root `AGENTS.md` stays
+compact. Open this file when work touches pipeline architecture, stage contracts,
+generation, assembly, or project artifacts.
 
 ---
 
-## What this project is
+## Project Overview
 
-A 7-stage Python CLI pipeline that converts novels (EPUB/TXT) into comic books
-(PDF/CBZ). It uses LLMs for story analysis and image generation models for panel
-artwork. Each stage is discrete, resumable, and produces inspectable
-JSON/file output.
+**What it is:** A Python/React application that converts novels (EPUB/TXT/PDF) into
+comic books (PDF/CBZ) via an 8-stage LLM + image-generation pipeline.
 
-**Status:** Early MVP. Breaking changes are frequent and expected. No test suite
-yet — this is intentional.
+**Status:** Early MVP. The web server is the primary interface — the CLI only
+has `init` and `serve`. All pipeline operations are HTTP API endpoints.
 
-**Long-term goal:** Release as a product. Roadmap:
-
-1. Polish generation (stage 6) and assembly (stage 7) — current focus
-2. Web dashboard with per-stage manual control and visual output review
-3. Visual drag-and-drop editor for speech bubbles, panel layout
-4. User insertion into story (inject user's likeness into character references)
+**Key constraint:** All model inference runs through external cloud APIs.
+No local GPU execution.
 
 ---
 
-## Codebase map
+## Codebase Map
 
-```text
+```
 novel_to_comic/src/novel_to_comic/
-├── cli.py                  # Click CLI entry point — init, run, approve, status, export
-├── config.py               # Pydantic config loaded from config.yaml + .env
-├── state.py                # Pipeline state machine — state.json, stage status, cost tracking
-├── events.py               # Event callback system for SSE/WebSocket streaming
+├── cli.py                  # Click CLI — init, serve (run/approve/status via API)
+├── config.py               # Pydantic Config loaded from config.yaml + .env
+├── state.py                # Pipeline state machine — state.json, stage status, cost
+├── events.py               # Event callback system for SSE streaming
+├── layout_planning.py      # LayoutPlan model + helpers for plan→pages projection
+├── prompting.py            # Shared prompt-building helpers (style samples, etc.)
 ├── clients/
-│   ├── gemini.py           # Async Gemini wrapper with retry
+│   ├── gemini.py           # Async Gemini wrapper (Vertex AI or developer API)
 │   ├── claude.py           # Anthropic Claude wrapper
-│   ├── flux.py             # Image gen router: Gemini native or Together AI
-│   └── embeddings.py       # Google / OpenAI embedding clients
+│   ├── flux.py             # Image gen router: Gemini / OpenAI / OpenRouter / Together
+│   └── embeddings.py       # Google Vertex / OpenAI embedding clients
 ├── stages/
 │   ├── s1_extract.py       # Novel → Story Bible JSON
-│   ├── s2_index.py         # Optional RAG index + character refs + location plates
-│   ├── s3_screenplay.py    # Scene prose → screenplay
-│   ├── s4_panels.py        # Screenplay → panel breakdown JSON
-│   ├── s5_prompts.py       # Panel breakdown → image prompts
-│   ├── s6_generate.py      # Image generation
-│   └── s7_assemble.py      # ComicPage JSON → HTML → Playwright PNG → PDF/CBZ
+│   ├── s2_index.py         # Character refs + location plates (cast)
+│   ├── s3_screenplay.py    # Scene prose → screenplay (adapt)
+│   ├── s4_layout_plan.py   # Screenplay → page/panel layout plan (plan)
+│   ├── s4_panels.py        # Layout plan → legacy PanelBreakdown (storyboard)
+│   ├── s5_prompts.py       # Panel breakdown → image prompts (direct)
+│   ├── s6_generate.py      # Image generation (draw)
+│   └── s7_assemble.py      # ComicPage JSON → HTML → PNG → PDF/CBZ (compose)
 ├── models/
-│   ├── story_bible.py      # Character, Location, Scene, NarrativeArc
-│   ├── panel.py            # PanelBreakdown, DialogueLine, Screenplay
-│   ├── prompt.py           # Image prompt template
-│   └── comic_page.py       # ComicPage, PagePanel, Bubble, Sfx
+│   ├── story_bible.py      # Character, Location, Scene, NarrativeArc, Prop
+│   ├── panel.py            # PanelBreakdown, DialogueLine, Screenplay, ScreenplayBeat
+│   ├── prompt.py           # ImagePrompt
+│   ├── layout_plan.py      # LayoutPlan, PlannedPanel, PlannedPage, PanelGeometry
+│   └── comic_page.py       # ComicPage, PagePanel, Bubble, Sfx, BubbleTail
 ├── assembly/
 │   └── html_renderer.py    # build_page_html(), browser_context(), render_html_to_png()
 ├── rag/
-│   ├── store.py            # Optional Qdrant search
+│   ├── store.py            # Optional Qdrant vector store
 │   └── chunker.py          # Scene-boundary text chunking
-└── prompts/                # LLM prompt templates
+└── server/
+    ├── app.py              # FastAPI app factory (create_app)
+    ├── routers/
+    │   ├── pipeline.py     # run, approve, reset, events (SSE), stage errors
+    │   ├── projects.py     # list, status, create
+    │   ├── stages.py       # story-bible, screenplays, panels, prompts, images
+    │   ├── pages.py        # page JSON read/write, preview PNG, static files
+    │   ├── config.py       # config read/patch
+    │   ├── export.py       # PDF/CBZ export trigger + download
+    │   └── styles.py       # style suggestions, sample generation, active style
+    ├── generation_jobs.py  # Job queue for async image/style generation
+    └── telemetry.py        # OpenTelemetry span emission
 ```
 
 ---
 
-## Architecture decisions
+## The 8 Pipeline Stages
+
+All stage names (used in state, API routes, and CLI paths):
+
+| # | Stage name | Module | Checkpoint? | LLM used |
+|---|-----------|--------|-------------|----------|
+| 1 | `extract` | `s1_extract.py` | Yes | Gemini 3.1 Pro |
+| 2 | `cast` | `s2_index.py` | Yes | Gemini (image gen) |
+| 3 | `adapt` | `s3_screenplay.py` | No | Gemini 3.1 Pro |
+| 4 | `plan` | `s4_layout_plan.py` | No | None (deterministic) |
+| 5 | `storyboard` | `s4_panels.py` | No | Gemini Flash-Lite |
+| 6 | `direct` | `s5_prompts.py` | No | Gemini Flash-Lite |
+| 7 | `draw` | `s6_generate.py` | Yes | Gemini / OpenAI / OpenRouter / Together |
+| 8 | `compose` | `s7_assemble.py` | No | None (deterministic) |
+
+**Checkpoint stages** (`CHECKPOINT_STAGES = {"extract", "cast", "direct", "draw"}`):
+pipeline pauses at `awaiting_review` after the stage completes. Advance with
+`POST /api/projects/{project}/approve/{stage}` or the web UI.
+
+---
+
+## Architecture Decisions
+
+### Pipeline is API-only, not CLI
+
+There is no `pipeline run <stage>` command. The CLI (`cli.py`) only has `init`
+and `serve`. All pipeline operations are HTTP endpoints. This means:
+- `pipeline serve --projects-dir .` starts the web server
+- Pipeline is controlled via the web UI or direct API calls
+- See `server/routers/pipeline.py` for all endpoints
 
 ### Decomposition over end-to-end
 
-Each LLM call does exactly one thing. This enables targeted re-runs
-(`pipeline run panels --scene scene_012`), clean error recovery, and human
-review at boundaries. Never collapse stages.
-
-### Human checkpoints
-
-Pipeline pauses at stages 1 (story bible), 2 (character design), and 6
-(generated panels). `approve_stage()` in `state.py` advances `AWAITING_REVIEW`
-to `COMPLETE`. The web dashboard will replace `pipeline approve` with UI
-buttons.
+Each LLM call does exactly one thing. This enables targeted re-runs, clean error
+recovery, and human review at boundaries. Never collapse stages.
 
 ### Text composited in post
 
-Speech bubbles, narration, SFX are rendered in Stage 7, never generated inside
-images. This avoids OCR issues and allows bubble editing without regenerating
-images.
+Speech bubbles, narration, SFX are rendered in Stage 8 (`compose`), never
+generated inside images. This avoids OCR issues and allows bubble editing without
+regenerating images.
 
 ### Visual anchors are sacred
 
-`visual_anchor` fields on Character and Location are injected verbatim at the
-very beginning of prompt identity. Never paraphrase or summarize them. They must
-be comma-separated physical/visual tags only:
-
-- Characters need 15-20 appearance tags ending with
-  `", Same character, same appearance."`
-- Locations need at least 15 environment tags.
+`visual_anchor` fields on `Character` and `Location` are injected verbatim at the
+very beginning of every image prompt. Never paraphrase or summarize them.
 
 ### Event system for web dashboard
 
-Every stage `run()` accepts `on_event: EventCallback | None`. The CLI passes
-`None`. The future web server injects a callback that streams to the browser
-over SSE. See `events.py` for the event schema and FastAPI SSE example. Always
-add `emit()` calls alongside `console.print()` calls in stage code.
+Every stage `run()` accepts `on_event: EventCallback | None`. The web server
+injects a callback that streams events to the browser over SSE. See `events.py`
+for the event schema. Always add `emit()` calls alongside `console.print()`
+calls in stage code.
+
+### Layout plan as planner-owned artifact
+
+Stage 4 (`plan`) produces `plan/layout_plan.json` — a `LayoutPlan` containing
+`PlannedPage` and `PlannedPanel` records. Downstream stages (storyboard, direct,
+draw) read from this plan and project it into their own artifacts. The plan is
+the source of truth for page/panel structure.
 
 ### ComicPage JSON as editing surface
 
-`assembly/pages/page_NNN.json` is the canonical artifact for Stage 7. It is
-read, edited manually or via future web editor, and re-rendered by
-`pipeline export`. Never write rendering logic that bypasses this JSON.
+`compose/pages/page_NNN.json` is the canonical artifact for Stage 8. It is
+read, edited manually or via the web editor, and re-rendered by the export API.
+Never write rendering logic that bypasses this JSON.
 
 ---
 
-## The assembly system (Stage 7)
+## The Assembly System (Stage 8 — compose)
 
-Current focus: Stage 6 generation and Stage 7 assembly.
+### Position contract (Bubble and Sfx)
 
-### Position contract
-
-Applies to both `Bubble` and `Sfx`.
-
-```text
-x, y = None   -> CSS auto-layout (default)
-                  Bubble narration -> .captions container at panel top
-                  Bubble speech/thought -> .bubble-auto flex at panel bottom
-                  Sfx -> centered, bottom 18% of panel
-
-x, y = float  -> Pinned by web editor (absolute px from panel top-left)
-                  Rendered as position:absolute; left:Xpx; top:Ypx
-                  CSS class "pinned" added
-```
-
-This contract is the foundation of the visual editor. The same JSON fields that
-the Python renderer uses will be set by drag-and-drop in the browser.
+| Value of x/y | Behaviour |
+|---|---|
+| `None` | CSS auto-layout. Narration → top of panel. Speech/thought → bottom. SFX → centered at bottom 18%. |
+| `float` (pixels) | Pinned — rendered as `position: absolute; left: Xpx; top: Ypx`. Set by web editor drag-and-drop. |
 
 ### Bubble model (`models/comic_page.py`)
 
-- `id`: deterministic string `"{scene_id}-p{panel_number}-b{dialogue_index}"`
-- `type`: `"speech"` | `"thought"` | `"narration"`
-- `side`: `"left"` | `"right"` | `"center"`
-- `x`, `y`, `width`: `None` = auto, float = pinned
+```python
+id: str              # "{scene_id}-p{panel_num}-b{dialogue_index}"
+type: Literal["speech", "thought", "narration"]
+text: str
+speaker_id: str | None
+speaker_name: str | None
+side: Literal["left", "right", "center"]
+x, y, width: float | None   # None = auto, float = pinned
+tail: BubbleTail | None     # SVG tail with tail_x, tail_y target points
+```
 
-### Sfx model (`models/comic_page.py`)
+### Sfx model
 
-- `text`: SFX string, uppercased at render time
-- `x`, `y`: `None` = auto, float = pinned
-- `rotation`: degrees, default `-4.0`
-- `font_size`: px override; `None` = use `--sfx-font-size`
+```python
+text: str            # Uppercased at render time
+x, y: float | None   # None = auto, float = pinned
+rotation: float      # degrees, default -4.0
+font_size: int | None
+```
 
 ### Theme system (`assembly/html_renderer.py`)
 
-- CSS variables in `_BASE_VARS` define defaults for visual elements.
-- `THEMES` overrides variables per named theme.
-- `write_theme_css()` writes `assembly/theme.css` on first run.
+- CSS variables in `_BASE_VARS` define defaults for all visual elements.
+- `THEMES` dict overrides variables per named theme.
+- `write_theme_css()` writes `compose/theme.css` on first run.
 - `detect_theme()` auto-selects theme from `style_template` keywords.
-- To add a theme: add to `THEMES`, then update `detect_theme()`.
+- Available themes: `default`, `noir`, `manga`, `vintage`, `painted`.
 
-### Playwright rendering
+### Playwright rendering notes
 
-- `browser_context()` yields a reusable browser. Use it when rendering multiple
-  pages.
-- `render_html_to_png(html, path, *, browser=None, source_path=None)` should
-  load via `page.goto("file://...")`, not `page.set_content()`, so Chromium can
-  access `file://` images and fonts.
-- `build_page_html(page, project_dir, custom_css, image_url_fn, font_url_fn)`
-  accepts URL hooks. Use `None` for CLI/Playwright file URLs; use HTTP builders
-  for the web server.
+- `browser_context()` yields a reusable Playwright browser instance.
+- `render_html_to_png()` must load via `page.goto("file://...")` not
+  `page.set_content()` so Chromium can access local images and fonts.
+- `build_page_html()` accepts `image_url_fn` and `font_url_fn` hooks — pass
+  `None` for CLI/file URLs, HTTP builders for the web server.
 
-### Known limitation — bubble tails
+### Bubble tails (planned)
 
-Current CSS `::before/::after` tails always point upward. This is wrong for
-pinned bubbles where the character can be anywhere. The planned fix is SVG tails
-with `tail_x/tail_y` target points on the `Bubble` model. Do not build the
-drag-and-drop editor until this is implemented.
+Current CSS `::before/::after` tails always point upward. The planned fix adds
+`BubbleTail` with `tail_x`/`tail_y` target points. Do not build the visual
+drag-and-drop editor until SVG tails are implemented.
 
 ---
 
-## Current model config
+## Current Model Config
 
-Defaults live in `config.py` and may be overridden by project `config.yaml`.
-Do not push model version choices into prompt templates.
+Defaults in `config.py`, overridable via project `config.yaml`.
 
-| Stage | Model |
-|---|---|
-| Extraction | `gemini-3.1-pro-preview` |
-| Screenplay | `gemini-3.1-pro-preview` |
-| Panel breakdown | `gemini-3.1-flash-lite-preview` |
-| Image prompts | `gemini-3.1-flash-lite-preview` |
-| Embeddings | `gemini-embedding-001` |
-| Image generation primary | `gemini-3-pro-image-preview` |
-| Dev-mode image fallback | `gemini-3.1-flash-image-preview` |
+### LLM models (text)
 
-Image model routing in `clients/flux.py`:
+| Stage | Model | Notes |
+|-------|-------|-------|
+| `extract` | `gemini-3.1-pro-preview` | 1M context, full-novel extraction |
+| `adapt` | `gemini-3.1-pro-preview` | Screenplay writing |
+| `storyboard` (panels) | `gemini-3.1-flash-lite-preview` | Panel breakdown |
+| `direct` (prompts) | `gemini-3.1-flash-lite-preview` | Prompt assembly |
 
-- no `/` in model name -> Gemini native `generateContent`
-- contains `/` -> Together AI
-- `imagen-*` is no longer supported
+### Embeddings
+
+`gemini-embedding-001` via Google Vertex AI (3072 dims). Qdrant RAG index is
+optional (`enable_rag_index: false` by default).
+
+### Image generation (`image_provider` + `image_model`)
+
+Configured via two fields:
+- `image_provider: "gemini" | "openai" | "openrouter" | "together"`
+- `image_model: str` — provider-specific model ID
+
+Defaults:
+- `image_provider: "gemini"`
+- `image_model: "gemini-3-pro-image-preview"` (Gemini 3 Pro Image, "Nano Banana Pro")
+- `fallback_image_model: "gemini-3.1-flash-image-preview"` (Gemini 3.1 Flash Image)
+
+Routing in `clients/flux.py`:
+- `image_provider == "gemini"` → Vertex AI or developer API
+- `/` in model name (e.g. `"black-forest-labs/flux-1-dev"`) → Together AI
+- `gpt-image-*` → OpenAI
+- Otherwise → OpenRouter
+
+`dev_mode: true` substitutes `fallback_image_model` for faster iteration.
 
 ---
 
-## Event schema
+## Event Schema
 
 ```python
 {"type": "stage_begin",    "stage": str, "total": int}
@@ -206,18 +244,21 @@ Image model routing in `clients/flux.py`:
 # level: "info" | "warn" | "error" | "dim" | "bold"
 ```
 
-FastAPI SSE example is in `events.py`.
+SSE endpoint: `GET /api/projects/{project}/events`
 
 ---
 
-## State machine
+## State Machine
 
-`state.json` is the source of truth. Stages:
+`state.json` is the source of truth. Stage states:
 
-`pending` -> `running` -> `awaiting_review` (checkpoint stages only) ->
-`complete` / `failed`.
+```
+pending → running → awaiting_review (checkpoint stages only) → complete / failed
+```
 
-Checkpoint stages: `extract`, `index`, `generate`.
+**Stage names:** `["extract", "cast", "adapt", "plan", "storyboard", "direct", "draw", "compose"]`
+
+**Checkpoint stages:** `{"extract", "cast", "direct", "draw"}`
 
 Key helpers in `state.py`: `begin_stage`, `complete_stage`, `fail_stage`,
 `approve_stage`, `record_item_done`, `record_item_failed`.
@@ -226,9 +267,9 @@ State writes are atomic: temp file + rename prevents corruption on crash.
 
 ---
 
-## Configuration priority
+## Configuration Priority
 
-Highest to lowest:
+(highest wins)
 
 1. Shell environment variables
 2. Nearest `.env` file, walked up from `project_dir`
@@ -237,54 +278,94 @@ Highest to lowest:
 
 ---
 
-## Next planned work
+## Key Models
 
-1. SVG bubble tails: add `tail_x/tail_y: float | None` to `Bubble`; render SVG
-   `<path>` tail pointing from bubble edge toward target point when pinned.
-2. Web dashboard: FastAPI server, SSE streaming, REST API for `ComicPage` JSON,
-   export endpoint, static serving for images and fonts.
-3. Visual drag-and-drop editor: browser loads the same HTML/CSS from
-   `build_page_html`; JS sets `Bubble.x/y` and `Sfx.x/y`; PATCHes JSON back to
-   server.
+### LayoutPlan (`models/layout_plan.py`)
+
+Planner-owned artifact produced by stage 4 (`plan`). Contains:
+- `planned_pages: list[PlannedPage]` — page structure with panel geometries
+- `planned_panels: list[PlannedPanel]` — per-panel metadata (scene, shot type,
+  shape intent, generation mode, crop/framing contract)
+- `user_overrides: dict` — panel-level overrides set by the web editor
+- `regeneration_impact: dict` — tracks which panels need regeneration
+
+Key helpers in `layout_planning.py`:
+- `planned_panel_index(plan)` → `dict[panel_id, PlannedPanel]`
+- `scene_panel_map(plan)` → `dict[scene_id, list[PlannedPanel]]`
+- `project_layout_plan_to_pages(...)` — projects layout plan into ComicPage JSON
+
+### ComicPage (`models/comic_page.py`)
+
+Canonical editing surface for Stage 8. Contains page-level data plus per-panel
+`PagePanel` objects, each with `Bubble` list and optional `Sfx`.
+
+### ImagePrompt (`models/prompt.py`)
+
+Produced by Stage 6 (`direct`). Contains `full_prompt` (assembled string),
+`reference_image_paths`, and generation parameters.
 
 ---
 
-## What not to do
+## Project Directory Structure
 
-- Do not add backwards-compatibility shims for old JSON formats. Existing
-  projects can be rebuilt.
-- Do not add speculative abstractions for hypothetical future requirements.
-- Do not collapse stages or add cross-stage logic.
-- Do not add error handling for scenarios that cannot happen in the current
-  pipeline.
-- Do not mock the event system for testing; it is a pass-through lambda.
-- Do not push model version choices into prompt templates.
-
----
-
-## Project directory structure
-
-```text
+```
 projects/my-novel/
-├── config.yaml
-├── state.json
-├── story_bible.json
-├── input/novel.epub
-├── scenes/
-├── refs/
-├── plates/
-├── screenplays/
-├── panels/
-├── prompts/
-├── images/
-├── assembly/
-│   ├── theme.css
+├── config.yaml              # API keys + pipeline config
+├── state.json               # Stage progress, costs, failed items
+├── story_bible.json         # Central artifact — all downstream stages read this
+├── input/
+│   └── novel.epub
+├── scenes/                  # Extracted scene text files (scene_001.txt …)
+├── refs/                    # Character reference sheets
+│   └── char_NNN/
+│       ├── front.png
+│       ├── three_quarter.png
+│       ├── side.png
+│       └── action.png
+├── plates/                  # Location background plates (loc_NNN.png …)
+├── adapt/                   # Per-scene screenplay JSON
+│   └── scene_NNN.json
+├── plan/
+│   └── layout_plan.json     # Planner-owned page/panel structure
+├── storyboard/              # Per-panel breakdown JSON (legacy compat)
+│   └── scene_NNN/
+│       └── panel_NNN.json
+├── direct/                  # Per-panel image prompt JSON
+│   └── scene_NNN/
+│       └── panel_NNN.json
+├── draw/                    # Generated panel images
+│   └── scene_NNN/
+│       └── panel_NNN.png
+├── compose/                 # Stage 8 output
+│   ├── theme.css            # Editable CSS — regenerate with export
 │   ├── pages/
-│   │   ├── page_001.json
-│   │   └── page_001.png
+│   │   ├── page_NNN.json    # Canonical editing surface (ComicPage)
+│   │   └── page_NNN.png     # Rendered preview
 │   └── html/
-│       └── page_001.html
+│       └── page_NNN.html    # HTML preview — open in browser, edit CSS, hard-refresh
 └── exports/
     ├── comic.pdf
     └── comic.cbz
 ```
+
+---
+
+## What Not To Do
+
+- Do not add a `pipeline run <stage>` CLI command — the architecture is API-first.
+- Do not add backwards-compatibility shims for old JSON formats.
+- Do not add speculative abstractions for hypothetical future requirements.
+- Do not collapse stages or add cross-stage logic.
+- Do not push model version choices into prompt templates.
+- Do not mock the event system for testing (pass-through lambda).
+
+---
+
+## Next Planned Work
+
+1. **SVG bubble tails:** Add `tail_x`/`tail_y` to `Bubble`; render SVG `<path>`
+   tail pointing from bubble edge toward target point when pinned.
+2. **Web dashboard improvements:** Live SSE activity drawer, per-action cost
+   previews, bulk panel regeneration.
+3. **Visual page editor:** Drag-and-drop panel reordering across pages,
+   persistent version history.

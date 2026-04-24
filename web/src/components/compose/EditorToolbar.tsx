@@ -44,6 +44,14 @@ export function EditorToolbar({
   onZoomOut,
   onZoomReset,
 }: EditorToolbarProps) {
+  function KeyBadge({ children }: { children: React.ReactNode }) {
+    return (
+      <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-[2px] border border-ink-black/18 bg-bristol px-1 text-[0.43rem] text-ink-black/48">
+        {children}
+      </span>
+    );
+  }
+
   function ToolbarButton({
     label,
     shortcut,
@@ -65,23 +73,21 @@ export function EditorToolbar({
         onClick={onClick}
         disabled={disabled}
         className={cn(
-          "inline-flex h-8 items-center gap-2 border border-ink-black/20 bg-pulp-paper px-2.5 font-meta text-[0.56rem] tracking-[0.12em] text-ink-black transition-colors hover:bg-bristol disabled:cursor-not-allowed disabled:opacity-35",
+          "inline-flex h-8 items-center gap-2 border border-ink-black/22 bg-pulp-paper px-2.5 font-meta text-[0.52rem] tracking-[0.14em] text-ink-black transition-colors hover:bg-bristol disabled:cursor-not-allowed disabled:opacity-35",
           emphasized && "border-ink-black/35 bg-bristol",
         )}
       >
         {icon}
         <span>{label}</span>
         {shortcut && (
-          <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center border border-ink-black/15 px-1 text-[0.44rem] text-ink-black/45">
-            {shortcut}
-          </span>
+          <KeyBadge>{shortcut}</KeyBadge>
         )}
       </button>
     );
   }
 
   return (
-    <div className="flex min-h-10 flex-wrap items-center gap-x-3 gap-y-2 border-y border-ink-black/20 bg-pulp-paper px-3 py-2">
+    <div className="flex min-h-10 flex-wrap items-center gap-x-5 gap-y-2 bg-pulp-paper px-3 py-2">
       <div className="flex items-center gap-1.5">
         <span className="font-meta text-[0.52rem] tracking-[0.16em] text-ink-black/45">ADD:</span>
         <ToolbarButton label="SPEECH" shortcut="B" icon={<Icon name="speech" size={12} />} onClick={() => onAddBubble("speech")} />
@@ -110,7 +116,7 @@ export function EditorToolbar({
           <button
             type="button"
             onClick={onZoomReset}
-            className="inline-flex h-8 min-w-[54px] items-center justify-center border border-ink-black/20 bg-bristol px-2 font-meta text-[0.56rem] tracking-[0.12em] text-ink-black"
+            className="inline-flex h-8 min-w-[54px] items-center justify-center border border-ink-black/22 bg-bristol px-2 font-meta text-[0.52rem] tracking-[0.12em] text-ink-black"
           >
             {Math.round(zoomPercent)}%
           </button>

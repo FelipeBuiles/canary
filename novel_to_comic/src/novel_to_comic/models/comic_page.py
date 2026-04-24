@@ -1,7 +1,7 @@
 """Comic page layout data model.
 
-ComicPage is the canonical editing surface for stage 7 and the future web
-dashboard.  Each page is serialised as ``assembly/pages/page_NNN.json``.
+ComicPage is the canonical editing surface for stage 8 (compose) and the
+web dashboard. Each page is serialised as ``compose/pages/page_NNN.json``.
 
 Rendering pipeline:
     ComicPage JSON  →  html_renderer.build_page_html()  →  HTML string
@@ -42,10 +42,11 @@ class Bubble(BaseModel):
     IDs are deterministic within a given ComicPage JSON file:
     ``"{scene_id}-p{panel_number}-b{dialogue_index}"``.
 
-    They are stable across re-renders (``pipeline export``).  They reset on
-    a full rebuild (``pipeline run assemble`` or ``--rebuild``), which also
-    resets all bubble positions to None — so stale web-editor pin data is
-    never silently applied to the wrong bubble.
+    They are stable across re-renders (``POST /export``).  They reset on
+    a full rebuild (``POST /api/projects/{project}/run/{stage}`` with
+    ``--rebuild``), which also resets all bubble positions to None — so
+    stale web-editor pin data is never silently applied to the wrong
+    bubble.
 
     The web dashboard must treat IDs as opaque strings valid only for the
     lifetime of the current JSON file.

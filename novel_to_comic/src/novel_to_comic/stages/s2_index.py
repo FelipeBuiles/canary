@@ -255,6 +255,15 @@ def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
     return None
 
 
+def _character_ref_style_ref(config: Config, style_ref: Path | None) -> Path | None:
+    if config.image_provider != "openai":
+        return style_ref
+    # OpenAI image edits treat every input image as visual conditioning, not as
+    # a style-only reference. Reusing a previous character sample here can copy
+    # that character's clothing or body details into the next reference sheet.
+    return None
+
+
 def _load_story_bible(project_dir: Path) -> StoryBible:
     bible_path = project_dir / "story_bible.json"
     return StoryBible.model_validate_json(bible_path.read_text())
@@ -306,7 +315,7 @@ async def regenerate_character_ref(
     tmp_path = output_path.with_name(
         f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
     )
-    style_ref = _find_style_ref(project_dir, config.style_template)
+    style_ref = _character_ref_style_ref(config, _find_style_ref(project_dir, config.style_template))
     prompt = _character_ref_prompt(config, story_bible, char)
     meta = _character_ref_meta(config, project_dir, style_ref, char, prompt)
 
@@ -419,16 +428,22 @@ async def _generate_character_refs(
     """
     emit = on_event or _NOOP
     console.print("[bold]Generating character reference images...[/bold]")
-    emit({"type": "log", "stage": "index", "level": "info",
+    emit({"type": "log", "stage": "cast", "level": "info",
           "message": "Generating character reference sheets..."})
     refs_dir = project_dir / "refs"
 
     # A visual style reference image is far stronger than text for locking style.
     # Without it, the model applies different stylistic conventions per character
     # type (human → concept art, cat → anime, creature → dark fantasy).
-    style_ref = _find_style_ref(project_dir, config.style_template)
+    candidate_style_ref = _find_style_ref(project_dir, config.style_template)
+    style_ref = _character_ref_style_ref(config, candidate_style_ref)
     if style_ref:
         console.print(f"[dim]Using style reference: {style_ref.name}[/dim]")
+    elif candidate_style_ref and config.image_provider == "openai":
+        console.print(
+            "[dim]Skipping style image reference for OpenAI character sheets "
+            "to avoid copying another character's outfit.[/dim]"
+        )
     else:
         console.print(
             "[yellow]No style sample found — run `pipeline style` and generate a sample "
@@ -453,17 +468,17 @@ async def _generate_character_refs(
                         await asyncio.to_thread(_crop_sheet_to_poses, output_path)
                     except Exception:
                         pass
-                record_item_done(state, "index", cost=0.0)
-                emit({"type": "log", "stage": "index", "level": "dim",
+                record_item_done(state, "cast", cost=0.0)
+                emit({"type": "log", "stage": "cast", "level": "dim",
                       "message": f"Using existing ref sheet for {char.name}"})
-                emit({"type": "stage_progress", "stage": "index",
-                      "done": state.stages["index"].items_done,
-                      "total": state.stages["index"].items_total})
+                emit({"type": "stage_progress", "stage": "cast",
+                      "done": state.stages["cast"].items_done,
+                      "total": state.stages["cast"].items_total})
                 progress.advance(task)
                 continue
 
             try:
-                emit({"type": "log", "stage": "index", "level": "info",
+                emit({"type": "log", "stage": "cast", "level": "info",
                       "message": f"Generating ref sheet for {char.name}"})
                 # Square 2x2 grid — each quadrant gives a full-body figure
                 # ~512x512px of space, enough to avoid edge clipping.
@@ -477,15 +492,15 @@ async def _generate_character_refs(
                 )
                 await asyncio.to_thread(_crop_sheet_to_poses, output_path)
                 _write_asset_meta(output_path, meta)
-                record_item_done(state, "index", cost=0.05)
-                emit({"type": "stage_progress", "stage": "index",
-                      "done": state.stages["index"].items_done,
-                      "total": state.stages["index"].items_total})
+                record_item_done(state, "cast", cost=0.05)
+                emit({"type": "stage_progress", "stage": "cast",
+                      "done": state.stages["cast"].items_done,
+                      "total": state.stages["cast"].items_total})
             except Exception as e:
                 cause = e.last_attempt.exception() if isinstance(e, RetryError) else e
                 console.print(f"[red]Failed ref sheet for {char.name}: {cause}[/red]")
-                record_item_failed(state, "index", char.id)
-                emit({"type": "log", "stage": "index", "level": "error",
+                record_item_failed(state, "cast", char.id)
+                emit({"type": "log", "stage": "cast", "level": "error",
                       "message": f"Failed ref sheet for {char.name}: {cause}"})
             progress.advance(task)
 
@@ -498,7 +513,7 @@ async def _generate_location_plates(
     """Part C: Generate location background plates."""
     emit = on_event or _NOOP
     console.print("[bold]Generating location plates...[/bold]")
-    emit({"type": "log", "stage": "index", "level": "info",
+    emit({"type": "log", "stage": "cast", "level": "info",
           "message": "Generating location plates..."})
     plates_dir = project_dir / "plates"
     plates_dir.mkdir(parents=True, exist_ok=True)
@@ -513,16 +528,16 @@ async def _generate_location_plates(
             style_ref = _find_style_ref(project_dir, config.style_template)
             meta = _location_plate_meta(config, project_dir, style_ref, loc, prompt)
             if _asset_matches_meta(output_path, meta):
-                record_item_done(state, "index", cost=0.0)
-                emit({"type": "log", "stage": "index", "level": "dim",
+                record_item_done(state, "cast", cost=0.0)
+                emit({"type": "log", "stage": "cast", "level": "dim",
                       "message": f"Using existing location plate for {loc.name}"})
-                emit({"type": "stage_progress", "stage": "index",
-                      "done": state.stages["index"].items_done,
-                      "total": state.stages["index"].items_total})
+                emit({"type": "stage_progress", "stage": "cast",
+                      "done": state.stages["cast"].items_done,
+                      "total": state.stages["cast"].items_total})
                 progress.advance(task)
                 continue
             try:
-                emit({"type": "log", "stage": "index", "level": "info",
+                emit({"type": "log", "stage": "cast", "level": "info",
                       "message": f"Generating location plate for {loc.name}"})
                 await flux.generate_image(
                     config,
@@ -532,10 +547,10 @@ async def _generate_location_plates(
                     ref_type="style",
                 )
                 _write_asset_meta(output_path, meta)
-                record_item_done(state, "index", cost=0.03)
-                emit({"type": "stage_progress", "stage": "index",
-                      "done": state.stages["index"].items_done,
-                      "total": state.stages["index"].items_total})
+                record_item_done(state, "cast", cost=0.03)
+                emit({"type": "stage_progress", "stage": "cast",
+                      "done": state.stages["cast"].items_done,
+                      "total": state.stages["cast"].items_total})
             except Exception as e:
                 cause = e.last_attempt.exception() if isinstance(e, RetryError) else e
                 console.print(f"[red]Failed plate for {loc.name}: {cause}[/red]")
@@ -568,37 +583,37 @@ async def run(
     if should_generate_plates:
         total_items += len([l for l in story_bible.locations if not loc_ids or l.id in loc_ids])
 
-    begin_stage(state, "index", total=total_items)
-    emit({"type": "stage_begin", "stage": "index", "total": total_items})
+    begin_stage(state, "cast", total=total_items)
+    emit({"type": "stage_begin", "stage": "cast", "total": total_items})
     save_state(state, project_dir)
 
     try:
         if should_build_rag:
-            emit({"type": "log", "stage": "index", "level": "info",
+            emit({"type": "log", "stage": "cast", "level": "info",
                   "message": "Building scene search index..."})
             await _build_rag_index(config, project_dir, story_bible)
-            record_item_done(state, "index", cost=0.002)
-            emit({"type": "stage_progress", "stage": "index",
-                  "done": state.stages["index"].items_done,
-                  "total": state.stages["index"].items_total})
+            record_item_done(state, "cast", cost=0.002)
+            emit({"type": "stage_progress", "stage": "cast",
+                  "done": state.stages["cast"].items_done,
+                  "total": state.stages["cast"].items_total})
         elif not is_partial:
             console.print("[dim]Skipping optional RAG index; enable_rag_index is false.[/dim]")
-            emit({"type": "log", "stage": "index", "level": "dim",
+            emit({"type": "log", "stage": "cast", "level": "dim",
                   "message": "Skipping optional RAG index; enable_rag_index is false."})
 
         if should_generate_refs:
             await _generate_character_refs(config, project_dir, story_bible, state, char_ids, on_event)
-            emit({"type": "stage_progress", "stage": "index",
-                  "done": state.stages["index"].items_done,
-                  "total": state.stages["index"].items_total})
+            emit({"type": "stage_progress", "stage": "cast",
+                  "done": state.stages["cast"].items_done,
+                  "total": state.stages["cast"].items_total})
 
         if should_generate_plates:
             await _generate_location_plates(config, project_dir, story_bible, state, loc_ids, on_event)
 
-        complete_stage(state, "index")
-        emit({"type": "stage_complete", "stage": "index",
-              "done": state.stages["index"].items_done,
-              "total": state.stages["index"].items_total})
+        complete_stage(state, "cast")
+        emit({"type": "stage_complete", "stage": "cast",
+              "done": state.stages["cast"].items_done,
+              "total": state.stages["cast"].items_total})
         save_state(state, project_dir)
 
         if not is_partial:
@@ -607,7 +622,7 @@ async def run(
             console.print("Run [bold]pipeline approve --project . --stage index[/bold] to continue.")
 
     except Exception as e:
-        fail_stage(state, "index", str(e))
-        emit({"type": "stage_fail", "stage": "index", "message": str(e)})
+        fail_stage(state, "cast", str(e))
+        emit({"type": "stage_fail", "stage": "cast", "message": str(e)})
         save_state(state, project_dir)
         raise

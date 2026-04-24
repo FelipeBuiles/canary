@@ -1,12 +1,13 @@
 import { useEffect } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { useScreenplays, useScreenplay } from "../../api/queries";
+import { useProjectStatus, useScreenplays, useScreenplay } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { Tag } from "../../components/ui/Tag";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { SceneSidebar } from "../../components/ui/SceneSidebar";
 import { LoadingBlock, StateBlock } from "../../components/ui/StateBlock";
 import { RerunStageAction } from "../../components/ui/RerunStageAction";
+import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
 
 const BEAT_LABEL: Record<string, string> = {
   action: "ACTION",
@@ -18,30 +19,44 @@ const BEAT_LABEL: Record<string, string> = {
 export function AdaptRoom() {
   const { name } = useParams<{ name: string }>();
   const { data: summaries, isLoading: loadingList } = useScreenplays(name);
+  const { data: status } = useProjectStatus(name);
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedScene = searchParams.get("scene");
   const activeScene = selectedScene ?? summaries?.[0]?.scene_id ?? null;
   const { data: screenplay, isLoading: loadingScript } = useScreenplay(name, activeScene);
+  const stageInfo = status?.stages?.adapt;
+  const stageStatus = stageInfo?.status ?? "pending";
 
   useEffect(() => {
     if (selectedScene || !summaries?.[0]?.scene_id) return;
     setSearchParams({ scene: summaries[0].scene_id }, { replace: true });
   }, [selectedScene, setSearchParams, summaries]);
 
+  if (loadingList || (!summaries?.length && stageStatus !== "pending")) {
+    return <RoomShell isLoading loadingText="LOADING SCREENPLAYS…" />;
+  }
+
+  if (!summaries?.length || !name) {
+    return (
+      <RoomShell>
+        <StagePlaceholder
+          stage="adapt"
+          status={stageStatus}
+          itemsDone={stageInfo?.items_done}
+          itemsTotal={stageInfo?.items_total}
+        />
+      </RoomShell>
+    );
+  }
+
   return (
-    <RoomShell
-      isLoading={loadingList}
-      loadingText="LOADING SCREENPLAYS…"
-      isEmpty={!summaries?.length || !name}
-      emptyTitle="SCREENPLAYS NOT AVAILABLE"
-      emptyDescription="Complete ADAPT first."
-    >
+    <RoomShell>
       <div className="flex h-[calc(100vh-3rem)] min-h-0 flex-col gap-10 md:h-[calc(100vh-5rem)]">
         <ShowcaseHeader
           label="ADAPT / SCREENPLAY"
           title="SCREENPLAY VIEWER"
           lead="Each scene's prose rendered into beats — action, dialogue, sfx, description — ready to panel."
-          actions={name ? <RerunStageAction project={name} stage="screenplay" label="Adapt" /> : null}
+          actions={name ? <RerunStageAction project={name} stage="adapt" label="Adapt" /> : null}
         />
 
         <section className="grid min-h-0 flex-1 grid-rows-[minmax(132px,30%)_minmax(0,1fr)] overflow-hidden border-[2px] border-ink-black bg-bristol xl:grid-cols-[300px_minmax(0,1fr)] xl:grid-rows-none">

@@ -2,11 +2,11 @@
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 LANGUAGE_NAMES: dict[str, str] = {
@@ -21,6 +21,7 @@ _ENV_KEYS: dict[str, str] = {
     "ANTHROPIC_API_KEY": "anthropic_api_key",
     "TOGETHER_API_KEY": "together_api_key",
     "OPENAI_API_KEY": "openai_api_key",
+    "OPENROUTER_API_KEY": "openrouter_api_key",
     "GOOGLE_CLOUD_PROJECT": "google_cloud_project",
     "GOOGLE_CLOUD_LOCATION": "google_cloud_location",
 }
@@ -29,11 +30,14 @@ _ENV_KEYS: dict[str, str] = {
 class Config(BaseModel):
     """Pipeline configuration. Loaded from config.yaml in the project directory."""
 
+    model_config = ConfigDict(validate_assignment=True)
+
     # API Keys — load from .env or environment variables instead of hardcoding here
     gemini_api_key: str = ""
     anthropic_api_key: str = ""
     together_api_key: str = ""
     openai_api_key: str = ""
+    openrouter_api_key: str = ""
 
     # Google Gemini access. Vertex AI uses Application Default Credentials
     # instead of Gemini Developer API keys.
@@ -48,6 +52,7 @@ class Config(BaseModel):
     panel_model: str = "gemini-3.1-flash-lite-preview"
     prompt_model: str = "gemini-3.1-flash-lite-preview"
     embedding_model: str = "gemini-embedding-001"  # Google Vertex AI, 3072 dims
+    image_provider: Literal["gemini", "openai", "openrouter", "together"] = "gemini"
     image_model: str = "gemini-3-pro-image-preview"   # Nano Banana Pro — Gemini 3 Pro Image (native)
     fallback_image_model: str = "gemini-3.1-flash-image-preview"  # Nano Banana 2 — faster dev image model
 
@@ -115,6 +120,9 @@ class Config(BaseModel):
         if self.dev_mode and self.image_model == "gemini-3-pro-image-preview":
             return self.fallback_image_model or "gemini-3.1-flash-image-preview"
         return self.image_model
+
+    def uses_gemini_image_provider(self) -> bool:
+        return self.image_provider == "gemini"
 
     def language_code(self) -> str:
         return self.target_language if self.target_language in LANGUAGE_NAMES else "en"
@@ -228,10 +236,12 @@ def save_config(config: Config, project_dir: Path) -> None:
 #   ANTHROPIC_API_KEY   — https://console.anthropic.com/
 #   TOGETHER_API_KEY    — https://api.together.ai/settings/api-keys
 #   OPENAI_API_KEY      — optional, only for OpenAI embeddings
+#   OPENROUTER_API_KEY  — https://openrouter.ai/settings/keys
 gemini_api_key: ""
 anthropic_api_key: ""
 together_api_key: ""
 openai_api_key: ""
+openrouter_api_key: ""
 
 # Set false only if you intentionally want to use GEMINI_API_KEY instead of Vertex AI.
 google_use_vertex_ai: {str(config.google_use_vertex_ai).lower()}
@@ -262,9 +272,14 @@ enable_rag_index: {str(config.enable_rag_index).lower()}
 # WARNING: changing this after building a RAG index requires rebuilding that index
 embedding_model: "{config.embedding_model}"
 
-# Image generation model
+# Image generation provider/model
+# image_provider: gemini | openai | openrouter | together
+image_provider: "{config.image_provider}"
+#
 # Nano Banana Pro  (Gemini 3 Pro Image, default): "gemini-3-pro-image-preview"
 # Nano Banana 2    (Gemini 3.1 Flash Image):      "gemini-3.1-flash-image-preview"
+# OpenAI:                                         "gpt-image-1"
+# OpenRouter:                                     "black-forest-labs/flux-1-dev"
 # Together AI:                                    "black-forest-labs/FLUX.1-kontext-pro"
 image_model: "{config.image_model}"
 

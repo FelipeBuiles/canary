@@ -14,7 +14,7 @@ from rich.console import Console
 from rich.progress import Progress
 
 from novel_to_comic.clients import flux
-from novel_to_comic.clients.flux import _is_gemini_native, is_rate_limited_error
+from novel_to_comic.clients.flux import is_rate_limited_error
 from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.layout_planning import load_layout_plan, prompt_path_for_panel, scene_panel_map
@@ -192,7 +192,7 @@ async def _generate_panel(
 
         prompt = _load_or_upgrade_prompt(config, project_dir, prompt_path, story_bible)
 
-        output_dir = project_dir / "images" / prompt.scene_id
+        output_dir = project_dir / "draw" / prompt.scene_id
         output_path = output_dir / f"panel_{prompt.panel_number:03d}.png"
         scene_lock = scene_locks.setdefault(prompt.scene_id, asyncio.Lock())
 
@@ -296,7 +296,7 @@ async def regenerate_panel_image(
     semaphore: asyncio.Semaphore | None = None,
 ) -> Path | None:
     """Regenerate one panel without mutating stage counters or deleting the old image."""
-    prompt_path = project_dir / "prompts" / scene_id / f"panel_{panel_number:03d}.json"
+    prompt_path = project_dir / "direct" / scene_id / f"panel_{panel_number:03d}.json"
     if not prompt_path.exists():
         raise FileNotFoundError(f"Prompt not found: {scene_id}/panel_{panel_number:03d}")
 
@@ -336,12 +336,12 @@ async def run(
 ) -> None:
     """Execute Stage 6: Generate panel images."""
     emit = on_event or _NOOP
-    prompts_dir = project_dir / "prompts"
+    prompts_dir = project_dir / "direct"
     prompt_files: list[Path] = []
     story_bible: StoryBible | None = None
     plan = None
     panels_by_scene = {}
-    plan_path = project_dir / "layout_plan" / "layout_plan.json"
+    plan_path = project_dir / "plan" / "layout_plan.json"
     if plan_path.exists():
         plan = load_layout_plan(project_dir)
         panels_by_scene = scene_panel_map(plan)
@@ -367,7 +367,7 @@ async def run(
                     # Include only panels whose output image is actually missing.
                     # More reliable than the items_failed list, which resets each run.
                     prompt = ImagePrompt.model_validate_json(pf.read_text())
-                    out = project_dir / "images" / prompt.scene_id / f"panel_{prompt.panel_number:03d}.png"
+                    out = project_dir / "draw" / prompt.scene_id / f"panel_{prompt.panel_number:03d}.png"
                     if out.exists():
                         continue
                 prompt_files.append(pf)
@@ -413,16 +413,15 @@ async def run(
         panel_events[(pf.parent.name, panel_num)] = asyncio.Event()
 
     # Always reset counters for clean tracking
-    begin_stage(state, "generate", total=len(prompt_files))
-    emit({"type": "stage_begin", "stage": "generate", "total": len(prompt_files)})
-    emit({"type": "log", "stage": "generate", "level": "info",
+    begin_stage(state, "draw", total=len(prompt_files))
+    emit({"type": "stage_begin", "stage": "draw", "total": len(prompt_files)})
+    emit({"type": "log", "stage": "draw", "level": "info",
           "message": f"Preparing {len(prompt_files)} panel image jobs..."})
     save_state(state, project_dir)
 
     # Google Gemini image models have tight per-minute quotas and are called
     # sequentially with a delay. Together AI supports real parallelism.
-    model = config.effective_image_model()
-    using_google = _is_gemini_native(model)
+    using_google = config.uses_gemini_image_provider()
     batch_size = 1 if using_google else config.effective_image_concurrency(google_model=False)
     inter_request_delay = 4.0 if using_google and not config.dev_mode else 0.0
 
@@ -440,7 +439,7 @@ async def run(
                 batch = prompt_files[batch_start:batch_start + batch_size]
                 first = batch_start + 1
                 last = batch_start + len(batch)
-                emit({"type": "log", "stage": "generate", "level": "info",
+                emit({"type": "log", "stage": "draw", "level": "info",
                       "message": f"Drawing panel batch {first}-{last} of {len(prompt_files)}"})
                 coros = [
                     _generate_panel(config, project_dir, pf, semaphore, scene_locks,
@@ -457,7 +456,7 @@ async def run(
                                 f"{int(_RATE_LIMIT_RECOVERY_COOLDOWN_SECONDS)}s and retrying once."
                             )
                             console.print(f"[yellow]{msg}[/yellow]")
-                            emit({"type": "log", "stage": "generate", "level": "warning", "message": msg})
+                            emit({"type": "log", "stage": "draw", "level": "warning", "message": msg})
                             await asyncio.sleep(_RATE_LIMIT_RECOVERY_COOLDOWN_SECONDS)
                             retry_result = await asyncio.gather(
                                 _generate_panel(
@@ -475,16 +474,16 @@ async def run(
                             )
                             retry_outcome = retry_result[0]
                             if not isinstance(retry_outcome, Exception):
-                                record_item_done(state, "generate", cost=COST_PER_IMAGE)
+                                record_item_done(state, "draw", cost=COST_PER_IMAGE)
                                 emit({
                                     "type": "log",
-                                    "stage": "generate",
+                                    "stage": "draw",
                                     "level": "dim",
                                     "message": f"Recovered {pf.parent.name} / {pf.stem.replace('_', ' ')} after cooldown retry",
                                 })
-                                emit({"type": "stage_progress", "stage": "generate",
-                                      "done": state.stages["generate"].items_done,
-                                      "total": state.stages["generate"].items_total})
+                                emit({"type": "stage_progress", "stage": "draw",
+                                      "done": state.stages["draw"].items_done,
+                                      "total": state.stages["draw"].items_total})
                                 recovered = True
                             else:
                                 result = retry_outcome
@@ -496,33 +495,33 @@ async def run(
                         cause = getattr(result, "__cause__", None) or result
                         msg = f"Failed {pf.name}: {_fmt_error(cause)}"
                         console.print(f"[red]{msg}[/red]")
-                        emit({"type": "log", "stage": "generate", "level": "error",
+                        emit({"type": "log", "stage": "draw", "level": "error",
                               "message": msg})
-                        record_item_failed(state, "generate", str(pf))
+                        record_item_failed(state, "draw", str(pf))
                     else:
-                        record_item_done(state, "generate", cost=COST_PER_IMAGE)
-                        emit({"type": "log", "stage": "generate", "level": "dim",
+                        record_item_done(state, "draw", cost=COST_PER_IMAGE)
+                        emit({"type": "log", "stage": "draw", "level": "dim",
                               "message": f"Finished {pf.parent.name} / {pf.stem.replace('_', ' ')}"})
-                        emit({"type": "stage_progress", "stage": "generate",
-                              "done": state.stages["generate"].items_done,
-                              "total": state.stages["generate"].items_total})
+                        emit({"type": "stage_progress", "stage": "draw",
+                              "done": state.stages["draw"].items_done,
+                              "total": state.stages["draw"].items_total})
                     progress.advance(task)
                 save_state(state, project_dir)
 
                 if inter_request_delay and batch_start + batch_size < len(prompt_files):
                     await asyncio.sleep(inter_request_delay)
 
-        complete_stage(state, "generate")
-        emit({"type": "stage_complete", "stage": "generate",
-              "done": state.stages["generate"].items_done,
-              "total": state.stages["generate"].items_total})
+        complete_stage(state, "draw")
+        emit({"type": "stage_complete", "stage": "draw",
+              "done": state.stages["draw"].items_done,
+              "total": state.stages["draw"].items_total})
         save_state(state, project_dir)
         console.print("[yellow]Stage 7 complete — awaiting review.[/yellow]")
         console.print("Review generated panels in: images/")
         console.print("Run [bold]pipeline approve --project . --stage generate[/bold] to continue.")
 
     except Exception as e:
-        fail_stage(state, "generate", str(e))
-        emit({"type": "stage_fail", "stage": "generate", "message": str(e)})
+        fail_stage(state, "draw", str(e))
+        emit({"type": "stage_fail", "stage": "draw", "message": str(e)})
         save_state(state, project_dir)
         raise

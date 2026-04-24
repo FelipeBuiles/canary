@@ -291,6 +291,12 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
         { project: name, stage: needsApproval },
         {
           onSuccess: () => {
+            // After approving extract, go to style selection before running cast.
+            // Check stylesData directly — status cache is stale at this point.
+            if (needsApproval === "extract" && stylesData?.active_index == null) {
+              navigate(`/project/${encodeURIComponent(name)}/styles`);
+              return;
+            }
             clearEvents();
             runPipeline.mutate(
               { project: name },

@@ -15,23 +15,23 @@ interface ModeSwitcherProps {
 
 export function ModeSwitcher({ mode, onModeChange }: ModeSwitcherProps) {
   return (
-    <div className="flex shrink-0 border-b-[2px] border-ink-black bg-ink-black">
+    <div className="mx-2 flex shrink-0 border-[2px] border-ink-black bg-ink-black">
       {MODES.map((m, i) => (
         <button
           key={m.id}
           onClick={() => onModeChange(m.id)}
           className={cn(
-            "flex flex-1 items-center justify-center gap-2 px-4 py-3 font-meta text-[0.65rem] tracking-[0.18em] transition-colors",
+            "inline-flex min-h-8 items-center justify-center gap-2 border-r border-pulp-paper/10 px-4 py-2 font-meta text-[0.56rem] tracking-[0.18em] transition-colors md:min-w-[120px]",
             mode === m.id
               ? "bg-pulp-paper text-ink-black"
-              : "text-pulp-paper/50 hover:text-pulp-paper/80",
+              : "text-pulp-paper/45 hover:text-pulp-paper/85",
           )}
         >
           <span className="opacity-50">0{i + 1}</span>
           <span>{m.label}</span>
           <kbd
             className={cn(
-              "ml-0.5 rounded border px-1 py-0.5 text-[0.48rem] opacity-40",
+              "ml-1 rounded-[2px] border px-1 py-0.5 text-[0.46rem] opacity-55",
               mode === m.id ? "border-ink-black" : "border-pulp-paper/30",
             )}
           >

@@ -5,13 +5,13 @@
 
 ## Overview
 
-The current pipeline treats layout mostly as a Stage 7 concern. That works for simple pagination, but it breaks down when Compose changes panel count, page balance, or panel emphasis. A page-level layout change can imply upstream changes to panel structure, prompt framing, and generation requirements, yet there is no canonical artifact that owns those decisions.
+The current pipeline treats layout mostly as a Stage 8 concern. That works for simple pagination, but it breaks down when Compose changes panel count, page balance, or panel emphasis. A page-level layout change can imply upstream changes to panel structure, prompt framing, and generation requirements, yet there is no canonical artifact that owns those decisions.
 
 This design introduces a new canonical planning layer between screenplay beats and prompt generation:
 
 `story bible -> screenplay beats -> layout plan -> prompts -> generate -> compose/export`
 
-The `layout plan` becomes the source of truth for comic structure. It owns beat-to-panel grouping, panel importance, panel shape intent, page assignment, and downstream regeneration impact. Compose edits this plan for structural changes, while `assembly/pages/page_NNN.json` remains the canonical Stage 7 editing surface for presentation concerns such as bubbles, SFX, styling, and final render adjustments.
+The `layout plan` becomes the source of truth for comic structure. It owns beat-to-panel grouping, panel importance, panel shape intent, page assignment, and downstream regeneration impact. Compose edits this plan for structural changes, while `compose/pages/page_NNN.json` remains the canonical Stage 8 editing surface for presentation concerns such as bubbles, SFX, styling, and final render adjustments.
 
 ## Problem Statement
 
@@ -20,7 +20,7 @@ The `layout plan` becomes the source of truth for comic structure. It owns beat-
 | **Layout is too late** | Page layout is mostly chosen during assemble, after panel count and framing are already fixed |
 | **Panel count has no safe owner** | A Compose layout change can imply split/merge/add/remove behavior, but no upstream artifact owns that structure |
 | **Prompt framing is disconnected from page intent** | Stage 5 and Stage 6 know `shot_type` but not whether a panel is supposed to be wide, tall, splash, inset, or irregular |
-| **Stage 7 is overloaded** | `assembly/pages/page_NNN.json` is both the editing surface and the only place where page structure is concretely visible |
+| **Stage 8 is overloaded** | `compose/pages/page_NNN.json` is both the editing surface and the only place where page structure is concretely visible |
 | **Structural edits are not traceable** | There is no clean distinction between narrative/panel edits and presentation edits |
 | **Image reuse is ad hoc** | The system lacks a policy for when an existing generated image is still compatible after layout changes |
 
@@ -31,7 +31,7 @@ The `layout plan` becomes the source of truth for comic structure. It owns beat-
 - Let screenplay express cinematic intent without forcing it to own final panelization.
 - Support first-class dynamic panel shapes without locking the planner to one renderer's geometry model.
 - Keep Compose exploratory and fast by preserving existing images by default and making regeneration explicit.
-- Preserve Stage 7 page JSON as the canonical presentation editing surface without making it the structural source of truth.
+- Preserve Stage 8 page JSON as the canonical presentation editing surface without making it the structural source of truth.
 
 ## Non-Goals
 
@@ -58,7 +58,7 @@ Responsibilities by stage:
 The critical boundary is:
 
 - `layout plan` is canonical for comic structure.
-- `assembly/pages/page_NNN.json` is canonical for Stage 7 presentation editing.
+- `compose/pages/page_NNN.json` is canonical for Stage 8 presentation editing.
 
 ## Core Design Decisions
 
@@ -232,14 +232,14 @@ Generation behavior:
 
 Each generated asset should retain compatibility metadata describing the contract it was generated for.
 
-### Stage 7: Compose Projection and Render
+### Stage 8: Compose Projection and Render
 
-Stage 7 should be treated as two concerns:
+Stage 8 should be treated as two concerns:
 
 - **Projection:** materialize the current layout plan and chosen image assets into renderable `ComicPage` JSON.
 - **Render/export:** build HTML and screenshots from projected pages, then export PDF/CBZ.
 
-`assembly/pages/page_NNN.json` remains the canonical Stage 7 editing surface, but now for presentation and render concerns rather than structural truth.
+`compose/pages/page_NNN.json` remains the canonical Stage 8 editing surface, but now for presentation and render concerns rather than structural truth.
 
 ## Compose Editing Model
 
@@ -276,7 +276,7 @@ That distinction supports behaviors like “replan this scene but preserve my ma
 
 ### Presentation Operations
 
-Presentation operations remain Stage 7 concerns:
+Presentation operations remain Stage 8 concerns:
 
 - bubble placement
 - bubble ordering
@@ -363,7 +363,7 @@ At the end of this phase:
 - `layout plan` exists on disk
 - it has stable panel/page IDs
 - Compose can inspect it
-- Stage 7 still projects into `assembly/pages/page_NNN.json`
+- Stage 8 still projects into `compose/pages/page_NNN.json`
 
 ### Phase 2: Move Prompts and Generation to Planned Panels
 
@@ -375,7 +375,7 @@ At the end of this phase:
 - generation keys off planned-panel IDs
 - asset compatibility metadata starts being stored
 
-### Phase 3: Make Stage 7 a Projection Layer
+### Phase 3: Make Stage 8 a Projection Layer
 
 Refactor assemble so it reads `PlannedPage`s from the layout plan rather than grouping panels naively.
 
@@ -383,7 +383,7 @@ At the end of this phase:
 
 - page structure comes from the planner
 - `ComicPage` JSON is a projection
-- Stage 7 no longer owns structural truth
+- Stage 8 no longer owns structural truth
 
 ### Phase 4: Add Structural Compose Edits
 
@@ -424,7 +424,7 @@ The redesign is successful when:
 - Compose distinguishes structural edits from presentation edits
 - structural changes produce explicit downstream impact states
 - existing images can be preserved, warned, or invalidated deterministically
-- `assembly/pages/page_NNN.json` remains the canonical Stage 7 editing surface for presentation, not story structure
+- `compose/pages/page_NNN.json` remains the canonical Stage 8 editing surface for presentation, not story structure
 
 ## Open Questions Resolved by This Design
 

@@ -15,7 +15,7 @@ The intended end state is:
 with these ownership rules:
 
 - `layout plan` is canonical for comic structure.
-- `assembly/pages/page_NNN.json` remains canonical for Stage 7 presentation editing.
+- `compose/pages/page_NNN.json` remains canonical for Stage 8 presentation editing.
 - Compose structural edits write planner overrides into the layout plan.
 - Compose presentation edits continue to write projected page JSON.
 
@@ -185,8 +185,8 @@ Create the canonical planning artifact and IDs without breaking the current end-
 
 ### Verification
 
-- `pipeline run screenplay`
-- `pipeline run layout-plan`
+- `POST /api/projects/{project}/run` with `stage=adapt`
+- `POST /api/projects/{project}/run` with `stage=plan`
 - inspect `layout_plan/layout_plan.json`
 - confirm deterministic IDs and page assignments are stable across repeated runs with unchanged inputs
 - verify no downstream stage regressions when planner output exists but is not yet the sole input
@@ -291,8 +291,8 @@ Stop Stage 7 from inventing page structure. Make it project `PlannedPage` into `
 
 ### Verification
 
-- `pipeline run assemble` builds pages from the layout plan
-- `pipeline export` still respects page JSON presentation edits
+- `POST /api/projects/{project}/run` with `stage=compose` builds pages from the layout plan
+- `POST /api/projects/{project}/run` with `stage=compose` still respects page JSON presentation edits
 - page count now matches planner decisions, not `max_panels_per_page` packing heuristics
 
 ### Exit Criteria

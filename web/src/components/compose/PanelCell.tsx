@@ -117,8 +117,8 @@ export function PanelCell({
       )}
 
       {/* Panel ID debug label */}
-      <div className="panel-id" data-panel-id={panel.id}>
-        {panel.scene_id}/{panel.panel_number}
+      <div className="panel-id" data-panel-id={panel.id} title={`${panel.scene_id}/${panel.panel_number}`}>
+        P{panelIndex + 1}
       </div>
     </div>
   );

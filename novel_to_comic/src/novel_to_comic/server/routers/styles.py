@@ -118,8 +118,6 @@ async def _generate_style_sample(config, bible, project_dir, sample_path):
 
 
 async def _generate_style_samples_parallel(config, bible, project_dir, indices, suggestions):
-    from novel_to_comic.clients.flux import _is_gemini_native
-
     samples_dir = project_dir / "samples"
     samples_dir.mkdir(exist_ok=True)
 
@@ -130,7 +128,7 @@ async def _generate_style_samples_parallel(config, bible, project_dir, indices, 
         sample_path = samples_dir / f"style_{idx}.png"
         await _generate_style_sample(sample_config, bible, project_dir, sample_path)
 
-    if _is_gemini_native(config.effective_image_model()):
+    if config.uses_gemini_image_provider():
         for i in indices:
             await _one(i)
         return

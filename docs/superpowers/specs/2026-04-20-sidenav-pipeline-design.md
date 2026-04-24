@@ -41,16 +41,17 @@ Each stage shows as an icon button:
 ┌──────────────────────────────┐
 │ [Logo]  Canary         [≡]   │  ← Header with collapse toggle
 ├──────────────────────────────┤
-│ ▸ EXTRACT    ✓               │
-│ ▸ CAST       ✓               │
-│ ▸ ADAPT      ✓               │
-│ ▸ STORYBOARD ✓               │
-│ ▸ DIRECT     ● RUNNING       │  ← Current stage highlighted
-│ ▸ DRAW       ○ PENDING       │
-│ ▸ COMPOSE    ○ PENDING       │
+│ ▸ EXTRACT     ✓               │
+│ ▸ CAST        ✓               │
+│ ▸ ADAPT       ✓               │
+│ ▸ PLAN        ✓               │
+│ ▸ STORYBOARD  ✓               │
+│ ▸ DIRECT      ● RUNNING       │  ← Current stage highlighted
+│ ▸ DRAW        ○ PENDING       │
+│ ▸ COMPOSE     ○ PENDING       │
 ├──────────────────────────────┤
 │                              │
-│   ●████████████████░░░░░░░   │  ← Progress bar (3/7 complete)
+│   ●████████████████░░░░░░░   │  ← Progress bar (4/8 complete)
 │                              │
 │      [ CONTINUE → ]         │  ← Primary action button
 │                              │
@@ -76,7 +77,7 @@ Each stage row shows:
 
 Horizontal visual strip above the stage list:
 ```
-[✓] → [✓] → [✓] → [✓] → [●] → [○] → [○]
+[✓] → [✓] → [✓] → [✓] → [●] → [○] → [○] → [○]
 ```
 
 Icons: ✓ complete, ● running, ✗ failed/review, ○ pending

@@ -69,10 +69,10 @@ async def run(
 
     story_bible = _load_story_bible(project_dir)
 
-    plan_path = project_dir / "layout_plan" / "layout_plan.json"
+    plan_path = project_dir / "plan" / "layout_plan.json"
     if not plan_path.exists():
         console.print("[red]No layout plan found. Run stage 4 (layout-plan) first.[/red]")
-        emit({"type": "log", "stage": "prompts", "level": "error",
+        emit({"type": "log", "stage": "direct", "level": "error",
               "message": "No layout plan found. Run stage 4 (layout-plan) first."})
         return
     plan = load_layout_plan(project_dir)
@@ -87,8 +87,8 @@ async def run(
             prev_panel = scene_panels[index - 1] if index > 0 else None
             planned_panels.append((panel, prev_panel))
 
-    begin_stage(state, "prompts", total=len(planned_panels))
-    emit({"type": "stage_begin", "stage": "prompts", "total": len(planned_panels)})
+    begin_stage(state, "direct", total=len(planned_panels))
+    emit({"type": "stage_begin", "stage": "direct", "total": len(planned_panels)})
     save_state(state, project_dir)
 
     try:
@@ -104,26 +104,26 @@ async def run(
                 for (panel, _prev_panel), result in zip(batch, results):
                     if isinstance(result, Exception):
                         console.print(f"[red]Failed {panel.panel_id}: {result}[/red]")
-                        emit({"type": "log", "stage": "prompts", "level": "error",
+                        emit({"type": "log", "stage": "direct", "level": "error",
                               "message": f"Failed {panel.panel_id}: {result}"})
-                        record_item_failed(state, "prompts", panel.panel_id)
+                        record_item_failed(state, "direct", panel.panel_id)
                     else:
-                        record_item_done(state, "prompts", cost=0.001)
-                        emit({"type": "stage_progress", "stage": "prompts",
-                              "done": state.stages["prompts"].items_done,
-                              "total": state.stages["prompts"].items_total})
+                        record_item_done(state, "direct", cost=0.001)
+                        emit({"type": "stage_progress", "stage": "direct",
+                              "done": state.stages["direct"].items_done,
+                              "total": state.stages["direct"].items_total})
                     progress.advance(task)
                 save_state(state, project_dir)
 
-        complete_stage(state, "prompts")
-        emit({"type": "stage_complete", "stage": "prompts",
-              "done": state.stages["prompts"].items_done,
-              "total": state.stages["prompts"].items_total})
+        complete_stage(state, "direct")
+        emit({"type": "stage_complete", "stage": "direct",
+              "done": state.stages["direct"].items_done,
+              "total": state.stages["direct"].items_total})
         save_state(state, project_dir)
         console.print("[green]Stage 6 complete.[/green]")
 
     except Exception as e:
-        fail_stage(state, "prompts", str(e))
-        emit({"type": "stage_fail", "stage": "prompts", "message": str(e)})
+        fail_stage(state, "direct", str(e))
+        emit({"type": "stage_fail", "stage": "direct", "message": str(e)})
         save_state(state, project_dir)
         raise

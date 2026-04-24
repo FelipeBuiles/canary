@@ -1,4 +1,5 @@
 import type { ComposeMode } from "./compose-types";
+import { Icon } from "../ui/Icon";
 
 interface ComposeHeaderProps {
   mode: ComposeMode;
@@ -6,6 +7,7 @@ interface ComposeHeaderProps {
   onExport: (format: "pdf" | "cbz") => void;
   onOpenCmdk: () => void;
   onPreview: () => void;
+  rerunAction?: React.ReactNode;
 }
 
 export function ComposeHeader({
@@ -14,31 +16,35 @@ export function ComposeHeader({
   onExport,
   onOpenCmdk,
   onPreview,
+  rerunAction,
 }: ComposeHeaderProps) {
   function UtilityButton({
     label,
     shortcut,
     onClick,
+    icon,
     emphasized = false,
   }: {
     label: string;
     shortcut?: string;
     onClick: () => void;
+    icon?: React.ReactNode;
     emphasized?: boolean;
   }) {
     return (
       <button
         type="button"
         onClick={onClick}
-        className={`inline-flex h-9 items-center gap-2 border px-3.5 font-meta text-[0.58rem] tracking-[0.14em] transition-colors ${
+        className={`inline-flex h-8 items-center gap-2 border px-3 font-meta text-[0.52rem] tracking-[0.16em] transition-colors ${
           emphasized
             ? "border-[#9e4734] bg-[#a84a35] text-bristol hover:bg-[#943c28]"
             : "border-ink-black/20 bg-bristol text-ink-black hover:bg-surface-container"
         }`}
       >
+        {icon}
         <span>{label}</span>
         {shortcut ? (
-          <span className={`inline-flex h-4 min-w-4 items-center justify-center border px-1 text-[0.42rem] ${
+          <span className={`inline-flex h-4 min-w-4 items-center justify-center rounded-[2px] border px-1 text-[0.42rem] ${
             emphasized ? "border-bristol/30 text-bristol/70" : "border-ink-black/15 text-ink-black/45"
           }`}>
             {shortcut}
@@ -49,17 +55,19 @@ export function ComposeHeader({
   }
 
   return (
-    <section className="shrink-0 border-b-[2px] border-ink-black bg-bristol px-7 py-4 md:px-8 md:py-4.5">
+    <section className="m-2 shrink-0 border-[3px] border-ink-black bg-bristol px-5 py-4 shadow-[3px_3px_0_0_var(--color-ink-black)] md:px-7 md:py-4.5">
       <div className="flex items-start justify-between gap-6">
         <span className="inline-flex min-h-7 items-center bg-hero-red px-3 py-1 font-meta text-[0.5rem] tracking-[0.22em] uppercase text-bristol">
           COMPOSE · {mode.toUpperCase()}
         </span>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <UtilityButton label="COMMANDS" shortcut="⌘K" onClick={onOpenCmdk} />
-          <UtilityButton label="PREVIEW" onClick={onPreview} />
+          {rerunAction}
+          <UtilityButton label="COMMANDS" shortcut="⌘K" icon={<Icon name="search" size={12} />} onClick={onOpenCmdk} />
+          <UtilityButton label="PREVIEW" icon={<Icon name="eye" size={12} />} onClick={onPreview} />
           <UtilityButton
             label={isExporting ? "EXPORTING…" : "EXPORT PDF"}
             shortcut="⌘E"
+            icon={<Icon name="export" size={12} />}
             onClick={() => onExport("pdf")}
             emphasized
           />

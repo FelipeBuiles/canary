@@ -44,6 +44,23 @@ const FONT_OPTIONS = [
   { label: "Mono", value: "'Courier New', monospace" },
 ];
 
+function BindingIndicator({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  tone?: "neutral" | "active";
+}) {
+  return (
+    <div className={`border px-2 py-1.5 ${tone === "active" ? "border-hero-red/45 bg-outline-ghost/45" : "border-ink-black/12 bg-bristol"}`}>
+      <div className="font-meta text-[0.45rem] tracking-[0.18em] text-ink-black/38">{label}</div>
+      <div className="mt-0.5 font-meta text-[0.58rem] tracking-[0.12em] text-ink-black/70">{value}</div>
+    </div>
+  );
+}
+
 interface DebouncedColorInputProps {
   value: string;
   onCommit: (value: string) => void;
@@ -135,7 +152,7 @@ export function PropertyPanel({
 
   if (!selection) {
     return (
-      <Card className="max-h-none overflow-hidden md:max-h-[calc(100vh-236px)]">
+      <Card className="max-h-none overflow-hidden shadow-[3px_3px_0_0_var(--color-ink-black)] md:max-h-[calc(100vh-236px)]">
         <SurfaceHeader kicker="INSPECTOR" title={t("PAGE PROPERTIES")} />
 
         <div className="max-h-none space-y-4 overflow-y-auto p-3 md:max-h-[calc(100vh-292px)]">
@@ -371,10 +388,16 @@ export function PropertyPanel({
     const isPinned = bubble.x != null && bubble.y != null;
 
     return (
-      <Card className="max-h-none overflow-hidden md:max-h-[calc(100vh-236px)]">
+      <Card className="max-h-none overflow-hidden shadow-[3px_3px_0_0_var(--color-ink-black)] md:max-h-[calc(100vh-236px)]">
         <SurfaceHeader kicker="INSPECTOR" title={t("BUBBLE")} />
 
         <div className="max-h-none space-y-4 overflow-y-auto p-3 md:max-h-[calc(100vh-292px)]">
+        <div className="grid grid-cols-3 gap-1.5">
+          <BindingIndicator label="PANEL" value={`P${found.panel.panel_number}`} tone="active" />
+          <BindingIndicator label="ANCHOR" value={isPinned ? "PINNED" : "AUTO"} />
+          <BindingIndicator label="TAIL" value={bubble.tail_x != null && bubble.tail_y != null ? "TARGET" : bubble.type === "speech" ? bubble.tail_direction.toUpperCase() : "NONE"} />
+        </div>
+
         <div>
           <FieldLabel>{t("TEXT")}</FieldLabel>
           <EditableText
@@ -559,10 +582,15 @@ export function PropertyPanel({
   const sfxPinned = sfx.x != null && sfx.y != null;
 
   return (
-    <Card className="max-h-none overflow-hidden md:max-h-[calc(100vh-236px)]">
+      <Card className="max-h-none overflow-hidden shadow-[3px_3px_0_0_var(--color-ink-black)] md:max-h-[calc(100vh-236px)]">
       <SurfaceHeader kicker="INSPECTOR" title="SFX" />
 
       <div className="max-h-none space-y-4 overflow-y-auto p-3 md:max-h-[calc(100vh-292px)]">
+      <div className="grid grid-cols-2 gap-1.5">
+        <BindingIndicator label="PANEL" value={`P${sfxFound.panel.panel_number}`} tone="active" />
+        <BindingIndicator label="ANCHOR" value={sfxPinned ? "PINNED" : "AUTO"} />
+      </div>
+
       <div>
         <FieldLabel>TEXT</FieldLabel>
         <EditableText

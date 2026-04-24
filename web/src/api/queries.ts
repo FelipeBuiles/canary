@@ -218,7 +218,7 @@ export function useScreenplay(
 
 export function useLayoutPlan(project: string | undefined) {
   return useQuery({
-    queryKey: ["project", project, "layout-plan"],
+    queryKey: ["project", project, "plan"],
     queryFn: () => getLayoutPlan(project!),
     enabled: !!project,
   });
@@ -228,7 +228,7 @@ export function useLayoutPlan(project: string | undefined) {
 
 export function usePanelSummaries(project: string | undefined) {
   return useQuery({
-    queryKey: ["project", project, "panels"],
+    queryKey: ["project", project, "storyboard"],
     queryFn: () => listPanelSummaries(project!),
     enabled: !!project,
   });
@@ -239,7 +239,7 @@ export function usePanelsForScene(
   sceneId: string | null | undefined,
 ) {
   return useQuery({
-    queryKey: ["project", project, "panels", sceneId],
+    queryKey: ["project", project, "storyboard", sceneId],
     queryFn: () => getPanelsForScene(project!, sceneId!),
     enabled: !!project && !!sceneId,
   });
@@ -251,7 +251,7 @@ export function useUpdatePanel() {
     mutationFn: ({ project, sceneId, data }: { project: string; sceneId: string; data: import("../types/api").PanelBreakdown }) =>
       updatePanel(project, sceneId, data.panel_number, data),
     onSuccess: (_data, { project, sceneId }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "panels", sceneId] });
+      qc.invalidateQueries({ queryKey: ["project", project, "storyboard", sceneId] });
     },
   });
 }
@@ -260,7 +260,7 @@ export function useUpdatePanel() {
 
 export function usePromptSummaries(project: string | undefined) {
   return useQuery({
-    queryKey: ["project", project, "prompts"],
+    queryKey: ["project", project, "direct"],
     queryFn: () => listPromptSummaries(project!),
     enabled: !!project,
   });
@@ -271,7 +271,7 @@ export function usePromptsForScene(
   sceneId: string | null | undefined,
 ) {
   return useQuery({
-    queryKey: ["project", project, "prompts", sceneId],
+    queryKey: ["project", project, "direct", sceneId],
     queryFn: () => getPromptsForScene(project!, sceneId!),
     enabled: !!project && !!sceneId,
   });
@@ -283,7 +283,7 @@ export function useUpdatePrompt() {
     mutationFn: ({ project, sceneId, data }: { project: string; sceneId: string; data: import("../types/api").ImagePrompt }) =>
       updatePrompt(project, sceneId, data.panel_number, data),
     onSuccess: (_data, { project, sceneId }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "prompts", sceneId] });
+      qc.invalidateQueries({ queryKey: ["project", project, "direct", sceneId] });
     },
   });
 }
@@ -304,7 +304,7 @@ export function useImageGenerationMeta(
 
 export function useImages(project: string | undefined, refetchInterval?: number) {
   return useQuery({
-    queryKey: ["project", project, "images"],
+    queryKey: ["project", project, "draw"],
     queryFn: () => listImages(project!),
     enabled: !!project,
     refetchInterval,
@@ -360,7 +360,7 @@ export function useReflowPages() {
       reflowPages(project, panelsPerPage),
     onSuccess: (_data, { project }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
-      qc.invalidateQueries({ queryKey: ["project", project, "layout-plan"] });
+      qc.invalidateQueries({ queryKey: ["project", project, "plan"] });
     },
   });
 }
@@ -484,7 +484,7 @@ export function useReflowSinglePage() {
       );
       qc.invalidateQueries({ queryKey: ["project", project, "pages", pageNum] });
       qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
-      qc.invalidateQueries({ queryKey: ["project", project, "layout-plan"] });
+      qc.invalidateQueries({ queryKey: ["project", project, "plan"] });
     },
   });
 }
@@ -499,7 +499,7 @@ export function useApplyStructuralOperation() {
         qc.setQueryData(["project", project, "pages", data.page.page_number], data.page);
       }
       qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
-      qc.invalidateQueries({ queryKey: ["project", project, "layout-plan"] });
+      qc.invalidateQueries({ queryKey: ["project", project, "plan"] });
     },
   });
 }
