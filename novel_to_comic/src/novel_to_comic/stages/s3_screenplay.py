@@ -202,8 +202,8 @@ async def run(
     system_prompt = PROMPT_PATH.read_text()
 
     ids = scene_ids or [s.id for s in story_bible.scenes]
-    begin_stage(state, "screenplay", total=len(ids))
-    emit({"type": "stage_begin", "stage": "screenplay", "total": len(ids)})
+    begin_stage(state, "adapt", total=len(ids))
+    emit({"type": "stage_begin", "stage": "adapt", "total": len(ids)})
     save_state(state, project_dir)
 
     semaphore = asyncio.Semaphore(config.parallel_batch_size)
@@ -221,26 +221,26 @@ async def run(
                 for sid, result in zip(batch, results):
                     if isinstance(result, Exception):
                         console.print(f"[red]Failed {sid}: {result}[/red]")
-                        emit({"type": "log", "stage": "screenplay", "level": "error",
+                        emit({"type": "log", "stage": "adapt", "level": "error",
                               "message": f"Failed {sid}: {result}"})
-                        record_item_failed(state, "screenplay", sid)
+                        record_item_failed(state, "adapt", sid)
                     else:
-                        record_item_done(state, "screenplay", cost=0.04)
-                        emit({"type": "stage_progress", "stage": "screenplay",
-                              "done": state.stages["screenplay"].items_done,
-                              "total": state.stages["screenplay"].items_total})
+                        record_item_done(state, "adapt", cost=0.04)
+                        emit({"type": "stage_progress", "stage": "adapt",
+                              "done": state.stages["adapt"].items_done,
+                              "total": state.stages["adapt"].items_total})
                     progress.advance(task)
                 save_state(state, project_dir)
 
-        complete_stage(state, "screenplay")
-        emit({"type": "stage_complete", "stage": "screenplay",
-              "done": state.stages["screenplay"].items_done,
-              "total": state.stages["screenplay"].items_total})
+        complete_stage(state, "adapt")
+        emit({"type": "stage_complete", "stage": "adapt",
+              "done": state.stages["adapt"].items_done,
+              "total": state.stages["adapt"].items_total})
         save_state(state, project_dir)
         console.print("[green]Stage 3 complete.[/green]")
 
     except Exception as e:
-        fail_stage(state, "screenplay", str(e))
-        emit({"type": "stage_fail", "stage": "screenplay", "message": str(e)})
+        fail_stage(state, "adapt", str(e))
+        emit({"type": "stage_fail", "stage": "adapt", "message": str(e)})
         save_state(state, project_dir)
         raise

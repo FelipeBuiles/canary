@@ -1,11 +1,12 @@
 import { useParams, useSearchParams } from "react-router-dom";
-import { usePromptSummaries, usePromptsForScene, useUpdatePrompt } from "../../api/queries";
+import { usePromptSummaries, usePromptsForScene, useUpdatePrompt, useProjectStatus } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { EditableText } from "../../components/ui/EditableText";
 import { LoadingBlock, StateBlock } from "../../components/ui/StateBlock";
 import { RerunStageAction } from "../../components/ui/RerunStageAction";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { SceneSidebar } from "../../components/ui/SceneSidebar";
+import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
 import { renderPanelPromptBody } from "../../lib/prompting";
 import type { ImagePrompt } from "../../types/api";
 
@@ -91,12 +92,15 @@ function DirectPromptDetail({
 export function DirectRoom() {
   const { name } = useParams<{ name: string }>();
   const { data: summaries, isLoading } = usePromptSummaries(name);
+  const { data: status } = useProjectStatus(name);
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedScene = searchParams.get("scene");
   const selectedPanel = Number(searchParams.get("panel"));
   const activeScene = selectedScene ?? summaries?.[0]?.scene_id;
   const { data: prompts, isLoading: loadingPrompts } = usePromptsForScene(name, activeScene);
   const updatePrompt = useUpdatePrompt();
+  const stageInfo = status?.stages?.direct;
+  const stageStatus = stageInfo?.status ?? "pending";
 
   const activePrompt =
     prompts?.find((prompt) => prompt.panel_number === selectedPanel) ??
@@ -124,20 +128,31 @@ export function DirectRoom() {
     );
   };
 
+  if (isLoading || (!summaries?.length && stageStatus !== "pending")) {
+    return <RoomShell isLoading loadingText="LOADING IMAGE PROMPTS…" />;
+  }
+
+  if (!summaries?.length || !name) {
+    return (
+      <RoomShell>
+        <StagePlaceholder
+          stage="direct"
+          status={stageStatus}
+          itemsDone={stageInfo?.items_done}
+          itemsTotal={stageInfo?.items_total}
+        />
+      </RoomShell>
+    );
+  }
+
   return (
-    <RoomShell
-      isLoading={isLoading}
-      loadingText="LOADING IMAGE PROMPTS…"
-      isEmpty={!summaries?.length || !name}
-      emptyTitle="IMAGE PROMPTS NOT AVAILABLE"
-      emptyDescription="Complete DIRECT first."
-    >
+    <RoomShell>
       <div className="flex h-[calc(100vh-3rem)] min-h-0 flex-col gap-10 md:h-[calc(100vh-5rem)]">
         <ShowcaseHeader
           label="DIRECT / IMAGE PROMPTS"
           title="IMAGE PROMPTS"
           lead="Compiled prompts with character and location refs baked in — the last human-readable artifact before image generation."
-          actions={name ? <RerunStageAction project={name} stage="prompts" label="Direct" /> : null}
+          actions={name ? <RerunStageAction project={name} stage="direct" label="Direct" /> : null}
         />
 
         <section className="grid min-h-0 flex-1 grid-rows-[minmax(132px,30%)_minmax(0,1fr)] overflow-hidden border-[2px] border-ink-black bg-bristol xl:grid-cols-[300px_minmax(0,1fr)] xl:grid-rows-none">

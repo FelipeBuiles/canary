@@ -195,7 +195,7 @@ export function PrimitiveReference() {
       <RerunDrawer
         open={rerunOpen}
         stageName="Extract"
-        impactStages={["index", "screenplay", "panels", "prompts", "generate", "assemble"]}
+        impactStages={["cast", "adapt", "storyboard", "direct", "draw", "compose"]}
         estimatedCost="~$4.10"
         costIsPlaceholder
         itemsAtRisk="46 generated panels will be lost."

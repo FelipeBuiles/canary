@@ -35,14 +35,14 @@ router = APIRouter()
 logger = logging.getLogger("canary.pipeline")
 
 _RERUN_CLEAN_PATHS: dict[str, tuple[str, ...]] = {
-    "extract": ("story_bible.json", "scenes", "refs", "plates", "screenplays", "layout_plan", "panels", "prompts", "images", "assembly", "exports"),
-    "index": ("refs", "plates", "screenplays", "layout_plan", "panels", "prompts", "images", "assembly", "exports"),
-    "screenplay": ("screenplays", "layout_plan", "panels", "prompts", "images", "assembly", "exports"),
-    "layout-plan": ("layout_plan", "panels", "prompts", "images", "assembly", "exports"),
-    "panels": ("panels", "prompts", "images", "assembly", "exports"),
-    "prompts": ("prompts", "images", "assembly", "exports"),
-    "generate": ("images", "assembly", "exports"),
-    "assemble": ("assembly", "exports"),
+    "extract": ("story_bible.json", "scenes", "refs", "plates", "adapt", "plan", "storyboard", "direct", "draw", "compose", "exports"),
+    "cast": ("refs", "plates", "adapt", "plan", "storyboard", "direct", "draw", "compose", "exports"),
+    "adapt": ("adapt", "plan", "storyboard", "direct", "draw", "compose", "exports"),
+    "plan": ("plan", "storyboard", "direct", "draw", "compose", "exports"),
+    "storyboard": ("storyboard", "direct", "draw", "compose", "exports"),
+    "direct": ("direct", "draw", "compose", "exports"),
+    "draw": ("draw", "compose", "exports"),
+    "compose": ("compose", "exports"),
 }
 
 
@@ -54,13 +54,13 @@ def _stage_runner(stage: str, config, project_dir, state):
     )
     runners = {
         "extract":    lambda on_event: s1_extract.run(config, project_dir, state, on_event=on_event),
-        "index":      lambda on_event: s2_index.run(config, project_dir, state, on_event=on_event),
-        "screenplay": lambda on_event: s3_screenplay.run(config, project_dir, state, on_event=on_event),
-        "layout-plan": lambda on_event: s4_layout_plan.run(config, project_dir, state, on_event=on_event),
-        "panels":     lambda on_event: s4_panels.run(config, project_dir, state, on_event=on_event),
-        "prompts":    lambda on_event: s5_prompts.run(config, project_dir, state, on_event=on_event),
-        "generate":   lambda on_event: s6_generate.run(config, project_dir, state, on_event=on_event),
-        "assemble":   lambda on_event: s7_assemble.run(config, project_dir, state, on_event=on_event),
+        "cast":       lambda on_event: s2_index.run(config, project_dir, state, on_event=on_event),
+        "adapt":      lambda on_event: s3_screenplay.run(config, project_dir, state, on_event=on_event),
+        "plan":       lambda on_event: s4_layout_plan.run(config, project_dir, state, on_event=on_event),
+        "storyboard": lambda on_event: s4_panels.run(config, project_dir, state, on_event=on_event),
+        "direct":     lambda on_event: s5_prompts.run(config, project_dir, state, on_event=on_event),
+        "draw":       lambda on_event: s6_generate.run(config, project_dir, state, on_event=on_event),
+        "compose":    lambda on_event: s7_assemble.run(config, project_dir, state, on_event=on_event),
     }
     return runners.get(stage)
 
@@ -310,7 +310,7 @@ async def regen_panel(
     if existing and not existing.done():
         raise HTTPException(409, "A stage is already running for this project")
 
-    prompt_path = project_dir / "prompts" / scene_id / f"panel_{panel_number:03d}.json"
+    prompt_path = project_dir / "direct" / scene_id / f"panel_{panel_number:03d}.json"
     if not prompt_path.exists():
         raise HTTPException(404, f"Prompt not found: {scene_id}/panel_{panel_number:03d}")
     planned_panel_id = None

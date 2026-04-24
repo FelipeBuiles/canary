@@ -39,21 +39,21 @@
 }
 
 .panel.panel-active {
-  outline: 10px solid rgba(181, 24, 34, 0.32);
-  outline-offset: -10px;
+  outline: 7px solid rgba(181, 24, 34, 0.34);
+  outline-offset: -7px;
 }
 
 .panel.panel-active::before {
-  content: 'ACTIVE PANEL';
+  content: 'BOUND';
   position: absolute;
   top: 0;
-  left: 0;
+  right: 0;
   z-index: 8;
   background: #b51822;
   color: #fff;
-  padding: 6px 10px;
+  padding: 5px 8px;
   font-family: 'Bangers', fantasy, sans-serif;
-  font-size: 20px;
+  font-size: 16px;
   letter-spacing: 0.08em;
   pointer-events: none;
 }
@@ -271,13 +271,18 @@
 /* ── Panel ID debug label ── */
 .panel-id {
   position: absolute;
-  bottom: 3px; right: 3px;
-  background: rgba(0,0,0,0.6);
-  color: rgba(220,220,220,0.85);
-  font-family: monospace;
+  top: 7px;
+  left: 7px;
+  background: rgba(27,28,21,0.82);
+  color: rgba(252,250,237,0.92);
+  font-family: 'Lexend', system-ui, sans-serif;
   font-size: 13px;
-  padding: 1px 5px;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  padding: 5px 6px;
   z-index: 5;
+  border: 1px solid rgba(252,250,237,0.28);
+  pointer-events: none;
 }
 
 /* ── Page number ── */

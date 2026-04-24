@@ -26,7 +26,7 @@ router = APIRouter()
 
 def _assemble_artifact_error(project_dir: Path) -> str | None:
     """Return a user-facing reason when a completed assemble stage is unusable."""
-    page_json = list((project_dir / "assembly" / "pages").glob("page_*.json"))
+    page_json = list((project_dir / "compose" / "pages").glob("page_*.json"))
     if page_json:
         return None
 
@@ -45,7 +45,7 @@ def _stage_payload(project_dir: Path, name: str, state) -> dict:
     status = s.status.value
     error = s.error
 
-    if name == "assemble" and status == "complete":
+    if name == "compose" and status == "complete":
         artifact_error = _assemble_artifact_error(project_dir)
         if artifact_error:
             status = "failed"
@@ -195,8 +195,8 @@ async def create_project(
 
     # Create directory structure
     project_dir.mkdir(parents=True)
-    for subdir in ["input", "scenes", "refs", "plates", "screenplays", "layout_plan", "panels",
-                   "prompts", "images", "assembly", "exports", "cover"]:
+    for subdir in ["input", "scenes", "refs", "plates", "adapt", "plan", "storyboard",
+                   "direct", "draw", "compose", "exports", "cover"]:
         (project_dir / subdir).mkdir()
 
     # Save uploaded file
@@ -231,6 +231,7 @@ async def create_project(
         "ANTHROPIC_API_KEY=\n"
         "TOGETHER_API_KEY=\n"
         "OPENAI_API_KEY=\n"
+        "OPENROUTER_API_KEY=\n"
     )
 
     return {"name": slug, "project_name": name, "status": "created"}

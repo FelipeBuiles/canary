@@ -60,7 +60,7 @@ LAYOUT_PRESET_GEOMETRIES: dict[str, list[tuple[list[float], list[list[float]] | 
 
 
 def _layout_plan_path(project_dir: Path) -> Path:
-    return project_dir / "layout_plan" / "layout_plan.json"
+    return project_dir / "plan" / "layout_plan.json"
 
 
 def load_layout_plan(project_dir: Path) -> LayoutPlan:
@@ -112,11 +112,11 @@ def planned_panel_to_breakdown(panel: PlannedPanel) -> PanelBreakdown:
 
 
 def prompt_path_for_panel(project_dir: Path, panel: PlannedPanel) -> Path:
-    return project_dir / "prompts" / panel.scene_id / f"panel_{panel.panel_number:03d}.json"
+    return project_dir / "direct" / panel.scene_id / f"panel_{panel.panel_number:03d}.json"
 
 
 def image_path_for_panel(project_dir: Path, panel: PlannedPanel) -> Path:
-    return project_dir / "images" / panel.scene_id / f"panel_{panel.panel_number:03d}.png"
+    return project_dir / "draw" / panel.scene_id / f"panel_{panel.panel_number:03d}.png"
 
 
 def _content_box() -> tuple[float, float]:
@@ -274,7 +274,7 @@ def project_layout_plan_to_pages(
 
 
 def write_projected_pages(project_dir: Path, pages: list[ComicPage]) -> list[Path]:
-    pages_dir = project_dir / "assembly" / "pages"
+    pages_dir = project_dir / "compose" / "pages"
     pages_dir.mkdir(parents=True, exist_ok=True)
     for old in pages_dir.glob("page_*.json"):
         old.unlink()
@@ -478,7 +478,7 @@ def persist_projected_pages(
     story_bible: StoryBible,
     theme_name: str,
 ) -> list[ComicPage]:
-    pages_dir = project_dir / "assembly" / "pages"
+    pages_dir = project_dir / "compose" / "pages"
     existing = []
     if pages_dir.exists():
         for path in sorted(pages_dir.glob("page_*.json")):
@@ -493,7 +493,7 @@ def persist_projected_pages(
 
 def dump_structural_response(plan: LayoutPlan, pages: list[ComicPage]) -> dict[str, object]:
     return {
-        "layout_plan": plan.model_dump(),
+        "plan": plan.model_dump(),
         "pages": [page.model_dump() for page in pages],
         "summary": structural_summary(plan),
     }

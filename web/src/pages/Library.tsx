@@ -1,21 +1,26 @@
-import { Link } from "react-router-dom";
-import { useEffect, useState } from "react";
-import { useGenerateProjectCover, useProjects } from "../api/queries";
+import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useCreateProject, useGenerateProjectCover, useProjects, useRunPipeline } from "../api/queries";
+import { usePipelineStore } from "../store/pipeline";
 import { ProjectCard } from "../components/ProjectCard";
 import { StatRow } from "../components/ui/StatRow";
 import { Icon } from "../components/ui/Icon";
+import { UploadStep } from "../components/wizard/UploadStep";
+import type { ConfigOverrides } from "../types/api";
 import { useI18n } from "../i18n";
 
 const coverRequestedProjects = new Set<string>();
 
-function NewProjectCard() {
+function NewProjectCard({ onClick }: { onClick: () => void }) {
   const { t } = useI18n();
 
   return (
-    <Link
-      to="/new"
+    <button
+      type="button"
+      onClick={onClick}
       aria-label={t("START NEW PROJECT")}
-      className="group block h-full focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
+      className="group block h-full w-full text-left focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
     >
       <div className="flex h-full min-h-[390px] flex-col items-center justify-center gap-6 border-[3px] border-dashed border-ink-black/10 bg-transparent p-6 transition-colors duration-150 group-hover:border-ink-black/35 group-hover:bg-bristol/35 group-focus-visible:border-ink-black">
         <div className="flex h-20 w-20 items-center justify-center border-[3px] border-ink-black/38 text-ink-black/55 transition-colors duration-150 group-hover:border-ink-black group-hover:bg-narrator-gold group-hover:text-ink-black">
@@ -30,7 +35,87 @@ function NewProjectCard() {
           </p>
         </div>
       </div>
-    </Link>
+    </button>
+  );
+}
+
+function NewProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const createProject = useCreateProject();
+  const runPipeline = useRunPipeline();
+  const connect = usePipelineStore((s) => s.connect);
+  const clearEvents = usePipelineStore((s) => s.clearEvents);
+  const { t } = useI18n();
+
+  const handleCreate = useCallback(
+    (file: File, name: string, configOverrides?: Partial<ConfigOverrides>) => {
+      createProject.mutate(
+        { file, name, configOverrides },
+        {
+          onSuccess: (data) => {
+            queryClient.removeQueries({ queryKey: ["project", data.name] });
+            clearEvents();
+            // Start the pipeline, then navigate to the first stage room
+            runPipeline.mutate(
+              { project: data.name },
+              {
+                onSuccess: () => {
+                  connect(data.name);
+                  onClose();
+                  navigate(`/project/${encodeURIComponent(data.name)}/extract`);
+                },
+              },
+            );
+          },
+        },
+      );
+    },
+    [createProject, runPipeline, queryClient, clearEvents, connect, onClose, navigate],
+  );
+
+  // Close on Escape
+  useEffect(() => {
+    if (!isOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, onClose]);
+
+  // Prevent body scroll
+  useEffect(() => {
+    if (!isOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-ink-black/80 p-4 pt-[8vh] backdrop-blur-[3px]"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={t("NEW PRODUCTION")}
+    >
+      <div
+        className="w-full max-w-[640px] pb-8"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <UploadStep
+          onSubmit={handleCreate}
+          isPending={createProject.isPending}
+          error={null}
+          onCancel={onClose}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -39,6 +124,7 @@ export function Library() {
   const { data: projects, isLoading, error, refetch } = useProjects();
   const generateCover = useGenerateProjectCover();
   const [pendingCovers, setPendingCovers] = useState<Set<string>>(new Set());
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
   const totalCost = projects?.reduce((sum, p) => sum + p.total_cost_usd, 0) ?? 0;
   const runningCount = projects?.filter((p) => p.is_running).length ?? 0;
 
@@ -162,7 +248,7 @@ export function Library() {
 
       <section>
         <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-7">
-          <NewProjectCard />
+          <NewProjectCard onClick={() => setNewProjectOpen(true)} />
 
           {projects?.map((project) => (
             <ProjectCard
@@ -177,6 +263,8 @@ export function Library() {
           ))}
         </div>
       </section>
+
+      <NewProjectModal isOpen={newProjectOpen} onClose={() => setNewProjectOpen(false)} />
     </div>
   );
 }

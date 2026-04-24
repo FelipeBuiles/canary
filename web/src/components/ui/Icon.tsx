@@ -29,6 +29,8 @@ import {
   FileDown,
   Archive,
   Sparkles,
+  Search,
+  Eye,
 } from "lucide-react";
 import { cn } from "../../lib/cn";
 
@@ -62,7 +64,9 @@ export type IconName =
   | "reset"
   | "pdf"
   | "archive"
-  | "sparkles";
+  | "sparkles"
+  | "search"
+  | "eye";
 
 interface IconProps {
   name: IconName;
@@ -101,6 +105,8 @@ const ICON_MAP = {
   pdf: FileDown,
   archive: Archive,
   sparkles: Sparkles,
+  search: Search,
+  eye: Eye,
 };
 
 export function Icon({ name, size = 14, className }: IconProps) {

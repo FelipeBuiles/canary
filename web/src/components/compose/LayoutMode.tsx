@@ -194,7 +194,7 @@ export function LayoutMode({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {/* Toolbar */}
-      <div className="shrink-0 border-b-[2px] border-ink-black px-3 py-2 md:px-4">
+      <div className="shrink-0 border-b-[2px] border-ink-black bg-pulp-paper px-3 py-2 md:px-4">
         <div className="flex items-center justify-between gap-3">
           <EditorToolbar
             onAddBubble={onAddBubble}
@@ -237,10 +237,10 @@ export function LayoutMode({
               type="button"
               onClick={() => onInspectorModeChange("floating")}
               className={cn(
-                "border-[2px] px-2 py-1 font-meta text-[0.52rem] tracking-[0.12em]",
+                "border-[2px] px-2.5 py-2 font-meta text-[0.52rem] tracking-[0.14em] transition-colors",
                 inspectorMode === "floating"
                   ? "border-ink-black bg-ink-black text-pulp-paper"
-                  : "border-ink-black bg-pulp-paper",
+                  : "border-ink-black/25 bg-bristol text-ink-black/55 hover:border-ink-black/45",
               )}
             >
               FLOATING
@@ -249,10 +249,10 @@ export function LayoutMode({
               type="button"
               onClick={() => onInspectorModeChange("fixed")}
               className={cn(
-                "border-[2px] px-2 py-1 font-meta text-[0.52rem] tracking-[0.12em]",
+                "border-[2px] px-2.5 py-2 font-meta text-[0.52rem] tracking-[0.14em] transition-colors",
                 inspectorMode === "fixed"
                   ? "border-ink-black bg-ink-black text-pulp-paper"
-                  : "border-ink-black bg-pulp-paper",
+                  : "border-ink-black/25 bg-bristol text-ink-black/55 hover:border-ink-black/45",
               )}
             >
               FIXED
@@ -264,8 +264,8 @@ export function LayoutMode({
       {/* 3-column layout */}
       <div
         className={cn(
-          "grid min-h-0 flex-1 grid-cols-[180px_minmax(0,1fr)] gap-3 overflow-hidden p-3 md:p-4",
-          inspectorMode === "fixed" && "xl:grid-cols-[220px_minmax(0,1fr)_340px]",
+          "grid min-h-0 flex-1 grid-cols-[154px_minmax(0,1fr)] gap-3 overflow-hidden bg-pulp-paper px-2 pb-3 pt-3 md:px-2 md:pb-4",
+          inspectorMode === "fixed" && "xl:grid-cols-[164px_minmax(0,1fr)_330px]",
         )}
       >
         {/* Left: page navigator */}
@@ -281,7 +281,7 @@ export function LayoutMode({
         {/* Center: canvas */}
         <section
           ref={canvasShellRef}
-          className="relative min-h-[560px] min-w-0 overflow-hidden border-[2px] border-ink-black bg-[radial-gradient(circle_at_1px_1px,rgba(27,28,21,0.12)_1px,transparent_0)] p-2 shadow-[6px_6px_0_0_var(--color-ghost-shadow)] [background-size:18px_18px] md:min-h-0 md:p-4"
+          className="relative min-h-[560px] min-w-0 overflow-hidden border-[3px] border-ink-black bg-pulp-paper p-3 shadow-[4px_4px_0_0_var(--color-ink-black)] md:min-h-0 md:p-4"
         >
           <div className="mb-2 flex items-center justify-between gap-3">
             <div>
@@ -292,11 +292,15 @@ export function LayoutMode({
                 Page {String(pageNumber).padStart(2, "0")}
               </div>
             </div>
-            <div className="hidden font-meta text-[0.52rem] tracking-[0.16em] text-ink-black/45 sm:block">
-              {page?.panels.length ?? 0} PANELS
+            <div className="hidden font-meta text-[0.52rem] tracking-[0.16em] text-ink-black/40 sm:flex sm:items-center sm:gap-2">
+              <span>{panelCount} PANELS</span>
+              <span>·</span>
+              <span>{bubbleCount} BUBBLES</span>
+              <span>·</span>
+              <span>{sfxCount} SFX</span>
             </div>
           </div>
-          <div className="h-[72vh] min-h-[480px] overflow-hidden border-[2px] border-ink-black bg-pulp-paper/90 p-2 md:h-[calc(100vh-390px)] md:min-h-0">
+          <div className="h-[72vh] min-h-[480px] overflow-hidden border-[2px] border-ink-black bg-bristol p-2 md:h-[calc(100vh-382px)] md:min-h-0">
             {isLoadingPage ? (
               <div
                 className="flex h-full items-center justify-center bg-ink-black/5"

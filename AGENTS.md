@@ -1,6 +1,7 @@
-Behavioral guidelines for coding agents in this repo. Keep this file short:
-it is loaded into every session. Open `docs/reference/agent-context.md` only
-when you need detailed pipeline, model, stage, assembly, or artifact context.
+# Canary — Agent Guidelines
+
+Compact instruction file for every coding-agent session. Detailed reference:
+`docs/reference/agent-context.md`.
 
 ## Work Style
 
@@ -15,30 +16,41 @@ when you need detailed pipeline, model, stage, assembly, or artifact context.
 
 ## Project Snapshot
 
-Canary is an early-MVP Python/React app that turns novels into comic books via a
-7-stage resumable pipeline:
+Canary is a Python/React app that turns novels into comic books via an 8-stage
+pipeline. Each stage is discrete, resumable, and produces inspectable JSON/file
+output. The pipeline is orchestrated through a FastAPI web server — there is no
+`pipeline run` CLI command. Use the web UI or call the API directly.
 
-1. extract story bible
-2. build index and visual references
-3. write screenplay
-4. break screenplay into panels
-5. assemble image prompts
-6. generate panel images
-7. assemble/export comic pages
+**8 pipeline stages (in order):**
 
-Current focus: Stage 6 generation and Stage 7 assembly.
+| # | Stage name | What it does |
+|---|-----------|--------------|
+| 1 | `extract` | Novel → Story Bible JSON |
+| 2 | `cast` | Story Bible → character refs + location plates |
+| 3 | `adapt` | Scene prose → screenplay format |
+| 4 | `plan` | Screenplay → page/panel layout plan |
+| 5 | `storyboard` | Layout plan → panel breakdown JSON |
+| 6 | `direct` | Panel breakdown → image prompts |
+| 7 | `draw` | Image prompts → panel PNGs |
+| 8 | `compose` | Panel images + bubble/SFX JSON → PDF/CBZ export |
+
+**Current focus:** `draw` (stage 7) generation and `compose` (stage 8) assembly.
 
 ## Must-Know Rules
 
+- **No `pipeline run` CLI.** Pipeline operations (run, approve, status, export)
+  are HTTP API endpoints on the web server. The CLI only has `init` and `serve`.
+  See `server/routers/pipeline.py` for all pipeline endpoints.
 - Do not collapse stages or add cross-stage logic. Each stage reads its inputs
   from disk and writes its own outputs.
 - Preserve `visual_anchor` text verbatim. Never paraphrase anchors in prompts.
-- Text belongs in Stage 7 post-processing, never inside generated panel images.
-- `assembly/pages/page_NNN.json` is the canonical Stage 7 editing surface.
+- Text belongs in Stage 8 (`compose`) post-processing, never inside generated
+  panel images.
+- `compose/pages/page_NNN.json` is the canonical Stage 8 editing surface.
 - Every stage `run()` accepts `on_event`; add `emit()` calls beside new
   `console.print()` calls.
 - Do not build the visual drag-and-drop editor before pinned bubble SVG tails
-  exist (`tail_x/tail_y` target points are the planned model change).
+  exist (`tail_x`/`tail_y` target points are the planned model change).
 - Keep model names/configuration in `config.py` or project `config.yaml`, not in
   prompt templates.
 - Breaking JSON/model changes are acceptable for now; do not add legacy shims
@@ -47,11 +59,14 @@ Current focus: Stage 6 generation and Stage 7 assembly.
 ## Where To Look
 
 - Detailed agent reference: `docs/reference/agent-context.md`
-- CLI and stage routing: `novel_to_comic/src/novel_to_comic/cli.py`
+- Web server + all pipeline API endpoints: `server/routers/pipeline.py`
+- CLI (`init` + `serve` only): `novel_to_comic/src/novel_to_comic/cli.py`
 - Config loading/defaults: `novel_to_comic/src/novel_to_comic/config.py`
 - Pipeline state machine: `novel_to_comic/src/novel_to_comic/state.py`
-- Event schema/SSE notes: `novel_to_comic/src/novel_to_comic/events.py`
+- Stage definitions (all 8): `novel_to_comic/src/novel_to_comic/stages/`
+- Event schema/SSE: `novel_to_comic/src/novel_to_comic/events.py`
 - Image routing: `novel_to_comic/src/novel_to_comic/clients/flux.py`
+- Layout planning models + helpers: `novel_to_comic/src/novel_to_comic/layout_planning.py`
 - Assembly renderer: `novel_to_comic/src/novel_to_comic/assembly/html_renderer.py`
 - Comic editing models: `novel_to_comic/src/novel_to_comic/models/comic_page.py`
 

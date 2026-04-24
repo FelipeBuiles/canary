@@ -12,6 +12,7 @@ import {
   useExport,
   useProjectConfig,
   useUpdateProjectConfig,
+  useProjectStatus,
 } from "../../api/queries";
 import { downloadExportUrl } from "../../api/pages";
 import { RerunStageAction } from "../../components/ui/RerunStageAction";
@@ -23,6 +24,7 @@ import { StyleMode } from "../../components/compose/StyleMode";
 import { PreviewMode } from "../../components/compose/PreviewMode";
 import { CommandPalette } from "../../components/compose/CommandPalette";
 import { TryLayoutsModal } from "../../components/compose/TryLayoutsModal";
+import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
 import { useAllPages } from "../../hooks/useAllPages";
 import { useComposeStore } from "../../store/compose";
 import type { ComicPage, Bubble, Sfx, PagePanel } from "../../types/api";
@@ -45,7 +47,7 @@ export function ComposeRoom() {
   const [tryLayoutsOpen, setTryLayoutsOpen] = useState(false);
   const [inspectorMode, setInspectorMode] = useState<"floating" | "fixed">(() => {
     const saved = window.localStorage.getItem("canary.compose.inspector-mode");
-    return saved === "fixed" ? "fixed" : "floating";
+    return saved === "floating" ? "floating" : "fixed";
   });
 
   // ── Page state (URL param for Layout mode deep-link, localStorage persist) ──
@@ -53,6 +55,7 @@ export function ComposeRoom() {
   const currentPage = Number(searchParams.get("page") ?? 1);
 
   const { data: pageList, isLoading: loadingList } = usePages(name);
+  const { data: projectStatus } = useProjectStatus(name);
   const safePage = pageList?.length ? Math.min(currentPage, pageList.length) : undefined;
   const { data: page, isLoading: loadingPage } = usePage(name, safePage);
 
@@ -313,7 +316,9 @@ export function ComposeRoom() {
 
   // ── Render ───────────────────────────────────────────────────────────────
 
-  if (loadingList) {
+  const composeStageStatus = projectStatus?.stages?.compose?.status ?? "pending";
+
+  if (loadingList || (!pageList?.length && composeStageStatus !== "pending")) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
@@ -324,14 +329,15 @@ export function ComposeRoom() {
   }
 
   if (!pageList?.length || !name) {
+    const stageInfo = projectStatus?.stages?.compose;
     return (
       <div className="flex min-h-[40vh] items-center justify-center">
-        <div className="text-center">
-          <div className="font-display text-[1.5rem] font-bold tracking-[-0.05em] text-ink-black/30">
-            PAGE EDITOR NOT AVAILABLE
-          </div>
-          <p className="mt-2 text-[0.82rem] text-ink-black/50">Complete COMPOSE first.</p>
-        </div>
+        <StagePlaceholder
+          stage="compose"
+          status={stageInfo?.status ?? "pending"}
+          itemsDone={stageInfo?.items_done}
+          itemsTotal={stageInfo?.items_total}
+        />
       </div>
     );
   }
@@ -339,7 +345,7 @@ export function ComposeRoom() {
   const pageNumber = safePage ?? 1;
 
   return (
-    <div className="-mx-5 -my-6 flex min-h-[calc(100vh-58px)] flex-col md:-my-6">
+    <div className="-mx-5 -my-6 flex min-h-[calc(100vh-58px)] flex-col bg-pulp-paper md:-my-6">
       {/* Persistent header with Export CTA */}
       <ComposeHeader
         mode={mode}
@@ -347,12 +353,15 @@ export function ComposeRoom() {
         onExport={handleExport}
         onOpenCmdk={() => setCmdkOpen(true)}
         onPreview={() => setMode("preview")}
+        rerunAction={
+          <RerunStageAction
+            project={name}
+            stage="compose"
+            label="Compose"
+            className="min-h-8 border px-3 py-1.5 text-[0.52rem] tracking-[0.16em]"
+          />
+        }
       />
-
-      {/* Rerun action — placed outside header to keep it subtle */}
-      <div className="shrink-0 border-b-[2px] border-ink-black bg-surface-container px-6 py-1.5 flex items-center justify-end gap-3">
-        <RerunStageAction project={name} stage="assemble" label="Compose" />
-      </div>
 
       {/* Mode tab switcher */}
       <ModeSwitcher mode={mode} onModeChange={setMode} />

@@ -1,12 +1,12 @@
 export type StageName =
   | "extract"
-  | "index"
-  | "screenplay"
-  | "layout-plan"
-  | "panels"
-  | "prompts"
-  | "generate"
-  | "assemble";
+  | "cast"
+  | "adapt"
+  | "plan"
+  | "storyboard"
+  | "direct"
+  | "draw"
+  | "compose";
 
 export type StageStatus =
   | "pending"
@@ -17,6 +17,7 @@ export type StageStatus =
 
 export interface ConfigOverrides {
   style_template?: string;
+  image_provider?: "gemini" | "openai" | "openrouter" | "together";
   image_model?: string;
   target_language?: "en" | "es" | "fr";
   dev_mode?: boolean;
@@ -95,35 +96,35 @@ export interface GenerationJob {
 
 export const STAGE_ORDER: StageName[] = [
   "extract",
-  "index",
-  "screenplay",
-  "layout-plan",
-  "panels",
-  "prompts",
-  "generate",
-  "assemble",
+  "cast",
+  "adapt",
+  "plan",
+  "storyboard",
+  "direct",
+  "draw",
+  "compose",
 ];
 
 export const STAGE_DISPLAY_NAMES: Record<StageName, string> = {
   extract: "EXTRACT",
-  index: "CAST",
-  screenplay: "ADAPT",
-  "layout-plan": "PLAN",
-  panels: "STORYBOARD",
-  prompts: "DIRECT",
-  generate: "DRAW",
-  assemble: "COMPOSE",
+  cast: "CAST",
+  adapt: "ADAPT",
+  plan: "PLAN",
+  storyboard: "STORYBOARD",
+  direct: "DIRECT",
+  draw: "DRAW",
+  compose: "COMPOSE",
 };
 
 export const STAGE_ROUTES: Record<StageName, string> = {
   extract: "extract",
-  index: "cast",
-  screenplay: "adapt",
-  "layout-plan": "storyboard",
-  panels: "storyboard",
-  prompts: "direct",
-  generate: "draw",
-  assemble: "compose",
+  cast: "cast",
+  adapt: "adapt",
+  plan: "plan",
+  storyboard: "storyboard",
+  direct: "direct",
+  draw: "draw",
+  compose: "compose",
 };
 
 export const ROUTE_TO_STAGE: Record<string, StageName> = Object.fromEntries(

@@ -590,10 +590,16 @@ def build_style_sample_prompt(config: Config, story_bible: StoryBible) -> str:
         200,
     ) or "a dramatic atmospheric setting"
     return (
+        "Create one style proof image for evaluating this comic's art direction. "
+        f"Subject: {char_desc}. Setting: {loc_desc}. "
+        "Use a single portrait 4:5 panel, filled edge to edge with no letterboxing, "
+        "pillarboxing, border margins, text, speech bubbles, or captions. "
+        "The selected visual medium must be obvious at first glance: emphasize its "
+        "materials, mark-making, texture, color handling, rendering conventions, "
+        "lighting language, and composition choices.\n\n"
+        "STYLE AUTHORITY - demonstrate this exactly:\n"
         f"{config.style_template}\n\n"
-        f"{char_desc}. Set in: {loc_desc}. "
-        "Medium shot, eye-level camera, dramatic lighting. "
-        "Portrait 4:5 aspect ratio. Fill the entire frame edge to edge — "
-        "no letterboxing, no pillarboxing, no border margins. "
-        "No text. No speech bubbles. No captions. Single panel only."
+        "Every visible choice should support the style authority above. Do not fall "
+        "back to generic cinematic, comic, or digital illustration defaults unless "
+        "they are explicitly part of that style."
     )

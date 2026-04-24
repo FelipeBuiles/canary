@@ -68,7 +68,7 @@ def _collect_panel_data(
 ) -> list[tuple[Path, PanelBreakdown]]:
     """Collect ordered (img_path, breakdown) pairs, preferring layout plan ordering."""
     if use_layout_plan:
-        plan_path = project_dir / "layout_plan" / "layout_plan.json"
+        plan_path = project_dir / "plan" / "layout_plan.json"
         if plan_path.exists():
             plan = load_layout_plan(project_dir)
             panel_lookup = planned_panel_index(plan)
@@ -84,8 +84,8 @@ def _collect_panel_data(
                     panel_data.append((img_path, planned_panel_to_breakdown(planned_panel)))
             return panel_data
 
-    images_dir = project_dir / "images"
-    panels_dir = project_dir / "panels"
+    images_dir = project_dir / "draw"
+    panels_dir = project_dir / "storyboard"
     panel_data: list[tuple[Path, PanelBreakdown]] = []
 
     for scene_dir in sorted(images_dir.iterdir()):
@@ -266,10 +266,10 @@ async def run(
     max_per_page   = getattr(config, "max_panels_per_page", 6)
 
     # ── Validate inputs ───────────────────────────────────────────────────────
-    images_dir = project_dir / "images"
+    images_dir = project_dir / "draw"
     if not images_dir.exists() or not any(images_dir.iterdir()):
         console.print("[red]No images found. Run stage 6 (generate) first.[/red]")
-        emit({"type": "log", "stage": "assemble", "level": "error",
+        emit({"type": "log", "stage": "compose", "level": "error",
               "message": "No images found. Run stage 6 (generate) first."})
         return
 
@@ -278,7 +278,7 @@ async def run(
     )
 
     # ── Directories ───────────────────────────────────────────────────────────
-    assembly_dir = project_dir / "assembly"
+    assembly_dir = project_dir / "compose"
     json_dir  = assembly_dir / "pages"      # ComicPage JSON (editing surface)
     html_dir  = assembly_dir / "html"       # HTML previews (open in browser)
     png_dir   = assembly_dir / "pages"      # PNGs share the dir with JSON
@@ -295,21 +295,21 @@ async def run(
         f"[dim]Edit [bold]{css_path.relative_to(project_dir)}[/bold] "
         f"then run [bold]pipeline export[/bold] to apply changes.[/dim]"
     )
-    emit({"type": "log", "stage": "assemble", "level": "info",
+    emit({"type": "log", "stage": "compose", "level": "info",
           "message": f"Theme: {theme_name}"})
 
     # ── Build phase (panel data → ComicPage JSON) ─────────────────────────────
     if rebuild:
-        plan_path = project_dir / "layout_plan" / "layout_plan.json"
+        plan_path = project_dir / "plan" / "layout_plan.json"
         panel_data = _collect_panel_data(project_dir, use_layout_plan=plan_path.exists())
         if not panel_data:
             console.print("[red]No valid panel images found.[/red]")
-            emit({"type": "log", "stage": "assemble", "level": "error",
+            emit({"type": "log", "stage": "compose", "level": "error",
                   "message": "No valid panel images found."})
             return
 
-        begin_stage(state, "assemble", total=len(panel_data))
-        emit({"type": "stage_begin", "stage": "assemble", "total": len(panel_data)})
+        begin_stage(state, "compose", total=len(panel_data))
+        emit({"type": "stage_begin", "stage": "compose", "total": len(panel_data)})
         save_state(state, project_dir)
 
         if plan_path.exists():
@@ -326,7 +326,7 @@ async def run(
             f"[bold]Building {len(panel_data)} panels → "
             f"{len(page_groups)} pages{' from layout plan' if plan_path.exists() else f' ({max_per_page}/page)'}...[/bold]"
         )
-        emit({"type": "log", "stage": "assemble", "level": "bold",
+        emit({"type": "log", "stage": "compose", "level": "bold",
               "message": f"Building {len(panel_data)} panels → {len(page_groups)} pages"})
         if not plan_path.exists():
             for i, group in enumerate(page_groups):
@@ -336,24 +336,24 @@ async def run(
                 json_paths.append(json_path)
         for group in page_groups:
             for _ in group:
-                record_item_done(state, "assemble")
-                emit({"type": "stage_progress", "stage": "assemble",
-                      "done": state.stages["assemble"].items_done,
-                      "total": state.stages["assemble"].items_total})
+                record_item_done(state, "compose")
+                emit({"type": "stage_progress", "stage": "compose",
+                      "done": state.stages["compose"].items_done,
+                      "total": state.stages["compose"].items_total})
         save_state(state, project_dir)
         console.print(f"[dim]Page JSON files in:[/dim] [bold]{json_dir.relative_to(project_dir)}[/bold]")
-        emit({"type": "log", "stage": "assemble", "level": "dim",
+        emit({"type": "log", "stage": "compose", "level": "dim",
               "message": f"Page JSON files in: {json_dir.relative_to(project_dir)}"})
     else:
         # Render-only: load existing JSON
         json_paths = sorted(json_dir.glob("page_*.json"))
         if not json_paths:
             console.print("[red]No page JSON files found. Run without --from-json first.[/red]")
-            emit({"type": "log", "stage": "assemble", "level": "error",
+            emit({"type": "log", "stage": "compose", "level": "error",
                   "message": "No page JSON files found."})
             return
-        begin_stage(state, "assemble", total=len(json_paths))
-        emit({"type": "stage_begin", "stage": "assemble", "total": len(json_paths)})
+        begin_stage(state, "compose", total=len(json_paths))
+        emit({"type": "stage_begin", "stage": "compose", "total": len(json_paths)})
         save_state(state, project_dir)
         console.print(f"[bold]Re-rendering {len(json_paths)} existing page(s)...[/bold]")
 
@@ -382,24 +382,24 @@ async def run(
             f"[dim]HTML previews in:[/dim] [bold]{html_dir.relative_to(project_dir)}[/bold]  "
             f"(open in browser to preview, edit theme.css, hard-refresh)"
         )
-        emit({"type": "log", "stage": "assemble", "level": "dim",
+        emit({"type": "log", "stage": "compose", "level": "dim",
               "message": f"HTML previews in: {html_dir.relative_to(project_dir)}"})
 
         _do_exports(png_paths, exports_dir, export_formats)
         for fmt in export_formats:
             out = exports_dir / f"comic.{fmt}"
-            emit({"type": "log", "stage": "assemble", "level": "info",
+            emit({"type": "log", "stage": "compose", "level": "info",
                   "message": f"{fmt.upper()}: {out}"})
 
-        complete_stage(state, "assemble")
-        emit({"type": "stage_complete", "stage": "assemble",
-              "done": state.stages["assemble"].items_done,
-              "total": state.stages["assemble"].items_total})
+        complete_stage(state, "compose")
+        emit({"type": "stage_complete", "stage": "compose",
+              "done": state.stages["compose"].items_done,
+              "total": state.stages["compose"].items_total})
         save_state(state, project_dir)
         console.print("[green]Stage 8 complete.[/green]")
 
     except Exception as e:
-        fail_stage(state, "assemble", str(e))
-        emit({"type": "stage_fail", "stage": "assemble", "message": str(e)})
+        fail_stage(state, "compose", str(e))
+        emit({"type": "stage_fail", "stage": "compose", "message": str(e)})
         save_state(state, project_dir)
         raise

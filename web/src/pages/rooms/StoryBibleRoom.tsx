@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
-import { useStoryBible, useUpdateStoryBible } from "../../api/queries";
+import { useProjectStatus, useStoryBible, useUpdateStoryBible } from "../../api/queries";
 import { ShowcaseHeader } from "../../components/ShowcaseHeader";
 import { Tag } from "../../components/ui/Tag";
 import { EditableText } from "../../components/ui/EditableText";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { RerunStageAction } from "../../components/ui/RerunStageAction";
+import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
 import type { Character, Location } from "../../types/api";
 
 function VisualAnchorEditor({
@@ -178,19 +179,26 @@ export function LocationCard({
 export function StoryBibleRoom() {
   const { name } = useParams<{ name: string }>();
   const { data: bible, isLoading, error } = useStoryBible(name);
+  const { data: status } = useProjectStatus(name);
   const updateBible = useUpdateStoryBible();
 
-  if (isLoading) {
+  const stageInfo = status?.stages?.extract;
+  const stageStatus = stageInfo?.status ?? "pending";
+
+  if (isLoading || (!bible && stageStatus !== "pending")) {
     return <RoomShell isLoading loadingText="LOADING STORY BIBLE…" />;
   }
 
   if (error || !bible || !name) {
     return (
-      <RoomShell
-        isEmpty
-        emptyTitle="STORY BIBLE NOT AVAILABLE"
-        emptyDescription={error instanceof Error ? error.message : error ? "Failed to load story bible." : "This room is not ready yet."}
-      />
+      <RoomShell>
+        <StagePlaceholder
+          stage="extract"
+          status={stageStatus}
+          itemsDone={stageInfo?.items_done}
+          itemsTotal={stageInfo?.items_total}
+        />
+      </RoomShell>
     );
   }
 

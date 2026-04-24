@@ -1,5 +1,4 @@
 import { useState, useRef } from "react";
-import { useNavigate } from "react-router-dom";
 import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
@@ -12,6 +11,7 @@ interface UploadStepProps {
   onSubmit: (file: File, name: string, configOverrides?: Partial<ConfigOverrides>) => void;
   isPending: boolean;
   error: string | null;
+  onCancel?: () => void;
 }
 
 const ACCEPTED = [".txt", ".epub", ".pdf"];
@@ -23,21 +23,37 @@ function formatBytes(bytes: number): string {
 }
 
 const PANEL_COST_USD = 0.07;
+type ImageProvider = NonNullable<ConfigOverrides["image_provider"]>;
+
+const DEFAULT_IMAGE_PROVIDER: ImageProvider = "gemini";
 const DEFAULT_IMAGE_MODEL = "gemini-3-pro-image-preview";
-const IMAGE_MODEL_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: DEFAULT_IMAGE_MODEL, label: "Gemini 3 Pro Image" },
-  { value: "gemini-2.5-flash-image", label: "Gemini 2.5 Flash Image" },
-  { value: "gemini-2.5-pro-image", label: "Gemini 2.5 Pro Image" },
-  { value: "gemini-3.1-flash-image-preview", label: "Gemini 3.1 Flash Image" },
-  { value: "gemini-3.1-pro-image-preview", label: "Gemini 3.1 Pro Image" },
-  { value: "gpt-image-1.5", label: "OpenAI GPT Image 1.5" },
-  { value: "gpt-image-2", label: "OpenAI GPT Image 2" },
+const IMAGE_PROVIDER_OPTIONS: Array<{ value: ImageProvider; label: string }> = [
+  { value: "gemini", label: "Gemini" },
+  { value: "openai", label: "OpenAI" },
+  { value: "openrouter", label: "OpenRouter" },
+  { value: "together", label: "Together AI" },
 ];
+const IMAGE_MODEL_OPTIONS: Array<{ value: string; label: string; provider: ImageProvider }> = [
+  { value: DEFAULT_IMAGE_MODEL, label: "Gemini 3 Pro Image", provider: "gemini" },
+  { value: "gemini-2.5-flash-image", label: "Gemini 2.5 Flash Image", provider: "gemini" },
+  { value: "gemini-2.5-pro-image", label: "Gemini 2.5 Pro Image", provider: "gemini" },
+  { value: "gemini-3.1-flash-image-preview", label: "Gemini 3.1 Flash Image", provider: "gemini" },
+  { value: "gemini-3.1-pro-image-preview", label: "Gemini 3.1 Pro Image", provider: "gemini" },
+  { value: "gpt-image-1.5", label: "OpenAI GPT Image 1.5", provider: "openai" },
+  { value: "gpt-image-2", label: "OpenAI GPT Image 2", provider: "openai" },
+  { value: "black-forest-labs/FLUX.2-pro", label: "FLUX.2 Pro", provider: "together" },
+  { value: "openai/gpt-image-1.5", label: "OpenAI GPT Image 1.5 via OpenRouter", provider: "openrouter" },
+];
+const DEFAULT_MODEL_BY_PROVIDER: Record<ImageProvider, string> = {
+  gemini: DEFAULT_IMAGE_MODEL,
+  openai: "gpt-image-1.5",
+  openrouter: "openai/gpt-image-1.5",
+  together: "black-forest-labs/FLUX.2-pro",
+};
 type RenderPreset = "fast_draft" | "balanced" | "high_quality";
 
-export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
+export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepProps) {
   const { language, t } = useI18n();
-  const navigate = useNavigate();
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [targetLanguage, setTargetLanguage] = useState<LanguageCode>(language);
@@ -45,6 +61,7 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
   const [showExpert, setShowExpert] = useState(false);
   const [renderPreset, setRenderPreset] = useState<RenderPreset>("balanced");
   const [theme, setTheme] = useState("auto");
+  const [imageProvider, setImageProvider] = useState<ImageProvider>(DEFAULT_IMAGE_PROVIDER);
   const [imageModel, setImageModel] = useState(DEFAULT_IMAGE_MODEL);
   const [imageWidth, setImageWidth] = useState(1024);
   const [imageHeight, setImageHeight] = useState(1024);
@@ -57,16 +74,33 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
 
   const ext = file ? "." + file.name.split(".").pop()?.toLowerCase() : "";
   const extOk = !file || ACCEPTED.includes(ext);
-  const isTogetherModel = imageModel.includes("/");
-  const isOpenAIModel = imageModel.startsWith("gpt-image-");
+  const isTogetherProvider = imageProvider === "together";
+  const isOpenAIProvider = imageProvider === "openai";
+  const isOpenRouterProvider = imageProvider === "openrouter";
+
+  function handleProviderChange(provider: ImageProvider) {
+    setImageProvider(provider);
+    const currentOption = IMAGE_MODEL_OPTIONS.find((option) => option.value === imageModel);
+    if (currentOption?.provider !== provider) {
+      setImageModel(DEFAULT_MODEL_BY_PROVIDER[provider]);
+    }
+  }
+
+  function handleModelChange(model: string) {
+    setImageModel(model);
+    const option = IMAGE_MODEL_OPTIONS.find((item) => item.value === model);
+    if (option) setImageProvider(option.provider);
+  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!file || !name.trim() || !extOk) return;
+    const selectedImageModel = imageModel.trim();
+    if (!file || !name.trim() || !extOk || !selectedImageModel) return;
     const overrides: Partial<ConfigOverrides> = { target_language: targetLanguage };
 
-    // Persist model choice if changed from default.
-    if (imageModel !== DEFAULT_IMAGE_MODEL) overrides.image_model = imageModel;
+    // Persist provider/model choice if changed from default.
+    if (imageProvider !== DEFAULT_IMAGE_PROVIDER) overrides.image_provider = imageProvider;
+    if (selectedImageModel !== DEFAULT_IMAGE_MODEL) overrides.image_model = selectedImageModel;
 
     // Presets: keep common flows safe and avoid exposing low-level footguns by default.
     if (renderPreset === "fast_draft") {
@@ -76,30 +110,30 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
       overrides.dev_image_concurrency = 5;
       overrides.max_panels_per_scene = 6;
       overrides.max_panels_per_page = 6;
-      if (isTogetherModel) {
+      if (isTogetherProvider) {
         overrides.image_steps = 8;
       }
-      if (isOpenAIModel) {
+      if (isOpenAIProvider) {
         overrides.image_quality = "low";
       }
     } else if (renderPreset === "high_quality") {
       overrides.dev_mode = false;
       overrides.max_panels_per_scene = 10;
       overrides.max_panels_per_page = 5;
-      if (isTogetherModel) {
+      if (isTogetherProvider) {
         overrides.image_steps = 36;
       }
-      if (isOpenAIModel) {
+      if (isOpenAIProvider) {
         overrides.image_quality = "high";
       }
     } else {
       overrides.dev_mode = false;
       overrides.max_panels_per_scene = 8;
       overrides.max_panels_per_page = 6;
-      if (isTogetherModel) {
+      if (isTogetherProvider) {
         overrides.image_steps = 24;
       }
-      if (isOpenAIModel) {
+      if (isOpenAIProvider) {
         overrides.image_quality = "medium";
       }
     }
@@ -111,8 +145,8 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
       if (showExpert) {
         if (imageWidth !== 1024) overrides.image_width = imageWidth;
         if (imageHeight !== 1024) overrides.image_height = imageHeight;
-        if (isTogetherModel && imageSteps !== 28) overrides.image_steps = imageSteps;
-        if (isOpenAIModel && imageQuality !== "auto") overrides.image_quality = imageQuality;
+        if (isTogetherProvider && imageSteps !== 28) overrides.image_steps = imageSteps;
+        if (isOpenAIProvider && imageQuality !== "auto") overrides.image_quality = imageQuality;
         if (maxPanelsPerScene !== 8) overrides.max_panels_per_scene = maxPanelsPerScene;
         if (maxPanelsPerPage !== 6) overrides.max_panels_per_page = maxPanelsPerPage;
       }
@@ -290,22 +324,50 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
               </div>
               <div>
                 <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-                  {t("IMAGE MODEL")}
+                  IMAGE PROVIDER
                 </label>
                 <select
-                  name="imageModel"
-                  value={imageModel}
-                  onChange={(e) => setImageModel(e.target.value)}
+                  name="imageProvider"
+                  value={imageProvider}
+                  onChange={(e) => handleProviderChange(e.target.value as ImageProvider)}
                   className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
                 >
-                  {IMAGE_MODEL_OPTIONS.map((option) => (
+                  {IMAGE_PROVIDER_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
                     </option>
                   ))}
                 </select>
+              </div>
+              <div>
+                <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
+                  {t("IMAGE MODEL")}
+                </label>
+                {isOpenRouterProvider ? (
+                  <input
+                    name="imageModel"
+                    type="text"
+                    value={imageModel}
+                    onChange={(e) => setImageModel(e.target.value)}
+                    placeholder="black-forest-labs/flux-1-dev"
+                    className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
+                  />
+                ) : (
+                  <select
+                    name="imageModel"
+                    value={imageModel}
+                    onChange={(e) => handleModelChange(e.target.value)}
+                    className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
+                  >
+                    {IMAGE_MODEL_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <p className="mt-1 text-[0.72rem] leading-relaxed text-ink-black/45">
-                  Selected model is persisted to the project config and used by DRAW.
+                  Provider and model are persisted to the project config and used by DRAW.
                 </p>
               </div>
             </div>
@@ -378,7 +440,7 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
                   </div>
                 </div>
 
-                {isTogetherModel && (
+                {isTogetherProvider && (
                   <div>
                     <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
                       {t("STEPS")}
@@ -390,7 +452,7 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
                   </div>
                 )}
 
-                {isOpenAIModel && (
+                {isOpenAIProvider && (
                   <div>
                     <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
                       IMAGE QUALITY (OPENAI)
@@ -421,18 +483,20 @@ export function UploadStep({ onSubmit, isPending, error }: UploadStepProps) {
           <Button
             type="submit"
             size="lg"
-            disabled={!file || !name.trim() || !extOk || isPending}
+            disabled={!file || !name.trim() || !extOk || !imageModel.trim() || isPending}
           >
             {isPending ? t("CREATING…") : t("CREATE PROJECT")}
           </Button>
-          <Button
-            type="button"
-            size="lg"
-            variant="outline"
-            onClick={() => navigate("/")}
-          >
-            {t("BACK")}
-          </Button>
+          {onCancel && (
+            <Button
+              type="button"
+              size="lg"
+              variant="outline"
+              onClick={onCancel}
+            >
+              {t("BACK")}
+            </Button>
+          )}
         </div>
       </Card>
     </form>

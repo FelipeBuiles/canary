@@ -53,9 +53,12 @@ export function ScriptMode({
   ];
 
   return (
-    <div className="flex min-h-0 flex-1 overflow-hidden">
+    <div className="grid min-h-0 flex-1 grid-cols-[166px_minmax(0,1fr)_240px] gap-3 overflow-hidden bg-pulp-paper px-2 py-3">
       {/* Left rail — page list */}
-      <aside className="w-[220px] shrink-0 space-y-2 overflow-y-auto border-r-[2px] border-ink-black bg-ink-black/5 p-3">
+      <aside className="min-h-0 overflow-y-auto border-[2px] border-ink-black bg-pulp-paper p-2 shadow-[3px_3px_0_0_var(--color-ink-black)]">
+        <div className="mb-2 font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/55">
+          PAGES
+        </div>
         {pages.map((page, idx) => {
           const bubbleCount = page?.panels.flatMap((p) => p.bubbles).length ?? 0;
           const panelCount = page?.panels.length ?? 0;
@@ -64,8 +67,10 @@ export function ScriptMode({
               key={idx}
               onClick={() => onPageSelect(idx)}
               className={cn(
-                "w-full border-[2px] border-ink-black p-2.5 text-left transition-colors",
-                idx === pageIdx ? "bg-hero-red text-bristol" : "bg-pulp-paper hover:bg-bristol",
+                "mb-2 w-full border p-2 text-left transition-colors",
+                idx === pageIdx
+                  ? "border-hero-red bg-bristol text-ink-black"
+                  : "border-ink-black/24 bg-pulp-paper hover:bg-bristol",
               )}
             >
               <div className="font-meta text-[0.52rem] tracking-[0.18em] opacity-70">
@@ -83,18 +88,18 @@ export function ScriptMode({
       </aside>
 
       {/* Center — screenplay */}
-      <div className="min-w-0 flex-1 overflow-y-auto">
+      <div className="min-w-0 overflow-hidden border-[2px] border-ink-black bg-bristol shadow-[3px_3px_0_0_var(--color-ink-black)]">
         {/* Filter pills */}
-        <div className="sticky top-0 z-10 flex items-center gap-1.5 border-b-[2px] border-ink-black bg-pulp-paper/95 px-4 py-2.5 backdrop-blur-sm">
+        <div className="sticky top-0 z-10 flex items-center justify-end gap-1.5 border-b-[2px] border-ink-black bg-pulp-paper px-4 py-2">
           {FILTERS.map((f) => (
             <button
               key={f.id}
               onClick={() => setFilter(f.id)}
               className={cn(
-                "flex items-center gap-1.5 border-[2px] border-ink-black px-3 py-1 font-meta text-[0.6rem] tracking-[0.12em] transition-colors",
+                "flex items-center gap-1.5 border px-2.5 py-1 font-meta text-[0.52rem] tracking-[0.12em] transition-colors",
                 filter === f.id
                   ? "bg-ink-black text-pulp-paper"
-                  : "bg-pulp-paper text-ink-black hover:bg-surface-container",
+                  : "border-ink-black/22 bg-pulp-paper text-ink-black hover:bg-bristol",
               )}
             >
               {f.label}
@@ -103,7 +108,7 @@ export function ScriptMode({
           ))}
         </div>
 
-        <div className="space-y-6 p-4">
+        <div className="h-[calc(100%-41px)] space-y-5 overflow-y-auto p-4">
           {isLoading ? (
             <div className="flex h-40 items-center justify-center">
               <p className="font-meta text-[0.6rem] tracking-[0.2em] text-ink-black/40">
@@ -132,7 +137,7 @@ export function ScriptMode({
       </div>
 
       {/* Right rail — bulk ops + explainer */}
-      <aside className="w-[260px] shrink-0 space-y-3 overflow-y-auto border-l-[2px] border-ink-black p-3">
+      <aside className="min-h-0 space-y-3 overflow-y-auto">
         {/* Character Voices */}
         <CharacterVoicesCard project={project} pages={pages} />
 
@@ -149,21 +154,21 @@ export function ScriptMode({
           <div className="space-y-1.5 p-3">
             <button
               onClick={() => setFilter("narration")}
-              className="flex w-full items-center justify-between border-[2px] border-ink-black bg-surface-container px-2.5 py-1.5 text-left transition-colors hover:bg-pulp-paper"
+              className="flex w-full items-center justify-between border border-ink-black/30 bg-bristol px-2.5 py-1.5 text-left transition-colors hover:bg-surface-container"
             >
               <span className="font-meta text-[0.6rem] tracking-[0.1em]">Select all narration</span>
               <kbd className="font-meta text-[0.5rem] text-ink-black/50">⇧N</kbd>
             </button>
             <button
               onClick={() => setFindReplaceOpen((o) => !o)}
-              className="flex w-full items-center justify-between border-[2px] border-ink-black bg-surface-container px-2.5 py-1.5 text-left transition-colors hover:bg-pulp-paper"
+              className="flex w-full items-center justify-between border border-ink-black/30 bg-bristol px-2.5 py-1.5 text-left transition-colors hover:bg-surface-container"
             >
               <span className="font-meta text-[0.6rem] tracking-[0.1em]">Find & replace</span>
               <kbd className="font-meta text-[0.5rem] text-ink-black/50">⌘F</kbd>
             </button>
             <button
               disabled
-              className="flex w-full cursor-not-allowed items-center justify-between border-[2px] border-ink-black/20 bg-surface-container px-2.5 py-1.5 text-left opacity-40"
+              className="flex w-full cursor-not-allowed items-center justify-between border border-ink-black/15 bg-surface-container px-2.5 py-1.5 text-left opacity-40"
             >
               <span className="font-meta text-[0.6rem] tracking-[0.1em]">Re-attribute speaker</span>
               <kbd className="font-meta text-[0.5rem] text-ink-black/50">⇧A</kbd>
@@ -180,7 +185,7 @@ export function ScriptMode({
                 }
               }}
               disabled={!project || translateSinglePageMut.isPending}
-              className="flex w-full items-center justify-between border-[2px] border-ink-black bg-surface-container px-2.5 py-1.5 text-left transition-colors hover:bg-pulp-paper disabled:opacity-40"
+              className="flex w-full items-center justify-between border border-ink-black/30 bg-bristol px-2.5 py-1.5 text-left transition-colors hover:bg-surface-container disabled:opacity-40"
             >
               <span className="font-meta text-[0.6rem] tracking-[0.1em]">
                 {translateSinglePageMut.isPending ? "Translating..." : "Translate page"}
@@ -263,7 +268,7 @@ function ScriptPageSection({
       <div className="section-rule mb-3">
         PAGE {String(page.page_number).padStart(2, "0")}
       </div>
-      <div className="space-y-3">
+      <div>
         {page.panels.map((panel, pidx) => {
           const bubbles =
             filter === "all" ? panel.bubbles : panel.bubbles.filter((b) => b.type === filter);
@@ -300,8 +305,8 @@ function ScriptPanelSection({
   const primaryBubble = bubbles[0];
 
   return (
-    <div className="border-[2px] border-ink-black bg-pulp-paper">
-      <div className="flex items-center justify-between border-b-[2px] border-ink-black bg-surface-container px-3 py-2">
+    <div className="border-t border-ink-black bg-bristol first:border-t-0">
+      <div className="flex items-center justify-between border-b border-ink-black/70 bg-bristol px-3 py-2">
         <div className="flex items-center gap-3">
           <span className="font-meta text-[0.58rem] tracking-[0.18em]">
             PANEL {panelIndex + 1}
@@ -312,7 +317,7 @@ function ScriptPanelSection({
         </div>
         <button
           onClick={() => primaryBubble && onRevealInLayout(panel.id, primaryBubble.id)}
-          className="font-meta text-[0.52rem] tracking-[0.1em] text-hero-red hover:underline"
+          className="border border-ink-black/20 bg-pulp-paper px-2 py-1 font-meta text-[0.48rem] tracking-[0.12em] text-ink-black/70 transition-colors hover:bg-bristol"
         >
           Reveal in Layout →
         </button>
@@ -364,7 +369,7 @@ function ScriptBubbleRow({
     <div
       className={cn(
         "grid grid-cols-[180px_1fr]",
-        bubble.type === "narration" && "bg-surface-container/40",
+        bubble.type === "narration" && "bg-surface-container/35",
       )}
     >
       <div className="border-r-[1px] border-ink-black/10 px-3 py-2.5">
@@ -384,7 +389,7 @@ function ScriptBubbleRow({
         <div className="mb-1 flex items-center justify-end">
           <button
             onClick={onFixInLayout}
-            className="font-meta text-[0.48rem] tracking-[0.1em] text-hero-red hover:underline"
+            className="border border-ink-black/15 bg-pulp-paper px-2 py-0.5 font-meta text-[0.46rem] tracking-[0.1em] text-ink-black/55 transition-colors hover:bg-bristol"
           >
             fix in Layout
           </button>

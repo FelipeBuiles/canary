@@ -7,6 +7,7 @@ import { PanelDetailModal } from "../../components/PanelDetailModal";
 import { StatRow } from "../../components/ui/StatRow";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { RerunStageAction } from "../../components/ui/RerunStageAction";
+import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
 import { StyleCallout } from "../../components/wizard/StyleCallout";
 import { useActiveRegens, useRegenStore } from "../../store/regen";
 import type { ImageStatus } from "../../types/api";
@@ -192,17 +193,22 @@ export function DrawRoom() {
 
   const scenes = [...new Set([...images?.map((img) => img.scene_id) ?? [], ...(promptSummaries?.map((s) => s.scene_id) ?? [])])];
 
-  if (isLoading) {
+  const drawStageStatus = generateStage?.status ?? "pending";
+
+  if (isLoading || ((!images?.length && !promptSummaries?.length) && drawStageStatus !== "pending")) {
     return <RoomShell isLoading loadingText="LOADING PANEL GALLERY…" />;
   }
 
   if ((!images?.length && !promptSummaries?.length && regeningKeys.length === 0) || !name) {
     return (
-      <RoomShell
-        isEmpty
-        emptyTitle="PANEL GALLERY NOT AVAILABLE"
-        emptyDescription="Complete DRAW first."
-      />
+      <RoomShell>
+        <StagePlaceholder
+          stage="draw"
+          status={drawStageStatus}
+          itemsDone={generateStage?.items_done}
+          itemsTotal={generateStage?.items_total}
+        />
+      </RoomShell>
     );
   }
 
@@ -235,7 +241,7 @@ export function DrawRoom() {
         label="DRAW / PANEL GALLERY"
         title="PANEL GALLERY"
         lead="Every generated panel at a glance — regenerate individual frames, review failures, switch scenes."
-        actions={<RerunStageAction project={name} stage="generate" label="Draw" itemsAtRisk={`${images?.length ?? 0} generated panels will be lost`} />}
+        actions={<RerunStageAction project={name} stage="draw" label="Draw" itemsAtRisk={`${images?.length ?? 0} generated panels will be lost`} />}
       />
       <StyleCallout project={name} />
       <div className="flex max-w-full overflow-x-auto" role="tablist" aria-label="Panel filters">

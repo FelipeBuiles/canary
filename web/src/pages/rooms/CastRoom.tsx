@@ -10,6 +10,7 @@ import { ImageModal } from "../../components/ui/ImageModal";
 import { LazyImage } from "../../components/ui/LazyImage";
 import { StatusPill } from "../../components/ui/StatusPill";
 import { RerunStageAction } from "../../components/ui/RerunStageAction";
+import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
 import type { Character, GenerationJob, Location } from "../../types/api";
 
 function queuedLabel(job: GenerationJob | null) {
@@ -64,6 +65,11 @@ function CharacterCastCard({
       }, 0);
       return () => window.clearTimeout(timer);
     }
+
+    const interval = window.setInterval(() => {
+      setTimestamp(Date.now());
+    }, 2000);
+    return () => window.clearInterval(interval);
   }, [stageRegenerating]);
 
   const handleRegen = (e: React.MouseEvent) => {
@@ -85,21 +91,28 @@ function CharacterCastCard({
           className="relative cursor-pointer bg-surface-container"
           onClick={() => !imgFailed && setIsModalOpen(true)}
         >
-          {stageRegenerating ? (
+          {imgFailed ? (
             <div className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-2 bg-surface-container">
-              <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
-                REGENERATING…
-              </div>
-              <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
-                REBUILDING CAST REF
-              </div>
-            </div>
-          ) : imgFailed ? (
-            <div
-              className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-2 bg-surface-container"
-              onClick={handleRegen}
-            >
-              {regenRef.isPending || activeJob ? (
+              {stageRegenerating && (
+                <img
+                  key={timestamp}
+                  src={`${refUrl}?t=${timestamp}`}
+                  className="hidden"
+                  onLoad={() => setImgFailed(false)}
+                  alt=""
+                  aria-hidden="true"
+                />
+              )}
+              {stageRegenerating ? (
+                <>
+                  <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
+                    REGENERATING…
+                  </div>
+                  <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
+                    REBUILDING CAST REF
+                  </div>
+                </>
+              ) : regenRef.isPending || activeJob ? (
                 <>
                   <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
                     {queuedLabel(activeJob)}
@@ -131,6 +144,11 @@ function CharacterCastCard({
               {activeJob && (
                 <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
                   {queuedLabel(activeJob)}
+                </StatusPill>
+              )}
+              {stageRegenerating && !activeJob && (
+                <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
+                  CAST STAGE RUNNING
                 </StatusPill>
               )}
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/42 opacity-0 transition-opacity duration-150 group-hover/cast-card:opacity-100">
@@ -235,6 +253,11 @@ function LocationPlateCard({
       }, 0);
       return () => window.clearTimeout(timer);
     }
+
+    const interval = window.setInterval(() => {
+      setTimestamp(Date.now());
+    }, 2000);
+    return () => window.clearInterval(interval);
   }, [stageRegenerating]);
 
   const handleRegen = (e: React.MouseEvent) => {
@@ -256,18 +279,28 @@ function LocationPlateCard({
           className="relative cursor-pointer bg-surface-container"
           onClick={() => !imgFailed && setIsModalOpen(true)}
         >
-          {stageRegenerating ? (
+          {imgFailed ? (
             <div className="flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 bg-surface-container">
-              <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
-                REGENERATING…
-              </div>
-              <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
-                REBUILDING LOCATION PLATE
-              </div>
-            </div>
-          ) : imgFailed ? (
-            <div className="flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 bg-surface-container">
-              {regenPlate.isPending || activeJob ? (
+              {stageRegenerating && (
+                <img
+                  key={timestamp}
+                  src={`${plateUrl}?t=${timestamp}`}
+                  className="hidden"
+                  onLoad={() => setImgFailed(false)}
+                  alt=""
+                  aria-hidden="true"
+                />
+              )}
+              {stageRegenerating ? (
+                <>
+                  <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
+                    REGENERATING…
+                  </div>
+                  <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
+                    REBUILDING LOCATION PLATE
+                  </div>
+                </>
+              ) : regenPlate.isPending || activeJob ? (
                 <>
                   <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
                     {queuedLabel(activeJob)}
@@ -299,6 +332,11 @@ function LocationPlateCard({
               {activeJob && (
                 <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
                   {queuedLabel(activeJob)}
+                </StatusPill>
+              )}
+              {stageRegenerating && !activeJob && (
+                <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
+                  CAST STAGE RUNNING
                 </StatusPill>
               )}
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/42 opacity-0 transition-opacity duration-150 group-hover/cast-card:opacity-100">
@@ -355,20 +393,25 @@ export function CastRoom() {
   const { name } = useParams<{ name: string }>();
   const { data: bible, isLoading } = useStoryBible(name);
   const { data: status } = useProjectStatus(name);
-  const isCastStageRunning = status?.stages?.index?.status === "running";
+  const isCastStageRunning = status?.stages?.cast?.status === "running";
   const stageRegenerating = isCastStageRunning;
+  const stageInfo = status?.stages?.cast;
+  const stageStatus = stageInfo?.status ?? "pending";
 
-  if (isLoading) {
+  if (isLoading || (!bible && stageStatus !== "pending")) {
     return <RoomShell isLoading loadingText="LOADING CAST…" />;
   }
 
   if (!bible || !name) {
     return (
-      <RoomShell
-        isEmpty
-        emptyTitle="CAST NOT AVAILABLE"
-        emptyDescription="Complete EXTRACT and CAST first."
-      />
+      <RoomShell>
+        <StagePlaceholder
+          stage="cast"
+          status={stageStatus}
+          itemsDone={stageInfo?.items_done}
+          itemsTotal={stageInfo?.items_total}
+        />
+      </RoomShell>
     );
   }
 
@@ -378,7 +421,7 @@ export function CastRoom() {
         label="CAST / CHARACTER & LOCATION REFS"
         title="CASTING CALL"
         lead="Reference sheets and location plates produced by the casting director — each used as the visual anchor for every downstream panel."
-        actions={<RerunStageAction project={name} stage="index" label="Cast" disabled={stageRegenerating} />}
+        actions={<RerunStageAction project={name} stage="cast" label="Cast" disabled={stageRegenerating} />}
       />
 
       <section className="grid gap-10 xl:grid-cols-2">

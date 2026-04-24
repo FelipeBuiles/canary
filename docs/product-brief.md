@@ -65,7 +65,7 @@ The site is no longer just a dashboard concept. It has a working React shell, pr
 
 ## 1. Vision
 
-Canary is the end-to-end studio for turning prose fiction into a finished comic book. A reader uploads a novel, makes a handful of creative decisions, and gets back a polished, exportable graphic novel. Behind the scenes a 7-stage pipeline of LLMs and image models does the heavy lifting; in front of the reader is a focused workspace where every stage is reviewable, editable, and re-runnable without losing prior work.
+Canary is the end-to-end studio for turning prose fiction into a finished comic book. A reader uploads a novel, makes a handful of creative decisions, and gets back a polished, exportable graphic novel. Behind the scenes an 8-stage pipeline of LLMs and image models does the heavy lifting; in front of the reader is a focused workspace where every stage is reviewable, editable, and re-runnable without losing prior work.
 
 
 **What makes it different:**
@@ -77,15 +77,14 @@ Canary is the end-to-end studio for turning prose fiction into a finished comic 
 
 ## 2. Two products, one engine
 
-### 2.1 The CLI — `pipeline`
+### 2.1 The CLI — `novel_to_comic`
 
 **Audience:** Developers, power users, advanced creators, anyone scripting comic generation in batches.
 
 **Implemented today:**
-- `pipeline init` creates a local project, copies the input novel, writes `config.yaml`, `state.json`, and expected artifact folders.
-- `pipeline run [stage]` runs all stages or one stage; supports scene-limited runs for applicable stages, retrying failed image items, and export format selection for assembly.
-- `pipeline approve` and the state machine support human checkpoints.
-- `pipeline continue`, `pipeline status`, `pipeline style`, export/TUI commands, and stale-stage recovery exist in the local engine.
+- `novel_to_comic init` creates a local project, copies the input novel, writes `config.yaml`, `state.json`, and expected artifact folders.
+- `novel_to_comic serve` boots the web dashboard.
+- All pipeline operations (run, approve, status, export) are HTTP API endpoints — see `server/routers/pipeline.py`.
 - The CLI remains the most direct way to run local projects without the React site.
 
 **Future role:**
@@ -95,12 +94,11 @@ Canary is the end-to-end studio for turning prose fiction into a finished comic 
 - Becomes the canonical way to script multi-novel runs (e.g. an indie publisher generating 30 titles a month).
 
 **Future commands beyond the current set:**
-- `pipeline batch <input_dir>` — run pipeline against every novel in a directory
-- `pipeline serve` — boots the web dashboard against one or many projects
-- `pipeline cast --face me.png` — register a face for user insertion
-- `pipeline publish <project>` — push to a hosted gallery / share link
-- `pipeline diff <project> --stage panels` — see what changed since last run
-- `pipeline lint` — pre-flight checks (visual anchors, prompts, model availability)
+- `novel_to_comic batch <input_dir>` — run pipeline against every novel in a directory
+- `novel_to_comic cast --face me.png` — register a face for user insertion
+- `novel_to_comic publish <project>` — push to a hosted gallery / share link
+- `novel_to_comic diff <project> --stage panels` — see what changed since last run
+- `novel_to_comic lint` — pre-flight checks (visual anchors, prompts, model availability)
 
 ### 2.2 The Web App
 
@@ -122,17 +120,18 @@ Canary is the end-to-end studio for turning prose fiction into a finished comic 
 
 ## 3. The pipeline as user-facing concept
 
-The pipeline has 7 stages. In the product, each stage is a **room** the user moves through. They can go back to any room and the system re-runs the affected downstream rooms.
+The pipeline has 8 stages. In the product, each stage is a **room** the user moves through. They can go back to any room and the system re-runs the affected downstream rooms.
 
 | Stage | What the user sees |
 |---|---|
 | 1. **Extract** | "We read your novel. Here's your story bible — characters, locations, plot beats." Current: story bible viewer/editor exists. |
 | 2. **Cast** | "Here's your cast — meet your characters." Current: character refs and location plates are visible and individually regenerable; uploads/locks are not done. |
 | 3. **Adapt** | "Here's the screenplay version of your novel." Current: scene-by-scene screenplay viewer exists; source prose comparison/editing is not done. |
-| 4. **Storyboard** | "Here's how each scene breaks into panels." Current: editable panel cards exist; add/remove/reorder is not done. |
-| 5. **Direct** | "Here's the brief for each panel." Current: prompt inspector/editor exists with lineage display. |
-| 6. **Draw** | "Here are your panels." Current: panel gallery, failures/pending states, detail modal, and per-panel regen exist; alternates/bulk regen are not done. |
-| 7. **Compose** | "Here's your comic." Current: canonical page JSON editor exists for bubbles, SFX, layout/theme, translation, reflow, and export; full drag-and-drop panel layout and persistent history are not done. |
+| 4. **Plan** | "Here's the page layout plan for each scene." Current: layout planning with panel breakdown exists. |
+| 5. **Storyboard** | "Here's how each scene breaks into panels." Current: editable panel cards exist; add/remove/reorder is not done. |
+| 6. **Direct** | "Here's the brief for each panel." Current: prompt inspector/editor exists with lineage display. |
+| 7. **Draw** | "Here are your panels." Current: panel gallery, failures/pending states, detail modal, and per-panel regen exist; alternates/bulk regen are not done. |
+| 8. **Compose** | "Here's your comic." Current: canonical page JSON editor exists for bubbles, SFX, layout/theme, translation, reflow, and export; full drag-and-drop panel layout and persistent history are not done. |
 
 This rooms-not-buttons mental model is the spine of the future UI.
 
@@ -153,7 +152,7 @@ This rooms-not-buttons mental model is the spine of the future UI.
 - Quick actions: resume, duplicate, archive, export.
 
 ### 4.3 Pipeline progress & control
-- 7-stage progress visualization (the seven rooms).
+- 8-stage progress visualization (the eight rooms).
 - Live progress with streaming logs as stages run (already wired via SSE).
 - Cost-as-you-go counter.
 - Pause / resume / cancel a running stage.
@@ -248,7 +247,7 @@ The drag-and-drop editor is the highest-value UI in the product. Every panel is 
 
 ## 5. UX principles for designers
 
-1. **Rooms, not screens.** The user moves through 7 rooms in order; back-navigation is always available; downstream rooms invalidate gracefully when something upstream changes.
+1. **Rooms, not screens.** The user moves through 8 rooms in order; back-navigation is always available; downstream rooms invalidate gracefully when something upstream changes.
 2. **Show the artifact, hide the JSON.** The user should never see raw JSON in the default flow. Power users get a "view source" toggle.
 3. **Always show cost.** Every action that costs money should show a price tag before commit.
 4. **Re-render is cheap, redo from scratch is expensive.** Make per-item regen one click; full pipeline rebuild requires confirmation.
@@ -280,7 +279,7 @@ The drag-and-drop editor is the highest-value UI in the product. Every panel is 
 6. Export CBZ. Read on phone.
 
 ### Journey C: "I'm an indie publisher generating 12 titles a month"
-1. Use CLI: `pipeline batch ./novels/ --style noir --auto-approve safe-stages`.
+1. Use the API to run pipeline batches or the CLI batch command once implemented.
 2. Web app shows all 12 projects on the dashboard.
 3. Reviewer in the team opens each, fixes issues, exports.
 4. Pipeline runs unattended overnight; reviewer wakes up to a queue of awaiting-review projects.
