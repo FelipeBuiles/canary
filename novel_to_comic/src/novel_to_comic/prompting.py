@@ -6,7 +6,6 @@ from pathlib import Path
 
 from novel_to_comic.config import Config
 from novel_to_comic.models.layout_plan import PlannedPanel
-from novel_to_comic.models.panel import PanelBreakdown
 from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
 from novel_to_comic.models.story_bible import Character, StoryBible
 from novel_to_comic.text_utils import clean, shorten
@@ -82,7 +81,7 @@ def dimensions_for_shot(shot_type: str) -> tuple[int, int]:
     return _SHOT_DIMENSIONS.get(shot_type.lower().replace(" ", "-"), _DEFAULT_DIMENSIONS)
 
 
-def dimensions_for_panel(panel: PlannedPanel | PanelBreakdown) -> tuple[int, int]:
+def dimensions_for_panel(panel: PlannedPanel) -> tuple[int, int]:
     shape_intent = getattr(panel, "shape_intent", None)
     generation_mode = getattr(panel, "generation_mode", None)
     if shape_intent in {"wide", "panorama", "bleed"}:
@@ -157,18 +156,6 @@ def _reference_paths(project_dir: Path, character_id: str, character_count: int)
     return []
 
 
-def _panel_text_blob(panel: PanelBreakdown) -> str:
-    pieces: list[str] = [
-        panel.background_description,
-        panel.lighting,
-        panel.mood,
-        panel.sfx or "",
-    ]
-    pieces.extend(panel.character_actions.values())
-    pieces.extend(line.text for line in panel.dialogue)
-    return " ".join(pieces).lower()
-
-
 def _planned_panel_text_blob(panel: PlannedPanel) -> str:
     pieces: list[str] = [
         panel.background_description,
@@ -179,17 +166,6 @@ def _planned_panel_text_blob(panel: PlannedPanel) -> str:
     pieces.extend(panel.character_actions.values())
     pieces.extend(str(line.get("text", "")) for line in panel.dialogue)
     return " ".join(pieces).lower()
-
-
-def _panel_props(panel: PanelBreakdown, story_bible: StoryBible) -> list[str]:
-    blob = _panel_text_blob(panel)
-    props: list[str] = []
-    for prop in getattr(story_bible, "props", []):
-        name = prop.name.lower()
-        prop_id = (prop.id or "").lower()
-        if name in blob or (prop_id and prop_id in blob):
-            props.append(f"{prop.name}: {_shorten(prop.visual_anchor, 120)}")
-    return props
 
 
 def _planned_panel_props(panel: PlannedPanel, story_bible: StoryBible) -> list[str]:
@@ -203,20 +179,6 @@ def _planned_panel_props(panel: PlannedPanel, story_bible: StoryBible) -> list[s
     return props
 
 
-def _panel_state_summary(
-    panel: PanelBreakdown,
-) -> str:
-    parts: list[str] = []
-    for char_id in panel.characters_present:
-        action = panel.character_actions.get(char_id, "")
-        expression = panel.character_expressions.get(char_id, "")
-        position = panel.character_positions.get(char_id, "")
-        state_bits = [bit for bit in (action, expression, position) if bit]
-        if state_bits:
-            parts.append(f"{char_id}: {', '.join(state_bits)}")
-    return "; ".join(parts) if parts else "scene continues"
-
-
 def _planned_panel_state_summary(panel: PlannedPanel) -> str:
     parts: list[str] = []
     for char_id in panel.characters_present:
@@ -227,36 +189,6 @@ def _planned_panel_state_summary(panel: PlannedPanel) -> str:
         if state_bits:
             parts.append(f"{char_id}: {', '.join(state_bits)}")
     return "; ".join(parts) if parts else "scene continues"
-
-
-def build_continuity_note(
-    current_panel: PanelBreakdown,
-    prev_panel: PanelBreakdown | None,
-) -> str | None:
-    """Build narrative chain from previous panel's state.
-
-    Returns a string like:
-    "CONTINUING FROM: Sara stands at the hospital door, hand on the frame,
-    expression worried. Marcus lies in the hospital bed, eyes closed, IV drip nearby.
-    TRANSITION: fade. Now: Close-up on Sara's face, tears in her eyes."
-    """
-    if not prev_panel:
-        return None
-
-    transition_type = (getattr(prev_panel, "transition_type", "") or "").strip().lower()
-    if transition_type not in _SOFT_CONTINUITY:
-        return None
-
-    prev_state_str = _shorten(_panel_state_summary(prev_panel), 120)
-    curr_state_str = _shorten(_panel_state_summary(current_panel), 120)
-
-    parts: list[str] = [f"CONTINUING FROM: {prev_state_str}."]
-    parts.append(f"TRANSITION TYPE: {transition_type}.")
-    transition_note = _clean(prev_panel.transition_note or "")
-    if transition_note:
-        parts.append(f"TRANSITION: {_shorten(transition_note.rstrip('. '), 70)}.")
-    parts.append(f"Now: {curr_state_str}.")
-    return " ".join(parts)
 
 
 def build_planned_panel_continuity_note(
@@ -277,107 +209,6 @@ def build_planned_panel_continuity_note(
     parts.append(f"TRANSITION TYPE: {transition_type}.")
     parts.append(f"Now: {curr_state_str}.")
     return " ".join(parts)
-
-
-def build_image_prompt_spec(
-    config: Config,
-    project_dir: Path,
-    panel: PanelBreakdown,
-    story_bible: StoryBible,
-    prev_panel: PanelBreakdown | None = None,
-) -> ImagePrompt:
-    character_count = len(panel.characters_present)
-    subjects: list[PromptSubject] = []
-    ref_paths: list[str] = []
-    labels = _labels(config)
-
-    scene = next((s for s in story_bible.scenes if s.id == panel.scene_id), None)
-
-    for character_id in panel.characters_present:
-        character = next((c for c in story_bible.characters if c.id == character_id), None)
-        if not character:
-            continue
-        scene_appearance = None
-        if scene:
-            scene_appearance = scene.character_appearances.get(character_id)
-        subjects.append(
-            PromptSubject(
-                character_id=character_id,
-                name=character.name,
-                identity=_character_identity(character, scene_appearance, labels),
-                action=_clean(panel.character_actions.get(character_id, "")),
-                expression=_clean(panel.character_expressions.get(character_id, "")),
-                position=_clean(panel.character_positions.get(character_id, "")),
-            )
-        )
-        ref_paths.extend(_reference_paths(project_dir, character_id, character_count))
-
-    location = None
-    if scene:
-        location = next((loc for loc in story_bible.locations if loc.id == scene.location_id), None)
-
-    shot_key = panel.shot_type.lower().replace(" ", "-")
-    composition = _SHOT_COMPOSITION.get(
-        shot_key,
-        f"{_clean(panel.shot_type)} panel, {_clean(panel.camera_angle)} camera",
-    )
-    camera_angle = _clean(panel.camera_angle)
-    if camera_angle and camera_angle.lower() not in composition.lower():
-        composition = f"{composition}, {camera_angle} camera"
-
-    setting_parts = []
-    if location and location.visual_anchor:
-        setting_parts.append(_shorten(location.visual_anchor, 180))
-    if panel.background_description:
-        setting_parts.append(_shorten(panel.background_description, 160))
-
-    width, height = dimensions_for_shot(panel.shot_type)
-    setting = "; ".join(setting_parts)
-    lighting = _clean(panel.lighting)
-    mood = _clean(panel.mood)
-    props = _panel_props(panel, story_bible)
-    character_label = labels["character"] if character_count == 1 else labels["characters"]
-    constraints = (
-        f"exactly {character_count} {character_label}; "
-        f"{labels['one_body']}; {labels['no_lettering']}"
-    )
-    full_prompt = _render_panel_prompt_body_parts(
-        labels=labels,
-        subjects=subjects,
-        composition=composition,
-        setting=setting,
-        lighting=lighting,
-        mood=mood,
-        props=props,
-        constraints=constraints,
-    )
-
-    prompt = ImagePrompt(
-        prompt_version=IMAGE_PROMPT_VERSION,
-        scene_id=panel.scene_id,
-        panel_number=panel.panel_number,
-        full_prompt=full_prompt,
-        style=config.style_template,
-        composition=composition,
-        setting=setting,
-        lighting=lighting,
-        mood=mood,
-        subjects=subjects,
-        props=props,
-        constraints=constraints,
-        reference_image_paths=ref_paths,
-        negative_prompt=None,
-        width=width,
-        height=height,
-        steps=config.effective_image_steps(),
-        guidance_scale=config.flux_guidance_scale,
-        continuity_note=(
-            build_continuity_note(panel, prev_panel)
-            if getattr(config, "continuity_mode", "hybrid") in {"text_only", "hybrid"}
-            else None
-        ),
-    )
-    return prompt
 
 
 def build_planned_panel_prompt_spec(
@@ -564,12 +395,8 @@ def render_panel_prompt_body(prompt: ImagePrompt) -> str:
 
 def render_generation_prompt(prompt: ImagePrompt, style_template: str) -> str:
     style = _clean(style_template or getattr(prompt, "style", None))
-
-    if getattr(prompt, "prompt_version", 1) >= 2:
-        body = _clean(getattr(prompt, "full_prompt", "")) or render_panel_prompt_body(prompt)
-        output = f"{style}\n\n{body}" if style else body
-    else:
-        output = f"{style}\n\n{_PROMPT_LABELS['en']['style_authority']}\n\n{prompt.full_prompt}" if style else getattr(prompt, "full_prompt", "")
+    body = _clean(getattr(prompt, "full_prompt", "")) or render_panel_prompt_body(prompt)
+    output = f"{style}\n\n{body}" if style else body
 
     if getattr(prompt, "continuity_note", None):
         output = f"{output}\n\n{prompt.continuity_note}"

@@ -1,17 +1,17 @@
 import { useMemo } from "react";
 import { Navigate, useParams } from "react-router-dom";
-import { useProjectStatus, useStyles } from "../api/queries";
+import { useProjectStatus } from "../api/queries";
 import { STAGE_ORDER, STAGE_ROUTES } from "../types/api";
 
 export function NavigateToRoom() {
   const { name } = useParams<{ name: string }>();
   const { data: status, isLoading, error } = useProjectStatus(name);
-  const { data: stylesData, isLoading: stylesLoading } = useStyles(name);
 
   const activeStage = useMemo(() => {
     if (!status) return null;
-    const styleSelected = stylesData?.active_index != null;
-    if (status.stages.extract?.status === "complete" && !styleSelected) {
+    const extractDone = status.stages.extract?.status === "complete"
+      || status.stages.extract?.status === "awaiting_review";
+    if (extractDone && !status.style_selected) {
       return "styles";
     }
     const stage =
@@ -21,10 +21,10 @@ export function NavigateToRoom() {
       STAGE_ORDER.find((s) => status.stages[s]?.status === "pending") ??
       STAGE_ORDER[STAGE_ORDER.length - 1];
     return STAGE_ROUTES[stage];
-  }, [status, stylesData?.active_index]);
+  }, [status]);
 
   if (!name) return null;
-  if (isLoading || stylesLoading || !activeStage) {
+  if (isLoading || !activeStage) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">

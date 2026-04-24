@@ -549,6 +549,7 @@ export function useSetActiveStyle() {
       setActiveStyle(project, index),
     onSuccess: (_data, { project }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "styles"] });
+      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
     },
   });
 }

@@ -26,7 +26,7 @@ from together import AsyncTogether
 
 from novel_to_comic.clients.api_logging import image_payload_summary, log_call_end, log_call_start
 from novel_to_comic.config import Config
-from novel_to_comic.clients.gemini import describe_provider, get_client
+from novel_to_comic.clients.gemini import get_client
 
 logger = logging.getLogger("canary.google")
 image_logger = logging.getLogger("canary.image")
@@ -179,13 +179,12 @@ async def _generate_gemini_image(
     call_id, started = log_call_start(
         logger,
         provider="gemini",
-        operation="models.generate_content:image",
+        operation="generate",
+        task="image",
         params={
             "model": config.image_model,
             "refs": len(valid_refs),
             "style_refs": len(valid_style_refs),
-            "provider_mode": describe_provider(config),
-            "response_modalities": ["IMAGE", "TEXT"],
             "width": width or config.image_width,
             "height": height or config.image_height,
         },
@@ -303,7 +302,8 @@ async def _generate_gemini_image(
                     call_id=call_id,
                     started=started,
                     provider="gemini",
-                    operation="models.generate_content:image",
+                    operation="generate",
+                    task="image",
                     ok=True,
                     result={
                         "image_bytes": len(image_bytes),
@@ -320,7 +320,8 @@ async def _generate_gemini_image(
             call_id=call_id,
             started=started,
             provider="gemini",
-            operation="models.generate_content:image",
+            operation="generate",
+            task="image",
             ok=False,
             error=e,
         )
@@ -343,7 +344,8 @@ async def _generate_together_image(
     call_id, started = log_call_start(
         image_logger,
         provider="together",
-        operation="images.generate",
+        operation="generate",
+        task="image",
         params={
             "model": config.image_model,
             "refs": len([p for p in (reference_paths or []) if p.exists()]),
@@ -393,7 +395,8 @@ async def _generate_together_image(
                         call_id=call_id,
                         started=started,
                         provider="together",
-                        operation="images.generate",
+                        operation="generate",
+                        task="image",
                         ok=True,
                         result={"image_bytes": len(image_data), "ref_mode": "multi"},
                     )
@@ -415,7 +418,8 @@ async def _generate_together_image(
             call_id=call_id,
             started=started,
             provider="together",
-            operation="images.generate",
+            operation="generate",
+            task="image",
             ok=True,
             result={"image_bytes": len(image_data), "ref_mode": "single_or_none"},
         )
@@ -426,7 +430,8 @@ async def _generate_together_image(
             call_id=call_id,
             started=started,
             provider="together",
-            operation="images.generate",
+            operation="generate",
+            task="image",
             ok=False,
             error=e,
         )
@@ -450,15 +455,14 @@ async def _generate_openai_image(
     call_id, started = log_call_start(
         image_logger,
         provider="openai",
-        operation="images.generate",
+        operation="generate",
+        task="image",
         params={
             "model": config.image_model,
-            "width": width or config.image_width,
-            "height": height or config.image_height,
-            "quality": getattr(config, "image_quality", "auto"),
             "subject_refs": len(subject_refs),
             "style_refs": len(aux_refs),
-            "edit_refs": len(edit_refs),
+            "width": width or config.image_width,
+            "height": height or config.image_height,
         },
         payload=image_payload_summary(prompt),
     )
@@ -502,7 +506,8 @@ async def _generate_openai_image(
             call_id=call_id,
             started=started,
             provider="openai",
-            operation="images.generate",
+            operation="generate",
+            task="image",
             ok=True,
             result={"image_bytes": len(image_data)},
         )
@@ -513,7 +518,8 @@ async def _generate_openai_image(
             call_id=call_id,
             started=started,
             provider="openai",
-            operation="images.generate",
+            operation="generate",
+            task="image",
             ok=False,
             error=e,
         )
@@ -605,7 +611,8 @@ async def _generate_openrouter_image(
             call_id=call_id,
             started=started,
             provider="openrouter",
-            operation="images.generate",
+            operation="generate",
+            task="image",
             ok=True,
             result={"image_bytes": len(image_data)},
         )
@@ -616,7 +623,8 @@ async def _generate_openrouter_image(
             call_id=call_id,
             started=started,
             provider="openrouter",
-            operation="images.generate",
+            operation="generate",
+            task="image",
             ok=False,
             error=e,
         )

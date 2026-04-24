@@ -11,7 +11,7 @@ from openai import AsyncOpenAI
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from novel_to_comic.clients.api_logging import log_call_end, log_call_start
-from novel_to_comic.clients.gemini import describe_provider, get_client
+from novel_to_comic.clients.gemini import get_client
 from novel_to_comic.config import Config
 
 # Google gemini-embedding-001 = 3072 dims on Vertex AI
@@ -51,12 +51,11 @@ async def _embed_google(config: Config, texts: list[str]) -> list[list[float]]:
     call_id, started = log_call_start(
         logger,
         provider="gemini",
-        operation="models.embed_content",
+        operation="embed",
+        task="embed",
         params={
             "model": config.embedding_model,
             "count": len(texts),
-            "provider_mode": describe_provider(config),
-            "task_type": "RETRIEVAL_DOCUMENT",
         },
         payload={"input_chars_total": sum(len(t) for t in texts)},
     )
@@ -84,7 +83,8 @@ async def _embed_google(config: Config, texts: list[str]) -> list[list[float]]:
             call_id=call_id,
             started=started,
             provider="gemini",
-            operation="models.embed_content",
+            operation="embed",
+            task="embed",
             ok=True,
             result={
                 "count": len(results),
@@ -98,7 +98,8 @@ async def _embed_google(config: Config, texts: list[str]) -> list[list[float]]:
             call_id=call_id,
             started=started,
             provider="gemini",
-            operation="models.embed_content",
+            operation="embed",
+            task="embed",
             ok=False,
             error=e,
         )
@@ -110,7 +111,8 @@ async def _embed_openai(config: Config, texts: list[str]) -> list[list[float]]:
     call_id, started = log_call_start(
         logger,
         provider="openai",
-        operation="embeddings.create",
+        operation="embed",
+        task="embed",
         params={
             "model": config.embedding_model,
             "count": len(texts),
@@ -131,7 +133,8 @@ async def _embed_openai(config: Config, texts: list[str]) -> list[list[float]]:
             call_id=call_id,
             started=started,
             provider="openai",
-            operation="embeddings.create",
+            operation="embed",
+            task="embed",
             ok=True,
             result={
                 "count": len(vectors),
@@ -145,7 +148,8 @@ async def _embed_openai(config: Config, texts: list[str]) -> list[list[float]]:
             call_id=call_id,
             started=started,
             provider="openai",
-            operation="embeddings.create",
+            operation="embed",
+            task="embed",
             ok=False,
             error=e,
         )

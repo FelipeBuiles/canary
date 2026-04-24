@@ -40,7 +40,7 @@ The site is no longer just a dashboard concept. It has a working React shell, pr
 - **Localization:** UI language and output language controls exist, and existing page bubbles can be translated to English/Spanish/French. Full multi-language export workflows are still limited.
 - **Stage 7 editor:** The visual editor exists and edits canonical page JSON. It is not yet a complete freeform page-layout editor: panel reorder across pages exists in the backend but is not exposed as drag-and-drop, and version history is only in-memory undo/redo.
 - **Bubble tails:** `tail_x`/`tail_y` fields and `SvgTail` exist in the frontend model/editor path, but this still needs to be treated carefully as an MVP feature rather than a finished pinned-tail system.
-- **Style system:** Style suggestions/samples/active style work. The broader preset gallery/theme variant studio described below is only partly represented.
+- **Style system:** Style suggestions/samples/active style work. Style selection is backend-enforced — the pipeline blocks post-extract stages until a style is selected (`is_style_selected` gate in `styles.py`). The broader preset gallery/theme variant studio described below is only partly represented.
 
 ### What is missing or still roadmap
 

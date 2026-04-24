@@ -19,11 +19,13 @@ Novel (EPUB / TXT / PDF)
   │   Characters (visual anchors), locations, scenes, narrative arcs, props
   │   ► CHECKPOINT: review story_bible.json before continuing
   │
+  │   ── Style Gate: user must select a style before any post-extract stage runs ──
+  │
   ▼ Stage 2 — Cast (image gen via config.image_provider)
   │   Character reference sheets (4 angles each) + location background plates
   │   ► CHECKPOINT: review refs/ and plates/ before continuing
   │
-  ▼ Stage 3 — Adapt (gemini-3.1-pro-preview)
+  ▼ Stage 3 — Adapt (gemini-3.1-pro-preview) # consider claude models for better prose?
   │   Per-scene: prose → observable actions, compressed dialogue (≤35 words/bubble)
   │   Removes interiority; adds SFX annotations
   │
@@ -36,7 +38,7 @@ Novel (EPUB / TXT / PDF)
   │   Shot type, camera angle, character positions, expressions, dialogue
   │
   ▼ Stage 6 — Direct (gemini-3.1-flash-lite-preview)
-  │   Per-panel: assembles full image prompt from:
+  │   Per-panel: assembles full image prompt from planned panels:
   │     [Style template] + [Location anchor] + [Character anchor(s)] + [Panel description]
   │   Character visual anchors injected VERBATIM for consistency
   │
@@ -58,6 +60,7 @@ Novel (EPUB / TXT / PDF)
 | **Layout plan as planner** | Stage 4 owns page/panel structure; downstream stages project from it. |
 | **Decompose relentlessly** | Each LLM call does exactly one thing. No end-to-end generation. |
 | **Human checkpoints at boundaries** | Pipeline pauses after `extract`, `cast`, `direct`, and `draw`. |
+| **Style gate enforced** | Backend blocks post-extract stages until a style is selected. Frontend reads `style_selected` from status API (sourced from `config.yaml`, never stale). |
 | **Resume from failure** | `state.json` tracks every item. Interrupted stages resume where they left off. |
 
 ---

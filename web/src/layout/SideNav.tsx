@@ -235,8 +235,8 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     : null;
   const styleNeedsSelection =
     !!name &&
-    status?.stages.extract?.status === "complete" &&
-    styleStatus !== "complete";
+    !status?.style_selected &&
+    (status?.stages.extract?.status === "complete" || status?.stages.extract?.status === "awaiting_review");
   const isRunning = status?.is_running ?? false;
 
   const measureStageDetails = useCallback(() => {
@@ -292,8 +292,8 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
         {
           onSuccess: () => {
             // After approving extract, go to style selection before running cast.
-            // Check stylesData directly — status cache is stale at this point.
-            if (needsApproval === "extract" && stylesData?.active_index == null) {
+            // style_selected comes from config.yaml so it's never stale.
+            if (needsApproval === "extract" && !status?.style_selected) {
               navigate(`/project/${encodeURIComponent(name)}/styles`);
               return;
             }

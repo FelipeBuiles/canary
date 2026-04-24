@@ -14,6 +14,7 @@ from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.state import STAGE_NAMES, create_initial_state, is_stale, load_state, save_state
 
 from ..deps import get_project, get_projects_dir
+from .styles import is_style_selected
 from ..generation_jobs import (
     enqueue_generation_job,
     generation_job_payload,
@@ -278,6 +279,7 @@ def project_status(request: Request, project=Depends(get_project)):
         "total_cost_usd": state.total_cost_usd,
         "is_running": _is_project_running(project_dir.name, request),
         "has_cover": _cover_path(project_dir).exists(),
+        "style_selected": is_style_selected(project_dir, config),
         "stages": stages,
     }
 

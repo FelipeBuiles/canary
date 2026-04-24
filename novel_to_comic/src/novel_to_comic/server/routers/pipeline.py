@@ -23,6 +23,7 @@ from novel_to_comic.state import (
 )
 
 from ..deps import get_project
+from .styles import is_style_selected
 from ..generation_jobs import (
     enqueue_generation_job,
     find_active_generation_job,
@@ -202,6 +203,17 @@ async def run_pipeline(
     existing = running.get(project_name)
     if existing and not existing.done():
         raise HTTPException(409, "A stage is already running for this project")
+
+    # Style gate: extract must be done, target includes post-extract stage,
+    # and no style selected → block. Does NOT gate stage=extract or regen-* endpoints.
+    _POST_EXTRACT = {"cast", "adapt", "plan", "storyboard", "direct", "draw", "compose"}
+    extract_done = state.stages["extract"].status.value in ("complete", "awaiting_review")
+    target_includes_post_extract = (
+        stage is None
+        or stage in _POST_EXTRACT
+    )
+    if extract_done and target_includes_post_extract and not is_style_selected(project_dir, config):
+        raise HTTPException(403, "Select a style before running post-extract stages.")
 
     if stage and rerun:
         _reset_stage_and_downstream(state, stage)

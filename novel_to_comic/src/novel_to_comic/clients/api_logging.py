@@ -188,10 +188,10 @@ def payload_summary(*, system_prompt: str | None = None, user_content: str | Non
     full_prompts = _full_prompts_enabled()
     out: dict[str, Any] = {}
     if system_prompt is not None:
-        out["system_chars"] = len(system_prompt)
-        out["system_sha"] = _text_fingerprint(system_prompt)
+        out["sys_chars"] = len(system_prompt)
+        out["sys_sha"] = _text_fingerprint(system_prompt)
         if include_text and not full_prompts:
-            out["system_preview"] = _truncate(system_prompt, 600)
+            out["sys_preview"] = _truncate(system_prompt, 600)
     if user_content is not None:
         out["user_chars"] = len(user_content)
         out["user_sha"] = _text_fingerprint(user_content)
@@ -213,25 +213,32 @@ def log_call_start(
     *,
     provider: str,
     operation: str,
+    task: str | None = None,
     params: Mapping[str, Any] | None = None,
     payload: Mapping[str, Any] | None = None,
 ) -> tuple[str, float]:
     call_id = uuid.uuid4().hex[:12]
     started = time.perf_counter()
-    event: dict[str, Any] = {
-        "event": "api_call_start",
-        "call_id": call_id,
-        "provider": provider,
-        "operation": operation,
-    }
     trace_id = _start_span(call_id, provider, operation, params, payload) or _current_trace_id()
+
+    # Human-readable flat format: [task] provider.operation call_id [key=val ...]
+    parts = []
+    if task:
+        parts.append(f"[{task}]")
+    parts.append(f"{provider}.{operation}")
+    parts.append(f"call={call_id}")
     if trace_id:
-        event["trace_id"] = trace_id
+        parts.append(f"trace={trace_id[:8]}")
     if params:
-        event["params"] = _sanitize(params)
+        safe = _sanitize(params)
+        for k, v in safe.items():
+            parts.append(f"{k}={v}")
     if payload:
-        event["payload"] = _sanitize(payload)
-    logger.info("[bold cyan]API call[/] %s", json.dumps(event, ensure_ascii=True, sort_keys=True))
+        safe = _sanitize(payload)
+        for k, v in safe.items():
+            parts.append(f"{k}={v}")
+
+    logger.info("[bold cyan]▶ START[/] %s", " ".join(str(p) for p in parts))
     return call_id, started
 
 
@@ -242,31 +249,34 @@ def log_call_end(
     started: float,
     provider: str,
     operation: str,
+    task: str | None = None,
     ok: bool,
     status_code: int | None = None,
     result: Mapping[str, Any] | None = None,
     error: BaseException | None = None,
 ) -> None:
     _finish_span(call_id, ok=ok, status_code=status_code, result=result, error=error)
-    event: dict[str, Any] = {
-        "event": "api_call_end",
-        "call_id": call_id,
-        "provider": provider,
-        "operation": operation,
-        "ok": ok,
-        "elapsed_ms": round((time.perf_counter() - started) * 1000, 1),
-    }
+    elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
     trace_id = _current_trace_id()
+
+    # Human-readable flat format: [task] provider.operation call_id elapsed_ms [key=val ...]
+    parts = []
+    if task:
+        parts.append(f"[{task}]")
+    parts.append(f"{provider}.{operation}")
+    parts.append(f"call={call_id}")
+    parts.append(f"elapsed={elapsed_ms}ms")
     if trace_id:
-        event["trace_id"] = trace_id
+        parts.append(f"trace={trace_id[:8]}")
     if status_code is not None:
-        event["status_code"] = status_code
+        parts.append(f"status={status_code}")
     if result:
-        event["result"] = _sanitize(result)
+        safe = _sanitize(result)
+        for k, v in safe.items():
+            parts.append(f"{k}={v}")
     if error is not None:
-        event["error"] = {
-            "type": error.__class__.__name__,
-            "message": _truncate(str(error), 500),
-        }
+        parts.append(f"error={error.__class__.__name__}: {_truncate(str(error), 200)}")
+
     level = logging.INFO if ok else logging.ERROR
-    logger.log(level, "[bold green]API done[/] %s", json.dumps(event, ensure_ascii=True, sort_keys=True))
+    icon = "[bold green]✓ DONE[/]" if ok else "[bold red]✗ FAIL[/]"
+    logger.log(level, "%s %s", icon, " ".join(parts))
