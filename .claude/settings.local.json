@@ -64,7 +64,8 @@
       "Bash(sed -i '' 's/stage=\"screenplay\"/stage=\"adapt\"/' /Users/jbuiles/Code/canary/web/src/pages/rooms/AdaptRoom.tsx)",
       "Bash(sed -i '' 's/stage=\"panels\"/stage=\"storyboard\"/' /Users/jbuiles/Code/canary/web/src/pages/rooms/StoryboardRoom.tsx)",
       "Bash(sed -i '' 's/stage=\"prompts\"/stage=\"direct\"/' /Users/jbuiles/Code/canary/web/src/pages/rooms/DirectRoom.tsx)",
-      "Bash(sed -i '' 's/stage=\"generate\"/stage=\"draw\"/' /Users/jbuiles/Code/canary/web/src/pages/rooms/DrawRoom.tsx)"
+      "Bash(sed -i '' 's/stage=\"generate\"/stage=\"draw\"/' /Users/jbuiles/Code/canary/web/src/pages/rooms/DrawRoom.tsx)",
+      "Bash(ls:*)"
     ]
   }
 }

@@ -30,13 +30,8 @@ async def generate_json(
     call_id, started = log_call_start(
         logger,
         provider="anthropic",
-        operation="messages.create",
-        params={
-            "model": resolved_model,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "task": "json",
-        },
+        operation="generate",
+        task="json",
         payload=payload_summary(system_prompt=system_prompt, user_content=user_content),
     )
     client = _get_client(config)
@@ -62,7 +57,8 @@ async def generate_json(
             call_id=call_id,
             started=started,
             provider="anthropic",
-            operation="messages.create",
+            operation="generate",
+            task="json",
             ok=True,
             result={"response_chars": len(text), "response_type": type(parsed).__name__},
         )
@@ -73,7 +69,8 @@ async def generate_json(
             call_id=call_id,
             started=started,
             provider="anthropic",
-            operation="messages.create",
+            operation="generate",
+            task="json",
             ok=False,
             error=e,
         )
@@ -94,13 +91,8 @@ async def generate_text(
     call_id, started = log_call_start(
         logger,
         provider="anthropic",
-        operation="messages.create",
-        params={
-            "model": resolved_model,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "task": "text",
-        },
+        operation="generate",
+        task="text",
         payload=payload_summary(system_prompt=system_prompt, user_content=user_content),
     )
     client = _get_client(config)
@@ -120,7 +112,8 @@ async def generate_text(
             call_id=call_id,
             started=started,
             provider="anthropic",
-            operation="messages.create",
+            operation="generate",
+            task="text",
             ok=True,
             result={"response_chars": len(text)},
         )
@@ -131,7 +124,8 @@ async def generate_text(
             call_id=call_id,
             started=started,
             provider="anthropic",
-            operation="messages.create",
+            operation="generate",
+            task="text",
             ok=False,
             error=e,
         )

@@ -28,7 +28,7 @@ novel_to_comic/src/novel_to_comic/
 ├── state.py                # Pipeline state machine — state.json, stage status, cost
 ├── events.py               # Event callback system for SSE streaming
 ├── layout_planning.py      # LayoutPlan model + helpers for plan→pages projection
-├── prompting.py            # Shared prompt-building helpers (style samples, etc.)
+├── prompting.py            # Prompt-building for PlannedPanel + style samples
 ├── clients/
 │   ├── gemini.py           # Async Gemini wrapper (Vertex AI or developer API)
 │   ├── claude.py           # Anthropic Claude wrapper
@@ -40,7 +40,7 @@ novel_to_comic/src/novel_to_comic/
 │   ├── s3_screenplay.py    # Scene prose → screenplay (adapt)
 │   ├── s4_layout_plan.py   # Screenplay → page/panel layout plan (plan)
 │   ├── s4_panels.py        # Layout plan → legacy PanelBreakdown (storyboard)
-│   ├── s5_prompts.py       # Panel breakdown → image prompts (direct)
+│   ├── s5_prompts.py       # Planned panels → image prompts (direct)
 │   ├── s6_generate.py      # Image generation (draw)
 │   └── s7_assemble.py      # ComicPage JSON → HTML → PNG → PDF/CBZ (compose)
 ├── models/
@@ -63,7 +63,7 @@ novel_to_comic/src/novel_to_comic/
     │   ├── pages.py        # page JSON read/write, preview PNG, static files
     │   ├── config.py       # config read/patch
     │   ├── export.py       # PDF/CBZ export trigger + download
-    │   └── styles.py       # style suggestions, sample generation, active style
+    │   └── styles.py       # style suggestions, sample generation, active style, is_style_selected gate
     ├── generation_jobs.py  # Job queue for async image/style generation
     └── telemetry.py        # OpenTelemetry span emission
 ```
@@ -81,7 +81,7 @@ All stage names (used in state, API routes, and CLI paths):
 | 3 | `adapt` | `s3_screenplay.py` | No | Gemini 3.1 Pro |
 | 4 | `plan` | `s4_layout_plan.py` | No | None (deterministic) |
 | 5 | `storyboard` | `s4_panels.py` | No | Gemini Flash-Lite |
-| 6 | `direct` | `s5_prompts.py` | No | Gemini Flash-Lite |
+| 6 | `direct` | `s5_prompts.py` | No | Gemini Flash-Lite (prompt assembly only) |
 | 7 | `draw` | `s6_generate.py` | Yes | Gemini / OpenAI / OpenRouter / Together |
 | 8 | `compose` | `s7_assemble.py` | No | None (deterministic) |
 
@@ -123,6 +123,14 @@ Every stage `run()` accepts `on_event: EventCallback | None`. The web server
 injects a callback that streams events to the browser over SSE. See `events.py`
 for the event schema. Always add `emit()` calls alongside `console.print()`
 calls in stage code.
+
+### Style gate (backend-enforced)
+
+After extract completes, the backend blocks `POST /run` for any post-extract stage
+unless a style is selected. The check lives in `is_style_selected()` in
+`server/routers/styles.py` and is called from `pipeline.py`'s `run_pipeline()`.
+The status API returns `style_selected: bool` (sourced from `config.yaml`) so the
+frontend can gate navigation without depending on stale React Query cache.
 
 ### Layout plan as planner-owned artifact
 

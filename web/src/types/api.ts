@@ -66,6 +66,7 @@ export interface ProjectStatus {
   total_cost_usd: number;
   is_running: boolean;
   has_cover: boolean;
+  style_selected: boolean;
   stages: Record<string, StageInfo>;
 }
 

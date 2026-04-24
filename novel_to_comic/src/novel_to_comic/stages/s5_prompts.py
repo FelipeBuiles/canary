@@ -46,8 +46,8 @@ async def _process_panel(
     if output_path.exists():
         existing = ImagePrompt.model_validate_json(output_path.read_text())
         if (
-            getattr(existing, "prompt_version", 1) >= IMAGE_PROMPT_VERSION
-            and getattr(existing, "planned_panel_id", None) == panel.panel_id
+            existing.prompt_version >= IMAGE_PROMPT_VERSION
+            and existing.planned_panel_id == panel.panel_id
         ):
             return existing
 

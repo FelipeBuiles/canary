@@ -54,6 +54,15 @@ def _load_suggestions(project_dir):
         return None
 
 
+def is_style_selected(project_dir, config) -> bool:
+    """Check whether an active style has been selected for this project."""
+    suggestions = _load_suggestions(project_dir) or []
+    return any(
+        s.get("template", "").strip() == config.style_template.strip()
+        for s in suggestions
+    )
+
+
 def _save_suggestions(project_dir, suggestions, title):
     path = project_dir / "samples" / "style_suggestions.json"
     path.parent.mkdir(exist_ok=True)

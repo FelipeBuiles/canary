@@ -30,7 +30,7 @@ output. The pipeline is orchestrated through a FastAPI web server — there is n
 | 3 | `adapt` | Scene prose → screenplay format |
 | 4 | `plan` | Screenplay → page/panel layout plan |
 | 5 | `storyboard` | Layout plan → panel breakdown JSON |
-| 6 | `direct` | Panel breakdown → image prompts |
+| 6 | `direct` | Planned panels → image prompts |
 | 7 | `draw` | Image prompts → panel PNGs |
 | 8 | `compose` | Panel images + bubble/SFX JSON → PDF/CBZ export |
 
@@ -55,6 +55,10 @@ output. The pipeline is orchestrated through a FastAPI web server — there is n
   prompt templates.
 - Breaking JSON/model changes are acceptable for now; do not add legacy shims
   unless explicitly requested.
+- **Style gate:** The backend blocks `POST /run` for any post-extract stage if no
+  style is selected (`is_style_selected` in `styles.py`). The status API returns
+  `style_selected: bool` sourced from `config.yaml`. Frontend uses this field
+  (not `useStyles` data) for gate checks to avoid stale-cache bugs.
 
 ## Where To Look
 

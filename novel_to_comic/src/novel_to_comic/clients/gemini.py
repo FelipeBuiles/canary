@@ -69,14 +69,10 @@ async def generate_json(
     call_id, started = log_call_start(
         logger,
         provider="gemini",
-        operation="models.generate_content",
+        operation="generate",
+        task="json",
         params={
             "model": model,
-            "task": "json",
-            "temperature": temperature,
-            "max_output_tokens": max_output_tokens,
-            "provider_mode": describe_provider(config),
-            "response_mime_type": "application/json",
         },
         payload=payload_summary(system_prompt=system_prompt, user_content=user_content),
     )
@@ -102,7 +98,8 @@ async def generate_json(
             call_id=call_id,
             started=started,
             provider="gemini",
-            operation="models.generate_content",
+            operation="generate",
+            task="json",
             ok=True,
             result={
                 "response_chars": len(response.text),
@@ -117,7 +114,8 @@ async def generate_json(
             call_id=call_id,
             started=started,
             provider="gemini",
-            operation="models.generate_content",
+            operation="generate",
+            task="json",
             ok=False,
             error=e,
         )
@@ -136,12 +134,10 @@ async def generate_text(
     call_id, started = log_call_start(
         logger,
         provider="gemini",
-        operation="models.generate_content",
+        operation="generate",
+        task="text",
         params={
             "model": model,
-            "task": "text",
-            "temperature": temperature,
-            "provider_mode": describe_provider(config),
         },
         payload=payload_summary(system_prompt=system_prompt, user_content=user_content),
     )
