@@ -54,8 +54,9 @@ export function ComposeRoom() {
   const [searchParams, setSearchParams] = useSearchParams();
   const currentPage = Number(searchParams.get("page") ?? 1);
 
-  const { data: pageList, isLoading: loadingList } = usePages(name);
   const { data: projectStatus } = useProjectStatus(name);
+  const composeStageStatus = projectStatus?.stages?.compose?.status ?? "pending";
+  const { data: pageList, isLoading: loadingList, refetch: refetchPageList } = usePages(name);
   const safePage = pageList?.length ? Math.min(currentPage, pageList.length) : undefined;
   const { data: page, isLoading: loadingPage } = usePage(name, safePage);
 
@@ -307,6 +308,20 @@ export function ComposeRoom() {
     window.localStorage.setItem("canary.compose.inspector-mode", inspectorMode);
   }, [inspectorMode]);
 
+  useEffect(() => {
+    if (!name) return;
+    const waitingForPages =
+      composeStageStatus === "running" ||
+      (composeStageStatus === "complete" && !pageList?.length);
+    if (!waitingForPages) return;
+
+    void refetchPageList();
+    const interval = window.setInterval(() => {
+      void refetchPageList();
+    }, 2000);
+    return () => window.clearInterval(interval);
+  }, [name, composeStageStatus, pageList?.length, refetchPageList]);
+
   // ── Script → Layout deep-link ────────────────────────────────────────────
   function handleSwitchToLayout(targetPageNum: number, panelId: string, bubbleId: string) {
     setPageNum(targetPageNum, { preserveSelection: true });
@@ -315,8 +330,6 @@ export function ComposeRoom() {
   }
 
   // ── Render ───────────────────────────────────────────────────────────────
-
-  const composeStageStatus = projectStatus?.stages?.compose?.status ?? "pending";
 
   if (loadingList || (!pageList?.length && composeStageStatus !== "pending")) {
     return (

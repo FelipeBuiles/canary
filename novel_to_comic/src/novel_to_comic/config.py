@@ -49,7 +49,7 @@ class Config(BaseModel):
     # NOTE: Gemini 2.5 Pro/Flash deprecated June 17 2026 — using 3.1/Flash-Lite
     extraction_model: str = "gemini-3.1-pro-preview"
     screenplay_model: str = "gemini-3.1-pro-preview"
-    panel_model: str = "gemini-3.1-flash-lite-preview"
+    panel_model: str = "gemini-3.1-pro-preview"
     prompt_model: str = "gemini-3.1-flash-lite-preview"
     embedding_model: str = "gemini-embedding-001"  # Google Vertex AI, 3072 dims
     image_provider: Literal["gemini", "openai", "openrouter", "together"] = "gemini"
@@ -98,6 +98,10 @@ class Config(BaseModel):
         "Faces rendered with natural individuality and subtle imperfection — never idealized or airbrushed. "
         "All facial expressions understated and restrained; emotion conveyed through the eyes and posture alone."
     )
+
+    # Plan stage mode: "llm" uses Gemini Flash for intelligent beat merging / shot variety;
+    # "heuristic" falls back to the deterministic one-beat-per-panel mapper.
+    plan_mode: Literal["llm", "heuristic"] = "llm"
 
     # Pipeline settings
     enable_rag_index: bool = False
@@ -257,7 +261,11 @@ extraction_model: "{config.extraction_model}"
 # Stage 3 – screenplay adaptation (creative writing quality matters here)
 screenplay_model: "{config.screenplay_model}"
 
-# Stage 4 – panel breakdown (structured JSON from screenplay)
+# Stage 4 – layout planning: "llm" for intelligent beat merging (default), "heuristic" for deterministic fallback
+plan_mode: "{config.plan_mode}"
+
+# Stage 4 – layout planning model (also used for panel breakdown in storyboard stage)
+# Available on Vertex AI: gemini-3.1-flash-lite-preview | gemini-3.1-pro-preview
 panel_model: "{config.panel_model}"
 
 # Stage 5 – image prompt assembly (template filling)

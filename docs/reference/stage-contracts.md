@@ -14,8 +14,8 @@ it reads its inputs from disk and writes its own outputs. Never add cross-stage 
 | 1 | Extract | `extract` | Gemini 3.1 Pro | Yes |
 | 2 | Cast | `cast` | Image gen (config.provider) | Yes |
 | 3 | Adapt | `adapt` | Gemini 3.1 Pro | No |
-| 4 | Plan | `plan` | None (deterministic) | No |
-| 5 | Storyboard | `storyboard` | Gemini Flash-Lite | No |
+| 4 | Plan | `plan` | Gemini Pro by default (`plan_mode: llm`) | No |
+| 5 | Storyboard | `storyboard` | None (projection from layout plan) | No |
 | 6 | Direct | `direct` | Gemini Flash-Lite | No |
 | 7 | Draw | `draw` | Image gen (config.provider) | Yes |
 | 8 | Compose | `compose` | None (deterministic) | No |
@@ -84,9 +84,17 @@ directly into the prompt.
 - `plan/layout_plan.json` — planner-owned `LayoutPlan` JSON
 
 **What it does:** Produces the authoritative page/panel structure for the comic.
-Derives `PlannedPage` and `PlannedPanel` records from screenplay beats —
-assigning panel geometry, page layout, generation modes, and shape intent.
-This is the source of truth for all downstream stage ordering.
+In default `plan_mode: "llm"`, calls Gemini once per scene to merge consecutive
+beats into comic panels, vary shot language, set lighting/mood, and mark rare
+narrative page breaks. If the LLM call fails for a scene, that scene falls back
+to the deterministic heuristic planner. `plan_mode: "heuristic"` keeps the
+one-beat-per-panel behavior.
+
+After scene planning, Stage 4 applies a cross-scene transition pass and an
+importance-aware paginator. The paginator selects `layout_template` values from
+`LAYOUT_PRESET_GEOMETRIES`, respects `page_break_after`, and gives `hero` /
+`splash` panels more visual space. This plan is the source of truth for all
+downstream stage ordering.
 
 ---
 
@@ -116,9 +124,10 @@ tools during the migration period.
 - `direct/scene_NNN/panel_NNN.json` — one `ImagePrompt` JSON per panel
 
 **What it does:** Assembles the complete image generation prompt for each panel.
-Injects `visual_anchor` fields verbatim, style template, and reference image
-paths. Prompt metadata carries `planned_panel_id`, shape intent, generation
-mode, and crop/framing contract.
+Injects `visual_anchor` fields verbatim, style template, and project-relative
+reference image paths. Prompt metadata carries `planned_panel_id`, shape intent,
+generation mode, crop/framing contract, transition hints, and optional
+`continuity_note`.
 
 ---
 
@@ -133,8 +142,11 @@ mode, and crop/framing contract.
 - `draw/scene_NNN/panel_NNN.png`
 
 **What it does:** Runs image generation against the planner-owned prompt
-contracts. Routes to the configured `image_provider`. Generated image metadata
-records `planned_panel_id`. Pauses for human review before Stage 8.
+contracts. Routes to the configured `image_provider`. Subject references are
+loaded from project-relative prompt paths, while style/continuity references use
+the adjacent previous panel for smooth transitions or the style sample plus
+location plate otherwise. Generated image metadata records `planned_panel_id`.
+Pauses for human review before Stage 8.
 
 ---
 

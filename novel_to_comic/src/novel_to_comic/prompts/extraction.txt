@@ -14,7 +14,7 @@ Given the complete text of a novel, output a single JSON object matching the sch
     {
       "id": "char_001",
       "name": "Full Name",
-      "visual_anchor": "STRICT DANBOORU-STYLE TAGS (comma-separated). Use 10-16 evidence-grounded tags of the character's typical look — physical appearance, usual clothing, accessories. NO situational state (wet, dirty, shivering, injured, covered in blood). End with the phrase: ', Same character, same appearance.'",
+      "visual_anchor": "STRICT DANBOORU-STYLE TAGS (comma-separated). Use 10-16 evidence-grounded tags of the character's typical look — physical appearance, usual clothing, accessories. NO situational state (wet, dirty, shivering, injured, covered in blood).",
       "age_range": "early 30s",
       "gender": "female",
       "distinguishing_features": ["feature one", "feature two"],
@@ -118,7 +118,6 @@ CHARACTERS
   - Adult female characters MUST start with "1woman, adult female" — NEVER "1girl".
   - Child male characters use "1boy, child".
   - Child female characters use "1girl, child".
-- Every visual_anchor MUST end with the exact phrase: ", Same character, same appearance."
 - distinguishing_features: specific visual details a storyboard artist needs (scars, hair, marks).
 
 SCENES

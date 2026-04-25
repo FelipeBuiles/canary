@@ -228,15 +228,19 @@ async def _generate_gemini_image(
         end = subject_count + style_count
         if style_count == 1:
             reference_notes.append(
-                f"Image {start} is a visual style and scene-continuity reference. "
-                "Match its rendering style, palette, texture, and lighting without "
-                "copying its exact composition unless requested."
+                f"Image {start} is a visual style reference. "
+                "Match its rendering medium, palette, mark-making, and lighting language "
+                "without copying its exact composition unless requested."
             )
         else:
+            # Two style refs: first is the global style sample, second is the location plate.
             reference_notes.append(
-                f"Images {start}-{end} are visual style and scene-continuity references. "
-                "Match their rendering style, palette, texture, and lighting without "
-                "copying their exact composition unless requested."
+                f"Image {start} is a global visual style reference: match its rendering "
+                "medium, palette, mark-making, and lighting language."
+            )
+            reference_notes.append(
+                f"Image {end} is a location/environment reference: match its spatial "
+                "setting and atmosphere, not its rendering style."
             )
 
     # Nudge Gemini toward the requested aspect ratio.  The model picks its own
@@ -570,12 +574,12 @@ async def _generate_openrouter_image(
     call_id, started = log_call_start(
         image_logger,
         provider="openrouter",
-        operation="images.generate",
+        operation="generate",
+        task="image",
         params={
             "model": config.image_model,
             "subject_refs": len(subject_refs),
             "style_refs": len(aux_refs),
-            "edit_refs": len(edit_refs),
             "width": width or config.image_width,
             "height": height or config.image_height,
         },

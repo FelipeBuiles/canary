@@ -20,7 +20,7 @@ from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.layout_planning import load_layout_plan, prompt_path_for_panel, scene_panel_map
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.prompting import IMAGE_PROMPT_VERSION, build_planned_panel_prompt_spec, render_generation_prompt
+from novel_to_comic.prompting import IMAGE_PROMPT_VERSION, _SOFT_CONTINUITY, build_planned_panel_prompt_spec, render_generation_prompt
 from novel_to_comic.state import (
     PipelineState,
     begin_stage,
@@ -35,8 +35,6 @@ console = Console()
 
 COST_PER_IMAGE = 0.03  # FLUX.2 Pro via Together AI
 _RATE_LIMIT_RECOVERY_COOLDOWN_SECONDS = 45.0
-
-_SOFT_CONTINUITY = {"smooth_continuation", "match_cut"}
 
 
 def _meta_path(image_path: Path) -> Path:
@@ -166,10 +164,8 @@ async def _generate_panel(
     Style / continuity refs are chosen in priority order per panel:
       - previous panel image (N-1) from the same scene when transition metadata
         indicates smooth continuity.
-      - style_sample — global style anchor, used only for the first panel of
-                       each scene.
-      - location plate — environment anchor, paired with style_sample for the
-                         first panel only.
+      - style_sample + location plate — used for any panel that lacks a
+                       smooth-continuity predecessor (not only the first panel).
 
     Subject refs (character sheets / pose crops) are always passed first to
     flux.generate_image_multi_ref so character identity gets the strongest
@@ -200,8 +196,13 @@ async def _generate_panel(
             if output_path.exists() and not force:
                 return output_path
 
-            # Subject refs: character reference sheets
-            subject_refs = [Path(p) for p in prompt.reference_image_paths if Path(p).exists()]
+            # Subject refs: character reference sheets (stored as project-relative paths;
+            # fall back to absolute for prompts generated before the relative-path change).
+            subject_refs = [
+                resolved
+                for p in prompt.reference_image_paths
+                if (resolved := (project_dir / p) if not Path(p).is_absolute() else Path(p)).exists()
+            ]
 
             # Style / continuity refs: adjacent previous panel only.
             # This prevents reruns from accidentally inheriting style from unrelated
@@ -247,7 +248,6 @@ async def _generate_panel(
                     "width": prompt.width,
                     "height": prompt.height,
                     "steps": prompt.steps,
-                    "guidance_scale": prompt.guidance_scale,
                     "style_template": config.style_template,
                     "subject_refs": [_relative_to_project(p, project_dir) for p in subject_refs],
                     "style_refs": [_relative_to_project(p, project_dir) for p in style_refs],

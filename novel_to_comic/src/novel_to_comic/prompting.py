@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from novel_to_comic.config import Config
@@ -26,6 +27,14 @@ _SHOT_COMPOSITION: dict[str, str] = {
     "over-shoulder": "over-the-shoulder vertical panel, one foreground shoulder, the other face visible",
     "wide": "wide vertical panel, full bodies visible with significant surrounding environment",
     "extreme-wide": "extreme-wide establishing panel, environment dominant, characters small but readable",
+}
+
+_SHOT_COMPOSITION_EMPTY: dict[str, str] = {
+    "close-up": "close-up detail shot, environment or object filling the panel",
+    "medium": "medium vertical panel, full environment visible",
+    "over-shoulder": "environment panel from an over-shoulder camera angle",
+    "wide": "wide vertical panel, environment dominant",
+    "extreme-wide": "extreme-wide establishing panel, environment dominant",
 }
 
 _PROMPT_LABELS: dict[str, dict[str, str]] = {
@@ -98,8 +107,27 @@ def _labels(config: Config | None = None) -> dict[str, str]:
 
 _clean = clean
 _shorten = shorten
-IMAGE_PROMPT_VERSION = 9
+IMAGE_PROMPT_VERSION = 11
 _SOFT_CONTINUITY = {"smooth_continuation", "match_cut"}
+
+# Keywords that indicate a direction is describing on-screen text/lettering — always
+# strip these before they enter the prompt, since text is composed in Stage 8 and the
+# no-lettering constraint forbids it in the generated image.
+_TEXT_RENDER_TOKENS = (
+    "lettering", "subtitle", "caption", "speech balloon", "word balloon",
+    "text crawl", "floating text", "scrolling text", "on-screen text",
+    "bold text", "glowing text", "burning text", "corrupted text",
+)
+
+
+def _strip_text_render_sentences(text: str) -> str:
+    """Remove sentences that instruct the model to render on-screen text/lettering."""
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    kept = [
+        s for s in sentences
+        if not any(tok in s.lower() for tok in _TEXT_RENDER_TOKENS)
+    ]
+    return " ".join(kept).strip()
 
 
 def _character_identity(
@@ -121,17 +149,18 @@ def _character_identity(
     default_outfit = _clean(character.default_outfit)
     scene_override = _clean(scene_appearance)
 
+    _NULL_OUTFIT = {"none", "n/a", "-", "null", ""}
     parts: list[str] = [anchor] if anchor else []
-    if scene_override:
+    if scene_override and scene_override.lower() not in _NULL_OUTFIT:
         parts.append(f"{label_set['wardrobe_override']}: {_shorten(scene_override, 180)}")
-    elif default_outfit:
+    elif default_outfit and default_outfit.lower() not in _NULL_OUTFIT:
         parts.append(_shorten(default_outfit, 180))
 
     return "; ".join(part for part in parts if part)
 
 
 def _reference_paths(project_dir: Path, character_id: str, character_count: int) -> list[str]:
-    """Return subject ref paths for one character, ordered by priority.
+    """Return subject ref paths for one character as project-relative paths.
 
     Prefers individual pose crops (front/three_quarter/gesture) over the 2x2
     sheet composite — passing the grid directly leaks its layout into the
@@ -146,13 +175,17 @@ def _reference_paths(project_dir: Path, character_id: str, character_count: int)
         views = ["front", "three_quarter"]
     else:
         views = ["front"]
-    cropped = [str(p) for v in views if (p := char_ref_dir / f"{v}.png").exists()]
+    cropped = [
+        str((char_ref_dir / f"{v}.png").relative_to(project_dir))
+        for v in views
+        if (char_ref_dir / f"{v}.png").exists()
+    ]
     if cropped:
         return cropped
 
     sheet = char_ref_dir / "sheet.png"
     if sheet.exists():
-        return [str(sheet)]
+        return [str(sheet.relative_to(project_dir))]
     return []
 
 
@@ -205,6 +238,9 @@ def build_planned_panel_continuity_note(
     prev_state_str = _shorten(_planned_panel_state_summary(prev_panel), 120)
     curr_state_str = _shorten(_planned_panel_state_summary(current_panel), 120)
 
+    if prev_state_str == "scene continues" and curr_state_str == "scene continues":
+        return None
+
     parts: list[str] = [f"CONTINUING FROM: {prev_state_str}."]
     parts.append(f"TRANSITION TYPE: {transition_type}.")
     parts.append(f"Now: {curr_state_str}.")
@@ -249,7 +285,8 @@ def build_planned_panel_prompt_spec(
         location = next((loc for loc in story_bible.locations if loc.id == scene.location_id), None)
 
     shot_key = panel.shot_type.lower().replace(" ", "-")
-    composition = _SHOT_COMPOSITION.get(
+    composition_map = _SHOT_COMPOSITION_EMPTY if character_count == 0 else _SHOT_COMPOSITION
+    composition = composition_map.get(
         shot_key,
         f"{_clean(panel.shot_type)} panel, {_clean(panel.camera_angle)} camera",
     )
@@ -262,16 +299,28 @@ def build_planned_panel_prompt_spec(
         composition = f"{composition}, tall vertical framing"
     if panel.generation_mode == "master":
         composition = f"{composition}, extra environmental margin for flexible crop"
+    camera_note = _strip_text_render_sentences(_clean(getattr(panel, "camera_note", "")))
+    if camera_note and character_count == 0:
+        # Remove character name tokens so the framing direction survives but the
+        # name reference doesn't contradict the zero-character constraint.
+        # "Low angle showing Carl's bare legs" → "Low angle showing bare legs"
+        for char in story_bible.characters:
+            name = re.escape(char.name)
+            camera_note = re.sub(rf"\b{name}'s\s+", "", camera_note, flags=re.IGNORECASE)
+            camera_note = re.sub(rf"\b{name}\b,?\s*", "", camera_note, flags=re.IGNORECASE)
+        camera_note = re.sub(r"  +", " ", camera_note).strip(" ,.")
+    if camera_note:
+        composition = f"{composition}. {camera_note}"
 
     setting_parts = []
     if location and location.visual_anchor:
-        setting_parts.append(_shorten(location.visual_anchor, 180))
+        setting_parts.append(_shorten(location.visual_anchor, 180).rstrip(" .,;"))
     if panel.background_description:
-        setting_parts.append(_shorten(panel.background_description, 160))
+        setting_parts.append(_shorten(panel.background_description, 160).rstrip(" .,;"))
 
     width, height = dimensions_for_panel(panel)
     setting = "; ".join(setting_parts)
-    lighting = _clean(panel.lighting)
+    lighting = _strip_text_render_sentences(_clean(panel.lighting))
     mood = _clean(panel.mood)
     props = _planned_panel_props(panel, story_bible)
     character_label = labels["character"] if character_count == 1 else labels["characters"]
@@ -300,8 +349,6 @@ def build_planned_panel_prompt_spec(
         panel_number=panel.panel_number,
         generation_mode=panel.generation_mode,
         shape_intent=panel.shape_intent,
-        aspect_preference=panel.aspect_preference,
-        aspect_range=panel.aspect_range,
         crop_policy=panel.crop_policy,
         transition_in=panel.transition_in,
         transition_out=panel.transition_out,
@@ -315,11 +362,9 @@ def build_planned_panel_prompt_spec(
         props=props,
         constraints=constraints,
         reference_image_paths=ref_paths,
-        negative_prompt=None,
         width=width,
         height=height,
         steps=config.effective_image_steps(),
-        guidance_scale=config.flux_guidance_scale,
         continuity_note=(
             build_planned_panel_continuity_note(panel, prev_panel)
             if getattr(config, "continuity_mode", "hybrid") in {"text_only", "hybrid"}

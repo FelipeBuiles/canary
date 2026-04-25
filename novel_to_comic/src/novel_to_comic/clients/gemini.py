@@ -158,7 +158,8 @@ async def generate_text(
             call_id=call_id,
             started=started,
             provider="gemini",
-            operation="models.generate_content",
+            operation="generate",
+            task="text",
             ok=True,
             result={
                 "response_chars": len(response.text),
@@ -172,7 +173,8 @@ async def generate_text(
             call_id=call_id,
             started=started,
             provider="gemini",
-            operation="models.generate_content",
+            operation="generate",
+            task="text",
             ok=False,
             error=e,
         )

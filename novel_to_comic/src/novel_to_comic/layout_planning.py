@@ -15,12 +15,72 @@ CONTENT_MARGIN = 30.0
 CONTENT_FOOTER = 48.0
 
 LAYOUT_PRESET_GEOMETRIES: dict[str, list[tuple[list[float], list[list[float]] | None]]] = {
+    # ── 1-panel ──────────────────────────────────────────────────────────────
+    "single": [
+        ([0.0, 0.0, 1.0, 1.0], None),
+    ],
+    # ── 2-panel ──────────────────────────────────────────────────────────────
+    "stacked_2": [
+        ([0.0, 0.0, 1.0, 0.5], None),
+        ([0.0, 0.5, 1.0, 0.5], None),
+    ],
+    "side_2": [
+        ([0.0, 0.0, 0.5, 1.0], None),
+        ([0.5, 0.0, 0.5, 1.0], None),
+    ],
+    # Large hero top (60%) + smaller follow panel (40%)
+    "hero_top_2": [
+        ([0.0, 0.0, 1.0, 0.60], [[0.0, 0.0], [1.0, 0.02], [1.0, 1.0], [0.0, 0.96]]),
+        ([0.0, 0.60, 1.0, 0.40], None),
+    ],
+    # ── 3-panel ──────────────────────────────────────────────────────────────
+    # Wide hero top + 2 equal below
+    "hero_top_3": [
+        ([0.0, 0.0, 1.0, 0.45], [[0.0, 0.02], [1.0, 0.0], [1.0, 1.0], [0.02, 0.96]]),
+        ([0.0, 0.45, 0.5, 0.55], None),
+        ([0.5, 0.45, 0.5, 0.55], None),
+    ],
+    # Large left column + 2 stacked on right
+    "hero_left_3": [
+        ([0.0, 0.0, 0.60, 1.0], None),
+        ([0.60, 0.0, 0.40, 0.5], None),
+        ([0.60, 0.5, 0.40, 0.5], None),
+    ],
+    "vertical_trio": [
+        ([0.0, 0.0, 1 / 3, 1.0], None),
+        ([1 / 3, 0.0, 1 / 3, 1.0], None),
+        ([2 / 3, 0.0, 1 / 3, 1.0], None),
+    ],
+    # ── 4-panel ──────────────────────────────────────────────────────────────
     "2x2": [
         ([0.0, 0.0, 0.5, 0.5], None),
         ([0.5, 0.0, 0.5, 0.5], None),
         ([0.0, 0.5, 0.5, 0.5], None),
         ([0.5, 0.5, 0.5, 0.5], None),
     ],
+    # Full-width hero top + 3 equal below
+    "hero_top_4": [
+        ([0.0, 0.0, 1.0, 0.42], [[0.02, 0.0], [1.0, 0.03], [0.98, 1.0], [0.0, 0.97]]),
+        ([0.0, 0.42, 1 / 3, 0.58], None),
+        ([1 / 3, 0.42, 1 / 3, 0.58], None),
+        ([2 / 3, 0.42, 1 / 3, 0.58], None),
+    ],
+    # ── 5-panel ──────────────────────────────────────────────────────────────
+    "splash+4": [
+        ([0.0, 0.0, 1.0, 0.45], [[0.0, 0.02], [1.0, 0.0], [1.0, 1.0], [0.02, 0.94]]),
+        ([0.0, 0.45, 0.5, 0.275], None),
+        ([0.5, 0.45, 0.5, 0.275], None),
+        ([0.0, 0.725, 0.5, 0.275], None),
+        ([0.5, 0.725, 0.5, 0.275], None),
+    ],
+    "wide_opening": [
+        ([0.0, 0.0, 1.0, 0.32], [[0.02, 0.0], [1.0, 0.04], [0.98, 1.0], [0.0, 0.96]]),
+        ([0.0, 0.32, 0.5, 0.34], None),
+        ([0.5, 0.32, 0.5, 0.34], None),
+        ([0.0, 0.66, 0.5, 0.34], None),
+        ([0.5, 0.66, 0.5, 0.34], None),
+    ],
+    # ── 6-panel ──────────────────────────────────────────────────────────────
     "2x3": [
         ([0.0, 0.0, 1 / 3, 0.5], None),
         ([1 / 3, 0.0, 1 / 3, 0.5], None),
@@ -37,26 +97,32 @@ LAYOUT_PRESET_GEOMETRIES: dict[str, list[tuple[list[float], list[list[float]] | 
         ([0.0, 2 / 3, 0.5, 1 / 3], None),
         ([0.5, 2 / 3, 0.5, 1 / 3], None),
     ],
-    "splash+4": [
-        ([0.0, 0.0, 1.0, 0.45], [[0.0, 0.02], [1.0, 0.0], [1.0, 1.0], [0.02, 0.94]]),
-        ([0.0, 0.45, 0.5, 0.275], None),
-        ([0.5, 0.45, 0.5, 0.275], None),
-        ([0.0, 0.725, 0.5, 0.275], None),
-        ([0.5, 0.725, 0.5, 0.275], None),
-    ],
-    "vertical_trio": [
-        ([0.0, 0.0, 1 / 3, 1.0], None),
-        ([1 / 3, 0.0, 1 / 3, 1.0], None),
-        ([2 / 3, 0.0, 1 / 3, 1.0], None),
-    ],
-    "wide_opening": [
-        ([0.0, 0.0, 1.0, 0.32], [[0.02, 0.0], [1.0, 0.04], [0.98, 1.0], [0.0, 0.96]]),
-        ([0.0, 0.32, 0.5, 0.34], None),
-        ([0.5, 0.32, 0.5, 0.34], None),
-        ([0.0, 0.66, 0.5, 0.34], None),
-        ([0.5, 0.66, 0.5, 0.34], None),
-    ],
 }
+
+# Maps (panel_count, has_hero) to the best preset name.
+_TEMPLATE_SELECTION: dict[tuple[int, bool], str] = {
+    (1, False): "single",
+    (1, True):  "single",
+    (2, False): "stacked_2",
+    (2, True):  "hero_top_2",
+    (3, False): "vertical_trio",
+    (3, True):  "hero_top_3",
+    (4, False): "2x2",
+    (4, True):  "hero_top_4",
+    (5, False): "wide_opening",
+    (5, True):  "splash+4",
+    (6, False): "2x3",
+    (6, True):  "3x2",
+}
+
+
+def select_layout_template(panels: "list") -> str:  # list[PlannedPanel]
+    """Return the best LAYOUT_PRESET_GEOMETRIES key for a list of PlannedPanels."""
+    count = min(len(panels), 6)
+    if count == 0:
+        return "single"
+    has_hero = any(getattr(p, "importance", "standard") in {"hero", "splash"} for p in panels)
+    return _TEMPLATE_SELECTION.get((count, has_hero), "2x3")
 
 
 def _layout_plan_path(project_dir: Path) -> Path:
