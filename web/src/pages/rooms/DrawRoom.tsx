@@ -229,7 +229,7 @@ export function DrawRoom() {
     ? bustTimestamps[`${name}/${selectedPanelKey}`]
     : undefined;
   const selectedPanelBaseUrl = selectedPanel
-    ? `/api/projects/${encodeURIComponent(name!)}/files/images/${selectedPanel.sceneId}/panel_${String(selectedPanel.panelNumber).padStart(3, "0")}.png`
+    ? `/api/projects/${encodeURIComponent(name!)}/files/draw/${selectedPanel.sceneId}/panel_${String(selectedPanel.panelNumber).padStart(3, "0")}.png`
     : "";
   const selectedPanelImageUrl = selectedPanelBust
     ? `${selectedPanelBaseUrl}?t=${selectedPanelBust}`
@@ -281,7 +281,7 @@ export function DrawRoom() {
           {displayImages.map((img) => {
             const key = `${img.scene_id}-${img.panel_number}`;
             const bust = name ? bustTimestamps[`${name}/${key}`] : undefined;
-            const baseUrl = `/api/projects/${encodeURIComponent(name!)}/files/images/${img.scene_id}/panel_${String(img.panel_number).padStart(3, "0")}.png`;
+            const baseUrl = `/api/projects/${encodeURIComponent(name!)}/files/draw/${img.scene_id}/panel_${String(img.panel_number).padStart(3, "0")}.png`;
             const imageUrl = bust ? `${baseUrl}?t=${bust}` : baseUrl;
             const isFailed = failedItems.includes(
               `${img.scene_id}/panel_${String(img.panel_number).padStart(3, "0")}`,

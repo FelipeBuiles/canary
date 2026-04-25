@@ -29,7 +29,7 @@ router = APIRouter()
 
 
 def _pages_dir(project_dir: Path) -> Path:
-    return project_dir / "assembly" / "pages"
+    return project_dir / "compose" / "pages"
 
 
 def _load_page(project_dir: Path, page_num: int) -> ComicPage:

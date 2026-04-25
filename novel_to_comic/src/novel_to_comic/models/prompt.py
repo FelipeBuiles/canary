@@ -20,12 +20,10 @@ class ImagePrompt(BaseModel):
     panel_number: int
     generation_mode: str | None = None
     shape_intent: str | None = None
-    aspect_preference: float | None = None
-    aspect_range: list[float] = Field(default_factory=list)
     crop_policy: str | None = None
     transition_in: str | None = None
     transition_out: str | None = None
-    full_prompt: str = ""  # v2+: compact panel prompt body, excluding current style
+    full_prompt: str = ""
     style: str | None = None
     composition: str | None = None
     setting: str | None = None
@@ -34,10 +32,8 @@ class ImagePrompt(BaseModel):
     subjects: list[PromptSubject] = Field(default_factory=list)
     props: list[str] = Field(default_factory=list)
     constraints: str | None = None
-    reference_image_paths: list[str] = Field(default_factory=list)  # Paths to character ref images for multi-ref
-    negative_prompt: None = None  # ALWAYS None. FLUX.2 does not support negative prompts.
+    reference_image_paths: list[str] = Field(default_factory=list)  # Project-relative paths to character ref images
     width: int
     height: int
     steps: int
-    guidance_scale: float
-    continuity_note: str | None = None  # Narrative chain from previous panel
+    continuity_note: str | None = None

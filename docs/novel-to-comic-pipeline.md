@@ -353,7 +353,7 @@ stage reads from it. Edit it after Stage 1 before approving.
     {
       "id": "char_001",
       "name": "Della",
-      "visual_anchor": "Young woman, early 20s, slender build, warm brown eyes, long chestnut hair that falls past her knees, worn grey dress with a frayed collar, bare feet in scuffed leather shoes, delicate hands. Same character, same appearance.",
+      "visual_anchor": "1woman, adult female, early 20s, slender build, warm brown eyes, very long chestnut hair, worn grey dress, frayed collar, scuffed leather shoes, delicate hands",
       "age_range": "early 20s",
       "gender": "female",
       "distinguishing_features": ["unusually long chestnut hair", "frayed collar"],
@@ -376,10 +376,10 @@ stage reads from it. Edit it after Stage 1 before approving.
 }
 ```
 
-**Critical rule:** The `visual_anchor` field must be a camera-ready physical
-description — what a camera would see, not personality or backstory. It must end
-with `"Same character, same appearance."` and be exactly 60–80 words for
-characters, 40–60 words for locations.
+**Critical rule:** The `visual_anchor` field must be camera-ready visual evidence
+only — what a camera would see, not personality or backstory. Character anchors
+use strict comma-separated Danbooru-style tags with no situational state such as
+wet, dirty, shivering, injured, or covered in blood.
 
 ---
 

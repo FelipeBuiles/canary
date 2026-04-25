@@ -145,7 +145,6 @@ export function PanelDetailModal({
     width: draft.width,
     height: draft.height,
     steps: effectiveSteps,
-    guidance_scale: draft.guidance_scale,
     style_template: projectConfig?.style_template ?? draft.style,
     subject_refs: draft.reference_image_paths,
     style_refs: [],

@@ -79,8 +79,8 @@ All stage names (used in state, API routes, and CLI paths):
 | 1 | `extract` | `s1_extract.py` | Yes | Gemini 3.1 Pro |
 | 2 | `cast` | `s2_index.py` | Yes | Gemini (image gen) |
 | 3 | `adapt` | `s3_screenplay.py` | No | Gemini 3.1 Pro |
-| 4 | `plan` | `s4_layout_plan.py` | No | None (deterministic) |
-| 5 | `storyboard` | `s4_panels.py` | No | Gemini Flash-Lite |
+| 4 | `plan` | `s4_layout_plan.py` | No | Gemini Pro by default (`plan_mode: llm`) |
+| 5 | `storyboard` | `s4_panels.py` | No | None (projection from layout plan) |
 | 6 | `direct` | `s5_prompts.py` | No | Gemini Flash-Lite (prompt assembly only) |
 | 7 | `draw` | `s6_generate.py` | Yes | Gemini / OpenAI / OpenRouter / Together |
 | 8 | `compose` | `s7_assemble.py` | No | None (deterministic) |
@@ -138,6 +138,12 @@ Stage 4 (`plan`) produces `plan/layout_plan.json` — a `LayoutPlan` containing
 `PlannedPage` and `PlannedPanel` records. Downstream stages (storyboard, direct,
 draw) read from this plan and project it into their own artifacts. The plan is
 the source of truth for page/panel structure.
+
+Default planning mode is `plan_mode: "llm"`: Stage 4 calls Gemini once per scene
+to merge screenplay beats into panels, add shot/lighting/mood metadata, and flag
+rare page breaks. If a scene-level LLM call fails, that scene falls back to the
+heuristic one-beat-per-panel planner. Use `plan_mode: "heuristic"` to force the
+deterministic fallback behavior.
 
 ### ComicPage JSON as editing surface
 
@@ -212,7 +218,8 @@ Defaults in `config.py`, overridable via project `config.yaml`.
 |-------|-------|-------|
 | `extract` | `gemini-3.1-pro-preview` | 1M context, full-novel extraction |
 | `adapt` | `gemini-3.1-pro-preview` | Screenplay writing |
-| `storyboard` (panels) | `gemini-3.1-flash-lite-preview` | Panel breakdown |
+| `plan` | `gemini-3.1-pro-preview` | Scene-level beat merging and layout planning |
+| `storyboard` | None | Projection from layout plan |
 | `direct` (prompts) | `gemini-3.1-flash-lite-preview` | Prompt assembly |
 
 ### Embeddings
@@ -293,7 +300,8 @@ State writes are atomic: temp file + rename prevents corruption on crash.
 Planner-owned artifact produced by stage 4 (`plan`). Contains:
 - `planned_pages: list[PlannedPage]` — page structure with panel geometries
 - `planned_panels: list[PlannedPanel]` — per-panel metadata (scene, shot type,
-  shape intent, generation mode, crop/framing contract)
+  shape intent, generation mode, crop/framing contract, camera note, lighting,
+  page-break hints)
 - `user_overrides: dict` — panel-level overrides set by the web editor
 - `regeneration_impact: dict` — tracks which panels need regeneration
 
@@ -310,7 +318,8 @@ Canonical editing surface for Stage 8. Contains page-level data plus per-panel
 ### ImagePrompt (`models/prompt.py`)
 
 Produced by Stage 6 (`direct`). Contains `full_prompt` (assembled string),
-`reference_image_paths`, and generation parameters.
+project-relative `reference_image_paths`, transition hints, `continuity_note`,
+and generation dimensions.
 
 ---
 

@@ -333,8 +333,6 @@ export interface ImagePrompt {
   panel_number: number;
   generation_mode?: string | null;
   shape_intent?: string | null;
-  aspect_preference?: number | null;
-  aspect_range?: number[];
   crop_policy?: string | null;
   transition_in?: string | null;
   transition_out?: string | null;
@@ -348,11 +346,9 @@ export interface ImagePrompt {
   props?: string[];
   constraints?: string | null;
   reference_image_paths: string[];
-  negative_prompt: null;
   width: number;
   height: number;
   steps: number;
-  guidance_scale: number;
   continuity_note?: string | null;
 }
 

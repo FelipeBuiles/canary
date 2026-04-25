@@ -3,10 +3,10 @@
 These are the Pydantic models that flow between pipeline stages.
 
 - `story_bible.json` — carries the StoryBible (stage 1 output)
-- `draw/panels/scene_NNN/panel_NNN.json` — carries PanelBreakdown (stage 5 output)
-- `prompts/scene_NNN/panel_NNN.json` — carries ImagePrompt (stage 6 output)
-- `compose/pages/page_NNN.json` — carries ComicPage (stage 8 output)
 - `plan/layout_plan.json` — carries LayoutPlan (stage 4 output)
+- `storyboard/scene_NNN/panel_NNN.json` — carries PanelBreakdown (stage 5 output)
+- `direct/scene_NNN/panel_NNN.json` — carries ImagePrompt (stage 6 output)
+- `compose/pages/page_NNN.json` — carries ComicPage (stage 8 output)
 
 ## Bubble _(comic_page.py)_
 
@@ -136,8 +136,6 @@ These are the Pydantic models that flow between pipeline stages.
 | `panel_number` | `int` |  |
 | `generation_mode` | `str \| None` | `None` |
 | `shape_intent` | `str \| None` | `None` |
-| `aspect_preference` | `float \| None` | `None` |
-| `aspect_range` | `list[float]` | `Field(default_factory=list)` |
 | `crop_policy` | `str \| None` | `None` |
 | `transition_in` | `str \| None` | `None` |
 | `transition_out` | `str \| None` | `None` |
@@ -150,12 +148,10 @@ These are the Pydantic models that flow between pipeline stages.
 | `subjects` | `list[PromptSubject]` | `Field(default_factory=list)` |
 | `props` | `list[str]` | `Field(default_factory=list)` |
 | `constraints` | `str \| None` | `None` |
-| `reference_image_paths` | `list[str]` | `Field(default_factory=list)` |
-| `negative_prompt` | `None` | `None` |
+| `reference_image_paths` | `list[str]` | `Field(default_factory=list)`; project-relative character refs |
 | `width` | `int` |  |
 | `height` | `int` |  |
 | `steps` | `int` |  |
-| `guidance_scale` | `float` |  |
 | `continuity_note` | `str \| None` | `None` |
 
 ## CharacterRelationship _(story_bible.py)_
@@ -275,6 +271,27 @@ These are the Pydantic models that flow between pipeline stages.
 | `shot_hint` | `str \| None` | `None` |
 | `transition_significance` | `str \| None` | `None` |
 
+### LLMPanelSpec _(layout_plan.py)_
+
+Intermediate model for Stage 4 LLM scene-planning output before deterministic
+conversion into `PlannedPanel`.
+
+| Field | Type | Default |
+|-------|------|---------|
+| `beat_indices` | `list[int]` |  |
+| `characters_present` | `list[str]` | `Field(default_factory=list)` |
+| `character_actions` | `dict[str, str]` | `Field(default_factory=dict)` |
+| `shot_type` | `str` | `"medium"` |
+| `camera_angle` | `str` | `"eye-level"` |
+| `camera_note` | `str` | `""` |
+| `lighting` | `str` | `""` |
+| `mood` | `str` | `"neutral"` |
+| `background_description` | `str` | `""` |
+| `importance` | `PanelImportance` | `"standard"` |
+| `shape_intent` | `ShapeIntent` | `"rect"` |
+| `transition_out` | `str \| None` | `None` |
+| `page_break_after` | `bool` | `False` |
+
 ### PlannedPanel _(layout_plan.py)_
 
 | Field | Type | Default |
@@ -302,10 +319,12 @@ These are the Pydantic models that flow between pipeline stages.
 | `character_expressions` | `dict[str, str]` | `Field(default_factory=dict)` |
 | `character_positions` | `dict[str, str]` | `Field(default_factory=dict)` |
 | `background_description` | `str` | `""` |
+| `camera_note` | `str` | `""` |
 | `lighting` | `str` | `""` |
 | `mood` | `str` | `""` |
 | `dialogue` | `list[dict[str, str \| None]]` | `Field(default_factory=list)` |
 | `sfx` | `str \| None` | `None` |
+| `page_break_after` | `bool` | `False` |
 
 ### PlannedPage _(layout_plan.py)_
 
@@ -318,6 +337,7 @@ These are the Pydantic models that flow between pipeline stages.
 | `scene_ids` | `list[str]` | `Field(default_factory=list)` |
 | `scene_boundary_mode` | `SceneBoundaryMode` | `"scene_contained"` |
 | `page_rhythm_role` | `PageRhythmRole` | `"regular"` |
+| `layout_template` | `str` | `""` |
 | `spread_id` | `str \| None` | `None` |
 | `cross_scene_reason` | `str \| None` | `None` |
 

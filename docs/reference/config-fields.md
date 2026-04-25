@@ -25,7 +25,7 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `google_cloud_location` | `str` | `'global'` | Vertex AI location |
 | `extraction_model` | `str` | `'gemini-3.1-pro-preview'` | Stage 1 — full-novel extraction |
 | `screenplay_model` | `str` | `'gemini-3.1-pro-preview'` | Stage 3 — screenplay adaptation |
-| `panel_model` | `str` | `'gemini-3.1-flash-lite-preview'` | Stage 5 — panel breakdown |
+| `panel_model` | `str` | `'gemini-3.1-pro-preview'` | Stage 4 layout planning and Stage 5 panel breakdown |
 | `prompt_model` | `str` | `'gemini-3.1-flash-lite-preview'` | Stage 6 — image prompt assembly |
 | `embedding_model` | `str` | `'gemini-embedding-001'` | Google Vertex AI, 3072 dims |
 | `image_provider` | `Literal` | `'gemini'` | Image gen provider: `gemini` \| `openai` \| `openrouter` \| `together` |
@@ -43,6 +43,7 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `continuity_mode` | `str` | `'hybrid'` | Character consistency mode: `off` \| `text_only` \| `ref_only` \| `hybrid` |
 | `negative_prompt` | `str` | `'ugly, deformed, blurry, ...'` | Applied to Together AI / SDXL models only (Gemini ignores) |
 | `style_template` | `str` | `'High quality visual storytelling. ...'` | Injected verbatim at start of every image prompt |
+| `plan_mode` | `Literal` | `'llm'` | Stage 4 planning mode: `llm` \| `heuristic` |
 | `enable_rag_index` | `bool` | `False` | Build optional Qdrant vector index in Stage 2 |
 | `max_panels_per_scene` | `int` | `8` | Cap on panels per scene |
 | `max_panels_per_page` | `int` | `6` | Panels per assembled comic page |
