@@ -334,9 +334,12 @@ export function useUpdatePage() {
   return useMutation({
     mutationFn: ({ project, pageNum, data }: { project: string; pageNum: number; data: Partial<import("../types/api").ComicPage> }) =>
       updatePage(project, pageNum, data),
-    onSuccess: (_data, { project, pageNum }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "pages", pageNum] });
-      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
+    onSuccess: (data, { project, pageNum }) => {
+      // Populate the specific page cache directly — avoids the refetch that causes
+      // the rubber-band snap when dragging bubbles.
+      qc.setQueryData(["project", project, "pages", pageNum], data);
+      // Only invalidate the summary list (exact match skips the per-page query).
+      qc.invalidateQueries({ queryKey: ["project", project, "pages"], exact: true });
     },
   });
 }

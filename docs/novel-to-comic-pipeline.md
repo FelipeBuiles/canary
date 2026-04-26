@@ -307,7 +307,9 @@ re-render without re-running earlier stages.
           "x": null,
           "y": null,
           "width": null,
-          "tail": null
+          "tail_x": null,
+          "tail_y": null,
+          "tail_direction": "auto"
         }
       ]
     }
@@ -323,6 +325,25 @@ re-render without re-running earlier stages.
 |-------|-----------|
 | `null` | CSS auto-layout. Narration → top of panel. Speech/thought → bottom. SFX → centered at bottom 18%. |
 | `float` (pixels) | Pinned — rendered as `position: absolute; left: Xpx; top: Ypx` inside the panel. |
+
+Pinned speech bubbles can also set `tail_x` and `tail_y` to draw an SVG tail
+toward a panel-relative target point. Bubbles without `tail_x`/`tail_y` use CSS
+tails controlled by `tail_direction`.
+
+### Compose web editor
+
+The Compose room edits the same `ComicPage` JSON through four modes:
+
+- **Script:** Review all page lettering, translate page bubbles, and jump from a
+  line of dialogue to the matching bubble in Layout mode.
+- **Layout:** Place bubbles/SFX on the page, edit panel image offsets, use the
+  floating or fixed inspector, apply page layout presets, and make
+  planner-backed structural overrides.
+- **Style:** Generate lettering variables from the active art style, apply
+  bubble presets, manage character voice presets, and translate bubbles
+  project-wide.
+- **Preview:** Review two-page spreads, zoom/pan the rendered page iframes, and
+  export PDF or CBZ.
 
 ### Theming
 

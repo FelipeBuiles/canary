@@ -66,7 +66,17 @@
       "Bash(sed -i '' 's/stage=\"prompts\"/stage=\"direct\"/' /Users/jbuiles/Code/canary/web/src/pages/rooms/DirectRoom.tsx)",
       "Bash(sed -i '' 's/stage=\"generate\"/stage=\"draw\"/' /Users/jbuiles/Code/canary/web/src/pages/rooms/DrawRoom.tsx)",
       "Bash(ls:*)",
-      "Read(//Users/jbuiles/**)"
+      "Read(//Users/jbuiles/**)",
+      "Bash(pnpm lint *)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "mcp__Claude_in_Chrome__navigate",
+      "mcp__Claude_in_Chrome__computer",
+      "mcp__Claude_in_Chrome__resize_window",
+      "Bash(grep -E \"\\\\.\\(css|scss\\)$\")",
+      "Bash(grep -E \"\\\\.tsx$|\\\\.ts$\")",
+      "Bash(npx next:*)",
+      "Bash(npx vitest:*)",
+      "Bash(curl:*)"
     ]
   }
 }

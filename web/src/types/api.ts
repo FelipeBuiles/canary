@@ -359,6 +359,7 @@ export interface Bubble {
   speaker_id: string | null;
   speaker_name: string | null;
   side: "left" | "right" | "center";
+  full_width: boolean | null;
   x: number | null;
   y: number | null;
   width: number | null;

@@ -60,8 +60,22 @@ Replace `{project}` with the project directory name.
 |--------|------|---------|------|
 | `GET` | `/api/projects/{project}/pages` | `list_pages` | `pages.py` |
 | `GET` | `/api/projects/{project}/pages/{page_num}` | `get_page` | `pages.py` |
-| `PUT` | `/api/projects/{project}/pages/{page_num}` | `update_page` | `pages.py` |
+| `PATCH` | `/api/projects/{project}/pages/{page_num}` | `update_page` | `pages.py` |
+| `PUT` | `/api/projects/{project}/pages/{page_num}` | `replace_page` | `pages.py` |
 | `GET` | `/api/projects/{project}/pages/{page_num}/preview` | `page_preview` | `pages.py` |
+| `POST` | `/api/projects/{project}/pages/{page_num}/translate-bubbles` | `translate_single_page_bubbles` | `pages.py` |
+| `POST` | `/api/projects/{project}/pages/{page_num}/reflow` | `reflow_single_page` | `pages.py` |
+| `POST` | `/api/projects/{project}/pages/style-vars/generate` | `generate_page_style_vars` | `pages.py` |
+| `POST` | `/api/projects/{project}/pages/set-theme` | `set_theme` | `pages.py` |
+| `GET` | `/api/projects/{project}/pages/bubble-presets` | `get_bubble_presets` | `pages.py` |
+| `POST` | `/api/projects/{project}/pages/apply-bubble-preset` | `apply_bubble_preset` | `pages.py` |
+| `POST` | `/api/projects/{project}/pages/translate-bubbles` | `translate_page_bubbles` | `pages.py` |
+| `POST` | `/api/projects/{project}/pages/reflow` | `reflow_pages` | `pages.py` |
+| `POST` | `/api/projects/{project}/pages/reorder` | `reorder_panels` | `pages.py` |
+| `POST` | `/api/projects/{project}/pages/structural` | `apply_structural_operation` | `pages.py` |
+| `GET` | `/api/projects/{project}/pages/character-voices` | `get_character_voices` | `pages.py` |
+| `PUT` | `/api/projects/{project}/pages/character-voices/{character_id}` | `put_character_voice` | `pages.py` |
+| `DELETE` | `/api/projects/{project}/pages/character-voices/{character_id}` | `delete_character_voice` | `pages.py` |
 | `GET` | `/api/projects/{project}/files/{file_path:path}` | `serve_file` | `pages.py` |
 
 ## Export

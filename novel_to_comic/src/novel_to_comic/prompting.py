@@ -93,10 +93,13 @@ def dimensions_for_shot(shot_type: str) -> tuple[int, int]:
 def dimensions_for_panel(panel: PlannedPanel) -> tuple[int, int]:
     shape_intent = getattr(panel, "shape_intent", None)
     generation_mode = getattr(panel, "generation_mode", None)
+    aspect_pref = getattr(panel, "aspect_preference", None)
     if shape_intent in {"wide", "panorama", "bleed"}:
         return (1344, 768) if generation_mode == "exact" else (1536, 1024)
     if shape_intent == "tall":
         return (768, 1536) if generation_mode == "exact" else (1024, 1536)
+    if aspect_pref is not None and aspect_pref <= 0.40:
+        return (512, 1344)
     return dimensions_for_shot(panel.shot_type)
 
 
@@ -297,6 +300,9 @@ def build_planned_panel_prompt_spec(
         composition = f"{composition}, wide horizontal framing"
     if panel.shape_intent == "tall" and "vertical" not in composition.lower():
         composition = f"{composition}, tall vertical framing"
+    aspect_pref = getattr(panel, "aspect_preference", None)
+    if aspect_pref is not None and aspect_pref <= 0.40 and "narrow" not in composition.lower():
+        composition = f"{composition}, narrow vertical column — keep subject centered horizontally, avoid wide poses or spread elements"
     if panel.generation_mode == "master":
         composition = f"{composition}, extra environmental margin for flexible crop"
     camera_note = _strip_text_render_sentences(_clean(getattr(panel, "camera_note", "")))

@@ -633,17 +633,20 @@ def _importance_aware_paginate(
         geometries: list[PanelGeometry] = []
         for idx, panel in enumerate(chunk):
             region, polygon = template[min(idx, len(template) - 1)]
+            geom_aspect = (region[2] / region[3]) if region[3] else None
             geometries.append(
                 PanelGeometry(
                     panel_id=panel.panel_id,
                     shape_intent=panel.shape_intent,
                     region=region,
                     polygon=polygon or [],
-                    aspect_ratio=(region[2] / region[3]) if region[3] else None,
+                    aspect_ratio=geom_aspect,
                     bleed=panel.shape_intent in {"bleed", "panorama"},
                     z_index=idx,
                 )
             )
+            if geom_aspect is not None and abs(geom_aspect - (panel.aspect_preference or 1.0)) > 0.1:
+                panel.aspect_preference = geom_aspect
 
         is_intro = page_number == start_page_number
         has_climax = any(p.importance in {"hero", "splash"} for p in chunk)

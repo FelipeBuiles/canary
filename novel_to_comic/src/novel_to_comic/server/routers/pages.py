@@ -58,24 +58,19 @@ STYLE_VAR_ALLOWLIST = {
     "--caption-bg",
     "--caption-border",
     "--caption-color",
-    "--caption-font-size",
     "--bubble-bg",
     "--bubble-border",
     "--bubble-border-width",
     "--bubble-radius",
-    "--bubble-font-size",
     "--bubble-padding",
     "--bubble-max-width",
     "--bubble-center-width",
     "--speaker-color",
-    "--speaker-font-size",
     "--thought-border-style",
     "--thought-radius",
     "--sfx-color",
     "--sfx-shadow",
-    "--sfx-font-size",
     "--page-num-color",
-    "--page-num-font-size",
 }
 
 
@@ -95,14 +90,9 @@ def _sanitize_style_vars(raw: dict) -> dict[str, str]:
     }
     px_ranges = {
         "--panel-border-width": (1, 12),
-        "--caption-font-size": (12, 44),
         "--bubble-border-width": (1, 10),
         "--bubble-radius": (6, 120),
-        "--bubble-font-size": (16, 54),
-        "--speaker-font-size": (10, 36),
         "--thought-radius": (18, 180),
-        "--sfx-font-size": (20, 180),
-        "--page-num-font-size": (14, 96),
     }
     pct_ranges = {
         "--bubble-max-width": (38, 95),
@@ -205,7 +195,6 @@ def _fallback_lettering_style(style_template: str) -> dict[str, str]:
             "--bubble-border": "#000000",
             "--bubble-border-width": "2px",
             "--bubble-radius": "24px",
-            "--bubble-font-size": "25px",
             "--sfx-color": "#000000",
             "--sfx-shadow": "transparent",
             "--thought-border-style": "solid",
@@ -248,7 +237,6 @@ def _fallback_lettering_style(style_template: str) -> dict[str, str]:
         "--bubble-border": "#1A1A1A",
         "--bubble-border-width": "2px",
         "--bubble-radius": "14px",
-        "--bubble-font-size": "24px",
         "--speaker-color": "#664400",
         "--sfx-color": "#CC1111",
         "--sfx-shadow": "#000000",
@@ -265,7 +253,9 @@ async def _generate_lettering_style(config: Config) -> dict[str, str]:
         "You are a comic book lettering and production designer. Given an image generation style, "
         "choose CSS custom property values for panel borders, narration captions, speech bubbles, "
         "thought bubbles, SFX, and page numbers. Return JSON only. Use readable lettering with "
-        "strong contrast. Do not use url(), external assets, gradients, or CSS functions except simple px/% values."
+        "strong contrast. Do not set font sizes — only set colors, borders, backgrounds, radii, "
+        "padding, and decorative properties. "
+        "Do not use url(), external assets, gradients, or CSS functions except simple px/% values."
     )
     user = (
         f"Image generation style:\n{config.style_template}\n\n"
@@ -419,6 +409,7 @@ def update_page(page_num: int, body: dict, project=Depends(get_project)):
                         for field in (
                             "x", "y", "width", "side", "text", "type",
                             "tail_x", "tail_y", "tail_direction",
+                            "full_width",
                             "font_family", "font_size", "font_color",
                             "fill_color", "border_color", "border_width",
                             "border_radius",

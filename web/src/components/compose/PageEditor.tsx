@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ComicPage } from "../../types/api";
 import { ScaledContainer } from "./ScaledContainer";
 import { ComicPageCanvas } from "./ComicPageCanvas";
@@ -11,8 +11,11 @@ interface PageEditorProps {
   onZoomChange: (zoom: number) => void;
   selectedId: string | null;
   selectedType: "bubble" | "sfx" | null;
+  reframePanelId: string | null;
   onSelect: (panelId: string, type: "bubble" | "sfx", elementId: string) => void;
   onDeselect: () => void;
+  onPanelReframeStart: (panelId: string) => void;
+  onPanelReframeDragEnd: (panelId: string, newOffsetX: number, newOffsetY: number) => void;
   onDragEnd?: (
     panelId: string,
     type: "bubble" | "sfx",
@@ -22,7 +25,7 @@ interface PageEditorProps {
   ) => void;
 }
 
-interface DragState {
+interface ElementDragState {
   panelId: string;
   type: "bubble" | "sfx";
   elementId: string;
@@ -33,20 +36,26 @@ interface DragState {
   scale: number;
 }
 
-interface DragPreview extends DragState {
+interface ElementDragPreview extends ElementDragState {
   dx: number;
   dy: number;
 }
 
-/** Find the closest ancestor (or self) matching a selector */
+interface PanelReframeDrag {
+  panelId: string;
+  startClientX: number;
+  startClientY: number;
+  startOffsetX: number;
+  startOffsetY: number;
+  scale: number;
+  dx: number;
+  dy: number;
+}
+
 function closest(el: HTMLElement | null, sel: string): HTMLElement | null {
   return el?.closest(sel) ?? null;
 }
 
-/**
- * Main editor surface — replaces PagePreview + EditorOverlay.
- * Renders the comic page natively in React with event delegation for selection and drag.
- */
 export function PageEditor({
   page,
   project,
@@ -54,14 +63,28 @@ export function PageEditor({
   onZoomChange,
   selectedId,
   selectedType,
+  reframePanelId,
   onSelect,
   onDeselect,
+  onPanelReframeStart,
+  onPanelReframeDragEnd,
   onDragEnd,
 }: PageEditorProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const scaleRef = useRef(0);
-  const dragRef = useRef<DragState | null>(null);
-  const [dragPreview, setDragPreview] = useState<DragPreview | null>(null);
+  const dragRef = useRef<ElementDragState | null>(null);
+  const panelDragRef = useRef<PanelReframeDrag | null>(null);
+  const [dragPreview, setDragPreview] = useState<ElementDragPreview | null>(null);
+  const [panelDragPreview, setPanelDragPreview] = useState<PanelReframeDrag | null>(null);
+  // Committed drag state persists the optimistic position until the server responds,
+  // preventing the rubberband snap between pointerUp and the next page data update.
+  const [committedDrag, setCommittedDrag] = useState<ElementDragPreview | null>(null);
+  const [committedPanelDrag, setCommittedPanelDrag] = useState<PanelReframeDrag | null>(null);
+
+  useEffect(() => {
+    setCommittedDrag(null);
+    setCommittedPanelDrag(null);
+  }, [page]);
 
   const imageBaseUrl = `/api/projects/${encodeURIComponent(project)}/files`;
 
@@ -69,62 +92,50 @@ export function PageEditor({
     scaleRef.current = s;
   }, []);
 
-  // ── Event delegation: single handler for all pointer events ──
-
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
       const target = e.target as HTMLElement;
+      const canvas = canvasRef.current;
+      const scale = scaleRef.current;
 
-      // 1) Check if a bubble was clicked (data-id on .bubble or .caption)
+      // 1) Bubble click
       const bubbleEl = closest(target, "[data-id][data-editor-selectable]");
       if (bubbleEl) {
         const bubbleId = bubbleEl.getAttribute("data-id")!;
         const panelEl = closest(bubbleEl, "[data-panel-id]");
         const panelId = panelEl?.getAttribute("data-panel-id");
         if (!panelId) return;
-
         onSelect(panelId, "bubble", bubbleId);
-
-        // Initiate drag
-        if (onDragEnd) {
-          const canvas = canvasRef.current;
-          const scale = scaleRef.current;
-          if (canvas && panelEl && scale) {
-            const startPos = getVisualPanelPosition(bubbleEl, panelEl, scale);
-            const dragState: DragState = {
-              panelId,
-              type: "bubble",
-              elementId: bubbleId,
-              startClientX: e.clientX,
-              startClientY: e.clientY,
-              startPanelX: startPos.x,
-              startPanelY: startPos.y,
-              scale,
-            };
-            dragRef.current = dragState;
-            setDragPreview({ ...dragState, dx: 0, dy: 0 });
-            canvas.setPointerCapture(e.pointerId);
-          }
+        if (onDragEnd && canvas && panelEl && scale) {
+          const startPos = getVisualPanelPosition(bubbleEl, panelEl, scale);
+          const ds: ElementDragState = {
+            panelId,
+            type: "bubble",
+            elementId: bubbleId,
+            startClientX: e.clientX,
+            startClientY: e.clientY,
+            startPanelX: startPos.x,
+            startPanelY: startPos.y,
+            scale,
+          };
+          dragRef.current = ds;
+          setDragPreview({ ...ds, dx: 0, dy: 0 });
+          canvas.setPointerCapture(e.pointerId);
         }
         return;
       }
 
-      // 2) Check if SFX was clicked (data-sfx on .sfx)
+      // 2) SFX click
       const sfxEl = closest(target, "[data-sfx][data-editor-selectable]");
       if (sfxEl) {
         const panelId = sfxEl.getAttribute("data-sfx")!;
         const elementId = `${panelId}__sfx`;
-
         onSelect(panelId, "sfx", elementId);
-
-        // Initiate drag
-        if (onDragEnd) {
-          const canvas = canvasRef.current;
-          const scale = scaleRef.current;
+        if (onDragEnd && canvas && scale) {
           const panelEl = closest(sfxEl, "[data-panel-id]");
-          if (canvas && panelEl && scale) {
+          if (panelEl) {
             const startPos = getVisualPanelPosition(sfxEl, panelEl, scale);
-            const dragState: DragState = {
+            const ds: ElementDragState = {
               panelId,
               type: "sfx",
               elementId,
@@ -134,67 +145,108 @@ export function PageEditor({
               startPanelY: startPos.y,
               scale,
             };
-            dragRef.current = dragState;
-            setDragPreview({ ...dragState, dx: 0, dy: 0 });
+            dragRef.current = ds;
+            setDragPreview({ ...ds, dx: 0, dy: 0 });
             canvas.setPointerCapture(e.pointerId);
           }
         }
         return;
       }
 
-      // 3) Click on empty area → deselect
+      // 3) Panel background click → arm reframe mode; drag only starts if already armed
+      const panelEl = closest(target, "[data-panel-id]");
+      if (panelEl) {
+        const panelId = panelEl.getAttribute("data-panel-id")!;
+        const panelData = page.panels.find((p) => p.id === panelId);
+        if (reframePanelId === panelId && canvas && scale && panelData) {
+          // Already armed for this panel — start the reframe drag
+          const pd: PanelReframeDrag = {
+            panelId,
+            startClientX: e.clientX,
+            startClientY: e.clientY,
+            startOffsetX: panelData.image_offset_x ?? 0,
+            startOffsetY: panelData.image_offset_y ?? 0,
+            scale,
+            dx: 0,
+            dy: 0,
+          };
+          panelDragRef.current = pd;
+          setPanelDragPreview(pd);
+          canvas.setPointerCapture(e.pointerId);
+        } else {
+          // First click — arm reframe mode but don't start drag yet
+          onPanelReframeStart(panelId);
+        }
+        return;
+      }
+
+      // 4) Empty canvas → deselect
       onDeselect();
     },
-    [onSelect, onDeselect, onDragEnd],
+    [onSelect, onDeselect, onPanelReframeStart, onDragEnd, page.panels, reframePanelId],
   );
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     const ds = dragRef.current;
-    if (!ds) return;
-    const dx = e.clientX - ds.startClientX;
-    const dy = e.clientY - ds.startClientY;
-    setDragPreview({ ...ds, dx, dy });
+    if (ds) {
+      setDragPreview({ ...ds, dx: e.clientX - ds.startClientX, dy: e.clientY - ds.startClientY });
+      return;
+    }
+    const pd = panelDragRef.current;
+    if (pd) {
+      setPanelDragPreview({ ...pd, dx: e.clientX - pd.startClientX, dy: e.clientY - pd.startClientY });
+    }
   }, []);
 
   const handlePointerUp = useCallback(
     (e: React.PointerEvent) => {
+      const canvas = canvasRef.current;
+
+      // Element drag end
       const ds = dragRef.current;
-      if (!ds || !onDragEnd) {
+      if (ds && onDragEnd) {
+        const dx = e.clientX - ds.startClientX;
+        const dy = e.clientY - ds.startClientY;
+        if (exceedsThreshold(dx, dy)) {
+          onDragEnd(ds.panelId, ds.type, ds.elementId, ds.startPanelX + dx / ds.scale, ds.startPanelY + dy / ds.scale);
+          // Freeze preview at committed position; cleared by the useEffect watching page updates
+          setCommittedDrag({ ...ds, dx, dy });
+        }
         dragRef.current = null;
         setDragPreview(null);
+        if (canvas?.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
         return;
       }
-
-      const dx = e.clientX - ds.startClientX;
-      const dy = e.clientY - ds.startClientY;
-
-      if (exceedsThreshold(dx, dy)) {
-        onDragEnd(
-          ds.panelId,
-          ds.type,
-          ds.elementId,
-          ds.startPanelX + dx / ds.scale,
-          ds.startPanelY + dy / ds.scale,
-        );
-      }
-
       dragRef.current = null;
       setDragPreview(null);
-      if (canvasRef.current?.hasPointerCapture(e.pointerId)) {
-        canvasRef.current.releasePointerCapture(e.pointerId);
+
+      // Panel reframe drag end
+      const pd = panelDragRef.current;
+      if (pd) {
+        const dx = e.clientX - pd.startClientX;
+        const dy = e.clientY - pd.startClientY;
+        if (exceedsThreshold(dx, dy)) {
+          onPanelReframeDragEnd(
+            pd.panelId,
+            pd.startOffsetX + dx / pd.scale,
+            pd.startOffsetY + dy / pd.scale,
+          );
+          setCommittedPanelDrag({ ...pd, dx, dy });
+        }
+        panelDragRef.current = null;
+        setPanelDragPreview(null);
+        if (canvas?.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
       }
     },
-    [onDragEnd],
+    [onDragEnd, onPanelReframeDragEnd],
   );
 
-  // Build modified page for optimistic drag preview
-  const displayPage = dragPreview
-    ? applyDragPreview(page, dragPreview)
-    : page;
+  const displayPage = buildDisplayPage(page, dragPreview ?? committedDrag, panelDragPreview ?? committedPanelDrag);
+
   const selectedPanelId = selectedId
     ? page.panels.find((panel) =>
-        panel.bubbles.some((bubble) => bubble.id === selectedId) ||
-        (selectedType === "sfx" && `${panel.id}__sfx` === selectedId)
+        panel.bubbles.some((b) => b.id === selectedId) ||
+        (selectedType === "sfx" && `${panel.id}__sfx` === selectedId),
       )?.id ?? null
     : null;
 
@@ -205,7 +257,6 @@ export function PageEditor({
       const selectable = closest(target, "[data-editor-selectable]");
       if (!selectable) return;
       e.preventDefault();
-
       const bubbleId = selectable.getAttribute("data-id");
       if (bubbleId) {
         const panelEl = closest(selectable, "[data-panel-id]");
@@ -213,7 +264,6 @@ export function PageEditor({
         if (panelId) onSelect(panelId, "bubble", bubbleId);
         return;
       }
-
       const panelId = selectable.getAttribute("data-sfx");
       if (panelId) onSelect(panelId, "sfx", `${panelId}__sfx`);
     },
@@ -235,6 +285,7 @@ export function PageEditor({
           selectedPanelId={selectedPanelId}
           selectedElementId={selectedId}
           selectedType={selectedType}
+          reframePanelId={reframePanelId}
           imageBaseUrl={imageBaseUrl}
         />
       </ScaledContainer>
@@ -242,54 +293,49 @@ export function PageEditor({
   );
 }
 
-/** Measure an element's current visual top-left as panel-relative page coordinates. */
-function getVisualPanelPosition(
-  element: HTMLElement,
-  panelEl: HTMLElement,
-  scale: number,
-): { x: number; y: number } {
+function getVisualPanelPosition(element: HTMLElement, panelEl: HTMLElement, scale: number) {
   const elementRect = element.getBoundingClientRect();
   const panelRect = panelEl.getBoundingClientRect();
-
   return {
     x: (elementRect.left - panelRect.left) / scale - panelEl.clientLeft,
     y: (elementRect.top - panelRect.top) / scale - panelEl.clientTop,
   };
 }
 
-/** Optimistically apply drag delta to page data for smooth preview */
-function applyDragPreview(
+function buildDisplayPage(
   page: ComicPage,
-  preview: DragPreview,
+  elementDrag: ElementDragPreview | null,
+  panelDrag: PanelReframeDrag | null,
 ): ComicPage {
-  const x = preview.startPanelX + preview.dx / preview.scale;
-  const y = preview.startPanelY + preview.dy / preview.scale;
+  if (!elementDrag && !panelDrag) return page;
 
   return {
     ...page,
     panels: page.panels.map((panel) => {
-      if (preview.type === "bubble" && panel.id === preview.panelId) {
+      // Optimistic element drag
+      if (elementDrag && panel.id === elementDrag.panelId) {
+        const x = elementDrag.startPanelX + elementDrag.dx / elementDrag.scale;
+        const y = elementDrag.startPanelY + elementDrag.dy / elementDrag.scale;
+        if (elementDrag.type === "bubble") {
+          return {
+            ...panel,
+            bubbles: panel.bubbles.map((b) =>
+              b.id === elementDrag.elementId ? { ...b, x, y } : b,
+            ),
+          };
+        }
+        if (elementDrag.type === "sfx" && panel.sfx) {
+          return { ...panel, sfx: { ...panel.sfx, x, y } };
+        }
+      }
+      // Optimistic panel reframe drag
+      if (panelDrag && panel.id === panelDrag.panelId) {
         return {
           ...panel,
-          bubbles: panel.bubbles.map((b) =>
-            b.id === preview.elementId
-              ? { ...b, x, y }
-              : b,
-          ),
+          image_offset_x: Math.round(panelDrag.startOffsetX + panelDrag.dx / panelDrag.scale),
+          image_offset_y: Math.round(panelDrag.startOffsetY + panelDrag.dy / panelDrag.scale),
         };
       }
-
-      if (preview.type === "sfx" && panel.id === preview.panelId && panel.sfx) {
-        return {
-          ...panel,
-          sfx: {
-            ...panel.sfx,
-            x,
-            y,
-          },
-        };
-      }
-
       return panel;
     }),
   };

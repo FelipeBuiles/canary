@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useGenerationJobs, useProjectStatus, useStoryBible, useRegenRef, useRegenPlate } from "../../api/queries";
-import { ShowcaseHeader } from "../../components/ShowcaseHeader";
+import { RoomHeader } from "../../components/ui/RoomHeader";
+import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { Tag } from "../../components/ui/Tag";
 import { Button } from "../../components/ui/Button";
 import { DestructiveButton } from "../../components/ui/DestructiveButton";
@@ -391,6 +392,7 @@ function LocationPlateCard({
 
 export function CastRoom() {
   const { name } = useParams<{ name: string }>();
+  const { isCompact, toggle } = useHeaderMode();
   const { data: bible, isLoading } = useStoryBible(name);
   const { data: status } = useProjectStatus(name);
   const isCastStageRunning = status?.stages?.cast?.status === "running";
@@ -417,8 +419,10 @@ export function CastRoom() {
 
   return (
     <RoomShell>
-      <ShowcaseHeader
-        label="CAST / CHARACTER & LOCATION REFS"
+      <RoomHeader
+        kicker="CAST / CHARACTER & LOCATION REFS"
+        compact={isCompact}
+        onToggle={toggle}
         title="CASTING CALL"
         lead="Reference sheets and location plates produced by the casting director — each used as the visual anchor for every downstream panel."
         actions={<RerunStageAction project={name} stage="cast" label="Cast" disabled={stageRegenerating} />}

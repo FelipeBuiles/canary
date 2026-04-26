@@ -62,6 +62,7 @@ export function BubbleElement({ bubble, selected }: BubbleElementProps) {
   }
 
   if (isPinned) classes.push("pinned");
+  if (bubble.full_width) classes.push("full-width");
   if (hasSvgTail) classes.push("svg-tail");
   else if (bubble.type === "speech") classes.push(`tail-${resolveTailDirection(bubble)}`);
   if (selected) classes.push("selected");

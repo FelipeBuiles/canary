@@ -10,7 +10,8 @@ import {
   useProjectConfig,
   useStoryBible,
 } from "../../api/queries";
-import { ShowcaseHeader } from "../../components/ShowcaseHeader";
+import { RoomHeader } from "../../components/ui/RoomHeader";
+import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { Button } from "../../components/ui/Button";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { GenerationDetailsModal } from "../../components/ui/GenerationDetailsModal";
@@ -211,6 +212,7 @@ function StyleCard({
 
 export function StyleRoom() {
   const { name } = useParams<{ name: string }>();
+  const { isCompact, toggle } = useHeaderMode();
   const projectName = name ?? "";
   const { data: stylesData, isLoading, refetch: refetchStyles } = useStyles(name);
   const { data: projectConfig } = useProjectConfig(name);
@@ -336,8 +338,10 @@ export function StyleRoom() {
 
   return (
     <RoomShell>
-      <ShowcaseHeader
-        label="STYLES / VISUAL IDENTITY"
+      <RoomHeader
+        kicker="STYLES / VISUAL IDENTITY"
+        compact={isCompact}
+        onToggle={toggle}
         title="LOOK & FEEL"
         lead="Pick the visual style that defines your comic. Generate samples to compare, then select one to lock it in."
         actions={

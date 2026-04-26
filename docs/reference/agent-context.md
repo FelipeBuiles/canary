@@ -172,7 +172,10 @@ speaker_id: str | None
 speaker_name: str | None
 side: Literal["left", "right", "center"]
 x, y, width: float | None   # None = auto, float = pinned
-tail: BubbleTail | None     # SVG tail with tail_x, tail_y target points
+tail_x, tail_y: float | None # SVG tail target point in panel coordinates
+tail_direction: Literal["auto", "up", "down"] # CSS-tail direction fallback
+font_family, font_size, font_color: optional per-bubble typography
+fill_color, border_color, border_width, border_radius: optional shape overrides
 ```
 
 ### Sfx model
@@ -200,11 +203,27 @@ font_size: int | None
 - `build_page_html()` accepts `image_url_fn` and `font_url_fn` hooks — pass
   `None` for CLI/file URLs, HTTP builders for the web server.
 
-### Bubble tails (planned)
+### Bubble tails
 
-Current CSS `::before/::after` tails always point upward. The planned fix adds
-`BubbleTail` with `tail_x`/`tail_y` target points. Do not build the visual
-drag-and-drop editor until SVG tails are implemented.
+Pinned bubbles can use SVG tails by setting `tail_x` and `tail_y` to a
+panel-relative target point. The React editor (`SvgTail.tsx`) and Python
+renderer (`html_renderer.py`) both render those target-point tails and suppress
+the CSS pseudo-element tail. Bubbles without target points use CSS tails and
+`tail_direction`; `auto` points down when a pinned bubble sits near the top of
+the panel and up otherwise.
+
+### Compose room modes
+
+The web editor is split into four modes:
+- Script — page-indexed bubble text review, per-page translation, and "reveal in
+  layout" deep-linking.
+- Layout — page canvas, element selection, bubble/SFX dragging, floating or fixed
+  property inspector, undo/redo, zoom, page reflow, and planner-backed
+  structural overrides.
+- Style — lettering/theme generation, project-wide translation, style variables,
+  bubble presets, and character voice presets.
+- Preview — spread preview using page HTML iframes, fit-to-screen scaling,
+  command/meta-wheel zoom, panning while zoomed, and PDF/CBZ export.
 
 ---
 

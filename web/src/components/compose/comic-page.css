@@ -58,6 +58,31 @@
   pointer-events: none;
 }
 
+.panel.panel-reframe {
+  outline: 7px solid rgba(22, 130, 220, 0.45);
+  outline-offset: -7px;
+  cursor: grab;
+}
+
+.panel.panel-reframe:active {
+  cursor: grabbing;
+}
+
+.panel.panel-reframe::before {
+  content: 'REFRAME';
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 8;
+  background: #1682dc;
+  color: #fff;
+  padding: 5px 8px;
+  font-family: 'Bangers', fantasy, sans-serif;
+  font-size: 16px;
+  letter-spacing: 0.08em;
+  pointer-events: none;
+}
+
 /* object-position 20% keeps faces/action visible (top-biased) */
 .panel-art-frame {
   position: absolute;
@@ -141,6 +166,7 @@
 }
 .bubble.right  { align-self: flex-end; }
 .bubble.center { align-self: center; max-width: var(--bubble-center-width); }
+.bubble.full-width { align-self: stretch; max-width: 100%; text-align: center; }
 
 /* Thought bubble */
 .bubble.thought {
@@ -154,7 +180,7 @@
 .bubble.speech.tail-up.center::after {
   content: '';
   position: absolute;
-  top: -18px;
+  top: -25px;
   border: 9px solid transparent;
   border-bottom: 16px solid var(--bubble-border);
 }
@@ -163,7 +189,7 @@
 .bubble.speech.tail-up.center::before {
   content: '';
   position: absolute;
-  top: -14px;
+  top: -21px;
   border: 7px solid transparent;
   border-bottom: 14px solid var(--bubble-bg);
   z-index: 1;
@@ -181,7 +207,7 @@
 .bubble.speech.tail-down.center::after {
   content: '';
   position: absolute;
-  bottom: -14px;
+  bottom: -22px;
   border: 8px solid transparent;
   border-top: 14px solid var(--bubble-border);
 }
@@ -190,7 +216,7 @@
 .bubble.speech.tail-down.center::before {
   content: '';
   position: absolute;
-  bottom: -10px;
+  bottom: -16px;
   border: 6px solid transparent;
   border-top: 12px solid var(--bubble-bg);
   z-index: 1;
