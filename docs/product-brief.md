@@ -3,7 +3,7 @@
 A product brief for Canary, a tool that turns novels into comic books. This document now tracks both **the product we're building toward** and **the current state of the site**, so UI iterations can start from what actually exists.
 
 **Last status review:** April 22, 2026  
-**Status source:** Current React/FastAPI code in `web/src` and `novel_to_comic/src/novel_to_comic/server`, plus a successful `npm run build` in `web/`.
+**Status source:** Current React/FastAPI code in `web/src` and `novel_to_comic/src/novel_to_comic/server`.
 
 ---
 
@@ -15,7 +15,6 @@ The site is no longer just a dashboard concept. It has a working React shell, pr
 
 - **App shell and navigation:** React Router routes for library, new project, settings, dev primitives, and project rooms: Extract, Cast, Adapt, Storyboard, Direct, Draw, Compose, and Styles.
 - **Project library:** Lists project directories from the backend, shows project status/cost/furthest stage, tracks running projects, and can request generated project covers once a story bible exists.
-- **Project creation wizard:** Uploads `.txt`, `.epub`, or `.pdf`, creates a project directory, starts the pipeline, streams progress, pauses at review checkpoints, and supports approve/retry/start-over flows.
 - **Pipeline orchestration:** Backend can run the full pipeline or a specific stage, rerun a stage while clearing downstream outputs, approve checkpoints, reset stale stages, expose stage errors, and stream events over SSE.
 - **Story bible room:** Shows title/author/scenes plus editable character and location cards. Saves story bible changes back to `story_bible.json`.
 - **Cast room:** Shows character reference sheets and location plates from disk, opens images in a modal, and supports queued regeneration of one character ref or one location plate.
@@ -27,19 +26,16 @@ The site is no longer just a dashboard concept. It has a working React shell, pr
 - **Compose room:** Provides a real page editor over canonical `assembly/pages/page_NNN.json`: page navigation, zoom, bubble/SFX selection, drag repositioning, add/delete bubble or SFX, undo/redo, panel image offset edits, page theme/layout/style-var edits, reflow by panels-per-page, generated lettering styles, bubble translation, and PDF/CBZ export.
 - **Settings:** Supports UI language locally and project-level config edits for output language, dev/demo mode, comic theme, style template, and image model.
 - **Backend APIs:** REST endpoints exist for projects, project config, pipeline run/approve/events, story bible, screenplays, panels, prompts, images, styles, page JSON, previews/files, translations, reflow, and export.
-- **Build health:** `web` builds successfully with TypeScript and Vite. The current build emitted `web/dist`.
+- **Build health:** frontend tests pass, build passes.
 
 ### What is partially done
 
-- **Rooms mental model:** The seven-room structure exists in routing and UI, but invalidation/downstream recovery is mostly handled through rerun buttons and backend output clearing rather than a polished dependency UI.
-- **Review checkpoints:** Extract, Cast/Index, Direct/Prompts, and Draw/Generate are represented in the new-project wizard. There is not yet a full human-review workflow for every stage from project room pages.
+- **Rooms mental model:** The eight-room structure exists in routing and UI, but invalidation/downstream recovery is mostly handled through rerun buttons and backend output clearing rather than a polished dependency UI.
 - **Editing:** Several JSON artifacts are editable, but edits do not yet present impact analysis, dirty-state review, or explicit downstream invalidation guidance in the UI.
 - **Live progress:** SSE is wired for active runs and the wizard consumes it. Existing project rooms mostly rely on status polling, rerun buttons, and job polling rather than a unified live activity drawer.
 - **Cost tracking:** Backend state and project cards expose total/stage costs, but the site does not yet show action-level cost previews, budget caps, or per-panel pricing.
 - **Failure handling:** Failed stages/items are visible in status and Draw placeholders, and stale stages can be reset through the API. The UX is not yet comprehensive for all failure modes.
 - **Localization:** UI language and output language controls exist, and existing page bubbles can be translated to English/Spanish/French. Full multi-language export workflows are still limited.
-- **Stage 7 editor:** The visual editor exists and edits canonical page JSON. It is not yet a complete freeform page-layout editor: panel reorder across pages exists in the backend but is not exposed as drag-and-drop, and version history is only in-memory undo/redo.
-- **Bubble tails:** `tail_x`/`tail_y` fields and `SvgTail` exist in the frontend model/editor path, but this still needs to be treated carefully as an MVP feature rather than a finished pinned-tail system.
 - **Style system:** Style suggestions/samples/active style work. Style selection is backend-enforced — the pipeline blocks post-extract stages until a style is selected (`is_style_selected` gate in `styles.py`). The broader preset gallery/theme variant studio described below is only partly represented.
 
 ### What is missing or still roadmap
@@ -76,6 +72,7 @@ Canary is the end-to-end studio for turning prose fiction into a finished comic 
 ---
 
 ## 2. Two products, one engine
+not so sure about this part anymore, maybe better to focus solely on the web app as the user facing part
 
 ### 2.1 The CLI — `novel_to_comic`
 
@@ -200,7 +197,7 @@ This rooms-not-buttons mental model is the spine of the future UI.
 - Bulk regen: select 5 panels, fire off regenerations in parallel.
 - Show generation cost per panel.
 
-### 4.10 Visual page editor (stage 7) — the centerpiece
+### 4.10 Visual page editor (stage 8 / compose) — the centerpiece
 The drag-and-drop editor is the highest-value UI in the product. Every panel is a canvas; every bubble, caption, and SFX is a draggable, editable element.
 
 - **Page layout:** Choose a layout grid (1–6 panels per page or freeform). Drag panels to reorder, resize, span columns.
@@ -302,4 +299,3 @@ The drag-and-drop editor is the highest-value UI in the product. Every panel is 
 - Replacing professional comic artists for major publishers — Canary is for the long tail, not Marvel.
 
 ---
-

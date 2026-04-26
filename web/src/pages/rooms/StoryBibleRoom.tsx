@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useProjectStatus, useStoryBible, useUpdateStoryBible } from "../../api/queries";
-import { ShowcaseHeader } from "../../components/ShowcaseHeader";
+import { RoomHeader } from "../../components/ui/RoomHeader";
+import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { Tag } from "../../components/ui/Tag";
 import { EditableText } from "../../components/ui/EditableText";
 import { RoomShell } from "../../components/ui/RoomShell";
@@ -178,6 +179,7 @@ export function LocationCard({
 
 export function StoryBibleRoom() {
   const { name } = useParams<{ name: string }>();
+  const { isCompact, toggle } = useHeaderMode();
   const { data: bible, isLoading, error } = useStoryBible(name);
   const { data: status } = useProjectStatus(name);
   const updateBible = useUpdateStoryBible();
@@ -220,8 +222,10 @@ export function StoryBibleRoom() {
 
   return (
     <RoomShell>
-      <ShowcaseHeader
-        label="EXTRACT / STORY BIBLE"
+      <RoomHeader
+        kicker="EXTRACT / STORY BIBLE"
+        compact={isCompact}
+        onToggle={toggle}
         title={bible.title}
         lead={`by ${bible.author} · ${bible.total_scenes} scene${bible.total_scenes !== 1 ? "s" : ""} extracted into the narrative frame.`}
         actions={<RerunStageAction project={name} stage="extract" label="Extract" />}

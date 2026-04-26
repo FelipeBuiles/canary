@@ -17,7 +17,7 @@ describe("RERUN_IMPACT", () => {
   });
 
   it("every entry has downstream and cost fields", () => {
-    for (const [key, impact] of Object.entries(RERUN_IMPACT)) {
+    for (const [, impact] of Object.entries(RERUN_IMPACT)) {
       expect(Array.isArray(impact.downstream)).toBe(true);
       expect(typeof impact.cost).toBe("string");
       expect(typeof impact.costIsPlaceholder).toBe("boolean");
@@ -76,7 +76,7 @@ describe("RERUN_IMPACT", () => {
   });
 
   it("cost strings are non-empty", () => {
-    for (const [key, impact] of Object.entries(RERUN_IMPACT)) {
+    for (const [, impact] of Object.entries(RERUN_IMPACT)) {
       expect(impact.cost.length).toBeGreaterThan(0);
     }
   });

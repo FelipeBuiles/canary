@@ -5,30 +5,27 @@ import {
   usePage,
   useUpdatePage,
   useReplacePage,
-  useReflowPages,
-  useApplyStructuralOperation,
   useGeneratePageStyleVars,
   useTranslatePageBubbles,
   useExport,
   useProjectConfig,
   useUpdateProjectConfig,
   useProjectStatus,
+  useSetTheme,
 } from "../../api/queries";
 import { downloadExportUrl } from "../../api/pages";
 import { RerunStageAction } from "../../components/ui/RerunStageAction";
 import { ComposeHeader } from "../../components/compose/ComposeHeader";
-import { ModeSwitcher } from "../../components/compose/ModeSwitcher";
+import { EditSubTabs } from "../../components/compose/ModeSwitcher";
 import { ScriptMode } from "../../components/compose/ScriptMode";
 import { LayoutMode } from "../../components/compose/LayoutMode";
-import { StyleMode } from "../../components/compose/StyleMode";
 import { PreviewMode } from "../../components/compose/PreviewMode";
 import { CommandPalette } from "../../components/compose/CommandPalette";
-import { TryLayoutsModal } from "../../components/compose/TryLayoutsModal";
 import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
 import { useAllPages } from "../../hooks/useAllPages";
 import { useComposeStore } from "../../store/compose";
 import type { ComicPage, Bubble, Sfx, PagePanel } from "../../types/api";
-import type { ComposeMode } from "../../components/compose/compose-types";
+import type { ComposeTab, EditSubMode } from "../../components/compose/compose-types";
 import "../../components/compose/comic-page.css";
 
 function isInputFocused() {
@@ -41,16 +38,13 @@ function isInputFocused() {
 export function ComposeRoom() {
   const { name } = useParams<{ name: string }>();
 
-  // ── Mode state ───────────────────────────────────────────────────────────
-  const [mode, setMode] = useState<ComposeMode>("script");
+  // ── Tab / sub-mode state ─────────────────────────────────────────────────
+  const [tab, setTab] = useState<ComposeTab>("edit");
+  const [editSubMode, setEditSubMode] = useState<EditSubMode>("canvas");
+  const [panelReframeId, setPanelReframeId] = useState<string | null>(null);
   const [cmdkOpen, setCmdkOpen] = useState(false);
-  const [tryLayoutsOpen, setTryLayoutsOpen] = useState(false);
-  const [inspectorMode, setInspectorMode] = useState<"floating" | "fixed">(() => {
-    const saved = window.localStorage.getItem("canary.compose.inspector-mode");
-    return saved === "floating" ? "floating" : "fixed";
-  });
 
-  // ── Page state (URL param for Layout mode deep-link, localStorage persist) ──
+  // ── Page state ────────────────────────────────────────────────────────────
   const [searchParams, setSearchParams] = useSearchParams();
   const currentPage = Number(searchParams.get("page") ?? 1);
 
@@ -60,10 +54,8 @@ export function ComposeRoom() {
   const safePage = pageList?.length ? Math.min(currentPage, pageList.length) : undefined;
   const { data: page, isLoading: loadingPage } = usePage(name, safePage);
 
-  // Fetch all pages for Script/Preview modes
   const { pages: allPages, isLoading: loadingAllPages } = useAllPages(name, pageList);
 
-  // Current page index (0-based) derived from URL param
   const pageIdx = (safePage ?? 1) - 1;
 
   const { data: projectConfig } = useProjectConfig(name);
@@ -73,12 +65,11 @@ export function ComposeRoom() {
   // ── Mutations ────────────────────────────────────────────────────────────
   const updatePageMut = useUpdatePage();
   const replacePageMut = useReplacePage();
-  const reflowPagesMut = useReflowPages();
-  const structuralOpMut = useApplyStructuralOperation();
   const generatePageStyleMut = useGeneratePageStyleVars();
   const translateBubblesMut = useTranslatePageBubbles();
   const updateProjectConfigMut = useUpdateProjectConfig();
   const exportMut = useExport();
+  const setThemeMut = useSetTheme();
 
   // ── Compose store ────────────────────────────────────────────────────────
   const selection = useComposeStore((s) => s.selection);
@@ -103,8 +94,7 @@ export function ComposeRoom() {
     setZoom(1);
   }
 
-  // ── Mutations ────────────────────────────────────────────────────────────
-
+  // ── Patch helpers ────────────────────────────────────────────────────────
   function patchPage(patch: Partial<ComicPage>, targetPageNum?: number) {
     const pNum = targetPageNum ?? safePage;
     if (!name || !pNum) return;
@@ -128,60 +118,35 @@ export function ComposeRoom() {
     patchPage({ panels: [{ id: panelId, ...pPatch }] as ComicPage["panels"] });
   }
 
-  function handleUpdatePageProps(patch: Partial<ComicPage>) {
-    patchPage(patch);
+  // ── Panel reframe ────────────────────────────────────────────────────────
+  function handlePanelReframeStart(panelId: string) {
+    deselect();
+    setPanelReframeId(panelId);
   }
 
-  function handleUpdatePanelStructure(
-    plannedPanelId: string,
-    patch: { importance?: string | null; shape_intent?: string | null; generation_mode?: string | null },
-  ) {
-    if (!name || !safePage) return;
-    clearHistory();
-    structuralOpMut.mutate({
-      project: name,
-      data: {
-        operation: "panel_override",
-        page_number: safePage,
-        planned_panel_id: plannedPanelId,
-        importance: patch.importance ?? undefined,
-        shape_intent: patch.shape_intent ?? undefined,
-        generation_mode: patch.generation_mode ?? undefined,
-      },
+  function handlePanelReframeDragEnd(panelId: string, newOffsetX: number, newOffsetY: number) {
+    handleUpdatePanel(panelId, {
+      image_offset_x: Math.round(newOffsetX),
+      image_offset_y: Math.round(newOffsetY),
     });
   }
 
-  function handleReflowPages(panelsPerPage: number) {
-    if (!name || !page) return;
-    reflowPagesMut.mutate(
-      { project: name, panelsPerPage },
-      {
-        onSuccess: (pages) => {
-          clearHistory();
-          const lastPage = pages.at(-1)?.page_number ?? 1;
-          if (currentPage > lastPage) setPageNum(lastPage);
-        },
-      },
-    );
+  function handleResetPanelFrame(panelId: string) {
+    handleUpdatePanel(panelId, { image_offset_x: null, image_offset_y: null });
   }
 
-  function handleGeneratePageStyle() {
-    if (!name) return;
-    generatePageStyleMut.mutate({ project: name });
+  // ── Selection — also clears panel reframe ────────────────────────────────
+  function handleSelect(panelId: string, type: "bubble" | "sfx", elementId: string) {
+    setPanelReframeId(null);
+    select(panelId, type, elementId);
   }
 
-  function handleTranslateBubbles(targetLanguage: "en" | "es" | "fr") {
-    if (!name || !page) return;
-    pushUndo(page);
-    translateBubblesMut.mutate({ project: name, targetLanguage });
+  function handleDeselect() {
+    setPanelReframeId(null);
+    deselect();
   }
 
-  function handleOutputLanguageChange(targetLanguage: "en" | "es" | "fr") {
-    setOutputLanguageOverride(targetLanguage);
-    if (!name) return;
-    updateProjectConfigMut.mutate({ project: name, data: { target_language: targetLanguage } });
-  }
-
+  // ── Element delete / unpin ───────────────────────────────────────────────
   function handleDeleteElement(panelId: string, type: "bubble" | "sfx", elementId: string) {
     if (!name || !safePage || !page) return;
     pushUndo(page);
@@ -206,18 +171,13 @@ export function ComposeRoom() {
     else handleUpdateSfx(panelId, { x, y });
   }
 
+  // ── Add elements ─────────────────────────────────────────────────────────
   function handleAddBubble(bubbleType: "speech" | "thought" | "narration") {
     if (!page || !name || !safePage) return;
     const targetPanel = selection?.panelId ? page.panels.find((p) => p.id === selection.panelId) : page.panels[0];
     if (!targetPanel) return;
     pushUndo(page);
-    const newBubble = {
-      id: `new-${Date.now()}`,
-      type: bubbleType,
-      text: bubbleType === "narration" ? "Narration text..." : "Dialogue...",
-      side: "left" as const,
-    };
-    patchPage({ panels: [{ id: targetPanel.id, bubbles: [newBubble] }] as unknown as ComicPage["panels"] });
+    patchPage({ panels: [{ id: targetPanel.id, bubbles: [{ id: `new-${Date.now()}`, type: bubbleType, text: bubbleType === "narration" ? "Narration text..." : "Dialogue...", side: "left" as const }] }] as unknown as ComicPage["panels"] });
   }
 
   function handleAddSfx() {
@@ -228,6 +188,7 @@ export function ComposeRoom() {
     patchPage({ panels: [{ id: targetPanel.id, sfx: { text: "KRAK!" } }] as unknown as ComicPage["panels"] });
   }
 
+  // ── Undo / redo ──────────────────────────────────────────────────────────
   function handleUndo() {
     const prev = popUndo();
     if (!prev || !name || !safePage || !page) return;
@@ -242,6 +203,7 @@ export function ComposeRoom() {
     replacePageMut.mutate({ project: name, pageNum: safePage, data: next });
   }
 
+  // ── Export / style / translate ───────────────────────────────────────────
   function handleExport(format: "pdf" | "cbz") {
     if (!name) return;
     exportMut.mutate(
@@ -250,46 +212,69 @@ export function ComposeRoom() {
     );
   }
 
+  function handleGeneratePageStyle() {
+    if (!name) return;
+    generatePageStyleMut.mutate({ project: name });
+  }
+
+  function handleTranslateBubbles(targetLanguage: "en" | "es" | "fr") {
+    if (!name) return;
+    translateBubblesMut.mutate({ project: name, targetLanguage });
+  }
+
+  function handleOutputLanguageChange(targetLanguage: "en" | "es" | "fr") {
+    setOutputLanguageOverride(targetLanguage);
+    if (!name) return;
+    updateProjectConfigMut.mutate({ project: name, data: { target_language: targetLanguage } });
+  }
+
+  function handleThemeChange(theme: string) {
+    if (!name) return;
+    setThemeMut.mutate({ project: name, theme });
+  }
+
+  // ── Script → Canvas deep-link ────────────────────────────────────────────
+  function handleSwitchToCanvas(targetPageNum: number, panelId: string, bubbleId: string) {
+    setPageNum(targetPageNum, { preserveSelection: true });
+    setEditSubMode("canvas");
+    setPanelReframeId(null);
+    select(panelId, "bubble", bubbleId);
+  }
+
+  // ── Poll while compose is running ────────────────────────────────────────
+  useEffect(() => {
+    if (!name) return;
+    const waitingForPages =
+      composeStageStatus === "running" ||
+      (composeStageStatus === "complete" && !pageList?.length);
+    if (!waitingForPages) return;
+    void refetchPageList();
+    const interval = window.setInterval(() => { void refetchPageList(); }, 2000);
+    return () => window.clearInterval(interval);
+  }, [name, composeStageStatus, pageList?.length, refetchPageList]);
+
   // ── Keyboard shortcuts ───────────────────────────────────────────────────
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      // Mode switching — only when not typing
       if (!isInputFocused() && !cmdkOpen) {
-        if (e.key === "1") { setMode("script"); return; }
-        if (e.key === "2") { setMode("layout"); return; }
-        if (e.key === "3") { setMode("style"); return; }
-        if (e.key === "4") { setMode("preview"); return; }
+        if (e.key === "1") { setTab("edit"); setEditSubMode("canvas"); return; }
+        if (e.key === "2") { setTab("edit"); setEditSubMode("script"); return; }
+        if (e.key === "3") { setTab("export"); return; }
       }
-      // Global shortcuts
       if ((e.metaKey || e.ctrlKey) && e.key === "k") { e.preventDefault(); setCmdkOpen((o) => !o); return; }
-      if ((e.metaKey || e.ctrlKey) && e.key === "e") { e.preventDefault(); setMode("preview"); return; }
+      if ((e.metaKey || e.ctrlKey) && e.key === "e") { e.preventDefault(); setTab("export"); return; }
       if ((e.metaKey || e.ctrlKey) && e.key === "m") { e.preventDefault(); handleGeneratePageStyle(); return; }
-      if ((e.metaKey || e.ctrlKey) && e.key === "l") { e.preventDefault(); setTryLayoutsOpen(true); return; }
-      if (e.key === "Escape") { if (cmdkOpen) { setCmdkOpen(false); return; } deselect(); return; }
-      // Layout mode shortcuts
-      if (mode === "layout" && !isInputFocused()) {
+      if (e.key === "Escape") {
+        if (cmdkOpen) { setCmdkOpen(false); return; }
+        if (panelReframeId) { setPanelReframeId(null); return; }
+        deselect();
+        return;
+      }
+      if (tab === "edit" && editSubMode === "canvas" && !isInputFocused()) {
         if (e.key === "b" || e.key === "B") { handleAddBubble("speech"); return; }
         if (e.key === "t" && !e.shiftKey) { handleAddBubble("thought"); return; }
         if (e.key === "n" && !e.shiftKey) { handleAddBubble("narration"); return; }
         if (e.key === "x" || e.key === "X") { handleAddSfx(); return; }
-        if (e.key === "N" && e.shiftKey) {
-          const narration = page?.panels.flatMap((panel) =>
-            panel.bubbles
-              .filter((bubble) => bubble.type === "narration")
-              .map((bubble) => ({ panelId: panel.id, bubbleId: bubble.id }))
-          )[0];
-          if (narration) select(narration.panelId, "bubble", narration.bubbleId);
-          return;
-        }
-        if (e.key === "T" && e.shiftKey) {
-          const thought = page?.panels.flatMap((panel) =>
-            panel.bubbles
-              .filter((bubble) => bubble.type === "thought")
-              .map((bubble) => ({ panelId: panel.id, bubbleId: bubble.id }))
-          )[0];
-          if (thought) select(thought.panelId, "bubble", thought.bubbleId);
-          return;
-        }
         if (e.key === "Delete" || e.key === "Backspace") {
           if (selection && page) handleDeleteElement(selection.panelId, selection.type, selection.elementId);
         }
@@ -304,39 +289,11 @@ export function ComposeRoom() {
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 
-  useEffect(() => {
-    window.localStorage.setItem("canary.compose.inspector-mode", inspectorMode);
-  }, [inspectorMode]);
-
-  useEffect(() => {
-    if (!name) return;
-    const waitingForPages =
-      composeStageStatus === "running" ||
-      (composeStageStatus === "complete" && !pageList?.length);
-    if (!waitingForPages) return;
-
-    void refetchPageList();
-    const interval = window.setInterval(() => {
-      void refetchPageList();
-    }, 2000);
-    return () => window.clearInterval(interval);
-  }, [name, composeStageStatus, pageList?.length, refetchPageList]);
-
-  // ── Script → Layout deep-link ────────────────────────────────────────────
-  function handleSwitchToLayout(targetPageNum: number, panelId: string, bubbleId: string) {
-    setPageNum(targetPageNum, { preserveSelection: true });
-    setMode("layout");
-    select(panelId, "bubble", bubbleId);
-  }
-
-  // ── Render ───────────────────────────────────────────────────────────────
-
+  // ── Loading / empty states ───────────────────────────────────────────────
   if (loadingList || (!pageList?.length && composeStageStatus !== "pending")) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
-        <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-          LOADING PAGE EDITOR...
-        </p>
+        <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">LOADING PAGE EDITOR...</p>
       </div>
     );
   }
@@ -356,103 +313,85 @@ export function ComposeRoom() {
   }
 
   const pageNumber = safePage ?? 1;
+  const activeTheme = pageList?.[0]?.theme ?? "default";
 
   return (
-    <div className="-mx-5 -my-6 flex min-h-[calc(100vh-58px)] flex-col bg-pulp-paper md:-my-6">
-      {/* Persistent header with Export CTA */}
+    <div className="-mx-5 -my-6 flex min-h-[calc(100vh-58px)] flex-col gap-3 bg-pulp-paper md:-my-6">
+      {/* Thin persistent header */}
       <ComposeHeader
-        mode={mode}
+        tab={tab}
+        onTabChange={setTab}
         isExporting={exportMut.isPending}
+        isMatchingStyle={generatePageStyleMut.isPending}
         onExport={handleExport}
-        onOpenCmdk={() => setCmdkOpen(true)}
-        onPreview={() => setMode("preview")}
+        onMatchStyle={handleGeneratePageStyle}
         rerunAction={
           <RerunStageAction
             project={name}
             stage="compose"
             label="Compose"
-            className="min-h-8 border px-3 py-1.5 text-[0.52rem] tracking-[0.16em]"
+            className="min-h-7 border border-ink-black/20 px-3 py-1 text-[0.5rem] tracking-[0.16em] text-ink-black/50 hover:text-ink-black"
           />
         }
+        pageCount={pageList.length}
       />
 
-      {/* Mode tab switcher */}
-      <ModeSwitcher mode={mode} onModeChange={setMode} />
+      {/* Edit tab */}
+      {tab === "edit" && (
+        <>
+          <EditSubTabs subMode={editSubMode} onSubModeChange={setEditSubMode} />
 
-      {/* Mode content — fills remaining height */}
-      {mode === "script" && (
-        <ScriptMode
-          project={name}
-          pages={allPages}
-          isLoading={loadingAllPages}
-          pageIdx={pageIdx}
-          outputLanguage={outputLanguage}
-          onPageSelect={(idx) => setPageNum(idx + 1)}
-          onUpdateBubble={(pageNum, panelId, bubbleId, patch) =>
-            handleUpdateBubble(panelId, bubbleId, patch, pageNum)
-          }
-          onSwitchToLayout={handleSwitchToLayout}
-        />
+          {editSubMode === "canvas" && (
+            <LayoutMode
+              project={name}
+              pageList={pageList}
+              page={page}
+              pageNumber={pageNumber}
+              isLoadingPage={loadingPage}
+              zoom={zoom}
+              selection={selection}
+              panelReframeId={panelReframeId}
+              undoStack={undoStack}
+              redoStack={redoStack}
+              onPageSelect={setPageNum}
+              onAddBubble={handleAddBubble}
+              onAddSfx={handleAddSfx}
+              onUndo={handleUndo}
+              onRedo={handleRedo}
+              onSelect={handleSelect}
+              onDeselect={handleDeselect}
+              onDragEnd={handleDragEnd}
+              onZoomChange={(z) => setZoom(clampZoom(z))}
+              onUpdatePanel={handleUpdatePanel}
+              onUpdateBubble={handleUpdateBubble}
+              onUpdateSfx={handleUpdateSfx}
+              onPanelReframeStart={handlePanelReframeStart}
+              onPanelReframeDragEnd={handlePanelReframeDragEnd}
+              onResetPanelFrame={handleResetPanelFrame}
+              onDeleteElement={handleDeleteElement}
+              onUnpin={handleUnpin}
+            />
+          )}
+
+          {editSubMode === "script" && (
+            <ScriptMode
+              project={name}
+              pages={allPages}
+              isLoading={loadingAllPages}
+              pageIdx={pageIdx}
+              outputLanguage={outputLanguage}
+              onPageSelect={(idx) => setPageNum(idx + 1)}
+              onUpdateBubble={(pageNum, panelId, bubbleId, patch) =>
+                handleUpdateBubble(panelId, bubbleId, patch, pageNum)
+              }
+              onSwitchToLayout={handleSwitchToCanvas}
+            />
+          )}
+        </>
       )}
 
-      {mode === "layout" && (
-        <LayoutMode
-          project={name}
-          pageList={pageList}
-          page={page}
-          pageNumber={pageNumber}
-          isLoadingPage={loadingPage}
-          zoom={zoom}
-          selection={selection}
-          undoStack={undoStack}
-          redoStack={redoStack}
-          isGeneratingPageStyle={generatePageStyleMut.isPending}
-          isTranslatingBubbles={translateBubblesMut.isPending}
-          outputLanguage={outputLanguage}
-          onPageSelect={setPageNum}
-          onAddBubble={handleAddBubble}
-          onAddSfx={handleAddSfx}
-          onDelete={() => { if (selection) handleDeleteElement(selection.panelId, selection.type, selection.elementId); }}
-          onUndo={handleUndo}
-          onRedo={handleRedo}
-          onTryLayouts={() => setTryLayoutsOpen(true)}
-          onSelect={select}
-          onDeselect={deselect}
-          onDragEnd={handleDragEnd}
-          onZoomChange={(z) => setZoom(clampZoom(z))}
-          onZoomIn={() => setZoom((z) => clampZoom(z + 0.1))}
-          onZoomOut={() => setZoom((z) => clampZoom(z - 0.1))}
-          onZoomReset={() => setZoom(1)}
-          onUpdatePanel={handleUpdatePanel}
-          onUpdatePanelStructure={handleUpdatePanelStructure}
-          onUpdateBubble={handleUpdateBubble}
-          onUpdateSfx={handleUpdateSfx}
-          onUpdatePage={handleUpdatePageProps}
-          onReflowPages={handleReflowPages}
-          onGeneratePageStyle={handleGeneratePageStyle}
-          onOutputLanguageChange={handleOutputLanguageChange}
-          onTranslateBubbles={handleTranslateBubbles}
-          onDeleteElement={handleDeleteElement}
-          onUnpin={handleUnpin}
-          inspectorMode={inspectorMode}
-          onInspectorModeChange={setInspectorMode}
-        />
-      )}
-
-      {mode === "style" && (
-        <StyleMode
-          project={name}
-          isMatchingStyle={generatePageStyleMut.isPending}
-          isTranslatingBubbles={translateBubblesMut.isPending}
-          outputLanguage={outputLanguage}
-          pageCount={pageList.length}
-          onMatchStyle={handleGeneratePageStyle}
-          onTranslateBubbles={handleTranslateBubbles}
-          onOutputLanguageChange={handleOutputLanguageChange}
-        />
-      )}
-
-      {mode === "preview" && (
+      {/* Export tab */}
+      {tab === "export" && (
         <PreviewMode
           project={name}
           pages={allPages}
@@ -460,8 +399,14 @@ export function ComposeRoom() {
           isLoading={loadingAllPages}
           pageIdx={pageIdx}
           isExporting={exportMut.isPending}
+          activeTheme={activeTheme}
+          outputLanguage={outputLanguage}
+          isTranslatingBubbles={translateBubblesMut.isPending}
           onPageSelect={(idx) => setPageNum(idx + 1)}
           onExport={handleExport}
+          onThemeChange={handleThemeChange}
+          onOutputLanguageChange={handleOutputLanguageChange}
+          onTranslateBubbles={handleTranslateBubbles}
         />
       )}
 
@@ -469,25 +414,20 @@ export function ComposeRoom() {
       {cmdkOpen && (
         <CommandPalette
           onClose={() => setCmdkOpen(false)}
-          onSwitchMode={setMode}
+          onSwitchMode={(m) => {
+            if (m === "script") { setTab("edit"); setEditSubMode("script"); }
+            else if (m === "layout") { setTab("edit"); setEditSubMode("canvas"); }
+            else if (m === "preview") { setTab("export"); }
+            else if (m === "style") { setTab("export"); }
+          }}
           onExport={handleExport}
           onMatchStyle={handleGeneratePageStyle}
           onTranslate={() => handleTranslateBubbles(outputLanguage)}
           onAddBubble={handleAddBubble}
           onAddSfx={handleAddSfx}
-          onTryLayouts={() => setTryLayoutsOpen(true)}
         />
       )}
 
-      {/* Try Layouts modal */}
-      {tryLayoutsOpen && name && safePage && (
-        <TryLayoutsModal
-          project={name}
-          pageNum={safePage}
-          page={page}
-          onClose={() => setTryLayoutsOpen(false)}
-        />
-      )}
     </div>
   );
 }

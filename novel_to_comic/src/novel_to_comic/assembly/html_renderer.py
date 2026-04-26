@@ -52,24 +52,24 @@ _BASE_VARS: dict[str, str] = {
     "--caption-bg":           "#F7F0DC",
     "--caption-border":       "#9B8A5A",
     "--caption-color":        "#3A2A10",
-    "--caption-font-size":    "17px",
+    "--caption-font-size":    "11px",
     "--bubble-bg":            "#FFFFFF",
     "--bubble-border":        "#1A1A1A",
     "--bubble-border-width":  "2px",
     "--bubble-radius":        "14px",
-    "--bubble-font-size":     "24px",
+    "--bubble-font-size":     "32px",
     "--bubble-padding":       "7px 11px",
     "--bubble-max-width":     "52%",
     "--bubble-center-width":  "68%",
     "--speaker-color":        "#664400",
-    "--speaker-font-size":    "14px",
+    "--speaker-font-size":    "9px",
     "--thought-border-style": "dashed",
     "--thought-radius":       "50px",
     "--sfx-color":            "#CC1111",
     "--sfx-shadow":           "#000000",
-    "--sfx-font-size":        "56px",
+    "--sfx-font-size":        "37px",
     "--page-num-color":       "#AAAAAA",
-    "--page-num-font-size":   "26px",
+    "--page-num-font-size":   "17px",
 }
 
 THEMES: dict[str, dict[str, str]] = {
@@ -96,7 +96,7 @@ THEMES: dict[str, dict[str, str]] = {
         "--caption-border":       "#000000",
         "--caption-color":        "#000000",
         "--bubble-border":        "#000000",
-        "--bubble-font-size":     "25px",
+        "--bubble-font-size":     "33px",
         "--sfx-color":            "#000000",
         "--sfx-shadow":           "transparent",
         "--thought-border-style": "solid",
@@ -287,6 +287,7 @@ body {
 }
 .bubble.right  { align-self: flex-end; }
 .bubble.center { align-self: center; max-width: var(--bubble-center-width); }
+.bubble.full-width { align-self: stretch; max-width: 100%; text-align: center; }
 
 /* Thought bubble */
 .bubble.thought {
@@ -467,21 +468,21 @@ _THEME_HEADER = """\
  *    --caption-bg              background (#F7F0DC)
  *    --caption-border          border (#9B8A5A)
  *    --caption-color           text colour (#3A2A10)
- *    --caption-font-size       (17px)
+ *    --caption-font-size       (11px)
  *
  *  Speech / thought bubbles
  *    --bubble-bg               background (#FFFFFF)
  *    --bubble-border           border colour (#1A1A1A)
  *    --bubble-border-width     (2px)
  *    --bubble-radius           corner radius (14px)
- *    --bubble-font-size        (24px)
+ *    --bubble-font-size        (32px)
  *    --bubble-padding          (7px 11px)
  *    --bubble-max-width        max % of panel width (52%)
  *    --bubble-center-width     max % for centred bubbles (68%)
  *
  *  Speaker name labels (shown when 3+ characters in a panel)
  *    --speaker-color           (#664400)
- *    --speaker-font-size       (14px)
+ *    --speaker-font-size       (9px)
  *
  *  Thought bubbles
  *    --thought-border-style    "dashed" | "solid" | "dotted" (dashed)
@@ -490,11 +491,11 @@ _THEME_HEADER = """\
  *  Sound effects
  *    --sfx-color               fill (#CC1111)
  *    --sfx-shadow              outline (use "transparent" to disable) (#000000)
- *    --sfx-font-size           (56px)
+ *    --sfx-font-size           (37px)
  *
  *  Page number
  *    --page-num-color          (#AAAAAA)
- *    --page-num-font-size      (26px)
+ *    --page-num-font-size      (17px)
  * ─────────────────────────────────────────────────────────────────
  * Full CSS is supported. Add custom rules after the :root block.
  */
@@ -516,7 +517,7 @@ def write_theme_css(project_dir: Path, theme_name: str) -> Path:
         if theme_vars:
             var_lines = "\n".join(f"  {k}: {v};" for k, v in theme_vars.items())
         else:
-            var_lines = "  /* base defaults active — uncomment to override: */\n  /* --bubble-font-size: 24px; */"
+            var_lines = "  /* base defaults active — uncomment to override: */\n  /* --bubble-font-size: 32px; */"
         path.write_text(_THEME_HEADER.format(theme_name=theme_name, var_lines=var_lines))
     return path
 
@@ -630,6 +631,9 @@ def _bubble_html(bubble: Bubble, character_voices: dict[str, dict] | None = None
     classes = ["bubble", bubble.type, bubble.side]
     inline: list[str] = []
     has_svg_tail = False
+
+    if bubble.full_width:
+        classes.append("full-width")
 
     if bubble.x is not None and bubble.y is not None:
         classes.append("pinned")

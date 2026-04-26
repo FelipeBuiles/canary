@@ -14,24 +14,24 @@ export const BASE_VARS: Record<string, string> = {
   "--caption-bg":           "#F7F0DC",
   "--caption-border":       "#9B8A5A",
   "--caption-color":        "#3A2A10",
-  "--caption-font-size":    "17px",
+  "--caption-font-size":    "11px",
   "--bubble-bg":            "#FFFFFF",
   "--bubble-border":        "#1A1A1A",
   "--bubble-border-width":  "2px",
   "--bubble-radius":        "14px",
-  "--bubble-font-size":     "24px",
+  "--bubble-font-size":     "32px",
   "--bubble-padding":       "7px 11px",
   "--bubble-max-width":     "52%",
   "--bubble-center-width":  "68%",
   "--speaker-color":        "#664400",
-  "--speaker-font-size":    "14px",
+  "--speaker-font-size":    "9px",
   "--thought-border-style": "dashed",
   "--thought-radius":       "50px",
   "--sfx-color":            "#CC1111",
   "--sfx-shadow":           "#000000",
-  "--sfx-font-size":        "56px",
+  "--sfx-font-size":        "37px",
   "--page-num-color":       "#AAAAAA",
-  "--page-num-font-size":   "26px",
+  "--page-num-font-size":   "17px",
 };
 
 export const THEMES: Record<string, Record<string, string>> = {
@@ -58,7 +58,7 @@ export const THEMES: Record<string, Record<string, string>> = {
     "--caption-border":       "#000000",
     "--caption-color":        "#000000",
     "--bubble-border":        "#000000",
-    "--bubble-font-size":     "25px",
+    "--bubble-font-size":     "33px",
     "--sfx-color":            "#000000",
     "--sfx-shadow":           "transparent",
     "--thought-border-style": "solid",
@@ -117,7 +117,7 @@ export function sanitizeStyleVars(input: Record<string, string> | undefined): Re
   if (!input) return {};
   const out: Record<string, string> = { ...input };
 
-  const bubbleFontSize = normalizePx(out["--bubble-font-size"], 16, 54);
+  const bubbleFontSize = normalizePx(out["--bubble-font-size"], 16, 200);
   if (bubbleFontSize) out["--bubble-font-size"] = bubbleFontSize;
   else delete out["--bubble-font-size"];
 

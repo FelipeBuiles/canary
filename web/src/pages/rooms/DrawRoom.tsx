@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useGenerationJobs, useImages, useProjectStatus, useRegenPanel, usePromptSummaries } from "../../api/queries";
-import { ShowcaseHeader } from "../../components/ShowcaseHeader";
+import { RoomHeader } from "../../components/ui/RoomHeader";
+import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { PanelCard } from "../../components/PanelCard";
 import { PanelDetailModal } from "../../components/PanelDetailModal";
 import { StatRow } from "../../components/ui/StatRow";
@@ -14,6 +15,7 @@ import type { ImageStatus } from "../../types/api";
 
 export function DrawRoom() {
   const { name } = useParams<{ name: string }>();
+  const { isCompact, toggle } = useHeaderMode();
   const projectRegens = useActiveRegens(name ?? "");
   const bustTimestamps = useRegenStore((s) => s.bustTimestamps);
   const errors = useRegenStore((s) => s.errors);
@@ -237,8 +239,10 @@ export function DrawRoom() {
 
   return (
     <RoomShell>
-      <ShowcaseHeader
-        label="DRAW / PANEL GALLERY"
+      <RoomHeader
+        kicker="DRAW / PANEL GALLERY"
+        compact={isCompact}
+        onToggle={toggle}
         title="PANEL GALLERY"
         lead="Every generated panel at a glance — regenerate individual frames, review failures, switch scenes."
         actions={<RerunStageAction project={name} stage="draw" label="Draw" itemsAtRisk={`${images?.length ?? 0} generated panels will be lost`} />}

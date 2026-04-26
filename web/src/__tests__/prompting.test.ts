@@ -6,12 +6,12 @@ const makePrompt = (
   overrides: Partial<ImagePrompt> = {}
 ): Pick<ImagePrompt, "subjects" | "composition" | "setting" | "lighting" | "mood" | "props" | "constraints"> => ({
   subjects: [],
-  composition: null,
-  setting: null,
-  lighting: null,
-  mood: null,
-  props: null,
-  constraints: null,
+  composition: undefined,
+  setting: undefined,
+  lighting: undefined,
+  mood: undefined,
+  props: undefined,
+  constraints: undefined,
   ...overrides,
 });
 
@@ -22,8 +22,8 @@ const makeSubject = (
   name: "Alice",
   identity: "a young woman",
   action: "walking down a street",
-  expression: "contemplative",
-  position: "center frame",
+  expression: overrides.expression ?? "contemplative",
+  position: overrides.position ?? "center frame",
   ...overrides,
 });
 
@@ -56,8 +56,8 @@ describe("renderPanelPromptBody", () => {
     const prompt = makePrompt({
       subjects: [
         makeSubject({
-          expression: null,
-          position: null,
+          expression: undefined,
+          position: undefined,
         }),
       ],
     });
@@ -151,12 +151,12 @@ describe("renderPanelPromptBody", () => {
   it("returns empty string when all fields are null/empty", () => {
     const prompt = makePrompt({
       subjects: [],
-      composition: null,
-      setting: null,
-      lighting: null,
-      mood: null,
-      props: null,
-      constraints: null,
+      composition: undefined,
+      setting: undefined,
+      lighting: undefined,
+      mood: undefined,
+      props: undefined,
+      constraints: undefined,
     });
     expect(renderPanelPromptBody(prompt)).toBe("");
   });

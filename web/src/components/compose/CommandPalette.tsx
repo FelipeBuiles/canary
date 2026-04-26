@@ -1,7 +1,5 @@
 import { useState, useEffect, useRef } from "react";
 import { cn } from "../../lib/cn";
-import type { ComposeMode } from "./compose-types";
-
 interface Command {
   id: string;
   group: string;
@@ -13,13 +11,12 @@ interface Command {
 
 interface CommandPaletteProps {
   onClose: () => void;
-  onSwitchMode: (mode: ComposeMode) => void;
+  onSwitchMode: (mode: "script" | "layout" | "style" | "preview") => void;
   onExport: (format: "pdf" | "cbz") => void;
   onMatchStyle: () => void;
   onTranslate: () => void;
   onAddBubble: (type: "speech" | "thought" | "narration") => void;
   onAddSfx: () => void;
-  onTryLayouts?: () => void;
 }
 
 export function CommandPalette({
@@ -30,7 +27,6 @@ export function CommandPalette({
   onTranslate,
   onAddBubble,
   onAddSfx,
-  onTryLayouts,
 }: CommandPaletteProps) {
   const [query, setQuery] = useState("");
   const [selectedIdx, setSelectedIdx] = useState(0);
@@ -50,8 +46,6 @@ export function CommandPalette({
     // Magic
     { id: "match-style", group: "MAGIC", label: "Match lettering to art", shortcut: "⌘M", accent: true, action: () => { onMatchStyle(); onClose(); } },
     { id: "translate", group: "MAGIC", label: "Translate project", action: () => { onTranslate(); onClose(); } },
-    // Layout
-    { id: "try-layouts", group: "LAYOUT", label: "Try layouts", shortcut: "⌘L", accent: true, action: () => { onTryLayouts?.(); onClose(); } },
     // Export
     { id: "export-pdf", group: "EXPORT", label: "Export PDF", shortcut: "⌘E", accent: true, action: () => { onExport("pdf"); onClose(); } },
     { id: "export-cbz", group: "EXPORT", label: "Export CBZ", action: () => { onExport("cbz"); onClose(); } },

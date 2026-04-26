@@ -1,42 +1,27 @@
 import { cn } from "../../lib/cn";
-import type { ComposeMode } from "./compose-types";
+import type { EditSubMode } from "./compose-types";
 
-const MODES: { id: ComposeMode; label: string; key: string }[] = [
-  { id: "script", label: "SCRIPT", key: "1" },
-  { id: "layout", label: "LAYOUT", key: "2" },
-  { id: "style", label: "STYLE", key: "3" },
-  { id: "preview", label: "PREVIEW", key: "4" },
-];
-
-interface ModeSwitcherProps {
-  mode: ComposeMode;
-  onModeChange: (m: ComposeMode) => void;
+interface EditSubTabsProps {
+  subMode: EditSubMode;
+  onSubModeChange: (m: EditSubMode) => void;
 }
 
-export function ModeSwitcher({ mode, onModeChange }: ModeSwitcherProps) {
+export function EditSubTabs({ subMode, onSubModeChange }: EditSubTabsProps) {
   return (
-    <div className="mx-2 flex shrink-0 border-[2px] border-ink-black bg-ink-black">
-      {MODES.map((m, i) => (
+    <div className="flex shrink-0 border-b-[2px] border-ink-black bg-pulp-paper">
+      {(["canvas", "script"] as EditSubMode[]).map((m) => (
         <button
-          key={m.id}
-          onClick={() => onModeChange(m.id)}
+          key={m}
+          type="button"
+          onClick={() => onSubModeChange(m)}
           className={cn(
-            "inline-flex min-h-8 items-center justify-center gap-2 border-r border-pulp-paper/10 px-4 py-2 font-meta text-[0.56rem] tracking-[0.18em] transition-colors md:min-w-[120px]",
-            mode === m.id
-              ? "bg-pulp-paper text-ink-black"
-              : "text-pulp-paper/45 hover:text-pulp-paper/85",
+            "px-5 py-2 font-meta text-[0.52rem] tracking-[0.18em] transition-colors",
+            m === subMode
+              ? "border-b-[2px] border-ink-black bg-pulp-paper font-bold text-ink-black"
+              : "text-ink-black/40 hover:text-ink-black/70",
           )}
         >
-          <span className="opacity-50">0{i + 1}</span>
-          <span>{m.label}</span>
-          <kbd
-            className={cn(
-              "ml-1 rounded-[2px] border px-1 py-0.5 text-[0.46rem] opacity-55",
-              mode === m.id ? "border-ink-black" : "border-pulp-paper/30",
-            )}
-          >
-            {m.key}
-          </kbd>
+          {m.toUpperCase()}
         </button>
       ))}
     </div>

@@ -8,6 +8,7 @@ interface ComicPageCanvasProps {
   selectedPanelId: string | null;
   selectedElementId: string | null;
   selectedType: "bubble" | "sfx" | null;
+  reframePanelId: string | null;
   imageBaseUrl: string;
 }
 
@@ -21,12 +22,12 @@ export function ComicPageCanvas({
   selectedPanelId,
   selectedElementId,
   selectedType,
+  reframePanelId,
   imageBaseUrl,
 }: ComicPageCanvasProps) {
   const layout = getLayout(page.layout);
   const vars = { ...resolveThemeVars(page.theme), ...sanitizeStyleVars(page.style_vars) };
 
-  // Apply CSS variables as inline styles for the page root
   const cssVars = vars as unknown as React.CSSProperties;
 
   return (
@@ -58,6 +59,7 @@ export function ComicPageCanvas({
             selectedPanelId={selectedPanelId}
             selectedElementId={selectedElementId}
             selectedType={selectedType}
+            reframePanelId={reframePanelId}
             imageBaseUrl={imageBaseUrl}
           />
         ))}
