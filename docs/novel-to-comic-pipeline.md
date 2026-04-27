@@ -14,7 +14,7 @@ analysis and image generation models for panel artwork.
 ```
 Novel (EPUB / TXT / PDF)
   │
-  ▼ Stage 1 — Extract (gemini-3.1-pro-preview, 1M context)
+  ▼ Stage 1 — Extract (configurable text model, default: gemini-3.1-pro-preview)
   │   Full novel → Story Bible JSON
   │   Characters (visual anchors), locations, scenes, narrative arcs, props
   │   ► CHECKPOINT: review story_bible.json before continuing
@@ -25,11 +25,11 @@ Novel (EPUB / TXT / PDF)
   │   Character reference sheets (4 angles each) + location background plates
   │   ► CHECKPOINT: review refs/ and plates/ before continuing
   │
-  ▼ Stage 3 — Adapt (gemini-3.1-pro-preview) # consider claude models for better prose?
+  ▼ Stage 3 — Adapt (configurable text model, default: gemini-3.1-pro-preview)
   │   Per-scene: prose → observable actions, compressed dialogue (≤35 words/bubble)
   │   Removes interiority; adds SFX annotations
   │
-  ▼ Stage 4 — Plan (deterministic — no LLM)
+  ▼ Stage 4 — Plan (configurable text model, default: gemini-3.1-pro-preview)
   │   Screenplay → Layout Plan JSON (planned pages + planned panels)
   │   Assigns panel geometry, page layout, generation modes
   │
@@ -37,7 +37,7 @@ Novel (EPUB / TXT / PDF)
   │   Layout plan → legacy PanelBreakdown JSON per panel
   │   Shot type, camera angle, character positions, expressions, dialogue
   │
-  ▼ Stage 6 — Direct (gemini-3.1-flash-lite-preview)
+  ▼ Stage 6 — Direct (configurable text model, default: gemini-3.1-flash-lite-preview)
   │   Per-panel: assembles full image prompt from planned panels:
   │     [Style template] + [Location anchor] + [Character anchor(s)] + [Panel description]
   │   Character visual anchors injected VERBATIM for consistency
@@ -71,14 +71,18 @@ Defaults in `config.py`, overridable in `config.yaml`.
 
 ### Text / LLM stages
 
-| Stage | Model | Why |
-|-------|-------|-----|
-| Extract (1) | `gemini-3.1-pro-preview` | 1M context window fits a full novel in one pass |
-| Adapt (3) | `gemini-3.1-pro-preview` | Creative writing quality for screenplay adaptation |
-| Storyboard (5) | `gemini-3.1-flash-lite-preview` | Structured JSON, fast and cheap |
-| Direct (6) | `gemini-3.1-flash-lite-preview` | Template assembly, Flash-Lite sufficient |
-| Embeddings | `gemini-embedding-001` | Google Vertex AI, 3072 dims |
-| Vector store | Qdrant | Hybrid search (dense + BM25), optional — disabled by default |
+All text stages route through `clients/text.py` via an explicit `MODEL_REGISTRY`.
+Supported providers: Gemini, Anthropic Claude, OpenAI, OpenRouter.
+
+| Stage | Default model | Config field |
+|-------|---------------|-------------|
+| Extract (1) | `gemini-3.1-pro-preview` | `extraction_model` |
+| Adapt (3) | `gemini-3.1-pro-preview` | `screenplay_model` |
+| Plan (4) | `gemini-3.1-pro-preview` | `panel_model` |
+| Direct (6) | `gemini-3.1-flash-lite-preview` | `prompt_model` |
+
+Set `quality_preset: fast | balanced | quality` to override all four fields at once.
+`dev_mode` forces the `"fast"` preset regardless.
 
 ### Image generation
 
@@ -100,7 +104,7 @@ image_model: "gemini-3-pro-image-preview"   # provider-specific model ID
 
 ## Installation
 
-**Requirements:** Python 3.12+, Docker (optional, for Qdrant)
+**Requirements:** Python 3.12+
 
 ```bash
 git clone <repo>
@@ -113,15 +117,6 @@ pip install -e .
 
 # One-time: install Playwright Chromium browser (required for Stage 8 — HTML → PNG rendering)
 playwright install chromium
-```
-
-Qdrant is optional and disabled by default. To enable it:
-
-```bash
-docker run -d --name qdrant \
-  -p 6333:6333 \
-  -v ./qdrant_data:/qdrant/storage \
-  qdrant/qdrant:latest
 ```
 
 ---
@@ -406,6 +401,12 @@ wet, dirty, shivering, injured, or covered in blood.
 
 ## Cost Reference
 
+Costs are tracked automatically. Each API call returns an `ApiResult` with a
+`UsageRecord`; the pipeline accumulates real costs into `state.json` via
+`usage_log` and `cost_usd`. Before a stage runs, an estimate is saved to
+`estimated_cost_usd`. Pricing lives in `pricing.yaml` — edit that file for
+price changes, no code deploy needed.
+
 ### Per-component costs (approximate)
 
 | Component | Model | Cost |
@@ -442,16 +443,12 @@ Ensure reference images were approved after Stage 2. If drift persists,
 regenerate character reference sheets with a more detailed `visual_anchor`
 description — edit `story_bible.json` directly and rerun Stage 2.
 
-**JSON validation errors from LLM**  
+**JSON validation errors from LLM**
 Gemini uses `response_mime_type: "application/json"` to enforce structured
-output. If validation fails, the stage retries up to 3 times with exponential
-backoff.
+output. Other providers use similar constraints. If validation fails,
+the stage retries up to 3 times with exponential backoff.
 
-**Qdrant connection refused**  
-Qdrant is optional and disabled by default. If you enabled it:
-`docker start qdrant` or `docker run -d --name qdrant -p 6333:6333 qdrant/qdrant:latest`
-
-**Resume after crash**  
+**Resume after crash**
 Rerun the pipeline or specific stage via the web UI or API. Each stage checks
 `state.json` and skips already-completed items. Failed panels are tracked in
 `state.stages.<stage>.items_failed` and are retried automatically on the next run.

@@ -103,7 +103,9 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
     if (selectedImageModel !== DEFAULT_IMAGE_MODEL) overrides.image_model = selectedImageModel;
 
     // Presets: keep common flows safe and avoid exposing low-level footguns by default.
+    // Map UI preset → backend quality_preset so text model selection is also affected.
     if (renderPreset === "fast_draft") {
+      overrides.quality_preset = "fast";
       overrides.dev_mode = true;
       overrides.dev_image_scale = 0.6;
       overrides.dev_image_steps = 8;
@@ -117,6 +119,7 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
         overrides.image_quality = "low";
       }
     } else if (renderPreset === "high_quality") {
+      overrides.quality_preset = "quality";
       overrides.dev_mode = false;
       overrides.max_panels_per_scene = 10;
       overrides.max_panels_per_page = 5;
@@ -127,6 +130,7 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
         overrides.image_quality = "high";
       }
     } else {
+      overrides.quality_preset = "balanced";
       overrides.dev_mode = false;
       overrides.max_panels_per_scene = 8;
       overrides.max_panels_per_page = 6;

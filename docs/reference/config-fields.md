@@ -18,7 +18,7 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `gemini_api_key` | `str` | `''` | Gemini developer API key (legacy; Vertex AI ADC preferred) |
 | `anthropic_api_key` | `str` | `''` | Anthropic API key for Claude (stage 3) |
 | `together_api_key` | `str` | `''` | Together AI API key (FLUX via Together) |
-| `openai_api_key` | `str` | `''` | OpenAI API key (GPT Image models) |
+| `openai_api_key` | `str` | `''` | OpenAI API key (text and image models) |
 | `openrouter_api_key` | `str` | `''` | OpenRouter API key (various models) |
 | `google_use_vertex_ai` | `bool` | `True` | Use Vertex AI ADC instead of Gemini developer API |
 | `google_cloud_project` | `str` | `''` | Google Cloud project ID for Vertex AI |
@@ -27,7 +27,7 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `screenplay_model` | `str` | `'gemini-3.1-pro-preview'` | Stage 3 — screenplay adaptation |
 | `panel_model` | `str` | `'gemini-3.1-pro-preview'` | Stage 4 layout planning and Stage 5 panel breakdown |
 | `prompt_model` | `str` | `'gemini-3.1-flash-lite-preview'` | Stage 6 — image prompt assembly |
-| `embedding_model` | `str` | `'gemini-embedding-001'` | Google Vertex AI, 3072 dims |
+| `quality_preset` | `QualityPreset or None` | `None` | Overrides all four text model fields. `fast` \| `balanced` \| `quality`. `dev_mode` forces `fast`. |
 | `image_provider` | `Literal` | `'gemini'` | Image gen provider: `gemini` \| `openai` \| `openrouter` \| `together` |
 | `image_model` | `str` | `'gemini-3-pro-image-preview'` | Primary image generation model |
 | `fallback_image_model` | `str` | `'gemini-3.1-flash-image-preview'` | Dev-mode fallback for image generation |
@@ -44,13 +44,10 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `negative_prompt` | `str` | `'ugly, deformed, blurry, ...'` | Applied to Together AI / SDXL models only (Gemini ignores) |
 | `style_template` | `str` | `'High quality visual storytelling. ...'` | Injected verbatim at start of every image prompt |
 | `plan_mode` | `Literal` | `'llm'` | Stage 4 planning mode: `llm` \| `heuristic` |
-| `enable_rag_index` | `bool` | `False` | Build optional Qdrant vector index in Stage 2 |
 | `max_panels_per_scene` | `int` | `8` | Cap on panels per scene |
 | `max_panels_per_page` | `int` | `6` | Panels per assembled comic page |
 | `max_words_per_bubble` | `int` | `35` | Max words per dialogue bubble |
 | `parallel_batch_size` | `int` | `5` | Scenes to process in parallel (stages 3–6) |
-| `qdrant_host` | `str` | `'localhost'` | Qdrant vector store host |
-| `qdrant_port` | `int` | `6333` | Qdrant port |
 | `max_concurrent_requests` | `int` | `5` | Max simultaneous image generation requests (stage 7) |
 | `cost_limit_usd` | `Optional[float]` | `None` | Hard cap — pipeline pauses if total cost exceeds this |
 | `comic_theme` | `str` | `'auto'` | Comic theme: `auto` \| `default` \| `noir` \| `manga` \| `vintage` \| `painted` |
@@ -58,14 +55,28 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 
 ## Provider Routing
 
+### Text models (`clients/text.py`)
+
+Explicit `MODEL_REGISTRY` lookup — no heuristic prefix-matching. Every known model
+is mapped to its provider. Unknown models raise `ValueError`.
+
+| Provider | Example models |
+|----------|---------------|
+| `gemini` | `gemini-3.1-pro-preview`, `gemini-2.5-pro`, `gemini-2.5-flash` |
+| `anthropic` | `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5` |
+| `openai` | `gpt-5.4`, `gpt-5.4-mini`, `o3`, `o4-mini` |
+| `openrouter` | `anthropic/claude-sonnet-4`, `google/gemini-2.5-pro`, `deepseek/deepseek-r1` |
+
+### Image models (`clients/flux.py`)
+
 The `image_provider` field controls which API is used for image generation:
 
 | Provider | How identified | Example models |
 |----------|---------------|----------------|
 | `gemini` (default) | `image_provider == "gemini"` | `gemini-3-pro-image-preview`, `gemini-3.1-flash-image-preview` |
-| `openai` | `gpt-image-*` in model name | `gpt-image-1`, `gpt-image-1.5` |
-| `openrouter` | `/` in model name + provider `"openrouter"` | `black-forest-labs/flux-1-dev` |
-| `together` | `/` in model name + provider `"together"` | `black-forest-labs/FLUX.1-kontext-pro` |
+| `openai` | `image_provider == "openai"` | `gpt-image-1`, `gpt-image-1.5` |
+| `openrouter` | `image_provider == "openrouter"` | `black-forest-labs/flux-1-dev` |
+| `together` | `image_provider == "together"` | `black-forest-labs/FLUX.1-kontext-pro` |
 
 ## Environment Variables
 

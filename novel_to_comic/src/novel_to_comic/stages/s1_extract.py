@@ -11,7 +11,7 @@ from pathlib import Path
 from pydantic import ValidationError
 from rich.console import Console
 
-from novel_to_comic.clients import gemini
+from novel_to_comic.clients import text
 from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP
 from novel_to_comic.models.story_bible import StoryBible
@@ -23,18 +23,27 @@ from novel_to_comic.state import (
     record_item_done,
     save_state,
 )
+from novel_to_comic.usage import ApiResult, estimate_text_cost
 
 console = Console()
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "extraction.txt"
 
 
-def _read_novel(novel_path: Path) -> str:
-    """Read novel text from EPUB, PDF, or plain text."""
+def _read_novel(novel_path: Path) -> str | bytes:
+    """Read novel text from EPUB, PDF, or plain text.
+
+    For image-based PDFs where text extraction yields nothing, returns the raw
+    PDF bytes so the caller can pass them directly to Gemini's native PDF
+    understanding instead of failing with an empty prompt.
+    """
     if novel_path.suffix.lower() == ".epub":
         return _read_epub(novel_path)
     elif novel_path.suffix.lower() == ".pdf":
-        return _read_pdf(novel_path)
+        text = _read_pdf(novel_path)
+        if not text.strip():
+            return novel_path.read_bytes()
+        return text
     return novel_path.read_text(encoding="utf-8", errors="replace")
 
 def _read_pdf(pdf_path: Path) -> str:
@@ -266,21 +275,24 @@ async def _extract_with_retry(
     last_error: Exception | None = None
     user_content = novel_text
 
+    last_usage = None
     for attempt in range(max_retries + 1):
-        result = await gemini.generate_json(
+        api_result = await text.generate_json(
             config=config,
-            model=config.extraction_model,
+            model=config.effective_extraction_model(),
             system_prompt=system_prompt,
             user_content=user_content,
             temperature=0.4,
             max_output_tokens=65536,
         )
+        last_usage = api_result.usage
+        result = api_result.value
         if isinstance(result, list):
             result = result[0]
         result = _normalize_result(result)
 
         try:
-            return StoryBible.model_validate(result)
+            return ApiResult(value=StoryBible.model_validate(result), usage=last_usage)
         except ValidationError as e:
             last_error = e
             if attempt < max_retries:
@@ -395,18 +407,31 @@ async def run(
         emit({"type": "log", "stage": "extract", "level": "info",
               "message": f"Reading novel: {novel_path}"})
         novel_text = _read_novel(novel_path)
-        console.print(f"Novel length: {len(novel_text):,} characters (~{len(novel_text) // 4:,} tokens)")
-        emit({"type": "log", "stage": "extract", "level": "dim",
-              "message": f"Novel length: {len(novel_text):,} characters"})
+        if isinstance(novel_text, bytes):
+            console.print(f"Novel length: {len(novel_text):,} bytes (image-based PDF — using native Gemini processing)")
+            emit({"type": "log", "stage": "extract", "level": "dim",
+                  "message": f"Novel: image-based PDF, {len(novel_text):,} bytes"})
+        else:
+            console.print(f"Novel length: {len(novel_text):,} characters (~{len(novel_text) // 4:,} tokens)")
+            emit({"type": "log", "stage": "extract", "level": "dim",
+                  "message": f"Novel length: {len(novel_text):,} characters"})
         emit({"type": "stage_progress", "stage": "extract", "done": 1, "total": 4})
 
         system_prompt = PROMPT_PATH.read_text()
+        content_for_cost = novel_text if isinstance(novel_text, str) else ""
+        estimated = estimate_text_cost(
+            config.effective_extraction_model(),
+            system_prompt + "\n" + content_for_cost,
+            output_chars=65536 * 4,
+        )
+        state.stages["extract"].estimated_cost_usd = estimated
         emit({"type": "stage_progress", "stage": "extract", "done": 2, "total": 4})
 
-        console.print(f"[bold]Calling {config.extraction_model}...[/bold]")
+        console.print(f"[bold]Calling {config.effective_extraction_model()}...[/bold]")
         emit({"type": "log", "stage": "extract", "level": "info",
-              "message": f"Calling {config.extraction_model}..."})
-        story_bible = await _extract_with_retry(config, system_prompt, novel_text)
+              "message": f"Calling {config.effective_extraction_model()}..."})
+        extract_result = await _extract_with_retry(config, system_prompt, novel_text)
+        story_bible = extract_result.value
         console.print(
             f"[green]Extracted:[/green] {len(story_bible.characters)} characters, "
             f"{len(story_bible.locations)} locations, {len(story_bible.scenes)} scenes"
@@ -422,14 +447,7 @@ async def run(
         bible_path.write_text(bible_json)
         _write_scene_files(story_bible, novel_text, project_dir / "scenes")
 
-        # Estimate cost from both input and output tokens.
-        # Gemini 3.1 Pro pricing (adjust if model pricing changes):
-        #   input  $2.50 / M tokens
-        #   output $10.00 / M tokens
-        input_tokens = len(novel_text) // 4
-        output_tokens = len(bible_json) // 4
-        cost = (input_tokens / 1_000_000) * 2.50 + (output_tokens / 1_000_000) * 10.00
-        record_item_done(state, "extract", cost=cost)
+        record_item_done(state, "extract", usage=extract_result.usage)
         emit({"type": "stage_progress", "stage": "extract",
               "done": 4,
               "total": 4})

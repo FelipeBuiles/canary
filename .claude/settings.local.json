@@ -76,7 +76,11 @@
       "Bash(grep -E \"\\\\.tsx$|\\\\.ts$\")",
       "Bash(npx next:*)",
       "Bash(npx vitest:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(gh pr *)",
+      "Bash(.venv/bin/pdftotext /Users/jbuiles/Code/canary/projects/the-flowers/input/walker_flowers.pdf -)",
+      "Bash(pdftotext /Users/jbuiles/Code/canary/projects/the-flowers/input/walker_flowers.pdf -)",
+      "Bash(.venv/bin/python:*)"
     ]
   }
 }

@@ -108,7 +108,7 @@ async def run(
                               "message": f"Failed {panel.panel_id}: {result}"})
                         record_item_failed(state, "direct", panel.panel_id)
                     else:
-                        record_item_done(state, "direct", cost=0.001)
+                        record_item_done(state, "direct")
                         emit({"type": "stage_progress", "stage": "direct",
                               "done": state.stages["direct"].items_done,
                               "total": state.stages["direct"].items_total})

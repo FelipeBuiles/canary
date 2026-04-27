@@ -16,6 +16,11 @@ export function Footer() {
       return stageStatus === "running" || stageStatus === "awaiting_review";
     }) ?? null);
 
+  const spent = status?.total_cost_usd ?? 0;
+  const estimated = status?.total_estimated_cost_usd ?? 0;
+  // Show the estimate when the pipeline has produced one and hasn't fully spent it yet.
+  const showEstimate = estimated > 0 && estimated > spent;
+
   return (
     <footer className="shrink-0 border-t-[2px] border-hero-red bg-ink-black text-bristol">
       <div className="flex min-h-[34px] items-center justify-between gap-4 px-4 lg:px-5">
@@ -25,7 +30,14 @@ export function Footer() {
 
         <div className="flex flex-wrap items-center gap-5 text-[0.55rem]">
           <span className="font-meta tracking-[0.12em] text-bristol/80 tabular-nums">
-            Usage: ${(status?.total_cost_usd ?? 0).toFixed(2)}
+            {showEstimate ? (
+              <>
+                <span>Usage: ${spent.toFixed(2)}</span>
+                <span className="text-bristol/40"> / ~${estimated.toFixed(2)}</span>
+              </>
+            ) : (
+              <>Usage: ${spent.toFixed(2)}</>
+            )}
           </span>
           <span className="font-meta tracking-[0.12em] text-bristol/80 tabular-nums">
             Progress: {completedStages}/7

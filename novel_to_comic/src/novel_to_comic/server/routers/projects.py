@@ -58,6 +58,7 @@ def _stage_payload(project_dir: Path, name: str, state) -> dict:
         "items_total": s.items_total,
         "items_failed": s.items_failed,
         "cost_usd": s.cost_usd,
+        "estimated_cost_usd": s.estimated_cost_usd,
         "error": error,
         "started_at": s.started_at.isoformat() if s.started_at else None,
         "finished_at": s.finished_at.isoformat() if s.finished_at else None,
@@ -273,10 +274,12 @@ def project_status(request: Request, project=Depends(get_project)):
     stages = {}
     for name in STAGE_NAMES:
         stages[name] = _stage_payload(project_dir, name, state)
+    total_estimated = sum(state.stages[n].estimated_cost_usd for n in STAGE_NAMES)
     return {
         "project_name": state.project_name,
         "created_at": state.created_at.isoformat(),
         "total_cost_usd": state.total_cost_usd,
+        "total_estimated_cost_usd": total_estimated,
         "is_running": _is_project_running(project_dir.name, request),
         "has_cover": _cover_path(project_dir).exists(),
         "style_selected": is_style_selected(project_dir, config),

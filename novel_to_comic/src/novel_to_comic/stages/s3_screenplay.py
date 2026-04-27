@@ -10,7 +10,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.progress import Progress
 
-from novel_to_comic.clients import gemini
+from novel_to_comic.clients import text
 from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.models.panel import Screenplay
@@ -24,6 +24,7 @@ from novel_to_comic.state import (
     record_item_failed,
     save_state,
 )
+from novel_to_comic.usage import ApiResult, estimate_text_cost
 
 console = Console()
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "screenplay.txt"
@@ -157,7 +158,7 @@ async def _process_scene(
     scene_id: str,
     system_prompt: str,
     semaphore: asyncio.Semaphore,
-) -> Screenplay | None:
+) -> ApiResult[Screenplay | None]:
     """Process a single scene into a screenplay."""
     scene_text_path = project_dir / "scenes" / f"{scene_id}.txt"
     if not scene_text_path.exists():
@@ -165,19 +166,20 @@ async def _process_scene(
 
     output_path = project_dir / "screenplays" / f"{scene_id}.json"
     if output_path.exists():
-        return Screenplay.model_validate_json(output_path.read_text())
+        return ApiResult(value=Screenplay.model_validate_json(output_path.read_text()), usage=None)
 
     scene_text = scene_text_path.read_text()
     user_content = _build_user_content(scene_text, story_bible, scene_id)
 
     async with semaphore:
-        result = await gemini.generate_json(
+        api_result = await text.generate_json(
             config=config,
-            model=config.screenplay_model,
+            model=config.effective_screenplay_model(),
             system_prompt=_localized_system_prompt(config, system_prompt),
             user_content=user_content,
         )
 
+    result = api_result.value
     # Some models wrap the response in a list — unwrap before validating.
     if isinstance(result, list):
         result = result[0]
@@ -185,7 +187,7 @@ async def _process_scene(
     screenplay = _annotate_transition_beats(screenplay)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(screenplay.model_dump_json(indent=2))
-    return screenplay
+    return ApiResult(value=screenplay, usage=api_result.usage)
 
 
 async def run(
@@ -202,7 +204,18 @@ async def run(
     system_prompt = PROMPT_PATH.read_text()
 
     ids = scene_ids or [s.id for s in story_bible.scenes]
-    begin_stage(state, "adapt", total=len(ids))
+
+    estimated = 0.0
+    for sid in ids:
+        if (project_dir / "screenplays" / f"{sid}.json").exists():
+            continue
+        scene_path = project_dir / "scenes" / f"{sid}.txt"
+        scene_text = scene_path.read_text() if scene_path.exists() else "x" * 8000
+        estimated += estimate_text_cost(
+            config.effective_screenplay_model(),
+            system_prompt + "\n" + scene_text,
+        )
+    begin_stage(state, "adapt", total=len(ids), estimated_cost_usd=estimated)
     emit({"type": "stage_begin", "stage": "adapt", "total": len(ids)})
     save_state(state, project_dir)
 
@@ -225,12 +238,20 @@ async def run(
                               "message": f"Failed {sid}: {result}"})
                         record_item_failed(state, "adapt", sid)
                     else:
-                        record_item_done(state, "adapt", cost=0.04)
+                        record_item_done(
+                            state, "adapt",
+                            usage=result.usage if result is not None else None,
+                        )
                         emit({"type": "stage_progress", "stage": "adapt",
                               "done": state.stages["adapt"].items_done,
                               "total": state.stages["adapt"].items_total})
                     progress.advance(task)
                 save_state(state, project_dir)
+
+        if len(state.stages["adapt"].items_failed) > 0 and state.stages["adapt"].items_done == 0:
+            raise RuntimeError(
+                f"All {len(state.stages['adapt'].items_failed)} scenes failed during adapt stage"
+            )
 
         complete_stage(state, "adapt")
         emit({"type": "stage_complete", "stage": "adapt",

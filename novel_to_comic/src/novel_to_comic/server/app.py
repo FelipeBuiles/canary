@@ -18,6 +18,15 @@ from .routers import config, export, pages, pipeline, projects, stages, styles
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    import logging
+    from novel_to_comic.usage import audit_pricing
+    missing = audit_pricing()
+    if missing:
+        logging.getLogger(__name__).warning(
+            "Models missing from pricing.yaml (cost tracking will be $0 for these): %s",
+            ", ".join(missing),
+        )
+
     worker_count = max(1, int(os.environ.get("CANARY_GENERATION_WORKERS", "5")))
     app.state.generation_worker_tasks = [
         asyncio.create_task(generation_worker(app))

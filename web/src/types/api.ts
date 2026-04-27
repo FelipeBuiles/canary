@@ -21,6 +21,11 @@ export interface ConfigOverrides {
   image_model?: string;
   target_language?: "en" | "es" | "fr";
   dev_mode?: boolean;
+  quality_preset?: "fast" | "balanced" | "quality" | null;
+  extraction_model?: string;
+  screenplay_model?: string;
+  panel_model?: string;
+  prompt_model?: string;
   dev_image_scale?: number;
   dev_image_steps?: number;
   dev_image_concurrency?: number;
@@ -30,7 +35,6 @@ export interface ConfigOverrides {
   image_steps?: number;
   image_quality?: "auto" | "low" | "medium" | "high";
   flux_guidance_scale?: number;
-  enable_rag_index?: boolean;
   max_panels_per_scene?: number;
   max_panels_per_page?: number;
   comic_theme?: string;
@@ -42,6 +46,7 @@ export interface StageInfo {
   items_total: number;
   items_failed: string[];
   cost_usd: number;
+  estimated_cost_usd: number;
   error: string | null;
   started_at: string | null;
   finished_at: string | null;
@@ -64,6 +69,7 @@ export interface ProjectStatus {
   project_name: string;
   created_at: string;
   total_cost_usd: number;
+  total_estimated_cost_usd: number;
   is_running: boolean;
   has_cover: boolean;
   style_selected: boolean;

@@ -30,10 +30,9 @@ from novel_to_comic.state import (
     record_item_failed,
     save_state,
 )
+from novel_to_comic.usage import ApiResult, estimate_image_cost
 
 console = Console()
-
-COST_PER_IMAGE = 0.03  # FLUX.2 Pro via Together AI
 _RATE_LIMIT_RECOVERY_COOLDOWN_SECONDS = 45.0
 
 
@@ -158,7 +157,7 @@ async def _generate_panel(
     panel_events: dict[tuple[str, int], asyncio.Event] | None,
     story_bible: StoryBible | None,
     force: bool = False,
-) -> Path | None:
+) -> ApiResult[Path | None]:
     """Generate a single panel image from its prompt.
 
     Style / continuity refs are chosen in priority order per panel:
@@ -194,7 +193,7 @@ async def _generate_panel(
 
         async with scene_lock:
             if output_path.exists() and not force:
-                return output_path
+                return ApiResult(value=output_path, usage=None)
 
             # Subject refs: character reference sheets (stored as project-relative paths;
             # fall back to absolute for prompts generated before the relative-path change).
@@ -257,7 +256,7 @@ async def _generate_panel(
 
             try:
                 async with semaphore:
-                    result = await flux.generate_image_multi_ref(
+                    flux_result = await flux.generate_image_multi_ref(
                         config=config,
                         prompt=generation_prompt,
                         output_path=generation_path,
@@ -267,6 +266,7 @@ async def _generate_panel(
                         height=prompt.height,
                         steps=prompt.steps,
                     )
+                result = flux_result.value
                 if force and result:
                     output_path.parent.mkdir(parents=True, exist_ok=True)
                     generation_path.replace(output_path)
@@ -280,7 +280,7 @@ async def _generate_panel(
                     _write_generation_meta(output_path, meta_payload)
                 except Exception:
                     pass
-            return result
+            return ApiResult(value=result, usage=flux_result.usage)
     finally:
         if panel_events and panel_key:
             event = panel_events.get(panel_key)
@@ -311,7 +311,7 @@ async def regenerate_panel_image(
 
     scene_locks: dict[str, asyncio.Lock] = {}
 
-    return await _generate_panel(
+    api_result = await _generate_panel(
         config,
         project_dir,
         prompt_path,
@@ -323,6 +323,7 @@ async def regenerate_panel_image(
         story_bible,
         force=True,
     )
+    return api_result.value
 
 
 async def run(
@@ -412,8 +413,8 @@ async def run(
             continue
         panel_events[(pf.parent.name, panel_num)] = asyncio.Event()
 
-    # Always reset counters for clean tracking
-    begin_stage(state, "draw", total=len(prompt_files))
+    estimated = estimate_image_cost(config.effective_image_model(), len(prompt_files))
+    begin_stage(state, "draw", total=len(prompt_files), estimated_cost_usd=estimated)
     emit({"type": "stage_begin", "stage": "draw", "total": len(prompt_files)})
     emit({"type": "log", "stage": "draw", "level": "info",
           "message": f"Preparing {len(prompt_files)} panel image jobs..."})
@@ -474,7 +475,7 @@ async def run(
                             )
                             retry_outcome = retry_result[0]
                             if not isinstance(retry_outcome, Exception):
-                                record_item_done(state, "draw", cost=COST_PER_IMAGE)
+                                record_item_done(state, "draw", usage=retry_outcome.usage)
                                 emit({
                                     "type": "log",
                                     "stage": "draw",
@@ -499,7 +500,7 @@ async def run(
                               "message": msg})
                         record_item_failed(state, "draw", str(pf))
                     else:
-                        record_item_done(state, "draw", cost=COST_PER_IMAGE)
+                        record_item_done(state, "draw", usage=result.usage)
                         emit({"type": "log", "stage": "draw", "level": "dim",
                               "message": f"Finished {pf.parent.name} / {pf.stem.replace('_', ' ')}"})
                         emit({"type": "stage_progress", "stage": "draw",

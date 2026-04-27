@@ -70,7 +70,7 @@ def _save_suggestions(project_dir, suggestions, title):
 
 
 async def _suggest_styles(config: Config, bible, existing_labels: list[str] | None = None) -> list[dict]:
-    from novel_to_comic.clients import gemini
+    from novel_to_comic.clients import text
 
     avoid = ""
     if existing_labels:
@@ -104,11 +104,12 @@ async def _suggest_styles(config: Config, bible, existing_labels: list[str] | No
         f'[{{"label": "Style Name (2-4 words)", "template": "40-70 word description"}}, ...]'
     )
 
-    result = await gemini.generate_json(
-        config=config, model=config.prompt_model,
+    api_result = await text.generate_json(
+        config=config, model=config.effective_prompt_model(),
         system_prompt=system, user_content=user,
         temperature=1.0,
     )
+    result = api_result.value
     if isinstance(result, list):
         return result
     if isinstance(result, dict):

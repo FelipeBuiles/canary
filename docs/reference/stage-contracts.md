@@ -11,12 +11,12 @@ it reads its inputs from disk and writes its own outputs. Never add cross-stage 
 
 | # | Stage | CLI/API name | LLM | Checkpoint? |
 |---|-------|-------------|-----|-------------|
-| 1 | Extract | `extract` | Gemini 3.1 Pro | Yes |
+| 1 | Extract | `extract` | Configurable text model (default: Gemini 3.1 Pro) | Yes |
 | 2 | Cast | `cast` | Image gen (config.provider) | Yes |
-| 3 | Adapt | `adapt` | Gemini 3.1 Pro | No |
-| 4 | Plan | `plan` | Gemini Pro by default (`plan_mode: llm`) | No |
+| 3 | Adapt | `adapt` | Configurable text model (default: Gemini 3.1 Pro) | No |
+| 4 | Plan | `plan` | Configurable text model (default: Gemini Pro, `plan_mode: llm`) | No |
 | 5 | Storyboard | `storyboard` | None (projection from layout plan) | No |
-| 6 | Direct | `direct` | Gemini Flash-Lite | No |
+| 6 | Direct | `direct` | Configurable text model (default: Gemini Flash-Lite) | No |
 | 7 | Draw | `draw` | Image gen (config.provider) | Yes |
 | 8 | Compose | `compose` | None (deterministic) | No |
 
@@ -35,9 +35,9 @@ pipeline pauses at `awaiting_review` after the stage completes. Advance with
 - `story_bible.json` — central artifact; all downstream stages read this
 - `scenes/scene_NNN.txt` — one file per extracted scene
 
-**What it does:** Uses Gemini 3.1 Pro (1M context) to extract characters,
-locations, scenes, narrative arcs, and props from the entire novel. Also splits
-the novel into per-scene text files.
+**What it does:** Uses the configured text model (default: Gemini 3.1 Pro, 1M context)
+to extract characters, locations, scenes, narrative arcs, and props from the entire
+novel. Also splits the novel into per-scene text files.
 
 ---
 
@@ -50,12 +50,10 @@ the novel into per-scene text files.
 **Writes:**
 - `refs/char_NNN/` — character reference sheets: `front.png`, `three_quarter.png`, `side.png`, `action.png`
 - `plates/loc_NNN.png` — location background plates
-- Optional Qdrant collection when `enable_rag_index: true`
 
 **What it does:** Generates character reference images (4 angles) and location
 plates via the configured image provider. These reference images are injected
-into Stage 7 prompts. RAG indexing is skipped by default because downstream
-stages read scene files directly.
+into Stage 7 prompts.
 
 ---
 
@@ -84,11 +82,11 @@ directly into the prompt.
 - `plan/layout_plan.json` — planner-owned `LayoutPlan` JSON
 
 **What it does:** Produces the authoritative page/panel structure for the comic.
-In default `plan_mode: "llm"`, calls Gemini once per scene to merge consecutive
-beats into comic panels, vary shot language, set lighting/mood, and mark rare
-narrative page breaks. If the LLM call fails for a scene, that scene falls back
-to the deterministic heuristic planner. `plan_mode: "heuristic"` keeps the
-one-beat-per-panel behavior.
+In default `plan_mode: "llm"`, calls the configured text model once per scene to
+merge consecutive beats into comic panels, vary shot language, set lighting/mood,
+and mark rare narrative page breaks. If the LLM call fails for a scene, that scene
+falls back to the deterministic heuristic planner. `plan_mode: "heuristic"` keeps
+the one-beat-per-panel behavior.
 
 After scene planning, Stage 4 applies a cross-scene transition pass and an
 importance-aware paginator. The paginator selects `layout_template` values from

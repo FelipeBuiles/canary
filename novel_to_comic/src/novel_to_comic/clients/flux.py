@@ -27,6 +27,7 @@ from together import AsyncTogether
 from novel_to_comic.clients.api_logging import image_payload_summary, log_call_end, log_call_start
 from novel_to_comic.config import Config
 from novel_to_comic.clients.gemini import get_client
+from novel_to_comic.usage import ApiResult, UsageRecord
 
 logger = logging.getLogger("canary.google")
 image_logger = logging.getLogger("canary.image")
@@ -451,8 +452,13 @@ async def _generate_openai_image(
     height: int | None = None,
     reference_paths: list[Path] | None = None,
     style_refs: list[Path] | None = None,
-) -> Path:
-    """Generate image via OpenAI Images API (GPT Image family)."""
+) -> tuple[Path, int, int]:
+    """Generate image via OpenAI Images API (GPT Image family).
+
+    Returns (output_path, input_tokens, output_tokens). Token counts come from
+    response.usage (gpt-image-1 and later). Both are 0 for older models that
+    don't return usage data; callers fall back to per_image_usd in that case.
+    """
     subject_refs = [p for p in (reference_paths or []) if p.exists()]
     aux_refs = [p for p in (style_refs or []) if p.exists()]
     edit_refs = (subject_refs + aux_refs)[:8]
@@ -505,6 +511,11 @@ async def _generate_openai_image(
         image_data = base64.b64decode(response.data[0].b64_json)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         await asyncio.to_thread(output_path.write_bytes, image_data)
+
+        usage = getattr(response, "usage", None)
+        input_tokens = getattr(usage, "input_tokens", 0) or 0
+        output_tokens = getattr(usage, "output_tokens", 0) or 0
+
         log_call_end(
             image_logger,
             call_id=call_id,
@@ -513,9 +524,9 @@ async def _generate_openai_image(
             operation="generate",
             task="image",
             ok=True,
-            result={"image_bytes": len(image_data)},
+            result={"image_bytes": len(image_data), "input_tokens": input_tokens, "output_tokens": output_tokens},
         )
-        return output_path
+        return output_path, input_tokens, output_tokens
     except Exception as e:
         log_call_end(
             image_logger,
@@ -680,7 +691,7 @@ async def generate_image(
     steps: int | None = None,
     reference_image_path: Path | None = None,
     ref_type: str = "subject",
-) -> Path:
+) -> ApiResult[Path]:
     """Generate a single image using the configured image provider.
 
     ref_type controls whether the reference image is treated as a subject
@@ -693,19 +704,26 @@ async def generate_image(
     refs = None if is_style else ([reference_image_path] if reference_image_path else None)
     srefs = [reference_image_path] if (is_style and reference_image_path) else None
     provider = config.image_provider
+    model = config.effective_image_model()
+    input_tokens = output_tokens = 0
     if provider == "gemini":
-        result = await _generate_gemini_image(config, prompt, output_path, refs, width, height, srefs)
-        return await _downscale_dev_output(config, result, width, height)
-    if provider == "openai":
-        result = await _generate_openai_image(config, prompt, output_path, width, height, refs, srefs)
-        return await _downscale_dev_output(config, result, width, height)
-    if provider == "openrouter":
-        result = await _generate_openrouter_image(config, prompt, output_path, width, height, refs, srefs)
-        return await _downscale_dev_output(config, result, width, height)
-    if provider != "together":
+        raw = await _generate_gemini_image(config, prompt, output_path, refs, width, height, srefs)
+    elif provider == "openai":
+        raw, input_tokens, output_tokens = await _generate_openai_image(config, prompt, output_path, width, height, refs, srefs)
+    elif provider == "openrouter":
+        raw = await _generate_openrouter_image(config, prompt, output_path, width, height, refs, srefs)
+    elif provider == "together":
+        raw = await _generate_together_image(config, prompt, output_path, width, height, steps, refs)
+    else:
         raise ValueError(f"Unsupported image provider: {provider}")
-    result = await _generate_together_image(config, prompt, output_path, width, height, steps, refs)
-    return await _downscale_dev_output(config, result, width, height)
+    final = await _downscale_dev_output(config, raw, width, height)
+    return ApiResult(
+        value=final,
+        usage=UsageRecord(
+            provider=provider, model=model, operation="image",
+            image_count=1, input_tokens=input_tokens, output_tokens=output_tokens,
+        ),
+    )
 
 
 async def generate_image_multi_ref(
@@ -718,7 +736,7 @@ async def generate_image_multi_ref(
     steps: int | None = None,
     ref_type: str = "subject",
     style_refs: list[Path] | None = None,
-) -> Path:
+) -> ApiResult[Path]:
     """Generate a panel image conditioned on character reference images and style refs.
 
     reference_paths — subject/character refs (identity conditioning).
@@ -731,26 +749,27 @@ async def generate_image_multi_ref(
     width, height = _effective_dimensions(config, width, height)
     steps = config.effective_image_steps(steps)
     provider = config.image_provider
+    model = config.effective_image_model()
+    input_tokens = output_tokens = 0
     if provider == "gemini":
-        result = await _generate_gemini_image(config, prompt, output_path, reference_paths, width, height, style_refs)
-        return await _downscale_dev_output(config, result, width, height)
-    if provider == "openai":
-        result = await _generate_openai_image(
-            config,
-            prompt,
-            output_path,
-            width,
-            height,
-            reference_paths,
-            style_refs,
+        raw = await _generate_gemini_image(config, prompt, output_path, reference_paths, width, height, style_refs)
+    elif provider == "openai":
+        raw, input_tokens, output_tokens = await _generate_openai_image(
+            config, prompt, output_path, width, height, reference_paths, style_refs,
         )
-        return await _downscale_dev_output(config, result, width, height)
-    if provider == "openrouter":
-        result = await _generate_openrouter_image(
-            config, prompt, output_path, width, height, reference_paths, style_refs
+    elif provider == "openrouter":
+        raw = await _generate_openrouter_image(
+            config, prompt, output_path, width, height, reference_paths, style_refs,
         )
-        return await _downscale_dev_output(config, result, width, height)
-    if provider != "together":
+    elif provider == "together":
+        raw = await _generate_together_image(config, prompt, output_path, width, height, steps, reference_paths)
+    else:
         raise ValueError(f"Unsupported image provider: {provider}")
-    result = await _generate_together_image(config, prompt, output_path, width, height, steps, reference_paths)
-    return await _downscale_dev_output(config, result, width, height)
+    final = await _downscale_dev_output(config, raw, width, height)
+    return ApiResult(
+        value=final,
+        usage=UsageRecord(
+            provider=provider, model=model, operation="image",
+            image_count=1, input_tokens=input_tokens, output_tokens=output_tokens,
+        ),
+    )
