@@ -1,12 +1,17 @@
 """Pipeline state machine: read/write state.json, track stage progress."""
 
+from __future__ import annotations
+
 import tempfile
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from novel_to_comic.usage import UsageRecord
 
 STALE_RUNNING_THRESHOLD = timedelta(minutes=5)
 
@@ -27,7 +32,13 @@ class StageState(BaseModel):
     items_total: int = 0
     items_failed: list[str] = Field(default_factory=list)
     approved: Optional[bool] = None
+    # estimated_cost_usd: set before the stage runs for credit reservation.
+    # cost_usd: accumulates actual cost from real API usage during the run.
+    estimated_cost_usd: float = 0.0
     cost_usd: float = 0.0
+    # Append-only log of individual API call records. Preserved for audit and
+    # future per-call billing. Stored as dicts for JSON portability.
+    usage_log: list[dict] = Field(default_factory=list)
     error: Optional[str] = None
 
 
@@ -94,8 +105,18 @@ def create_initial_state(project_name: str, novel_path: str) -> PipelineState:
     )
 
 
-def begin_stage(state: PipelineState, stage: str, total: int = 0) -> None:
-    """Mark a stage as running. Resets counters for clean tracking."""
+def begin_stage(
+    state: PipelineState,
+    stage: str,
+    total: int = 0,
+    estimated_cost_usd: float = 0.0,
+) -> None:
+    """Mark a stage as running. Resets counters for clean tracking.
+
+    estimated_cost_usd should be set to a pre-run cost estimate so the
+    credits layer can reserve the appropriate amount before generation starts.
+    After the stage completes, cost_usd holds the actual amount.
+    """
     s = state.stages[stage]
     s.status = StageStatus.RUNNING
     s.started_at = datetime.now(timezone.utc)
@@ -103,7 +124,9 @@ def begin_stage(state: PipelineState, stage: str, total: int = 0) -> None:
     s.items_total = total
     s.items_done = 0
     s.items_failed = []
+    s.estimated_cost_usd = estimated_cost_usd
     s.cost_usd = 0.0
+    s.usage_log = []
     s.error = None
 
 
@@ -136,11 +159,40 @@ def approve_stage(state: PipelineState, stage: str) -> None:
     s.status = StageStatus.COMPLETE
 
 
-def record_item_done(state: PipelineState, stage: str, cost: float = 0.0) -> None:
-    """Increment the items_done counter and add cost."""
+def record_item_done(
+    state: PipelineState,
+    stage: str,
+    cost: float = 0.0,
+    usage: UsageRecord | None = None,
+) -> None:
+    """Increment items_done and record cost.
+
+    Pass usage to derive cost from real token counts and append to the
+    audit log. Pass cost directly (legacy) when no API call was made.
+    """
+    from novel_to_comic.usage import calculate_cost
+
     s = state.stages[stage]
     s.items_done += 1
-    s.cost_usd += cost
+    if usage is not None:
+        s.usage_log.append(usage.model_dump())
+        s.cost_usd += calculate_cost(usage)
+    else:
+        s.cost_usd += cost
+
+
+def record_api_usage(state: PipelineState, stage: str, usage: UsageRecord) -> None:
+    """Append an API usage record without incrementing items_done.
+
+    Use this when a stage makes API calls that don't map 1:1 to items
+    (e.g., layout planning builds all scenes in one async gather then
+    records items_done separately).
+    """
+    from novel_to_comic.usage import calculate_cost
+
+    s = state.stages[stage]
+    s.usage_log.append(usage.model_dump())
+    s.cost_usd += calculate_cost(usage)
 
 
 def is_stale(stage_state: StageState) -> bool:

@@ -11,12 +11,27 @@ import { useShowDevContent } from "../lib/devContent";
 import type { ConfigOverrides } from "../types/api";
 
 type ImageProvider = NonNullable<ConfigOverrides["image_provider"]>;
+type QualityPreset = NonNullable<ConfigOverrides["quality_preset"]>;
 
 const IMAGE_PROVIDER_OPTIONS: Array<{ value: ImageProvider; label: string }> = [
   { value: "gemini", label: "Gemini" },
   { value: "openai", label: "OpenAI" },
   { value: "openrouter", label: "OpenRouter" },
   { value: "together", label: "Together AI" },
+];
+
+const QUALITY_PRESET_OPTIONS: Array<{ value: string; label: string; desc: string }> = [
+  { value: "", label: "Custom", desc: "Use individual model fields" },
+  { value: "fast", label: "Fast", desc: "Gemini Flash Lite for all stages" },
+  { value: "balanced", label: "Balanced", desc: "Gemini Pro + Claude Sonnet + GPT-5.4-mini" },
+  { value: "quality", label: "Quality", desc: "GPT-5.4 + Claude Opus + Sonnet" },
+];
+
+const TEXT_MODEL_FIELDS: Array<{ key: keyof ConfigOverrides; label: string; hint: string }> = [
+  { key: "extraction_model", label: "EXTRACT MODEL", hint: "Stage 1 — full-novel extraction (needs large context)" },
+  { key: "screenplay_model", label: "ADAPT MODEL", hint: "Stage 3 — screenplay adaptation" },
+  { key: "panel_model", label: "PLAN MODEL", hint: "Stage 4 — layout planning" },
+  { key: "prompt_model", label: "PROMPT MODEL", hint: "Style suggestions, lettering, translation" },
 ];
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
@@ -148,6 +163,36 @@ export function Settings() {
                 label={t("DEV / DEMO MODE")}
               />
             </Row>
+
+            <Row
+              label={t("QUALITY PRESET")}
+              hint={t("Overrides all four text model fields at once. DEV mode forces Fast regardless.")}
+            >
+              <SelectField
+                value={config?.quality_preset ?? ""}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  patch({ quality_preset: (val || null) as QualityPreset | null });
+                }}
+                disabled={!config || updating || !!config?.dev_mode}
+                className="max-w-sm bg-bristol font-meta text-[0.72rem] tracking-[0.1em]"
+              >
+                {QUALITY_PRESET_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label} — {option.desc}</option>
+                ))}
+              </SelectField>
+            </Row>
+
+            {TEXT_MODEL_FIELDS.map((field) => (
+              <Row key={field.key} label={field.label} hint={field.hint}>
+                <ImageModelField
+                  key={`${name}:${field.key}:${(config as Record<string, unknown>)?.[field.key] ?? ""}`}
+                  value={((config as Record<string, unknown>)?.[field.key] as string) ?? ""}
+                  onCommit={(v) => patch({ [field.key]: v })}
+                  disabled={!config || updating || !!config?.quality_preset || !!config?.dev_mode}
+                />
+              </Row>
+            ))}
 
             <Row
               label={t("COMIC THEME")}

@@ -30,6 +30,8 @@ type PipelineNavStage = {
   failedCount: number;
   needsApproval: boolean;
   detail?: string | null;
+  costUsd: number;
+  estimatedCostUsd: number;
 };
 
 interface SideNavProps {
@@ -51,6 +53,7 @@ function progressWidth(stage: PipelineNavStage) {
 
 function progressTone(stage: PipelineNavStage) {
   if (stage.status === "failed") return "bg-hero-red";
+  if (stage.status === "complete" && stage.failedCount > 0) return "bg-narrator-gold";
   if (stage.status === "running" || stage.status === "awaiting_review") return "bg-narrator-gold";
   if (stage.status === "pending") return "bg-bristol/18";
   return "bg-archive-sage";
@@ -70,6 +73,21 @@ function stageStatusGlyph(stage: PipelineNavStage) {
   if (stage.status === "running") return "RUN";
   if (stage.status === "complete") return "OK";
   return "WAIT";
+}
+
+function stageCostLabel(stage: PipelineNavStage): string | null {
+  const spent = stage.costUsd;
+  const est = stage.estimatedCostUsd;
+  if (spent > 0) {
+    if (stage.status === "running" && est > spent) {
+      return `$${spent.toFixed(2)} / ~$${est.toFixed(2)}`;
+    }
+    return `$${spent.toFixed(2)}`;
+  }
+  if (est > 0 && stage.status === "pending") {
+    return `~$${est.toFixed(2)}`;
+  }
+  return null;
 }
 
 function stageDetail(stage: PipelineNavStage, fallbackDetail?: string | null) {
@@ -139,6 +157,8 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
         itemsTotal: info?.items_total ?? 0,
         failedCount: info?.items_failed.length ?? 0,
         needsApproval: info?.status === "awaiting_review",
+        costUsd: info?.cost_usd ?? 0,
+        estimatedCostUsd: info?.estimated_cost_usd ?? 0,
       });
 
       if (stage === "extract") {
@@ -152,6 +172,8 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           failedCount: 0,
           needsApproval: false,
           detail: activeStyle ? activeStyle.label : null,
+          costUsd: 0,
+          estimatedCostUsd: 0,
         });
       }
     }
@@ -311,6 +333,25 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
       navigate(`/project/${encodeURIComponent(name)}/styles`);
       return;
     }
+
+    // Find the earliest stage that needs attention — either failed outright
+    // or "complete" with failed items (partial failure that blocks downstream).
+    // Rerunning from the root cause is better than retrying the surface symptom.
+    const brokenStage = STAGE_ORDER.find((s) => {
+      const info = status?.stages[s];
+      if (!info) return false;
+      return info.status === "failed"
+        || (info.status === "complete" && (info.items_failed?.length ?? 0) > 0);
+    });
+    if (brokenStage) {
+      clearEvents();
+      runPipeline.mutate(
+        { project: name, stage: brokenStage, rerun: true },
+        { onSuccess: () => connect(name) },
+      );
+      return;
+    }
+
     handleRun();
   }
 
@@ -324,6 +365,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   function renderStageRow(stage: PipelineNavStage) {
     const isActive = activeStageRoute === stage.route;
     const detail = stageDetail(stage, stageDetails[stage.key]);
+    const costLabel = stageCostLabel(stage);
     const statusLabel = stageStatusLabel(stage);
     const statusGlyph = stageStatusGlyph(stage);
     const rowClassName = cn(
@@ -338,7 +380,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
         key={stage.key}
         type="button"
         onClick={() => name && navigate(`/project/${encodeURIComponent(name)}/${stage.route}`)}
-        aria-label={`${stage.label}: ${statusLabel}. ${detail}`}
+        aria-label={`${stage.label}: ${statusLabel}. ${detail}${costLabel ? `. Cost: ${costLabel}` : ""}`}
         className={rowClassName}
       >
         <div className="flex items-center gap-2">
@@ -370,12 +412,20 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           data-stage-detail
           {...(isActive ? { "data-active": "" } : {})}
           className={cn(
-            "mt-2 font-meta text-[0.62rem] tracking-[0.06em] 2xl:text-[0.72rem] min-[2200px]:mt-3 min-[2200px]:text-[1rem]",
+            "mt-2 flex items-baseline justify-between gap-2 font-meta text-[0.62rem] tracking-[0.06em] 2xl:text-[0.72rem] min-[2200px]:mt-3 min-[2200px]:text-[1rem]",
             compactStageDetails && !isActive && "hidden",
             isActive ? "text-bristol/62" : "text-bristol/42",
           )}
         >
-          {detail}
+          <span className="min-w-0 truncate">{detail}</span>
+          {costLabel && (
+            <span className={cn(
+              "shrink-0 tabular-nums",
+              stage.status === "running" ? "text-narrator-gold/70" : "text-bristol/40",
+            )}>
+              {costLabel}
+            </span>
+          )}
         </div>
       </button>
     );

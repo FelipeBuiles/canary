@@ -27,7 +27,8 @@ from pathlib import Path
 
 from rich.console import Console
 
-from novel_to_comic.clients.gemini import generate_json
+from novel_to_comic.clients.text import generate_json
+from novel_to_comic.usage import UsageRecord, estimate_text_cost
 from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.layout_planning import LAYOUT_PRESET_GEOMETRIES, select_layout_template
@@ -47,6 +48,7 @@ from novel_to_comic.state import (
     begin_stage,
     complete_stage,
     fail_stage,
+    record_api_usage,
     record_item_done,
     save_state,
 )
@@ -405,8 +407,9 @@ async def _plan_scene_llm(
     config: Config,
     screenplay: Screenplay,
     story_bible: StoryBible,
+    usage_records: list[UsageRecord] | None = None,
 ) -> list[LLMPanelSpec]:
-    """Call Gemini Pro to produce panel specs for a single scene."""
+    """Call the panel model to produce panel specs for a single scene."""
     beat_count = len(screenplay.beats)
     target_panels = _target_panel_count(config.max_panels_per_scene, beat_count)
     avg_per_panel = f"{beat_count / target_panels:.1f}"
@@ -416,15 +419,17 @@ async def _plan_scene_llm(
         avg_per_panel=avg_per_panel,
     )
     user = _scene_planning_user_content(screenplay, story_bible, target_panels)
-    raw = await generate_json(
+    api_result = await generate_json(
         config,
-        model=config.panel_model,
+        model=config.effective_panel_model(),
         system_prompt=system,
         user_content=user,
         temperature=0.4,
         max_output_tokens=16384,
     )
-    return _parse_llm_panel_specs(raw)
+    if usage_records is not None and api_result.usage is not None:
+        usage_records.append(api_result.usage)
+    return _parse_llm_panel_specs(api_result.value)
 
 
 # ---------------------------------------------------------------------------
@@ -520,6 +525,7 @@ async def _plan_scene(
     story_bible: StoryBible,
     scene_location_name: str,
     warnings: list[str],
+    usage_records: list[UsageRecord] | None = None,
 ) -> list[PlannedPanel]:
     """Plan one scene, using the LLM if plan_mode='llm', else heuristic.
 
@@ -535,7 +541,7 @@ async def _plan_scene(
         return _plan_scene_heuristic(screenplay, scene_location_name)
 
     try:
-        specs = await _plan_scene_llm(config, screenplay, story_bible)
+        specs = await _plan_scene_llm(config, screenplay, story_bible, usage_records=usage_records)
         if not specs:
             raise ValueError("LLM returned empty panel list")
         panels = [
@@ -678,6 +684,7 @@ async def _build_layout_plan(
     project_dir: Path,
     story_bible: StoryBible,
     scene_ids: list[str],
+    usage_records: list[UsageRecord] | None = None,
 ) -> LayoutPlan:
     screenplays = [_load_screenplay(project_dir, scene_id) for scene_id in scene_ids]
     location_name_by_id = {loc.id: loc.name for loc in story_bible.locations}
@@ -691,7 +698,7 @@ async def _build_layout_plan(
         if not sp.beats:
             warnings.append(f"{sp.scene_id}: screenplay has no beats to plan")
             return sp.scene_id, [], []
-        panels = await _plan_scene(config, sp, story_bible, loc_name, warnings)
+        panels = await _plan_scene(config, sp, story_bible, loc_name, warnings, usage_records=usage_records)
         beat_refs = [
             _beat_ref(sp.scene_id, idx, beat)
             for idx, beat in enumerate(sp.beats, start=1)
@@ -760,16 +767,36 @@ async def run(
     layout_plan_dir = project_dir / "plan"
     layout_plan_path = layout_plan_dir / "layout_plan.json"
 
-    begin_stage(state, "plan", total=len(ids))
+    # Pre-flight: verify all required screenplays exist.
+    missing = [sid for sid in ids if not (project_dir / "screenplays" / f"{sid}.json").exists()]
+    if missing:
+        raise FileNotFoundError(
+            f"Missing screenplays for {len(missing)} scene(s): "
+            + ", ".join(missing)
+            + ". Re-run the adapt stage first to generate them."
+        )
+
+    estimated = 0.0
+    for sid in ids:
+        sp_path = project_dir / "screenplays" / f"{sid}.json"
+        sp_text = sp_path.read_text() if sp_path.exists() else "x" * 4000
+        estimated += estimate_text_cost(
+            config.effective_panel_model(),
+            _PLAN_SCENE_SYSTEM + "\n" + sp_text,
+        )
+    begin_stage(state, "plan", total=len(ids), estimated_cost_usd=estimated)
     emit({"type": "stage_begin", "stage": "plan", "total": len(ids)})
     save_state(state, project_dir)
 
     try:
         with make_progress(on_event) as progress:
             task = progress.add_task("Layout planning", total=len(ids))
-            plan = await _build_layout_plan(config, project_dir, story_bible, ids)
+            usage_records: list[UsageRecord] = []
+            plan = await _build_layout_plan(config, project_dir, story_bible, ids, usage_records=usage_records)
             layout_plan_dir.mkdir(parents=True, exist_ok=True)
             layout_plan_path.write_text(plan.model_dump_json(indent=2))
+            for usage in usage_records:
+                record_api_usage(state, "plan", usage)
             for _scene_id in ids:
                 record_item_done(state, "plan")
                 emit(

@@ -107,12 +107,38 @@ async def _run_stage(stage: str, config, project_dir, state, queue: asyncio.Queu
         )
 
 
+# Primary output artifact for each stage — used to detect stale "complete" state.
+_STAGE_OUTPUTS: dict[str, str] = {
+    "extract": "story_bible.json",
+    "cast": "refs",
+    "adapt": "screenplays",
+    "plan": "plan",
+    "storyboard": "panels",
+    "direct": "direct",
+    "draw": "images",
+    "compose": "exports",
+}
+
+
 async def _run_full_pipeline(config, project_dir, state, queue: asyncio.Queue):
     """Run all stages in order, stopping at checkpoints or failures."""
     for stage in STAGE_NAMES:
         s = state.stages[stage]
         if s.status.value in ("complete",):
-            continue
+            # Verify the stage's output actually exists — if it was falsely
+            # marked complete (e.g. a bug that has since been fixed), auto-recover.
+            output = _STAGE_OUTPUTS.get(stage)
+            if output and not (project_dir / output).exists():
+                logger.warning(
+                    "Stage %s marked complete but output %s missing — resetting and rerunning",
+                    stage, output,
+                )
+                _reset_stage_and_downstream(state, stage)
+                _clear_outputs_for_rerun(project_dir, stage)
+                save_state(state, project_dir)
+                # Fall through to run this stage
+            else:
+                continue
         if s.status == StageStatus.AWAITING_REVIEW:
             queue.put_nowait({
                 "type": "log", "stage": stage, "level": "warn",

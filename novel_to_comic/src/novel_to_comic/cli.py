@@ -13,11 +13,7 @@ console = Console()
 
 _INIT_IMAGE_MODEL_CHOICES: list[tuple[str, str]] = [
     ("gemini-3-pro-image-preview", "Gemini 3 Pro Image"),
-    ("gemini-2.5-flash-image", "Gemini 2.5 Flash Image"),
-    ("gemini-2.5-pro-image", "Gemini 2.5 Pro Image"),
     ("gemini-3.1-flash-image-preview", "Gemini 3.1 Flash Image"),
-    ("gemini-3.1-pro-image-preview", "Gemini 3.1 Pro Image"),
-    ("gpt-image-1.5", "OpenAI GPT Image 1.5"),
     ("gpt-image-2", "OpenAI GPT Image 2"),
 ]
 

@@ -1,5 +1,6 @@
 """Pipeline configuration loaded from config.yaml + .env."""
 
+import logging
 import os
 from pathlib import Path
 from typing import Literal, Optional
@@ -8,11 +9,44 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict
 
+_logger = logging.getLogger(__name__)
+
 
 LANGUAGE_NAMES: dict[str, str] = {
     "en": "English",
     "es": "Spanish",
     "fr": "French",
+}
+
+QualityPreset = Literal["fast", "balanced", "quality"]
+
+# Quality preset → model for each text stage
+_QUALITY_PRESETS: dict[QualityPreset, dict[str, str]] = {
+    "fast": {
+        "extract": "gemini-3.1-flash-lite-preview",
+        "adapt": "gemini-3.1-flash-lite-preview",
+        "plan": "gemini-3.1-flash-lite-preview",
+        "prompt": "gemini-3.1-flash-lite-preview",
+    },
+    "balanced": {
+        "extract": "gemini-2.5-pro",
+        "adapt": "claude-sonnet-4-6",
+        "plan": "gpt-5.4-mini",
+        "prompt": "gemini-2.5-flash-lite",
+    },
+    "quality": {
+        "extract": "gpt-5.4",
+        "adapt": "claude-opus-4-6",
+        "plan": "claude-sonnet-4-6",
+        "prompt": "gemini-2.5-flash",
+    },
+}
+
+_QUALITY_PRESET_FIELDS: dict[str, str] = {
+    "extract": "extraction_model",
+    "adapt": "screenplay_model",
+    "plan": "panel_model",
+    "prompt": "prompt_model",
 }
 
 # Env var name → Config field name
@@ -51,7 +85,6 @@ class Config(BaseModel):
     screenplay_model: str = "gemini-3.1-pro-preview"
     panel_model: str = "gemini-3.1-pro-preview"
     prompt_model: str = "gemini-3.1-flash-lite-preview"
-    embedding_model: str = "gemini-embedding-001"  # Google Vertex AI, 3072 dims
     image_provider: Literal["gemini", "openai", "openrouter", "together"] = "gemini"
     image_model: str = "gemini-3-pro-image-preview"   # Nano Banana Pro — Gemini 3 Pro Image (native)
     fallback_image_model: str = "gemini-3.1-flash-image-preview"  # Nano Banana 2 — faster dev image model
@@ -62,6 +95,10 @@ class Config(BaseModel):
     # Dev/demo mode — lowers image generation resolution/steps and prefers the
     # faster Gemini Flash image model when the default production model is used.
     dev_mode: bool = False
+
+    # Quality preset: "fast" | "balanced" | "quality" | None
+    # When set, overrides all four text model fields. dev_mode forces "fast".
+    quality_preset: QualityPreset | None = None
     dev_image_scale: float = 0.5
     dev_image_steps: int = 8
     dev_image_concurrency: int = 5
@@ -104,13 +141,10 @@ class Config(BaseModel):
     plan_mode: Literal["llm", "heuristic"] = "llm"
 
     # Pipeline settings
-    enable_rag_index: bool = False
     max_panels_per_scene: int = 8
     max_panels_per_page: int = 6    # how many panels appear on each assembled page
     max_words_per_bubble: int = 35
     parallel_batch_size: int = 5
-    qdrant_host: str = "localhost"
-    qdrant_port: int = 6333
     max_concurrent_requests: int = 5
     cost_limit_usd: Optional[float] = None
 
@@ -124,6 +158,38 @@ class Config(BaseModel):
         if self.dev_mode and self.image_model == "gemini-3-pro-image-preview":
             return self.fallback_image_model or "gemini-3.1-flash-image-preview"
         return self.image_model
+
+    def _effective_text_model(self, stage: str) -> str:
+        """Resolve the effective text model for a pipeline stage.
+
+        Priority: dev_mode -> "fast" preset, else quality_preset if set, else raw field.
+        """
+        if self.dev_mode:
+            return _QUALITY_PRESETS["fast"][stage]
+        if self.quality_preset is not None:
+            preset_model = _QUALITY_PRESETS[self.quality_preset][stage]
+            field_name = _QUALITY_PRESET_FIELDS[stage]
+            raw_model = getattr(self, field_name)
+            field_default = Config.model_fields[field_name].default
+            if raw_model != field_default and raw_model != preset_model:
+                _logger.warning(
+                    "quality_preset=%r overrides explicitly configured %s=%r (using %r instead)",
+                    self.quality_preset, field_name, raw_model, preset_model,
+                )
+            return preset_model
+        return getattr(self, _QUALITY_PRESET_FIELDS[stage])
+
+    def effective_extraction_model(self) -> str:
+        return self._effective_text_model("extract")
+
+    def effective_screenplay_model(self) -> str:
+        return self._effective_text_model("adapt")
+
+    def effective_panel_model(self) -> str:
+        return self._effective_text_model("plan")
+
+    def effective_prompt_model(self) -> str:
+        return self._effective_text_model("prompt")
 
     def uses_gemini_image_provider(self) -> bool:
         return self.image_provider == "gemini"
@@ -239,7 +305,7 @@ def save_config(config: Config, project_dir: Path) -> None:
 # Non-Google providers still use API keys:
 #   ANTHROPIC_API_KEY   — https://console.anthropic.com/
 #   TOGETHER_API_KEY    — https://api.together.ai/settings/api-keys
-#   OPENAI_API_KEY      — optional, only for OpenAI embeddings
+#   OPENAI_API_KEY      — optional, for OpenAI text and image models
 #   OPENROUTER_API_KEY  — https://openrouter.ai/settings/keys
 gemini_api_key: ""
 anthropic_api_key: ""
@@ -255,6 +321,12 @@ google_cloud_location: "{config.google_cloud_location}"
 # ---------------------------------------------------------------------------
 # Model choices
 # ---------------------------------------------------------------------------
+# Quality preset: fast | balanced | quality | null
+# When set, overrides all four text model fields below.
+# dev_mode forces "fast" regardless of this setting.
+# Set to null (or omit) to use individual model fields.
+quality_preset: {"null" if config.quality_preset is None else f'"{config.quality_preset}"'}
+
 # Stage 1 – full-novel extraction (1M context window required)
 extraction_model: "{config.extraction_model}"
 
@@ -270,15 +342,6 @@ panel_model: "{config.panel_model}"
 
 # Stage 5 – image prompt assembly (template filling)
 prompt_model: "{config.prompt_model}"
-
-# Optional experimental RAG index. Disabled by default because the current
-# screenplay/prompt stages read scene files directly and do not query Qdrant.
-enable_rag_index: {str(config.enable_rag_index).lower()}
-
-# Embeddings for optional RAG index (Google gemini-embedding-001 = 3072 dims on Vertex AI)
-# Switch to "text-embedding-3-small" for OpenAI (1536 dims, $0.02/M tokens)
-# WARNING: changing this after building a RAG index requires rebuilding that index
-embedding_model: "{config.embedding_model}"
 
 # Image generation provider/model
 # image_provider: gemini | openai | openrouter | together
@@ -363,10 +426,6 @@ parallel_batch_size: {config.parallel_batch_size}
 # How many image generation requests to fire simultaneously (stage 6)
 # Together AI default rate limit: 10 req/s — keep this at 5 to be safe
 max_concurrent_requests: {config.max_concurrent_requests}
-
-# Qdrant vector store connection (used in stage 2)
-qdrant_host: "{config.qdrant_host}"
-qdrant_port: {config.qdrant_port}
 
 # Hard cost cap in USD — pipeline pauses stage 6 if total_cost_usd exceeds this.
 # Set to null to disable.

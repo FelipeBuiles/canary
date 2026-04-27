@@ -187,7 +187,6 @@ This rooms-not-buttons mental model is the spine of the future UI.
 - Per-panel: see the assembled image prompt.
 - Edit prompt directly, save as draft, regenerate the image.
 - Show which character/location visual anchors were injected.
-- Show which RAG-retrieved scene context was used.
 - "Explain this prompt" — surfaces the template variables filled in.
 
 ### 4.9 Panel gallery (stage 6 checkpoint)

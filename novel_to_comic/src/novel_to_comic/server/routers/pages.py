@@ -244,10 +244,7 @@ def _fallback_lettering_style(style_template: str) -> dict[str, str]:
 
 
 async def _generate_lettering_style(config: Config) -> dict[str, str]:
-    if not config.google_use_vertex_ai and not config.gemini_api_key:
-        return _fallback_lettering_style(config.style_template)
-
-    from novel_to_comic.clients import gemini
+    from novel_to_comic.clients import text
 
     system = (
         "You are a comic book lettering and production designer. Given an image generation style, "
@@ -266,14 +263,15 @@ async def _generate_lettering_style(config: Config) -> dict[str, str]:
         '{"label":"Noir Lettering","rationale":"...","vars":{"--panel-border":"#111111","--bubble-bg":"#FFFFFF"}}'
     )
     try:
-        result = await gemini.generate_json(
+        api_result = await text.generate_json(
             config=config,
-            model=config.prompt_model,
+            model=config.effective_prompt_model(),
             system_prompt=system,
             user_content=user,
             temperature=0.45,
             max_output_tokens=1400,
         )
+        result = api_result.value
     except Exception:
         return _fallback_lettering_style(config.style_template)
 
@@ -286,10 +284,8 @@ async def _translate_text_items(config: Config, items: list[dict]) -> dict[str, 
     """Translate editable lettering text items and return {id: translated_text}."""
     if not items:
         return {}
-    if not config.google_use_vertex_ai and not config.gemini_api_key:
-        raise HTTPException(400, "Google Gemini auth is required to translate existing page text")
 
-    from novel_to_comic.clients import gemini
+    from novel_to_comic.clients import text
 
     system = (
         "You are a literary comic localization editor. Translate only user-facing comic lettering "
@@ -303,14 +299,15 @@ async def _translate_text_items(config: Config, items: list[dict]) -> dict[str, 
         '{"items":[{"id":"same id","text":"translated text"}]}\n\n'
         f"Items:\n{json.dumps(items, ensure_ascii=False)}"
     )
-    result = await gemini.generate_json(
+    api_result = await text.generate_json(
         config=config,
-        model=config.prompt_model,
+        model=config.effective_prompt_model(),
         system_prompt=system,
         user_content=user,
         temperature=0.2,
         max_output_tokens=6000,
     )
+    result = api_result.value
     if isinstance(result, dict):
         raw_items = result.get("items", [])
     elif isinstance(result, list):

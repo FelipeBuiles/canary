@@ -1,8 +1,7 @@
-"""Stage 2: optional RAG index + character reference images + location plates.
+"""Stage 2: character reference images + location plates.
 
-Part A: Optionally embed novel scene chunks into Qdrant.
-Part B: Generate character reference sheets via FLUX.2 Pro.
-Part C: Generate location background plates via FLUX.2 Pro.
+Part A: Generate character reference sheets via FLUX.2 Pro.
+Part B: Generate location background plates via FLUX.2 Pro.
 """
 
 import asyncio
@@ -16,13 +15,11 @@ from rich.console import Console
 from rich.progress import Progress
 from tenacity import RetryError
 
-from novel_to_comic.clients import embeddings, flux
+from novel_to_comic.clients import flux
 from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.models.story_bible import Character, StoryBible
 from novel_to_comic.text_utils import clean, shorten
-from novel_to_comic.rag.chunker import chunk_scene_text, load_scene_texts
-from novel_to_comic.rag.store import create_collection, upsert_chunks
 from novel_to_comic.state import (
     PipelineState,
     begin_stage,
@@ -38,43 +35,12 @@ console = Console()
 _clean = clean
 _shorten = shorten
 
-_MAX_EMBEDDING_BATCH_TEXTS = 100
-_MAX_EMBEDDING_BATCH_TOKENS = 18_000
-
-
 def _tokens(value: str) -> set[str]:
     return {
         token
         for token in re.findall(r"[a-z0-9]+", value.lower())
         if len(token) > 2 and token not in {"the", "and", "with", "his", "her"}
     }
-
-
-def _estimate_tokens(text: str) -> int:
-    return max(1, len(text) // 4)
-
-
-def _embedding_batches(chunks: list[dict]) -> list[list[dict]]:
-    batches: list[list[dict]] = []
-    current: list[dict] = []
-    current_tokens = 0
-
-    for chunk in chunks:
-        chunk_tokens = _estimate_tokens(chunk["text"])
-        would_exceed_count = len(current) >= _MAX_EMBEDDING_BATCH_TEXTS
-        would_exceed_tokens = current_tokens + chunk_tokens > _MAX_EMBEDDING_BATCH_TOKENS
-        if current and (would_exceed_count or would_exceed_tokens):
-            batches.append(current)
-            current = []
-            current_tokens = 0
-
-        current.append(chunk)
-        current_tokens += chunk_tokens
-
-    if current:
-        batches.append(current)
-
-    return batches
 
 
 def _character_signature(char: Character) -> str:
@@ -333,7 +299,7 @@ async def regenerate_character_ref(
         tmp_path.replace(output_path)
         await asyncio.to_thread(_crop_sheet_to_poses, output_path)
         _write_asset_meta(output_path, meta)
-        return output_path
+        return output_path  # ApiResult.value unwrapped by caller
     finally:
         if tmp_path.exists():
             tmp_path.unlink()
@@ -375,43 +341,6 @@ async def regenerate_location_plate(
     finally:
         if tmp_path.exists():
             tmp_path.unlink()
-
-
-async def _build_rag_index(config: Config, project_dir: Path, story_bible: StoryBible) -> int:
-    """Part A: Build the Qdrant RAG index from scene texts."""
-    console.print("[bold]Building RAG index...[/bold]")
-    create_collection(config, project_dir)
-
-    scene_texts = load_scene_texts(project_dir / "scenes")
-    scene_lookup = {s.id: s for s in story_bible.scenes}
-
-    all_chunks: list[dict] = []
-    chunk_id = 0
-    for scene_id, text in scene_texts.items():
-        chunks = chunk_scene_text(text)
-        scene = scene_lookup.get(scene_id)
-        for chunk_text in chunks:
-            all_chunks.append({
-                "id": chunk_id,
-                "scene_id": scene_id,
-                "chapter": scene.chapter if scene else 0,
-                "character_ids": scene.character_ids if scene else [],
-                "location_id": scene.location_id if scene else "",
-                "text": chunk_text,
-            })
-            chunk_id += 1
-
-    if not all_chunks:
-        console.print("[yellow]No scene texts found to index.[/yellow]")
-        return 0
-
-    for batch in _embedding_batches(all_chunks):
-        texts = [c["text"] for c in batch]
-        vectors = await embeddings.embed_texts(config, texts)
-        upsert_chunks(config, batch, vectors, project_dir)
-
-    console.print(f"[green]Indexed {len(all_chunks)} chunks from {len(scene_texts)} scenes.[/green]")
-    return len(all_chunks)
 
 
 async def _generate_character_refs(
@@ -484,7 +413,7 @@ async def _generate_character_refs(
                 # ~512x512px of space, enough to avoid edge clipping.
                 # Pass the style sample as a style reference to lock visual style
                 # across all characters regardless of their subject type.
-                await flux.generate_image(
+                flux_result = await flux.generate_image(
                     config, prompt, output_path,
                     width=1024, height=1024,
                     reference_image_path=style_ref,
@@ -492,7 +421,7 @@ async def _generate_character_refs(
                 )
                 await asyncio.to_thread(_crop_sheet_to_poses, output_path)
                 _write_asset_meta(output_path, meta)
-                record_item_done(state, "cast", cost=0.05)
+                record_item_done(state, "cast", usage=flux_result.usage)
                 emit({"type": "stage_progress", "stage": "cast",
                       "done": state.stages["cast"].items_done,
                       "total": state.stages["cast"].items_total})
@@ -539,7 +468,7 @@ async def _generate_location_plates(
             try:
                 emit({"type": "log", "stage": "cast", "level": "info",
                       "message": f"Generating location plate for {loc.name}"})
-                await flux.generate_image(
+                flux_result = await flux.generate_image(
                     config,
                     prompt,
                     output_path,
@@ -547,7 +476,7 @@ async def _generate_location_plates(
                     ref_type="style",
                 )
                 _write_asset_meta(output_path, meta)
-                record_item_done(state, "cast", cost=0.03)
+                record_item_done(state, "cast", usage=flux_result.usage)
                 emit({"type": "stage_progress", "stage": "cast",
                       "done": state.stages["cast"].items_done,
                       "total": state.stages["cast"].items_total})
@@ -565,19 +494,16 @@ async def run(
     loc_ids: list[str] | None = None,
     on_event: EventCallback | None = None,
 ) -> None:
-    """Execute Stage 2: optionally build RAG index and generate reference images."""
+    """Execute Stage 2: generate character reference images and location plates."""
     emit = on_event or _NOOP
 
     story_bible = _load_story_bible(project_dir)
 
     is_partial = bool(char_ids or loc_ids)
-    should_build_rag = not is_partial and config.enable_rag_index
     should_generate_refs = not is_partial or char_ids is not None
     should_generate_plates = not is_partial or loc_ids is not None
 
     total_items = 0
-    if should_build_rag:
-        total_items += 1  # RAG index
     if should_generate_refs:
         total_items += len([c for c in story_bible.characters if not char_ids or c.id in char_ids])
     if should_generate_plates:
@@ -588,19 +514,6 @@ async def run(
     save_state(state, project_dir)
 
     try:
-        if should_build_rag:
-            emit({"type": "log", "stage": "cast", "level": "info",
-                  "message": "Building scene search index..."})
-            await _build_rag_index(config, project_dir, story_bible)
-            record_item_done(state, "cast", cost=0.002)
-            emit({"type": "stage_progress", "stage": "cast",
-                  "done": state.stages["cast"].items_done,
-                  "total": state.stages["cast"].items_total})
-        elif not is_partial:
-            console.print("[dim]Skipping optional RAG index; enable_rag_index is false.[/dim]")
-            emit({"type": "log", "stage": "cast", "level": "dim",
-                  "message": "Skipping optional RAG index; enable_rag_index is false."})
-
         if should_generate_refs:
             await _generate_character_refs(config, project_dir, story_bible, state, char_ids, on_event)
             emit({"type": "stage_progress", "stage": "cast",

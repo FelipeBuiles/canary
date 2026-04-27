@@ -25,15 +25,18 @@ No local GPU execution.
 novel_to_comic/src/novel_to_comic/
 ├── cli.py                  # Click CLI — init, serve (run/approve/status via API)
 ├── config.py               # Pydantic Config loaded from config.yaml + .env
-├── state.py                # Pipeline state machine — state.json, stage status, cost
+├── state.py                # Pipeline state machine — state.json, stage status, cost, usage_log
 ├── events.py               # Event callback system for SSE streaming
 ├── layout_planning.py      # LayoutPlan model + helpers for plan→pages projection
 ├── prompting.py            # Prompt-building for PlannedPanel + style samples
 ├── clients/
+│   ├── text.py             # Text gen router — MODEL_REGISTRY → provider dispatch
 │   ├── gemini.py           # Async Gemini wrapper (Vertex AI or developer API)
 │   ├── claude.py           # Anthropic Claude wrapper
+│   ├── openai_text.py      # OpenAI text wrapper
+│   ├── openrouter_text.py  # OpenRouter text wrapper
 │   ├── flux.py             # Image gen router: Gemini / OpenAI / OpenRouter / Together
-│   └── embeddings.py       # Google Vertex / OpenAI embedding clients
+├── usage.py                    # UsageRecord, ApiResult, pricing, cost calculation
 ├── stages/
 │   ├── s1_extract.py       # Novel → Story Bible JSON
 │   ├── s2_index.py         # Character refs + location plates (cast)
@@ -51,9 +54,6 @@ novel_to_comic/src/novel_to_comic/
 │   └── comic_page.py       # ComicPage, PagePanel, Bubble, Sfx, BubbleTail
 ├── assembly/
 │   └── html_renderer.py    # build_page_html(), browser_context(), render_html_to_png()
-├── rag/
-│   ├── store.py            # Optional Qdrant vector store
-│   └── chunker.py          # Scene-boundary text chunking
 └── server/
     ├── app.py              # FastAPI app factory (create_app)
     ├── routers/
@@ -76,12 +76,12 @@ All stage names (used in state, API routes, and CLI paths):
 
 | # | Stage name | Module | Checkpoint? | LLM used |
 |---|-----------|--------|-------------|----------|
-| 1 | `extract` | `s1_extract.py` | Yes | Gemini 3.1 Pro |
+| 1 | `extract` | `s1_extract.py` | Yes | Configurable text model (default: Gemini 3.1 Pro) |
 | 2 | `cast` | `s2_index.py` | Yes | Gemini (image gen) |
-| 3 | `adapt` | `s3_screenplay.py` | No | Gemini 3.1 Pro |
-| 4 | `plan` | `s4_layout_plan.py` | No | Gemini Pro by default (`plan_mode: llm`) |
+| 3 | `adapt` | `s3_screenplay.py` | No | Configurable text model (default: Gemini 3.1 Pro) |
+| 4 | `plan` | `s4_layout_plan.py` | No | Configurable text model (default: Gemini Pro, `plan_mode: llm`) |
 | 5 | `storyboard` | `s4_panels.py` | No | None (projection from layout plan) |
-| 6 | `direct` | `s5_prompts.py` | No | Gemini Flash-Lite (prompt assembly only) |
+| 6 | `direct` | `s5_prompts.py` | No | Configurable text model (default: Gemini Flash-Lite) |
 | 7 | `draw` | `s6_generate.py` | Yes | Gemini / OpenAI / OpenRouter / Together |
 | 8 | `compose` | `s7_assemble.py` | No | None (deterministic) |
 
@@ -105,6 +105,36 @@ and `serve`. All pipeline operations are HTTP endpoints. This means:
 
 Each LLM call does exactly one thing. This enables targeted re-runs, clean error
 recovery, and human review at boundaries. Never collapse stages.
+
+### Unified text client (`clients/text.py`)
+
+All text generation goes through `clients/text.py`, which routes to the correct
+provider via a strict `MODEL_REGISTRY` dict. There is no heuristic prefix-matching.
+To add a new text model, add it to `MODEL_REGISTRY` with its provider string.
+
+Providers: `gemini`, `anthropic`, `openai`, `openrouter`. Each provider module
+(`gemini.py`, `claude.py`, `openai_text.py`, `openrouter_text.py`) exposes
+`generate_json()` and `generate_text()` returning `ApiResult[T]`.
+
+### Quality presets
+
+`quality_preset: "fast" | "balanced" | "quality" | null` overrides all four text
+model fields at once. `dev_mode` forces `"fast"` regardless. When set, individual
+model fields are ignored (with a warning if they were explicitly changed from defaults).
+
+Config exposes `effective_extraction_model()`, `effective_screenplay_model()`,
+`effective_panel_model()`, `effective_prompt_model()` — always use these instead
+of reading the raw fields.
+
+### Usage tracking (`usage.py`)
+
+Every API call returns an `ApiResult[T]` pairing the value with a `UsageRecord`.
+State accumulates real costs via `record_item_done(usage=...)` and
+`record_api_usage(...)`. Before a stage runs, `estimate_text_cost()` /
+`estimate_image_cost()` set `estimated_cost_usd` on the stage state.
+
+`pricing.yaml` holds per-model pricing. `audit_pricing()` checks for missing
+entries on startup. Unknown models log a warning (once per model) and return $0.00.
 
 ### Text composited in post
 
@@ -229,22 +259,22 @@ The web editor is split into four modes:
 
 ## Current Model Config
 
-Defaults in `config.py`, overridable via project `config.yaml`.
+Defaults in `config.py`, overridable via project `config.yaml` or `quality_preset`.
 
-### LLM models (text)
+### Text models
 
-| Stage | Model | Notes |
-|-------|-------|-------|
-| `extract` | `gemini-3.1-pro-preview` | 1M context, full-novel extraction |
-| `adapt` | `gemini-3.1-pro-preview` | Screenplay writing |
-| `plan` | `gemini-3.1-pro-preview` | Scene-level beat merging and layout planning |
-| `storyboard` | None | Projection from layout plan |
-| `direct` (prompts) | `gemini-3.1-flash-lite-preview` | Prompt assembly |
+Four configurable fields, each routing through `clients/text.py` via `MODEL_REGISTRY`:
 
-### Embeddings
+| Stage | Field | Default | Notes |
+|-------|-------|---------|-------|
+| `extract` | `extraction_model` | `gemini-3.1-pro-preview` | 1M context, full-novel extraction |
+| `adapt` | `screenplay_model` | `gemini-3.1-pro-preview` | Screenplay writing |
+| `plan` | `panel_model` | `gemini-3.1-pro-preview` | Scene-level beat merging and layout planning |
+| `direct` (prompts) | `prompt_model` | `gemini-3.1-flash-lite-preview` | Prompt assembly |
 
-`gemini-embedding-001` via Google Vertex AI (3072 dims). Qdrant RAG index is
-optional (`enable_rag_index: false` by default).
+Supported providers: Gemini, Anthropic Claude, OpenAI, OpenRouter.
+When `quality_preset` is set, all four fields are overridden. `dev_mode` forces the `"fast"` preset.
+Always use `config.effective_*_model()` methods to get the resolved model.
 
 ### Image generation (`image_provider` + `image_model`)
 
@@ -295,7 +325,11 @@ pending → running → awaiting_review (checkpoint stages only) → complete / 
 **Checkpoint stages:** `{"extract", "cast", "direct", "draw"}`
 
 Key helpers in `state.py`: `begin_stage`, `complete_stage`, `fail_stage`,
-`approve_stage`, `record_item_done`, `record_item_failed`.
+`approve_stage`, `record_item_done`, `record_item_failed`, `record_api_usage`.
+
+Each `StageState` tracks `estimated_cost_usd` (set before run), `cost_usd`
+(accumulated from real usage), and `usage_log` (append-only list of `UsageRecord`
+dicts for audit).
 
 State writes are atomic: temp file + rename prevents corruption on crash.
 

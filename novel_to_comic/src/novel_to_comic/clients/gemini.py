@@ -10,6 +10,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from novel_to_comic.clients.api_logging import log_call_end, log_call_start, payload_summary
 from novel_to_comic.config import Config
+from novel_to_comic.usage import ApiResult, UsageRecord
 
 logger = logging.getLogger("canary.google")
 
@@ -56,25 +57,40 @@ def get_client(config: Config) -> genai.Client:
     return client
 
 
+def _extract_gemini_usage(response, model: str) -> UsageRecord | None:
+    usage_meta = getattr(response, "usage_metadata", None)
+    if usage_meta is None:
+        return None
+    return UsageRecord(
+        provider="gemini",
+        model=model,
+        operation="text",
+        input_tokens=getattr(usage_meta, "prompt_token_count", 0) or 0,
+        output_tokens=getattr(usage_meta, "candidates_token_count", 0) or 0,
+    )
+
+
 @retry(wait=wait_exponential(min=2, max=60), stop=stop_after_attempt(3))
 async def generate_json(
     config: Config,
     model: str,
     system_prompt: str,
-    user_content: str,
+    user_content: str | bytes,
     temperature: float = 0.7,
     max_output_tokens: int | None = None,
-) -> dict:
-    """Call Gemini async and parse the JSON response."""
+) -> ApiResult[dict]:
+    """Call Gemini async and parse the JSON response.
+
+    user_content may be a plain string or raw PDF bytes (passed as inline data).
+    """
+    payload_str = user_content if isinstance(user_content, str) else f"<pdf bytes len={len(user_content)}>"
     call_id, started = log_call_start(
         logger,
         provider="gemini",
         operation="generate",
         task="json",
-        params={
-            "model": model,
-        },
-        payload=payload_summary(system_prompt=system_prompt, user_content=user_content),
+        params={"model": model},
+        payload=payload_summary(system_prompt=system_prompt, user_content=payload_str),
     )
     client = get_client(config)
     gen_config = types.GenerateContentConfig(
@@ -84,10 +100,14 @@ async def generate_json(
     )
     if max_output_tokens is not None:
         gen_config.max_output_tokens = max_output_tokens
+    if isinstance(user_content, bytes):
+        contents = [types.Part.from_bytes(data=user_content, mime_type="application/pdf")]
+    else:
+        contents = user_content
     try:
         response = await client.aio.models.generate_content(
             model=model,
-            contents=user_content,
+            contents=contents,
             config=gen_config,
         )
         if not response.text:
@@ -107,7 +127,7 @@ async def generate_json(
                 "response_type": type(parsed).__name__,
             },
         )
-        return parsed
+        return ApiResult(value=parsed, usage=_extract_gemini_usage(response, model))
     except Exception as e:
         log_call_end(
             logger,
@@ -129,16 +149,14 @@ async def generate_text(
     system_prompt: str,
     user_content: str,
     temperature: float = 0.7,
-) -> str:
+) -> ApiResult[str]:
     """Call Gemini async and return raw text response."""
     call_id, started = log_call_start(
         logger,
         provider="gemini",
         operation="generate",
         task="text",
-        params={
-            "model": model,
-        },
+        params={"model": model},
         payload=payload_summary(system_prompt=system_prompt, user_content=user_content),
     )
     client = get_client(config)
@@ -166,7 +184,7 @@ async def generate_text(
                 "candidates": len(getattr(response, "candidates", []) or []),
             },
         )
-        return response.text
+        return ApiResult(value=response.text, usage=_extract_gemini_usage(response, model))
     except Exception as e:
         log_call_end(
             logger,

@@ -42,6 +42,10 @@ def update_config(body: dict, project=Depends(get_project)):
         if hasattr(config, key):
             if key == "target_language" and value not in LANGUAGE_NAMES:
                 raise HTTPException(400, "target_language must be one of: en, es, fr")
+            if key == "quality_preset" and value is not None:
+                valid_presets = {"fast", "balanced", "quality"}
+                if value not in valid_presets:
+                    raise HTTPException(400, f"quality_preset must be one of: {', '.join(sorted(valid_presets))}, or null")
             setattr(config, key, value)
 
     save_config(config, project_dir)
