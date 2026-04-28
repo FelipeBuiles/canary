@@ -165,7 +165,7 @@ export function applyStructuralOperation(
 export function triggerExport(
   project: string,
   format: "pdf" | "cbz",
-): Promise<{ status: string; path: string }> {
+): Promise<{ status: string; path: string; url: string | null }> {
   return apiFetch(`/projects/${encodeURIComponent(project)}/export/?format=${format}`, {
     method: "POST",
   });

@@ -20,6 +20,7 @@ from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.models.story_bible import Character, StoryBible
 from novel_to_comic.text_utils import clean, shorten
+from novel_to_comic.usage import ApiResult
 from novel_to_comic.state import (
     PipelineState,
     begin_stage,
@@ -269,7 +270,7 @@ async def regenerate_character_ref(
     project_dir: Path,
     char_id: str,
     semaphore: asyncio.Semaphore | None = None,
-) -> Path:
+) -> ApiResult[Path]:
     story_bible = _load_story_bible(project_dir)
     char = next((candidate for candidate in story_bible.characters if candidate.id == char_id), None)
     if char is None:
@@ -286,8 +287,9 @@ async def regenerate_character_ref(
     meta = _character_ref_meta(config, project_dir, style_ref, char, prompt)
 
     try:
+        flux_result = None
         async with sem:
-            await flux.generate_image(
+            flux_result = await flux.generate_image(
                 config,
                 prompt,
                 tmp_path,
@@ -299,7 +301,7 @@ async def regenerate_character_ref(
         tmp_path.replace(output_path)
         await asyncio.to_thread(_crop_sheet_to_poses, output_path)
         _write_asset_meta(output_path, meta)
-        return output_path  # ApiResult.value unwrapped by caller
+        return ApiResult(value=output_path, usage=flux_result.usage)
     finally:
         if tmp_path.exists():
             tmp_path.unlink()
@@ -310,7 +312,7 @@ async def regenerate_location_plate(
     project_dir: Path,
     loc_id: str,
     semaphore: asyncio.Semaphore | None = None,
-) -> Path:
+) -> ApiResult[Path]:
     story_bible = _load_story_bible(project_dir)
     loc = next((candidate for candidate in story_bible.locations if candidate.id == loc_id), None)
     if loc is None:
@@ -327,8 +329,9 @@ async def regenerate_location_plate(
     meta = _location_plate_meta(config, project_dir, style_ref, loc, prompt)
 
     try:
+        flux_result = None
         async with sem:
-            await flux.generate_image(
+            flux_result = await flux.generate_image(
                 config,
                 prompt,
                 tmp_path,
@@ -337,7 +340,7 @@ async def regenerate_location_plate(
             )
         tmp_path.replace(output_path)
         _write_asset_meta(output_path, meta)
-        return output_path
+        return ApiResult(value=output_path, usage=flux_result.usage)
     finally:
         if tmp_path.exists():
             tmp_path.unlink()

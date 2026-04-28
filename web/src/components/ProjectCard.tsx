@@ -126,9 +126,11 @@ export function ProjectCard({ project, coverPending = false }: Props) {
             >
               {presentation.label}
             </span>
-            <span className="font-body text-[0.86rem] font-bold leading-none text-ink-black/55 tabular-nums">
-              ${project.total_cost_usd.toFixed(2)}
-            </span>
+            {stageLabel && (
+              <span className="font-meta text-[0.58rem] font-bold leading-none tracking-[0.14em] text-ink-black/40">
+                {stageLabel}
+              </span>
+            )}
           </div>
         </div>
       </article>

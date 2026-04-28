@@ -21,8 +21,19 @@ from novel_to_comic.state import (
     reset_stale_stages,
     save_state,
 )
+from novel_to_comic.usage import UsageRecord
 
-from ..deps import get_project
+from ..auth import get_current_user
+from ..credits import (
+    debit_model_usage,
+    estimate_stage_credit_reservation,
+    get_project_id,
+    release_reservation,
+    release_stage_reservations,
+    reserve_credits,
+)
+from ..db import get_db
+from ..deps import get_project, project_key
 from .styles import is_style_selected
 from ..generation_jobs import (
     enqueue_generation_job,
@@ -120,7 +131,52 @@ _STAGE_OUTPUTS: dict[str, str] = {
 }
 
 
-async def _run_full_pipeline(config, project_dir, state, queue: asyncio.Queue):
+async def _run_stage_with_credits(
+    stage: str,
+    config,
+    project_dir,
+    state,
+    queue: asyncio.Queue,
+    user_id: str,
+    project_id: str | None,
+):
+    """Reserve credits, run the stage, then settle or release the reservation."""
+    db = get_db()
+    try:
+        reservation_credits = estimate_stage_credit_reservation(config, project_dir, state, stage)
+        reservation_id = reserve_credits(db, user_id, project_id, stage, reservation_credits)
+    except Exception as exc:
+        # Insufficient credits or DB error — fail the stage so the UI reflects it.
+        message = getattr(exc, "detail", str(exc))
+        fail_stage(state, stage, message)
+        save_state(state, project_dir)
+        queue.put_nowait({"type": "stage_fail", "stage": stage, "message": message})
+        return
+
+    await _run_stage(stage, config, project_dir, state, queue)
+
+    s = state.stages[stage]
+    for usage in s.usage_log:
+        debit_model_usage(
+            db,
+            user_id,
+            project_id,
+            UsageRecord.model_validate(usage),
+            stage=stage,
+            description=f"Model call: {stage}",
+        )
+    if reservation_id:
+        release_reservation(db, reservation_id)
+
+
+async def _run_full_pipeline(
+    config,
+    project_dir,
+    state,
+    queue: asyncio.Queue,
+    user_id: str,
+    project_id: str | None,
+):
     """Run all stages in order, stopping at checkpoints or failures."""
     for stage in STAGE_NAMES:
         s = state.stages[stage]
@@ -146,7 +202,7 @@ async def _run_full_pipeline(config, project_dir, state, queue: asyncio.Queue):
             })
             break
 
-        await _run_stage(stage, config, project_dir, state, queue)
+        await _run_stage_with_credits(stage, config, project_dir, state, queue, user_id, project_id)
 
         # Stop if stage failed or hit a checkpoint
         s = state.stages[stage]
@@ -160,15 +216,15 @@ async def _run_full_pipeline(config, project_dir, state, queue: asyncio.Queue):
             break
 
 
-async def _run_job(project_name: str, request: Request, job):
+async def _run_job(pkey: str, request: Request, job):
     """Wrap a pipeline task so lifecycle cleanup is consistent."""
     try:
         await job
     finally:
-        queue = request.app.state.event_queues.get(project_name)
+        queue = request.app.state.event_queues.get(pkey)
         if queue is not None:
             queue.put_nowait({"type": "pipeline_done"})
-        request.app.state.running_tasks.pop(project_name, None)
+        request.app.state.running_tasks.pop(pkey, None)
         # Schedule cleanup of the event queue if no SSE client drains it.
         # This prevents orphaned queues when a client disconnects before
         # receiving pipeline_done.
@@ -176,20 +232,20 @@ async def _run_job(project_name: str, request: Request, job):
             60,
             _cleanup_stale_queue,
             request.app,
-            project_name,
+            pkey,
             queue,
         )
 
 
-def _cleanup_stale_queue(app, project_name: str, queue) -> None:
+def _cleanup_stale_queue(app, pkey: str, queue) -> None:
     """Remove an event queue if it's still the same one and no task owns it."""
-    current = app.state.event_queues.get(project_name)
+    current = app.state.event_queues.get(pkey)
     if current is not queue:
         return  # a new run replaced it
-    task = app.state.running_tasks.get(project_name)
+    task = app.state.running_tasks.get(pkey)
     if task is not None and not task.done():
         return  # a new run is active
-    app.state.event_queues.pop(project_name, None)
+    app.state.event_queues.pop(pkey, None)
 
 
 def _reset_stage_and_downstream(state, stage: str) -> None:
@@ -209,6 +265,21 @@ def _clear_outputs_for_rerun(project_dir, stage: str) -> None:
             path.unlink()
 
 
+@router.get("/estimate")
+async def estimate_stage_cost(
+    project_name: str,
+    stage: str = Query(...),
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
+    """Return the estimated credit reservation for running a stage."""
+    if stage not in STAGE_NAMES:
+        raise HTTPException(400, f"Unknown stage: {stage}. Valid: {STAGE_NAMES}")
+    project_dir, config, state = project
+    credits = estimate_stage_credit_reservation(config, project_dir, state, stage)
+    return {"stage": stage, "credits": credits}
+
+
 @router.post("/run")
 async def run_pipeline(
     request: Request,
@@ -216,8 +287,10 @@ async def run_pipeline(
     stage: Optional[str] = Query(None),
     rerun: bool = Query(False),
     project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
+    pkey = project_key(user_id, project_name)
 
     if stage and stage not in STAGE_NAMES:
         raise HTTPException(400, f"Unknown stage: {stage}. Valid: {STAGE_NAMES}")
@@ -226,7 +299,7 @@ async def run_pipeline(
 
     # Concurrency guard
     running = request.app.state.running_tasks
-    existing = running.get(project_name)
+    existing = running.get(pkey)
     if existing and not existing.done():
         raise HTTPException(409, "A stage is already running for this project")
 
@@ -246,17 +319,19 @@ async def run_pipeline(
         _clear_outputs_for_rerun(project_dir, stage)
         save_state(state, project_dir)
 
+    project_id = get_project_id(get_db(), user_id, project_name)
+
     queue: asyncio.Queue = asyncio.Queue()
-    request.app.state.event_queues[project_name] = queue
+    request.app.state.event_queues[pkey] = queue
 
     if stage:
-        job = _run_stage(stage, config, project_dir, state, queue)
+        job = _run_stage_with_credits(stage, config, project_dir, state, queue, user_id, project_id)
     else:
-        job = _run_full_pipeline(config, project_dir, state, queue)
+        job = _run_full_pipeline(config, project_dir, state, queue, user_id, project_id)
 
-    task = asyncio.create_task(_run_job(project_name, request, job))
+    task = asyncio.create_task(_run_job(pkey, request, job))
 
-    running[project_name] = task
+    running[pkey] = task
     logger.info(
         "[bold blue]Pipeline queued[/] project=[white]%s[/] stage=[bold]%s[/]",
         project_name,
@@ -270,12 +345,14 @@ async def regen_extract(
     request: Request,
     project_name: str,
     project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
+    pkey = project_key(user_id, project_name)
 
     # Concurrency guard
     running = request.app.state.running_tasks
-    existing = running.get(project_name)
+    existing = running.get(pkey)
     if existing and not existing.done():
         raise HTTPException(409, "A stage is already running for this project")
 
@@ -287,10 +364,11 @@ async def regen_extract(
 
     # Run extract stage via SSE pipeline (same pattern as POST /run?stage=extract)
     queue: asyncio.Queue = asyncio.Queue()
-    request.app.state.event_queues[project_name] = queue
-    job = _run_stage("extract", config, project_dir, state, queue)
-    task = asyncio.create_task(_run_job(project_name, request, job))
-    running[project_name] = task
+    request.app.state.event_queues[pkey] = queue
+    project_id = get_project_id(get_db(), user_id, project_name)
+    job = _run_stage_with_credits("extract", config, project_dir, state, queue, user_id, project_id)
+    task = asyncio.create_task(_run_job(pkey, request, job))
+    running[pkey] = task
     logger.info(
         "[bold blue]Pipeline queued[/] project=[white]%s[/] stage=[bold]extract[/] mode=regen",
         project_name,
@@ -300,8 +378,13 @@ async def regen_extract(
 
 
 @router.get("/events")
-async def event_stream(request: Request, project_name: str):
-    queue = request.app.state.event_queues.get(project_name)
+async def event_stream(
+    request: Request,
+    project_name: str,
+    user_id: str = Depends(get_current_user),
+):
+    pkey = project_key(user_id, project_name)
+    queue = request.app.state.event_queues.get(pkey)
     if not queue:
         raise HTTPException(404, "No active run for this project")
 
@@ -325,10 +408,10 @@ async def event_stream(request: Request, project_name: str):
                     completed = True
                     break
         finally:
-            task = request.app.state.running_tasks.get(project_name)
-            current_queue = request.app.state.event_queues.get(project_name)
+            task = request.app.state.running_tasks.get(pkey)
+            current_queue = request.app.state.event_queues.get(pkey)
             if current_queue is queue and (completed or task is None or task.done()):
-                request.app.state.event_queues.pop(project_name, None)
+                request.app.state.event_queues.pop(pkey, None)
 
     return StreamingResponse(generator(), media_type="text/event-stream")
 
@@ -340,11 +423,13 @@ async def regen_panel(
     scene_id: str = Query(...),
     panel_number: int = Query(...),
     project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
+    pkey = project_key(user_id, project_name)
 
     running = request.app.state.running_tasks
-    existing = running.get(project_name)
+    existing = running.get(pkey)
     if existing and not existing.done():
         raise HTTPException(409, "A stage is already running for this project")
 
@@ -361,16 +446,26 @@ async def regen_panel(
 
     async def _runner() -> None:
         from novel_to_comic.stages import s6_generate
-        await s6_generate.regenerate_panel_image(
+        result = await s6_generate.regenerate_panel_image(
             config,
             project_dir,
             scene_id,
             panel_number,
         )
+        if result.usage:
+            db = get_db()
+            debit_model_usage(
+                db,
+                user_id,
+                get_project_id(db, user_id, project_name),
+                result.usage,
+                stage="draw",
+                description=f"Model call: regenerate panel {scene_id}/{panel_number:03d}",
+            )
 
     existing = find_active_generation_job(
         request.app,
-        project_name=project_name,
+        project_name=pkey,
         kind="panel_regen",
         payload={"scene_id": scene_id, "panel_number": panel_number},
     )
@@ -386,7 +481,7 @@ async def regen_panel(
     prune_finished_generation_jobs(request.app)
     job = enqueue_generation_job(
         request.app,
-        project_name=project_name,
+        project_name=pkey,
         kind="panel_regen",
         label=f"{scene_id} / panel {panel_number:03d}",
         payload={"scene_id": scene_id, "panel_number": panel_number},
@@ -408,20 +503,32 @@ async def regen_ref(
     project_name: str,
     char_id: str = Query(...),
     project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
+    pkey = project_key(user_id, project_name)
 
     async def _runner() -> None:
         from novel_to_comic.stages import s2_index
-        await s2_index.regenerate_character_ref(
+        result = await s2_index.regenerate_character_ref(
             config,
             project_dir,
             char_id,
         )
+        if result.usage:
+            db = get_db()
+            debit_model_usage(
+                db,
+                user_id,
+                get_project_id(db, user_id, project_name),
+                result.usage,
+                stage="cast",
+                description=f"Model call: regenerate character ref {char_id}",
+            )
 
     existing = find_active_generation_job(
         request.app,
-        project_name=project_name,
+        project_name=pkey,
         kind="character_ref_regen",
         payload={"char_id": char_id},
     )
@@ -435,7 +542,7 @@ async def regen_ref(
     prune_finished_generation_jobs(request.app)
     job = enqueue_generation_job(
         request.app,
-        project_name=project_name,
+        project_name=pkey,
         kind="character_ref_regen",
         label=f"Character ref / {char_id}",
         payload={"char_id": char_id},
@@ -455,20 +562,32 @@ async def regen_plate(
     project_name: str,
     loc_id: str = Query(...),
     project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
+    pkey = project_key(user_id, project_name)
 
     async def _runner() -> None:
         from novel_to_comic.stages import s2_index
-        await s2_index.regenerate_location_plate(
+        result = await s2_index.regenerate_location_plate(
             config,
             project_dir,
             loc_id,
         )
+        if result.usage:
+            db = get_db()
+            debit_model_usage(
+                db,
+                user_id,
+                get_project_id(db, user_id, project_name),
+                result.usage,
+                stage="cast",
+                description=f"Model call: regenerate location plate {loc_id}",
+            )
 
     existing = find_active_generation_job(
         request.app,
-        project_name=project_name,
+        project_name=pkey,
         kind="location_plate_regen",
         payload={"loc_id": loc_id},
     )
@@ -482,7 +601,7 @@ async def regen_plate(
     prune_finished_generation_jobs(request.app)
     job = enqueue_generation_job(
         request.app,
-        project_name=project_name,
+        project_name=pkey,
         kind="location_plate_regen",
         label=f"Location plate / {loc_id}",
         payload={"loc_id": loc_id},
@@ -501,11 +620,13 @@ def get_generation_jobs(
     request: Request,
     project_name: str,
     ids: list[str] | None = Query(None),
+    user_id: str = Depends(get_current_user),
 ):
+    pkey = project_key(user_id, project_name)
     jobs = [
         job
         for job in request.app.state.generation_jobs.values()
-        if job.project_name == project_name and (ids is None or job.id in ids)
+        if job.project_name == pkey and (ids is None or job.id in ids)
     ]
     jobs.sort(key=lambda job: job.sequence)
     return {"jobs": [generation_job_payload(request.app, job) for job in jobs]}
@@ -525,7 +646,12 @@ def approve(stage: str, project_name: str, project=Depends(get_project)):
 
 
 @router.post("/reset/{stage}")
-def reset_stage(stage: str, project_name: str, project=Depends(get_project)):
+def reset_stage(
+    stage: str,
+    project_name: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
     """Reset a failed stage back to pending so it can be re-run."""
     project_dir, config, state = project
     if stage not in STAGE_NAMES:
@@ -541,6 +667,8 @@ def reset_stage(stage: str, project_name: str, project=Depends(get_project)):
 
     state.stages[stage] = StageState()
     save_state(state, project_dir)
+    db = get_db()
+    release_stage_reservations(db, user_id, get_project_id(db, user_id, project_name), stage)
     return {
         "status": "reset",
         "stage": stage,
@@ -549,11 +677,17 @@ def reset_stage(stage: str, project_name: str, project=Depends(get_project)):
 
 
 @router.post("/reset-stale")
-def reset_stale(request: Request, project_name: str, project=Depends(get_project)):
+def reset_stale(
+    request: Request,
+    project_name: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
     """Reset all stale RUNNING stages back to PENDING.
 
     A stage is stale when state.json shows RUNNING but no server-side process
     is actively tracking it — e.g. after a server restart or crash.
+    Also releases any credit reservations held by those stages.
     """
     project_dir, config, state = project
     stale = get_stale_stages(state)
@@ -561,6 +695,10 @@ def reset_stale(request: Request, project_name: str, project=Depends(get_project
         return {"status": "ok", "reset": [], "message": "No stale stages detected."}
     reset = reset_stale_stages(state)
     save_state(state, project_dir)
+    db = get_db()
+    project_id = get_project_id(db, user_id, project_name)
+    for stage in reset:
+        release_stage_reservations(db, user_id, project_id, stage)
     return {
         "status": "reset",
         "reset": reset,

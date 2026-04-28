@@ -23,6 +23,9 @@ from novel_to_comic.layout_planning import (
 from novel_to_comic.models.comic_page import Bubble, ComicPage, Sfx, BUBBLE_PRESETS, CharacterVoice
 from novel_to_comic.models.story_bible import StoryBible
 
+from ..auth import get_current_user
+from ..credits import debit_model_usage, get_project_id
+from ..db import get_db
 from ..deps import get_project
 
 router = APIRouter()
@@ -243,7 +246,7 @@ def _fallback_lettering_style(style_template: str) -> dict[str, str]:
     }
 
 
-async def _generate_lettering_style(config: Config) -> dict[str, str]:
+async def _generate_lettering_style(config: Config) -> tuple[dict[str, str], object | None]:
     from novel_to_comic.clients import text
 
     system = (
@@ -273,17 +276,17 @@ async def _generate_lettering_style(config: Config) -> dict[str, str]:
         )
         result = api_result.value
     except Exception:
-        return _fallback_lettering_style(config.style_template)
+        return _fallback_lettering_style(config.style_template), None
 
     vars_raw = result.get("vars", result) if isinstance(result, dict) else {}
     generated = _sanitize_style_vars(vars_raw)
-    return generated or _fallback_lettering_style(config.style_template)
+    return generated or _fallback_lettering_style(config.style_template), api_result.usage
 
 
-async def _translate_text_items(config: Config, items: list[dict]) -> dict[str, str]:
+async def _translate_text_items(config: Config, items: list[dict]) -> tuple[dict[str, str], object | None]:
     """Translate editable lettering text items and return {id: translated_text}."""
     if not items:
-        return {}
+        return {}, None
 
     from novel_to_comic.clients import text
 
@@ -322,7 +325,7 @@ async def _translate_text_items(config: Config, items: list[dict]) -> dict[str, 
         text = item.get("text")
         if item_id and isinstance(text, str):
             translations[item_id] = text
-    return translations
+    return translations, api_result.usage
 
 
 # ── Pages CRUD ───────────────────────────────────────────────────────────────
@@ -461,11 +464,25 @@ def update_page(page_num: int, body: dict, project=Depends(get_project)):
 
 
 @router.post("/pages/style-vars/generate")
-async def generate_page_style_vars(request: Request, project=Depends(get_project)):
+async def generate_page_style_vars(
+    request: Request,
+    project_name: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
     """Generate page-level lettering/panel CSS variables from the active image style."""
     project_dir, config, state = project
 
-    style_vars = await _generate_lettering_style(config)
+    style_vars, usage = await _generate_lettering_style(config)
+    if usage:
+        debit_model_usage(
+            get_db(),
+            user_id,
+            get_project_id(get_db(), user_id, project_name),
+            usage,
+            stage="compose",
+            description="Model call: page style",
+        )
     pd = _pages_dir(project_dir)
     page_paths = sorted(pd.glob("page_*.json"))
     if not page_paths:
@@ -547,7 +564,12 @@ def apply_bubble_preset(body: dict, project=Depends(get_project)):
 
 
 @router.post("/pages/translate-bubbles")
-async def translate_page_bubbles(body: dict, project=Depends(get_project)):
+async def translate_page_bubbles(
+    body: dict,
+    project_name: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
     """Translate all existing editable bubble/narration text across assembled pages."""
     project_dir, config, state = project
     target_language = body.get("target_language")
@@ -576,7 +598,16 @@ async def translate_page_bubbles(body: dict, project=Depends(get_project)):
                         "text": bubble.text,
                     })
 
-    translations = await _translate_text_items(config, items)
+    translations, usage = await _translate_text_items(config, items)
+    if usage:
+        debit_model_usage(
+            get_db(),
+            user_id,
+            get_project_id(get_db(), user_id, project_name),
+            usage,
+            stage="compose",
+            description="Model call: translate bubbles",
+        )
     updated = 0
     for cp, path in zip(pages, page_paths):
         changed = False
@@ -600,7 +631,13 @@ async def translate_page_bubbles(body: dict, project=Depends(get_project)):
 
 
 @router.post("/pages/{page_num}/translate-bubbles")
-async def translate_single_page_bubbles(page_num: int, body: dict, project=Depends(get_project)):
+async def translate_single_page_bubbles(
+    page_num: int,
+    body: dict,
+    project_name: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
     """Translate bubble/narration text for a single page."""
     project_dir, config, state = project
     target_language = body.get("target_language")
@@ -623,7 +660,16 @@ async def translate_single_page_bubbles(page_num: int, body: dict, project=Depen
                     "text": bubble.text,
                 })
 
-    translations = await _translate_text_items(config, items)
+    translations, usage = await _translate_text_items(config, items)
+    if usage:
+        debit_model_usage(
+            get_db(),
+            user_id,
+            get_project_id(get_db(), user_id, project_name),
+            usage,
+            stage="compose",
+            description=f"Model call: translate page {page_num}",
+        )
     updated = 0
     for panel in cp.panels:
         for bubble in panel.bubbles:

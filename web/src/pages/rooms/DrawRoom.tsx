@@ -77,7 +77,7 @@ export function DrawRoom() {
     }
   }, [generationJobs, projectRegens, name, updateJob, complete, fail]);
 
-  const generateStage = status?.stages?.generate;
+  const generateStage = status?.stages?.draw;
   const failedItems = generateStage?.items_failed ?? [];
   const isGenerateStale = generateStage?.status === "running" && generateStage.stale;
   const imageByKey = useMemo(
@@ -94,12 +94,16 @@ export function DrawRoom() {
   // Keep the regen panel in the grid while its file is absent from disk.
   const displayImages: ImageStatus[] = [...baseImages];
 
-  // Add failed panels that might not be in images yet
+  // Add failed panels that might not be in images yet.
+  // items_failed may be short keys ("scene_001/panel_001") or legacy absolute paths.
   for (const failedItem of failedItems) {
     const parts = failedItem.split("/");
-    const failedSceneId = parts[0];
-    const panelMatch = parts[1]?.match(/panel_(\d+)/);
-    if (!panelMatch) continue;
+    // Absolute paths: find the scene_NNN segment and the panel_NNN segment after it
+    const sceneIdx = parts.findLastIndex((p) => /^scene_/.test(p));
+    const failedSceneId = sceneIdx >= 0 ? parts[sceneIdx] : parts[0];
+    const panelPart = sceneIdx >= 0 ? parts[sceneIdx + 1] : parts[1];
+    const panelMatch = panelPart?.match(/panel_(\d+)/);
+    if (!panelMatch || !failedSceneId) continue;
     const failedPanelNum = parseInt(panelMatch[1], 10);
     const alreadyPresent = displayImages.some(
       (img) => img.scene_id === failedSceneId && img.panel_number === failedPanelNum,
@@ -121,7 +125,14 @@ export function DrawRoom() {
     const key = `${sceneId}-${panelNumber}`;
     const regenMode = regenModes.get(key);
     if (regenMode === "queued" || regenMode === "running") return "pending";
+    const panelStem = `panel_${String(panelNumber).padStart(3, "0")}`;
+    const failedKey = `${sceneId}/${panelStem}`;
+    // items_failed may store short keys ("scene/panel_001") or legacy absolute paths
+    if (failedItems.some((f) => f === failedKey || f.endsWith(`/${sceneId}/${panelStem}.json`))) return "failed";
     if (isGenerateStale) return "stale";
+    // If the draw stage has finished but this panel has no image, it failed to generate
+    const ds = generateStage?.status;
+    if (ds === "awaiting_review" || ds === "complete" || ds === "failed") return "failed";
     return "pending";
   };
 

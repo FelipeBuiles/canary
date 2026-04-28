@@ -186,8 +186,8 @@ export function Settings() {
             {TEXT_MODEL_FIELDS.map((field) => (
               <Row key={field.key} label={field.label} hint={field.hint}>
                 <ImageModelField
-                  key={`${name}:${field.key}:${(config as Record<string, unknown>)?.[field.key] ?? ""}`}
-                  value={((config as Record<string, unknown>)?.[field.key] as string) ?? ""}
+                  key={`${name}:${field.key}:${(config as unknown as Record<string, unknown>)?.[field.key] ?? ""}`}
+                  value={((config as unknown as Record<string, unknown>)?.[field.key] as string) ?? ""}
                   onCommit={(v) => patch({ [field.key]: v })}
                   disabled={!config || updating || !!config?.quality_preset || !!config?.dev_mode}
                 />

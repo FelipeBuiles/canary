@@ -80,3 +80,12 @@ export function regenExtract(
     { method: "POST" },
   );
 }
+
+export function fetchStageEstimate(
+  project: string,
+  stage: string,
+): Promise<{ stage: string; credits: number }> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/estimate?stage=${encodeURIComponent(stage)}`,
+  );
+}

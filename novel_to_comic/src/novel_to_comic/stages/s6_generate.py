@@ -294,7 +294,7 @@ async def regenerate_panel_image(
     scene_id: str,
     panel_number: int,
     semaphore: asyncio.Semaphore | None = None,
-) -> Path | None:
+) -> ApiResult[Path | None]:
     """Regenerate one panel without mutating stage counters or deleting the old image."""
     prompt_path = project_dir / "direct" / scene_id / f"panel_{panel_number:03d}.json"
     if not prompt_path.exists():
@@ -323,7 +323,7 @@ async def regenerate_panel_image(
         story_bible,
         force=True,
     )
-    return api_result.value
+    return api_result
 
 
 async def run(
@@ -498,7 +498,7 @@ async def run(
                         console.print(f"[red]{msg}[/red]")
                         emit({"type": "log", "stage": "draw", "level": "error",
                               "message": msg})
-                        record_item_failed(state, "draw", str(pf))
+                        record_item_failed(state, "draw", f"{pf.parent.name}/{pf.stem}")
                     else:
                         record_item_done(state, "draw", usage=result.usage)
                         emit({"type": "log", "stage": "draw", "level": "dim",

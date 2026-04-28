@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { CreditBalance } from "../components/CreditBalance";
+import { ConfirmDrawer } from "../components/ui/ConfirmDrawer";
 import {
   useApproveStage,
   useImages,
@@ -10,6 +12,7 @@ import {
   usePromptSummaries,
   useRunPipeline,
   useScreenplays,
+  useStageEstimate,
   useStoryBible,
   useStyles,
 } from "../api/queries";
@@ -30,8 +33,6 @@ type PipelineNavStage = {
   failedCount: number;
   needsApproval: boolean;
   detail?: string | null;
-  costUsd: number;
-  estimatedCostUsd: number;
 };
 
 interface SideNavProps {
@@ -73,21 +74,6 @@ function stageStatusGlyph(stage: PipelineNavStage) {
   if (stage.status === "running") return "RUN";
   if (stage.status === "complete") return "OK";
   return "WAIT";
-}
-
-function stageCostLabel(stage: PipelineNavStage): string | null {
-  const spent = stage.costUsd;
-  const est = stage.estimatedCostUsd;
-  if (spent > 0) {
-    if (stage.status === "running" && est > spent) {
-      return `$${spent.toFixed(2)} / ~$${est.toFixed(2)}`;
-    }
-    return `$${spent.toFixed(2)}`;
-  }
-  if (est > 0 && stage.status === "pending") {
-    return `~$${est.toFixed(2)}`;
-  }
-  return null;
 }
 
 function stageDetail(stage: PipelineNavStage, fallbackDetail?: string | null) {
@@ -157,8 +143,6 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
         itemsTotal: info?.items_total ?? 0,
         failedCount: info?.items_failed.length ?? 0,
         needsApproval: info?.status === "awaiting_review",
-        costUsd: info?.cost_usd ?? 0,
-        estimatedCostUsd: info?.estimated_cost_usd ?? 0,
       });
 
       if (stage === "extract") {
@@ -172,8 +156,6 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           failedCount: 0,
           needsApproval: false,
           detail: activeStyle ? activeStyle.label : null,
-          costUsd: status?.misc_cost_usd ?? 0,
-          estimatedCostUsd: 0,
         });
       }
     }
@@ -260,6 +242,36 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     !status?.style_selected &&
     (status?.stages.extract?.status === "complete" || status?.stages.extract?.status === "awaiting_review");
   const isRunning = status?.is_running ?? false;
+
+  // Determine which stage will actually run when the user clicks NEXT STAGE,
+  // so we can show a credit estimate before they commit to the action.
+  const nextRunStage = useMemo<StageName | undefined>(() => {
+    if (!status || isRunning || styleNeedsSelection || !name) return undefined;
+    // Approving extract → navigates to style selection (no model cost).
+    if (needsApproval === "extract") return undefined;
+    // For other approval stages, pipeline runs from the first pending stage after approval.
+    if (needsApproval) {
+      const idx = STAGE_ORDER.indexOf(needsApproval);
+      return STAGE_ORDER.slice(idx + 1).find((s) => {
+        const st = status.stages[s]?.status;
+        return !st || st === "pending";
+      });
+    }
+    // Rerun the root broken stage if one exists.
+    const brokenStage = STAGE_ORDER.find((s) => {
+      const info = status.stages[s];
+      return info && (info.status === "failed" || (info.status === "complete" && (info.items_failed?.length ?? 0) > 0));
+    });
+    if (brokenStage) return brokenStage;
+    // Normal advance: first pending stage.
+    return STAGE_ORDER.find((s) => {
+      const st = status.stages[s]?.status;
+      return !st || st === "pending";
+    });
+  }, [status, isRunning, styleNeedsSelection, needsApproval, name]);
+
+  const { data: nextStageEstimate } = useStageEstimate(name, nextRunStage);
+  const [showCostConfirm, setShowCostConfirm] = useState(false);
 
   const measureStageDetails = useCallback(() => {
     const nav = navRef.current;
@@ -355,6 +367,20 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     handleRun();
   }
 
+  // Gate the button click behind a cost confirmation when the next action will
+  // spend credits. Free actions (style selection, extract approval) pass through.
+  function handleContinueClick() {
+    if (styleNeedsSelection || needsApproval === "extract") {
+      handleContinue();
+      return;
+    }
+    if (nextStageEstimate && nextStageEstimate.credits > 0) {
+      setShowCostConfirm(true);
+      return;
+    }
+    handleContinue();
+  }
+
   function continueButtonLabel() {
     if (isRunning) return t("RUNNING…");
     if (needsApproval) return "APPROVE & CONTINUE";
@@ -365,7 +391,6 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   function renderStageRow(stage: PipelineNavStage) {
     const isActive = activeStageRoute === stage.route;
     const detail = stageDetail(stage, stageDetails[stage.key]);
-    const costLabel = stageCostLabel(stage);
     const statusLabel = stageStatusLabel(stage);
     const statusGlyph = stageStatusGlyph(stage);
     const rowClassName = cn(
@@ -380,7 +405,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
         key={stage.key}
         type="button"
         onClick={() => name && navigate(`/project/${encodeURIComponent(name)}/${stage.route}`)}
-        aria-label={`${stage.label}: ${statusLabel}. ${detail}${costLabel ? `. Cost: ${costLabel}` : ""}`}
+        aria-label={`${stage.label}: ${statusLabel}. ${detail}`}
         className={rowClassName}
       >
         <div className="flex items-center gap-2">
@@ -418,14 +443,6 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           )}
         >
           <span className="min-w-0 truncate">{detail}</span>
-          {costLabel && (
-            <span className={cn(
-              "shrink-0 tabular-nums",
-              stage.status === "running" ? "text-narrator-gold/70" : "text-bristol/40",
-            )}>
-              {costLabel}
-            </span>
-          )}
         </div>
       </button>
     );
@@ -499,7 +516,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           {name && (
             <button
               type="button"
-              onClick={handleContinue}
+              onClick={handleContinueClick}
               disabled={isRunning || approveStage.isPending || runPipeline.isPending}
               className="flex min-h-13 w-full items-center justify-center gap-2 border-[2px] border-ink-black/80 bg-hero-red px-3 py-3 font-meta text-[0.72rem] tracking-[0.18em] text-bristol shadow-ink-sm transition-colors hover:bg-hero-red/90 disabled:cursor-not-allowed disabled:opacity-45 disabled:shadow-none 2xl:min-h-14 2xl:text-[0.82rem] min-[2200px]:min-h-20 min-[2200px]:text-[1.15rem]"
             >
@@ -507,7 +524,24 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
               {continueButtonLabel()} {!isRunning && "→"}
             </button>
           )}
-          <div className="mt-4 flex justify-center gap-3 font-meta text-[0.58rem] tracking-[0.08em] text-bristol/30 2xl:text-[0.66rem] min-[2200px]:mt-6 min-[2200px]:text-[1rem]">
+          <ConfirmDrawer
+            open={showCostConfirm}
+            title={`Start ${nextRunStage ? stageName(nextRunStage) : "stage"}?`}
+            body="Credits will be reserved now and settled to actual usage once the stage completes. Any unused portion of the hold is released automatically."
+            estimatedCredits={nextStageEstimate?.credits}
+            confirmLabel={continueButtonLabel().replace("APPROVE & ", "")}
+            busy={approveStage.isPending || runPipeline.isPending}
+            onConfirm={() => { setShowCostConfirm(false); handleContinue(); }}
+            onClose={() => setShowCostConfirm(false)}
+          />
+          {name && nextStageEstimate && nextStageEstimate.credits > 0 && !isRunning && (
+            <div className="mt-2 flex items-center justify-center gap-1.5 font-meta text-[0.56rem] tracking-[0.12em] text-bristol/45 2xl:text-[0.62rem]">
+              <span className="text-narrator-gold/70">~{nextStageEstimate.credits.toLocaleString()}</span>
+              <span>credit hold</span>
+            </div>
+          )}
+          <CreditBalance className="mt-3 2xl:mt-4" />
+          <div className="mt-3 flex justify-center gap-3 font-meta text-[0.58rem] tracking-[0.08em] text-bristol/30 2xl:text-[0.66rem] min-[2200px]:mt-6 min-[2200px]:text-[1rem]">
             <Link to={settingsPath} className={isSettingsActive ? "text-bristol" : "hover:text-bristol/60"}>
               {t("Settings")}
             </Link>

@@ -10,7 +10,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from novel_to_comic.clients.api_logging import log_call_end, log_call_start, payload_summary
 from novel_to_comic.config import Config
-from novel_to_comic.usage import ApiResult, UsageRecord
+from novel_to_comic.usage import ApiResult, UsageRecord, estimate_text_usage
 
 logger = logging.getLogger("canary.google")
 
@@ -57,11 +57,12 @@ def get_client(config: Config) -> genai.Client:
     return client
 
 
-def _extract_gemini_usage(response, model: str) -> UsageRecord | None:
+def _extract_gemini_usage(response, model: str, call_id: str) -> UsageRecord | None:
     usage_meta = getattr(response, "usage_metadata", None)
     if usage_meta is None:
         return None
     return UsageRecord(
+        call_id=call_id,
         provider="gemini",
         model=model,
         operation="text",
@@ -127,7 +128,15 @@ async def generate_json(
                 "response_type": type(parsed).__name__,
             },
         )
-        return ApiResult(value=parsed, usage=_extract_gemini_usage(response, model))
+        usage = _extract_gemini_usage(response, model, call_id) or estimate_text_usage(
+            provider="gemini",
+            model=model,
+            system_prompt=system_prompt,
+            user_content=user_content,
+            output_text=response.text,
+            call_id=call_id,
+        )
+        return ApiResult(value=parsed, usage=usage)
     except Exception as e:
         log_call_end(
             logger,
@@ -184,7 +193,15 @@ async def generate_text(
                 "candidates": len(getattr(response, "candidates", []) or []),
             },
         )
-        return ApiResult(value=response.text, usage=_extract_gemini_usage(response, model))
+        usage = _extract_gemini_usage(response, model, call_id) or estimate_text_usage(
+            provider="gemini",
+            model=model,
+            system_prompt=system_prompt,
+            user_content=user_content,
+            output_text=response.text,
+            call_id=call_id,
+        )
+        return ApiResult(value=response.text, usage=usage)
     except Exception as e:
         log_call_end(
             logger,

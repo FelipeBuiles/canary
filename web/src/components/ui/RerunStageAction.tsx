@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useRunAction } from "../../hooks/useRunAction";
+import { useStageEstimate } from "../../api/queries";
 import { RERUN_IMPACT } from "../../lib/rerunImpact";
 import type { StageName } from "../../types/api";
 import { STAGE_DISPLAY_NAMES } from "../../types/api";
@@ -28,6 +29,13 @@ export function RerunStageAction({
   const impact = RERUN_IMPACT[stage];
   const busy = disabled || isPending;
 
+  const estimate = useStageEstimate(project, stage, open);
+  const estimatedCredits = estimate.isLoading
+    ? "…"
+    : estimate.data
+      ? `${estimate.data.credits.toLocaleString()} credits`
+      : impact.credits;
+
   function confirmRerun() {
     handleRun(project, stage, true);
     setOpen(false);
@@ -47,8 +55,8 @@ export function RerunStageAction({
         open={open}
         stageName={label}
         impactStages={impact.downstream}
-        estimatedCost={impact.cost}
-        costIsPlaceholder={impact.costIsPlaceholder}
+        estimatedCredits={estimatedCredits}
+        creditsAreEstimated={!estimate.data}
         itemsAtRisk={itemsAtRisk}
         confirmLabel={`Rerun ${STAGE_DISPLAY_NAMES[stage]}`}
         busy={busy}

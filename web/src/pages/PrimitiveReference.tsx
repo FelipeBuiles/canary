@@ -196,8 +196,8 @@ export function PrimitiveReference() {
         open={rerunOpen}
         stageName="Extract"
         impactStages={["cast", "adapt", "storyboard", "direct", "draw", "compose"]}
-        estimatedCost="~$4.10"
-        costIsPlaceholder
+        estimatedCredits="200 credits"
+        creditsAreEstimated
         itemsAtRisk="46 generated panels will be lost."
         onConfirm={() => setRerunOpen(false)}
         onClose={() => setRerunOpen(false)}

@@ -10,7 +10,10 @@ from novel_to_comic.config import Config, load_config, save_config
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.prompting import build_style_sample_prompt
 
-from ..deps import get_project
+from ..auth import get_current_user
+from ..credits import debit_model_usage, get_project_id
+from ..db import get_db
+from ..deps import get_project, project_key
 from ..generation_jobs import (
     enqueue_generation_job,
     find_active_generation_job,
@@ -69,7 +72,7 @@ def _save_suggestions(project_dir, suggestions, title):
     path.write_text(json.dumps({"title": title, "suggestions": suggestions}, indent=2))
 
 
-async def _suggest_styles(config: Config, bible, existing_labels: list[str] | None = None) -> list[dict]:
+async def _suggest_styles(config: Config, bible, existing_labels: list[str] | None = None) -> tuple[list[dict], object | None]:
     from novel_to_comic.clients import text
 
     avoid = ""
@@ -111,10 +114,10 @@ async def _suggest_styles(config: Config, bible, existing_labels: list[str] | No
     )
     result = api_result.value
     if isinstance(result, list):
-        return result
+        return result, api_result.usage
     if isinstance(result, dict):
-        return result.get("styles", [])
-    return []
+        return result.get("styles", []), api_result.usage
+    return [], api_result.usage
 
 
 async def _generate_style_sample(config, bible, project_dir, sample_path):
@@ -132,7 +135,7 @@ async def _generate_style_sample(config, bible, project_dir, sample_path):
     return result
 
 
-async def _generate_style_samples_parallel(config, bible, project_dir, indices, suggestions):
+async def _generate_style_samples_parallel(config, bible, project_dir, indices, suggestions, user_id: str, project_id: str | None):
     from novel_to_comic.state import load_state, record_misc_usage, save_state
     samples_dir = project_dir / "samples"
     samples_dir.mkdir(exist_ok=True)
@@ -147,6 +150,13 @@ async def _generate_style_samples_parallel(config, bible, project_dir, indices, 
             state = load_state(project_dir)
             record_misc_usage(state, result.usage)
             save_state(state, project_dir)
+            debit_model_usage(
+                get_db(),
+                user_id,
+                project_id,
+                result.usage,
+                description=f"Model call: style sample {idx}",
+            )
 
     if config.uses_gemini_image_provider():
         for i in indices:
@@ -189,11 +199,17 @@ def get_styles(project_name: str, project=Depends(get_project)):
 
 
 @router.post("/styles/suggest")
-async def suggest_styles(request: Request, project_name: str, project=Depends(get_project)):
+async def suggest_styles(
+    request: Request,
+    project_name: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
     project_dir, config, state = project
+    pkey = project_key(user_id, project_name)
 
     style_running = request.app.state.style_tasks
-    existing = style_running.get(project_name)
+    existing = style_running.get(pkey)
     if existing and not existing.done():
         raise HTTPException(409, "A style operation is already running for this project")
 
@@ -202,7 +218,7 @@ async def suggest_styles(request: Request, project_name: str, project=Depends(ge
         raise HTTPException(404, "Story bible not found — run extract first.")
 
     queue: asyncio.Queue = asyncio.Queue()
-    request.app.state.event_queues[project_name] = queue
+    request.app.state.event_queues[pkey] = queue
 
     async def _job():
         queue.put_nowait({"type": "stage_begin", "stage": "style_suggest", "total": 1})
@@ -215,17 +231,25 @@ async def suggest_styles(request: Request, project_name: str, project=Depends(ge
             })
             existing = _load_suggestions(project_dir) or []
             existing_labels = [s.get("label", "") for s in existing if isinstance(s, dict)]
-            new_suggestions = await _suggest_styles(config, bible, existing_labels=existing_labels)
+            new_suggestions, usage = await _suggest_styles(config, bible, existing_labels=existing_labels)
+            if usage:
+                debit_model_usage(
+                    get_db(),
+                    user_id,
+                    get_project_id(get_db(), user_id, project_name),
+                    usage,
+                    description="Model call: style suggestions",
+                )
             _save_suggestions(project_dir, existing + new_suggestions, bible.title)
             queue.put_nowait({"type": "stage_progress", "stage": "style_suggest", "done": 1, "total": 1})
             queue.put_nowait({"type": "stage_complete", "stage": "style_suggest", "done": 1, "total": 1})
         except Exception as exc:
             queue.put_nowait({"type": "stage_fail", "stage": "style_suggest", "message": str(exc)})
         finally:
-            style_running.pop(project_name, None)
+            style_running.pop(pkey, None)
 
     task = asyncio.create_task(_job())
-    style_running[project_name] = task
+    style_running[pkey] = task
     return {"status": "started"}
 
 
@@ -235,8 +259,10 @@ async def generate_style_samples(
     project_name: str,
     body: dict,
     project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
+    pkey = project_key(user_id, project_name)
 
     indices = body.get("indices", [])
     if not indices or not isinstance(indices, list):
@@ -259,7 +285,7 @@ async def generate_style_samples(
     for idx in indices:
         existing = find_active_generation_job(
             request.app,
-            project_name=project_name,
+            project_name=pkey,
             kind="style_sample",
             payload={"index": idx},
         )
@@ -282,10 +308,17 @@ async def generate_style_samples(
                 st = load_state(project_dir)
                 record_misc_usage(st, result.usage)
                 save_state(st, project_dir)
+                debit_model_usage(
+                    get_db(),
+                    user_id,
+                    get_project_id(get_db(), user_id, project_name),
+                    result.usage,
+                    description=f"Model call: style sample {idx}",
+                )
 
         job = enqueue_generation_job(
             request.app,
-            project_name=project_name,
+            project_name=pkey,
             kind="style_sample",
             label=f"style {idx}",
             payload={"index": idx},

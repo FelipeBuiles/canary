@@ -12,7 +12,8 @@ from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.prompting import render_panel_prompt_body
 from novel_to_comic.state import load_state
 
-from ..deps import get_project
+from ..auth import get_current_user
+from ..deps import get_project, project_key
 from ..generation_jobs import find_active_generation_job
 
 router = APIRouter()
@@ -200,8 +201,14 @@ def update_prompt(scene_id: str, panel_number: int, body: dict, project=Depends(
 
 
 @router.get("/images")
-def list_images(request: Request, project=Depends(get_project)):
+def list_images(
+    request: Request,
+    project_name: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
     project_dir, config, state = project
+    pkey = project_key(user_id, project_name)
     images_dir = project_dir / "draw"
     if not images_dir.exists():
         return []
@@ -224,7 +231,7 @@ def list_images(request: Request, project=Depends(get_project)):
             else:
                 active_job = find_active_generation_job(
                     request.app,
-                    project_dir.name,
+                    pkey,
                     "panel_regen",
                     {"scene_id": scene_dir.name, "panel_number": panel_num},
                 )

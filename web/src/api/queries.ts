@@ -1,7 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listProjects, getProjectStatus, createProject, generateProjectCover } from "./projects";
-import { runPipeline, approveStage, regenPanel, regenRef, regenPlate, getGenerationJobs, regenExtract, resetStale } from "./pipeline";
+import { runPipeline, approveStage, regenPanel, regenRef, regenPlate, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate } from "./pipeline";
 import type { ConfigOverrides, StoryBible, CharacterVoice } from "../types/api";
+import { getBalance, getCreditHistory } from "./credits";
+import { getPackages, createCheckout } from "./billing";
 import {
   getStoryBible,
   updateStoryBible,
@@ -120,6 +122,15 @@ export function useRegenPanel() {
       regenPanel(project, sceneId, panelNumber),
     // No cache invalidation here — DrawRoom detects completion via images polling
     // and busts the cache itself to avoid the panel disappearing mid-regen.
+  });
+}
+
+export function useStageEstimate(project: string | undefined, stage: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ["project", project, "estimate", stage],
+    queryFn: () => fetchStageEstimate(project!, stage!),
+    enabled: !!project && !!stage && enabled,
+    staleTime: 60_000,
   });
 }
 
@@ -553,6 +564,40 @@ export function useSetActiveStyle() {
     onSuccess: (_data, { project }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "styles"] });
       qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+    },
+  });
+}
+
+// ── Credits & Billing ─────────────────────────────────────────────────────────
+
+export function useCreditBalance() {
+  return useQuery({
+    queryKey: ["credits", "balance"],
+    queryFn: getBalance,
+    staleTime: 30_000,
+  });
+}
+
+export function useCreditHistory() {
+  return useQuery({
+    queryKey: ["credits", "history"],
+    queryFn: getCreditHistory,
+  });
+}
+
+export function useCreditPackages() {
+  return useQuery({
+    queryKey: ["billing", "packages"],
+    queryFn: getPackages,
+    staleTime: Infinity,
+  });
+}
+
+export function useCreateCheckout() {
+  return useMutation({
+    mutationFn: ({ packageId }: { packageId: string }) => createCheckout(packageId),
+    onSuccess: ({ url }) => {
+      window.location.href = url;
     },
   });
 }

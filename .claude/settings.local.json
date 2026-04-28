@@ -80,7 +80,8 @@
       "Bash(gh pr *)",
       "Bash(.venv/bin/pdftotext /Users/jbuiles/Code/canary/projects/the-flowers/input/walker_flowers.pdf -)",
       "Bash(pdftotext /Users/jbuiles/Code/canary/projects/the-flowers/input/walker_flowers.pdf -)",
-      "Bash(.venv/bin/python:*)"
+      "Bash(.venv/bin/python:*)",
+      "Bash(node -e \"console.log\\([1,2,3].findLastIndex\\(x => x < 3\\)\\)\")"
     ]
   }
 }

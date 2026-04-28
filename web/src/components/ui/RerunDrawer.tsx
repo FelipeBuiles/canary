@@ -9,8 +9,8 @@ export interface RerunDrawerProps {
   open: boolean;
   stageName: string;
   impactStages: StageName[];
-  estimatedCost: string;
-  costIsPlaceholder?: boolean;
+  estimatedCredits: string;
+  creditsAreEstimated?: boolean;
   itemsAtRisk?: string;
   onConfirm: () => void;
   onClose: () => void;
@@ -22,8 +22,8 @@ export function RerunDrawer({
   open,
   stageName,
   impactStages,
-  estimatedCost,
-  costIsPlaceholder = false,
+  estimatedCredits,
+  creditsAreEstimated = false,
   itemsAtRisk,
   onConfirm,
   onClose,
@@ -158,10 +158,13 @@ export function RerunDrawer({
             )}
             <div className="mt-3 flex items-baseline gap-3">
               <span className="font-meta text-[0.58rem] tracking-[0.16em] uppercase text-ink-black/60">
-                Estimated cost{costIsPlaceholder ? " (placeholder)" : ""}
+                Credit hold{creditsAreEstimated ? " (est.)" : ""}
               </span>
-              <span className="font-display text-[1.1rem] font-bold">
-                {estimatedCost}
+              <span className={cn(
+                "font-display text-[1.1rem] font-bold",
+                estimatedCredits === "…" && "animate-pulse text-ink-black/40",
+              )}>
+                {estimatedCredits}
               </span>
             </div>
           </div>

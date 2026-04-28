@@ -4,56 +4,57 @@ export type RerunStageKey = StageName | "style";
 
 export interface RerunImpact {
   downstream: StageName[];
-  cost: string;
-  costIsPlaceholder: boolean;
+  credits: string;
+  creditsAreEstimated: boolean;
 }
 
-// Placeholder cost estimates copied from the redesign prototype. Replace with
-// backend-derived stage history or project cost estimates when available.
+// Backend computes the actual hold dynamically from project inputs and config.
+const DYNAMIC_HOLD = "Calculated before run";
+
 export const RERUN_IMPACT: Record<RerunStageKey, RerunImpact> = {
   extract: {
     downstream: ["cast", "adapt", "plan", "storyboard", "direct", "draw", "compose"],
-    cost: "~$4.10",
-    costIsPlaceholder: true,
+    credits: DYNAMIC_HOLD,
+    creditsAreEstimated: true,
   },
   style: {
     downstream: ["cast", "adapt", "plan", "storyboard", "direct", "draw", "compose"],
-    cost: "~$0.30",
-    costIsPlaceholder: true,
+    credits: DYNAMIC_HOLD,
+    creditsAreEstimated: true,
   },
   cast: {
     downstream: ["adapt", "plan", "storyboard", "direct", "draw", "compose"],
-    cost: "~$0.80",
-    costIsPlaceholder: true,
+    credits: DYNAMIC_HOLD,
+    creditsAreEstimated: true,
   },
   adapt: {
     downstream: ["plan", "storyboard", "direct", "draw", "compose"],
-    cost: "~$0.25",
-    costIsPlaceholder: true,
+    credits: DYNAMIC_HOLD,
+    creditsAreEstimated: true,
   },
   plan: {
     downstream: ["storyboard", "direct", "draw", "compose"],
-    cost: "~$0.05",
-    costIsPlaceholder: true,
+    credits: DYNAMIC_HOLD,
+    creditsAreEstimated: true,
   },
   storyboard: {
     downstream: ["direct", "draw", "compose"],
-    cost: "~$0.15",
-    costIsPlaceholder: true,
+    credits: DYNAMIC_HOLD,
+    creditsAreEstimated: true,
   },
   direct: {
     downstream: ["draw", "compose"],
-    cost: "~$0.10",
-    costIsPlaceholder: true,
+    credits: DYNAMIC_HOLD,
+    creditsAreEstimated: true,
   },
   draw: {
     downstream: ["compose"],
-    cost: "~$3.20",
-    costIsPlaceholder: true,
+    credits: DYNAMIC_HOLD,
+    creditsAreEstimated: true,
   },
   compose: {
     downstream: [],
-    cost: "~$0.05",
-    costIsPlaceholder: true,
+    credits: DYNAMIC_HOLD,
+    creditsAreEstimated: true,
   },
 };
