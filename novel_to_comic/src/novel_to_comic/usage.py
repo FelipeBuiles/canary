@@ -156,13 +156,20 @@ def estimate_text_cost(model: str, input_text: str | int, output_chars: int = 0)
     )
 
 
-def estimate_image_cost(model: str, count: int) -> float:
-    """Pre-call cost estimate for count images. Uses per_image_usd as the estimate."""
+def estimate_image_cost(model: str, count: int, quality: str | None = None) -> float:
+    """Pre-call cost estimate for count images. Uses per_image_usd as the estimate.
+
+    For OpenAI gpt-image-2, quality significantly affects cost because higher
+    quality generates more output tokens. We adjust the estimate accordingly.
+    """
     pricing = PRICING_TABLE.get(model)
     if pricing is None:
         _warn_unknown_model(model)
         return 0.0
-    return count * pricing.per_image_usd
+    per_image = pricing.per_image_usd
+    if model == "gpt-image-2" and quality == "high":
+        per_image = 0.28
+    return count * per_image
 
 
 def audit_pricing(extra_models: list[str] | None = None) -> list[str]:

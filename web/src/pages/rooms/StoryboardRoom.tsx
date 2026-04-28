@@ -184,7 +184,7 @@ export function StoryboardRoom() {
     <RoomShell>
       <div className="flex h-[calc(100vh-3rem)] min-h-0 flex-col gap-3 md:h-[calc(100vh-5rem)] md:gap-8">
         <RoomHeader
-          kicker="STORYBOARD / PANEL BREAKDOWNS"
+          kicker="STORYBOARD"
           title="PANEL BREAKDOWNS"
           lead="Shot-by-shot blocking with camera, lighting, and dialogue — the blueprint the artist hands to the penciller."
           actions={rerunAction}

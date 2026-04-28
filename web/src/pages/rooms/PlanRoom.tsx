@@ -221,7 +221,7 @@ export function PlanRoom() {
     <RoomShell>
       <div className="flex h-[calc(100vh-3rem)] min-h-0 flex-col gap-3 md:h-[calc(100vh-5rem)] md:gap-8">
         <RoomHeader
-          kicker="PLAN / LAYOUT PLAN"
+          kicker="PLAN"
           title="LAYOUT PLAN"
           lead="Planned panels with importance, shape intent, and page assignment — the structural blueprint before image generation."
           actions={rerunAction}

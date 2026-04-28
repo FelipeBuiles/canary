@@ -293,6 +293,31 @@ export function StyleRoom() {
     }
   }, [events, isSuggesting, refetchStyles, add, attachJobs, generateSamples, projectName, remove]);
 
+  // Auto-trigger suggestions on first visit when none exist yet
+  const autoTriggered = useRef(false);
+  useEffect(() => {
+    if (autoTriggered.current) return;
+    if (isLoading || !stylesData) return;
+    if (stylesData.suggestions.length > 0) return;
+    if (isSuggesting || suggestStyles.isPending) return;
+    if (!storyBible) return;
+    autoTriggered.current = true;
+    prevSuggestionCount.current = 0;
+    clearEvents();
+    setSuggestionStatus("running");
+    setSuggestionError(null);
+    suggestStyles.mutate(
+      { project: projectName },
+      {
+        onSuccess: () => connect(projectName),
+        onError: (err) => {
+          setSuggestionStatus("failed");
+          setSuggestionError(err.message);
+        },
+      },
+    );
+  }, [isLoading, stylesData, storyBible, isSuggesting]);
+
   if (isLoading) {
     return <RoomShell isLoading loadingText="LOADING STYLES…" />;
   }
@@ -339,7 +364,7 @@ export function StyleRoom() {
   return (
     <RoomShell>
       <RoomHeader
-        kicker="STYLES / VISUAL IDENTITY"
+        kicker="STYLES"
         compact={isCompact}
         onToggle={toggle}
         title="LOOK & FEEL"

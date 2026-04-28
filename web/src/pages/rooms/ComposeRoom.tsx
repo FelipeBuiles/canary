@@ -410,8 +410,8 @@ export function ComposeRoom() {
         />
       )}
 
-      {/* Command palette */}
-      {cmdkOpen && (
+      {/* Command palette: TO DO//reimplement when it makes sense */}
+      {/* {cmdkOpen && (
         <CommandPalette
           onClose={() => setCmdkOpen(false)}
           onSwitchMode={(m) => {
@@ -426,7 +426,7 @@ export function ComposeRoom() {
           onAddBubble={handleAddBubble}
           onAddSfx={handleAddSfx}
         />
-      )}
+      )} */}
 
     </div>
   );

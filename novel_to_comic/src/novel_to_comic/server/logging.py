@@ -53,6 +53,9 @@ def configure_logging() -> None:
 
 def _should_log_request(request: Request, status_code: int, elapsed_ms: float) -> bool:
     path = request.url.path
+    # Suppress expected 404s when the frontend polls for not-yet-generated asset files
+    if status_code == 404 and ("/files/refs/" in path or "/files/plates/" in path):
+        return False
     if status_code >= 400:
         return True
     if path.endswith("/events"):
@@ -60,9 +63,6 @@ def _should_log_request(request: Request, status_code: int, elapsed_ms: float) -
     if path.endswith("/generation-jobs"):
         return False
     if path.endswith("/status"):
-        return False
-    # Suppress expected 404s when the frontend polls for not-yet-generated asset files
-    if status_code == 404 and ("/files/refs/" in path or "/files/plates/" in path):
         return False
     if request.method != "GET" or elapsed_ms >= 1000:
         return True

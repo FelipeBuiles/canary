@@ -61,11 +61,13 @@ models:
 
   # ── OpenAI image models (token-billed) ──────────────────────────────────────
   # Actual cost comes from response.usage tokens; per_image_usd is a pre-call estimate.
+  # The estimate below assumes "auto" quality. Actual cost is token-based and varies
+  # significantly by quality: "low" ≈ $0.02, "auto" ≈ $0.19, "high" ≈ $0.28.
   # Verify current token rates at https://openai.com/api/pricing
   gpt-image-2:
     input_per_m: 5
     output_per_m: 40
-    per_image_usd: 0.04
+    per_image_usd: 0.19
   dall-e-3:
     per_image_usd: 0.04
 

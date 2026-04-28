@@ -52,6 +52,7 @@ class PipelineState(BaseModel):
     created_at: datetime
     stages: dict[str, StageState] = Field(default_factory=dict)
     total_cost_usd: float = 0.0
+    misc_cost_usd: float = 0.0
 
     def model_post_init(self, __context: object) -> None:
         for name in STAGE_NAMES:
@@ -138,7 +139,7 @@ def complete_stage(state: PipelineState, stage: str) -> None:
         s.status = StageStatus.AWAITING_REVIEW
     else:
         s.status = StageStatus.COMPLETE
-    state.total_cost_usd = sum(st.cost_usd for st in state.stages.values())
+    state.total_cost_usd = sum(st.cost_usd for st in state.stages.values()) + state.misc_cost_usd
 
 
 def fail_stage(state: PipelineState, stage: str, error: str) -> None:
@@ -147,7 +148,7 @@ def fail_stage(state: PipelineState, stage: str, error: str) -> None:
     s.status = StageStatus.FAILED
     s.finished_at = datetime.now(timezone.utc)
     s.error = error
-    state.total_cost_usd = sum(st.cost_usd for st in state.stages.values())
+    state.total_cost_usd = sum(st.cost_usd for st in state.stages.values()) + state.misc_cost_usd
 
 
 def approve_stage(state: PipelineState, stage: str) -> None:
@@ -221,3 +222,15 @@ def record_item_failed(state: PipelineState, stage: str, item_id: str) -> None:
     """Record a failed item for later retry."""
     s = state.stages[stage]
     s.items_failed.append(item_id)
+
+
+def record_misc_usage(state: PipelineState, usage: UsageRecord) -> None:
+    """Record cost from a non-stage API call (style samples, cover, etc.).
+
+    Adds the cost to misc_cost_usd and updates total_cost_usd.
+    """
+    from novel_to_comic.usage import calculate_cost
+
+    cost = calculate_cost(usage)
+    state.misc_cost_usd += cost
+    state.total_cost_usd = sum(st.cost_usd for st in state.stages.values()) + state.misc_cost_usd

@@ -420,10 +420,10 @@ export function CastRoom() {
   return (
     <RoomShell>
       <RoomHeader
-        kicker="CAST / CHARACTER & LOCATION REFS"
+        kicker="CAST"
         compact={isCompact}
         onToggle={toggle}
-        title="CASTING CALL"
+        title="CHARACTER & LOCATION REFS"
         lead="Reference sheets and location plates produced by the casting director — each used as the visual anchor for every downstream panel."
         actions={<RerunStageAction project={name} stage="cast" label="Cast" disabled={stageRegenerating} />}
       />

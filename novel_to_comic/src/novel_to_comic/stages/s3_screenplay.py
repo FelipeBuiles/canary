@@ -204,6 +204,8 @@ async def run(
     system_prompt = PROMPT_PATH.read_text()
 
     ids = scene_ids or [s.id for s in story_bible.scenes]
+    if config.dev_mode and not scene_ids:
+        ids = ids[:1]
 
     estimated = 0.0
     for sid in ids:

@@ -77,11 +77,15 @@ async def run(
         return
     plan = load_layout_plan(project_dir)
     panels_by_scene = scene_panel_map(plan)
-    target_scenes = set(scene_ids) if scene_ids else None
+    all_scene_ids = sorted(panels_by_scene.keys())
+    if scene_ids:
+        target_scene_ids = [s for s in all_scene_ids if s in set(scene_ids)]
+    elif config.dev_mode:
+        target_scene_ids = all_scene_ids[:1]
+    else:
+        target_scene_ids = all_scene_ids
     planned_panels = []
-    for scene_id in sorted(panels_by_scene.keys()):
-        if target_scenes and scene_id not in target_scenes:
-            continue
+    for scene_id in target_scene_ids:
         scene_panels = panels_by_scene[scene_id]
         for index, panel in enumerate(scene_panels):
             prev_panel = scene_panels[index - 1] if index > 0 else None

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { computeScale } from "./coordinates";
 
 interface ScaledContainerProps {
@@ -16,6 +16,7 @@ export function ScaledContainer({ children, zoom = 1, onZoomChange, onScaleChang
   const containerRef = useRef<HTMLDivElement>(null);
   const [fitScale, setFitScale] = useState(0);
   const panRef = useRef<{ startX: number; startY: number; left: number; top: number } | null>(null);
+  const pendingScrollRef = useRef<{ left: number; top: number } | null>(null);
 
   const compute = useCallback(() => {
     const el = containerRef.current;
@@ -56,18 +57,22 @@ export function ScaledContainer({ children, zoom = 1, onZoomChange, onScaleChang
       const nextLeft = xInContent * ratio - (e.clientX - rect.left);
       const nextTop = yInContent * ratio - (e.clientY - rect.top);
 
+      pendingScrollRef.current = { left: nextLeft, top: nextTop };
       onZoomChange(nextZoom);
-      requestAnimationFrame(() => {
-        const current = containerRef.current;
-        if (!current) return;
-        current.scrollLeft = nextLeft;
-        current.scrollTop = nextTop;
-      });
     };
 
     el.addEventListener("wheel", handleWheel, { passive: false });
     return () => el.removeEventListener("wheel", handleWheel);
   }, [fitScale, onZoomChange, zoom]);
+
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    const scroll = pendingScrollRef.current;
+    if (!el || !scroll) return;
+    pendingScrollRef.current = null;
+    el.scrollLeft = scroll.left;
+    el.scrollTop = scroll.top;
+  }, [zoom]);
 
   if (scale === 0) {
     return <div ref={containerRef} className="w-full h-full" />;

@@ -119,15 +119,21 @@ async def _suggest_styles(config: Config, bible, existing_labels: list[str] | No
 
 async def _generate_style_sample(config, bible, project_dir, sample_path):
     from novel_to_comic.clients import flux
+    from novel_to_comic.usage import calculate_cost
     prompt = build_style_sample_prompt(config, bible)
     meta = _style_sample_meta(config, prompt)
 
     sample_path.parent.mkdir(exist_ok=True)
-    await flux.generate_image(config=config, prompt=prompt, output_path=sample_path)
+    result = await flux.generate_image(config=config, prompt=prompt, output_path=sample_path)
+    if result.usage:
+        meta["cost_usd"] = round(calculate_cost(result.usage), 6)
+        meta["usage"] = result.usage.model_dump()
     _sample_meta_path(sample_path).write_text(json.dumps(meta, indent=2, sort_keys=True))
+    return result
 
 
 async def _generate_style_samples_parallel(config, bible, project_dir, indices, suggestions):
+    from novel_to_comic.state import load_state, record_misc_usage, save_state
     samples_dir = project_dir / "samples"
     samples_dir.mkdir(exist_ok=True)
 
@@ -136,7 +142,11 @@ async def _generate_style_samples_parallel(config, bible, project_dir, indices, 
         template = s.get("template", config.style_template)
         sample_config = config.model_copy(update={"style_template": template})
         sample_path = samples_dir / f"style_{idx}.png"
-        await _generate_style_sample(sample_config, bible, project_dir, sample_path)
+        result = await _generate_style_sample(sample_config, bible, project_dir, sample_path)
+        if result.usage:
+            state = load_state(project_dir)
+            record_misc_usage(state, result.usage)
+            save_state(state, project_dir)
 
     if config.uses_gemini_image_provider():
         for i in indices:
@@ -266,7 +276,12 @@ async def generate_style_samples(
             sample_config=sample_config,
             sample_path=sample_path,
         ) -> None:
-            await _generate_style_sample(sample_config, bible, project_dir, sample_path)
+            result = await _generate_style_sample(sample_config, bible, project_dir, sample_path)
+            if result.usage:
+                from novel_to_comic.state import load_state, record_misc_usage, save_state
+                st = load_state(project_dir)
+                record_misc_usage(st, result.usage)
+                save_state(st, project_dir)
 
         job = enqueue_generation_job(
             request.app,

@@ -223,7 +223,7 @@ export function StoryBibleRoom() {
   return (
     <RoomShell>
       <RoomHeader
-        kicker="EXTRACT / STORY BIBLE"
+        kicker="EXTRACT"
         compact={isCompact}
         onToggle={toggle}
         title={bible.title}

@@ -25,14 +25,7 @@ function formatBytes(bytes: number): string {
 const PANEL_COST_USD = 0.07;
 type ImageProvider = NonNullable<ConfigOverrides["image_provider"]>;
 
-const DEFAULT_IMAGE_PROVIDER: ImageProvider = "gemini";
 const DEFAULT_IMAGE_MODEL = "gemini-3-pro-image-preview";
-const IMAGE_PROVIDER_OPTIONS: Array<{ value: ImageProvider; label: string }> = [
-  { value: "gemini", label: "Gemini" },
-  { value: "openai", label: "OpenAI" },
-  { value: "openrouter", label: "OpenRouter" },
-  { value: "together", label: "Together AI" },
-];
 const IMAGE_MODEL_OPTIONS: Array<{ value: string; label: string; provider: ImageProvider }> = [
   { value: DEFAULT_IMAGE_MODEL, label: "Gemini 3 Pro Image", provider: "gemini" },
   { value: "gemini-2.5-flash-image", label: "Gemini 2.5 Flash Image", provider: "gemini" },
@@ -44,12 +37,14 @@ const IMAGE_MODEL_OPTIONS: Array<{ value: string; label: string; provider: Image
   { value: "black-forest-labs/FLUX.2-pro", label: "FLUX.2 Pro", provider: "together" },
   { value: "openai/gpt-image-1.5", label: "OpenAI GPT Image 1.5 via OpenRouter", provider: "openrouter" },
 ];
-const DEFAULT_MODEL_BY_PROVIDER: Record<ImageProvider, string> = {
-  gemini: DEFAULT_IMAGE_MODEL,
-  openai: "gpt-image-1.5",
-  openrouter: "openai/gpt-image-1.5",
-  together: "black-forest-labs/FLUX.2-pro",
-};
+
+function _defaultProviderForModel(model: string): ImageProvider {
+  const value = model.trim().toLowerCase();
+  if (value.startsWith("gpt-image-") || value === "chatgpt-image-latest") return "openai";
+  if (value.includes("/")) return "together";
+  return "gemini";
+}
+
 type RenderPreset = "fast_draft" | "balanced" | "high_quality";
 
 export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepProps) {
@@ -59,9 +54,8 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
   const [targetLanguage, setTargetLanguage] = useState<LanguageCode>(language);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showExpert, setShowExpert] = useState(false);
+  const [devMode, setDevMode] = useState(false);
   const [renderPreset, setRenderPreset] = useState<RenderPreset>("balanced");
-  const [theme, setTheme] = useState("auto");
-  const [imageProvider, setImageProvider] = useState<ImageProvider>(DEFAULT_IMAGE_PROVIDER);
   const [imageModel, setImageModel] = useState(DEFAULT_IMAGE_MODEL);
   const [imageWidth, setImageWidth] = useState(1024);
   const [imageHeight, setImageHeight] = useState(1024);
@@ -74,22 +68,12 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
 
   const ext = file ? "." + file.name.split(".").pop()?.toLowerCase() : "";
   const extOk = !file || ACCEPTED.includes(ext);
-  const isTogetherProvider = imageProvider === "together";
-  const isOpenAIProvider = imageProvider === "openai";
-  const isOpenRouterProvider = imageProvider === "openrouter";
-
-  function handleProviderChange(provider: ImageProvider) {
-    setImageProvider(provider);
-    const currentOption = IMAGE_MODEL_OPTIONS.find((option) => option.value === imageModel);
-    if (currentOption?.provider !== provider) {
-      setImageModel(DEFAULT_MODEL_BY_PROVIDER[provider]);
-    }
-  }
+  const derivedProvider = _defaultProviderForModel(imageModel);
+  const isTogetherProvider = derivedProvider === "together";
+  const isOpenAIProvider = derivedProvider === "openai";
 
   function handleModelChange(model: string) {
     setImageModel(model);
-    const option = IMAGE_MODEL_OPTIONS.find((item) => item.value === model);
-    if (option) setImageProvider(option.provider);
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -98,15 +82,15 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
     if (!file || !name.trim() || !extOk || !selectedImageModel) return;
     const overrides: Partial<ConfigOverrides> = { target_language: targetLanguage };
 
-    // Persist provider/model choice if changed from default.
-    if (imageProvider !== DEFAULT_IMAGE_PROVIDER) overrides.image_provider = imageProvider;
+    // Derive provider from model selection.
+    const provider = _defaultProviderForModel(selectedImageModel);
+    overrides.image_provider = provider;
     if (selectedImageModel !== DEFAULT_IMAGE_MODEL) overrides.image_model = selectedImageModel;
 
-    // Presets: keep common flows safe and avoid exposing low-level footguns by default.
-    // Map UI preset → backend quality_preset so text model selection is also affected.
-    if (renderPreset === "fast_draft") {
-      overrides.quality_preset = "fast";
+    // Dev mode: force fast preset and dev overrides.
+    if (devMode) {
       overrides.dev_mode = true;
+      overrides.quality_preset = "fast";
       overrides.dev_image_scale = 0.6;
       overrides.dev_image_steps = 8;
       overrides.dev_image_concurrency = 5;
@@ -118,33 +102,35 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
       if (isOpenAIProvider) {
         overrides.image_quality = "low";
       }
-    } else if (renderPreset === "high_quality") {
-      overrides.quality_preset = "quality";
-      overrides.dev_mode = false;
-      overrides.max_panels_per_scene = 10;
-      overrides.max_panels_per_page = 5;
-      if (isTogetherProvider) {
-        overrides.image_steps = 36;
-      }
-      if (isOpenAIProvider) {
-        overrides.image_quality = "high";
-      }
     } else {
-      overrides.quality_preset = "balanced";
-      overrides.dev_mode = false;
-      overrides.max_panels_per_scene = 8;
-      overrides.max_panels_per_page = 6;
-      if (isTogetherProvider) {
-        overrides.image_steps = 24;
-      }
-      if (isOpenAIProvider) {
-        overrides.image_quality = "medium";
+      // Normal quality preset handling.
+      if (renderPreset === "high_quality") {
+        overrides.quality_preset = "quality";
+        overrides.dev_mode = false;
+        overrides.max_panels_per_scene = 10;
+        overrides.max_panels_per_page = 5;
+        if (isTogetherProvider) {
+          overrides.image_steps = 36;
+        }
+        if (isOpenAIProvider) {
+          overrides.image_quality = "high";
+        }
+      } else {
+        overrides.quality_preset = "balanced";
+        overrides.dev_mode = false;
+        overrides.max_panels_per_scene = 8;
+        overrides.max_panels_per_page = 6;
+        if (isTogetherProvider) {
+          overrides.image_steps = 24;
+        }
+        if (isOpenAIProvider) {
+          overrides.image_quality = "medium";
+        }
       }
     }
 
     // Advanced manual overrides are opt-in and override presets.
     if (showAdvanced) {
-      if (theme !== "auto") overrides.comic_theme = theme;
       if (styleTemplate.trim()) overrides.style_template = styleTemplate.trim();
       if (showExpert) {
         if (imageWidth !== 1024) overrides.image_width = imageWidth;
@@ -268,6 +254,24 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
               {t("Controls generated dialogue, narration, style suggestions, and prompt artifacts.")}
             </p>
           </div>
+
+          {/* Dev mode toggle */}
+          <label className="flex items-center gap-3 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={devMode}
+              onChange={(e) => setDevMode(e.target.checked)}
+              className="h-4 w-4 accent-hero-red"
+            />
+            <div>
+              <div className="font-display text-[0.9rem] font-bold uppercase leading-none tracking-[-0.02em] text-ink-black">
+                Dev mode
+              </div>
+              <div className="mt-0.5 font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/55">
+                Process only the first scene for rapid iteration. Forces fast quality preset.
+              </div>
+            </div>
+          </label>
         </div>
 
         {/* Advanced config disclosure */}
@@ -308,70 +312,41 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
         {showAdvanced && (
           <div className="mt-4 space-y-3 border-t-[2px] border-ink-black pt-4">
             <div className="grid gap-3 sm:grid-cols-2">
-              <div>
+              <div className="sm:col-span-2">
                 <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-                  {t("COMIC THEME")}
+                  {t("IMAGE MODEL")}
                 </label>
                 <select
-                  name="comicTheme"
-                  value={theme}
-                  onChange={(e) => setTheme(e.target.value)}
+                  name="imageModel"
+                  value={IMAGE_MODEL_OPTIONS.some(o => o.value === imageModel) ? imageModel : "__custom__"}
+                  onChange={(e) => {
+                    if (e.target.value !== "__custom__") {
+                      handleModelChange(e.target.value);
+                    }
+                  }}
                   className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
                 >
-                  <option value="auto">auto</option>
-                  <option value="default">default</option>
-                  <option value="noir">noir</option>
-                  <option value="manga">manga</option>
-                  <option value="vintage">vintage</option>
-                  <option value="painted">painted</option>
-                </select>
-              </div>
-              <div>
-                <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-                  IMAGE PROVIDER
-                </label>
-                <select
-                  name="imageProvider"
-                  value={imageProvider}
-                  onChange={(e) => handleProviderChange(e.target.value as ImageProvider)}
-                  className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
-                >
-                  {IMAGE_PROVIDER_OPTIONS.map((option) => (
+                  {IMAGE_MODEL_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
                     </option>
                   ))}
+                  {!IMAGE_MODEL_OPTIONS.some(o => o.value === imageModel) && (
+                    <option value="__custom__">Custom: {imageModel}</option>
+                  )}
+                  <option value="__custom__">Custom model ID...</option>
                 </select>
-              </div>
-              <div>
-                <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-                  {t("IMAGE MODEL")}
-                </label>
-                {isOpenRouterProvider ? (
+                {!IMAGE_MODEL_OPTIONS.some(o => o.value === imageModel) && (
                   <input
-                    name="imageModel"
                     type="text"
                     value={imageModel}
-                    onChange={(e) => setImageModel(e.target.value)}
-                    placeholder="black-forest-labs/flux-1-dev"
-                    className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
-                  />
-                ) : (
-                  <select
-                    name="imageModel"
-                    value={imageModel}
                     onChange={(e) => handleModelChange(e.target.value)}
-                    className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
-                  >
-                    {IMAGE_MODEL_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                    placeholder="e.g. black-forest-labs/flux-1-dev"
+                    className="mt-2 w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
+                  />
                 )}
                 <p className="mt-1 text-[0.72rem] leading-relaxed text-ink-black/45">
-                  Provider and model are persisted to the project config and used by DRAW.
+                  Provider ({derivedProvider}) is auto-derived from model selection.
                 </p>
               </div>
             </div>
@@ -381,16 +356,19 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
               </label>
               <select
                 name="renderPreset"
-                value={renderPreset}
+                value={devMode ? "fast_draft" : renderPreset}
                 onChange={(e) => setRenderPreset(e.target.value as RenderPreset)}
-                className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
+                disabled={devMode}
+                className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <option value="fast_draft">Fast draft</option>
+                <option value="fast_draft">Fast draft{devMode ? " (locked — dev mode)" : ""}</option>
                 <option value="balanced">Balanced (recommended)</option>
                 <option value="high_quality">High quality</option>
               </select>
               <p className="mt-1 text-[0.72rem] leading-relaxed text-ink-black/45">
-                Fast draft lowers cost/latency. Balanced is safe default. High quality increases runtime and spend.
+                {devMode
+                  ? "Locked to fast in dev mode."
+                  : "Fast draft lowers cost/latency. Balanced is safe default. High quality increases runtime and spend."}
               </p>
             </div>
             <div>
