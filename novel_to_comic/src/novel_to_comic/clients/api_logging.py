@@ -275,7 +275,7 @@ def log_call_end(
         for k, v in safe.items():
             parts.append(f"{k}={v}")
     if error is not None:
-        parts.append(f"error={error.__class__.__name__}: {_truncate(str(error), 200)}")
+        parts.append(f"error={error.__class__.__name__}: {_truncate(str(error), 500)}")
 
     level = logging.INFO if ok else logging.ERROR
     icon = "[bold green]✓ DONE[/]" if ok else "[bold red]✗ FAIL[/]"

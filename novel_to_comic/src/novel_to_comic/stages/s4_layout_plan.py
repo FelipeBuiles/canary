@@ -764,6 +764,8 @@ async def run(
     emit = on_event or _NOOP
     story_bible = _load_story_bible(project_dir)
     ids = scene_ids or [scene.id for scene in story_bible.scenes]
+    if config.dev_mode and not scene_ids:
+        ids = ids[:1]
     layout_plan_dir = project_dir / "plan"
     layout_plan_path = layout_plan_dir / "layout_plan.json"
 

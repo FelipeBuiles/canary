@@ -172,7 +172,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           failedCount: 0,
           needsApproval: false,
           detail: activeStyle ? activeStyle.label : null,
-          costUsd: 0,
+          costUsd: status?.misc_cost_usd ?? 0,
           estimatedCostUsd: 0,
         });
       }

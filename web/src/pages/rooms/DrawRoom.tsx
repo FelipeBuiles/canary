@@ -240,7 +240,7 @@ export function DrawRoom() {
   return (
     <RoomShell>
       <RoomHeader
-        kicker="DRAW / PANEL GALLERY"
+        kicker="DRAW"
         compact={isCompact}
         onToggle={toggle}
         title="PANEL GALLERY"

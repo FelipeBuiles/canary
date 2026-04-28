@@ -113,9 +113,9 @@ _STAGE_OUTPUTS: dict[str, str] = {
     "cast": "refs",
     "adapt": "screenplays",
     "plan": "plan",
-    "storyboard": "panels",
+    "storyboard": "storyboard",
     "direct": "direct",
-    "draw": "images",
+    "draw": "draw",
     "compose": "exports",
 }
 

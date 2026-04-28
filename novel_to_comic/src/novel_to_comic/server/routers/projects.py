@@ -147,6 +147,7 @@ def _cover_prompt(config: Config, bible: StoryBible) -> str:
 
 async def _generate_project_cover(config: Config, project_dir: Path) -> Path:
     from novel_to_comic.clients import flux
+    from novel_to_comic.state import load_state, record_misc_usage, save_state
 
     bible_path = project_dir / "story_bible.json"
     if not bible_path.exists():
@@ -155,7 +156,7 @@ async def _generate_project_cover(config: Config, project_dir: Path) -> Path:
     bible = StoryBible.model_validate_json(bible_path.read_text())
     output_path = _cover_path(project_dir)
     style_ref = _find_style_ref(project_dir, config.style_template)
-    await flux.generate_image(
+    result = await flux.generate_image(
         config=config,
         prompt=_cover_prompt(config, bible),
         output_path=output_path,
@@ -164,6 +165,10 @@ async def _generate_project_cover(config: Config, project_dir: Path) -> Path:
         reference_image_path=style_ref,
         ref_type="style",
     )
+    if result.usage:
+        state = load_state(project_dir)
+        record_misc_usage(state, result.usage)
+        save_state(state, project_dir)
     return output_path
 
 
@@ -214,6 +219,15 @@ async def create_project(
         except json.JSONDecodeError:
             raise HTTPException(400, "Invalid JSON in config_overrides")
     config = Config(**overrides)
+    # Auto-derive provider from model when not explicitly supplied.
+    if "image_provider" not in overrides:
+        model = config.image_model.strip().lower()
+        if model.startswith("gpt-image-") or model == "chatgpt-image-latest":
+            config.image_provider = "openai"
+        elif "/" in model:
+            config.image_provider = "together"
+        else:
+            config.image_provider = "gemini"
     save_config(config, project_dir)
 
     # Create state
@@ -279,6 +293,7 @@ def project_status(request: Request, project=Depends(get_project)):
         "project_name": state.project_name,
         "created_at": state.created_at.isoformat(),
         "total_cost_usd": state.total_cost_usd,
+        "misc_cost_usd": state.misc_cost_usd,
         "total_estimated_cost_usd": total_estimated,
         "is_running": _is_project_running(project_dir.name, request),
         "has_cover": _cover_path(project_dir).exists(),

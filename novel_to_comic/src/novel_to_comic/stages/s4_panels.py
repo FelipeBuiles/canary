@@ -37,6 +37,8 @@ async def run(
     plan = load_layout_plan(project_dir)
     panels_by_scene = scene_panel_map(plan)
     target_scene_ids = scene_ids or list(panels_by_scene.keys())
+    if config.dev_mode and not scene_ids:
+        target_scene_ids = target_scene_ids[:1]
 
     begin_stage(state, "storyboard", total=len(target_scene_ids))
     emit({"type": "stage_begin", "stage": "storyboard", "total": len(target_scene_ids)})

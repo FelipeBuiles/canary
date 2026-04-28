@@ -347,14 +347,14 @@ async def run(
         plan = load_layout_plan(project_dir)
         panels_by_scene = scene_panel_map(plan)
 
-    target_scenes = set(scene_ids) if scene_ids else None
     target_panels = set(panel_numbers) if panel_numbers else None
     if prompts_dir.exists():
-        for scene_dir in sorted(prompts_dir.iterdir()):
-            if not scene_dir.is_dir():
-                continue
-            if target_scenes and scene_dir.name not in target_scenes:
-                continue
+        all_scene_dirs = sorted(d for d in prompts_dir.iterdir() if d.is_dir())
+        if scene_ids:
+            all_scene_dirs = [d for d in all_scene_dirs if d.name in set(scene_ids)]
+        elif config.dev_mode:
+            all_scene_dirs = all_scene_dirs[:1]
+        for scene_dir in all_scene_dirs:
             for pf in sorted(scene_dir.glob("panel_*.json")):
                 if target_panels:
                     try:
@@ -413,7 +413,7 @@ async def run(
             continue
         panel_events[(pf.parent.name, panel_num)] = asyncio.Event()
 
-    estimated = estimate_image_cost(config.effective_image_model(), len(prompt_files))
+    estimated = estimate_image_cost(config.effective_image_model(), len(prompt_files), quality=getattr(config, "image_quality", None))
     begin_stage(state, "draw", total=len(prompt_files), estimated_cost_usd=estimated)
     emit({"type": "stage_begin", "stage": "draw", "total": len(prompt_files)})
     emit({"type": "log", "stage": "draw", "level": "info",

@@ -69,6 +69,7 @@ export interface ProjectStatus {
   project_name: string;
   created_at: string;
   total_cost_usd: number;
+  misc_cost_usd: number;
   total_estimated_cost_usd: number;
   is_running: boolean;
   has_cover: boolean;

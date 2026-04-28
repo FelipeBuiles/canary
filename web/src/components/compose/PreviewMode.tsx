@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ComicPage, PageSummary } from "../../types/api";
 import { Button } from "../ui/Button";
 import { pagePreviewUrl } from "../../api/pages";
@@ -222,6 +222,7 @@ function SpreadView({
   const [fitScale, setFitScale] = useState(0.2);
   const [zoom, setZoom] = useState(1);
   const panRef = useRef<{ startX: number; startY: number; left: number; top: number } | null>(null);
+  const pendingScrollRef = useRef<{ left: number; top: number } | null>(null);
 
   const pageCount = leftSummary && rightSummary ? 2 : 1;
   const nativeW = PAGE_W * pageCount;
@@ -247,14 +248,33 @@ function SpreadView({
     const el = containerRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
       const factor = e.deltaY < 0 ? 1.1 : 0.9;
-      setZoom((z) => parseFloat(Math.max(0.5, Math.min(3, z * factor)).toFixed(3)));
+      const nextZoom = parseFloat(Math.max(0.5, Math.min(3, zoom * factor)).toFixed(3));
+      if (nextZoom === zoom) return;
+
+      const rect = el.getBoundingClientRect();
+      const xInContent = e.clientX - rect.left + el.scrollLeft;
+      const yInContent = e.clientY - rect.top + el.scrollTop;
+      const ratio = nextZoom / zoom;
+      const nextLeft = xInContent * ratio - (e.clientX - rect.left);
+      const nextTop = yInContent * ratio - (e.clientY - rect.top);
+
+      pendingScrollRef.current = { left: nextLeft, top: nextTop };
+      setZoom(nextZoom);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, []);
+  }, [zoom]);
+
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    const scroll = pendingScrollRef.current;
+    if (!el || !scroll) return;
+    pendingScrollRef.current = null;
+    el.scrollLeft = scroll.left;
+    el.scrollTop = scroll.top;
+  }, [zoom]);
 
   const scale = fitScale * zoom;
   const scaledW = Math.round(nativeW * scale);
