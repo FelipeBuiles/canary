@@ -12,12 +12,13 @@ from __future__ import annotations
 import datetime
 import logging
 import re
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ _STALENESS_DAYS = 30
 class UsageRecord(BaseModel, frozen=True):
     """Immutable record of one API call's resource consumption."""
 
+    call_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     provider: str       # "gemini" | "anthropic" | "openai" | "openrouter"
     model: str
     operation: str      # "text" | "image"
@@ -120,6 +122,42 @@ def calculate_cost(record: UsageRecord) -> float:
     )
 
 
+def usage_has_billable_activity(record: UsageRecord) -> bool:
+    return record.input_tokens > 0 or record.output_tokens > 0 or record.image_count > 0
+
+
+def estimate_token_count(value: str | bytes | int) -> int:
+    if isinstance(value, bytes):
+        return max(1, len(value) // 4)
+    if isinstance(value, int):
+        return max(0, value // 4)
+    return _count_tokens_approx(value)
+
+
+def estimate_text_usage(
+    *,
+    provider: str,
+    model: str,
+    system_prompt: str,
+    user_content: str | bytes,
+    output_text: str,
+    call_id: str | None = None,
+) -> UsageRecord:
+    """Build a usage record when a text provider omits token usage.
+
+    Input uses the actual payload sent. Output uses the actual returned text,
+    which is more reliable than a pre-call max-token reservation.
+    """
+    return UsageRecord(
+        call_id=call_id or uuid.uuid4().hex,
+        provider=provider,
+        model=model,
+        operation="text",
+        input_tokens=estimate_token_count(system_prompt) + estimate_token_count(user_content),
+        output_tokens=estimate_token_count(output_text),
+    )
+
+
 def _count_tokens_approx(text: str) -> int:
     """Estimate BPE token count using word and punctuation boundaries.
 
@@ -145,11 +183,8 @@ def estimate_text_cost(model: str, input_text: str | int, output_chars: int = 0)
     if pricing is None:
         _warn_unknown_model(model)
         return 0.0
-    if isinstance(input_text, str):
-        input_tokens = _count_tokens_approx(input_text)
-    else:
-        input_tokens = input_text // 4
-    output_tokens = output_chars // 4
+    input_tokens = estimate_token_count(input_text)
+    output_tokens = estimate_token_count(output_chars)
     return (
         input_tokens / 1_000_000 * pricing.input_per_m
         + output_tokens / 1_000_000 * pricing.output_per_m

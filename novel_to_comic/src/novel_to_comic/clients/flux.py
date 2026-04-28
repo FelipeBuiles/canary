@@ -271,7 +271,13 @@ async def _generate_gemini_image(
             config=gtypes.GenerateContentConfig(response_modalities=["IMAGE", "TEXT"]),
         )
 
-        for part in response.candidates[0].content.parts:
+        candidates = getattr(response, "candidates", None) or []
+        if not candidates:
+            text = getattr(response, "text", "no text")
+            raise ValueError(f"No candidates in Gemini response. Model said: {text}")
+        content = getattr(candidates[0], "content", None)
+        parts = getattr(content, "parts", None) or []
+        for part in parts:
             if hasattr(part, "inline_data") and part.inline_data:
                 raw = part.inline_data.data
                 image_bytes = base64.b64decode(raw) if isinstance(raw, str) else bytes(raw)

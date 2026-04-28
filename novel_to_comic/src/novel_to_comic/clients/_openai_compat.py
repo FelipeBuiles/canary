@@ -13,14 +13,15 @@ from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from novel_to_comic.clients.api_logging import log_call_end, log_call_start, payload_summary
-from novel_to_comic.usage import ApiResult, UsageRecord
+from novel_to_comic.usage import ApiResult, UsageRecord, estimate_text_usage
 
 
-def _extract_usage(response, provider: str, model: str) -> UsageRecord | None:
+def _extract_usage(response, provider: str, model: str, call_id: str) -> UsageRecord | None:
     usage = getattr(response, "usage", None)
     if usage is None:
         return None
     return UsageRecord(
+        call_id=call_id,
         provider=provider,
         model=model,
         operation="text",
@@ -41,18 +42,24 @@ async def generate_json(
     temperature: float = 0.7,
     max_output_tokens: int | None = None,
 ) -> ApiResult[dict]:
+    # OpenAI requires "json" to appear somewhere in the messages when using json_object format.
+    effective_system = (
+        system_prompt
+        if "json" in system_prompt.lower() or "json" in user_content.lower()
+        else system_prompt + "\n\nRespond with valid JSON."
+    )
     call_id, started = log_call_start(
         logger,
         provider=provider,
         operation="generate",
         task="json",
         params={"model": model},
-        payload=payload_summary(system_prompt=system_prompt, user_content=user_content),
+        payload=payload_summary(system_prompt=effective_system, user_content=user_content),
     )
     kwargs: dict = {
         "model": model,
         "messages": [
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": effective_system},
             {"role": "user", "content": user_content},
         ],
         "temperature": temperature,
@@ -79,7 +86,15 @@ async def generate_json(
             ok=True,
             result={"response_chars": len(text), "response_type": type(parsed).__name__},
         )
-        return ApiResult(value=parsed, usage=_extract_usage(response, provider, model))
+        usage = _extract_usage(response, provider, model, call_id) or estimate_text_usage(
+            provider=provider,
+            model=model,
+            system_prompt=system_prompt,
+            user_content=user_content,
+            output_text=text,
+            call_id=call_id,
+        )
+        return ApiResult(value=parsed, usage=usage)
     except Exception as e:
         log_call_end(
             logger,
@@ -135,7 +150,15 @@ async def generate_text(
             ok=True,
             result={"response_chars": len(text)},
         )
-        return ApiResult(value=text, usage=_extract_usage(response, provider, model))
+        usage = _extract_usage(response, provider, model, call_id) or estimate_text_usage(
+            provider=provider,
+            model=model,
+            system_prompt=system_prompt,
+            user_content=user_content,
+            output_text=text,
+            call_id=call_id,
+        )
+        return ApiResult(value=text, usage=usage)
     except Exception as e:
         log_call_end(
             logger,

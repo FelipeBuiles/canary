@@ -1,0 +1,325 @@
+"""Credit reservation, model usage debits, and release against the Supabase ledger."""
+
+from __future__ import annotations
+
+import math
+import os
+from pathlib import Path
+
+from fastapi import HTTPException
+from supabase import Client
+
+from novel_to_comic.config import Config
+from novel_to_comic.state import PipelineState
+from novel_to_comic.usage import UsageRecord, calculate_cost, estimate_image_cost, estimate_text_cost, usage_has_billable_activity
+
+STAGE_MINIMUM_RESERVATION_CREDITS: dict[str, int] = {
+    "extract": 25,
+    "cast": 25,
+    "adapt": 25,
+    "plan": 25,
+    "draw": 25,
+}
+
+
+def credits_per_provider_usd() -> float:
+    """Public credits charged per $1 of raw provider cost before markup."""
+    return float(os.environ.get("PULP_CREDITS_PER_PROVIDER_USD", "100"))
+
+
+def model_cost_markup() -> float:
+    """Single markup multiplier for model-provider cost to public credits."""
+    return float(os.environ.get("PULP_MODEL_COST_MARKUP", "1.0"))
+
+
+def reservation_buffer() -> float:
+    """Temporary authorization cushion. This is not part of final billing."""
+    return float(os.environ.get("PULP_RESERVATION_BUFFER", "1.25"))
+
+
+def provider_usd_to_credits(cost_usd: float) -> int:
+    return math.ceil(cost_usd * credits_per_provider_usd() * model_cost_markup())
+
+
+def usage_to_credit_debit(usage: UsageRecord) -> tuple[int, float]:
+    """Return (credits, raw provider USD) for one model usage record.
+
+    This is the only place where provider USD is converted to public credits.
+    Keep purchase package math separate so margin is not applied twice.
+    """
+    cost_usd = calculate_cost(usage)
+    credits = provider_usd_to_credits(cost_usd)
+    if credits <= 0 and usage_has_billable_activity(usage):
+        credits = 1
+    return credits, cost_usd
+
+
+def estimate_stage_credit_reservation(
+    config: Config,
+    project_dir: Path,
+    state: PipelineState,
+    stage: str,
+) -> int:
+    """Estimate public credits to reserve for a stage from current project inputs."""
+    cost_usd = estimate_stage_provider_cost_usd(config, project_dir, state, stage)
+    base_credits = provider_usd_to_credits(cost_usd)
+    if base_credits <= 0:
+        return 0
+    minimum = STAGE_MINIMUM_RESERVATION_CREDITS.get(stage, 0)
+    return max(minimum, math.ceil(base_credits * reservation_buffer()))
+
+
+def estimate_stage_provider_cost_usd(
+    config: Config,
+    project_dir: Path,
+    state: PipelineState,
+    stage: str,
+) -> float:
+    if stage == "extract":
+        return _estimate_extract_cost(config, project_dir, state)
+    if stage == "cast":
+        return _estimate_cast_cost(config, project_dir)
+    if stage == "adapt":
+        return _estimate_adapt_cost(config, project_dir)
+    if stage == "plan":
+        return _estimate_plan_cost(config, project_dir)
+    if stage == "draw":
+        return _estimate_draw_cost(config, project_dir)
+    return 0.0
+
+
+def _safe_text(path: Path, default: str = "") -> str:
+    try:
+        return path.read_text()
+    except Exception:
+        return default
+
+
+def _estimate_extract_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
+    from novel_to_comic.stages.s1_extract import PROMPT_PATH
+
+    novel_path = Path(state.novel_path)
+    if not novel_path.is_absolute():
+        novel_path = project_dir / novel_path
+    try:
+        raw = novel_path.read_bytes()
+    except Exception:
+        raw = b""
+    try:
+        novel_text = raw.decode("utf-8")
+        input_payload: str | int = _safe_text(PROMPT_PATH) + "\n" + novel_text
+    except UnicodeDecodeError:
+        input_payload = len(raw)
+    return estimate_text_cost(
+        config.effective_extraction_model(),
+        input_payload,
+        output_chars=65536 * 4,
+    )
+
+
+def _load_json_model(path: Path, model):
+    try:
+        return model.model_validate_json(path.read_text())
+    except Exception:
+        return None
+
+
+def _estimate_cast_cost(config: Config, project_dir: Path) -> float:
+    from novel_to_comic.models.story_bible import StoryBible
+
+    story_bible = _load_json_model(project_dir / "story_bible.json", StoryBible)
+    if story_bible is None:
+        return 0.0
+    missing_refs = sum(
+        1 for char in story_bible.characters
+        if not (project_dir / "refs" / char.id / "sheet.png").exists()
+    )
+    missing_plates = sum(
+        1 for loc in story_bible.locations
+        if not (project_dir / "plates" / f"{loc.id}.png").exists()
+    )
+    return estimate_image_cost(
+        config.effective_image_model(),
+        missing_refs + missing_plates,
+        quality=getattr(config, "image_quality", None),
+    )
+
+
+def _estimate_adapt_cost(config: Config, project_dir: Path) -> float:
+    from novel_to_comic.stages.s3_screenplay import PROMPT_PATH
+    from novel_to_comic.models.story_bible import StoryBible
+
+    story_bible = _load_json_model(project_dir / "story_bible.json", StoryBible)
+    if story_bible is None:
+        return 0.0
+    system_prompt = _safe_text(PROMPT_PATH)
+    total = 0.0
+    for scene in story_bible.scenes:
+        if (project_dir / "screenplays" / f"{scene.id}.json").exists():
+            continue
+        scene_text = _safe_text(project_dir / "scenes" / f"{scene.id}.txt", "x" * 8000)
+        total += estimate_text_cost(
+            config.effective_screenplay_model(),
+            system_prompt + "\n" + scene_text,
+            output_chars=12000,
+        )
+    return total
+
+
+def _estimate_plan_cost(config: Config, project_dir: Path) -> float:
+    from novel_to_comic.models.story_bible import StoryBible
+    from novel_to_comic.stages.s4_layout_plan import _PLAN_SCENE_SYSTEM
+
+    story_bible = _load_json_model(project_dir / "story_bible.json", StoryBible)
+    if story_bible is None:
+        return 0.0
+    total = 0.0
+    for scene in story_bible.scenes:
+        sp_path = project_dir / "screenplays" / f"{scene.id}.json"
+        if not sp_path.exists():
+            continue
+        sp_text = _safe_text(sp_path, "x" * 4000)
+        total += estimate_text_cost(
+            config.effective_panel_model(),
+            _PLAN_SCENE_SYSTEM + "\n" + sp_text,
+            output_chars=8000,
+        )
+    return total
+
+
+def _estimate_draw_cost(config: Config, project_dir: Path) -> float:
+    prompts_dir = project_dir / "direct"
+    if not prompts_dir.exists():
+        return 0.0
+    count = 0
+    for prompt_path in prompts_dir.glob("*/panel_*.json"):
+        try:
+            scene_id = prompt_path.parent.name
+            panel_number = int(prompt_path.stem.split("_")[1])
+        except (IndexError, ValueError):
+            count += 1
+            continue
+        output_path = project_dir / "draw" / scene_id / f"panel_{panel_number:03d}.png"
+        if not output_path.exists():
+            count += 1
+    return estimate_image_cost(
+        config.effective_image_model(),
+        count,
+        quality=getattr(config, "image_quality", None),
+    )
+
+
+def get_balance_credits(db: Client, user_id: str) -> int:
+    result = (
+        db.table("user_credits")
+        .select("balance_credits")
+        .eq("user_id", user_id)
+        .execute()
+    )
+    return result.data[0]["balance_credits"] if result.data else 0
+
+
+def get_project_id(db: Client, user_id: str, project_name: str) -> str | None:
+    result = (
+        db.table("projects")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("name", project_name)
+        .execute()
+    )
+    return result.data[0]["id"] if result.data else None
+
+
+def reserve_credits(
+    db: Client,
+    user_id: str,
+    project_id: str | None,
+    stage: str,
+    amount_credits: int,
+) -> str | None:
+    """Atomically reserve credits and return the reserved ledger row id."""
+    if amount_credits <= 0:
+        return None
+    result = (
+        db.rpc(
+            "reserve_stage_credits",
+            {
+                "p_user_id": user_id,
+                "p_project_id": project_id,
+                "p_stage": stage,
+                "p_amount_credits": amount_credits,
+            },
+        )
+        .execute()
+    )
+    reservation_id = result.data
+    if not reservation_id:
+        balance = get_balance_credits(db, user_id)
+        raise HTTPException(
+            402,
+            f"Insufficient credits — {balance} available, {amount_credits} required for '{stage}'",
+        )
+    return str(reservation_id)
+
+
+def debit_model_usage(
+    db: Client,
+    user_id: str,
+    project_id: str | None,
+    usage: UsageRecord,
+    *,
+    stage: str | None = None,
+    description: str,
+) -> None:
+    """Insert one settled credit ledger row for one model-provider call."""
+    credits, cost_usd = usage_to_credit_debit(usage)
+    if credits <= 0:
+        return
+    db.table("credit_ledger").upsert(
+        {
+            "user_id": user_id,
+            "project_id": project_id,
+            "amount_credits": -credits,
+            "status": "settled",
+            "stage": stage,
+            "description": description,
+            "usage_call_id": usage.call_id,
+            "provider": usage.provider,
+            "model": usage.model,
+            "operation": usage.operation,
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "image_count": usage.image_count,
+            "cost_usd": cost_usd,
+        },
+        on_conflict="usage_call_id",
+    ).execute()
+
+
+def release_reservation(
+    db: Client,
+    reservation_id: str,
+) -> None:
+    """Mark the reservation RELEASED (stage failed or was reset)."""
+    db.table("credit_ledger").update({"status": "released"}).eq("id", reservation_id).eq("status", "reserved").execute()
+
+
+def release_stage_reservations(
+    db: Client,
+    user_id: str,
+    project_id: str | None,
+    stage: str,
+) -> None:
+    """Release any outstanding reservations for a project stage."""
+    q = (
+        db.table("credit_ledger")
+        .update({"status": "released"})
+        .eq("user_id", user_id)
+        .eq("stage", stage)
+        .eq("status", "reserved")
+    )
+    if project_id:
+        q = q.eq("project_id", project_id)
+    else:
+        q = q.is_("project_id", "null")
+    q.execute()

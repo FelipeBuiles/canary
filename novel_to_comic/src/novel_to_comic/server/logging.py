@@ -51,10 +51,13 @@ def configure_logging() -> None:
     configure_telemetry()
 
 
+_STATIC_FILE_PATH_FRAGMENTS = ("/files/refs/", "/files/plates/", "/files/pages/")
+
+
 def _should_log_request(request: Request, status_code: int, elapsed_ms: float) -> bool:
     path = request.url.path
-    # Suppress expected 404s when the frontend polls for not-yet-generated asset files
-    if status_code == 404 and ("/files/refs/" in path or "/files/plates/" in path):
+    # Suppress noisy polling for asset files (auth failures, not-yet-generated, etc.)
+    if any(fragment in path for fragment in _STATIC_FILE_PATH_FRAGMENTS):
         return False
     if status_code >= 400:
         return True

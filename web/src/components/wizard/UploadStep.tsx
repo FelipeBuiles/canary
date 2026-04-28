@@ -22,7 +22,6 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-const PANEL_COST_USD = 0.07;
 type ImageProvider = NonNullable<ConfigOverrides["image_provider"]>;
 
 const DEFAULT_IMAGE_MODEL = "gemini-3-pro-image-preview";
@@ -294,14 +293,14 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
           </span>
         </button>
 
-        {/* Cost preview strip */}
+        {/* Credit preview strip */}
         <div className="mt-3 flex items-center justify-between gap-3 border-[2px] border-ink-black bg-chip-gold px-4 py-2 shadow-ink-sm">
           <div>
             <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60">
-              {t("ESTIMATED GENERATION COST")}
+              {t("CREDITS REQUIRED")}
             </div>
             <div className="mt-0.5 font-display text-[1.05rem] font-bold leading-none tracking-[-0.03em] text-ink-black tabular-nums">
-              ~${(maxPanelsPerScene * PANEL_COST_USD * 0.5).toFixed(2)}–${(maxPanelsPerScene * PANEL_COST_USD * 0.75).toFixed(2)}
+              Reservation checked before each model-backed action
             </div>
           </div>
           <div className="text-right font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/55">
@@ -368,7 +367,7 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
               <p className="mt-1 text-[0.72rem] leading-relaxed text-ink-black/45">
                 {devMode
                   ? "Locked to fast in dev mode."
-                  : "Fast draft lowers cost/latency. Balanced is safe default. High quality increases runtime and spend."}
+                  : "Fast draft lowers credit use and latency. Balanced is safe default. High quality increases runtime and credits used."}
               </p>
             </div>
             <div>

@@ -13,7 +13,7 @@ from novel_to_comic.assembly.html_renderer import FONTS_DIR
 
 from .generation_jobs import generation_worker
 from .logging import request_log_middleware
-from .routers import config, export, pages, pipeline, projects, stages, styles
+from .routers import billing, config, credits, export, pages, pipeline, projects, stages, styles
 
 
 @asynccontextmanager
@@ -39,7 +39,7 @@ async def _lifespan(app: FastAPI):
 
 
 def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
-    app = FastAPI(title="Canary — Novel to Comic", lifespan=_lifespan)
+    app = FastAPI(title="Pulp", lifespan=_lifespan)
     app.middleware("http")(request_log_middleware)
 
     # Shared state for SSE streaming and concurrency control
@@ -69,7 +69,13 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
             allow_headers=["*"],
         )
 
+    @app.get("/api/health", tags=["meta"])
+    def health():
+        return {"status": "ok"}
+
     # Routers
+    app.include_router(credits.router, prefix="/api/credits", tags=["credits"])
+    app.include_router(billing.router, prefix="/api/billing", tags=["billing"])
     app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
     app.include_router(
         pipeline.router,

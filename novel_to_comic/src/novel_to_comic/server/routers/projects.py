@@ -13,7 +13,10 @@ from novel_to_comic.config import Config, load_config, save_config
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.state import STAGE_NAMES, create_initial_state, is_stale, load_state, save_state
 
-from ..deps import get_project, get_projects_dir
+from ..auth import get_current_user
+from ..credits import debit_model_usage, get_project_id
+from ..db import get_db
+from ..deps import get_project, get_projects_dir, project_key
 from .styles import is_style_selected
 from ..generation_jobs import (
     enqueue_generation_job,
@@ -66,8 +69,9 @@ def _stage_payload(project_dir: Path, name: str, state) -> dict:
     }
 
 
-def _is_project_running(project_name: str, request: Request) -> bool:
-    task = request.app.state.running_tasks.get(project_name)
+def _is_project_running(user_id: str, project_name: str, request: Request) -> bool:
+    key = project_key(user_id, project_name)
+    task = request.app.state.running_tasks.get(key)
     return task is not None and not task.done()
 
 
@@ -75,21 +79,21 @@ def _cover_path(project_dir: Path) -> Path:
     return project_dir / "cover" / "cover.png"
 
 
-def _latest_project_cover_job(request: Request, project_name: str):
+def _latest_project_cover_job(request: Request, pkey: str):
     jobs = [
         job
         for job in request.app.state.generation_jobs.values()
-        if job.project_name == project_name and job.kind == "project_cover"
+        if job.project_name == pkey and job.kind == "project_cover"
     ]
     if not jobs:
         return None
     return max(jobs, key=lambda job: job.sequence)
 
 
-def _active_project_cover_job(request: Request, project_name: str):
+def _active_project_cover_job(request: Request, pkey: str):
     for job in request.app.state.generation_jobs.values():
         if (
-            job.project_name == project_name
+            job.project_name == pkey
             and job.kind == "project_cover"
             and job.status in ("queued", "running")
         ):
@@ -145,7 +149,12 @@ def _cover_prompt(config: Config, bible: StoryBible) -> str:
     )
 
 
-async def _generate_project_cover(config: Config, project_dir: Path) -> Path:
+async def _generate_project_cover(
+    config: Config,
+    project_dir: Path,
+    user_id: str,
+    project_id: str | None,
+) -> Path:
     from novel_to_comic.clients import flux
     from novel_to_comic.state import load_state, record_misc_usage, save_state
 
@@ -169,6 +178,13 @@ async def _generate_project_cover(config: Config, project_dir: Path) -> Path:
         state = load_state(project_dir)
         record_misc_usage(state, result.usage)
         save_state(state, project_dir)
+        debit_model_usage(
+            get_db(),
+            user_id,
+            project_id,
+            result.usage,
+            description="Model call: project cover",
+        )
     return output_path
 
 
@@ -188,15 +204,16 @@ async def create_project(
     name: str = Form(...),
     config_overrides: str = Form(None),
     projects_dir: Path = Depends(get_projects_dir),
+    user_id: str = Depends(get_current_user),
 ):
     # Validate file extension
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in _ALLOWED_EXTENSIONS:
         raise HTTPException(400, f"Unsupported file type: {suffix}. Accepted: {', '.join(sorted(_ALLOWED_EXTENSIONS))}")
 
-    # Build project directory
+    # Build project directory (user-scoped to prevent cross-user collisions)
     slug = _slugify(name)
-    project_dir = projects_dir / slug
+    project_dir = projects_dir / user_id / slug
     if project_dir.exists():
         raise HTTPException(409, f"Project '{slug}' already exists")
 
@@ -250,32 +267,53 @@ async def create_project(
         "OPENROUTER_API_KEY=\n"
     )
 
+    # Register project in DB. On failure, clean up the directory so filesystem
+    # and DB don't get out of sync.
+    try:
+        get_db().table("projects").insert({"user_id": user_id, "name": slug}).execute()
+    except Exception as exc:
+        shutil.rmtree(project_dir, ignore_errors=True)
+        raise HTTPException(500, f"Failed to register project: {exc}") from exc
+
     return {"name": slug, "project_name": name, "status": "created"}
 
 
 @router.get("/")
-def list_projects(request: Request, projects_dir: Path = Depends(get_projects_dir)):
-    """Scan projects_dir for subdirectories containing state.json."""
+def list_projects(
+    request: Request,
+    projects_dir: Path = Depends(get_projects_dir),
+    user_id: str = Depends(get_current_user),
+):
+    """Return projects owned by the user, ordered by DB created_at."""
+    rows = (
+        get_db()
+        .table("projects")
+        .select("name, created_at")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
     results = []
-    for d in sorted(projects_dir.iterdir()):
+    for row in rows.data:
+        d = projects_dir / user_id / row["name"]
         state_file = d / "state.json"
         if not d.is_dir() or not state_file.exists():
-            continue
+            continue  # orphaned DB row — directory missing, skip silently
         state = load_state(d)
-        cover_job = _latest_project_cover_job(request, d.name)
-        # Summarise: furthest completed stage
+        pkey = project_key(user_id, row["name"])
+        cover_job = _latest_project_cover_job(request, pkey)
         furthest = None
         for name in STAGE_NAMES:
             if _stage_payload(d, name, state)["status"] in ("complete", "awaiting_review"):
                 furthest = name
         results.append({
-            "name": d.name,
+            "name": row["name"],
             "project_name": state.project_name,
             "author": _story_bible_author(d),
             "created_at": state.created_at.isoformat(),
             "total_cost_usd": state.total_cost_usd,
             "furthest_stage": furthest,
-            "is_running": _is_project_running(d.name, request),
+            "is_running": _is_project_running(user_id, row["name"], request),
             "has_cover": _cover_path(d).exists(),
             "cover_job": generation_job_payload(request.app, cover_job) if cover_job else None,
         })
@@ -283,21 +321,38 @@ def list_projects(request: Request, projects_dir: Path = Depends(get_projects_di
 
 
 @router.get("/{project_name}/status")
-def project_status(request: Request, project=Depends(get_project)):
+def project_status(
+    request: Request,
+    project_name: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
     project_dir, config, state = project
     stages = {}
     for name in STAGE_NAMES:
         stages[name] = _stage_payload(project_dir, name, state)
     total_estimated = sum(state.stages[n].estimated_cost_usd for n in STAGE_NAMES)
+    db_row = (
+        get_db()
+        .table("projects")
+        .select("share_token, is_public")
+        .eq("user_id", user_id)
+        .eq("name", project_name)
+        .execute()
+    )
+    share_info = db_row.data[0] if db_row.data else {}
+
     return {
         "project_name": state.project_name,
         "created_at": state.created_at.isoformat(),
         "total_cost_usd": state.total_cost_usd,
         "misc_cost_usd": state.misc_cost_usd,
         "total_estimated_cost_usd": total_estimated,
-        "is_running": _is_project_running(project_dir.name, request),
+        "is_running": _is_project_running(user_id, project_name, request),
         "has_cover": _cover_path(project_dir).exists(),
         "style_selected": is_style_selected(project_dir, config),
+        "is_public": share_info.get("is_public", False),
+        "share_token": share_info.get("share_token"),
         "stages": stages,
     }
 
@@ -308,8 +363,10 @@ async def generate_cover(
     project_name: str,
     force: bool = Query(False),
     project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
+    pkey = project_key(user_id, project_name)
 
     cover_path = _cover_path(project_dir)
     if cover_path.exists() and not force:
@@ -318,7 +375,7 @@ async def generate_cover(
     if not (project_dir / "story_bible.json").exists():
         raise HTTPException(404, "Story bible not found — run extract first.")
 
-    existing = _active_project_cover_job(request, project_name)
+    existing = _active_project_cover_job(request, pkey)
     if existing:
         return {
             "status": "queued",
@@ -327,12 +384,12 @@ async def generate_cover(
         }
 
     async def _runner() -> None:
-        await _generate_project_cover(config, project_dir)
+        await _generate_project_cover(config, project_dir, user_id, get_project_id(get_db(), user_id, project_name))
 
     prune_finished_generation_jobs(request.app)
     job = enqueue_generation_job(
         request.app,
-        project_name=project_name,
+        project_name=pkey,
         kind="project_cover",
         label=f"{state.project_name} cover",
         payload={"path": "cover/cover.png"},
@@ -344,3 +401,21 @@ async def generate_cover(
         "path": "cover/cover.png",
         "job": generation_job_payload(request.app, job),
     }
+
+
+@router.delete("/{project_name}")
+def delete_project(
+    request: Request,
+    project_name: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
+    project_dir, config, state = project
+    pkey = project_key(user_id, project_name)
+
+    if _is_project_running(user_id, project_name, request):
+        raise HTTPException(409, "Cannot delete a project while a stage is running")
+
+    get_db().table("projects").delete().eq("user_id", user_id).eq("name", project_name).execute()
+    shutil.rmtree(project_dir)
+    return {"status": "deleted", "name": project_name}

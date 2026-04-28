@@ -20,7 +20,6 @@ import { EditSubTabs } from "../../components/compose/ModeSwitcher";
 import { ScriptMode } from "../../components/compose/ScriptMode";
 import { LayoutMode } from "../../components/compose/LayoutMode";
 import { PreviewMode } from "../../components/compose/PreviewMode";
-import { CommandPalette } from "../../components/compose/CommandPalette";
 import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
 import { useAllPages } from "../../hooks/useAllPages";
 import { useComposeStore } from "../../store/compose";
@@ -208,7 +207,7 @@ export function ComposeRoom() {
     if (!name) return;
     exportMut.mutate(
       { project: name, format },
-      { onSuccess: () => { window.open(downloadExportUrl(name, format), "_blank"); } },
+      { onSuccess: (result) => { window.open(result.url ?? downloadExportUrl(name, format), "_blank"); } },
     );
   }
 

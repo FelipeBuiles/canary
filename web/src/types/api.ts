@@ -74,7 +74,36 @@ export interface ProjectStatus {
   is_running: boolean;
   has_cover: boolean;
   style_selected: boolean;
+  is_public: boolean;
+  share_token: string | null;
   stages: Record<string, StageInfo>;
+}
+
+export interface CreditBalance {
+  balance_credits: number;
+}
+
+export interface CreditTransaction {
+  id: string;
+  amount_credits: number;
+  status: "reserved" | "settled" | "released";
+  stage: string | null;
+  description: string | null;
+  project_id: string | null;
+  created_at: string;
+  provider?: string | null;
+  model?: string | null;
+  operation?: string | null;
+  input_tokens?: number;
+  output_tokens?: number;
+  image_count?: number;
+}
+
+export interface CreditPackage {
+  id: string;
+  label: string;
+  price_cents: number;
+  credits: number;
 }
 
 export interface PipelineEvent {
