@@ -29,6 +29,30 @@ function statusLabel(state: PanelState, t: (text: string) => string) {
   return t("ERROR");
 }
 
+function failedPanelCopy(
+  failureClassification?: string | null,
+  regenError?: string | null,
+  errorMessage?: string,
+) {
+  const shortError = regenError || errorMessage;
+  if (failureClassification === "provider_blocked") {
+    return {
+      title: "PROVIDER BLOCKED",
+      body: shortError || "Edit the prompt and re-run before composing.",
+    };
+  }
+  if (shortError) {
+    return {
+      title: "GENERATION FAILED",
+      body: shortError,
+    };
+  }
+  return {
+    title: "GENERATION FAILED",
+    body: "Open details, edit the prompt if needed, then use Quick Re-Do.",
+  };
+}
+
 interface PanelCardProps {
   sceneId: string;
   panelNumber: number;
@@ -36,6 +60,9 @@ interface PanelCardProps {
   imageUrl: string;
   narrative?: string;
   errorMessage?: string;
+  imageAvailable?: boolean;
+  failureClassification?: string | null;
+  accepted?: boolean;
   isRegening?: boolean;
   regenMode?: "queued" | "running" | null;
   regenError?: string | null;
@@ -49,6 +76,9 @@ export function PanelCard({
   imageUrl,
   narrative,
   errorMessage,
+  imageAvailable = true,
+  failureClassification,
+  accepted = false,
   isRegening = false,
   regenMode,
   regenError,
@@ -59,9 +89,10 @@ export function PanelCard({
   const state = resolvePanelState(status, resolvedRegenMode, !!narrative);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const { t } = useI18n();
+  const failedCopy = failedPanelCopy(failureClassification, regenError, errorMessage);
 
   const handleClick = () => {
-    if (state === "active" || state === "narrative") {
+    if (state === "active" || state === "narrative" || state === "failed" || state === "stale") {
       if (onPanelClick) {
         onPanelClick();
       } else {
@@ -103,32 +134,84 @@ export function PanelCard({
               <div className="mt-2 text-center text-[0.72rem] text-hero-red/80">
                 Job tracking was interrupted. Re-run this panel.
               </div>
-              {onRegenerate && (
-                <button
-                  type="button"
-                  className="mt-3 border border-hero-red px-4 py-2 font-meta text-[0.62rem] tracking-[0.14em] text-hero-red transition-colors hover:bg-hero-red hover:text-bristol"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRegenerate();
-                  }}
-                >
-                  {t("QUICK RE-DO")}
-                </button>
-              )}
+              <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                {onPanelClick && (
+                  <button
+                    type="button"
+                    className="border border-hero-red bg-bristol px-4 py-2 font-meta text-[0.62rem] tracking-[0.14em] text-hero-red transition-colors hover:bg-hero-red hover:text-bristol"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onPanelClick();
+                    }}
+                  >
+                    VIEW
+                  </button>
+                )}
+                {onRegenerate && (
+                  <button
+                    type="button"
+                    className="border border-hero-red px-4 py-2 font-meta text-[0.62rem] tracking-[0.14em] text-hero-red transition-colors hover:bg-hero-red hover:text-bristol"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRegenerate();
+                    }}
+                  >
+                    {t("QUICK RE-DO")}
+                  </button>
+                )}
+              </div>
             </div>
           ) : state === "failed" ? (
-            <div className="flex h-full flex-col items-center justify-center bg-hero-red/10">
-              <div className="flex h-14 w-14 items-center justify-center border-[2px] border-hero-red text-[1.4rem] font-bold text-hero-red">
-                △
-              </div>
-              <div className="mt-4 font-display text-[1.25rem] font-bold leading-none tracking-[-0.05em] text-hero-red">
-                GENERATION FAILED
-              </div>
-              {(regenError || errorMessage) && (
-                <div className="mt-2 max-w-[20ch] text-center text-[0.72rem] text-hero-red/80">
-                  {regenError ?? errorMessage}
-                </div>
+            <div className="relative h-full bg-hero-red/10">
+              {imageAvailable && (
+                <LazyImage
+                  src={imageUrl}
+                  alt={`Panel ${panelNumber}`}
+                  loading="lazy"
+                  width={400}
+                  height={500}
+                  containerClassName="absolute inset-0 h-full w-full"
+                  className="h-full w-full object-cover opacity-55 grayscale"
+                />
               )}
+              <div className="absolute inset-0 bg-hero-red/15" />
+              <div className="relative z-10 flex h-full flex-col items-center justify-center px-3">
+                <div className="flex h-14 w-14 items-center justify-center border-[2px] border-hero-red bg-bristol/80 text-[1.4rem] font-bold text-hero-red">
+                  △
+                </div>
+                <div className="mt-4 text-center font-display text-[1.25rem] font-bold leading-none tracking-[-0.05em] text-hero-red">
+                  {failedCopy.title}
+                </div>
+                <div className="mt-2 max-w-[24ch] text-center text-[0.72rem] leading-5 text-hero-red/85">
+                  {failedCopy.body}
+                </div>
+                <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                  {onPanelClick && (
+                    <button
+                      type="button"
+                      className="border border-hero-red bg-bristol px-4 py-2 font-meta text-[0.62rem] tracking-[0.14em] text-hero-red transition-colors hover:bg-hero-red hover:text-bristol"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onPanelClick();
+                      }}
+                    >
+                      VIEW
+                    </button>
+                  )}
+                  {onRegenerate && (
+                    <button
+                      type="button"
+                      className="border border-hero-red bg-bristol/75 px-4 py-2 font-meta text-[0.62rem] tracking-[0.14em] text-hero-red transition-colors hover:bg-hero-red hover:text-bristol"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRegenerate();
+                      }}
+                    >
+                      {t("QUICK RE-DO")}
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
           ) : (
             <>
@@ -185,13 +268,15 @@ export function PanelCard({
               Panel {String(panelNumber).padStart(2, "0")}
             </span>
             <span className={`flex h-5 min-w-5 items-center justify-center px-1.5 font-meta text-[0.56rem] tracking-[0.1em] text-bristol ${
-              state === "failed" || state === "stale"
+              accepted
+                ? "bg-archive-sage"
+                : state === "failed" || state === "stale"
                 ? "bg-hero-red"
                 : state === "inking" || state === "queued" || state === "regening"
                   ? "bg-narrator-gold text-ink-black"
                   : "bg-archive-sage"
             }`}>
-              {state === "active" || state === "narrative" ? "✓" : statusLabel(state, t)}
+              {accepted ? "ACCEPTED" : state === "active" || state === "narrative" ? "✓" : statusLabel(state, t)}
             </span>
           </div>
         </div>

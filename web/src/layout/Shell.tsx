@@ -1,5 +1,6 @@
 import { Outlet, useLocation } from "react-router-dom";
 import { SideNav } from "./SideNav";
+import { AppTopBar } from "./AppTopBar";
 import { FloatingIndicator } from "../components/ui/FloatingIndicator";
 import { cn } from "../lib/cn";
 import { useI18n } from "../i18n";
@@ -19,6 +20,7 @@ export function Shell() {
       >
         {t("SKIP TO CONTENT")}
       </a>
+      <AppTopBar />
       <div className="flex flex-1 flex-col overflow-hidden md:flex-row">
         <SideNav showDesktop={showDesktopProjectNav} />
         <main id="main-content" className="min-w-0 flex-1 overflow-y-auto bg-pulp-paper">

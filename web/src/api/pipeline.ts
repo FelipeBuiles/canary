@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import type { GenerationJob } from "../types/api";
+import type { GenerationJob, InstructedPanelRegenResponse } from "../types/api";
 
 export function runPipeline(
   project: string,
@@ -23,6 +23,25 @@ export function regenPanel(
   return apiFetch(
     `/projects/${encodeURIComponent(project)}/regen?scene_id=${encodeURIComponent(sceneId)}&panel_number=${panelNumber}`,
     { method: "POST" },
+  );
+}
+
+export function regenPanelWithInstruction(
+  project: string,
+  sceneId: string,
+  panelNumber: number,
+  instruction: string,
+): Promise<InstructedPanelRegenResponse> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/regen-instructed`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        scene_id: sceneId,
+        panel_number: panelNumber,
+        instruction,
+      }),
+    },
   );
 }
 

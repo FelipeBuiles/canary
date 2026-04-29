@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listProjects, getProjectStatus, createProject, generateProjectCover } from "./projects";
-import { runPipeline, approveStage, regenPanel, regenRef, regenPlate, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate } from "./pipeline";
+import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenPlate, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate } from "./pipeline";
 import type { ConfigOverrides, StoryBible, CharacterVoice } from "../types/api";
 import { getBalance, getCreditHistory } from "./credits";
 import { getPackages, createCheckout } from "./billing";
@@ -18,6 +18,10 @@ import {
   updatePrompt,
   listImages,
   getImageGenerationMeta,
+  getPanelImageVersions,
+  restorePanelImageVersion,
+  acceptImagePanel,
+  unacceptImagePanel,
 } from "./stages";
 import { listPages, getPage, updatePage, replacePage, reflowPages, generatePageStyleVars, translatePageBubbles, setTheme, applyBubblePreset, getBubblePresets, translateSinglePageBubbles, getCharacterVoices, putCharacterVoice, deleteCharacterVoice, reflowSinglePage, triggerExport, applyStructuralOperation } from "./pages";
 import { getStyles, suggestStyles, generateStyleSamples, setActiveStyle } from "./styles";
@@ -122,6 +126,32 @@ export function useRegenPanel() {
       regenPanel(project, sceneId, panelNumber),
     // No cache invalidation here — DrawRoom detects completion via images polling
     // and busts the cache itself to avoid the panel disappearing mid-regen.
+  });
+}
+
+export function useRegenPanelWithInstruction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      project,
+      sceneId,
+      panelNumber,
+      instruction,
+    }: {
+      project: string;
+      sceneId: string;
+      panelNumber: number;
+      instruction: string;
+    }) => regenPanelWithInstruction(project, sceneId, panelNumber, instruction),
+    onSuccess: (data, { project, sceneId }) => {
+      qc.setQueryData<import("../types/api").ImagePrompt[]>(
+        ["project", project, "direct", sceneId],
+        (existing) => existing?.map((prompt) =>
+          prompt.panel_number === data.panel_number ? data.prompt : prompt
+        ),
+      );
+      qc.invalidateQueries({ queryKey: ["project", project, "direct", sceneId] });
+    },
   });
 }
 
@@ -311,6 +341,43 @@ export function useImageGenerationMeta(
   });
 }
 
+export function usePanelImageVersions(
+  project: string | undefined,
+  sceneId: string | undefined,
+  panelNumber: number | undefined,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["project", project, "panel-image-versions", sceneId, panelNumber],
+    queryFn: () => getPanelImageVersions(project!, sceneId!, panelNumber!),
+    enabled: !!project && !!sceneId && !!panelNumber && enabled,
+    retry: false,
+  });
+}
+
+export function useRestorePanelImageVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      project,
+      sceneId,
+      panelNumber,
+      version,
+    }: {
+      project: string;
+      sceneId: string;
+      panelNumber: number;
+      version: number;
+    }) => restorePanelImageVersion(project, sceneId, panelNumber, version),
+    onSuccess: (_data, { project, sceneId, panelNumber }) => {
+      const panelRelPath = `draw/${sceneId}/panel_${String(panelNumber).padStart(3, "0")}.png`;
+      qc.invalidateQueries({ queryKey: ["project", project, "draw"] });
+      qc.invalidateQueries({ queryKey: ["project", project, "image-generation-meta", panelRelPath] });
+      qc.invalidateQueries({ queryKey: ["project", project, "panel-image-versions", sceneId, panelNumber] });
+    },
+  });
+}
+
 // ── Images (DRAW) ─────────────────────────────────────────────────────────────
 
 export function useImages(project: string | undefined, refetchInterval?: number) {
@@ -319,6 +386,28 @@ export function useImages(project: string | undefined, refetchInterval?: number)
     queryFn: () => listImages(project!),
     enabled: !!project,
     refetchInterval,
+  });
+}
+
+export function useAcceptPanel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, sceneId, panelNumber }: { project: string; sceneId: string; panelNumber: number }) =>
+      acceptImagePanel(project, sceneId, panelNumber),
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "draw"] });
+    },
+  });
+}
+
+export function useUnacceptPanel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, sceneId, panelNumber }: { project: string; sceneId: string; panelNumber: number }) =>
+      unacceptImagePanel(project, sceneId, panelNumber),
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "draw"] });
+    },
   });
 }
 

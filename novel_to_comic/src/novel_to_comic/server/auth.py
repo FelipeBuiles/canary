@@ -60,16 +60,17 @@ async def get_current_user(
             options={"verify_aud": False},
         )
         user_id = payload["sub"]
-        if authorization:
-            response.set_cookie(
-                SESSION_COOKIE_NAME,
-                token,
-                httponly=True,
-                secure=request.url.scheme == "https",
-                samesite="lax",
-                max_age=60 * 60,
-                path="/",
-            )
+        # Refresh the HttpOnly session cookie so browser-native consumers
+        # (img, EventSource, etc.) that can only use cookies stay authenticated.
+        response.set_cookie(
+            SESSION_COOKIE_NAME,
+            token,
+            httponly=True,
+            secure=request.url.scheme == "https",
+            samesite="lax",
+            max_age=60 * 60,
+            path="/",
+        )
         return user_id
     except (KeyError, jwt.PyJWTError):
         raise HTTPException(status_code=401, detail="Invalid or expired token")

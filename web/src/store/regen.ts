@@ -18,6 +18,7 @@ interface RegenStore {
   attachJob: (project: string, key: string, job: GenerationJob) => void;
   updateJob: (project: string, key: string, job: GenerationJob) => void;
   complete: (project: string, key: string) => void;
+  bust: (project: string, key: string) => void;
   fail: (project: string, key: string, error: string) => void;
   clearError: (project: string, key: string) => void;
 }
@@ -122,6 +123,11 @@ export const useRegenStore = create<RegenStore>((set) => ({
         bustTimestamps: { ...s.bustTimestamps, [`${project}/${key}`]: Date.now() },
       };
     }),
+
+  bust: (project, key) =>
+    set((s) => ({
+      bustTimestamps: { ...s.bustTimestamps, [`${project}/${key}`]: Date.now() },
+    })),
 
   fail: (project, key, error) =>
     set((s) => {

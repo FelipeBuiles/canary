@@ -51,7 +51,12 @@ def configure_logging() -> None:
     configure_telemetry()
 
 
-_STATIC_FILE_PATH_FRAGMENTS = ("/files/refs/", "/files/plates/", "/files/pages/")
+_STATIC_FILE_PATH_FRAGMENTS = (
+    "/files/refs/",
+    "/files/plates/",
+    "/files/pages/",
+    "/files/draw/",
+)
 
 
 def _should_log_request(request: Request, status_code: int, elapsed_ms: float) -> bool:

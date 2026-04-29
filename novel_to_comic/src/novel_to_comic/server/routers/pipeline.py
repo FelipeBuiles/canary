@@ -1,6 +1,7 @@
 """Pipeline execution, SSE streaming, and checkpoint approval."""
 
 import asyncio
+from datetime import UTC, datetime
 import json
 import logging
 import shutil
@@ -9,7 +10,17 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
+from novel_to_comic.models.prompt import ImagePrompt
+from novel_to_comic.prompt_instructions import (
+    PromptInstructionError,
+    apply_instruction_patch,
+    instruction_rewrite_system_prompt,
+    instruction_rewrite_user_content,
+    parse_instruction_patch,
+    validate_user_instruction,
+)
 from novel_to_comic.state import (
     STAGE_NAMES,
     StageState,
@@ -42,9 +53,16 @@ from ..generation_jobs import (
     generation_semaphore_for_config,
     prune_finished_generation_jobs,
 )
+from ..panel_acceptance import clear_panel_acceptance
 
 router = APIRouter()
 logger = logging.getLogger("canary.pipeline")
+
+
+class InstructedPanelRegenRequest(BaseModel):
+    scene_id: str = Field(min_length=1)
+    panel_number: int = Field(ge=1)
+    instruction: str = Field(min_length=1, max_length=500)
 
 _RERUN_CLEAN_PATHS: dict[str, tuple[str, ...]] = {
     "extract": ("story_bible.json", "scenes", "refs", "plates", "adapt", "plan", "storyboard", "direct", "draw", "compose", "exports"),
@@ -179,6 +197,14 @@ async def _run_full_pipeline(
 ):
     """Run all stages in order, stopping at checkpoints or failures."""
     for stage in STAGE_NAMES:
+        if stage == "compose":
+            draw_error = _draw_ready_for_compose_error(project_dir)
+            if draw_error:
+                fail_stage(state, "compose", draw_error)
+                save_state(state, project_dir)
+                queue.put_nowait({"type": "stage_fail", "stage": "compose", "message": draw_error})
+                break
+
         s = state.stages[stage]
         if s.status.value in ("complete",):
             # Verify the stage's output actually exists — if it was falsely
@@ -265,6 +291,68 @@ def _clear_outputs_for_rerun(project_dir, stage: str) -> None:
             path.unlink()
 
 
+def _draw_panel_blockers_for_compose(project_dir) -> list[str]:
+    """Return prompt-backed draw panels that must be regenerated before compose."""
+    direct_dir = project_dir / "direct"
+    if not direct_dir.exists():
+        return []
+
+    blockers: list[str] = []
+    for prompt_path in sorted(direct_dir.glob("*/panel_*.json")):
+        scene_id = prompt_path.parent.name
+        try:
+            prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
+            panel_number = prompt.panel_number
+        except Exception:
+            try:
+                panel_number = int(prompt_path.stem.split("_")[1])
+            except (IndexError, ValueError):
+                continue
+
+        image_path = project_dir / "draw" / scene_id / f"panel_{panel_number:03d}.png"
+        failure_path = image_path.with_suffix(f"{image_path.suffix}.failure.json")
+        if failure_path.exists():
+            blockers.append(f"{scene_id}/panel_{panel_number:03d} failed")
+        elif not image_path.exists():
+            blockers.append(f"{scene_id}/panel_{panel_number:03d} missing image")
+
+    return blockers
+
+
+def _draw_ready_for_compose_error(project_dir) -> str | None:
+    blockers = _draw_panel_blockers_for_compose(project_dir)
+    if not blockers:
+        return None
+    shown = ", ".join(blockers[:5])
+    if len(blockers) > 5:
+        shown = f"{shown}, and {len(blockers) - 5} more"
+    return f"Regenerate failed or missing draw panels before composing: {shown}"
+
+
+def _append_instruction_log(
+    project_dir,
+    scene_id: str,
+    panel_number: int,
+    *,
+    instruction: str,
+    patch: dict,
+    prompt: ImagePrompt,
+) -> None:
+    log_path = project_dir / "direct" / scene_id / f"panel_{panel_number:03d}.instructions.jsonl"
+    payload = {
+        "created_at": datetime.now(UTC).isoformat(),
+        "instruction": instruction,
+        "patch": patch,
+        "prompt": {
+            "scene_id": prompt.scene_id,
+            "panel_number": prompt.panel_number,
+            "full_prompt": prompt.full_prompt,
+        },
+    }
+    with log_path.open("a") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+
+
 @router.get("/estimate")
 async def estimate_stage_cost(
     project_name: str,
@@ -313,6 +401,11 @@ async def run_pipeline(
     )
     if extract_done and target_includes_post_extract and not is_style_selected(project_dir, config):
         raise HTTPException(403, "Select a style before running post-extract stages.")
+
+    if stage == "compose":
+        draw_error = _draw_ready_for_compose_error(project_dir)
+        if draw_error:
+            raise HTTPException(409, draw_error)
 
     if stage and rerun:
         _reset_stage_and_downstream(state, stage)
@@ -438,14 +531,13 @@ async def regen_panel(
         raise HTTPException(404, f"Prompt not found: {scene_id}/panel_{panel_number:03d}")
     planned_panel_id = None
     try:
-        from novel_to_comic.models.prompt import ImagePrompt
-
         planned_panel_id = ImagePrompt.model_validate_json(prompt_path.read_text()).planned_panel_id
     except Exception:
         planned_panel_id = None
 
     async def _runner() -> None:
         from novel_to_comic.stages import s6_generate
+        clear_panel_acceptance(project_dir, scene_id, panel_number)
         result = await s6_generate.regenerate_panel_image(
             config,
             project_dir,
@@ -479,6 +571,7 @@ async def regen_panel(
         }
 
     prune_finished_generation_jobs(request.app)
+    clear_panel_acceptance(project_dir, scene_id, panel_number)
     job = enqueue_generation_job(
         request.app,
         project_name=pkey,
@@ -494,6 +587,131 @@ async def regen_panel(
         "scene_id": scene_id,
         "panel_number": panel_number,
         "planned_panel_id": planned_panel_id,
+    }
+
+
+@router.post("/regen-instructed")
+async def regen_panel_with_instruction(
+    request: Request,
+    project_name: str,
+    body: InstructedPanelRegenRequest,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
+    project_dir, config, state = project
+    pkey = project_key(user_id, project_name)
+    scene_id = body.scene_id
+    panel_number = body.panel_number
+
+    running = request.app.state.running_tasks
+    existing_stage = running.get(pkey)
+    if existing_stage and not existing_stage.done():
+        raise HTTPException(409, "A stage is already running for this project")
+
+    existing_regen = find_active_generation_job(
+        request.app,
+        project_name=pkey,
+        kind="panel_regen",
+        payload={"scene_id": scene_id, "panel_number": panel_number},
+    )
+    if existing_regen:
+        raise HTTPException(409, "A regeneration is already queued or running for this panel")
+
+    prompt_path = project_dir / "direct" / scene_id / f"panel_{panel_number:03d}.json"
+    if not prompt_path.exists():
+        raise HTTPException(404, f"Prompt not found: {scene_id}/panel_{panel_number:03d}")
+
+    try:
+        instruction = validate_user_instruction(body.instruction)
+    except PromptInstructionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
+    from novel_to_comic.clients import text
+
+    try:
+        rewrite = await text.generate_json(
+            config=config,
+            model=config.effective_prompt_model(),
+            system_prompt=instruction_rewrite_system_prompt(),
+            user_content=instruction_rewrite_user_content(instruction, prompt),
+            temperature=0.2,
+            max_output_tokens=1200,
+        )
+        patch = parse_instruction_patch(rewrite.value)
+        updated_prompt = apply_instruction_patch(prompt, patch)
+    except PromptInstructionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        logger.exception(
+            "Panel instruction rewrite failed project=%s scene=%s panel=%s",
+            project_name,
+            scene_id,
+            panel_number,
+        )
+        raise HTTPException(502, f"Could not rewrite the panel prompt: {exc}") from exc
+
+    db = get_db()
+    if rewrite.usage:
+        debit_model_usage(
+            db,
+            user_id,
+            get_project_id(db, user_id, project_name),
+            rewrite.usage,
+            stage="draw",
+            description=f"Model call: rewrite panel prompt {scene_id}/{panel_number:03d}",
+        )
+
+    prompt_path.write_text(updated_prompt.model_dump_json(indent=2))
+    clear_panel_acceptance(project_dir, scene_id, panel_number)
+    _append_instruction_log(
+        project_dir,
+        scene_id,
+        panel_number,
+        instruction=instruction,
+        patch=patch.model_dump(),
+        prompt=updated_prompt,
+    )
+
+    async def _runner() -> None:
+        from novel_to_comic.stages import s6_generate
+
+        result = await s6_generate.regenerate_panel_image(
+            config,
+            project_dir,
+            scene_id,
+            panel_number,
+        )
+        if result.usage:
+            runner_db = get_db()
+            debit_model_usage(
+                runner_db,
+                user_id,
+                get_project_id(runner_db, user_id, project_name),
+                result.usage,
+                stage="draw",
+                description=f"Model call: regenerate instructed panel {scene_id}/{panel_number:03d}",
+            )
+
+    prune_finished_generation_jobs(request.app)
+    job = enqueue_generation_job(
+        request.app,
+        project_name=pkey,
+        kind="panel_regen",
+        label=f"{scene_id} / panel {panel_number:03d}",
+        payload={"scene_id": scene_id, "panel_number": panel_number},
+        runner=_runner,
+        semaphore=generation_semaphore_for_config(request.app, config),
+    )
+    return {
+        "status": "queued",
+        "instruction_status": "accepted",
+        "patch_summary": patch.message,
+        "job": generation_job_payload(request.app, job),
+        "scene_id": scene_id,
+        "panel_number": panel_number,
+        "planned_panel_id": updated_prompt.planned_panel_id,
+        "prompt": updated_prompt.model_dump(),
     }
 
 
@@ -637,6 +855,10 @@ def approve(stage: str, project_name: str, project=Depends(get_project)):
     project_dir, config, state = project
     if stage not in STAGE_NAMES:
         raise HTTPException(400, f"Unknown stage: {stage}")
+    if stage == "draw":
+        draw_error = _draw_ready_for_compose_error(project_dir)
+        if draw_error:
+            raise HTTPException(409, draw_error)
     try:
         approve_stage(state, stage)
     except ValueError as e:

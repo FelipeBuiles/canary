@@ -9,6 +9,8 @@ import type {
   ImagePrompt,
   ImageStatus,
   ImageGenerationMeta,
+  PanelImageVersionsResponse,
+  RestorePanelImageVersionResponse,
 } from "../types/api";
 
 // ── Story Bible ──────────────────────────────────────────────────────────────
@@ -107,20 +109,83 @@ export function listImages(project: string): Promise<ImageStatus[]> {
   return apiFetch(`/projects/${encodeURIComponent(project)}/images`);
 }
 
+export function acceptImagePanel(
+  project: string,
+  sceneId: string,
+  panelNumber: number,
+): Promise<{ scene_id: string; panel_number: number; accepted: boolean; accepted_at?: string }> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/images/${encodeURIComponent(sceneId)}/${panelNumber}/accept`,
+    { method: "POST" },
+  );
+}
+
+export function unacceptImagePanel(
+  project: string,
+  sceneId: string,
+  panelNumber: number,
+): Promise<{ scene_id: string; panel_number: number; accepted: boolean }> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/images/${encodeURIComponent(sceneId)}/${panelNumber}/accept`,
+    { method: "DELETE" },
+  );
+}
+
 export async function getImageGenerationMeta(
   project: string,
   relativeImagePath: string,
 ): Promise<ImageGenerationMeta | null> {
-  const encodedPath = `${relativeImagePath}.meta.json`
+  const encodeProjectFile = (path: string) => path
     .split("/")
     .map((segment) => encodeURIComponent(segment))
     .join("/");
+  const encodedPath = encodeProjectFile(`${relativeImagePath}.meta.json`);
   try {
     return await apiFetch(`/projects/${encodeURIComponent(project)}/files/${encodedPath}`);
   } catch (err) {
     if (err instanceof Error && err.message.startsWith("API 404:")) {
-      return null;
+      const failurePath = encodeProjectFile(`${relativeImagePath}.failure.json`);
+      try {
+        return await apiFetch(`/projects/${encodeURIComponent(project)}/files/${failurePath}`);
+      } catch (failureErr) {
+        if (failureErr instanceof Error && failureErr.message.startsWith("API 404:")) {
+          return null;
+        }
+        throw failureErr;
+      }
     }
     throw err;
   }
+}
+
+export function getPanelImageVersions(
+  project: string,
+  sceneId: string,
+  panelNumber: number,
+): Promise<PanelImageVersionsResponse> {
+  return apiFetch<PanelImageVersionsResponse>(
+    `/projects/${encodeURIComponent(project)}/images/${encodeURIComponent(sceneId)}/${panelNumber}/versions`,
+  ).catch((err) => {
+    if (err instanceof Error && err.message.startsWith("API 404:")) {
+      return {
+        scene_id: sceneId,
+        panel_number: panelNumber,
+        has_history: false,
+        versions: [],
+      };
+    }
+    throw err;
+  });
+}
+
+export function restorePanelImageVersion(
+  project: string,
+  sceneId: string,
+  panelNumber: number,
+  version: number,
+): Promise<RestorePanelImageVersionResponse> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/images/${encodeURIComponent(sceneId)}/${panelNumber}/versions/${version}/restore`,
+    { method: "POST" },
+  );
 }
