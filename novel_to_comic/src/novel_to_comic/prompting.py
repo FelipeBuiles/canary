@@ -50,6 +50,7 @@ _PROMPT_LABELS: dict[str, dict[str, str]] = {
         "character": "character",
         "characters": "characters",
         "one_body": "one body per listed character",
+        "single_instant": "single frozen instant, not a sequence or split-screen",
         "no_lettering": "no text, captions, speech balloons, or lettering anywhere in the image",
         "style_authority": "Use the selected visual style above as authoritative if later prompt text conflicts.",
     },
@@ -65,6 +66,7 @@ _PROMPT_LABELS: dict[str, dict[str, str]] = {
         "character": "personaje",
         "characters": "personajes",
         "one_body": "un cuerpo por cada personaje listado",
+        "single_instant": "un instante congelado, no una secuencia ni pantalla dividida",
         "no_lettering": "sin texto, cartelas, globos ni rotulación en ninguna parte de la imagen",
         "style_authority": "Usa el estilo visual seleccionado arriba como autoridad si el texto posterior entra en conflicto.",
     },
@@ -80,6 +82,7 @@ _PROMPT_LABELS: dict[str, dict[str, str]] = {
         "character": "personnage",
         "characters": "personnages",
         "one_body": "un seul corps par personnage listé",
+        "single_instant": "un seul instant figé, pas une séquence ni un écran divisé",
         "no_lettering": "aucun texte, cartouche, bulle ni lettrage nulle part dans l'image",
         "style_authority": "Utilise le style visuel sélectionné ci-dessus comme référence si le texte suivant le contredit.",
     },
@@ -103,6 +106,21 @@ def dimensions_for_panel(panel: PlannedPanel) -> tuple[int, int]:
     return dimensions_for_shot(panel.shot_type)
 
 
+def _single_instant_direction(text: str) -> str:
+    """Collapse sequential same-character action into the final drawable instant."""
+    cleaned = _clean(text)
+    if not cleaned:
+        return ""
+    parts = [
+        part.strip(" ,;.")
+        for part in _SEQUENTIAL_THEN_RE.split(cleaned)
+        if part.strip(" ,;.")
+    ]
+    if len(parts) < 2:
+        return cleaned
+    return _LEADING_TRANSITION_ACTION_RE.sub("", parts[-1]).strip(" ,;.")
+
+
 def _labels(config: Config | None = None) -> dict[str, str]:
     code = config.language_code() if config else "en"
     return _PROMPT_LABELS.get(code, _PROMPT_LABELS["en"])
@@ -110,8 +128,14 @@ def _labels(config: Config | None = None) -> dict[str, str]:
 
 _clean = clean
 _shorten = shorten
-IMAGE_PROMPT_VERSION = 11
+IMAGE_PROMPT_VERSION = 12
 _SOFT_CONTINUITY = {"smooth_continuation", "match_cut"}
+_SEQUENTIAL_THEN_RE = re.compile(r"(?<=[,;.!?])\s+then\s+", re.IGNORECASE)
+_LEADING_TRANSITION_ACTION_RE = re.compile(
+    r"^(?:rises?|stands?|turns?|moves?|steps?|walks?|bends?|leans?)"
+    r"(?:\s+\w+)?\s+and\s+",
+    re.IGNORECASE,
+)
 
 # Keywords that indicate a direction is describing on-screen text/lettering — always
 # strip these before they enter the prompt, since text is composed in Stage 8 and the
@@ -218,7 +242,7 @@ def _planned_panel_props(panel: PlannedPanel, story_bible: StoryBible) -> list[s
 def _planned_panel_state_summary(panel: PlannedPanel) -> str:
     parts: list[str] = []
     for char_id in panel.characters_present:
-        action = panel.character_actions.get(char_id, "")
+        action = _single_instant_direction(panel.character_actions.get(char_id, ""))
         expression = panel.character_expressions.get(char_id, "")
         position = panel.character_positions.get(char_id, "")
         state_bits = [bit for bit in (action, expression, position) if bit]
@@ -276,7 +300,9 @@ def build_planned_panel_prompt_spec(
                 character_id=character_id,
                 name=character.name,
                 identity=_character_identity(character, scene_appearance, labels),
-                action=_clean(panel.character_actions.get(character_id, "")),
+                action=_single_instant_direction(
+                    panel.character_actions.get(character_id, "")
+                ),
                 expression=_clean(panel.character_expressions.get(character_id, "")),
                 position=_clean(panel.character_positions.get(character_id, "")),
             )
@@ -293,7 +319,7 @@ def build_planned_panel_prompt_spec(
         shot_key,
         f"{_clean(panel.shot_type)} panel, {_clean(panel.camera_angle)} camera",
     )
-    camera_angle = _clean(panel.camera_angle)
+    camera_angle = _single_instant_direction(panel.camera_angle)
     if camera_angle and camera_angle.lower() not in composition.lower():
         composition = f"{composition}, {camera_angle} camera"
     if panel.shape_intent in {"wide", "panorama"} and "wide" not in composition.lower():
@@ -305,7 +331,9 @@ def build_planned_panel_prompt_spec(
         composition = f"{composition}, narrow vertical column — keep subject centered horizontally, avoid wide poses or spread elements"
     if panel.generation_mode == "master":
         composition = f"{composition}, extra environmental margin for flexible crop"
-    camera_note = _strip_text_render_sentences(_clean(getattr(panel, "camera_note", "")))
+    camera_note = _strip_text_render_sentences(
+        _single_instant_direction(getattr(panel, "camera_note", ""))
+    )
     if camera_note and character_count == 0:
         # Remove character name tokens so the framing direction survives but the
         # name reference doesn't contradict the zero-character constraint.
@@ -332,7 +360,7 @@ def build_planned_panel_prompt_spec(
     character_label = labels["character"] if character_count == 1 else labels["characters"]
     constraints = (
         f"exactly {character_count} {character_label}; "
-        f"{labels['one_body']}; {labels['no_lettering']}"
+        f"{labels['one_body']}; {labels['single_instant']}; {labels['no_lettering']}"
     )
     if panel.crop_policy:
         constraints = f"{constraints}; crop policy: {panel.crop_policy}"

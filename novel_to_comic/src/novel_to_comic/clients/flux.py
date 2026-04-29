@@ -100,6 +100,54 @@ def _exception_chain(exc: BaseException) -> list[BaseException]:
     return chain
 
 
+def _simple_obj_summary(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_simple_obj_summary(item) for item in value]
+    if isinstance(value, dict):
+        return {str(k): _simple_obj_summary(v) for k, v in value.items()}
+    if hasattr(value, "model_dump"):
+        try:
+            return _simple_obj_summary(value.model_dump())
+        except Exception:
+            pass
+    attrs: dict[str, Any] = {}
+    for name in (
+        "finish_reason",
+        "finish_message",
+        "block_reason",
+        "safety_ratings",
+        "prompt_feedback",
+    ):
+        item = getattr(value, name, None)
+        if item is not None:
+            attrs[name] = _simple_obj_summary(item)
+    return attrs or str(value)
+
+
+def _gemini_failure_details(response: Any) -> str:
+    details: dict[str, Any] = {}
+    prompt_feedback = getattr(response, "prompt_feedback", None)
+    if prompt_feedback is not None:
+        details["prompt_feedback"] = _simple_obj_summary(prompt_feedback)
+    candidates = getattr(response, "candidates", None) or []
+    candidate_details: list[Any] = []
+    for candidate in candidates:
+        candidate_details.append(
+            {
+                "finish_reason": _simple_obj_summary(getattr(candidate, "finish_reason", None)),
+                "finish_message": _simple_obj_summary(getattr(candidate, "finish_message", None)),
+                "safety_ratings": _simple_obj_summary(getattr(candidate, "safety_ratings", None)),
+            }
+        )
+    if candidate_details:
+        details["candidates"] = candidate_details
+    if not details:
+        return ""
+    return f" Gemini details: {details}"
+
+
 def is_rate_limited_error(exc: BaseException) -> bool:
     """Return True when an exception chain indicates provider throttling/quota."""
     tokens = ("429", "resource_exhausted", "rate limit", "quota")
@@ -274,7 +322,10 @@ async def _generate_gemini_image(
         candidates = getattr(response, "candidates", None) or []
         if not candidates:
             text = getattr(response, "text", "no text")
-            raise ValueError(f"No candidates in Gemini response. Model said: {text}")
+            raise ValueError(
+                f"No candidates in Gemini response. Model said: {text}."
+                f"{_gemini_failure_details(response)}"
+            )
         content = getattr(candidates[0], "content", None)
         parts = getattr(content, "parts", None) or []
         for part in parts:
@@ -324,7 +375,10 @@ async def _generate_gemini_image(
                 return output_path
 
         text = getattr(response, "text", "no text")
-        raise ValueError(f"No image part in Gemini response. Model said: {text}")
+        raise ValueError(
+            f"No image part in Gemini response. Model said: {text}."
+            f"{_gemini_failure_details(response)}"
+        )
     except Exception as e:
         log_call_end(
             logger,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -20,12 +21,25 @@ GenerationJobRunner = Callable[[], Awaitable[None]]
 logger = logging.getLogger("canary.generation")
 
 
+def _bool_env(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
+
+
+def _looks_like_timeout_cancellation(exc: BaseException, elapsed: float, timeout_seconds: int) -> bool:
+    text = " ".join(str(part) for part in (type(exc).__name__, str(exc), *(str(arg) for arg in getattr(exc, "args", ()))))
+    lowered = text.lower()
+    return elapsed >= max(0, timeout_seconds - 2) and "cancel" in lowered
 
 
 @dataclass
@@ -187,17 +201,22 @@ async def generation_worker(app: FastAPI) -> None:
                 timeout_seconds,
             )
         except Exception as exc:
+            elapsed = time.perf_counter() - started
             job.status = "failed"
-            job.error = str(exc) or type(exc).__name__
-            logger.exception(
+            if _looks_like_timeout_cancellation(exc, elapsed, timeout_seconds):
+                job.error = f"Generation timed out after {timeout_seconds}s"
+            else:
+                job.error = str(exc) or type(exc).__name__
+            logger.error(
                 "[bold red]Job failed[/] project=[white]%s[/] kind=[cyan]%s[/] "
                 "label=%s id=[dim]%s[/] elapsed=[bold]%.1fs[/] error=%s",
                 job.project_name,
                 job.kind,
                 job.label,
                 job.id[:8],
-                time.perf_counter() - started,
+                elapsed,
                 job.error,
+                exc_info=_bool_env("CANARY_LOG_JOB_TRACEBACKS", default=False),
             )
         finally:
             job.finished_at = _now()

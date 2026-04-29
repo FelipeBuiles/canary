@@ -1,57 +1,67 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCreditBalance, useCreditHistory, useCreditPackages, useCreateCheckout } from "../api/queries";
-import type { CreditTransaction } from "../types/api";
+import type { CreditPackage, CreditTransaction } from "../types/api";
 import { cn } from "../lib/cn";
 import { Icon } from "../components/ui/Icon";
 
-function formatCredits(credits: number): string {
-  return `${Math.abs(credits).toLocaleString()} credits`;
-}
+const COSTS = [
+  ["Draw (1 panel)", "4 credits"],
+  ["Rewrite / Fix", "4 credits"],
+  ["Quick Re-do", "4 credits"],
+  ["Plan / Direct", "2 credits"],
+  ["Extract / Adapt", "2 credits"],
+  ["Cover image", "4 credits"],
+];
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    year: "numeric",
+function formatWhen(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
     month: "short",
     day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
+}
+
+function packageName(pkg: CreditPackage) {
+  if (pkg.credits <= 1000) return "Starter";
+  if (pkg.credits < 6000) return "Studio";
+  return "Production";
+}
+
+function perThousand(pkg: CreditPackage) {
+  return `$${(pkg.price_cents / 100 / (pkg.credits / 1000)).toFixed(2)} / 1K`;
 }
 
 function txLabel(tx: CreditTransaction): string {
   if (tx.description) return tx.description;
-  if (tx.stage) return `Stage: ${tx.stage}`;
-  return "Transaction";
-}
-
-function txBadge(tx: CreditTransaction) {
-  if (tx.status === "reserved") return { label: "RESERVED", cls: "text-narrator-gold/80 bg-narrator-gold/10" };
-  if (tx.status === "released") return { label: "RELEASED", cls: "text-bristol/40 bg-bristol/8" };
-  return null;
+  if (tx.stage) return `Model call: ${tx.stage}`;
+  return "Credit transaction";
 }
 
 function TransactionRow({ tx }: { tx: CreditTransaction }) {
   const isCredit = tx.amount_credits > 0;
-  const badge = txBadge(tx);
+  const amount = Math.abs(tx.amount_credits).toLocaleString();
+  const isLargeDebit = tx.amount_credits < -20 || tx.status === "reserved";
 
   return (
-    <tr className="border-b border-ink-black/6 transition-colors hover:bg-ink-black/[0.02]">
-      <td className="py-3 pr-4">
-        <span className="font-body text-[0.88rem] text-ink-black/80">{txLabel(tx)}</span>
-        {badge && (
-          <span className={cn("ml-2 rounded-none px-1.5 py-0.5 font-meta text-[0.48rem] tracking-[0.1em]", badge.cls)}>
-            {badge.label}
-          </span>
+    <tr className="border-b border-ink-black/10 bg-bristol/45 odd:bg-bristol">
+      <td className="px-5 py-3 font-body text-[0.9rem] font-semibold text-ink-black/82">
+        {txLabel(tx)}
+      </td>
+      <td className="px-5 py-3 font-body text-[0.78rem] font-semibold text-ink-black/46">
+        {formatWhen(tx.created_at)}
+      </td>
+      <td
+        className={cn(
+          "px-5 py-3 text-right font-meta text-[0.82rem] font-bold tracking-[0.08em] tabular-nums",
+          isCredit && "text-archive-sage",
+          !isCredit && !isLargeDebit && "text-ink-black/70",
+          isLargeDebit && "text-warn-orange",
         )}
-      </td>
-      <td className="py-3 pr-4 font-meta text-[0.62rem] tracking-[0.06em] text-ink-black/40">
-        {formatDate(tx.created_at)}
-      </td>
-      <td className={cn(
-        "py-3 text-right font-meta text-[0.78rem] tabular-nums font-medium",
-        isCredit ? "text-archive-sage" : "text-ink-black/65",
-      )}>
-        {isCredit ? "+" : "−"}{formatCredits(tx.amount_credits)}
+      >
+        {isCredit ? "+" : "-"}{amount} ◆
       </td>
     </tr>
   );
@@ -71,7 +81,6 @@ export function CreditsPage() {
   useEffect(() => {
     if (successParam && !didRefresh.current) {
       didRefresh.current = true;
-      // Stripe webhook may take a moment — poll balance a few times
       const ids = [500, 2000, 4000].map((delay) =>
         setTimeout(() => {
           qc.invalidateQueries({ queryKey: ["credits"] });
@@ -81,128 +90,153 @@ export function CreditsPage() {
     }
   }, [successParam, qc]);
 
+  const credits = balance?.balance_credits ?? 0;
+  const transactions = useMemo(() => history?.transactions ?? [], [history?.transactions]);
+  const usedThisMonth = useMemo(
+    () =>
+      transactions
+        .filter((tx) => tx.amount_credits < 0)
+        .reduce((sum, tx) => sum + Math.abs(tx.amount_credits), 0),
+    [transactions],
+  );
+  const usageWidth = Math.min(100, Math.round((usedThisMonth / 1000) * 100));
+
   function dismissSuccess() {
     searchParams.delete("success");
     setSearchParams(searchParams, { replace: true });
   }
 
-  const credits = balance?.balance_credits ?? 0;
-  const isLow = credits < 500;
-
-  const packages = packagesData?.packages ?? [];
-  const transactions = history?.transactions ?? [];
-
   return (
-    <div className="mx-auto w-full max-w-[760px] space-y-10">
-      {/* Success banner */}
+    <div className="mx-auto w-full max-w-[880px] pb-16 pt-6">
       {successParam === "true" && (
-        <div className="flex items-center justify-between border-[2px] border-archive-sage bg-archive-sage/10 px-4 py-3">
+        <div className="mb-8 flex items-center justify-between border-[2px] border-archive-sage bg-chip-sage px-4 py-3">
           <div className="flex items-center gap-3">
-            <Icon name="check" size={16} className="shrink-0 text-archive-sage" />
-            <span className="font-meta text-[0.74rem] tracking-[0.08em] text-ink-black/80">
-              Payment received — credits will appear shortly.
+            <Icon name="check" size={16} className="text-archive-sage" />
+            <span className="font-meta text-[0.72rem] font-bold tracking-[0.08em] text-ink-black/80">
+              Payment received -- credits will appear shortly.
             </span>
           </div>
-          <button
-            type="button"
-            onClick={dismissSuccess}
-            className="ml-4 font-meta text-[0.6rem] tracking-[0.1em] text-ink-black/40 hover:text-ink-black"
-          >
+          <button type="button" onClick={dismissSuccess} className="font-meta text-[0.58rem] tracking-[0.12em] text-ink-black/45 hover:text-ink-black">
             DISMISS
           </button>
         </div>
       )}
 
-      {/* Balance hero */}
       <section>
-        <h1 className="font-meta text-[0.62rem] tracking-[0.2em] text-ink-black/40">BALANCE</h1>
-        <div className="mt-2 flex items-baseline gap-3">
-          {balanceLoading ? (
-            <span className="font-display text-[3rem] font-black leading-none text-ink-black/20">—</span>
-          ) : (
-            <span className={cn(
-              "font-display text-[3.5rem] font-black leading-none tracking-[-0.04em]",
-              isLow ? "text-hero-red" : "text-ink-black",
-            )}>
-              {credits.toLocaleString()}
-            </span>
-          )}
-          {isLow && !balanceLoading && (
-            <span className="font-meta text-[0.62rem] tracking-[0.14em] text-hero-red/80">LOW BALANCE</span>
-          )}
+        <div className="font-meta text-[0.66rem] font-bold uppercase tracking-[0.24em] text-ink-black/42">
+          Balance
         </div>
-        <p className="mt-2 font-body text-[0.88rem] text-ink-black/45">
-          Credits are consumed by model calls. Unused reservations are returned when an action finishes, resets, or fails.
+        <div className="mt-3 flex items-end gap-5">
+          <span className="font-display text-[5.2rem] font-black leading-[0.78] tracking-[-0.04em] text-ink-black">
+            {balanceLoading ? "..." : credits.toLocaleString()}
+          </span>
+          <span className="pb-2 font-meta text-[1rem] font-bold uppercase tracking-[0.18em] text-ink-black/45">
+            Credits
+          </span>
+        </div>
+        <p className="mt-6 max-w-[42rem] text-[1rem] font-semibold leading-7 text-ink-black/54">
+          Credits are consumed by model calls. Reserved credits are returned when an action finishes, resets, or fails.
         </p>
+        <div className="mt-8 flex items-center gap-5">
+          <div className="font-meta text-[0.66rem] font-bold uppercase tracking-[0.22em] text-ink-black/42">
+            This month
+          </div>
+          <div className="h-2 flex-1 bg-surface-variant">
+            <div className="h-full bg-hero-red" style={{ width: `${usageWidth}%` }} />
+          </div>
+          <div className="font-body text-[0.8rem] font-bold text-ink-black/68">
+            {usedThisMonth.toLocaleString()} credits used
+          </div>
+        </div>
       </section>
 
-      {/* Purchase packages */}
-      <section>
-        <h2 className="font-meta text-[0.62rem] tracking-[0.2em] text-ink-black/40">ADD CREDITS</h2>
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-          {packagesLoading
-            ? [1, 2, 3].map((i) => (
-                <div key={i} className="h-40 animate-pulse bg-ink-black/5" />
-              ))
-            : packages.map((pkg) => (
-                <div
-                  key={pkg.id}
-                  className="flex flex-col border-[2px] border-ink-black/12 bg-white p-5 transition-shadow hover:shadow-md"
-                >
-                  <span className="font-display text-[2rem] font-black leading-none tracking-[-0.04em] text-ink-black">
-                    {pkg.label}
-                  </span>
-                  <span className="mt-2 font-meta text-[0.64rem] tracking-[0.1em] text-ink-black/50">
-                    {pkg.credits.toLocaleString()} CREDITS
-                  </span>
-                  <button
-                    type="button"
-                    disabled={checkout.isPending}
-                    onClick={() => checkout.mutate({ packageId: pkg.id })}
-                    className="mt-auto flex items-center justify-center gap-2 border-[2px] border-ink-black/80 bg-hero-red px-3 py-2.5 font-meta text-[0.66rem] tracking-[0.16em] text-bristol shadow-ink-sm transition-colors hover:bg-hero-red/90 disabled:cursor-not-allowed disabled:opacity-50 mt-6"
-                  >
-                    {checkout.isPending && checkout.variables?.packageId === pkg.id && (
-                      <Icon name="loader" size={12} className="animate-spin" />
-                    )}
-                    BUY {pkg.label}
-                  </button>
-                </div>
-              ))}
+      <section className="mt-14 border-l-[4px] border-ink-black/45 bg-surface-container px-7 py-5">
+        <div className="mb-3 font-meta text-[0.66rem] font-bold uppercase tracking-[0.22em] text-ink-black/45">
+          What things cost
         </div>
-        <p className="mt-3 font-meta text-[0.54rem] tracking-[0.08em] text-ink-black/30">
-          Payments processed securely by Stripe. Credits are non-refundable.
-        </p>
-      </section>
-
-      {/* Transaction history */}
-      <section>
-        <h2 className="font-meta text-[0.62rem] tracking-[0.2em] text-ink-black/40">HISTORY</h2>
-        <div className="mt-4">
-          {historyLoading ? (
-            <div className="space-y-2">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="h-10 animate-pulse bg-ink-black/5" />
-              ))}
+        <div className="grid gap-x-9 gap-y-2 sm:grid-cols-3">
+          {COSTS.map(([label, cost]) => (
+            <div key={label} className="flex justify-between gap-4 font-body text-[0.9rem] font-bold text-ink-black/72">
+              <span>{label}</span>
+              <span className="whitespace-nowrap text-ink-black">{cost}</span>
             </div>
-          ) : transactions.length === 0 ? (
-            <p className="font-body text-[0.88rem] text-ink-black/35">No transactions yet.</p>
-          ) : (
-            <table className="w-full border-collapse">
-              <thead>
-                <tr className="border-b-[2px] border-ink-black/15">
-                  <th className="pb-2 text-left font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/40">DESCRIPTION</th>
-                  <th className="pb-2 text-left font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/40">DATE</th>
-                  <th className="pb-2 text-right font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/40">AMOUNT</th>
-                </tr>
-              </thead>
-              <tbody>
-                {transactions.map((tx) => (
-                  <TransactionRow key={tx.id} tx={tx} />
-                ))}
-              </tbody>
-            </table>
-          )}
+          ))}
         </div>
+      </section>
+
+      <section className="mt-12">
+        <div className="mb-5 font-meta text-[0.66rem] font-bold uppercase tracking-[0.22em] text-ink-black/42">
+          Add Credits
+        </div>
+        <div className="grid gap-6 md:grid-cols-3">
+          {packagesLoading
+            ? [1, 2, 3].map((i) => <div key={i} className="h-52 animate-pulse bg-ink-black/5" />)
+            : (packagesData?.packages ?? []).map((pkg) => {
+                const popular = pkg.credits > 1000 && pkg.credits < 6000;
+                return (
+                  <article
+                    key={pkg.id}
+                    className={cn(
+                      "relative border-[2px] bg-bristol p-6",
+                      popular ? "border-hero-red" : "border-ink-black/12",
+                    )}
+                  >
+                    {popular && (
+                      <div className="absolute right-5 top-0 -translate-y-1/2 bg-hero-red px-4 py-1 font-meta text-[0.55rem] font-bold uppercase tracking-[0.16em] text-bristol">
+                        Most Popular
+                      </div>
+                    )}
+                    <div className="font-meta text-[0.68rem] font-bold uppercase tracking-[0.18em] text-ink-black/42">
+                      {packageName(pkg)}
+                    </div>
+                    <div className="mt-2 font-display text-[3rem] font-black leading-[0.8] tracking-[-0.04em] text-ink-black">
+                      {pkg.credits.toLocaleString()}
+                    </div>
+                    <div className="mt-1 font-meta text-[0.64rem] font-bold uppercase tracking-[0.16em] text-ink-black/42">
+                      Credits
+                    </div>
+                    <div className="mt-5 font-body text-[0.9rem] font-bold text-ink-black/54">
+                      {perThousand(pkg)}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={checkout.isPending}
+                      onClick={() => checkout.mutate({ packageId: pkg.id })}
+                      className="mt-5 flex h-11 w-full items-center justify-center bg-ink-black px-4 font-meta text-[0.68rem] font-bold uppercase tracking-[0.2em] text-bristol hover:bg-hero-red disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Buy ${(pkg.price_cents / 100).toLocaleString()}
+                    </button>
+                  </article>
+                );
+              })}
+        </div>
+        <p className="mt-4 font-body text-[0.86rem] font-semibold text-ink-black/46">
+          Payments processed securely by Stripe. Credits never expire.
+        </p>
+      </section>
+
+      <section className="mt-14">
+        <div className="mb-5 font-meta text-[0.66rem] font-bold uppercase tracking-[0.22em] text-ink-black/42">
+          History
+        </div>
+        {historyLoading ? (
+          <div className="space-y-2">
+            {[1, 2, 3].map((i) => <div key={i} className="h-12 animate-pulse bg-ink-black/5" />)}
+          </div>
+        ) : transactions.length === 0 ? (
+          <p className="font-body text-[0.9rem] font-semibold text-ink-black/42">No transactions yet.</p>
+        ) : (
+          <table className="w-full border-collapse border-[2px] border-ink-black/10">
+            <thead>
+              <tr className="bg-bristol">
+                <th className="px-5 py-3 text-left font-meta text-[0.58rem] uppercase tracking-[0.16em] text-ink-black/42">Description</th>
+                <th className="px-5 py-3 text-left font-meta text-[0.58rem] uppercase tracking-[0.16em] text-ink-black/42">When</th>
+                <th className="px-5 py-3 text-right font-meta text-[0.58rem] uppercase tracking-[0.16em] text-ink-black/42">Credits</th>
+              </tr>
+            </thead>
+            <tbody>{transactions.map((tx) => <TransactionRow key={tx.id} tx={tx} />)}</tbody>
+          </table>
+        )}
       </section>
     </div>
   );

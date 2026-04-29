@@ -8,10 +8,10 @@ import asyncio
 import hashlib
 import json
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 from rich.console import Console
-from rich.progress import Progress
 
 from novel_to_comic.clients import flux
 from novel_to_comic.clients.flux import is_rate_limited_error
@@ -19,6 +19,7 @@ from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.layout_planning import load_layout_plan, prompt_path_for_panel, scene_panel_map
 from novel_to_comic.models.prompt import ImagePrompt
+from novel_to_comic.panel_versions import record_current_panel_version
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.prompting import IMAGE_PROMPT_VERSION, _SOFT_CONTINUITY, build_planned_panel_prompt_spec, render_generation_prompt
 from novel_to_comic.state import (
@@ -40,6 +41,10 @@ def _meta_path(image_path: Path) -> Path:
     return image_path.with_suffix(f"{image_path.suffix}.meta.json")
 
 
+def _failure_meta_path(image_path: Path) -> Path:
+    return image_path.with_suffix(f"{image_path.suffix}.failure.json")
+
+
 def _relative_to_project(path: Path, project_dir: Path) -> str:
     try:
         return str(path.relative_to(project_dir))
@@ -49,6 +54,11 @@ def _relative_to_project(path: Path, project_dir: Path) -> str:
 
 def _write_generation_meta(image_path: Path, payload: dict) -> None:
     _meta_path(image_path).write_text(json.dumps(payload, indent=2, sort_keys=True))
+
+
+def _write_failure_meta(image_path: Path, payload: dict) -> None:
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    _failure_meta_path(image_path).write_text(json.dumps(payload, indent=2, sort_keys=True))
 
 
 def _should_use_prev_panel_image(prev_transition_type: str | None) -> bool:
@@ -144,6 +154,35 @@ def _fmt_error(exc: BaseException) -> str:
         if entry.args:
             return f"{type_chain}: {entry.args[0]!r}"
     return type_chain
+
+
+def _exception_chain(exc: BaseException) -> list[BaseException]:
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    node: BaseException | None = exc
+    while node is not None and id(node) not in seen:
+        seen.add(id(node))
+        chain.append(node)
+        node = getattr(node, "__cause__", None) or getattr(node, "__context__", None)
+    return chain
+
+
+def _is_provider_blocked_error(exc: BaseException) -> bool:
+    tokens = (
+        "image_prohibited",
+        "prohibited_content",
+        "responsible ai",
+        "filtered out",
+        "safety rating",
+        "safety_ratings",
+        "violated google",
+        "unable to show the generated image",
+    )
+    chain_text = " ".join(
+        " ".join([str(node), *(str(arg) for arg in getattr(node, "args", ()) if arg is not None)]).lower()
+        for node in _exception_chain(exc)
+    )
+    return any(token in chain_text for token in tokens)
 
 
 async def _generate_panel(
@@ -269,18 +308,64 @@ async def _generate_panel(
                 result = flux_result.value
                 if force and result:
                     output_path.parent.mkdir(parents=True, exist_ok=True)
+                    record_current_panel_version(
+                        project_dir,
+                        prompt.scene_id,
+                        prompt.panel_number,
+                        reason="before_regenerate",
+                    )
                     generation_path.replace(output_path)
+                    record_current_panel_version(
+                        project_dir,
+                        prompt.scene_id,
+                        prompt.panel_number,
+                        reason="regenerate",
+                    )
                     result = output_path
             finally:
                 if force and generation_path.exists():
                     generation_path.unlink(missing_ok=True)
 
             if result:
+                _failure_meta_path(output_path).unlink(missing_ok=True)
                 try:
                     _write_generation_meta(output_path, meta_payload)
                 except Exception:
                     pass
             return ApiResult(value=result, usage=flux_result.usage)
+    except Exception as exc:
+        if "output_path" in locals() and "meta_payload" in locals():
+            try:
+                provider_blocked = _is_provider_blocked_error(exc)
+                failure_payload = {
+                    **meta_payload,
+                    "kind": "panel_image_failure",
+                    "failed_at": datetime.now(UTC).isoformat(),
+                    "classification": "provider_blocked" if provider_blocked else "generation_error",
+                    "recoverable": True,
+                    "user_message": (
+                        "The image provider blocked this panel. Edit the prompt and use Quick Re-Do "
+                        "to generate replacement art before composing."
+                        if provider_blocked
+                        else "Image generation failed. Review the model error, edit the prompt if needed, and use Quick Re-Do."
+                    ),
+                    "error": {
+                        "type": type(exc).__name__,
+                        "message": _fmt_error(exc),
+                        "chain": [
+                            {
+                                "type": type(node).__name__,
+                                "message": str(node),
+                                "args": [str(arg) for arg in getattr(node, "args", ())],
+                            }
+                            for node in _exception_chain(exc)
+                        ],
+                    },
+                }
+                _write_failure_meta(output_path, failure_payload)
+            except Exception:
+                pass
+        raise
     finally:
         if panel_events and panel_key:
             event = panel_events.get(panel_key)
@@ -365,11 +450,11 @@ async def run(
                         if panel_num not in target_panels:
                             continue
                 if retry_failed:
-                    # Include only panels whose output image is actually missing.
-                    # More reliable than the items_failed list, which resets each run.
+                    # Include panels with explicit failure metadata even if a previous
+                    # successful image still exists on disk.
                     prompt = ImagePrompt.model_validate_json(pf.read_text())
                     out = project_dir / "draw" / prompt.scene_id / f"panel_{prompt.panel_number:03d}.png"
-                    if out.exists():
+                    if out.exists() and not _failure_meta_path(out).exists():
                         continue
                 prompt_files.append(pf)
 

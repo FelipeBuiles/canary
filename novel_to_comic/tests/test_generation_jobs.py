@@ -1,0 +1,97 @@
+import asyncio
+import logging
+from types import SimpleNamespace
+
+from novel_to_comic.server.generation_jobs import GenerationJob, _looks_like_timeout_cancellation, generation_worker
+
+
+class _OneJobQueue:
+    def __init__(self, job):
+        self.job = job
+        self.done_count = 0
+
+    async def get(self):
+        if self.done_count:
+            await asyncio.sleep(3600)
+        return self.job
+
+    def task_done(self):
+        self.done_count += 1
+
+
+async def _failing_runner():
+    raise ValueError("image prohibited")
+
+
+def _run_single_job_worker(job):
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            generation_job_timeout_seconds=5,
+            generation_queue=_OneJobQueue(job),
+        )
+    )
+
+    async def run():
+        task = asyncio.create_task(generation_worker(app))
+        while app.state.generation_queue.done_count == 0:
+            await asyncio.sleep(0)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(run())
+
+
+def test_generation_job_failure_does_not_log_traceback_by_default(caplog, monkeypatch):
+    monkeypatch.delenv("CANARY_LOG_JOB_TRACEBACKS", raising=False)
+    job = GenerationJob(
+        id="abc123456789",
+        project_name="demo",
+        kind="panel_regen",
+        label="scene_001 / panel 001",
+        payload={},
+        sequence=1,
+        runner=_failing_runner,
+    )
+
+    with caplog.at_level(logging.ERROR, logger="canary.generation"):
+        _run_single_job_worker(job)
+
+    assert job.status == "failed"
+    assert job.error == "image prohibited"
+    failed_records = [
+        record for record in caplog.records if "Job failed" in record.getMessage()
+    ]
+    assert len(failed_records) == 1
+    assert not failed_records[0].exc_info
+
+
+def test_generation_job_failure_traceback_can_be_enabled(caplog, monkeypatch):
+    monkeypatch.setenv("CANARY_LOG_JOB_TRACEBACKS", "1")
+    job = GenerationJob(
+        id="abc123456789",
+        project_name="demo",
+        kind="panel_regen",
+        label="scene_001 / panel 001",
+        payload={},
+        sequence=1,
+        runner=_failing_runner,
+    )
+
+    with caplog.at_level(logging.ERROR, logger="canary.generation"):
+        _run_single_job_worker(job)
+
+    failed_records = [
+        record for record in caplog.records if "Job failed" in record.getMessage()
+    ]
+    assert len(failed_records) == 1
+    assert failed_records[0].exc_info is not None
+
+
+def test_generation_job_recognizes_provider_cancel_after_worker_timeout():
+    exc = RuntimeError("499 CANCELLED. The operation was cancelled.")
+
+    assert _looks_like_timeout_cancellation(exc, elapsed=600.0, timeout_seconds=600)
+    assert not _looks_like_timeout_cancellation(exc, elapsed=20.0, timeout_seconds=600)

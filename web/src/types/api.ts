@@ -388,6 +388,17 @@ export interface ImagePrompt {
   continuity_note?: string | null;
 }
 
+export interface InstructedPanelRegenResponse {
+  status: string;
+  instruction_status: "accepted";
+  patch_summary: string;
+  job: GenerationJob;
+  scene_id: string;
+  panel_number: number;
+  planned_panel_id?: string | null;
+  prompt: ImagePrompt;
+}
+
 export interface Bubble {
   id: string;
   type: "speech" | "thought" | "narration";
@@ -475,6 +486,11 @@ export interface ImageStatus {
   panel_number: number;
   planned_panel_id?: string | null;
   status: "done" | "failed" | "pending" | "queued" | "running" | "stale";
+  image_available?: boolean;
+  accepted?: boolean;
+  version_count?: number;
+  failure_classification?: "provider_blocked" | "generation_error" | string | null;
+  failure_message?: string | null;
 }
 
 export interface ImageGenerationMeta {
@@ -483,6 +499,45 @@ export interface ImageGenerationMeta {
   prompt: string;
   prompt_sha256: string;
   parameters: Record<string, unknown>;
+  failed_at?: string;
+  classification?: "provider_blocked" | "generation_error" | string;
+  recoverable?: boolean;
+  user_message?: string;
+  recovery?: Record<string, unknown>;
+  error?: {
+    type?: string;
+    message?: string;
+    chain?: Array<Record<string, unknown>>;
+  };
+}
+
+export interface PanelImageVersion {
+  version: number;
+  current: boolean;
+  scene_id: string;
+  panel_number: number;
+  image_path: string;
+  archived_at?: string;
+  reason?: string;
+  width?: number;
+  height?: number;
+  meta_path?: string;
+  failure_meta_path?: string;
+  restored_from_version?: number;
+}
+
+export interface PanelImageVersionsResponse {
+  scene_id: string;
+  panel_number: number;
+  has_history: boolean;
+  versions: PanelImageVersion[];
+}
+
+export interface RestorePanelImageVersionResponse {
+  scene_id: string;
+  panel_number: number;
+  restored: PanelImageVersion;
+  versions: PanelImageVersion[];
 }
 
 export interface CharacterVoice {

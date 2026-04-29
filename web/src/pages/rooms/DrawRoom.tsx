@@ -41,7 +41,7 @@ export function DrawRoom() {
   const { data: status } = useProjectStatus(name);
   const { data: images, isLoading } = useImages(
     name,
-    regeningKeys.length > 0 || status?.stages?.generate?.status === "running" ? 2000 : undefined,
+    regeningKeys.length > 0 || status?.stages?.draw?.status === "running" ? 2000 : undefined,
   );
   const { data: promptSummaries } = usePromptSummaries(name);
   const { mutate: regen } = useRegenPanel();
@@ -109,7 +109,13 @@ export function DrawRoom() {
       (img) => img.scene_id === failedSceneId && img.panel_number === failedPanelNum,
     );
     if (!alreadyPresent && (!sceneFilter || sceneFilter === failedSceneId)) {
-      const synth: ImageStatus = { scene_id: failedSceneId, panel_number: failedPanelNum, status: "failed" };
+      const synth: ImageStatus = {
+        scene_id: failedSceneId,
+        panel_number: failedPanelNum,
+        status: "failed",
+        image_available: false,
+        accepted: false,
+      };
       const idx = displayImages.findIndex(
         (img) =>
           img.scene_id > failedSceneId ||
@@ -152,6 +158,8 @@ export function DrawRoom() {
           scene_id: summary.scene_id,
           panel_number: panelNum,
           status: synthesizedStatus(summary.scene_id, panelNum),
+          image_available: false,
+          accepted: false,
         };
         if (idx === -1) displayImages.push(synth);
         else displayImages.splice(idx, 0, synth);
@@ -171,6 +179,8 @@ export function DrawRoom() {
         scene_id: regenSceneId,
         panel_number: regenPanelNum,
         status: synthesizedStatus(regenSceneId, regenPanelNum),
+        image_available: false,
+        accepted: false,
       };
       const idx = displayImages.findIndex(
         (img) =>
@@ -234,6 +244,12 @@ export function DrawRoom() {
   const prevPanel = selectedPanelIndex > 0 ? displayImages[selectedPanelIndex - 1] : null;
   const nextPanel = selectedPanelIndex >= 0 && selectedPanelIndex < displayImages.length - 1
     ? displayImages[selectedPanelIndex + 1]
+    : null;
+  const nextUnacceptedPanel = selectedPanelIndex >= 0
+    ? displayImages
+        .slice(selectedPanelIndex + 1)
+        .find((img) => img.status === "done" && !img.accepted)
+      ?? displayImages.find((img, idx) => idx !== selectedPanelIndex && img.status === "done" && !img.accepted)
     : null;
   const selectedPanelKey = selectedPanel
     ? `${selectedPanel.sceneId}-${selectedPanel.panelNumber}`
@@ -309,6 +325,10 @@ export function DrawRoom() {
                 panelNumber={img.panel_number}
                 status={isFailed ? "failed" : img.status}
                 imageUrl={imageUrl}
+                imageAvailable={img.image_available ?? img.status === "done"}
+                failureClassification={img.failure_classification}
+                errorMessage={img.failure_message ?? undefined}
+                accepted={!!img.accepted}
                 regenMode={regenModes.get(key) ?? null}
                 regenError={regenError}
                 onRegenerate={() => handleRegen(img.scene_id, img.panel_number)}
@@ -326,8 +346,9 @@ export function DrawRoom() {
             <div className="space-y-3">
               <StatRow label="TOTAL PANELS">{displayImages.length}</StatRow>
               <StatRow label="COMPLETED">{images?.filter((i) => i.status === "done").length ?? 0}</StatRow>
-              <StatRow label="FAILED">{images?.filter((i) => i.status === "failed").length ?? 0}</StatRow>
-              {status?.stages?.generate?.status === "running" && generateStage && (
+              <StatRow label="ACCEPTED">{displayImages.filter((i) => i.accepted).length}</StatRow>
+              <StatRow label="FAILED">{displayImages.filter((i) => i.status === "failed").length}</StatRow>
+              {status?.stages?.draw?.status === "running" && generateStage && (
                 <StatRow label="GENERATING">
                   <span className="animate-pulse text-narrator-gold">
                     {generateStage.items_done}/{generateStage.items_total}
@@ -354,10 +375,17 @@ export function DrawRoom() {
           onClose={() => setSelectedPanel(null)}
           onPrev={prevPanel ? () => setSelectedPanel({ sceneId: prevPanel.scene_id, panelNumber: prevPanel.panel_number }) : null}
           onNext={nextPanel ? () => setSelectedPanel({ sceneId: nextPanel.scene_id, panelNumber: nextPanel.panel_number }) : null}
+          onNextUnaccepted={nextUnacceptedPanel ? () => setSelectedPanel({ sceneId: nextUnacceptedPanel.scene_id, panelNumber: nextUnacceptedPanel.panel_number }) : null}
           project={name}
           sceneId={selectedPanel.sceneId}
           panelNumber={selectedPanel.panelNumber}
           imageUrl={selectedPanelImageUrl}
+          imageAvailable={selectedPanelImage.image_available ?? selectedPanelImage.status === "done"}
+          status={selectedPanelImage.status}
+          failureClassification={selectedPanelImage.failure_classification}
+          errorMessage={selectedPanelImage.failure_message}
+          accepted={!!selectedPanelImage.accepted}
+          versionCount={selectedPanelImage.version_count ?? 0}
         />
       )}
     </RoomShell>
