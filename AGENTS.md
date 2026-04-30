@@ -34,13 +34,15 @@ output. The pipeline is orchestrated through a FastAPI web server — there is n
 | 7 | `draw` | Image prompts → panel PNGs |
 | 8 | `compose` | Panel images + bubble/SFX JSON → PDF/CBZ export |
 
+**Note on file numbering:** Stage files use `s1`–`s7` (two stages share the `s4` prefix). The stage table above uses logical stage numbers 1–8.
+
 **Current focus:** `draw` (stage 7) generation and `compose` (stage 8) assembly.
 
 ## Must-Know Rules
 
 - **No `pipeline run` CLI.** Pipeline operations (run, approve, status, export)
   are HTTP API endpoints on the web server. The CLI only has `init` and `serve`.
-  See `server/routers/pipeline.py` for all pipeline endpoints.
+  See `novel_to_comic/src/novel_to_comic/server/routers/pipeline.py` for all pipeline endpoints.
 - Do not collapse stages or add cross-stage logic. Each stage reads its inputs
   from disk and writes its own outputs.
 - Preserve `visual_anchor` text verbatim. Never paraphrase anchors in prompts.
@@ -62,8 +64,10 @@ output. The pipeline is orchestrated through a FastAPI web server — there is n
 
 ## Where To Look
 
+All paths are repo-relative.
+
 - Detailed agent reference: `docs/reference/agent-context.md`
-- Web server + all pipeline API endpoints: `server/routers/pipeline.py`
+- Web server + all pipeline API endpoints: `novel_to_comic/src/novel_to_comic/server/routers/pipeline.py`
 - CLI (`init` + `serve` only): `novel_to_comic/src/novel_to_comic/cli.py`
 - Config loading/defaults: `novel_to_comic/src/novel_to_comic/config.py`
 - Pipeline state machine: `novel_to_comic/src/novel_to_comic/state.py`
@@ -73,6 +77,10 @@ output. The pipeline is orchestrated through a FastAPI web server — there is n
 - Layout planning models + helpers: `novel_to_comic/src/novel_to_comic/layout_planning.py`
 - Assembly renderer: `novel_to_comic/src/novel_to_comic/assembly/html_renderer.py`
 - Comic editing models: `novel_to_comic/src/novel_to_comic/models/comic_page.py`
+- Auth (Supabase JWT, `get_current_user`): `novel_to_comic/src/novel_to_comic/server/auth.py`
+- Credit reservation/debit: `novel_to_comic/src/novel_to_comic/server/credits.py`
+- Supabase client singleton: `novel_to_comic/src/novel_to_comic/server/db.py`
+- Stripe billing + webhooks: `novel_to_comic/src/novel_to_comic/server/routers/billing.py`
 
 ## Context Hygiene
 

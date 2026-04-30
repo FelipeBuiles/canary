@@ -6,6 +6,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from novel_to_comic import artifacts
+
 from novel_to_comic.layout_planning import (
     apply_narration_decision_patch,
     classify_narration_change_impact,
@@ -36,26 +38,21 @@ router = APIRouter()
 @router.get("/story-bible")
 def get_story_bible(project=Depends(get_project)):
     project_dir, config, state = project
-    path = project_dir / "story_bible.json"
-    if not path.exists():
+    if not artifacts.story_bible_path(project_dir).exists():
         raise HTTPException(404, "Story bible not found")
-    return StoryBible.model_validate_json(path.read_text()).model_dump()
+    return artifacts.read_story_bible(project_dir).model_dump()
 
 
 @router.put("/story-bible")
 def update_story_bible(body: dict, project=Depends(get_project)):
     project_dir, config, state = project
-    path = project_dir / "story_bible.json"
-    if not path.exists():
+    if not artifacts.story_bible_path(project_dir).exists():
         raise HTTPException(404, "Story bible not found")
-    
     try:
-        # Validate the incoming body against the StoryBible schema
         updated_bible = StoryBible.model_validate(body)
     except Exception as e:
         raise HTTPException(400, f"Invalid story bible data: {e}")
-        
-    path.write_text(updated_bible.model_dump_json(indent=2))
+    artifacts.write_story_bible(project_dir, updated_bible)
     return updated_bible.model_dump()
 
 
@@ -65,30 +62,18 @@ def update_story_bible(body: dict, project=Depends(get_project)):
 @router.get("/screenplays")
 def list_screenplays(project=Depends(get_project)):
     project_dir, config, state = project
-    sp_dir = project_dir / "screenplays"
-    if not sp_dir.exists():
-        return []
-    results = []
-    for f in sorted(sp_dir.glob("*.json")):
-        try:
-            sp = Screenplay.model_validate_json(f.read_text())
-            results.append({
-                "scene_id": sp.scene_id,
-                "title": sp.scene_id.replace("_", " ").title(),
-                "beat_count": len(sp.beats),
-            })
-        except Exception:
-            pass
-    return results
+    return [
+        {"scene_id": sp.scene_id, "title": sp.scene_id.replace("_", " ").title(), "beat_count": len(sp.beats)}
+        for sp in artifacts.list_screenplays(project_dir)
+    ]
 
 
 @router.get("/screenplays/{scene_id}")
 def get_screenplay(scene_id: str, project=Depends(get_project)):
     project_dir, config, state = project
-    path = project_dir / "screenplays" / f"{scene_id}.json"
-    if not path.exists():
+    if not artifacts.screenplay_path(project_dir, scene_id).exists():
         raise HTTPException(404, f"Screenplay for {scene_id} not found")
-    return Screenplay.model_validate_json(path.read_text()).model_dump()
+    return artifacts.read_screenplay(project_dir, scene_id).model_dump()
 
 
 # ── Panel Breakdowns (STORYBOARD) ─────────────────────────────────────────────
@@ -97,10 +82,9 @@ def get_screenplay(scene_id: str, project=Depends(get_project)):
 @router.get("/layout-plan")
 def get_layout_plan(project=Depends(get_project)):
     project_dir, config, state = project
-    path = project_dir / "plan" / "layout_plan.json"
-    if not path.exists():
+    if not artifacts.layout_plan_path(project_dir).exists():
         raise HTTPException(404, "Layout plan not found")
-    return LayoutPlan.model_validate_json(path.read_text()).model_dump()
+    return artifacts.read_layout_plan(project_dir).model_dump()
 
 
 @router.post("/layout-plan/narration-decisions/{beat_id}/impact")
@@ -162,20 +146,14 @@ def update_narration_decision(beat_id: str, body: dict, project=Depends(get_proj
 @router.get("/panels")
 def list_panels(project=Depends(get_project)):
     project_dir, config, state = project
-    panels_dir = project_dir / "storyboard"
-    if not panels_dir.exists():
+    storyboard_dir = project_dir / "storyboard"
+    if not storyboard_dir.exists():
         return []
-    results = []
-    for scene_dir in sorted(panels_dir.iterdir()):
-        if not scene_dir.is_dir():
-            continue
-        count = len(list(scene_dir.glob("panel_*.json")))
-        if count > 0:
-            results.append({
-                "scene_id": scene_dir.name,
-                "panel_count": count,
-            })
-    return results
+    return [
+        {"scene_id": d.name, "panel_count": len(list(d.glob("panel_*.json")))}
+        for d in sorted(storyboard_dir.iterdir())
+        if d.is_dir() and list(d.glob("panel_*.json"))
+    ]
 
 
 @router.get("/panels/{scene_id}")
@@ -187,8 +165,7 @@ def get_panels_for_scene(scene_id: str, project=Depends(get_project)):
     results = []
     for f in sorted(scene_dir.glob("panel_*.json")):
         try:
-            pb = PanelBreakdown.model_validate_json(f.read_text())
-            results.append(pb.model_dump())
+            results.append(PanelBreakdown.model_validate_json(f.read_text()).model_dump())
         except Exception:
             pass
     return results
@@ -197,14 +174,14 @@ def get_panels_for_scene(scene_id: str, project=Depends(get_project)):
 @router.put("/panels/{scene_id}/{panel_number}")
 def update_panel(scene_id: str, panel_number: int, body: dict, project=Depends(get_project)):
     project_dir, config, state = project
-    path = project_dir / "storyboard" / scene_id / f"panel_{panel_number:03d}.json"
+    path = artifacts.panel_breakdown_path(project_dir, scene_id, panel_number)
     if not path.exists():
         raise HTTPException(404, f"Panel {scene_id}/{panel_number} not found")
     try:
         updated = PanelBreakdown.model_validate(body)
     except Exception as e:
         raise HTTPException(400, f"Invalid panel data: {e}")
-    path.write_text(updated.model_dump_json(indent=2))
+    artifacts.write_panel_breakdown(project_dir, scene_id, panel_number, updated)
     return updated.model_dump()
 
 
@@ -217,17 +194,11 @@ def list_prompts(project=Depends(get_project)):
     prompts_dir = project_dir / "direct"
     if not prompts_dir.exists():
         return []
-    results = []
-    for scene_dir in sorted(prompts_dir.iterdir()):
-        if not scene_dir.is_dir():
-            continue
-        count = len(list(scene_dir.glob("panel_*.json")))
-        if count > 0:
-            results.append({
-                "scene_id": scene_dir.name,
-                "prompt_count": count,
-            })
-    return results
+    return [
+        {"scene_id": d.name, "prompt_count": len(list(d.glob("panel_*.json")))}
+        for d in sorted(prompts_dir.iterdir())
+        if d.is_dir() and list(d.glob("panel_*.json"))
+    ]
 
 
 @router.get("/prompts/{scene_id}")
@@ -236,20 +207,13 @@ def get_prompts_for_scene(scene_id: str, project=Depends(get_project)):
     scene_dir = project_dir / "direct" / scene_id
     if not scene_dir.is_dir():
         raise HTTPException(404, f"Prompts for {scene_id} not found")
-    results = []
-    for f in sorted(scene_dir.glob("panel_*.json")):
-        try:
-            ip = ImagePrompt.model_validate_json(f.read_text())
-            results.append(ip.model_dump())
-        except Exception:
-            pass
-    return results
+    return [p.model_dump() for p in artifacts.list_panel_prompts(project_dir, scene_id)]
 
 
 @router.put("/prompts/{scene_id}/{panel_number}")
 def update_prompt(scene_id: str, panel_number: int, body: dict, project=Depends(get_project)):
     project_dir, config, state = project
-    path = project_dir / "direct" / scene_id / f"panel_{panel_number:03d}.json"
+    path = artifacts.panel_prompt_path(project_dir, scene_id, panel_number)
     if not path.exists():
         raise HTTPException(404, f"Prompt {scene_id}/{panel_number} not found")
     try:
@@ -257,7 +221,7 @@ def update_prompt(scene_id: str, panel_number: int, body: dict, project=Depends(
     except Exception as e:
         raise HTTPException(400, f"Invalid prompt data: {e}")
     updated.full_prompt = render_panel_prompt_body(updated)
-    path.write_text(updated.model_dump_json(indent=2))
+    artifacts.write_panel_prompt(project_dir, scene_id, panel_number, updated)
     return updated.model_dump()
 
 
@@ -280,8 +244,8 @@ def list_images(
     generate_state = state.stages.get("draw")
     failed_items = set(generate_state.items_failed) if generate_state else set()
 
-    def failure_summary(scene_id: str, stem: str) -> tuple[str | None, str | None]:
-        failure_path = images_dir / scene_id / f"{stem}.png.failure.json"
+    def failure_summary(scene_id: str, panel_num: int) -> tuple[str | None, str | None]:
+        failure_path = artifacts.panel_image_failure_path(project_dir, scene_id, panel_num)
         if not failure_path.exists():
             return None, None
         try:
@@ -314,14 +278,14 @@ def list_images(
             item_key = f"{scene_dir.name}/{stem}"
             is_failed = item_key in failed_items
 
-            prompt_path = project_dir / "direct" / scene_dir.name / f"{stem}.json"
+            prompt_path = artifacts.panel_prompt_path(project_dir, scene_dir.name, panel_num)
             planned_panel_id = None
             if prompt_path.exists():
                 try:
                     planned_panel_id = ImagePrompt.model_validate_json(prompt_path.read_text()).planned_panel_id
                 except Exception:
                     planned_panel_id = None
-            failure_classification, failure_message = failure_summary(scene_dir.name, stem)
+            failure_classification, failure_message = failure_summary(scene_dir.name, panel_num)
             active_job = find_active_generation_job(
                 request.app,
                 pkey,
@@ -355,15 +319,14 @@ def list_images(
             panel_num = int(match.group(1))
             if (scene_dir.name, panel_num) in seen:
                 continue
-            stem = f"panel_{panel_num:03d}"
-            prompt_path = project_dir / "direct" / scene_dir.name / f"{stem}.json"
+            prompt_path = artifacts.panel_prompt_path(project_dir, scene_dir.name, panel_num)
             planned_panel_id = None
             if prompt_path.exists():
                 try:
                     planned_panel_id = ImagePrompt.model_validate_json(prompt_path.read_text()).planned_panel_id
                 except Exception:
                     planned_panel_id = None
-            failure_classification, failure_message = failure_summary(scene_dir.name, stem)
+            failure_classification, failure_message = failure_summary(scene_dir.name, panel_num)
             results.append({
                 "scene_id": scene_dir.name,
                 "panel_number": panel_num,
@@ -389,14 +352,14 @@ def list_images(
         if (scene_id, panel_num) in seen:
             continue
 
-        prompt_path = project_dir / "direct" / scene_id / f"panel_{panel_num:03d}.json"
+        prompt_path = artifacts.panel_prompt_path(project_dir, scene_id, panel_num)
         planned_panel_id = None
         if prompt_path.exists():
             try:
                 planned_panel_id = ImagePrompt.model_validate_json(prompt_path.read_text()).planned_panel_id
             except Exception:
                 planned_panel_id = None
-        failure_classification, failure_message = failure_summary(scene_id, f"panel_{panel_num:03d}")
+        failure_classification, failure_message = failure_summary(scene_id, panel_num)
         results.append({
             "scene_id": scene_id,
             "panel_number": panel_num,

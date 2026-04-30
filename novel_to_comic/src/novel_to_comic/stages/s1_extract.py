@@ -11,6 +11,7 @@ from pathlib import Path
 from pydantic import ValidationError
 from rich.console import Console
 
+from novel_to_comic import artifacts
 from novel_to_comic.clients import text
 from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP
@@ -445,9 +446,7 @@ async def run(
                           f"{len(story_bible.scenes)} scenes")})
         emit({"type": "stage_progress", "stage": "extract", "done": 3, "total": 4})
 
-        bible_path = project_dir / "story_bible.json"
-        bible_json = story_bible.model_dump_json(indent=2)
-        bible_path.write_text(bible_json)
+        artifacts.write_story_bible(project_dir, story_bible)
         _write_scene_files(story_bible, novel_text, project_dir / "scenes")
 
         record_item_done(state, "extract", usage=extract_result.usage)
@@ -461,7 +460,7 @@ async def run(
         save_state(state, project_dir)
 
         console.print("[yellow]Stage 1 complete — awaiting review.[/yellow]")
-        console.print(f"Review the Story Bible at: {bible_path}")
+        console.print(f"Review the Story Bible at: {artifacts.story_bible_path(project_dir)}")
         console.print("Run [bold]pipeline approve --project . --stage extract[/bold] to continue.")
 
         return story_bible

@@ -1,4 +1,4 @@
-"""Stage 3: Scene text → Screenplay format via Gemini Pro.
+"""Stage 3: Scene text → Screenplay format
 
 Converts prose scenes into observable-action screenplays suitable for
 comic panel breakdown.
@@ -9,6 +9,7 @@ from pathlib import Path
 
 from rich.console import Console
 
+from novel_to_comic import artifacts
 from novel_to_comic.clients import text
 from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
@@ -57,10 +58,6 @@ def _is_offscreen_character(char) -> bool:
             "never physically shown",
         )
     )
-
-
-def _load_story_bible(project_dir: Path) -> StoryBible:
-    return StoryBible.model_validate_json((project_dir / "story_bible.json").read_text())
 
 
 def _build_user_content(scene_text: str, story_bible: StoryBible, scene_id: str) -> str:
@@ -159,15 +156,13 @@ async def _process_scene(
     semaphore: asyncio.Semaphore,
 ) -> ApiResult[Screenplay | None]:
     """Process a single scene into a screenplay."""
-    scene_text_path = project_dir / "scenes" / f"{scene_id}.txt"
-    if not scene_text_path.exists():
+    if not artifacts.scene_text_path(project_dir, scene_id).exists():
         return None
 
-    output_path = project_dir / "screenplays" / f"{scene_id}.json"
-    if output_path.exists():
-        return ApiResult(value=Screenplay.model_validate_json(output_path.read_text()), usage=None)
+    if artifacts.screenplay_path(project_dir, scene_id).exists():
+        return ApiResult(value=artifacts.read_screenplay(project_dir, scene_id), usage=None)
 
-    scene_text = scene_text_path.read_text()
+    scene_text = artifacts.read_scene_text(project_dir, scene_id)
     user_content = _build_user_content(scene_text, story_bible, scene_id)
 
     async with semaphore:
@@ -185,8 +180,7 @@ async def _process_scene(
         result = result[0]
     screenplay = _normalize_screenplay(Screenplay.model_validate(result), story_bible)
     screenplay = _annotate_transition_beats(screenplay)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(screenplay.model_dump_json(indent=2))
+    artifacts.write_screenplay(project_dir, scene_id, screenplay)
     return ApiResult(value=screenplay, usage=api_result.usage)
 
 
@@ -200,7 +194,7 @@ async def run(
     """Execute Stage 3: Convert scenes to screenplays."""
     emit = on_event or _NOOP
 
-    story_bible = _load_story_bible(project_dir)
+    story_bible = artifacts.read_story_bible(project_dir)
     system_prompt = PROMPT_PATH.read_text()
 
     ids = scene_ids or [s.id for s in story_bible.scenes]
@@ -209,9 +203,9 @@ async def run(
 
     estimated = 0.0
     for sid in ids:
-        if (project_dir / "screenplays" / f"{sid}.json").exists():
+        if artifacts.screenplay_path(project_dir, sid).exists():
             continue
-        scene_path = project_dir / "scenes" / f"{sid}.txt"
+        scene_path = artifacts.scene_text_path(project_dir, sid)
         scene_text = scene_path.read_text() if scene_path.exists() else "x" * 8000
         estimated += estimate_text_cost(
             config.effective_screenplay_model(),

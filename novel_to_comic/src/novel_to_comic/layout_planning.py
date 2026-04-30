@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
+from novel_to_comic import artifacts
 from novel_to_comic.assembly.html_renderer import PAGE_H, PAGE_W
 from novel_to_comic.models.comic_page import Bubble, ComicPage, PagePanel, Sfx
 from novel_to_comic.models.layout_plan import LayoutPlan, NarrationDecision, PanelGeometry, PlannedPage, PlannedPanel
@@ -125,19 +125,12 @@ def select_layout_template(panels: "list") -> str:  # list[PlannedPanel]
     return _TEMPLATE_SELECTION.get((count, has_hero), "2x3")
 
 
-def _layout_plan_path(project_dir: Path) -> Path:
-    return project_dir / "plan" / "layout_plan.json"
-
-
 def load_layout_plan(project_dir: Path) -> LayoutPlan:
-    path = _layout_plan_path(project_dir)
-    return LayoutPlan.model_validate_json(path.read_text())
+    return artifacts.read_layout_plan(project_dir)
 
 
 def save_layout_plan(project_dir: Path, plan: LayoutPlan) -> None:
-    path = _layout_plan_path(project_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(plan.model_dump_json(indent=2))
+    artifacts.write_layout_plan(project_dir, plan)
 
 
 def planned_panel_index(plan: LayoutPlan) -> dict[str, PlannedPanel]:
@@ -320,11 +313,11 @@ def apply_narration_decision_patch(plan: LayoutPlan, beat_id: str, patch: dict) 
 
 
 def prompt_path_for_panel(project_dir: Path, panel: PlannedPanel) -> Path:
-    return project_dir / "direct" / panel.scene_id / f"panel_{panel.panel_number:03d}.json"
+    return artifacts.panel_prompt_path(project_dir, panel.scene_id, panel.panel_number)
 
 
 def image_path_for_panel(project_dir: Path, panel: PlannedPanel) -> Path:
-    return project_dir / "draw" / panel.scene_id / f"panel_{panel.panel_number:03d}.png"
+    return artifacts.panel_image_path(project_dir, panel.scene_id, panel.panel_number)
 
 
 def _content_box() -> tuple[float, float]:
@@ -480,15 +473,14 @@ def project_layout_plan_to_pages(
 
 
 def write_projected_pages(project_dir: Path, pages: list[ComicPage]) -> list[Path]:
-    pages_dir = project_dir / "compose" / "pages"
+    pages_dir = artifacts.compose_pages_dir(project_dir)
     pages_dir.mkdir(parents=True, exist_ok=True)
     for old in pages_dir.glob("page_*.json"):
         old.unlink()
     written: list[Path] = []
     for page in pages:
-        path = pages_dir / f"page_{page.page_number:03d}.json"
-        path.write_text(page.model_dump_json(indent=2))
-        written.append(path)
+        artifacts.write_compose_page(project_dir, page.page_number, page)
+        written.append(artifacts.compose_page_path(project_dir, page.page_number))
     return written
 
 
@@ -684,14 +676,11 @@ def persist_projected_pages(
     story_bible: StoryBible,
     theme_name: str,
 ) -> list[ComicPage]:
-    pages_dir = project_dir / "compose" / "pages"
     existing = []
-    if pages_dir.exists():
-        for path in sorted(pages_dir.glob("page_*.json")):
-            try:
-                existing.append(ComicPage.model_validate_json(path.read_text()))
-            except Exception:
-                continue
+    try:
+        existing = artifacts.list_compose_pages(project_dir)
+    except Exception:
+        pass
     pages = project_layout_plan_to_pages(project_dir, story_bible, theme_name, existing_pages=existing)
     write_projected_pages(project_dir, pages)
     return pages
