@@ -1,4 +1,4 @@
-"""Stage 6: Image prompts → Panel images via FLUX.2 Pro.
+"""Stage 6: Image prompts → Panel images
 
 Generates panel images using the assembled prompts and character reference
 images for multi-reference consistency.
@@ -13,6 +13,7 @@ from pathlib import Path
 
 from rich.console import Console
 
+from novel_to_comic import artifacts
 from novel_to_comic.clients import flux
 from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
@@ -34,14 +35,6 @@ from novel_to_comic.usage import ApiResult, estimate_image_cost
 
 console = Console()
 
-def _meta_path(image_path: Path) -> Path:
-    return image_path.with_suffix(f"{image_path.suffix}.meta.json")
-
-
-def _failure_meta_path(image_path: Path) -> Path:
-    return image_path.with_suffix(f"{image_path.suffix}.failure.json")
-
-
 def _relative_to_project(path: Path, project_dir: Path) -> str:
     try:
         return str(path.relative_to(project_dir))
@@ -50,12 +43,11 @@ def _relative_to_project(path: Path, project_dir: Path) -> str:
 
 
 def _write_generation_meta(image_path: Path, payload: dict) -> None:
-    _meta_path(image_path).write_text(json.dumps(payload, indent=2, sort_keys=True))
+    artifacts.write_asset_meta(image_path, payload)
 
 
 def _write_failure_meta(image_path: Path, payload: dict) -> None:
-    image_path.parent.mkdir(parents=True, exist_ok=True)
-    _failure_meta_path(image_path).write_text(json.dumps(payload, indent=2, sort_keys=True))
+    artifacts.write_asset_failure(image_path, payload)
 
 
 def _should_use_prev_panel_image(prev_transition_type: str | None) -> bool:
@@ -79,13 +71,13 @@ def _use_continuity_refs(config: Config) -> bool:
 
 def _find_style_sample(project_dir: Path, style_template: str) -> Path | None:
     """Return the sample image matching the active style template."""
-    suggestions_path = project_dir / "samples" / "style_suggestions.json"
+    suggestions_path = artifacts.style_suggestions_path(project_dir)
     if suggestions_path.exists():
         try:
             data = json.loads(suggestions_path.read_text())
             for i, s in enumerate(data.get("suggestions", []), 1):
                 if isinstance(s, dict) and s.get("template", "").strip() == style_template.strip():
-                    candidate = project_dir / "samples" / f"style_{i}.png"
+                    candidate = artifacts.style_sample_path(project_dir, i)
                     if candidate.exists():
                         return candidate
         except Exception:
@@ -179,10 +171,9 @@ def estimate_panel_image_cost_usd(
         style_sample = _find_style_sample(project_dir, config.style_template)
     if scene_to_location is None:
         scene_to_location = {}
-        bible_path = project_dir / "story_bible.json"
-        if bible_path.exists():
+        if artifacts.story_bible_path(project_dir).exists():
             try:
-                story_bible = StoryBible.model_validate_json(bible_path.read_text())
+                story_bible = artifacts.read_story_bible(project_dir)
                 scene_to_location = {s.id: s.location_id for s in story_bible.scenes}
             except Exception:
                 scene_to_location = {}
@@ -386,7 +377,7 @@ async def _generate_panel(
                     generation_path.unlink(missing_ok=True)
 
             if result:
-                _failure_meta_path(output_path).unlink(missing_ok=True)
+                artifacts.asset_failure_path(output_path).unlink(missing_ok=True)
                 try:
                     _write_generation_meta(output_path, meta_payload)
                 except Exception:
@@ -448,9 +439,8 @@ async def regenerate_panel_image(
 
     scene_to_location: dict[str, str] = {}
     story_bible: StoryBible | None = None
-    bible_path = project_dir / "story_bible.json"
-    if bible_path.exists():
-        story_bible = StoryBible.model_validate_json(bible_path.read_text())
+    if artifacts.story_bible_path(project_dir).exists():
+        story_bible = artifacts.read_story_bible(project_dir)
         scene_to_location = {s.id: s.location_id for s in story_bible.scenes}
 
     scene_locks: dict[str, asyncio.Lock] = {}
@@ -513,12 +503,12 @@ async def run(
                     # successful image still exists on disk.
                     prompt = ImagePrompt.model_validate_json(pf.read_text())
                     out = project_dir / "draw" / prompt.scene_id / f"panel_{prompt.panel_number:03d}.png"
-                    if out.exists() and not _failure_meta_path(out).exists():
+                    if out.exists() and not artifacts.asset_failure_path(out).exists():
                         continue
                 prompt_files.append(pf)
 
-    if (project_dir / "story_bible.json").exists():
-        story_bible = StoryBible.model_validate_json((project_dir / "story_bible.json").read_text())
+    if artifacts.story_bible_path(project_dir).exists():
+        story_bible = artifacts.read_story_bible(project_dir)
 
     if story_bible is not None and plan is not None:
         for scene_panels in panels_by_scene.values():
@@ -543,9 +533,8 @@ async def run(
 
     # 2. Scene → location mapping (for location plate lookup)
     scene_to_location: dict[str, str] = {}
-    bible_path = project_dir / "story_bible.json"
-    if bible_path.exists():
-        story_bible = StoryBible.model_validate_json(bible_path.read_text())
+    if artifacts.story_bible_path(project_dir).exists():
+        story_bible = artifacts.read_story_bible(project_dir)
         scene_to_location = {s.id: s.location_id for s in story_bible.scenes}
 
     scene_locks: dict[str, asyncio.Lock] = {}

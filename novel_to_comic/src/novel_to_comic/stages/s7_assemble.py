@@ -29,6 +29,7 @@ import img2pdf
 from rich.console import Console
 from rich.progress import Progress
 
+from novel_to_comic import artifacts
 from novel_to_comic.assembly.html_renderer import (
     browser_context,
     build_page_html,
@@ -277,16 +278,14 @@ async def run(
               "message": "No images found. Run stage 6 (generate) first."})
         return
 
-    story_bible = StoryBible.model_validate_json(
-        (project_dir / "story_bible.json").read_text()
-    )
+    story_bible = artifacts.read_story_bible(project_dir)
 
     # ── Directories ───────────────────────────────────────────────────────────
     assembly_dir = project_dir / "compose"
     json_dir  = assembly_dir / "pages"      # ComicPage JSON (editing surface)
     html_dir  = assembly_dir / "html"       # HTML previews (open in browser)
     png_dir   = assembly_dir / "pages"      # PNGs share the dir with JSON
-    exports_dir = project_dir / "exports"
+    exports_dir = artifacts.export_pdf_path(project_dir).parent
     for d in (json_dir, html_dir, exports_dir):
         d.mkdir(parents=True, exist_ok=True)
 
@@ -304,7 +303,7 @@ async def run(
 
     # ── Build phase (panel data → ComicPage JSON) ─────────────────────────────
     if rebuild:
-        plan_path = project_dir / "plan" / "layout_plan.json"
+        plan_path = artifacts.layout_plan_path(project_dir)
         panel_data = _collect_panel_data(project_dir, use_layout_plan=plan_path.exists())
         if not panel_data:
             console.print("[red]No valid panel images found.[/red]")
@@ -335,9 +334,8 @@ async def run(
         if not plan_path.exists():
             for i, group in enumerate(page_groups):
                 comic_page = _build_comic_page(group, i + 1, project_dir, story_bible, theme_name)
-                json_path  = json_dir / f"page_{i + 1:03d}.json"
-                json_path.write_text(comic_page.model_dump_json(indent=2))
-                json_paths.append(json_path)
+                artifacts.write_compose_page(project_dir, i + 1, comic_page)
+                json_paths.append(artifacts.compose_page_path(project_dir, i + 1))
         for group in page_groups:
             for _ in group:
                 record_item_done(state, "compose")

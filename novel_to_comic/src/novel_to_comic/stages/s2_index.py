@@ -1,7 +1,7 @@
 """Stage 2: character reference images + location plates.
 
-Part A: Generate character reference sheets via FLUX.2 Pro.
-Part B: Generate location background plates via FLUX.2 Pro.
+Part A: Generate character reference sheets
+Part B: Generate location background plates
 """
 
 import asyncio
@@ -13,6 +13,7 @@ from pathlib import Path
 
 from rich.console import Console
 
+from novel_to_comic import artifacts
 from novel_to_comic.clients import flux
 from novel_to_comic.config import Config, GATEWAY_IMAGE_PRIMARY_MODEL
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
@@ -136,10 +137,6 @@ def _relative_to_project(path: Path | None, project_dir: Path) -> str | None:
         return str(path)
 
 
-def _asset_meta_path(output_path: Path) -> Path:
-    return output_path.with_suffix(f"{output_path.suffix}.meta.json")
-
-
 def _asset_meta_common(config: Config, project_dir: Path, style_ref: Path | None) -> dict:
     return {
         "version": 1,
@@ -183,19 +180,6 @@ def _location_plate_meta(
     }
 
 
-def _asset_matches_meta(output_path: Path, expected: dict) -> bool:
-    meta_path = _asset_meta_path(output_path)
-    if not output_path.exists() or not meta_path.exists():
-        return False
-    try:
-        actual = json.loads(meta_path.read_text())
-    except Exception:
-        return False
-    return actual == expected
-
-
-def _write_asset_meta(output_path: Path, meta: dict) -> None:
-    _asset_meta_path(output_path).write_text(json.dumps(meta, indent=2, sort_keys=True))
 
 
 def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
@@ -205,14 +189,14 @@ def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
     Returns None if no exact sample exists. This avoids conditioning refs and
     panels on a sample from a different active style.
     """
-    suggestions_path = project_dir / "samples" / "style_suggestions.json"
+    suggestions_path = artifacts.style_suggestions_path(project_dir)
     if suggestions_path.exists():
         try:
             data = json.loads(suggestions_path.read_text())
             suggestions = data.get("suggestions", [])
             for i, s in enumerate(suggestions, 1):
                 if isinstance(s, dict) and s.get("template", "").strip() == style_template.strip():
-                    candidate = project_dir / "samples" / f"style_{i}.png"
+                    candidate = artifacts.style_sample_path(project_dir, i)
                     if candidate.exists():
                         return candidate
         except Exception:
@@ -228,11 +212,6 @@ def _character_ref_style_ref(config: Config, style_ref: Path | None) -> Path | N
     # Reusing a previous character sample here can copy that character's
     # clothing or body details into the next reference sheet.
     return None
-
-
-def _load_story_bible(project_dir: Path) -> StoryBible:
-    bible_path = project_dir / "story_bible.json"
-    return StoryBible.model_validate_json(bible_path.read_text())
 
 
 def _character_ref_prompt(config: Config, story_bible: StoryBible, char: Character) -> str:
@@ -270,7 +249,7 @@ async def regenerate_character_ref(
     char_id: str,
     semaphore: asyncio.Semaphore | None = None,
 ) -> ApiResult[Path]:
-    story_bible = _load_story_bible(project_dir)
+    story_bible = artifacts.read_story_bible(project_dir)
     char = next((candidate for candidate in story_bible.characters if candidate.id == char_id), None)
     if char is None:
         raise ValueError(f"Character not found: {char_id}")
@@ -300,7 +279,7 @@ async def regenerate_character_ref(
             )
         tmp_path.replace(output_path)
         await asyncio.to_thread(_crop_sheet_to_poses, output_path)
-        _write_asset_meta(output_path, meta)
+        artifacts.write_asset_meta(output_path, meta)
         return ApiResult(value=output_path, usage=flux_result.usage)
     finally:
         if tmp_path.exists():
@@ -313,7 +292,7 @@ async def regenerate_location_plate(
     loc_id: str,
     semaphore: asyncio.Semaphore | None = None,
 ) -> ApiResult[Path]:
-    story_bible = _load_story_bible(project_dir)
+    story_bible = artifacts.read_story_bible(project_dir)
     loc = next((candidate for candidate in story_bible.locations if candidate.id == loc_id), None)
     if loc is None:
         raise ValueError(f"Location not found: {loc_id}")
@@ -340,7 +319,7 @@ async def regenerate_location_plate(
                 feature="cast.location_plate",
             )
         tmp_path.replace(output_path)
-        _write_asset_meta(output_path, meta)
+        artifacts.write_asset_meta(output_path, meta)
         return ApiResult(value=output_path, usage=flux_result.usage)
     finally:
         if tmp_path.exists():
@@ -394,7 +373,7 @@ async def _generate_character_refs(
             prompt = _character_ref_prompt(config, story_bible, char)
             meta = _character_ref_meta(config, project_dir, style_ref, char, prompt)
 
-            if _asset_matches_meta(output_path, meta):
+            if artifacts.asset_matches_meta(output_path, meta):
                 # Migrate older sheets that pre-date cropped-pose references.
                 if not (char_dir / "front.png").exists():
                     try:
@@ -425,7 +404,7 @@ async def _generate_character_refs(
                     feature="cast.character_ref",
                 )
                 await asyncio.to_thread(_crop_sheet_to_poses, output_path)
-                _write_asset_meta(output_path, meta)
+                artifacts.write_asset_meta(output_path, meta)
                 record_item_done(state, "cast", usage=flux_result.usage)
                 emit({"type": "stage_progress", "stage": "cast",
                       "done": state.stages["cast"].items_done,
@@ -461,7 +440,7 @@ async def _generate_location_plates(
             prompt = _location_plate_prompt(config, loc)
             style_ref = _find_style_ref(project_dir, config.style_template)
             meta = _location_plate_meta(config, project_dir, style_ref, loc, prompt)
-            if _asset_matches_meta(output_path, meta):
+            if artifacts.asset_matches_meta(output_path, meta):
                 record_item_done(state, "cast", cost=0.0)
                 emit({"type": "log", "stage": "cast", "level": "dim",
                       "message": f"Using existing location plate for {loc.name}"})
@@ -481,7 +460,7 @@ async def _generate_location_plates(
                     ref_type="style",
                     feature="cast.location_plate",
                 )
-                _write_asset_meta(output_path, meta)
+                artifacts.write_asset_meta(output_path, meta)
                 record_item_done(state, "cast", usage=flux_result.usage)
                 emit({"type": "stage_progress", "stage": "cast",
                       "done": state.stages["cast"].items_done,
@@ -503,7 +482,7 @@ async def run(
     """Execute Stage 2: generate character reference images and location plates."""
     emit = on_event or _NOOP
 
-    story_bible = _load_story_bible(project_dir)
+    story_bible = artifacts.read_story_bible(project_dir)
 
     is_partial = bool(char_ids or loc_ids)
     should_generate_refs = not is_partial or char_ids is not None

@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from novel_to_comic import artifacts
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.prompt_instructions import (
     PromptInstructionError,
@@ -317,9 +318,8 @@ def _draw_panel_blockers_for_compose(project_dir) -> list[str]:
             except (IndexError, ValueError):
                 continue
 
-        image_path = project_dir / "draw" / scene_id / f"panel_{panel_number:03d}.png"
-        failure_path = image_path.with_suffix(f"{image_path.suffix}.failure.json")
-        if failure_path.exists():
+        image_path = artifacts.panel_image_path(project_dir, scene_id, panel_number)
+        if artifacts.asset_failure_path(image_path).exists():
             blockers.append(f"{scene_id}/panel_{panel_number:03d} failed")
         elif not image_path.exists():
             blockers.append(f"{scene_id}/panel_{panel_number:03d} missing image")
@@ -346,7 +346,7 @@ def _append_instruction_log(
     patch: dict,
     prompt: ImagePrompt,
 ) -> None:
-    log_path = project_dir / "direct" / scene_id / f"panel_{panel_number:03d}.instructions.jsonl"
+    log_path = artifacts.panel_prompt_instructions_path(project_dir, scene_id, panel_number)
     payload = {
         "created_at": datetime.now(UTC).isoformat(),
         "instruction": instruction,
@@ -387,7 +387,7 @@ async def regen_panel_estimate(
     """Return the estimated credit cost to regenerate one panel image."""
     from novel_to_comic.stages.s6_generate import estimate_panel_image_cost_usd
     project_dir, config, _state = project
-    prompt_path = project_dir / "direct" / scene_id / f"panel_{panel_number:03d}.json"
+    prompt_path = artifacts.panel_prompt_path(project_dir, scene_id, panel_number)
     if not prompt_path.exists():
         raise HTTPException(404, f"Prompt not found: {scene_id}/panel_{panel_number:03d}")
     cost_usd = estimate_panel_image_cost_usd(config, project_dir, prompt_path)
@@ -553,7 +553,7 @@ async def regen_panel(
     if existing and not existing.done():
         raise HTTPException(409, "A stage is already running for this project")
 
-    prompt_path = project_dir / "direct" / scene_id / f"panel_{panel_number:03d}.json"
+    prompt_path = artifacts.panel_prompt_path(project_dir, scene_id, panel_number)
     if not prompt_path.exists():
         raise HTTPException(404, f"Prompt not found: {scene_id}/panel_{panel_number:03d}")
     planned_panel_id = None
@@ -652,7 +652,7 @@ async def regen_panel_with_instruction(
     if existing_regen:
         raise HTTPException(409, "A regeneration is already queued or running for this panel")
 
-    prompt_path = project_dir / "direct" / scene_id / f"panel_{panel_number:03d}.json"
+    prompt_path = artifacts.panel_prompt_path(project_dir, scene_id, panel_number)
     if not prompt_path.exists():
         raise HTTPException(404, f"Prompt not found: {scene_id}/panel_{panel_number:03d}")
 

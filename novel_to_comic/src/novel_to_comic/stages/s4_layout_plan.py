@@ -27,6 +27,7 @@ from pathlib import Path
 
 from rich.console import Console
 
+from novel_to_comic import artifacts
 from novel_to_comic.clients.text import generate_json
 from novel_to_comic.usage import UsageRecord, estimate_text_cost
 from novel_to_comic.config import Config
@@ -164,13 +165,8 @@ Each narration_decisions object has exactly these keys:
 # Helpers shared by both planning modes
 # ---------------------------------------------------------------------------
 
-def _load_story_bible(project_dir: Path) -> StoryBible:
-    return StoryBible.model_validate_json((project_dir / "story_bible.json").read_text())
-
-
 def _load_screenplay(project_dir: Path, scene_id: str) -> Screenplay:
-    path = project_dir / "screenplays" / f"{scene_id}.json"
-    return Screenplay.model_validate_json(path.read_text())
+    return artifacts.read_screenplay(project_dir, scene_id)
 
 
 def _screenplay_hash(screenplays: list[Screenplay]) -> str:
@@ -1003,15 +999,12 @@ async def run(
 ) -> None:
     """Execute layout planning from screenplay artifacts."""
     emit = on_event or _NOOP
-    story_bible = _load_story_bible(project_dir)
+    story_bible = artifacts.read_story_bible(project_dir)
     ids = scene_ids or [scene.id for scene in story_bible.scenes]
     if config.dev_mode and not scene_ids:
         ids = ids[:1]
-    layout_plan_dir = project_dir / "plan"
-    layout_plan_path = layout_plan_dir / "layout_plan.json"
-
     # Pre-flight: verify all required screenplays exist.
-    missing = [sid for sid in ids if not (project_dir / "screenplays" / f"{sid}.json").exists()]
+    missing = [sid for sid in ids if not artifacts.screenplay_path(project_dir, sid).exists()]
     if missing:
         raise FileNotFoundError(
             f"Missing screenplays for {len(missing)} scene(s): "
@@ -1021,7 +1014,7 @@ async def run(
 
     estimated = 0.0
     for sid in ids:
-        sp_path = project_dir / "screenplays" / f"{sid}.json"
+        sp_path = artifacts.screenplay_path(project_dir, sid)
         sp_text = sp_path.read_text() if sp_path.exists() else "x" * 4000
         estimated += estimate_text_cost(
             config.effective_panel_model(),
@@ -1036,8 +1029,7 @@ async def run(
             task = progress.add_task("Layout planning", total=len(ids))
             usage_records: list[UsageRecord] = []
             plan = await _build_layout_plan(config, project_dir, story_bible, ids, usage_records=usage_records)
-            layout_plan_dir.mkdir(parents=True, exist_ok=True)
-            layout_plan_path.write_text(plan.model_dump_json(indent=2))
+            artifacts.write_layout_plan(project_dir, plan)
             for usage in usage_records:
                 record_api_usage(state, "plan", usage)
             for _scene_id in ids:
@@ -1064,7 +1056,7 @@ async def run(
         save_state(state, project_dir)
         console.print(
             f"[green]Stage 4 complete.[/green] Wrote "
-            f"{layout_plan_path.relative_to(project_dir)} "
+            f"{artifacts.layout_plan_path(project_dir).relative_to(project_dir)} "
             f"with {len(plan.planned_panels)} planned panels across {len(plan.planned_pages)} pages."
             + (f" [yellow]({len(plan.warnings)} warning(s))[/yellow]" if plan.warnings else "")
         )
@@ -1074,7 +1066,7 @@ async def run(
                 "stage": "plan",
                 "level": "info",
                 "message": (
-                    f"Wrote {layout_plan_path.relative_to(project_dir)} "
+                    f"Wrote {artifacts.layout_plan_path(project_dir).relative_to(project_dir)} "
                     f"with {len(plan.planned_panels)} planned panels across {len(plan.planned_pages)} pages."
                 ),
             }

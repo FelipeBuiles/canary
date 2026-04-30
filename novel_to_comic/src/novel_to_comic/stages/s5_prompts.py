@@ -9,8 +9,8 @@ import asyncio
 from pathlib import Path
 
 from rich.console import Console
-from rich.progress import Progress
 
+from novel_to_comic import artifacts
 from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.layout_planning import load_layout_plan, prompt_path_for_panel, scene_panel_map
@@ -28,10 +28,6 @@ from novel_to_comic.state import (
 )
 
 console = Console()
-
-
-def _load_story_bible(project_dir: Path) -> StoryBible:
-    return StoryBible.model_validate_json((project_dir / "story_bible.json").read_text())
 
 
 async def _process_panel(
@@ -67,9 +63,9 @@ async def run(
     """Execute Stage 5: Generate image prompts for all panels."""
     emit = on_event or _NOOP
 
-    story_bible = _load_story_bible(project_dir)
+    story_bible = artifacts.read_story_bible(project_dir)
 
-    plan_path = project_dir / "plan" / "layout_plan.json"
+    plan_path = artifacts.layout_plan_path(project_dir)
     if not plan_path.exists():
         console.print("[red]No layout plan found. Run stage 4 (layout-plan) first.[/red]")
         emit({"type": "log", "stage": "direct", "level": "error",

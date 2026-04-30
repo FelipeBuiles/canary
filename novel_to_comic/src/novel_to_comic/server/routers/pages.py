@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
+from novel_to_comic import artifacts
 from novel_to_comic.config import Config, LANGUAGE_NAMES, save_config
 from novel_to_comic.ai import ai_request_context
 from novel_to_comic.assembly.html_renderer import build_page_html, resolve_theme, write_theme_css, THEMES
@@ -33,21 +34,19 @@ router = APIRouter()
 
 
 def _pages_dir(project_dir: Path) -> Path:
-    return project_dir / "compose" / "pages"
+    return artifacts.compose_pages_dir(project_dir)
 
 
 def _load_page(project_dir: Path, page_num: int) -> ComicPage:
-    path = _pages_dir(project_dir) / f"page_{page_num:03d}.json"
-    if not path.exists():
+    if not artifacts.compose_page_path(project_dir, page_num).exists():
         raise HTTPException(404, f"Page {page_num} not found")
-    return ComicPage.model_validate_json(path.read_text())
+    return artifacts.read_compose_page(project_dir, page_num)
 
 
 def _load_story_bible(project_dir: Path) -> StoryBible:
-    path = project_dir / "story_bible.json"
-    if not path.exists():
+    if not artifacts.story_bible_path(project_dir).exists():
         raise HTTPException(404, "Story bible not found")
-    return StoryBible.model_validate_json(path.read_text())
+    return artifacts.read_story_bible(project_dir)
 
 
 def _project_structural_pages(project_dir: Path, config: Config) -> list[ComicPage]:
@@ -461,8 +460,7 @@ def update_page(page_num: int, body: dict, project=Depends(get_project)):
                 else:
                     panel.sfx = Sfx(text=sfx_data.get("text", "SFX!"))
 
-    path = _pages_dir(project_dir) / f"page_{page_num:03d}.json"
-    path.write_text(cp.model_dump_json(indent=2))
+    artifacts.write_compose_page(project_dir, page_num, cp)
     return cp.model_dump()
 
 
@@ -704,8 +702,7 @@ async def translate_single_page_bubbles(
                 updated += 1
 
     if updated:
-        path = _pages_dir(project_dir) / f"page_{page_num:03d}.json"
-        path.write_text(cp.model_dump_json(indent=2))
+        artifacts.write_compose_page(project_dir, page_num, cp)
 
     return {
         "status": "ok",
@@ -762,10 +759,9 @@ def replace_page(page_num: int, body: dict, project=Depends(get_project)):
     project_dir, config, state = project
     cp = ComicPage.model_validate(body)
     cp.page_number = page_num
-    path = _pages_dir(project_dir) / f"page_{page_num:03d}.json"
-    if not path.exists():
+    if not artifacts.compose_page_path(project_dir, page_num).exists():
         raise HTTPException(404, f"Page {page_num} not found")
-    path.write_text(cp.model_dump_json(indent=2))
+    artifacts.write_compose_page(project_dir, page_num, cp)
     return cp.model_dump()
 
 
