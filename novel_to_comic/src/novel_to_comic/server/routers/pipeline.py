@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from novel_to_comic import artifacts
 from novel_to_comic.models.prompt import ImagePrompt
+from novel_to_comic.stages import REGISTRY
 from novel_to_comic.prompt_instructions import (
     PromptInstructionError,
     apply_instruction_patch,
@@ -66,36 +67,6 @@ class InstructedPanelRegenRequest(BaseModel):
     panel_number: int = Field(ge=1)
     instruction: str = Field(min_length=1, max_length=500)
 
-_RERUN_CLEAN_PATHS: dict[str, tuple[str, ...]] = {
-    "extract": ("story_bible.json", "scenes", "refs", "plates", "adapt", "plan", "storyboard", "direct", "draw", "compose", "exports"),
-    "cast": ("refs", "plates", "adapt", "plan", "storyboard", "direct", "draw", "compose", "exports"),
-    "adapt": ("adapt", "plan", "storyboard", "direct", "draw", "compose", "exports"),
-    "plan": ("plan", "storyboard", "direct", "draw", "compose", "exports"),
-    "storyboard": ("storyboard", "direct", "draw", "compose", "exports"),
-    "direct": ("direct", "draw", "compose", "exports"),
-    "draw": ("draw", "compose", "exports"),
-    "compose": ("compose", "exports"),
-}
-
-
-def _stage_runner(stage: str, config, project_dir, state):
-    """Import and return the async run() coroutine for a given stage."""
-    from novel_to_comic.stages import (
-        s1_extract, s2_index, s3_screenplay,
-        s4_layout_plan, s4_panels, s5_prompts, s6_generate, s7_assemble,
-    )
-    runners = {
-        "extract":    lambda on_event: s1_extract.run(config, project_dir, state, on_event=on_event),
-        "cast":       lambda on_event: s2_index.run(config, project_dir, state, on_event=on_event),
-        "adapt":      lambda on_event: s3_screenplay.run(config, project_dir, state, on_event=on_event),
-        "plan":       lambda on_event: s4_layout_plan.run(config, project_dir, state, on_event=on_event),
-        "storyboard": lambda on_event: s4_panels.run(config, project_dir, state, on_event=on_event),
-        "direct":     lambda on_event: s5_prompts.run(config, project_dir, state, on_event=on_event),
-        "draw":       lambda on_event: s6_generate.run(config, project_dir, state, on_event=on_event),
-        "compose":    lambda on_event: s7_assemble.run(config, project_dir, state, on_event=on_event),
-    }
-    return runners.get(stage)
-
 
 async def _run_stage(stage: str, config, project_dir, state, queue: asyncio.Queue):
     """Execute a single stage, feeding events into the queue."""
@@ -106,10 +77,10 @@ async def _run_stage(stage: str, config, project_dir, state, queue: asyncio.Queu
         stage,
     )
     try:
-        runner = _stage_runner(stage, config, project_dir, state)
-        if not runner:
+        stage_obj = REGISTRY.get(stage)
+        if not stage_obj:
             raise ValueError(f"Unknown stage: {stage}")
-        await runner(on_event=lambda e: queue.put_nowait(e))
+        await stage_obj.run(config, project_dir, state, on_event=lambda e: queue.put_nowait(e))
         elapsed = time.perf_counter() - started
         status = state.stages[stage].status.value
         status_color = "green" if status in {"complete", "awaiting_review"} else "yellow"
@@ -137,18 +108,6 @@ async def _run_stage(stage: str, config, project_dir, state, queue: asyncio.Queu
             message,
         )
 
-
-# Primary output artifact for each stage — used to detect stale "complete" state.
-_STAGE_OUTPUTS: dict[str, str] = {
-    "extract": "story_bible.json",
-    "cast": "refs",
-    "adapt": "screenplays",
-    "plan": "plan",
-    "storyboard": "storyboard",
-    "direct": "direct",
-    "draw": "draw",
-    "compose": "exports",
-}
 
 
 async def _run_stage_with_credits(
@@ -218,11 +177,11 @@ async def _run_full_pipeline(
         if s.status.value in ("complete",):
             # Verify the stage's output actually exists — if it was falsely
             # marked complete (e.g. a bug that has since been fixed), auto-recover.
-            output = _STAGE_OUTPUTS.get(stage)
-            if output and not (project_dir / output).exists():
+            stage_outputs = REGISTRY[stage].outputs(project_dir)
+            if stage_outputs and not stage_outputs[0].exists():
                 logger.warning(
                     "Stage %s marked complete but output %s missing — resetting and rerunning",
-                    stage, output,
+                    stage, stage_outputs[0],
                 )
                 _reset_stage_and_downstream(state, stage)
                 _clear_outputs_for_rerun(project_dir, stage)
@@ -290,8 +249,10 @@ def _reset_stage_and_downstream(state, stage: str) -> None:
 
 
 def _clear_outputs_for_rerun(project_dir, stage: str) -> None:
-    for rel_path in _RERUN_CLEAN_PATHS.get(stage, ()):
-        path = project_dir / rel_path
+    stage_obj = REGISTRY.get(stage)
+    if not stage_obj:
+        return
+    for path in stage_obj.clean_paths(project_dir):
         if not path.exists():
             continue
         if path.is_dir():

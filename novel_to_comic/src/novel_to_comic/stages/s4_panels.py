@@ -91,3 +91,15 @@ async def run(
         emit({"type": "stage_fail", "stage": "storyboard", "message": str(exc)})
         save_state(state, project_dir)
         raise
+
+
+from novel_to_comic.stages import Stage  # noqa: E402
+
+STAGE = Stage(
+    name="storyboard",
+    run=run,
+    outputs=lambda d: [d / "storyboard"],
+    clean_paths=lambda d: [
+        d / "storyboard", d / "direct", d / "draw", d / "compose", d / "exports",
+    ],
+)
