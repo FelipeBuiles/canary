@@ -1,4 +1,7 @@
 services:
+  # Canary app service — uncomment for full-stack Docker testing.
+  # During the LiteLLM gateway migration the app runs via `pipeline serve`
+  # outside Docker while infra services (LiteLLM, Langfuse, etc.) run here.
   # canary:
   #   build: .
   #   ports:
@@ -28,7 +31,7 @@ services:
   #   restart: unless-stopped
 
   litellm:
-    image: docker.litellm.ai/berriai/litellm:main-latest
+    image: docker.litellm.ai/berriai/litellm:main-v1.67.0-stable
     command: ["--port", "4000", "--config", "/app/config.yaml"]
     ports:
       - "4000:4000"
@@ -54,7 +57,7 @@ services:
         condition: service_started
 
   langfuse-worker:
-    image: docker.io/langfuse/langfuse-worker:3
+    image: docker.io/langfuse/langfuse-worker:3.38
     restart: unless-stopped
     depends_on: &langfuse-depends-on
       langfuse-postgres:
@@ -95,7 +98,7 @@ services:
       REDIS_TLS_ENABLED: ${REDIS_TLS_ENABLED:-false}
 
   langfuse-web:
-    image: docker.io/langfuse/langfuse:3
+    image: docker.io/langfuse/langfuse:3.38
     restart: unless-stopped
     depends_on: *langfuse-depends-on
     ports:
@@ -133,7 +136,7 @@ services:
       retries: 10
 
   langfuse-clickhouse:
-    image: docker.io/clickhouse/clickhouse-server
+    image: docker.io/clickhouse/clickhouse-server:24.8
     restart: unless-stopped
     user: "101:101"
     environment:
@@ -163,7 +166,7 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-miniosecret}
     ports:
-      - "9090:9000"
+      - "127.0.0.1:9090:9000"
       - "127.0.0.1:9091:9001"
     volumes:
       - langfuse_minio_data:/data
@@ -174,7 +177,7 @@ services:
       retries: 5
 
   langfuse-redis:
-    image: docker.io/redis:7
+    image: docker.io/redis:7.4
     restart: unless-stopped
     command: ["--requirepass", "${REDIS_AUTH:-myredissecret}", "--maxmemory-policy", "noeviction"]
     ports:

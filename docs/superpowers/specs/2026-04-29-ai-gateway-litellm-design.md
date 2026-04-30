@@ -144,6 +144,19 @@ with `base_url=config.litellm_base_url`. Direct `httpx` is preferable for the
 first version because the ledger finalization code can capture raw status codes,
 response ids, and error bodies consistently for both chat and image endpoints.
 
+**Implementation note:** Application-level retry has been added to the AI client.
+The `_post_with_retry()` helper retries up to 3 times with exponential backoff
+(delay doubles each attempt, capped at 10s) on transient HTTP errors (status
+429, 502, 503, 504) and connection errors (`ConnectError`, `ReadError`,
+`WriteError`, `PoolTimeout`). After all retries are exhausted, the last error
+is raised. This replaces any previous per-stage retry logic (e.g. `tenacity` in
+`s2_index.py`).
+
+**Implementation note:** The shared `httpx.AsyncClient` pool lifecycle is tied
+to the FastAPI lifespan. The `_lifespan()` handler in `server/app.py` calls
+`_http.aclose()` on shutdown, ensuring the connection pool is properly cleaned
+up when the server stops.
+
 ### AI Request Context
 
 Add a small context module, for example:
@@ -457,6 +470,11 @@ The first image migration uses OpenAI-compatible image endpoints. This means:
   - text-to-image via `/v1/images/generations`
   - image edit/reference calls via `/v1/images/edits` where LiteLLM and the
     selected provider support them.
+  - a `steps` parameter passed through to the image generation API for
+    per-request control of diffusion steps (e.g. dev mode uses fewer steps).
+    **Implementation note:** `generateImage()` in `ai/client.py` now accepts an
+    optional `steps` parameter and forwards it in the request payload when
+    provided.
 - If a provider/model cannot support the existing reference-image pattern
   through OpenAI-compatible endpoints, the selected gateway alias should route
   to a model that can.

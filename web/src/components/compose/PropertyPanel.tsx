@@ -171,6 +171,24 @@ function BubbleInspector({
           />
         </div>
 
+        {bubble.type === "narration" && bubble.source_beat_id && (
+          <div className="border-l-[3px] border-narrator-gold bg-narrator-gold/10 px-3 py-2">
+            <div className="font-meta text-[0.55rem] font-bold tracking-[0.14em] text-narrator-gold uppercase">
+              Source narration
+            </div>
+            <div className="mt-1 text-[0.72rem] leading-5 text-ink-fade">
+              {bubble.source_beat_id}
+              {bubble.narration_mode ? ` · ${bubble.narration_mode.replace(/_/g, " ")}` : ""}
+              {bubble.preferred_zone ? ` · ${bubble.preferred_zone.replace(/_/g, " ")}` : ""}
+            </div>
+            {bubble.source_text && bubble.source_text !== bubble.text && (
+              <div className="mt-1 text-[0.72rem] italic leading-5 text-ink-black/65">
+                Original: "{bubble.source_text}"
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-2">
           <div>
             <FieldLabel>TYPE</FieldLabel>

@@ -12,7 +12,6 @@ import uuid
 from pathlib import Path
 
 from rich.console import Console
-from tenacity import RetryError
 
 from novel_to_comic.clients import flux
 from novel_to_comic.config import Config, GATEWAY_IMAGE_PRIMARY_MODEL
@@ -432,7 +431,7 @@ async def _generate_character_refs(
                       "done": state.stages["cast"].items_done,
                       "total": state.stages["cast"].items_total})
             except Exception as e:
-                cause = e.last_attempt.exception() if isinstance(e, RetryError) else e
+                cause = e.last_attempt.exception() if hasattr(e, "last_attempt") else e
                 console.print(f"[red]Failed ref sheet for {char.name}: {cause}[/red]")
                 record_item_failed(state, "cast", char.id)
                 emit({"type": "log", "stage": "cast", "level": "error",
@@ -488,7 +487,7 @@ async def _generate_location_plates(
                       "done": state.stages["cast"].items_done,
                       "total": state.stages["cast"].items_total})
             except Exception as e:
-                cause = e.last_attempt.exception() if isinstance(e, RetryError) else e
+                cause = e.last_attempt.exception() if hasattr(e, "last_attempt") else e
                 console.print(f"[red]Failed plate for {loc.name}: {cause}[/red]")
             progress.advance(task)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shutil
 from datetime import datetime, timezone
@@ -29,6 +30,7 @@ from ..generation_jobs import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _draw_prompt_files(project_dir: Path, config: Config) -> list[Path]:
@@ -325,7 +327,8 @@ async def create_project(
         get_db().table("projects").insert({"user_id": user_id, "name": slug}).execute()
     except Exception as exc:
         shutil.rmtree(project_dir, ignore_errors=True)
-        raise HTTPException(500, f"Failed to register project: {exc}") from exc
+        logger.exception("Failed to register project %s for user %s", slug, user_id)
+        raise HTTPException(500, "Failed to register project. Please try again.") from exc
 
     return {"name": slug, "project_name": name, "status": "created"}
 
@@ -381,8 +384,12 @@ def project_status(
 ):
     project_dir, config, state = project
     running = _is_project_running(user_id, project_name, request)
-    if _reconcile_completed_draw_stage(project_dir, config, state, is_running=running):
-        save_state(state, project_dir)
+
+    # Reconcile draw stage only when a task was running and has just finished.
+    # This avoids mutating state on every GET /status poll.
+    if not running:
+        if _reconcile_completed_draw_stage(project_dir, config, state, is_running=False):
+            save_state(state, project_dir)
 
     stages = {}
     for name in STAGE_NAMES:

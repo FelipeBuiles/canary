@@ -186,7 +186,13 @@ async def _generate_style_samples_parallel(config, bible, project_dir, indices, 
                 description=f"Model call: style sample {idx}",
             )
 
-    await asyncio.gather(*[_one(i) for i in indices])
+    sem = asyncio.Semaphore(2)
+
+    async def _limited(idx: int) -> None:
+        async with sem:
+            await _one(idx)
+
+    await asyncio.gather(*[_limited(i) for i in indices])
 
 
 def _get_bible(project_dir):
@@ -335,6 +341,7 @@ async def generate_style_samples(
             sample_config=sample_config,
             sample_path=sample_path,
             project_id=project_id,
+            _sample_idx=idx,
         ) -> None:
             result = await _generate_style_sample(
                 sample_config,
@@ -354,7 +361,7 @@ async def generate_style_samples(
                     user_id,
                     project_id,
                     result.usage,
-                    description=f"Model call: style sample {idx}",
+                    description=f"Model call: style sample {_sample_idx}",
                 )
 
         job = enqueue_generation_job(

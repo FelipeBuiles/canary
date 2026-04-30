@@ -565,9 +565,11 @@ async def regen_panel(
     async def _runner() -> None:
         from novel_to_comic.stages import s6_generate
         clear_panel_acceptance(project_dir, scene_id, panel_number)
+        db = get_db()
+        pid = get_project_id(db, user_id, project_name)
         with ai_request_context(
             user_id=user_id,
-            project_id=get_project_id(get_db(), user_id, project_name),
+            project_id=pid,
             project_name=project_name,
             workspace_id=str(project_dir.parent),
             stage="draw",
@@ -579,11 +581,10 @@ async def regen_panel(
                 panel_number,
             )
         if result.usage:
-            db = get_db()
             debit_model_usage(
                 db,
                 user_id,
-                get_project_id(db, user_id, project_name),
+                pid,
                 result.usage,
                 stage="draw",
                 description=f"Model call: regenerate panel {scene_id}/{panel_number:03d}",

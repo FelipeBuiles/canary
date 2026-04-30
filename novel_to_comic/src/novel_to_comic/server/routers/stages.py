@@ -6,6 +6,12 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from novel_to_comic.layout_planning import (
+    apply_narration_decision_patch,
+    classify_narration_change_impact,
+    load_layout_plan,
+    save_layout_plan,
+)
 from novel_to_comic.models.comic_page import ComicPage
 from novel_to_comic.models.layout_plan import LayoutPlan
 from novel_to_comic.models.panel import PanelBreakdown, Screenplay
@@ -16,6 +22,7 @@ from novel_to_comic.prompting import render_panel_prompt_body
 from novel_to_comic.state import load_state
 
 from ..auth import get_current_user
+from ..credits import estimate_stage_credit_reservation
 from ..deps import get_project, project_key
 from ..generation_jobs import find_active_generation_job
 from ..panel_acceptance import accept_panel, clear_panel_acceptance, is_panel_accepted
@@ -94,6 +101,59 @@ def get_layout_plan(project=Depends(get_project)):
     if not path.exists():
         raise HTTPException(404, "Layout plan not found")
     return LayoutPlan.model_validate_json(path.read_text()).model_dump()
+
+
+@router.post("/layout-plan/narration-decisions/{beat_id}/impact")
+def estimate_narration_decision_impact(beat_id: str, body: dict, project=Depends(get_project)):
+    project_dir, config, state = project
+    try:
+        plan = load_layout_plan(project_dir)
+    except FileNotFoundError:
+        raise HTTPException(404, "Layout plan not found")
+    before = next((d for d in plan.narration_decisions if d.beat_id == beat_id), None)
+    if before is None:
+        raise HTTPException(404, f"Narration decision {beat_id} not found")
+    data = before.model_dump()
+    for key in (
+        "decision",
+        "mode",
+        "panel_id",
+        "preferred_zone",
+        "decision_reason",
+        "caption_text_override",
+    ):
+        if key in body:
+            data[key] = body[key]
+    if data["decision"] != "rendered":
+        data["mode"] = None
+        data["panel_id"] = None
+    after = type(before).model_validate(data)
+    impact = classify_narration_change_impact(before, after)
+    stage_credits = {
+        stage: estimate_stage_credit_reservation(config, project_dir, state, stage)
+        for stage in impact["affected_stages"]
+        if stage in {"adapt", "plan", "storyboard", "direct", "draw", "compose"}
+    }
+    impact["estimated_credits"] = sum(stage_credits.values())
+    impact["stage_credits"] = stage_credits
+    return impact
+
+
+@router.put("/layout-plan/narration-decisions/{beat_id}")
+def update_narration_decision(beat_id: str, body: dict, project=Depends(get_project)):
+    project_dir, config, state = project
+    try:
+        plan = load_layout_plan(project_dir)
+        plan, impact = apply_narration_decision_patch(plan, beat_id, body)
+        save_layout_plan(project_dir, plan)
+    except FileNotFoundError:
+        raise HTTPException(404, "Layout plan not found")
+    except KeyError:
+        raise HTTPException(404, f"Narration decision {beat_id} not found")
+    except Exception as e:
+        raise HTTPException(400, f"Invalid narration decision update: {e}")
+    decision = next(d for d in plan.narration_decisions if d.beat_id == beat_id)
+    return {"decision": decision.model_dump(), "impact": impact}
 
 
 # ── Panel Breakdowns (STORYBOARD) ─────────────────────────────────────────────

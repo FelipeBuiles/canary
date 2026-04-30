@@ -33,6 +33,9 @@ async def _lifespan(app: FastAPI):
         for _ in range(worker_count)
     ]
     yield
+    # Close shared httpx pool used by ai/client.py
+    from novel_to_comic.ai.client import _http
+    await _http.aclose()
     for task in app.state.generation_worker_tasks:
         task.cancel()
     await asyncio.gather(*app.state.generation_worker_tasks, return_exceptions=True)

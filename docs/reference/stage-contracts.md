@@ -146,6 +146,13 @@ adjacent previous panel for smooth transitions or the style sample plus location
 plate otherwise. Generated image metadata records `planned_panel_id`. Pauses for
 human review before Stage 8.
 
+**Notes:**
+- `inter_request_delay` has been removed from the draw stage (it was always 0.0).
+- Draw stage reconciliation (`_reconcile_completed_draw_stage` in
+  `server/routers/projects.py`) only runs when no generation task is currently
+  running, not on every `GET /status` poll. This avoids unnecessary state
+  mutations during active polling.
+
 ---
 
 ## Stage 8 — Compose (`s7_assemble.py`)

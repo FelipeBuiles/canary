@@ -128,7 +128,7 @@ def _labels(config: Config | None = None) -> dict[str, str]:
 
 _clean = clean
 _shorten = shorten
-IMAGE_PROMPT_VERSION = 12
+IMAGE_PROMPT_VERSION = 13
 _SOFT_CONTINUITY = {"smooth_continuation", "match_cut"}
 _SEQUENTIAL_THEN_RE = re.compile(r"(?<=[,;.!?])\s+then\s+", re.IGNORECASE)
 _LEADING_TRANSITION_ACTION_RE = re.compile(
@@ -331,6 +331,13 @@ def build_planned_panel_prompt_spec(
         composition = f"{composition}, narrow vertical column — keep subject centered horizontally, avoid wide poses or spread elements"
     if panel.generation_mode == "master":
         composition = f"{composition}, extra environmental margin for flexible crop"
+    if panel.has_narration_caption:
+        zone = panel.preferred_caption_zone or "top"
+        if zone != "none":
+            composition = (
+                f"{composition}, leave quiet negative space near the {zone.replace('_', ' ')} "
+                "for a narration caption added later"
+            )
     camera_note = _strip_text_render_sentences(
         _single_instant_direction(getattr(panel, "camera_note", ""))
     )
@@ -362,6 +369,11 @@ def build_planned_panel_prompt_spec(
         f"exactly {character_count} {character_label}; "
         f"{labels['one_body']}; {labels['single_instant']}; {labels['no_lettering']}"
     )
+    if panel.has_narration_caption:
+        constraints = (
+            f"{constraints}; narration caption will be lettered in post-production only; "
+            "do not draw caption boxes, speech bubbles, labels, signs, or readable text"
+        )
     if panel.crop_policy:
         constraints = f"{constraints}; crop policy: {panel.crop_policy}"
 
@@ -386,6 +398,9 @@ def build_planned_panel_prompt_spec(
         crop_policy=panel.crop_policy,
         transition_in=panel.transition_in,
         transition_out=panel.transition_out,
+        has_narration_caption=panel.has_narration_caption,
+        narration_mode=panel.narration_mode,
+        preferred_caption_zone=panel.preferred_caption_zone,
         full_prompt=full_prompt,
         style=config.style_template,
         composition=composition,
@@ -461,6 +476,13 @@ def _render_panel_prompt_body_parts(
 
 def render_panel_prompt_body(prompt: ImagePrompt) -> str:
     """Render the compact panel-specific prompt body, excluding global style."""
+    constraints = getattr(prompt, "constraints", None)
+    if getattr(prompt, "has_narration_caption", False):
+        note = (
+            "narration caption will be lettered in post-production only; "
+            "do not draw caption boxes, speech bubbles, labels, signs, or readable text"
+        )
+        constraints = f"{constraints}; {note}" if constraints else note
     return _render_panel_prompt_body_parts(
         subjects=getattr(prompt, "subjects", []) or [],
         composition=getattr(prompt, "composition", None),
@@ -468,7 +490,7 @@ def render_panel_prompt_body(prompt: ImagePrompt) -> str:
         lighting=getattr(prompt, "lighting", None),
         mood=getattr(prompt, "mood", None),
         props=getattr(prompt, "props", []) or [],
-        constraints=getattr(prompt, "constraints", None),
+        constraints=constraints,
     )
 
 

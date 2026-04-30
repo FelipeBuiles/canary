@@ -38,7 +38,7 @@ novel_to_comic/src/novel_to_comic/
 ├── usage.py                    # UsageRecord, ApiResult, pricing, cost calculation
 ├── stages/
 │   ├── s1_extract.py       # Novel → Story Bible JSON
-│   ├── s2_index.py         # Character refs + location plates (cast)
+│   ├── s2_index.py         # Character refs + location plates (cast) — no longer uses tenacity; retry handled by ai/client.py
 │   ├── s3_screenplay.py    # Scene prose → screenplay (adapt)
 │   ├── s4_layout_plan.py   # Screenplay → page/panel layout plan (plan)
 │   ├── s4_panels.py        # Layout plan → legacy PanelBreakdown (storyboard)
@@ -55,6 +55,7 @@ novel_to_comic/src/novel_to_comic/
 │   └── html_renderer.py    # build_page_html(), browser_context(), render_html_to_png()
 └── server/
     ├── app.py              # FastAPI app factory (create_app)
+    ├── env.py              # Shared environment variable helpers (bool_env)
     ├── routers/
     │   ├── pipeline.py     # run, approve, reset, events (SSE), stage errors
     │   ├── projects.py     # list, status, create
@@ -64,7 +65,7 @@ novel_to_comic/src/novel_to_comic/
     │   ├── export.py       # PDF/CBZ export trigger + download
     │   └── styles.py       # style suggestions, sample generation, active style, is_style_selected gate
     ├── generation_jobs.py  # Job queue for async image/style generation
-    └── telemetry.py        # OpenTelemetry span emission
+    └── telemetry.py        # OpenTelemetry span emission (uses shared bool_env from env.py)
 ```
 
 ---
@@ -112,11 +113,27 @@ which calls LiteLLM Proxy using OpenAI-compatible HTTP endpoints, records
 `ai_usage_events`, and returns existing `ApiResult[T]` values through thin
 `clients/text.py` and `clients/flux.py` compatibility wrappers.
 
+The client includes application-level retry logic: 3 retries with exponential
+backoff (delay doubles each attempt, capped at 10s) on transient HTTP errors
+(status 429, 502, 503, 504) and connection errors (`ConnectError`, `ReadError`,
+`WriteError`, `PoolTimeout`). After all retries are exhausted, the last error
+is raised.
+
+The shared `httpx.AsyncClient` pool is closed on FastAPI shutdown via the app
+lifespan handler in `server/app.py`.
+
+The `generateImage()` function passes a `steps` parameter through to the image
+API when provided, allowing per-request control of diffusion steps.
+
 ### Quality presets
 
 `quality_preset: "fast" | "balanced" | "quality" | null` overrides all four text
 model fields at once. `dev_mode` forces `"fast"` regardless. When set, individual
 model fields are ignored (with a warning if they were explicitly changed from defaults).
+
+**Note:** All three presets currently resolve to the same gateway aliases. This is
+transitional during the LiteLLM migration — the actual model routing is controlled
+by the LiteLLM `config.yaml` per deployment.
 
 Config exposes `effective_extraction_model()`, `effective_screenplay_model()`,
 `effective_panel_model()`, `effective_prompt_model()` — always use these instead
@@ -129,8 +146,11 @@ State accumulates real costs via `record_item_done(usage=...)` and
 `record_api_usage(...)`. Before a stage runs, `estimate_text_cost()` /
 `estimate_image_cost()` set `estimated_cost_usd` on the stage state.
 
-`pricing.yaml` holds per-model pricing. `audit_pricing()` checks for missing
-entries on startup. Unknown models log a warning (once per model) and return $0.00.
+`pricing.yaml` has been removed. Pricing now uses
+`litellm_model_prices.cached.json` (LiteLLM model pricing cache) plus
+`litellm_pricing_overrides.yaml` (project-specific overrides). `audit_pricing()`
+checks for missing entries on startup. Unknown models log a warning (once per
+model) and return $0.00.
 
 ### Text composited in post
 
@@ -142,6 +162,14 @@ regenerating images.
 
 `visual_anchor` fields on `Character` and `Location` are injected verbatim at the
 very beginning of every image prompt. Never paraphrase or summarize them.
+
+### Image-based PDFs are rejected
+
+Stage 1 (`extract`) supports text-based PDFs (extracted with `pypdf`), EPUB, and
+plain text. Image-based (scanned) PDFs are rejected with a clear error message:
+the LiteLLM gateway does not support raw PDF bytes, so the app cannot pass them
+to Gemini's native PDF processing. Users must convert scanned PDFs to text
+first or add OCR preprocessing.
 
 ### Event system for web dashboard
 

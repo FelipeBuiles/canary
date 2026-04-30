@@ -98,7 +98,8 @@ export function PanelDetailModal({
   const unacceptPanel = useUnacceptPanel();
   const { data: creditBalance } = useCreditBalance();
   const { data: regenEstimate } = useRegenEstimate(project, sceneId, panelNumber, isOpen);
-  const regenCredits = regenEstimate?.credits ?? "…";
+  const regenCredits: number | null = regenEstimate?.credits ?? null;
+  const creditsLabel = regenCredits !== null ? String(regenCredits) : "…";
 
   useEffect(() => {
     if (originalPrompt) {
@@ -125,12 +126,13 @@ export function PanelDetailModal({
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { onClose(); return; }
       if (e.key === "ArrowLeft" && onPrev) onPrev();
       if (e.key === "ArrowRight" && onNext) onNext();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onPrev, onNext]);
+  }, [isOpen, onPrev, onNext, onClose]);
 
   if (!isOpen || !draft) return null;
 
@@ -154,7 +156,7 @@ export function PanelDetailModal({
     setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
   };
 
-  const lowCredits = (creditBalance?.balance_credits ?? 0) < 20;
+  const lowCredits = (creditBalance?.balance_credits ?? 0) < (regenCredits ?? 1);
 
   function runCreditAction(action: "quick" | "instruction" | "generate") {
     if (lowCredits && pendingCreditAction !== action) {
@@ -311,6 +313,9 @@ export function PanelDetailModal({
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-ink-black/80 p-4 backdrop-blur-sm"
       onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Panel ${String(panelNumber).padStart(2, "0")} — ${sceneId.toUpperCase()}`}
     >
       <div
         className="flex h-[90vh] w-[95vw] max-w-[1400px] flex-col bg-bristol border-[4px] border-ink-black"
@@ -458,7 +463,7 @@ export function PanelDetailModal({
                 <a href="/credits" className="underline">Add credits</a>
               </div>
               <Button onClick={() => runCreditAction(pendingCreditAction)}>
-                CONFIRM · {regenCredits} ◆
+                CONFIRM · {creditsLabel} ◆
               </Button>
               <Button variant="outline" onClick={() => setPendingCreditAction(null)}>
                 ✕
@@ -489,7 +494,7 @@ export function PanelDetailModal({
                 onClick={() => runCreditAction("instruction")}
                 disabled={isInstructionBusy || !instruction.trim()}
               >
-                {isInstructionBusy ? "APPLYING..." : `APPLY & REGEN · ${regenCredits} ◆`}
+                {isInstructionBusy ? "APPLYING..." : `APPLY & REGEN · ${creditsLabel} ◆`}
               </Button>
               <Button
                 variant="outline"
@@ -540,11 +545,11 @@ export function PanelDetailModal({
               </Button>
               {hasChanges && (
                 <Button onClick={() => runCreditAction("generate")} disabled={isGenerating}>
-                  {isGenerating ? "SAVING..." : `GENERATE · ${regenCredits} ◆`}
+                  {isGenerating ? "SAVING..." : `GENERATE · ${creditsLabel} ◆`}
                 </Button>
               )}
               <Button variant="outline" onClick={() => runCreditAction("quick")}>
-                ↺ RE-DO · {regenCredits} ◆
+                ↺ RE-DO · {creditsLabel} ◆
               </Button>
               <Button variant="outline" onClick={() => setIsDetailsOpen(true)}>
                 DETAILS

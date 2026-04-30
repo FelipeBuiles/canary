@@ -10,5 +10,5 @@ export async function getCreditHistory(): Promise<{ transactions: CreditTransact
 }
 
 export async function getPricingReference(): Promise<PricingReference> {
-  return apiFetch("/credits/pricing-reference");
+  return apiFetch<PricingReference>("/credits/pricing-reference");
 }

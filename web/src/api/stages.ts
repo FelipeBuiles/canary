@@ -4,6 +4,8 @@ import type {
   ScreenplaySummary,
   Screenplay,
   LayoutPlan,
+  NarrationDecision,
+  NarrationImpact,
   PanelSceneSummary,
   PanelBreakdown,
   ImagePrompt,
@@ -43,6 +45,28 @@ export function getScreenplay(
 
 export function getLayoutPlan(project: string): Promise<LayoutPlan> {
   return apiFetch(`/projects/${encodeURIComponent(project)}/layout-plan`);
+}
+
+export function estimateNarrationDecisionImpact(
+  project: string,
+  beatId: string,
+  patch: Partial<NarrationDecision>,
+): Promise<NarrationImpact> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/layout-plan/narration-decisions/${encodeURIComponent(beatId)}/impact`,
+    { method: "POST", body: JSON.stringify(patch) },
+  );
+}
+
+export function updateNarrationDecision(
+  project: string,
+  beatId: string,
+  patch: Partial<NarrationDecision>,
+): Promise<{ decision: NarrationDecision; impact: NarrationImpact }> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/layout-plan/narration-decisions/${encodeURIComponent(beatId)}`,
+    { method: "PUT", body: JSON.stringify(patch) },
+  );
 }
 
 // ── Panels ────────────────────────────────────────────────────────────────────

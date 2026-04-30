@@ -84,14 +84,14 @@ export function CreditsPage() {
 
   const credits = balance?.balance_credits ?? 0;
   const transactions = useMemo(() => history?.transactions ?? [], [history?.transactions]);
-  const usedThisMonth = useMemo(
+  const totalUsed = useMemo(
     () =>
       transactions
         .filter((tx) => tx.amount_credits < 0)
         .reduce((sum, tx) => sum + Math.abs(tx.amount_credits), 0),
     [transactions],
   );
-  const usageWidth = Math.min(100, Math.round((usedThisMonth / 1000) * 100));
+  const usageWidth = Math.min(100, Math.round((totalUsed / 1000) * 100));
 
   function dismissSuccess() {
     searchParams.delete("success");
@@ -137,7 +137,7 @@ export function CreditsPage() {
             <div className="h-full bg-hero-red" style={{ width: `${usageWidth}%` }} />
           </div>
           <div className="font-body text-[0.8rem] font-bold text-ink-black/68">
-            {usedThisMonth.toLocaleString()} credits used
+            {totalUsed.toLocaleString()} credits used
           </div>
         </div>
       </section>

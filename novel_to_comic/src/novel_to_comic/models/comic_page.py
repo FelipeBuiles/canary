@@ -57,6 +57,10 @@ class Bubble(BaseModel):
     text: str
     speaker_id: str | None = None                       # character ID
     speaker_name: str | None = None                     # first name label
+    source_beat_id: str | None = None
+    source_text: str | None = None
+    narration_mode: str | None = None
+    preferred_zone: str | None = None
     side: Literal["left", "right", "center"] = "left"  # tail / alignment
     full_width: bool | None = None                       # True = span panel width
     # Explicit position — null = CSS auto-layout; float = pinned by web editor

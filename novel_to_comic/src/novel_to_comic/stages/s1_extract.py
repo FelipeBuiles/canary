@@ -273,7 +273,7 @@ async def _extract_with_retry(
 ) -> StoryBible:
     """Call the extraction model, normalize, validate, and retry on schema errors."""
     last_error: Exception | None = None
-    user_content = novel_text
+    user_content: str = novel_text  # type: ignore[assignment]
 
     last_usage = None
     for attempt in range(max_retries + 1):
@@ -409,9 +409,11 @@ async def run(
               "message": f"Reading novel: {novel_path}"})
         novel_text = _read_novel(novel_path)
         if isinstance(novel_text, bytes):
-            console.print(f"Novel length: {len(novel_text):,} bytes (image-based PDF — using native Gemini processing)")
-            emit({"type": "log", "stage": "extract", "level": "dim",
-                  "message": f"Novel: image-based PDF, {len(novel_text):,} bytes"})
+            raise ValueError(
+                "Image-based (scanned) PDFs are not supported. The LiteLLM gateway does not "
+                "support raw PDF bytes. Use a text-based PDF, EPUB, or plain text file, or add "
+                "OCR preprocessing before running Stage 1."
+            )
         else:
             console.print(f"Novel length: {len(novel_text):,} characters (~{len(novel_text) // 4:,} tokens)")
             emit({"type": "log", "stage": "extract", "level": "dim",

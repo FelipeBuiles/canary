@@ -9,6 +9,10 @@ class DialogueLine(BaseModel):
     character_id: Optional[str] = None  # None for narration (no speaker)
     text: str
     type: str  # "speech", "thought", "narration"
+    source_beat_id: Optional[str] = None
+    source_text: Optional[str] = None
+    narration_mode: Optional[str] = None
+    preferred_zone: Optional[str] = None
 
     @field_validator("character_id", mode="before")
     @classmethod
@@ -37,11 +41,12 @@ class PanelBreakdown(BaseModel):
 
 
 class ScreenplayBeat(BaseModel):
-    type: str  # "action", "dialogue", "sfx", "transition"
+    type: str  # "action", "dialogue", "narration", "sfx", "transition"
     character_id: Optional[str] = None
     content: str
     direction: Optional[str] = None
     transition_type: Optional[str] = None  # "smooth_continuation", "match_cut", "hard_cut"
+    narration_reason: Optional[str] = None
 
 
 class Screenplay(BaseModel):
