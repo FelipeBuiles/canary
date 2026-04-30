@@ -565,7 +565,6 @@ async def run(
     save_state(state, project_dir)
 
     batch_size = config.effective_image_concurrency(google_model=False)
-    inter_request_delay = 0.0
 
     semaphore = asyncio.Semaphore(batch_size)
 
@@ -607,9 +606,6 @@ async def run(
                               "total": state.stages["draw"].items_total})
                     progress.advance(task)
                 save_state(state, project_dir)
-
-                if inter_request_delay and batch_start + batch_size < len(prompt_files):
-                    await asyncio.sleep(inter_request_delay)
 
         complete_stage(state, "draw")
         emit({"type": "stage_complete", "stage": "draw",

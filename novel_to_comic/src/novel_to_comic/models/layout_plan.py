@@ -14,6 +14,9 @@ ImageFitStatus = Literal["unknown", "compatible", "cropped_risk", "needs_redraw"
 RegenerationStatus = Literal["not_needed", "recommended", "required"]
 SceneBoundaryMode = Literal["scene_contained", "cross_scene_exception"]
 PageRhythmRole = Literal["regular", "intro", "climax", "transition"]
+NarrationDecisionStatus = Literal["rendered", "visualized", "dropped"]
+NarrationMode = Literal["attached_caption", "caption_panel"]
+CaptionZone = Literal["top", "bottom", "left", "right", "overlay_center", "none"]
 
 
 class LayoutPlanBeatRef(BaseModel):
@@ -25,9 +28,25 @@ class LayoutPlanBeatRef(BaseModel):
     content: str
     direction: str | None = None
     transition_type: str | None = None
+    narration_reason: str | None = None
     emphasis_hint: str | None = None
     shot_hint: str | None = None
     transition_significance: str | None = None
+
+
+class NarrationDecision(BaseModel):
+    beat_id: str
+    scene_id: str
+    beat_index: int
+    source_text: str
+    candidate_reason: str | None = None
+    decision: NarrationDecisionStatus
+    mode: NarrationMode | None = None
+    panel_id: str | None = None
+    preferred_zone: CaptionZone = "top"
+    decision_reason: str
+    fallback_decision: bool = False
+    caption_text_override: str | None = None
 
 
 class PanelGeometry(BaseModel):
@@ -56,6 +75,17 @@ class LLMPanelSpec(BaseModel):
     shape_intent: ShapeIntent = "rect"
     transition_out: str | None = None
     page_break_after: bool = False
+
+
+class LLMNarrationDecisionSpec(BaseModel):
+    """Intermediate LLM narration decision before panel IDs are assigned."""
+
+    beat_index: int
+    decision: NarrationDecisionStatus
+    mode: NarrationMode | None = None
+    panel_index: int | None = None
+    preferred_zone: CaptionZone = "top"
+    decision_reason: str
 
 
 class PlannedPanel(BaseModel):
@@ -87,6 +117,9 @@ class PlannedPanel(BaseModel):
     mood: str = ""
     dialogue: list[dict[str, str | None]] = Field(default_factory=list)
     sfx: str | None = None
+    has_narration_caption: bool = False
+    narration_mode: NarrationMode | None = None
+    preferred_caption_zone: CaptionZone | None = None
     page_break_after: bool = False
 
 
@@ -117,6 +150,7 @@ class LayoutPlan(BaseModel):
     beats: list[LayoutPlanBeatRef] = Field(default_factory=list)
     planned_panels: list[PlannedPanel] = Field(default_factory=list)
     planned_pages: list[PlannedPage] = Field(default_factory=list)
+    narration_decisions: list[NarrationDecision] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     user_overrides: dict[str, object] = Field(default_factory=dict)
     regeneration_impact: dict[str, str] = Field(default_factory=dict)

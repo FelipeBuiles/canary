@@ -10,6 +10,8 @@ import {
   listScreenplays,
   getScreenplay,
   getLayoutPlan,
+  estimateNarrationDecisionImpact,
+  updateNarrationDecision,
   listPanelSummaries,
   getPanelsForScene,
   updatePanel,
@@ -175,6 +177,39 @@ export function useRegenEstimate(
     queryFn: () => fetchRegenEstimate(project!, sceneId!, panelNumber!),
     enabled: !!project && !!sceneId && panelNumber != null && enabled,
     staleTime: 60_000,
+  });
+}
+
+export function useNarrationDecisionImpact(
+  project: string | undefined,
+  beatId: string | undefined,
+  patch: Partial<import("../types/api").NarrationDecision> | null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["project", project, "narration-impact", beatId, patch],
+    queryFn: () => estimateNarrationDecisionImpact(project!, beatId!, patch ?? {}),
+    enabled: !!project && !!beatId && !!patch && enabled,
+    staleTime: 15_000,
+  });
+}
+
+export function useUpdateNarrationDecision() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      project,
+      beatId,
+      patch,
+    }: {
+      project: string;
+      beatId: string;
+      patch: Partial<import("../types/api").NarrationDecision>;
+    }) => updateNarrationDecision(project, beatId, patch),
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "plan"] });
+      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
+    },
   });
 }
 

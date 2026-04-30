@@ -15,17 +15,11 @@ from typing import Any, Awaitable, Callable, Literal
 from fastapi import FastAPI
 
 from novel_to_comic.config import Config
+from novel_to_comic.server.env import bool_env
 
 GenerationJobStatus = Literal["queued", "running", "complete", "failed"]
 GenerationJobRunner = Callable[[], Awaitable[None]]
 logger = logging.getLogger("canary.generation")
-
-
-def _bool_env(name: str, default: bool = False) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _now() -> datetime:
@@ -216,7 +210,7 @@ async def generation_worker(app: FastAPI) -> None:
                 job.id[:8],
                 elapsed,
                 job.error,
-                exc_info=_bool_env("CANARY_LOG_JOB_TRACEBACKS", default=False),
+                exc_info=bool_env("CANARY_LOG_JOB_TRACEBACKS", default=False),
             )
         finally:
             job.finished_at = _now()

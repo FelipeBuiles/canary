@@ -193,6 +193,10 @@ def _build_comic_page(
                 text=dl.text,
                 speaker_id=dl.character_id or None,
                 speaker_name=char_name_map.get(dl.character_id) if show_labels else None,
+                source_beat_id=dl.source_beat_id,
+                source_text=dl.source_text,
+                narration_mode=dl.narration_mode,
+                preferred_zone=dl.preferred_zone,
                 side=side or "left",
             ))
 

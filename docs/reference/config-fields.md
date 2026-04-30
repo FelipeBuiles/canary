@@ -25,10 +25,10 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `screenplay_model` | `str` | `'canary/screenplay'` | Stage 3 gateway alias |
 | `panel_model` | `str` | `'canary/panel'` | Stage 4/5 gateway alias |
 | `prompt_model` | `str` | `'canary/prompt'` | Stage 6 gateway alias |
-| `quality_preset` | `QualityPreset or None` | `None` | Overrides all four text model fields. `fast` \| `balanced` \| `quality`. `dev_mode` forces `fast`. |
+| `quality_preset` | `QualityPreset or None` | `None` | Overrides all four text model fields. `fast` \| `balanced` \| `quality`. `dev_mode` forces `fast`. **Note:** All three presets currently resolve to the same gateway aliases — this is transitional during the LiteLLM migration; the LiteLLM `config.yaml` maps each alias to the appropriate model per deployment. |
 | `image_provider` | `Literal` | `'gemini'` | Legacy metadata field; runtime image calls use LiteLLM |
 | `image_model` | `str` | `'canary/image-primary'` | Primary image gateway alias |
-| `fallback_image_model` | `str` | `'canary/image-fast'` | Dev-mode image gateway alias |
+| `fallback_image_model` | `str` | `'canary/image-fallback'` | Fallback image gateway alias (used in dev mode) |
 | `dev_mode` | `bool` | `False` | Faster iteration: lower resolution/steps, uses fallback_image_model |
 | `dev_image_scale` | `float` | `0.5` | Scale factor for dev mode image dimensions |
 | `dev_image_steps` | `int` | `8` | Reduced diffusion steps in dev mode |
@@ -70,7 +70,8 @@ OpenAI-compatible endpoints and records `ai_usage_events`.
 | Alias | Purpose |
 |-------|---------|
 | `canary/image-primary` | Production image generation |
-| `canary/image-fast` | Dev-mode/fallback image generation |
+| `canary/image-fallback` | Fallback image generation (used in dev mode) |
+| `canary/image-fast` | Legacy dev-mode alias (superseded by `canary/image-fallback`) |
 
 ## Environment Variables
 
@@ -86,3 +87,30 @@ OpenAI-compatible endpoints and records `ai_usage_events`.
 Provider API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
 `OPENROUTER_API_KEY`, `TOGETHER_API_KEY`) belong in the LiteLLM service
 environment, not Canary runtime config.
+
+## Pricing
+
+The local `pricing.yaml` file has been removed. Cost lookup now uses:
+
+- `litellm_model_prices.cached.json` — LiteLLM model pricing cache
+  (downloaded from the LiteLLM pricing endpoint at startup).
+- `litellm_pricing_overrides.yaml` — project-specific overrides for models
+  not in the LiteLLM cache or with custom pricing (e.g. input image costs).
+
+`audit_pricing()` on startup validates that all configured gateway aliases have
+pricing entries.
+
+## Config API Allowlist
+
+The `PATCH /config` endpoint accepts updates only for fields listed in
+`_SETTABLE_FIELDS` (defined in `server/routers/config.py`). Any field not in
+the allowlist is silently ignored. The current allowlist:
+
+```
+quality_preset, target_language, style_template, dev_mode, image_provider,
+image_model, fallback_image_model, image_quality, image_steps,
+continuity_mode, plan_mode, comic_theme, negative_prompt,
+max_panels_per_scene, max_panels_per_page, max_words_per_bubble,
+parallel_batch_size, max_concurrent_requests, cost_limit_usd,
+flux_guidance_scale
+```

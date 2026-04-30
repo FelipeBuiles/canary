@@ -26,10 +26,13 @@ GATEWAY_SCREENPLAY_MODEL = "canary/screenplay"
 GATEWAY_PANEL_MODEL = "canary/panel"
 GATEWAY_PROMPT_MODEL = "canary/prompt"
 GATEWAY_IMAGE_PRIMARY_MODEL = "canary/image-primary"
-GATEWAY_IMAGE_FALLBACK_MODEL = "canary/image-primary"
+GATEWAY_IMAGE_FALLBACK_MODEL = "canary/image-fallback"
 GATEWAY_IMAGE_FAST_MODEL = "canary/image-fast"
 
 # Quality preset → model for each text stage
+# NOTE: All three presets currently resolve to the same gateway aliases.
+# This is intentional during the LiteLLM gateway migration — the LiteLLM
+# config.yaml maps each alias to the appropriate model per deployment.
 _QUALITY_PRESETS: dict[QualityPreset, dict[str, str]] = {
     "fast": {
         "extract": GATEWAY_EXTRACT_MODEL,

@@ -284,7 +284,10 @@ def debit_model_usage(
 ) -> None:
     """Insert one settled credit ledger row for one model-provider call."""
     credits, cost_usd = usage_to_credit_debit(usage)
-    cost = calculate_cost_breakdown(usage)
+    try:
+        cost = calculate_cost_breakdown(usage)
+    except Exception:
+        cost = None
     if credits <= 0:
         return
     db.table("credit_ledger").upsert(
@@ -298,13 +301,13 @@ def debit_model_usage(
             "usage_call_id": usage.call_id,
             "provider": usage.provider,
             "model": usage.model,
-            "provider_model": cost.provider_model,
+            "provider_model": cost.provider_model if cost else None,
             "operation": usage.operation,
             "input_tokens": usage.input_tokens,
             "output_tokens": usage.output_tokens,
             "image_count": usage.image_count,
             "cost_usd": cost_usd,
-            "cost_source": cost.source,
+            "cost_source": cost.source if cost else None,
         },
         on_conflict="usage_call_id",
     ).execute()

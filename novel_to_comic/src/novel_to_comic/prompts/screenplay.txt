@@ -17,6 +17,14 @@ CONVERT DESCRIPTION TO VISIBLE ACTION.
 "She felt afraid" → "She backs against the wall, eyes wide, hands trembling at her sides"
 Remove all interiority (feelings, backstory) unless it can be shown as a physical action or thought bubble.
 
+NARRATION: SOURCE-FIRST AND RARE.
+Emit first-class narration beats only when the finished comic would lose important source meaning if the passage were represented only as image, action, dialogue, or SFX.
+Narration is a preservation tool, not a default storytelling layer.
+Use exact source wording and punctuation for narration content, except for cleaning obvious OCR/page artifacts.
+Do not invent narration. Do not explain symbolism. Do not caption scenery or emotion that the image can carry clearly.
+Good narration candidates include explicit narrator turns, time/place context that cannot be inferred visually, ironic reversals, and closing lines whose exact language is essential.
+For every narration beat, include narration_reason explaining why the exact source line may need a caption.
+
 THOUGHT BUBBLES: use sparingly (max 2 per scene) for interior monologue that cannot be shown any other way.
 
 SFX: annotate meaningful sounds: [SFX: CRACK], [SFX: soft footsteps].
@@ -50,11 +58,12 @@ Output JSON:
   "characters": ["char_001", "char_002"],
   "beats": [
     {
-      "type": "action" | "dialogue" | "sfx" | "transition",
+      "type": "action" | "dialogue" | "narration" | "sfx" | "transition",
       "character_id": "..." (null for action/sfx/transition),
       "content": "exact dialogue text OR observable action description",
       "direction": "optional visual direction note (camera angle, emphasis, etc.)",
-      "transition_type": "optional one of \"smooth_continuation\" | \"match_cut\" | \"hard_cut\" (only for transition beats)"
+      "transition_type": "optional one of \"smooth_continuation\" | \"match_cut\" | \"hard_cut\" (only for transition beats)",
+      "narration_reason": "optional short reason, required when type is \"narration\""
     }
   ]
 }

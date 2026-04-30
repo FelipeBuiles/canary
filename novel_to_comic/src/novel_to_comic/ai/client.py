@@ -29,6 +29,33 @@ from novel_to_comic.usage import (
 
 logger = logging.getLogger("canary.ai")
 
+_RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
+_MAX_RETRIES = 3
+
+
+async def _post_with_retry(url: str, *, headers: dict[str, str], json: dict[str, Any] | None = None, data: dict[str, Any] | None = None, files: list | None = None) -> httpx.Response:
+    """POST with automatic retry on transient HTTP errors and connection failures."""
+    last_exc: Exception | None = None
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            if files:
+                response = await _http.post(url, headers=headers, data=data, files=files)
+            else:
+                response = await _http.post(url, headers=headers, json=json)
+            if response.status_code not in _RETRYABLE_STATUS_CODES:
+                return response
+            last_exc = httpx.HTTPStatusError(
+                f"Server returned {response.status_code}",
+                request=response.request,
+                response=response,
+            )
+        except (httpx.ConnectError, httpx.ReadError, httpx.WriteError, httpx.PoolTimeout) as exc:
+            last_exc = exc
+        if attempt < _MAX_RETRIES:
+            await asyncio.sleep(min(2 ** attempt, 10))
+    raise last_exc  # type: ignore[misc]
+
+
 # Shared connection pool — LiteLLM runs as a local/nearby sidecar so keepalive
 # connections give a meaningful speedup at high panel concurrency (50-200 images).
 _http = httpx.AsyncClient(
@@ -454,7 +481,7 @@ async def _chat_completion(
     started = time.perf_counter()
     response: httpx.Response | None = None
     try:
-        response = await _http.post(
+        response = await _post_with_retry(
             f"{_base_url(config)}/v1/chat/completions",
             headers=_headers(config, event_id),
             json=payload,
@@ -576,6 +603,8 @@ async def generate_image(
         "size": _image_size(width, height),
         "n": 1,
     }
+    # if steps is not None:
+    #     params["steps"] = steps
     if config.image_quality:
         params["quality"] = config.image_quality
     estimated_cost_usd = estimate_image_cost(model, 1, ref_count=len(ref_data)) or None
@@ -600,14 +629,14 @@ async def generate_image(
         if ref_data:
             files = [("image", (p.name, d, _mime_type(p))) for p, d in ref_data]
             form_params = {k: str(v) for k, v in params.items() if v is not None}
-            response = await _http.post(
+            response = await _post_with_retry(
                 f"{_base_url(config)}{endpoint}",
                 headers=_headers(config, event_id),
                 data={"prompt": prompt, "metadata": _json_dumps(metadata), **form_params},
                 files=files,
             )
         else:
-            response = await _http.post(
+            response = await _post_with_retry(
                 f"{_base_url(config)}{endpoint}",
                 headers=_headers(config, event_id),
                 json={"prompt": prompt, "metadata": metadata, **{k: v for k, v in params.items() if v is not None}},

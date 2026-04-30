@@ -34,7 +34,8 @@ def history(user_id: str = Depends(get_current_user)):
         .table("credit_ledger")
         .select(
             "id, amount_credits, status, stage, description, created_at, project_id, "
-            "provider, model, operation, input_tokens, output_tokens, image_count"
+            "provider, model, provider_model, operation, input_tokens, output_tokens, image_count, "
+            "cost_usd, cost_source"
         )
         .eq("user_id", user_id)
         .order("created_at", desc=True)

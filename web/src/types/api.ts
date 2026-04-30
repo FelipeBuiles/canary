@@ -241,6 +241,10 @@ export interface DialogueLine {
   character_id: string | null;
   text: string;
   type: string;
+  source_beat_id?: string | null;
+  source_text?: string | null;
+  narration_mode?: string | null;
+  preferred_zone?: string | null;
 }
 
 export interface ScreenplayBeat {
@@ -249,6 +253,7 @@ export interface ScreenplayBeat {
   content: string;
   direction: string | null;
   transition_type: string | null;
+  narration_reason?: string | null;
 }
 
 export interface Screenplay {
@@ -285,9 +290,35 @@ export interface LayoutPlanBeatRef {
   content: string;
   direction: string | null;
   transition_type: string | null;
+  narration_reason?: string | null;
   emphasis_hint?: string | null;
   shot_hint?: string | null;
   transition_significance?: string | null;
+}
+
+export interface NarrationDecision {
+  beat_id: string;
+  scene_id: string;
+  beat_index: number;
+  source_text: string;
+  candidate_reason: string | null;
+  decision: "rendered" | "visualized" | "dropped";
+  mode: "attached_caption" | "caption_panel" | null;
+  panel_id: string | null;
+  preferred_zone: "top" | "bottom" | "left" | "right" | "overlay_center" | "none";
+  decision_reason: string;
+  fallback_decision: boolean;
+  caption_text_override: string | null;
+}
+
+export interface NarrationImpact {
+  impact: "compose_only" | "plan_only" | "redraw_selected_panels" | "replan_scene";
+  affected_stages: string[];
+  affected_panels: string[];
+  requires_confirmation: boolean;
+  reason: string;
+  estimated_credits?: number;
+  stage_credits?: Record<string, number>;
 }
 
 export interface PanelGeometry {
@@ -326,6 +357,9 @@ export interface PlannedPanel {
   mood: string;
   dialogue: DialogueLine[];
   sfx: string | null;
+  has_narration_caption?: boolean;
+  narration_mode?: string | null;
+  preferred_caption_zone?: string | null;
 }
 
 export interface PlannedPage {
@@ -352,6 +386,7 @@ export interface LayoutPlan {
   beats: LayoutPlanBeatRef[];
   planned_panels: PlannedPanel[];
   planned_pages: PlannedPage[];
+  narration_decisions: NarrationDecision[];
   warnings: string[];
   user_overrides: Record<string, unknown>;
   regeneration_impact: Record<string, string>;
@@ -376,6 +411,9 @@ export interface ImagePrompt {
   crop_policy?: string | null;
   transition_in?: string | null;
   transition_out?: string | null;
+  has_narration_caption?: boolean;
+  narration_mode?: string | null;
+  preferred_caption_zone?: string | null;
   full_prompt: string;
   style?: string | null;
   composition?: string | null;
@@ -409,6 +447,10 @@ export interface Bubble {
   text: string;
   speaker_id: string | null;
   speaker_name: string | null;
+  source_beat_id?: string | null;
+  source_text?: string | null;
+  narration_mode?: string | null;
+  preferred_zone?: string | null;
   side: "left" | "right" | "center";
   full_width: boolean | null;
   x: number | null;

@@ -1,5 +1,12 @@
+import { useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { useLayoutPlan, useProjectStatus, useStoryBible } from "../../api/queries";
+import {
+  useLayoutPlan,
+  useNarrationDecisionImpact,
+  useProjectStatus,
+  useStoryBible,
+  useUpdateNarrationDecision,
+} from "../../api/queries";
 import { RoomHeader } from "../../components/ui/RoomHeader";
 import { StateBlock } from "../../components/ui/StateBlock";
 import { RerunStageAction } from "../../components/ui/RerunStageAction";
@@ -8,7 +15,7 @@ import { SceneSidebar } from "../../components/ui/SceneSidebar";
 import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
 import { useCharacterName } from "../../hooks/useCharacterName";
 import { useHeaderMode } from "../../hooks/useHeaderMode";
-import type { PlannedPanel, PlannedPage } from "../../types/api";
+import type { NarrationDecision, PlannedPanel, PlannedPage } from "../../types/api";
 
 const IMPORTANCE_STYLES: Record<string, string> = {
   standard: "bg-surface-container text-ink-black/60",
@@ -89,9 +96,13 @@ function PlanPanelCard({
           {panel.dialogue.map((d, i) => (
             <div
               key={i}
-              className="border-l-[3px] border-hero-red py-0.5 pl-3 text-[0.92rem] font-semibold italic leading-6 text-ink-black/78"
+              className={
+                d.type === "narration"
+                  ? "border-l-[3px] border-narrator-gold py-0.5 pl-3 text-[0.92rem] font-semibold italic leading-6 text-ink-black/78"
+                  : "border-l-[3px] border-hero-red py-0.5 pl-3 text-[0.92rem] font-semibold italic leading-6 text-ink-black/78"
+              }
             >
-              "{d.text}"
+              {d.type === "narration" ? "Caption" : "Dialogue"}: "{d.text}"
             </div>
           ))}
         </div>
@@ -123,6 +134,172 @@ function PageBreakBand({ page }: { page: PlannedPage }) {
   );
 }
 
+function NarrationDecisionCard({
+  project,
+  decision,
+  panels,
+}: {
+  project: string;
+  decision: NarrationDecision;
+  panels: PlannedPanel[];
+}) {
+  const [draft, setDraft] = useState<Partial<NarrationDecision>>({
+    decision: decision.decision,
+    mode: decision.mode,
+    panel_id: decision.panel_id,
+    preferred_zone: decision.preferred_zone,
+    caption_text_override: decision.caption_text_override,
+    decision_reason: decision.decision_reason,
+  });
+  const patch = useMemo(() => draft, [draft]);
+  const impact = useNarrationDecisionImpact(project, decision.beat_id, patch);
+  const updateDecision = useUpdateNarrationDecision();
+  const selectedDecision = draft.decision ?? decision.decision;
+  const selectedMode = draft.mode ?? decision.mode;
+
+  function apply() {
+    const summary = impact.data;
+    if (summary?.requires_confirmation) {
+      const ok = window.confirm(
+        `Apply narration change?\n\nImpact: ${summary.impact}\nStages: ${summary.affected_stages.join(", ")}\nEstimated hold: ${(summary.estimated_credits ?? 0).toLocaleString()} credits\n\n${summary.reason}`,
+      );
+      if (!ok) return;
+    }
+    updateDecision.mutate({ project, beatId: decision.beat_id, patch });
+  }
+
+  return (
+    <article className="border-[1.5px] border-narrator-gold/45 bg-narrator-gold/10 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-meta text-[0.58rem] font-bold tracking-[0.18em] text-narrator-gold uppercase">
+            Source narration · beat {decision.beat_index}
+          </div>
+          <p className="mt-1 text-[0.9rem] font-semibold leading-6 text-ink-black">
+            "{decision.source_text}"
+          </p>
+        </div>
+        {decision.fallback_decision && (
+          <span className="shrink-0 border border-warn-orange px-2 py-0.5 font-meta text-[0.55rem] tracking-[0.12em] text-warn-orange uppercase">
+            fallback
+          </span>
+        )}
+      </div>
+
+      {decision.candidate_reason && (
+        <p className="mt-2 text-[0.76rem] leading-5 text-ink-fade">
+          {decision.candidate_reason}
+        </p>
+      )}
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <label className="block">
+          <span className="font-meta text-[0.55rem] tracking-[0.14em] text-ink-black/50 uppercase">Decision</span>
+          <select
+            value={selectedDecision}
+            onChange={(e) => setDraft((d) => ({
+              ...d,
+              decision: e.target.value as NarrationDecision["decision"],
+              mode: e.target.value === "rendered" ? (d.mode ?? "attached_caption") : null,
+              panel_id: e.target.value === "rendered" ? (d.panel_id ?? panels[0]?.panel_id ?? null) : null,
+            }))}
+            className="mt-1 w-full border border-ink-black/20 bg-bristol px-2 py-1.5 text-[0.8rem]"
+          >
+            <option value="rendered">Rendered</option>
+            <option value="visualized">Visualized</option>
+            <option value="dropped">Dropped</option>
+          </select>
+        </label>
+
+        <label className="block">
+          <span className="font-meta text-[0.55rem] tracking-[0.14em] text-ink-black/50 uppercase">Mode</span>
+          <select
+            value={selectedMode ?? "attached_caption"}
+            disabled={selectedDecision !== "rendered"}
+            onChange={(e) => setDraft((d) => ({ ...d, mode: e.target.value as NarrationDecision["mode"] }))}
+            className="mt-1 w-full border border-ink-black/20 bg-bristol px-2 py-1.5 text-[0.8rem] disabled:opacity-50"
+          >
+            <option value="attached_caption">Attached caption</option>
+            <option value="caption_panel">Caption panel</option>
+          </select>
+        </label>
+
+        <label className="block">
+          <span className="font-meta text-[0.55rem] tracking-[0.14em] text-ink-black/50 uppercase">Panel</span>
+          <select
+            value={draft.panel_id ?? ""}
+            disabled={selectedDecision !== "rendered"}
+            onChange={(e) => setDraft((d) => ({ ...d, panel_id: e.target.value || null }))}
+            className="mt-1 w-full border border-ink-black/20 bg-bristol px-2 py-1.5 text-[0.8rem] disabled:opacity-50"
+          >
+            {panels.map((panel) => (
+              <option key={panel.panel_id} value={panel.panel_id}>
+                Panel {String(panel.panel_number).padStart(2, "0")}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="block">
+          <span className="font-meta text-[0.55rem] tracking-[0.14em] text-ink-black/50 uppercase">Zone</span>
+          <select
+            value={draft.preferred_zone ?? "top"}
+            disabled={selectedDecision !== "rendered"}
+            onChange={(e) => setDraft((d) => ({ ...d, preferred_zone: e.target.value as NarrationDecision["preferred_zone"] }))}
+            className="mt-1 w-full border border-ink-black/20 bg-bristol px-2 py-1.5 text-[0.8rem] disabled:opacity-50"
+          >
+            <option value="top">Top</option>
+            <option value="bottom">Bottom</option>
+            <option value="left">Left</option>
+            <option value="right">Right</option>
+            <option value="overlay_center">Overlay center</option>
+            <option value="none">None</option>
+          </select>
+        </label>
+      </div>
+
+      <label className="mt-3 block">
+        <span className="font-meta text-[0.55rem] tracking-[0.14em] text-ink-black/50 uppercase">
+          Caption override
+        </span>
+        <input
+          value={draft.caption_text_override ?? ""}
+          placeholder="Blank uses exact source quote"
+          onChange={(e) => setDraft((d) => ({ ...d, caption_text_override: e.target.value || null }))}
+          className="mt-1 w-full border border-ink-black/20 bg-bristol px-2 py-1.5 text-[0.82rem]"
+        />
+      </label>
+
+      <label className="mt-3 block">
+        <span className="font-meta text-[0.55rem] tracking-[0.14em] text-ink-black/50 uppercase">
+          Decision reason
+        </span>
+        <textarea
+          value={draft.decision_reason ?? ""}
+          onChange={(e) => setDraft((d) => ({ ...d, decision_reason: e.target.value }))}
+          className="mt-1 min-h-[64px] w-full border border-ink-black/20 bg-bristol px-2 py-1.5 text-[0.82rem]"
+        />
+      </label>
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="text-[0.74rem] leading-5 text-ink-fade">
+          {impact.isLoading ? "Analyzing impact..." : impact.data
+            ? `${impact.data.impact.replace(/_/g, " ")} · ${impact.data.affected_stages.join(", ") || "compose"} · ~${(impact.data.estimated_credits ?? 0).toLocaleString()} credits`
+            : "Impact preview unavailable"}
+        </div>
+        <button
+          type="button"
+          onClick={apply}
+          disabled={updateDecision.isPending}
+          className="border-[1.5px] border-ink-black bg-bristol px-3 py-1.5 font-meta text-[0.62rem] font-bold tracking-[0.12em] uppercase hover:bg-ink-black hover:text-bristol disabled:opacity-50"
+        >
+          {updateDecision.isPending ? "Applying..." : "Apply narration"}
+        </button>
+      </div>
+    </article>
+  );
+}
+
 export function PlanRoom() {
   const { name } = useParams<{ name: string }>();
   const { data: plan, isLoading } = useLayoutPlan(name);
@@ -144,6 +321,9 @@ export function PlanRoom() {
 
   const scenePanels = plan
     ? plan.planned_panels.filter((p) => p.scene_id === activeScene)
+    : [];
+  const sceneNarrationDecisions = plan
+    ? plan.narration_decisions.filter((d) => d.scene_id === activeScene)
     : [];
 
   const panelCountByScene = plan
@@ -258,6 +438,31 @@ export function PlanRoom() {
           <div className="min-h-0 min-w-0 overflow-hidden">
             {scenePanels.length > 0 ? (
               <div className="h-full min-h-0 overflow-y-auto p-6 md:p-8">
+                {sceneNarrationDecisions.length > 0 && name && (
+                  <section className="mb-6 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="font-meta text-[0.62rem] font-bold tracking-[0.2em] text-narrator-gold uppercase">
+                          Narration audit
+                        </div>
+                        <p className="mt-1 text-[0.78rem] leading-5 text-ink-fade">
+                          Review source captions before expensive downstream generation.
+                        </p>
+                      </div>
+                      <span className="font-meta text-[0.58rem] tracking-[0.16em] text-ink-black/45 uppercase">
+                        {sceneNarrationDecisions.length} source quote{sceneNarrationDecisions.length !== 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    {sceneNarrationDecisions.map((decision) => (
+                      <NarrationDecisionCard
+                        key={decision.beat_id}
+                        project={name}
+                        decision={decision}
+                        panels={scenePanels}
+                      />
+                    ))}
+                  </section>
+                )}
                 <div className="grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
                   {gridItems.map((item) =>
                     item.kind === "page" ? (

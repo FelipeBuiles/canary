@@ -36,7 +36,9 @@ from novel_to_comic.models.layout_plan import (
     LayoutPlan,
     LayoutPlanBeatRef,
     LayoutPlanMetadata,
+    LLMNarrationDecisionSpec,
     LLMPanelSpec,
+    NarrationDecision,
     PanelGeometry,
     PlannedPage,
     PlannedPanel,
@@ -70,9 +72,11 @@ _PLAN_SCENE_SYSTEM = """You are a comic book storyboard artist converting a scre
 
 PRIMARY DIRECTIVE
 -----------------
-Produce approximately {target_panels} panels for this {beat_count}-beat scene.
-That means averaging {avg_per_panel} beats per panel -- you MUST merge consecutive beats.
+Produce approximately {target_panels} panels for this {visual_beat_count}-visual-beat scene.
+The scene also has {narration_beat_count} narration candidate beat(s).
+That means averaging {avg_per_panel} visual beats per panel -- you MUST merge consecutive visual beats.
 One panel per beat is wrong. One panel per dialogue line is wrong.
+Narration beats are source quotes and should not inflate the panel target unless a caption_panel is genuinely needed.
 
 HOW TO MERGE
 ------------
@@ -117,12 +121,42 @@ PANEL FIELDS
   panel if the scene ends a chapter). Most scenes: 0 page breaks. Maximum 1 per scene.
   Do NOT mark hero or accent panels with page_break_after just because they feel dramatic.
 
+NARRATION DECISIONS
+-------------------
+Some beats may have type "narration". These are exact source quotes selected by Stage 3.
+Decide what happens to every narration beat:
+- rendered: the quote appears later as a narration caption in Stage 8.
+- visualized: the quote is intentionally handled by image/action/pacing, with no caption.
+- dropped: the quote is intentionally omitted because it is redundant or weak. Use rarely.
+
+For rendered narration, choose one mode:
+- attached_caption: the quote overlays an existing visual panel.
+- caption_panel: the quote motivates a distinct visual panel, usually establishing, transitional, or reflective.
+
+Rules:
+- Use the narration quote exactly. Do not rewrite it.
+- Include rendered narration beat_indices in the panel that carries the caption.
+- Prefer at most one narration caption per panel.
+- Do not render text inside the image. Lettering happens later in compose.
+- Use preferred_zone: top, bottom, left, right, overlay_center, or none.
+
+Examples:
+- Silent final turn: action beat "Myop lays down her flowers" + narration "And the summer was over."
+  -> rendered, attached_caption, same final panel, preferred_zone top or bottom.
+- Time/place bridge: narration "By twelve o'clock, her arms laden..." over a widening distance shot.
+  -> rendered, caption_panel only if it needs its own establishing image.
+- Visible scenery prose already carried by the image.
+  -> visualized, reason says the panel shows it clearly.
+
 OUTPUT FORMAT
 -------------
-Return {{"panels": [ {{...}}, ... ]}} where each object has exactly these keys:
+Return {{"panels": [ {{...}}, ... ], "narration_decisions": [ {{...}}, ... ]}}.
+Each panel object has exactly these keys:
   beat_indices, characters_present, character_actions, shot_type, camera_angle,
   camera_note, lighting, mood, background_description, importance, shape_intent,
   transition_out, page_break_after
+Each narration_decisions object has exactly these keys:
+  beat_index, decision, mode, panel_index, preferred_zone, decision_reason
 """
 
 
@@ -171,6 +205,7 @@ def _beat_ref(scene_id: str, beat_index: int, beat: ScreenplayBeat) -> LayoutPla
         content=beat.content,
         direction=beat.direction,
         transition_type=beat.transition_type,
+        narration_reason=beat.narration_reason,
         emphasis_hint=emphasis_hint,
         shot_hint=shot_hint,
         transition_significance=transition_significance,
@@ -178,13 +213,19 @@ def _beat_ref(scene_id: str, beat_index: int, beat: ScreenplayBeat) -> LayoutPla
 
 
 def _dialogue_line(beat: ScreenplayBeat) -> list[dict[str, str | None]]:
-    if beat.type != "dialogue":
-        return []
-    return [DialogueLine(
-        character_id=beat.character_id,
-        text=beat.content,
-        type="speech",
-    ).model_dump()]
+    if beat.type == "dialogue":
+        return [DialogueLine(
+            character_id=beat.character_id,
+            text=beat.content,
+            type="speech",
+        ).model_dump()]
+    if beat.type == "narration":
+        return [DialogueLine(
+            character_id=None,
+            text=beat.content,
+            type="narration",
+        ).model_dump()]
+    return []
 
 
 def _aspect_for_shape(shape_intent: str) -> tuple[float, list[float]]:
@@ -227,6 +268,10 @@ def _target_panel_count(config_max: int, beat_count: int) -> int:
     """
     natural = math.ceil(beat_count / _BEATS_PER_PANEL_AVG)
     return max(4, min(natural, config_max * 2))
+
+
+def _visual_beat_count(beats: list[ScreenplayBeat]) -> int:
+    return sum(1 for beat in beats if beat.type != "narration")
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +338,7 @@ def _panel_from_beat(
         character_expressions[beat.character_id] = "speaking"
     character_positions = {beat.character_id: "center"} if beat.character_id else {}
     dialogue_load = 1 if beat.type == "dialogue" else 0
-    caption_load = 1 if beat.type == "action" and not beat.character_id else 0
+    caption_load = 1 if beat.type == "narration" else (1 if beat.type == "action" and not beat.character_id else 0)
     aspect_preference, aspect_range = _aspect_for_shape(shape_intent)
     return PlannedPanel(
         panel_id=_panel_id(scene_id, beat_index),
@@ -322,17 +367,38 @@ def _panel_from_beat(
         mood="tense" if beat.type == "transition" else "neutral",
         dialogue=_dialogue_line(beat),
         sfx=beat.content if beat.type == "sfx" else None,
+        has_narration_caption=beat.type == "narration",
+        narration_mode="attached_caption" if beat.type == "narration" else None,
+        preferred_caption_zone="top" if beat.type == "narration" else None,
     )
 
 
 def _plan_scene_heuristic(
     screenplay: Screenplay,
     scene_location_name: str,
-) -> list[PlannedPanel]:
-    return [
+) -> tuple[list[PlannedPanel], list[NarrationDecision]]:
+    panels = [
         _panel_from_beat(screenplay.scene_id, beat_index, beat, scene_location_name)
         for beat_index, beat in enumerate(screenplay.beats, start=1)
     ]
+    decisions = [
+        NarrationDecision(
+            beat_id=_beat_id(screenplay.scene_id, beat_index),
+            scene_id=screenplay.scene_id,
+            beat_index=beat_index,
+            source_text=beat.content,
+            candidate_reason=beat.narration_reason,
+            decision="rendered",
+            mode="attached_caption",
+            panel_id=_panel_id(screenplay.scene_id, beat_index),
+            preferred_zone="top",
+            decision_reason="Heuristic planner renders Stage 3 narration as an attached caption.",
+            fallback_decision=True,
+        )
+        for beat_index, beat in enumerate(screenplay.beats, start=1)
+        if beat.type == "narration"
+    ]
+    return _sync_rendered_narration(panels, decisions), decisions
 
 
 # ---------------------------------------------------------------------------
@@ -369,6 +435,8 @@ def _scene_planning_user_content(
             parts.append(f"direction:{beat.direction!r}")
         if beat.transition_type:
             parts.append(f"transition:{beat.transition_type}")
+        if beat.narration_reason:
+            parts.append(f"narration_reason:{beat.narration_reason!r}")
         beat_lines.append(" ".join(parts))
 
     beat_count = len(screenplay.beats)
@@ -383,12 +451,20 @@ def _scene_planning_user_content(
     )
 
 
-def _parse_llm_panel_specs(raw: dict) -> list[LLMPanelSpec]:
+def _parse_llm_scene_plan(raw: dict) -> tuple[list[LLMPanelSpec], list[LLMNarrationDecisionSpec]]:
     """Validate and parse the raw LLM JSON response into LLMPanelSpec objects."""
     panels_raw = raw.get("panels")
     if not isinstance(panels_raw, list):
         raise ValueError(f"Expected {{'panels': [...]}} but got: {list(raw.keys())}")
-    return [LLMPanelSpec.model_validate(item) for item in panels_raw]
+    decisions_raw = raw.get("narration_decisions", [])
+    if decisions_raw is None:
+        decisions_raw = []
+    if not isinstance(decisions_raw, list):
+        raise ValueError("Expected narration_decisions to be a list")
+    return (
+        [LLMPanelSpec.model_validate(item) for item in panels_raw],
+        [LLMNarrationDecisionSpec.model_validate(item) for item in decisions_raw],
+    )
 
 
 def _apply_lighting_fallback(
@@ -408,14 +484,17 @@ async def _plan_scene_llm(
     screenplay: Screenplay,
     story_bible: StoryBible,
     usage_records: list[UsageRecord] | None = None,
-) -> list[LLMPanelSpec]:
+) -> tuple[list[LLMPanelSpec], list[LLMNarrationDecisionSpec]]:
     """Call the panel model to produce panel specs for a single scene."""
-    beat_count = len(screenplay.beats)
-    target_panels = _target_panel_count(config.max_panels_per_scene, beat_count)
-    avg_per_panel = f"{beat_count / target_panels:.1f}"
+    visual_beat_count = max(1, _visual_beat_count(screenplay.beats))
+    narration_beat_count = sum(1 for beat in screenplay.beats if beat.type == "narration")
+    target_panels = _target_panel_count(config.max_panels_per_scene, visual_beat_count)
+    avg_per_panel = f"{visual_beat_count / target_panels:.1f}"
     system = _PLAN_SCENE_SYSTEM.format(
         target_panels=target_panels,
-        beat_count=beat_count,
+        beat_count=len(screenplay.beats),
+        visual_beat_count=visual_beat_count,
+        narration_beat_count=narration_beat_count,
         avg_per_panel=avg_per_panel,
     )
     user = _scene_planning_user_content(screenplay, story_bible, target_panels)
@@ -430,7 +509,7 @@ async def _plan_scene_llm(
     )
     if usage_records is not None and api_result.usage is not None:
         usage_records.append(api_result.usage)
-    return _parse_llm_panel_specs(api_result.value)
+    return _parse_llm_scene_plan(api_result.value)
 
 
 # ---------------------------------------------------------------------------
@@ -486,7 +565,11 @@ def _llm_spec_to_planned_panel(
             character_positions[cid] = _pos_map[min(i, 2)]
 
     dialogue_load = sum(1 for b in covered_beats if b.type == "dialogue")
-    caption_load = sum(1 for b in covered_beats if b.type == "action" and not b.character_id)
+    caption_load = sum(
+        1 for b in covered_beats
+        if b.type == "narration" or (b.type == "action" and not b.character_id)
+    )
+    has_narration = any(b.type == "narration" for b in covered_beats)
     aspect_preference, aspect_range = _aspect_for_shape(spec.shape_intent)
 
     return PlannedPanel(
@@ -516,8 +599,154 @@ def _llm_spec_to_planned_panel(
         mood=spec.mood,
         dialogue=dialogue,
         sfx=sfx,
+        has_narration_caption=has_narration,
+        narration_mode="attached_caption" if has_narration else None,
+        preferred_caption_zone="top" if has_narration else None,
         page_break_after=spec.page_break_after,
     )
+
+
+def _caption_text(decision: NarrationDecision) -> str:
+    return decision.caption_text_override or decision.source_text
+
+
+def _apply_rendered_narration_to_panel(panel: PlannedPanel, decision: NarrationDecision) -> PlannedPanel:
+    if decision.decision != "rendered" or not decision.panel_id:
+        return panel
+    existing = [
+        line for line in panel.dialogue
+        if line.get("source_beat_id") == decision.beat_id
+        or (line.get("type") == "narration" and line.get("text") == _caption_text(decision))
+    ]
+    if existing:
+        dialogue = []
+        for line in panel.dialogue:
+            if line in existing:
+                updated = dict(line)
+                updated.update({
+                    "source_beat_id": decision.beat_id,
+                    "source_text": decision.source_text,
+                    "narration_mode": decision.mode,
+                    "preferred_zone": decision.preferred_zone,
+                })
+                dialogue.append(updated)
+            else:
+                dialogue.append(line)
+    else:
+        dialogue = list(panel.dialogue)
+        dialogue.append(
+            DialogueLine(
+                character_id=None,
+                text=_caption_text(decision),
+                type="narration",
+                source_beat_id=decision.beat_id,
+                source_text=decision.source_text,
+                narration_mode=decision.mode,
+                preferred_zone=decision.preferred_zone,
+            ).model_dump()
+        )
+    beat_ids = list(panel.beat_ids)
+    if decision.beat_id not in beat_ids:
+        beat_ids.append(decision.beat_id)
+    return panel.model_copy(
+        update={
+            "beat_ids": beat_ids,
+            "dialogue": dialogue,
+            "caption_load": max(panel.caption_load, sum(1 for line in dialogue if line.get("type") == "narration")),
+            "has_narration_caption": True,
+            "narration_mode": decision.mode,
+            "preferred_caption_zone": decision.preferred_zone,
+        }
+    )
+
+
+def _build_narration_decisions(
+    scene_id: str,
+    specs: list[LLMNarrationDecisionSpec],
+    panels: list[PlannedPanel],
+    beats: list[ScreenplayBeat],
+    warnings: list[str],
+) -> list[NarrationDecision]:
+    narration_by_index = {
+        idx: beat
+        for idx, beat in enumerate(beats, start=1)
+        if beat.type == "narration"
+    }
+    panel_by_index = {panel.panel_number: panel for panel in panels}
+    decisions: list[NarrationDecision] = []
+    used: set[int] = set()
+
+    for spec in specs:
+        beat = narration_by_index.get(spec.beat_index)
+        if beat is None:
+            continue
+        panel = panel_by_index.get(spec.panel_index or -1)
+        if spec.decision == "rendered" and panel is None:
+            panel = panels[-1] if panels else None
+            warnings.append(
+                f"{scene_id}: narration beat {spec.beat_index} rendered without a valid panel; attached to final panel."
+            )
+        decisions.append(
+            NarrationDecision(
+                beat_id=_beat_id(scene_id, spec.beat_index),
+                scene_id=scene_id,
+                beat_index=spec.beat_index,
+                source_text=beat.content,
+                candidate_reason=beat.narration_reason,
+                decision=spec.decision,
+                mode=spec.mode if spec.decision == "rendered" else None,
+                panel_id=panel.panel_id if spec.decision == "rendered" and panel else None,
+                preferred_zone=spec.preferred_zone,
+                decision_reason=spec.decision_reason,
+            )
+        )
+        used.add(spec.beat_index)
+
+    for beat_index, beat in narration_by_index.items():
+        if beat_index in used:
+            continue
+        panel = None
+        for candidate in panels:
+            if _beat_id(scene_id, beat_index) in candidate.beat_ids:
+                panel = candidate
+                break
+        if panel is None and panels:
+            panel = panels[-1]
+        decision = NarrationDecision(
+            beat_id=_beat_id(scene_id, beat_index),
+            scene_id=scene_id,
+            beat_index=beat_index,
+            source_text=beat.content,
+            candidate_reason=beat.narration_reason,
+            decision="rendered" if panel else "dropped",
+            mode="attached_caption" if panel else None,
+            panel_id=panel.panel_id if panel else None,
+            preferred_zone="top",
+            decision_reason=(
+                "Fallback: Stage 3 selected this source quote as necessary narration, "
+                "and the planner did not provide a decision."
+            ),
+            fallback_decision=True,
+        )
+        decisions.append(decision)
+        warnings.append(f'{scene_id}: fallback narration decision for "{beat.content}"')
+
+    return decisions
+
+
+def _sync_rendered_narration(
+    panels: list[PlannedPanel],
+    decisions: list[NarrationDecision],
+) -> tuple[list[PlannedPanel], list[NarrationDecision]]:
+    panel_map = {panel.panel_id: panel for panel in panels}
+    for decision in decisions:
+        if decision.decision != "rendered" or not decision.panel_id:
+            continue
+        panel = panel_map.get(decision.panel_id)
+        if panel is None:
+            continue
+        panel_map[decision.panel_id] = _apply_rendered_narration_to_panel(panel, decision)
+    return [panel_map[panel.panel_id] for panel in panels]
 
 
 async def _plan_scene(
@@ -542,19 +771,27 @@ async def _plan_scene(
         return _plan_scene_heuristic(screenplay, scene_location_name)
 
     try:
-        specs = await _plan_scene_llm(config, screenplay, story_bible, usage_records=usage_records)
+        specs, narration_specs = await _plan_scene_llm(config, screenplay, story_bible, usage_records=usage_records)
         if not specs:
             raise ValueError("LLM returned empty panel list")
         panels = [
             _llm_spec_to_planned_panel(screenplay.scene_id, idx, spec, screenplay.beats)
             for idx, spec in enumerate(specs, start=1)
         ]
+        decisions = _build_narration_decisions(
+            screenplay.scene_id,
+            narration_specs,
+            panels,
+            screenplay.beats,
+            warnings,
+        )
+        panels = _sync_rendered_narration(panels, decisions)
         _apply_lighting_fallback(panels, loc_lighting)
         logger.info(
             "LLM planned %s: %d beats -> %d panels",
             screenplay.scene_id, len(screenplay.beats), len(panels),
         )
-        return panels
+        return panels, decisions
     except Exception as exc:
         warnings.append(
             f"{screenplay.scene_id}: LLM planning failed ({exc!s}), falling back to heuristic"
@@ -694,27 +931,29 @@ async def _build_layout_plan(
     warnings: list[str] = []
 
     # -- Step 1: Plan each scene (LLM or heuristic) in parallel ---------------
-    async def _plan_one(sp: Screenplay) -> tuple[str, list[PlannedPanel], list[LayoutPlanBeatRef]]:
+    async def _plan_one(sp: Screenplay) -> tuple[str, list[PlannedPanel], list[NarrationDecision], list[LayoutPlanBeatRef]]:
         loc_name = location_name_by_id.get(sp.location_id, sp.location_id)
         if not sp.beats:
             warnings.append(f"{sp.scene_id}: screenplay has no beats to plan")
-            return sp.scene_id, [], []
-        panels = await _plan_scene(config, sp, story_bible, loc_name, warnings, usage_records=usage_records)
+            return sp.scene_id, [], [], []
+        panels, narration_decisions = await _plan_scene(config, sp, story_bible, loc_name, warnings, usage_records=usage_records)
         beat_refs = [
             _beat_ref(sp.scene_id, idx, beat)
             for idx, beat in enumerate(sp.beats, start=1)
         ]
-        return sp.scene_id, panels, beat_refs
+        return sp.scene_id, panels, narration_decisions, beat_refs
 
     results = await asyncio.gather(*[_plan_one(sp) for sp in screenplays])
 
     # Flatten, preserving scene order
     all_beats: list[LayoutPlanBeatRef] = []
     all_panels: list[PlannedPanel] = []
+    all_narration_decisions: list[NarrationDecision] = []
     panels_by_scene: dict[str, list[PlannedPanel]] = {}
-    for _scene_id, panels, beat_refs in results:
+    for _scene_id, panels, narration_decisions, beat_refs in results:
         all_beats.extend(beat_refs)
         all_panels.extend(panels)
+        all_narration_decisions.extend(narration_decisions)
         panels_by_scene[_scene_id] = panels
 
     # -- Step 2: Cross-scene transition pass -----------------------------------
@@ -746,6 +985,7 @@ async def _build_layout_plan(
         beats=all_beats,
         planned_panels=all_panels,
         planned_pages=planned_pages,
+        narration_decisions=all_narration_decisions,
         warnings=warnings,
     )
 

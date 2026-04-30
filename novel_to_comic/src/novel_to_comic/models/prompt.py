@@ -23,6 +23,9 @@ class ImagePrompt(BaseModel):
     crop_policy: str | None = None
     transition_in: str | None = None
     transition_out: str | None = None
+    has_narration_caption: bool = False
+    narration_mode: str | None = None
+    preferred_caption_zone: str | None = None
     full_prompt: str = ""
     style: str | None = None
     composition: str | None = None

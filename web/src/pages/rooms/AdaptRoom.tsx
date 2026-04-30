@@ -71,6 +71,9 @@ export function AdaptRoom() {
 
   // Characters in current scene for filter chips
   const filterChars = screenplay?.characters ?? [];
+  const narrationBeats = screenplay?.beats
+    .map((beat, index) => ({ beat, index }))
+    .filter(({ beat }) => beat.type === "narration") ?? [];
   const filteredBeats = screenplay?.beats.filter((beat) => {
     if (!activeCharFilter) return true;
     return beat.character_id === activeCharFilter;
@@ -167,10 +170,30 @@ export function AdaptRoom() {
                     </div>
                   )}
 
+                  {narrationBeats.length > 0 && (
+                    <div className="mb-5 mt-5 border-[1.5px] border-narrator-gold/50 bg-narrator-gold/10 p-4">
+                      <div className="font-meta text-[0.62rem] font-bold tracking-[0.18em] text-ink-black/55 uppercase">
+                        Narration candidates: {narrationBeats.length}
+                      </div>
+                      <div className="mt-2 space-y-1">
+                        {narrationBeats.map(({ beat, index }) => (
+                          <a
+                            key={`${index}-${beat.content}`}
+                            href={`#beat-${index + 1}`}
+                            className="block text-[0.82rem] font-semibold leading-5 text-ink-black hover:underline"
+                          >
+                            {index + 1}. "{beat.content}"
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Beats */}
                   {(filteredBeats ?? []).map((beat, i) => {
                     const isDialogue = beat.type === "dialogue";
                     const isDirection = beat.type === "direction";
+                    const isNarration = beat.type === "narration";
                     const isSfx = beat.type === "sfx";
                     const isTransition = beat.transition_type != null && beat.content?.toLowerCase().startsWith("cut") || beat.type === "transition";
 
@@ -199,6 +222,28 @@ export function AdaptRoom() {
                       );
                     }
 
+                    if (isNarration) {
+                      return (
+                        <div
+                          id={`beat-${i + 1}`}
+                          key={i}
+                          className="border-b border-narrator-gold/35 bg-narrator-gold/8 py-4"
+                        >
+                          <div className="font-meta text-[0.68rem] font-bold tracking-[0.18em] text-narrator-gold">
+                            NARRATION
+                          </div>
+                          <div className="mt-2 max-w-[68ch] font-body text-[0.98rem] font-semibold leading-7 text-ink-black">
+                            "{beat.content}"
+                          </div>
+                          {beat.narration_reason && (
+                            <div className="mt-3 border-l-[3px] border-narrator-gold/60 pl-4 text-[0.78rem] leading-6 text-ink-fade">
+                              {beat.narration_reason}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+
                     if (isDirection) {
                       return (
                         <div key={i} className="py-2 pl-6">
@@ -222,6 +267,7 @@ export function AdaptRoom() {
 
                     return (
                       <div
+                        id={`beat-${i + 1}`}
                         key={i}
                         className="border-b border-ink-black/10 py-4"
                       >

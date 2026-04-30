@@ -7,7 +7,7 @@ from pathlib import Path
 
 from novel_to_comic.assembly.html_renderer import PAGE_H, PAGE_W
 from novel_to_comic.models.comic_page import Bubble, ComicPage, PagePanel, Sfx
-from novel_to_comic.models.layout_plan import LayoutPlan, PanelGeometry, PlannedPage, PlannedPanel
+from novel_to_comic.models.layout_plan import LayoutPlan, NarrationDecision, PanelGeometry, PlannedPage, PlannedPanel
 from novel_to_comic.models.panel import DialogueLine, PanelBreakdown
 from novel_to_comic.models.story_bible import StoryBible
 
@@ -177,6 +177,148 @@ def planned_panel_to_breakdown(panel: PlannedPanel) -> PanelBreakdown:
     )
 
 
+def _caption_text(decision: NarrationDecision) -> str:
+    return decision.caption_text_override or decision.source_text
+
+
+def _remove_narration_from_panel(panel: PlannedPanel, beat_id: str) -> PlannedPanel:
+    dialogue = [
+        line for line in panel.dialogue
+        if line.get("source_beat_id") != beat_id
+    ]
+    has_narration = any(line.get("type") == "narration" for line in dialogue)
+    return panel.model_copy(
+        update={
+            "dialogue": dialogue,
+            "caption_load": sum(1 for line in dialogue if line.get("type") == "narration"),
+            "has_narration_caption": has_narration,
+            "narration_mode": panel.narration_mode if has_narration else None,
+            "preferred_caption_zone": panel.preferred_caption_zone if has_narration else None,
+        }
+    )
+
+
+def _apply_narration_to_panel(panel: PlannedPanel, decision: NarrationDecision) -> PlannedPanel:
+    dialogue = [
+        line for line in panel.dialogue
+        if line.get("source_beat_id") != decision.beat_id
+    ]
+    if decision.decision == "rendered":
+        dialogue.append(
+            DialogueLine(
+                character_id=None,
+                text=_caption_text(decision),
+                type="narration",
+                source_beat_id=decision.beat_id,
+                source_text=decision.source_text,
+                narration_mode=decision.mode,
+                preferred_zone=decision.preferred_zone,
+            ).model_dump()
+        )
+    beat_ids = list(panel.beat_ids)
+    if decision.decision == "rendered" and decision.beat_id not in beat_ids:
+        beat_ids.append(decision.beat_id)
+    has_narration = any(line.get("type") == "narration" for line in dialogue)
+    return panel.model_copy(
+        update={
+            "beat_ids": beat_ids,
+            "dialogue": dialogue,
+            "caption_load": sum(1 for line in dialogue if line.get("type") == "narration"),
+            "has_narration_caption": has_narration,
+            "narration_mode": decision.mode if decision.decision == "rendered" else None,
+            "preferred_caption_zone": decision.preferred_zone if decision.decision == "rendered" else None,
+        }
+    )
+
+
+def sync_narration_decisions(plan: LayoutPlan) -> LayoutPlan:
+    panels = planned_panel_index(plan)
+    for decision in plan.narration_decisions:
+        for panel_id, panel in list(panels.items()):
+            panels[panel_id] = _remove_narration_from_panel(panel, decision.beat_id)
+        if decision.decision == "rendered" and decision.panel_id in panels:
+            panels[decision.panel_id] = _apply_narration_to_panel(panels[decision.panel_id], decision)
+    plan.planned_panels = [panels[panel.panel_id] for panel in plan.planned_panels]
+    return plan
+
+
+def classify_narration_change_impact(
+    before: NarrationDecision,
+    after: NarrationDecision,
+) -> dict[str, object]:
+    affected_panels = sorted(
+        {
+            panel_id
+            for panel_id in (before.panel_id, after.panel_id)
+            if panel_id
+        }
+    )
+    if before.mode != "caption_panel" and after.mode == "caption_panel":
+        impact = "replan_scene"
+        stages = ["plan", "storyboard", "direct", "draw", "compose"]
+        reason = "Changing to a caption panel can alter panel count, page layout, and generated images."
+    elif before.decision != after.decision:
+        impact = "plan_only" if after.decision != "rendered" or after.mode != "caption_panel" else "replan_scene"
+        stages = ["storyboard", "direct", "compose"] if impact == "plan_only" else ["plan", "storyboard", "direct", "draw", "compose"]
+        reason = "Changing whether narration is rendered updates panel text and downstream structured artifacts."
+    elif before.panel_id != after.panel_id or before.preferred_zone != after.preferred_zone:
+        impact = "plan_only"
+        stages = ["storyboard", "direct", "compose"]
+        reason = "Moving an attached caption updates layout/direct metadata but does not require a redraw by default."
+    elif before.caption_text_override != after.caption_text_override:
+        impact = "compose_only"
+        stages = ["compose"]
+        reason = "Caption text changes are lettered in compose and do not change panel art."
+    else:
+        impact = "compose_only"
+        stages = ["compose"]
+        reason = "No image-affecting narration fields changed."
+    return {
+        "impact": impact,
+        "affected_stages": stages,
+        "affected_panels": affected_panels,
+        "requires_confirmation": impact != "compose_only",
+        "reason": reason,
+    }
+
+
+def apply_narration_decision_patch(plan: LayoutPlan, beat_id: str, patch: dict) -> tuple[LayoutPlan, dict[str, object]]:
+    decisions = {decision.beat_id: decision for decision in plan.narration_decisions}
+    before = decisions.get(beat_id)
+    if before is None:
+        raise KeyError(beat_id)
+    data = before.model_dump()
+    for key in (
+        "decision",
+        "mode",
+        "panel_id",
+        "preferred_zone",
+        "decision_reason",
+        "caption_text_override",
+    ):
+        if key in patch:
+            data[key] = patch[key]
+    if data["decision"] != "rendered":
+        data["mode"] = None
+        data["panel_id"] = None
+    after = NarrationDecision.model_validate(data)
+    impact = classify_narration_change_impact(before, after)
+    plan.narration_decisions = [
+        after if decision.beat_id == beat_id else decision
+        for decision in plan.narration_decisions
+    ]
+    sync_narration_decisions(plan)
+    for panel_id in impact.get("affected_panels", []):
+        if isinstance(panel_id, str):
+            _set_regeneration_impact(
+                plan,
+                panel_id,
+                "required" if impact.get("impact") in {"redraw_selected_panels", "replan_scene"} else "recommended",
+            )
+    _record_override(plan, "narration", beat_id, patch)
+    return plan, impact
+
+
 def prompt_path_for_panel(project_dir: Path, panel: PlannedPanel) -> Path:
     return project_dir / "direct" / panel.scene_id / f"panel_{panel.panel_number:03d}.json"
 
@@ -294,6 +436,10 @@ def project_layout_plan_to_pages(
                             text=dl.text,
                             speaker_id=dl.character_id or None,
                             speaker_name=char_name_map.get(dl.character_id) if show_labels else None,
+                            source_beat_id=dl.source_beat_id,
+                            source_text=dl.source_text,
+                            narration_mode=dl.narration_mode,
+                            preferred_zone=dl.preferred_zone,
                             side=side or "left",
                         )
                     )
