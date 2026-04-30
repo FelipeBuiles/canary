@@ -23,7 +23,7 @@ async def _lifespan(app: FastAPI):
     missing = audit_pricing()
     if missing:
         logging.getLogger(__name__).warning(
-            "Models missing from pricing.yaml (cost tracking will be $0 for these): %s",
+            "Models missing from LiteLLM pricing cache and local pricing fallback (cost tracking will be $0 for these): %s",
             ", ".join(missing),
         )
 

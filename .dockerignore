@@ -1,0 +1,15 @@
+.git
+.claude
+projects
+samples
+web/node_modules
+web/dist
+novel_to_comic/.venv
+novel_to_comic/__pycache__
+novel_to_comic/src/**/__pycache__
+novel_to_comic/tests
+*.pyc
+*.pyo
+.env
+.env.*
+!.env.example

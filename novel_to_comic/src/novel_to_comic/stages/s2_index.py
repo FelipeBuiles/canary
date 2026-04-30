@@ -12,11 +12,10 @@ import uuid
 from pathlib import Path
 
 from rich.console import Console
-from rich.progress import Progress
 from tenacity import RetryError
 
 from novel_to_comic.clients import flux
-from novel_to_comic.config import Config
+from novel_to_comic.config import Config, GATEWAY_IMAGE_PRIMARY_MODEL
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.models.story_bible import Character, StoryBible
 from novel_to_comic.text_utils import clean, shorten
@@ -27,6 +26,7 @@ from novel_to_comic.state import (
     complete_stage,
     fail_stage,
     record_item_done,
+    record_item_failed,
     save_state,
 )
 
@@ -223,11 +223,11 @@ def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
 
 
 def _character_ref_style_ref(config: Config, style_ref: Path | None) -> Path | None:
-    if config.image_provider != "openai":
+    if config.effective_image_model() != GATEWAY_IMAGE_PRIMARY_MODEL:
         return style_ref
-    # OpenAI image edits treat every input image as visual conditioning, not as
-    # a style-only reference. Reusing a previous character sample here can copy
-    # that character's clothing or body details into the next reference sheet.
+    # The primary gateway image route uses edit/reference-style conditioning.
+    # Reusing a previous character sample here can copy that character's
+    # clothing or body details into the next reference sheet.
     return None
 
 
@@ -297,6 +297,7 @@ async def regenerate_character_ref(
                 height=1024,
                 reference_image_path=style_ref,
                 ref_type="style",
+                feature="cast.character_ref",
             )
         tmp_path.replace(output_path)
         await asyncio.to_thread(_crop_sheet_to_poses, output_path)
@@ -337,6 +338,7 @@ async def regenerate_location_plate(
                 tmp_path,
                 reference_image_path=style_ref,
                 ref_type="style",
+                feature="cast.location_plate",
             )
         tmp_path.replace(output_path)
         _write_asset_meta(output_path, meta)
@@ -371,9 +373,9 @@ async def _generate_character_refs(
     style_ref = _character_ref_style_ref(config, candidate_style_ref)
     if style_ref:
         console.print(f"[dim]Using style reference: {style_ref.name}[/dim]")
-    elif candidate_style_ref and config.image_provider == "openai":
+    elif candidate_style_ref and config.effective_image_model() == GATEWAY_IMAGE_PRIMARY_MODEL:
         console.print(
-            "[dim]Skipping style image reference for OpenAI character sheets "
+            "[dim]Skipping style image reference for primary gateway character sheets "
             "to avoid copying another character's outfit.[/dim]"
         )
     else:
@@ -421,6 +423,7 @@ async def _generate_character_refs(
                     width=1024, height=1024,
                     reference_image_path=style_ref,
                     ref_type="style",
+                    feature="cast.character_ref",
                 )
                 await asyncio.to_thread(_crop_sheet_to_poses, output_path)
                 _write_asset_meta(output_path, meta)
@@ -450,7 +453,7 @@ async def _generate_location_plates(
     plates_dir = project_dir / "plates"
     plates_dir.mkdir(parents=True, exist_ok=True)
 
-    locs_to_gen = [l for l in story_bible.locations if not loc_ids or l.id in loc_ids]
+    locs_to_gen = [loc for loc in story_bible.locations if not loc_ids or loc.id in loc_ids]
 
     with make_progress(on_event) as progress:
         task = progress.add_task("Location plates", total=len(locs_to_gen))
@@ -477,6 +480,7 @@ async def _generate_location_plates(
                     output_path,
                     reference_image_path=style_ref,
                     ref_type="style",
+                    feature="cast.location_plate",
                 )
                 _write_asset_meta(output_path, meta)
                 record_item_done(state, "cast", usage=flux_result.usage)
@@ -510,7 +514,7 @@ async def run(
     if should_generate_refs:
         total_items += len([c for c in story_bible.characters if not char_ids or c.id in char_ids])
     if should_generate_plates:
-        total_items += len([l for l in story_bible.locations if not loc_ids or l.id in loc_ids])
+        total_items += len([loc for loc in story_bible.locations if not loc_ids or loc.id in loc_ids])
 
     begin_stage(state, "cast", total=total_items)
     emit({"type": "stage_begin", "stage": "cast", "total": total_items})

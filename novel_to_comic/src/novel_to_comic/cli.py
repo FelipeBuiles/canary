@@ -6,25 +6,15 @@ from pathlib import Path
 import click
 from rich.console import Console
 
-from novel_to_comic.config import Config, load_config, save_config
+from novel_to_comic.config import Config, GATEWAY_IMAGE_FAST_MODEL, GATEWAY_IMAGE_PRIMARY_MODEL, load_config, save_config
 from novel_to_comic.state import create_initial_state, save_state
 
 console = Console()
 
 _INIT_IMAGE_MODEL_CHOICES: list[tuple[str, str]] = [
-    ("gemini-3-pro-image-preview", "Gemini 3 Pro Image"),
-    ("gemini-3.1-flash-image-preview", "Gemini 3.1 Flash Image"),
-    ("gpt-image-2", "OpenAI GPT Image 2"),
+    (GATEWAY_IMAGE_PRIMARY_MODEL, "Gateway primary image model"),
+    (GATEWAY_IMAGE_FAST_MODEL, "Gateway fast image model"),
 ]
-
-
-def _default_provider_for_model(model: str) -> str:
-    value = model.strip().lower()
-    if value.startswith("gpt-image-") or value == "chatgpt-image-latest":
-        return "openai"
-    if "/" in value:
-        return "together"
-    return "gemini"
 
 
 def _choose_image_model(default_model: str) -> str:
@@ -90,33 +80,26 @@ def init(input_path: str, name: str | None, image_model: str | None):
 
     config = Config()
     selected_image_model = (image_model or "").strip() or _choose_image_model(config.image_model)
-    config.image_provider = _default_provider_for_model(selected_image_model)
     config.image_model = selected_image_model
     save_config(config, project_dir)
     state = create_initial_state(project_name, str(dst))
     save_state(state, project_dir)
 
     (project_dir / ".env.example").write_text(
-        "# API keys — copy to a .env at your repo root (not per-project).\n"
+        "# AI gateway keys — copy to a .env at your repo root (not per-project).\n"
         "# The pipeline walks up from any project dir to find the nearest .env.\n"
         "# Never commit the real .env — add it to your root .gitignore.\n\n"
-        "GOOGLE_GENAI_USE_VERTEXAI=true\n"
-        "GOOGLE_CLOUD_PROJECT=\n"
-        "GOOGLE_CLOUD_LOCATION=global\n"
-        "# Optional legacy Gemini Developer API fallback:\n"
-        "GEMINI_API_KEY=\n"
-        "ANTHROPIC_API_KEY=\n"
-        "TOGETHER_API_KEY=\n"
-        "OPENAI_API_KEY=\n"
-        "OPENROUTER_API_KEY=\n"
+        "LITELLM_BASE_URL=http://localhost:4000\n"
+        "LITELLM_API_KEY=sk-local-canary\n"
+        "AI_BILL_FAILED_REQUESTS=provider_usage_only\n"
     )
 
     console.print(f"[green]Project initialised:[/green] {project_dir}")
-    console.print(f"\nNext steps:")
-    console.print(f"  1. Configure Google ADC / API keys in a [bold].env[/bold] at your repo root")
-    console.print(f"  2. [bold]playwright install chromium[/bold]  ← one-time browser install for assembly")
-    console.print(f"  3. Start the server:  [bold]pipeline serve --projects-dir .[/bold]")
-    console.print(f"  4. Open the web UI and run the pipeline from there")
+    console.print("\nNext steps:")
+    console.print("  1. Configure LiteLLM in a [bold].env[/bold] at your repo root")
+    console.print("  2. [bold]playwright install chromium[/bold]  ← one-time browser install for assembly")
+    console.print("  3. Start the server:  [bold]pipeline serve --projects-dir .[/bold]")
+    console.print("  4. Open the web UI and run the pipeline from there")
     console.print(f"\n[dim]Image model set to:[/dim] {config.image_model}")
 
 

@@ -1,0 +1,45 @@
+<clickhouse>
+    <!-- Listen on all IPv4 interfaces so other containers can reach port 9000/8123 -->
+    <listen_host>0.0.0.0</listen_host>
+
+    <!-- Embedded ClickHouse Keeper (replaces ZooKeeper for single-node deployments) -->
+    <keeper_server>
+        <tcp_port>9181</tcp_port>
+        <server_id>1</server_id>
+        <log_storage_path>/var/lib/clickhouse/coordination/log</log_storage_path>
+        <snapshot_storage_path>/var/lib/clickhouse/coordination/snapshots</snapshot_storage_path>
+        <raft_configuration>
+            <server>
+                <id>1</id>
+                <hostname>langfuse-clickhouse</hostname>
+                <port>9234</port>
+            </server>
+        </raft_configuration>
+    </keeper_server>
+
+    <!-- Point ClickHouse at the embedded Keeper via loopback — Keeper binds to localhost -->
+    <zookeeper>
+        <node>
+            <host>127.0.0.1</host>
+            <port>9181</port>
+        </node>
+    </zookeeper>
+
+    <!-- Single-node cluster named "default" — satisfies Langfuse's ON CLUSTER default -->
+    <remote_servers>
+        <default>
+            <shard>
+                <replica>
+                    <host>langfuse-clickhouse</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+        </default>
+    </remote_servers>
+
+    <!-- Macros used by ReplicatedMergeTree table paths -->
+    <macros>
+        <shard>01</shard>
+        <replica>langfuse-clickhouse</replica>
+    </macros>
+</clickhouse>

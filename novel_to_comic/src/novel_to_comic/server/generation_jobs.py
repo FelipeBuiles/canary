@@ -224,8 +224,6 @@ async def generation_worker(app: FastAPI) -> None:
 
 
 def generation_semaphore_for_config(app: FastAPI, config: Config) -> asyncio.Semaphore:
-    if config.uses_gemini_image_provider():
-        return app.state.generation_semaphore
     if config.dev_mode:
         concurrency = config.effective_image_concurrency()
         semaphores = app.state.light_generation_semaphores

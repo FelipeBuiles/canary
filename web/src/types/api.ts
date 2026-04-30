@@ -106,6 +106,10 @@ export interface CreditPackage {
   credits: number;
 }
 
+export interface PricingReference {
+  notes: string[];
+}
+
 export interface PipelineEvent {
   type: string;
   stage?: string;

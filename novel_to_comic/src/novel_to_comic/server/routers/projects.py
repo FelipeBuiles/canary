@@ -5,13 +5,16 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Form
 
-from novel_to_comic.config import Config, load_config, save_config
+from novel_to_comic.config import Config, save_config
+from novel_to_comic.ai import ai_request_context
+from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.state import STAGE_NAMES, create_initial_state, is_stale, load_state, save_state
+from novel_to_comic.state import STAGE_NAMES, StageStatus, create_initial_state, is_stale, load_state, save_state
 
 from ..auth import get_current_user
 from ..credits import debit_model_usage, get_project_id
@@ -26,6 +29,62 @@ from ..generation_jobs import (
 )
 
 router = APIRouter()
+
+
+def _draw_prompt_files(project_dir: Path, config: Config) -> list[Path]:
+    prompts_dir = project_dir / "direct"
+    if not prompts_dir.exists():
+        return []
+    scene_dirs = sorted(d for d in prompts_dir.iterdir() if d.is_dir())
+    if config.dev_mode:
+        scene_dirs = scene_dirs[:1]
+    return [prompt for scene_dir in scene_dirs for prompt in sorted(scene_dir.glob("panel_*.json"))]
+
+
+def _draw_output_path_for_prompt(project_dir: Path, prompt_path: Path) -> Path | None:
+    try:
+        prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
+        return project_dir / "draw" / prompt.scene_id / f"panel_{prompt.panel_number:03d}.png"
+    except Exception:
+        match = re.match(r"panel_(\d+)$", prompt_path.stem)
+        if not match:
+            return None
+        return project_dir / "draw" / prompt_path.parent.name / f"panel_{int(match.group(1)):03d}.png"
+
+
+def _reconcile_completed_draw_stage(project_dir: Path, config: Config, state, *, is_running: bool) -> bool:
+    """Recover draw state when images were written but the final state save was missed."""
+    draw_state = state.stages["draw"]
+    if is_running or draw_state.status != StageStatus.RUNNING:
+        return False
+
+    prompt_files = _draw_prompt_files(project_dir, config)
+    if not prompt_files:
+        return False
+
+    output_paths = [
+        output_path
+        for prompt_path in prompt_files
+        if (output_path := _draw_output_path_for_prompt(project_dir, prompt_path)) is not None
+    ]
+    if len(output_paths) != len(prompt_files):
+        return False
+
+    completed_paths = [
+        output_path
+        for output_path in output_paths
+        if output_path.exists() and not output_path.with_suffix(f"{output_path.suffix}.failure.json").exists()
+    ]
+    if len(completed_paths) != len(prompt_files):
+        return False
+
+    draw_state.items_done = len(completed_paths)
+    draw_state.items_total = len(prompt_files)
+    draw_state.items_failed = []
+    draw_state.status = StageStatus.AWAITING_REVIEW
+    draw_state.finished_at = draw_state.finished_at or datetime.now(timezone.utc)
+    draw_state.error = None
+    return True
 
 
 def _assemble_artifact_error(project_dir: Path) -> str | None:
@@ -165,15 +224,23 @@ async def _generate_project_cover(
     bible = StoryBible.model_validate_json(bible_path.read_text())
     output_path = _cover_path(project_dir)
     style_ref = _find_style_ref(project_dir, config.style_template)
-    result = await flux.generate_image(
-        config=config,
-        prompt=_cover_prompt(config, bible),
-        output_path=output_path,
-        width=768,
-        height=1024,
-        reference_image_path=style_ref,
-        ref_type="style",
-    )
+    with ai_request_context(
+        user_id=user_id,
+        project_id=project_id,
+        project_name=project_dir.name,
+        workspace_id=str(project_dir.parent),
+        stage="cover",
+    ):
+        result = await flux.generate_image(
+            config=config,
+            prompt=_cover_prompt(config, bible),
+            output_path=output_path,
+            width=768,
+            height=1024,
+            reference_image_path=style_ref,
+            ref_type="style",
+            feature="project.cover",
+        )
     if result.usage:
         state = load_state(project_dir)
         record_misc_usage(state, result.usage)
@@ -236,15 +303,6 @@ async def create_project(
         except json.JSONDecodeError:
             raise HTTPException(400, "Invalid JSON in config_overrides")
     config = Config(**overrides)
-    # Auto-derive provider from model when not explicitly supplied.
-    if "image_provider" not in overrides:
-        model = config.image_model.strip().lower()
-        if model.startswith("gpt-image-") or model == "chatgpt-image-latest":
-            config.image_provider = "openai"
-        elif "/" in model:
-            config.image_provider = "together"
-        else:
-            config.image_provider = "gemini"
     save_config(config, project_dir)
 
     # Create state
@@ -253,18 +311,12 @@ async def create_project(
 
     # .env.example
     (project_dir / ".env.example").write_text(
-        "# API keys — copy to a .env at your repo root (not per-project).\n"
+        "# AI gateway keys — copy to a .env at your repo root (not per-project).\n"
         "# The pipeline walks up from any project dir to find the nearest .env.\n"
         "# Never commit the real .env — add it to your root .gitignore.\n\n"
-        "GOOGLE_GENAI_USE_VERTEXAI=true\n"
-        "GOOGLE_CLOUD_PROJECT=\n"
-        "GOOGLE_CLOUD_LOCATION=global\n"
-        "# Optional legacy Gemini Developer API fallback:\n"
-        "GEMINI_API_KEY=\n"
-        "ANTHROPIC_API_KEY=\n"
-        "TOGETHER_API_KEY=\n"
-        "OPENAI_API_KEY=\n"
-        "OPENROUTER_API_KEY=\n"
+        "LITELLM_BASE_URL=http://localhost:4000\n"
+        "LITELLM_API_KEY=sk-local-canary\n"
+        "AI_BILL_FAILED_REQUESTS=provider_usage_only\n"
     )
 
     # Register project in DB. On failure, clean up the directory so filesystem
@@ -328,6 +380,10 @@ def project_status(
     user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
+    running = _is_project_running(user_id, project_name, request)
+    if _reconcile_completed_draw_stage(project_dir, config, state, is_running=running):
+        save_state(state, project_dir)
+
     stages = {}
     for name in STAGE_NAMES:
         stages[name] = _stage_payload(project_dir, name, state)
@@ -348,7 +404,7 @@ def project_status(
         "total_cost_usd": state.total_cost_usd,
         "misc_cost_usd": state.misc_cost_usd,
         "total_estimated_cost_usd": total_estimated,
-        "is_running": _is_project_running(user_id, project_name, request),
+        "is_running": running,
         "has_cover": _cover_path(project_dir).exists(),
         "style_selected": is_style_selected(project_dir, config),
         "is_public": share_info.get("is_public", False),
@@ -411,8 +467,6 @@ def delete_project(
     user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
-    pkey = project_key(user_id, project_name)
-
     if _is_project_running(user_id, project_name, request):
         raise HTTPException(409, "Cannot delete a project while a stage is running")
 

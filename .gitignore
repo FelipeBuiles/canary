@@ -6,6 +6,7 @@
 *.key
 *.crt
 *.p12
+litellm/gcp-credentials.json
 
 # ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/

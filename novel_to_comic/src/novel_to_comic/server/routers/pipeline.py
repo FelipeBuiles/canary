@@ -28,17 +28,18 @@ from novel_to_comic.state import (
     approve_stage,
     fail_stage,
     get_stale_stages,
-    is_stale,
     reset_stale_stages,
     save_state,
 )
 from novel_to_comic.usage import UsageRecord
+from novel_to_comic.ai import ai_request_context
 
 from ..auth import get_current_user
 from ..credits import (
     debit_model_usage,
     estimate_stage_credit_reservation,
     get_project_id,
+    provider_usd_to_credits,
     release_reservation,
     release_stage_reservations,
     reserve_credits,
@@ -171,7 +172,14 @@ async def _run_stage_with_credits(
         queue.put_nowait({"type": "stage_fail", "stage": stage, "message": message})
         return
 
-    await _run_stage(stage, config, project_dir, state, queue)
+    with ai_request_context(
+        user_id=user_id,
+        project_id=project_id,
+        project_name=project_dir.name,
+        workspace_id=str(project_dir.parent),
+        stage=stage,
+    ):
+        await _run_stage(stage, config, project_dir, state, queue)
 
     s = state.stages[stage]
     for usage in s.usage_log:
@@ -368,6 +376,25 @@ async def estimate_stage_cost(
     return {"stage": stage, "credits": credits}
 
 
+@router.get("/regen-estimate")
+async def regen_panel_estimate(
+    project_name: str,
+    scene_id: str = Query(...),
+    panel_number: int = Query(...),
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
+    """Return the estimated credit cost to regenerate one panel image."""
+    from novel_to_comic.stages.s6_generate import estimate_panel_image_cost_usd
+    project_dir, config, _state = project
+    prompt_path = project_dir / "direct" / scene_id / f"panel_{panel_number:03d}.json"
+    if not prompt_path.exists():
+        raise HTTPException(404, f"Prompt not found: {scene_id}/panel_{panel_number:03d}")
+    cost_usd = estimate_panel_image_cost_usd(config, project_dir, prompt_path)
+    credits = max(1, provider_usd_to_credits(cost_usd)) if cost_usd > 0 else 1
+    return {"scene_id": scene_id, "panel_number": panel_number, "credits": credits}
+
+
 @router.post("/run")
 async def run_pipeline(
     request: Request,
@@ -538,12 +565,19 @@ async def regen_panel(
     async def _runner() -> None:
         from novel_to_comic.stages import s6_generate
         clear_panel_acceptance(project_dir, scene_id, panel_number)
-        result = await s6_generate.regenerate_panel_image(
-            config,
-            project_dir,
-            scene_id,
-            panel_number,
-        )
+        with ai_request_context(
+            user_id=user_id,
+            project_id=get_project_id(get_db(), user_id, project_name),
+            project_name=project_name,
+            workspace_id=str(project_dir.parent),
+            stage="draw",
+        ):
+            result = await s6_generate.regenerate_panel_image(
+                config,
+                project_dir,
+                scene_id,
+                panel_number,
+            )
         if result.usage:
             db = get_db()
             debit_model_usage(
@@ -630,14 +664,22 @@ async def regen_panel_with_instruction(
     from novel_to_comic.clients import text
 
     try:
-        rewrite = await text.generate_json(
-            config=config,
-            model=config.effective_prompt_model(),
-            system_prompt=instruction_rewrite_system_prompt(),
-            user_content=instruction_rewrite_user_content(instruction, prompt),
-            temperature=0.2,
-            max_output_tokens=1200,
-        )
+        with ai_request_context(
+            user_id=user_id,
+            project_id=get_project_id(get_db(), user_id, project_name),
+            project_name=project_name,
+            workspace_id=str(project_dir.parent),
+            stage="draw",
+        ):
+            rewrite = await text.generate_json(
+                config=config,
+                model=config.effective_prompt_model(),
+                system_prompt=instruction_rewrite_system_prompt(),
+                user_content=instruction_rewrite_user_content(instruction, prompt),
+                temperature=0.2,
+                max_output_tokens=1200,
+                feature="draw.panel_instruction_rewrite",
+            )
         patch = parse_instruction_patch(rewrite.value)
         updated_prompt = apply_instruction_patch(prompt, patch)
     except PromptInstructionError as exc:
@@ -676,12 +718,19 @@ async def regen_panel_with_instruction(
     async def _runner() -> None:
         from novel_to_comic.stages import s6_generate
 
-        result = await s6_generate.regenerate_panel_image(
-            config,
-            project_dir,
-            scene_id,
-            panel_number,
-        )
+        with ai_request_context(
+            user_id=user_id,
+            project_id=get_project_id(get_db(), user_id, project_name),
+            project_name=project_name,
+            workspace_id=str(project_dir.parent),
+            stage="draw",
+        ):
+            result = await s6_generate.regenerate_panel_image(
+                config,
+                project_dir,
+                scene_id,
+                panel_number,
+            )
         if result.usage:
             runner_db = get_db()
             debit_model_usage(
@@ -728,11 +777,18 @@ async def regen_ref(
 
     async def _runner() -> None:
         from novel_to_comic.stages import s2_index
-        result = await s2_index.regenerate_character_ref(
-            config,
-            project_dir,
-            char_id,
-        )
+        with ai_request_context(
+            user_id=user_id,
+            project_id=get_project_id(get_db(), user_id, project_name),
+            project_name=project_name,
+            workspace_id=str(project_dir.parent),
+            stage="cast",
+        ):
+            result = await s2_index.regenerate_character_ref(
+                config,
+                project_dir,
+                char_id,
+            )
         if result.usage:
             db = get_db()
             debit_model_usage(
@@ -787,11 +843,18 @@ async def regen_plate(
 
     async def _runner() -> None:
         from novel_to_comic.stages import s2_index
-        result = await s2_index.regenerate_location_plate(
-            config,
-            project_dir,
-            loc_id,
-        )
+        with ai_request_context(
+            user_id=user_id,
+            project_id=get_project_id(get_db(), user_id, project_name),
+            project_name=project_name,
+            workspace_id=str(project_dir.parent),
+            stage="cast",
+        ):
+            result = await s2_index.regenerate_location_plate(
+                config,
+                project_dir,
+                loc_id,
+            )
         if result.usage:
             db = get_db()
             debit_model_usage(

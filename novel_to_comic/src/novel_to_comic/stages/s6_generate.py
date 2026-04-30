@@ -14,7 +14,6 @@ from pathlib import Path
 from rich.console import Console
 
 from novel_to_comic.clients import flux
-from novel_to_comic.clients.flux import is_rate_limited_error
 from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.layout_planning import load_layout_plan, prompt_path_for_panel, scene_panel_map
@@ -34,8 +33,6 @@ from novel_to_comic.state import (
 from novel_to_comic.usage import ApiResult, estimate_image_cost
 
 console = Console()
-_RATE_LIMIT_RECOVERY_COOLDOWN_SECONDS = 45.0
-
 
 def _meta_path(image_path: Path) -> Path:
     return image_path.with_suffix(f"{image_path.suffix}.meta.json")
@@ -119,6 +116,90 @@ def _load_or_upgrade_prompt(
     )
     prompt_path.write_text(upgraded.model_dump_json(indent=2))
     return upgraded
+
+
+def resolve_panel_reference_paths(
+    config: Config,
+    project_dir: Path,
+    prompt: ImagePrompt,
+    *,
+    prompt_path: Path | None = None,
+    style_sample: Path | None = None,
+    scene_to_location: dict[str, str] | None = None,
+    output_dir: Path | None = None,
+) -> tuple[list[Path], list[Path]]:
+    """Return the subject and style refs that a panel image request will upload."""
+    subject_refs = [
+        resolved
+        for p in prompt.reference_image_paths
+        if (resolved := (project_dir / p) if not Path(p).is_absolute() else Path(p)).exists()
+    ]
+
+    style_refs: list[Path] = []
+    resolved_output_dir = output_dir or project_dir / "draw" / prompt.scene_id
+    if _use_continuity_refs(config) and prompt.panel_number > 1:
+        prev_image = resolved_output_dir / f"panel_{prompt.panel_number - 1:03d}.png"
+        prev_prompt_path = (
+            prompt_path.parent / f"panel_{prompt.panel_number - 1:03d}.json"
+            if prompt_path is not None
+            else project_dir / "direct" / prompt.scene_id / f"panel_{prompt.panel_number - 1:03d}.json"
+        )
+        prev_prompt = None
+        if prev_prompt_path.exists():
+            try:
+                prev_prompt = ImagePrompt.model_validate_json(prev_prompt_path.read_text())
+            except Exception:
+                prev_prompt = None
+        if prev_image.exists() and _should_use_prev_panel_image(getattr(prev_prompt, "transition_out", None)):
+            style_refs.append(prev_image)
+
+    if not style_refs:
+        if style_sample and style_sample.exists():
+            style_refs.append(style_sample)
+        loc_id = (scene_to_location or {}).get(prompt.scene_id)
+        if loc_id:
+            plate = project_dir / "plates" / f"{loc_id}.png"
+            if plate.exists():
+                style_refs.append(plate)
+
+    return subject_refs, style_refs
+
+
+def estimate_panel_image_cost_usd(
+    config: Config,
+    project_dir: Path,
+    prompt_path: Path,
+    *,
+    style_sample: Path | None = None,
+    scene_to_location: dict[str, str] | None = None,
+) -> float:
+    """Estimate one panel image request using the same refs the draw stage uploads."""
+    prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
+    if style_sample is None:
+        style_sample = _find_style_sample(project_dir, config.style_template)
+    if scene_to_location is None:
+        scene_to_location = {}
+        bible_path = project_dir / "story_bible.json"
+        if bible_path.exists():
+            try:
+                story_bible = StoryBible.model_validate_json(bible_path.read_text())
+                scene_to_location = {s.id: s.location_id for s in story_bible.scenes}
+            except Exception:
+                scene_to_location = {}
+    subject_refs, style_refs = resolve_panel_reference_paths(
+        config,
+        project_dir,
+        prompt,
+        prompt_path=prompt_path,
+        style_sample=style_sample,
+        scene_to_location=scene_to_location,
+    )
+    return estimate_image_cost(
+        config.effective_image_model(),
+        1,
+        quality=getattr(config, "image_quality", None),
+        ref_count=len(subject_refs) + len(style_refs),
+    )
 
 
 def _fmt_error(exc: BaseException) -> str:
@@ -234,38 +315,15 @@ async def _generate_panel(
             if output_path.exists() and not force:
                 return ApiResult(value=output_path, usage=None)
 
-            # Subject refs: character reference sheets (stored as project-relative paths;
-            # fall back to absolute for prompts generated before the relative-path change).
-            subject_refs = [
-                resolved
-                for p in prompt.reference_image_paths
-                if (resolved := (project_dir / p) if not Path(p).is_absolute() else Path(p)).exists()
-            ]
-
-            # Style / continuity refs: adjacent previous panel only.
-            # This prevents reruns from accidentally inheriting style from unrelated
-            # non-adjacent panels and keeps continuity deterministic.
-            style_refs: list[Path] = []
-            if _use_continuity_refs(config) and prompt.panel_number > 1:
-                prev_image = output_dir / f"panel_{prompt.panel_number - 1:03d}.png"
-                prev_prompt_path = prompt_path.parent / f"panel_{prompt.panel_number - 1:03d}.json"
-                prev_prompt = None
-                if prev_prompt_path.exists():
-                    try:
-                        prev_prompt = ImagePrompt.model_validate_json(prev_prompt_path.read_text())
-                    except Exception:
-                        prev_prompt = None
-                if prev_image.exists() and _should_use_prev_panel_image(getattr(prev_prompt, "transition_out", None)):
-                    style_refs.append(prev_image)
-
-            if not style_refs:
-                if style_sample and style_sample.exists():
-                    style_refs.append(style_sample)
-                loc_id = scene_to_location.get(prompt.scene_id)
-                if loc_id:
-                    plate = project_dir / "plates" / f"{loc_id}.png"
-                    if plate.exists():
-                        style_refs.append(plate)
+            subject_refs, style_refs = resolve_panel_reference_paths(
+                config,
+                project_dir,
+                prompt,
+                prompt_path=prompt_path,
+                style_sample=style_sample,
+                scene_to_location=scene_to_location,
+                output_dir=output_dir,
+            )
 
             generation_path = output_path
             if force:
@@ -304,6 +362,7 @@ async def _generate_panel(
                         width=prompt.width,
                         height=prompt.height,
                         steps=prompt.steps,
+                        feature="draw.panel_image",
                     )
                 result = flux_result.value
                 if force and result:
@@ -505,11 +564,8 @@ async def run(
           "message": f"Preparing {len(prompt_files)} panel image jobs..."})
     save_state(state, project_dir)
 
-    # Google Gemini image models have tight per-minute quotas and are called
-    # sequentially with a delay. Together AI supports real parallelism.
-    using_google = config.uses_gemini_image_provider()
-    batch_size = 1 if using_google else config.effective_image_concurrency(google_model=False)
-    inter_request_delay = 4.0 if using_google and not config.dev_mode else 0.0
+    batch_size = config.effective_image_concurrency(google_model=False)
+    inter_request_delay = 0.0
 
     semaphore = asyncio.Semaphore(batch_size)
 
@@ -535,48 +591,6 @@ async def run(
                 results = await asyncio.gather(*coros, return_exceptions=True)
                 for pf, result in zip(batch, results):
                     if isinstance(result, Exception):
-                        recovered = False
-                        if using_google and is_rate_limited_error(result):
-                            msg = (
-                                f"Rate limited while drawing {pf.name}; waiting "
-                                f"{int(_RATE_LIMIT_RECOVERY_COOLDOWN_SECONDS)}s and retrying once."
-                            )
-                            console.print(f"[yellow]{msg}[/yellow]")
-                            emit({"type": "log", "stage": "draw", "level": "warning", "message": msg})
-                            await asyncio.sleep(_RATE_LIMIT_RECOVERY_COOLDOWN_SECONDS)
-                            retry_result = await asyncio.gather(
-                                _generate_panel(
-                                    config,
-                                    project_dir,
-                                    pf,
-                                    semaphore,
-                                    scene_locks,
-                                    style_sample,
-                                    scene_to_location,
-                                    panel_events,
-                                    story_bible,
-                                ),
-                                return_exceptions=True,
-                            )
-                            retry_outcome = retry_result[0]
-                            if not isinstance(retry_outcome, Exception):
-                                record_item_done(state, "draw", usage=retry_outcome.usage)
-                                emit({
-                                    "type": "log",
-                                    "stage": "draw",
-                                    "level": "dim",
-                                    "message": f"Recovered {pf.parent.name} / {pf.stem.replace('_', ' ')} after cooldown retry",
-                                })
-                                emit({"type": "stage_progress", "stage": "draw",
-                                      "done": state.stages["draw"].items_done,
-                                      "total": state.stages["draw"].items_total})
-                                recovered = True
-                            else:
-                                result = retry_outcome
-                        if recovered:
-                            progress.advance(task)
-                            save_state(state, project_dir)
-                            continue
                         # Unwrap RetryError → actual cause → OS error
                         cause = getattr(result, "__cause__", None) or result
                         msg = f"Failed {pf.name}: {_fmt_error(cause)}"

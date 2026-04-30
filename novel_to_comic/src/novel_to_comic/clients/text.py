@@ -1,13 +1,14 @@
-"""Text generation: routes to the correct provider using a strict model registry.
+"""Text generation compatibility wrapper.
 
-Every known model is explicitly mapped to its provider. If a model is not in
-the registry the call fails with a clear error — no guessing.
+Runtime calls go through the internal LiteLLM-backed AI client. MODEL_REGISTRY
+is retained for pricing audits and legacy model metadata during the migration.
 """
 
 from __future__ import annotations
 
 from novel_to_comic.config import Config
 from novel_to_comic.usage import ApiResult
+from novel_to_comic.ai import generate_structured_object, generate_text as ai_generate_text
 
 # ── Model → provider registry ────────────────────────────────────────────────
 # Add new models here.  Do NOT add heuristic prefix-matching.
@@ -27,6 +28,11 @@ MODEL_REGISTRY: dict[str, str] = {
     # OpenAI
     "gpt-5.4": "openai",
     "gpt-5.4-mini": "openai",
+    # Gateway aliases
+    "canary/extract": "litellm",
+    "canary/screenplay": "litellm",
+    "canary/panel": "litellm",
+    "canary/prompt": "litellm",
 }
 
 
@@ -48,18 +54,17 @@ async def generate_json(
     user_content: str | bytes,
     temperature: float = 0.7,
     max_output_tokens: int | None = None,
+    feature: str = "text.generate_json",
 ) -> ApiResult[dict]:
-    """Generate structured JSON using the appropriate text provider."""
-    provider = provider_for_model(model)
-    client = _load_client(provider)
-
-    return await client.generate_json(
+    """Generate structured JSON through the AI gateway."""
+    return await generate_structured_object(
         config=config,
         model=model,
         system_prompt=system_prompt,
         user_content=user_content,
         temperature=temperature,
         max_output_tokens=max_output_tokens,
+        feature=feature,
     )
 
 
@@ -69,32 +74,16 @@ async def generate_text(
     system_prompt: str,
     user_content: str,
     temperature: float = 0.7,
+    max_output_tokens: int | None = None,
+    feature: str = "text.generate",
 ) -> ApiResult[str]:
-    """Generate raw text using the appropriate text provider."""
-    provider = provider_for_model(model)
-    client = _load_client(provider)
-
-    return await client.generate_text(
+    """Generate raw text through the AI gateway."""
+    return await ai_generate_text(
         config=config,
         model=model,
         system_prompt=system_prompt,
         user_content=user_content,
         temperature=temperature,
+        max_output_tokens=max_output_tokens,
+        feature=feature,
     )
-
-
-def _load_client(provider: str):
-    """Lazy-import the correct client module."""
-    if provider == "gemini":
-        from novel_to_comic.clients import gemini
-        return gemini
-    if provider == "anthropic":
-        from novel_to_comic.clients import claude
-        return claude
-    if provider == "openai":
-        from novel_to_comic.clients import openai_text
-        return openai_text
-    if provider == "openrouter":
-        from novel_to_comic.clients import openrouter_text
-        return openrouter_text
-    raise ValueError(f"Unknown text provider: {provider!r}")

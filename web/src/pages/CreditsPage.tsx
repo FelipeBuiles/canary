@@ -1,19 +1,10 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCreditBalance, useCreditHistory, useCreditPackages, useCreateCheckout } from "../api/queries";
+import { useCreditBalance, useCreditHistory, useCreditPackages, useCreateCheckout, usePricingReference } from "../api/queries";
 import type { CreditPackage, CreditTransaction } from "../types/api";
 import { cn } from "../lib/cn";
 import { Icon } from "../components/ui/Icon";
-
-const COSTS = [
-  ["Draw (1 panel)", "4 credits"],
-  ["Rewrite / Fix", "4 credits"],
-  ["Quick Re-do", "4 credits"],
-  ["Plan / Direct", "2 credits"],
-  ["Extract / Adapt", "2 credits"],
-  ["Cover image", "4 credits"],
-];
 
 function formatWhen(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
@@ -75,6 +66,7 @@ export function CreditsPage() {
   const { data: balance, isLoading: balanceLoading } = useCreditBalance();
   const { data: history, isLoading: historyLoading } = useCreditHistory();
   const { data: packagesData, isLoading: packagesLoading } = useCreditPackages();
+  const { data: pricingRef } = usePricingReference();
   const checkout = useCreateCheckout();
 
   const didRefresh = useRef(false);
@@ -152,16 +144,16 @@ export function CreditsPage() {
 
       <section className="mt-14 border-l-[4px] border-ink-black/45 bg-surface-container px-7 py-5">
         <div className="mb-3 font-meta text-[0.66rem] font-bold uppercase tracking-[0.22em] text-ink-black/45">
-          What things cost
+          How costs are shown
         </div>
-        <div className="grid gap-x-9 gap-y-2 sm:grid-cols-3">
-          {COSTS.map(([label, cost]) => (
-            <div key={label} className="flex justify-between gap-4 font-body text-[0.9rem] font-bold text-ink-black/72">
-              <span>{label}</span>
-              <span className="whitespace-nowrap text-ink-black">{cost}</span>
-            </div>
+        <ul className="space-y-2 font-body text-[0.92rem] font-bold leading-6 text-ink-black/68">
+          {(pricingRef?.notes ?? [
+            "Costs are estimated where you start an action, using that project's current settings.",
+            "Final charges come from the model usage reported after the request finishes.",
+          ]).map((note) => (
+            <li key={note}>{note}</li>
           ))}
-        </div>
+        </ul>
       </section>
 
       <section className="mt-12">

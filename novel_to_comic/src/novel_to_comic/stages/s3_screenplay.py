@@ -8,7 +8,6 @@ import asyncio
 from pathlib import Path
 
 from rich.console import Console
-from rich.progress import Progress
 
 from novel_to_comic.clients import text
 from novel_to_comic.config import Config
@@ -177,6 +176,7 @@ async def _process_scene(
             model=config.effective_screenplay_model(),
             system_prompt=_localized_system_prompt(config, system_prompt),
             user_content=user_content,
+            feature="adapt.screenplay",
         )
 
     result = api_result.value

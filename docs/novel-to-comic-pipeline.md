@@ -21,7 +21,7 @@ Novel (EPUB / TXT / PDF)
   │
   │   ── Style Gate: user must select a style before any post-extract stage runs ──
   │
-  ▼ Stage 2 — Cast (image gen via config.image_provider)
+  ▼ Stage 2 — Cast (image gen via LiteLLM gateway)
   │   Character reference sheets (4 angles each) + location background plates
   │   ► CHECKPOINT: review refs/ and plates/ before continuing
   │
@@ -42,7 +42,7 @@ Novel (EPUB / TXT / PDF)
   │     [Style template] + [Location anchor] + [Character anchor(s)] + [Panel description]
   │   Character visual anchors injected VERBATIM for consistency
   │
-  ▼ Stage 7 — Draw (image gen via config.image_provider)
+  ▼ Stage 7 — Draw (image gen via LiteLLM gateway)
   │   Per-panel: prompt + reference images → panel PNG
   │   ► CHECKPOINT: review generated images before continuing
   │
@@ -71,34 +71,29 @@ Defaults in `config.py`, overridable in `config.yaml`.
 
 ### Text / LLM stages
 
-All text stages route through `clients/text.py` via an explicit `MODEL_REGISTRY`.
-Supported providers: Gemini, Anthropic Claude, OpenAI, OpenRouter.
+All text stages route through `novel_to_comic.ai.client` and LiteLLM gateway aliases.
+Provider routes live in `litellm/config.yaml`.
 
 | Stage | Default model | Config field |
 |-------|---------------|-------------|
-| Extract (1) | `gemini-3.1-pro-preview` | `extraction_model` |
-| Adapt (3) | `gemini-3.1-pro-preview` | `screenplay_model` |
-| Plan (4) | `gemini-3.1-pro-preview` | `panel_model` |
-| Direct (6) | `gemini-3.1-flash-lite-preview` | `prompt_model` |
+| Extract (1) | `canary/extract` | `extraction_model` |
+| Adapt (3) | `canary/screenplay` | `screenplay_model` |
+| Plan (4) | `canary/panel` | `panel_model` |
+| Direct (6) | `canary/prompt` | `prompt_model` |
 
 Set `quality_preset: fast | balanced | quality` to override all four fields at once.
 `dev_mode` forces the `"fast"` preset regardless.
 
 ### Image generation
 
-Configured via two fields in `config.yaml`:
+Configured via gateway aliases in `config.yaml`:
 
 ```yaml
-image_provider: "gemini"   # gemini | openai | openrouter | together
-image_model: "gemini-3-pro-image-preview"   # provider-specific model ID
+image_model: "canary/image-primary"
+fallback_image_model: "canary/image-fast"
 ```
 
-| Provider | Model examples | Routing rule |
-|----------|---------------|-------------|
-| Gemini (default) | `gemini-3-pro-image-preview`, `gemini-3.1-flash-image-preview` | `image_provider == "gemini"` |
-| OpenAI | `gpt-image-1`, `gpt-image-1.5` | model name starts with `gpt-image-` |
-| OpenRouter | `black-forest-labs/flux-1-dev`, etc. | `/` in model name + provider == `"openrouter"` |
-| Together AI | `black-forest-labs/FLUX.1-kontext-pro`, etc. | `/` in model name + provider == `"together"` |
+The LiteLLM proxy resolves those aliases to provider/model routes.
 
 ---
 
@@ -148,9 +143,8 @@ export GOOGLE_CLOUD_PROJECT=your-project-id
 export GOOGLE_CLOUD_LOCATION=global
 
 # For other providers, put keys in .env at your repo root (not per-project)
-echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
-echo "TOGETHER_API_KEY=..." >> .env
-echo "OPENAI_API_KEY=..." >> .env
+echo "LITELLM_BASE_URL=http://localhost:4000" >> .env
+echo "LITELLM_API_KEY=sk-local-canary" >> .env
 ```
 
 `.env.example` in the project root shows all available key variables. The pipeline

@@ -112,6 +112,10 @@ def _start_span(
     params: Mapping[str, Any] | None,
     payload: Mapping[str, Any] | None,
 ) -> str | None:
+    # LLM prompt/response tracing now belongs to LiteLLM/Langfuse. Keep
+    # redacted app logs here, but do not create provider-specific OTel spans.
+    if provider in {"gemini", "anthropic", "openai", "openrouter", "together", "litellm"}:
+        return None
     try:
         from opentelemetry import trace
 

@@ -29,13 +29,12 @@ novel_to_comic/src/novel_to_comic/
 ├── events.py               # Event callback system for SSE streaming
 ├── layout_planning.py      # LayoutPlan model + helpers for plan→pages projection
 ├── prompting.py            # Prompt-building for PlannedPanel + style samples
+├── ai/
+│   ├── client.py           # LiteLLM-backed AI client + ai_usage_events ledger
+│   ├── context.py          # request-scoped user/project/stage metadata
 ├── clients/
-│   ├── text.py             # Text gen router — MODEL_REGISTRY → provider dispatch
-│   ├── gemini.py           # Async Gemini wrapper (Vertex AI or developer API)
-│   ├── claude.py           # Anthropic Claude wrapper
-│   ├── openai_text.py      # OpenAI text wrapper
-│   ├── openrouter_text.py  # OpenRouter text wrapper
-│   ├── flux.py             # Image gen router: Gemini / OpenAI / OpenRouter / Together
+│   ├── text.py             # Text compatibility wrapper → ai.client
+│   ├── flux.py             # Image compatibility wrapper → ai.client
 ├── usage.py                    # UsageRecord, ApiResult, pricing, cost calculation
 ├── stages/
 │   ├── s1_extract.py       # Novel → Story Bible JSON
@@ -106,15 +105,12 @@ and `serve`. All pipeline operations are HTTP endpoints. This means:
 Each LLM call does exactly one thing. This enables targeted re-runs, clean error
 recovery, and human review at boundaries. Never collapse stages.
 
-### Unified text client (`clients/text.py`)
+### Unified AI client (`ai/client.py`)
 
-All text generation goes through `clients/text.py`, which routes to the correct
-provider via a strict `MODEL_REGISTRY` dict. There is no heuristic prefix-matching.
-To add a new text model, add it to `MODEL_REGISTRY` with its provider string.
-
-Providers: `gemini`, `anthropic`, `openai`, `openrouter`. Each provider module
-(`gemini.py`, `claude.py`, `openai_text.py`, `openrouter_text.py`) exposes
-`generate_json()` and `generate_text()` returning `ApiResult[T]`.
+All runtime text and image generation goes through `novel_to_comic.ai.client`,
+which calls LiteLLM Proxy using OpenAI-compatible HTTP endpoints, records
+`ai_usage_events`, and returns existing `ApiResult[T]` values through thin
+`clients/text.py` and `clients/flux.py` compatibility wrappers.
 
 ### Quality presets
 
@@ -263,35 +259,27 @@ Defaults in `config.py`, overridable via project `config.yaml` or `quality_prese
 
 ### Text models
 
-Four configurable fields, each routing through `clients/text.py` via `MODEL_REGISTRY`:
+Four configurable fields route through LiteLLM gateway aliases:
 
 | Stage | Field | Default | Notes |
 |-------|-------|---------|-------|
-| `extract` | `extraction_model` | `gemini-3.1-pro-preview` | 1M context, full-novel extraction |
-| `adapt` | `screenplay_model` | `gemini-3.1-pro-preview` | Screenplay writing |
-| `plan` | `panel_model` | `gemini-3.1-pro-preview` | Scene-level beat merging and layout planning |
-| `direct` (prompts) | `prompt_model` | `gemini-3.1-flash-lite-preview` | Prompt assembly |
+| `extract` | `extraction_model` | `canary/extract` | Full-novel extraction |
+| `adapt` | `screenplay_model` | `canary/screenplay` | Screenplay writing |
+| `plan` | `panel_model` | `canary/panel` | Scene-level beat merging and layout planning |
+| `direct` (prompts) | `prompt_model` | `canary/prompt` | Prompt assembly |
 
-Supported providers: Gemini, Anthropic Claude, OpenAI, OpenRouter.
+Provider routing lives in `litellm/config.yaml`.
 When `quality_preset` is set, all four fields are overridden. `dev_mode` forces the `"fast"` preset.
 Always use `config.effective_*_model()` methods to get the resolved model.
 
-### Image generation (`image_provider` + `image_model`)
+### Image generation (`image_model`)
 
-Configured via two fields:
-- `image_provider: "gemini" | "openai" | "openrouter" | "together"`
-- `image_model: str` — provider-specific model ID
+Runtime image calls go through LiteLLM OpenAI-compatible image endpoints.
+`image_provider` is legacy metadata and should not be used for routing new code.
 
 Defaults:
-- `image_provider: "gemini"`
-- `image_model: "gemini-3-pro-image-preview"` (Gemini 3 Pro Image, "Nano Banana Pro")
-- `fallback_image_model: "gemini-3.1-flash-image-preview"` (Gemini 3.1 Flash Image)
-
-Routing in `clients/flux.py`:
-- `image_provider == "gemini"` → Vertex AI or developer API
-- `/` in model name (e.g. `"black-forest-labs/flux-1-dev"`) → Together AI
-- `gpt-image-*` → OpenAI
-- Otherwise → OpenRouter
+- `image_model: "canary/image-primary"`
+- `fallback_image_model: "canary/image-fast"`
 
 `dev_mode: true` substitutes `fallback_image_model` for faster iteration.
 
