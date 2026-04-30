@@ -1,18 +1,19 @@
 """Tests for pipeline config (config.py)."""
 
-import os
 import tempfile
 from pathlib import Path
 
-import pytest
-from dotenv import dotenv_values
-
 from novel_to_comic.config import (
     Config,
+    GATEWAY_EXTRACT_MODEL,
+    GATEWAY_IMAGE_FAST_MODEL,
+    GATEWAY_IMAGE_PRIMARY_MODEL,
+    GATEWAY_PANEL_MODEL,
+    GATEWAY_PROMPT_MODEL,
+    GATEWAY_SCREENPLAY_MODEL,
     LANGUAGE_NAMES,
-    load_config,
     save_config,
-    _find_env_file,
+    load_config,
 )
 
 
@@ -56,6 +57,21 @@ class TestConfigDefaults:
         cfg = Config()
         assert cfg.cost_limit_usd is None
 
+    def test_gateway_aliases_are_default_models(self):
+        cfg = Config()
+        assert cfg.extraction_model == GATEWAY_EXTRACT_MODEL
+        assert cfg.screenplay_model == GATEWAY_SCREENPLAY_MODEL
+        assert cfg.panel_model == GATEWAY_PANEL_MODEL
+        assert cfg.prompt_model == GATEWAY_PROMPT_MODEL
+        assert cfg.image_model == GATEWAY_IMAGE_PRIMARY_MODEL
+        assert cfg.fallback_image_model == GATEWAY_IMAGE_FAST_MODEL
+
+    def test_litellm_defaults_are_populated(self):
+        cfg = Config()
+        assert cfg.litellm_base_url == "http://localhost:4000"
+        assert cfg.litellm_api_key == "sk-local-canary"
+        assert cfg.ai_bill_failed_requests == "provider_usage_only"
+
 
 class TestEffectiveImageModel:
     def test_returns_configured_model_when_not_dev_mode(self):
@@ -63,8 +79,8 @@ class TestEffectiveImageModel:
         assert cfg.effective_image_model() == "gpt-image-1"
 
     def test_uses_fallback_when_dev_mode_and_default_pro_model(self):
-        cfg = Config(dev_mode=True, image_model="gemini-3-pro-image-preview")
-        assert cfg.effective_image_model() == "gemini-3.1-flash-image-preview"
+        cfg = Config(dev_mode=True, image_model=GATEWAY_IMAGE_PRIMARY_MODEL)
+        assert cfg.effective_image_model() == GATEWAY_IMAGE_FAST_MODEL
 
     def test_uses_configured_model_when_dev_mode_and_custom_model(self):
         cfg = Config(dev_mode=True, image_model="gpt-image-1")
@@ -73,7 +89,7 @@ class TestEffectiveImageModel:
     def test_fallback_respects_explicit_override(self):
         cfg = Config(
             dev_mode=True,
-            image_model="gemini-3-pro-image-preview",
+            image_model=GATEWAY_IMAGE_PRIMARY_MODEL,
             fallback_image_model="my-custom-model",
         )
         assert cfg.effective_image_model() == "my-custom-model"
@@ -192,6 +208,21 @@ class TestLoadConfig:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg, env_file = load_config(Path(tmpdir))
         assert cfg.target_language == "en"
+
+    def test_litellm_env_overrides_yaml(self, monkeypatch):
+        monkeypatch.setenv("LITELLM_BASE_URL", "http://gateway.local:4000")
+        monkeypatch.setenv("LITELLM_API_KEY", "sk-test")
+        monkeypatch.setenv("AI_BILL_FAILED_REQUESTS", "never")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "config.yaml").write_text(
+                "litellm_base_url: http://from-yaml:4000\n"
+                "litellm_api_key: sk-yaml\n"
+                "ai_bill_failed_requests: estimate_all\n"
+            )
+            cfg, env_file = load_config(Path(tmpdir))
+        assert cfg.litellm_base_url == "http://gateway.local:4000"
+        assert cfg.litellm_api_key == "sk-test"
+        assert cfg.ai_bill_failed_requests == "never"
 
 
 class TestSaveConfig:

@@ -97,17 +97,18 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   const storyBibleReady =
     status?.stages.extract?.status === "awaiting_review" ||
     status?.stages.extract?.status === "complete";
-  const screenplayReady = status?.stages.screenplay?.status != null && status.stages.screenplay.status !== "pending";
-  const panelsReady = status?.stages.panels?.status != null && status.stages.panels.status !== "pending";
-  const promptsReady = status?.stages.prompts?.status != null && status.stages.prompts.status !== "pending";
-  const generateReady = status?.stages.generate?.status != null && status.stages.generate.status !== "pending";
-  const assembleReady = status?.stages.assemble?.status != null && status.stages.assemble.status !== "pending";
+  const adaptReady = status?.stages.adapt?.status != null && status.stages.adapt.status !== "pending";
+  const planReady = status?.stages.plan?.status != null && status.stages.plan.status !== "pending";
+  const storyboardReady = status?.stages.storyboard?.status != null && status.stages.storyboard.status !== "pending";
+  const directReady = status?.stages.direct?.status != null && status.stages.direct.status !== "pending";
+  const drawReady = status?.stages.draw?.status != null && status.stages.draw.status !== "pending";
+  const composeReady = status?.stages.compose?.status != null && status.stages.compose.status !== "pending";
   const { data: storyBible } = useStoryBible(name, storyBibleReady);
-  const { data: screenplays } = useScreenplays(screenplayReady ? name : undefined);
-  const { data: panelSummaries } = usePanelSummaries(panelsReady ? name : undefined);
-  const { data: promptSummaries } = usePromptSummaries(promptsReady ? name : undefined);
-  const { data: images } = useImages(generateReady ? name : undefined);
-  const { data: pages } = usePages(assembleReady ? name : undefined);
+  const { data: screenplays } = useScreenplays(adaptReady ? name : undefined);
+  const { data: panelSummaries } = usePanelSummaries(planReady || storyboardReady ? name : undefined);
+  const { data: promptSummaries } = usePromptSummaries(directReady ? name : undefined);
+  const { data: images } = useImages(drawReady ? name : undefined);
+  const { data: pages } = usePages(composeReady ? name : undefined);
   const runPipeline = useRunPipeline();
   const approveStage = useApproveStage();
   const connect = usePipelineStore((state) => state.connect);
@@ -175,7 +176,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
         plural(storyBible.characters.length, "character"),
         plural(storyBible.locations.length, "location"),
       ].join(" · ");
-      details.index = [
+      details.cast = [
         plural(storyBible.characters.length, "character ref"),
         plural(storyBible.locations.length, "location plate"),
       ].join(" · ");
@@ -189,7 +190,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
 
     if (screenplays?.length) {
       const beatCount = screenplays.reduce((sum, screenplay) => sum + screenplay.beat_count, 0);
-      details.screenplay = [
+      details.adapt = [
         plural(screenplays.length, "scene"),
         plural(beatCount, "beat"),
       ].join(" · ");
@@ -197,7 +198,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
 
     if (panelSummaries?.length) {
       const panelCount = panelSummaries.reduce((sum, scene) => sum + scene.panel_count, 0);
-      details.panels = [
+      details.storyboard = [
         plural(panelSummaries.length, "scene"),
         plural(panelCount, "panel"),
       ].join(" · ");
@@ -205,17 +206,17 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
 
     if (promptSummaries?.length) {
       const promptCount = promptSummaries.reduce((sum, scene) => sum + scene.prompt_count, 0);
-      details.prompts = plural(promptCount, "prompt");
+      details.direct = plural(promptCount, "prompt");
     }
 
     if (images?.length) {
       const acceptedCount = images.filter((image) => image.status === "done").length;
-      details.generate = `${acceptedCount}/${images.length} accepted`;
+      details.draw = `${acceptedCount}/${images.length} generated`;
     }
 
     if (pages?.length) {
       const pagePanelCount = pages.reduce((sum, page) => sum + page.panel_count, 0);
-      details.assemble = [
+      details.compose = [
         plural(pages.length, "page"),
         plural(pagePanelCount, "panel"),
       ].join(" · ");

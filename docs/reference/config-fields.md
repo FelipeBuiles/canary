@@ -15,22 +15,20 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `gemini_api_key` | `str` | `''` | Gemini developer API key (legacy; Vertex AI ADC preferred) |
-| `anthropic_api_key` | `str` | `''` | Anthropic API key for Claude (stage 3) |
-| `together_api_key` | `str` | `''` | Together AI API key (FLUX via Together) |
-| `openai_api_key` | `str` | `''` | OpenAI API key (text and image models) |
-| `openrouter_api_key` | `str` | `''` | OpenRouter API key (various models) |
+| `litellm_base_url` | `str` | `'http://localhost:4000'` | LiteLLM Proxy base URL |
+| `litellm_api_key` | `str` | `'sk-local-canary'` | LiteLLM Proxy API key; never returned unmasked by config API |
+| `ai_bill_failed_requests` | `Literal` | `'provider_usage_only'` | Failed/refused billing policy: `provider_usage_only` \| `never` \| `estimate_all` |
 | `google_use_vertex_ai` | `bool` | `True` | Use Vertex AI ADC instead of Gemini developer API |
 | `google_cloud_project` | `str` | `''` | Google Cloud project ID for Vertex AI |
 | `google_cloud_location` | `str` | `'global'` | Vertex AI location |
-| `extraction_model` | `str` | `'gemini-3.1-pro-preview'` | Stage 1 — full-novel extraction |
-| `screenplay_model` | `str` | `'gemini-3.1-pro-preview'` | Stage 3 — screenplay adaptation |
-| `panel_model` | `str` | `'gemini-3.1-pro-preview'` | Stage 4 layout planning and Stage 5 panel breakdown |
-| `prompt_model` | `str` | `'gemini-3.1-flash-lite-preview'` | Stage 6 — image prompt assembly |
+| `extraction_model` | `str` | `'canary/extract'` | Stage 1 gateway alias |
+| `screenplay_model` | `str` | `'canary/screenplay'` | Stage 3 gateway alias |
+| `panel_model` | `str` | `'canary/panel'` | Stage 4/5 gateway alias |
+| `prompt_model` | `str` | `'canary/prompt'` | Stage 6 gateway alias |
 | `quality_preset` | `QualityPreset or None` | `None` | Overrides all four text model fields. `fast` \| `balanced` \| `quality`. `dev_mode` forces `fast`. |
-| `image_provider` | `Literal` | `'gemini'` | Image gen provider: `gemini` \| `openai` \| `openrouter` \| `together` |
-| `image_model` | `str` | `'gemini-3-pro-image-preview'` | Primary image generation model |
-| `fallback_image_model` | `str` | `'gemini-3.1-flash-image-preview'` | Dev-mode fallback for image generation |
+| `image_provider` | `Literal` | `'gemini'` | Legacy metadata field; runtime image calls use LiteLLM |
+| `image_model` | `str` | `'canary/image-primary'` | Primary image gateway alias |
+| `fallback_image_model` | `str` | `'canary/image-fast'` | Dev-mode image gateway alias |
 | `dev_mode` | `bool` | `False` | Faster iteration: lower resolution/steps, uses fallback_image_model |
 | `dev_image_scale` | `float` | `0.5` | Scale factor for dev mode image dimensions |
 | `dev_image_steps` | `int` | `8` | Reduced diffusion steps in dev mode |
@@ -53,40 +51,38 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `comic_theme` | `str` | `'auto'` | Comic theme: `auto` \| `default` \| `noir` \| `manga` \| `vintage` \| `painted` |
 | `target_language` | `str` | `'en'` | Output language for generated text: `en` \| `es` \| `fr` |
 
-## Provider Routing
+## Gateway Routing
 
-### Text models (`clients/text.py`)
+Runtime AI calls go through `novel_to_comic.ai.client`, which calls LiteLLM
+OpenAI-compatible endpoints and records `ai_usage_events`.
 
-Explicit `MODEL_REGISTRY` lookup — no heuristic prefix-matching. Every known model
-is mapped to its provider. Unknown models raise `ValueError`.
+### Text aliases
 
-| Provider | Example models |
-|----------|---------------|
-| `gemini` | `gemini-3.1-pro-preview`, `gemini-2.5-pro`, `gemini-2.5-flash` |
-| `anthropic` | `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5` |
-| `openai` | `gpt-5.4`, `gpt-5.4-mini`, `o3`, `o4-mini` |
-| `openrouter` | `anthropic/claude-sonnet-4`, `google/gemini-2.5-pro`, `deepseek/deepseek-r1` |
+| Alias | Purpose |
+|-------|---------|
+| `canary/extract` | Story bible extraction |
+| `canary/screenplay` | Screenplay adaptation |
+| `canary/panel` | Layout planning and panel breakdown |
+| `canary/prompt` | Prompt rewrite, style, translation, and instruction tasks |
 
-### Image models (`clients/flux.py`)
+### Image aliases
 
-The `image_provider` field controls which API is used for image generation:
-
-| Provider | How identified | Example models |
-|----------|---------------|----------------|
-| `gemini` (default) | `image_provider == "gemini"` | `gemini-3-pro-image-preview`, `gemini-3.1-flash-image-preview` |
-| `openai` | `image_provider == "openai"` | `gpt-image-1`, `gpt-image-1.5` |
-| `openrouter` | `image_provider == "openrouter"` | `black-forest-labs/flux-1-dev` |
-| `together` | `image_provider == "together"` | `black-forest-labs/FLUX.1-kontext-pro` |
+| Alias | Purpose |
+|-------|---------|
+| `canary/image-primary` | Production image generation |
+| `canary/image-fast` | Dev-mode/fallback image generation |
 
 ## Environment Variables
 
 | Variable | Maps to |
 |----------|---------|
-| `GEMINI_API_KEY` | `gemini_api_key` |
-| `ANTHROPIC_API_KEY` | `anthropic_api_key` |
-| `TOGETHER_API_KEY` | `together_api_key` |
-| `OPENAI_API_KEY` | `openai_api_key` |
-| `OPENROUTER_API_KEY` | `openrouter_api_key` |
+| `LITELLM_BASE_URL` | `litellm_base_url` |
+| `LITELLM_API_KEY` | `litellm_api_key` |
+| `AI_BILL_FAILED_REQUESTS` | `ai_bill_failed_requests` |
 | `GOOGLE_CLOUD_PROJECT` | `google_cloud_project` |
 | `GOOGLE_CLOUD_LOCATION` | `google_cloud_location` |
 | `GOOGLE_GENAI_USE_VERTEXAI` | `google_use_vertex_ai` |
+
+Provider API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
+`OPENROUTER_API_KEY`, `TOGETHER_API_KEY`) belong in the LiteLLM service
+environment, not Canary runtime config.

@@ -12,6 +12,7 @@ import {
   usePanelImageVersions,
   useProjectConfig,
   usePromptsForScene,
+  useRegenEstimate,
   useRegenPanel,
   useRegenPanelWithInstruction,
   useRestorePanelImageVersion,
@@ -96,6 +97,8 @@ export function PanelDetailModal({
   const acceptPanel = useAcceptPanel();
   const unacceptPanel = useUnacceptPanel();
   const { data: creditBalance } = useCreditBalance();
+  const { data: regenEstimate } = useRegenEstimate(project, sceneId, panelNumber, isOpen);
+  const regenCredits = regenEstimate?.credits ?? "…";
 
   useEffect(() => {
     if (originalPrompt) {
@@ -276,8 +279,8 @@ export function PanelDetailModal({
   const fallbackPromptWithContinuity = draft.continuity_note
     ? `${fallbackPrompt}\n\n${draft.continuity_note}`
     : fallbackPrompt;
-  const effectiveModel = projectConfig?.dev_mode && projectConfig?.image_model === "gemini-3-pro-image-preview"
-    ? (projectConfig?.fallback_image_model || "gemini-3.1-flash-image-preview")
+  const effectiveModel = projectConfig?.dev_mode && projectConfig?.image_model === "canary/image-primary"
+    ? (projectConfig?.fallback_image_model || "canary/image-fast")
     : projectConfig?.image_model;
   const effectiveSteps = projectConfig?.dev_mode
     ? Math.min(draft.steps, projectConfig?.dev_image_steps ?? draft.steps)
@@ -455,7 +458,7 @@ export function PanelDetailModal({
                 <a href="/credits" className="underline">Add credits</a>
               </div>
               <Button onClick={() => runCreditAction(pendingCreditAction)}>
-                CONFIRM · 4 ◆
+                CONFIRM · {regenCredits} ◆
               </Button>
               <Button variant="outline" onClick={() => setPendingCreditAction(null)}>
                 ✕
@@ -486,7 +489,7 @@ export function PanelDetailModal({
                 onClick={() => runCreditAction("instruction")}
                 disabled={isInstructionBusy || !instruction.trim()}
               >
-                {isInstructionBusy ? "APPLYING..." : "APPLY & REGEN · 4 ◆"}
+                {isInstructionBusy ? "APPLYING..." : `APPLY & REGEN · ${regenCredits} ◆`}
               </Button>
               <Button
                 variant="outline"
@@ -537,11 +540,11 @@ export function PanelDetailModal({
               </Button>
               {hasChanges && (
                 <Button onClick={() => runCreditAction("generate")} disabled={isGenerating}>
-                  {isGenerating ? "SAVING..." : "GENERATE · 4 ◆"}
+                  {isGenerating ? "SAVING..." : `GENERATE · ${regenCredits} ◆`}
                 </Button>
               )}
               <Button variant="outline" onClick={() => runCreditAction("quick")}>
-                ↺ RE-DO · 4 ◆
+                ↺ RE-DO · {regenCredits} ◆
               </Button>
               <Button variant="outline" onClick={() => setIsDetailsOpen(true)}>
                 DETAILS

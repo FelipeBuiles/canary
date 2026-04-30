@@ -26,13 +26,57 @@ create table if not exists public.credit_ledger (
   usage_call_id             text        unique,
   provider                  text,
   model                     text,
+  provider_model            text,
   operation                 text,
   input_tokens              integer     not null default 0,
   output_tokens             integer     not null default 0,
   image_count               integer     not null default 0,
   cost_usd                  numeric(12, 6),
+  cost_source               text,
   project_id                uuid        references public.projects(id) on delete set null,
   created_at                timestamptz not null default now()
+);
+
+create table if not exists public.ai_usage_events (
+  id                    uuid        primary key default gen_random_uuid(),
+  created_at            timestamptz not null default now(),
+  started_at            timestamptz not null default now(),
+  finished_at           timestamptz,
+  user_id               uuid        references auth.users(id) on delete cascade,
+  project_id            uuid        references public.projects(id) on delete set null,
+  workspace_id          text,
+  project_name          text,
+  stage                 text,
+  feature               text        not null,
+  operation             text        not null,
+  status                text        not null
+                                      check (status in ('started', 'succeeded', 'failed', 'refused', 'cancelled')),
+  billable              boolean     not null default false,
+  billing_policy        text,
+  model_alias           text        not null,
+  provider              text,
+  provider_model        text,
+  litellm_model         text,
+  provider_response_id  text,
+  request_id            text,
+  idempotency_key       text,
+  input_tokens          integer     not null default 0,
+  output_tokens         integer     not null default 0,
+  total_tokens          integer     not null default 0,
+  image_count           integer     not null default 0,
+  latency_ms            integer,
+  cost_usd              numeric(12, 6),
+  cost_source           text,
+  provider_cost_usd     numeric(12, 6),
+  estimated_cost_usd    numeric(12, 6),
+  pricing_snapshot      text,
+  params_json           jsonb       not null default '{}'::jsonb,
+  request_summary_json  jsonb       not null default '{}'::jsonb,
+  usage_json            jsonb       not null default '{}'::jsonb,
+  metadata_json         jsonb       not null default '{}'::jsonb,
+  error_type            text,
+  error_message         text,
+  error_json            jsonb       not null default '{}'::jsonb
 );
 
 -- One-time migration for databases created by earlier drafts of this schema.
@@ -52,11 +96,18 @@ alter table public.credit_ledger
   add column if not exists usage_call_id text,
   add column if not exists provider text,
   add column if not exists model text,
+  add column if not exists provider_model text,
   add column if not exists operation text,
   add column if not exists input_tokens integer not null default 0,
   add column if not exists output_tokens integer not null default 0,
   add column if not exists image_count integer not null default 0,
-  add column if not exists cost_usd numeric(12, 6);
+  add column if not exists cost_usd numeric(12, 6),
+  add column if not exists cost_source text;
+
+alter table public.ai_usage_events
+  add column if not exists provider_cost_usd numeric(12, 6),
+  add column if not exists estimated_cost_usd numeric(12, 6),
+  add column if not exists pricing_snapshot text;
 
 -- ── Balance view ─────────────────────────────────────────────────────────────
 -- balance_credits = sum of all non-released rows.
@@ -145,6 +196,26 @@ create index if not exists credit_ledger_payment_intent_idx
 create unique index if not exists credit_ledger_usage_call_idx
   on public.credit_ledger (usage_call_id);
 
+create index if not exists ai_usage_events_user_created_idx
+  on public.ai_usage_events (user_id, created_at desc);
+
+create index if not exists ai_usage_events_project_created_idx
+  on public.ai_usage_events (project_id, created_at desc);
+
+create index if not exists ai_usage_events_status_created_idx
+  on public.ai_usage_events (status, created_at desc);
+
+create index if not exists ai_usage_events_feature_created_idx
+  on public.ai_usage_events (feature, created_at desc);
+
+create unique index if not exists ai_usage_events_idempotency_key_idx
+  on public.ai_usage_events (idempotency_key)
+  where idempotency_key is not null;
+
+create unique index if not exists ai_usage_events_provider_response_id_idx
+  on public.ai_usage_events (provider_response_id)
+  where provider_response_id is not null;
+
 create index if not exists projects_user_created_idx
   on public.projects (user_id, created_at desc);
 
@@ -154,6 +225,7 @@ create index if not exists projects_user_created_idx
 
 alter table public.projects enable row level security;
 alter table public.credit_ledger enable row level security;
+alter table public.ai_usage_events enable row level security;
 
 -- Projects: users see only their own; public projects visible to all.
 do $$ begin
@@ -188,12 +260,24 @@ do $$ begin
   end if;
 end $$;
 
+-- AI usage events: users see only their own request rows.
+do $$ begin
+  if not exists (
+    select 1 from pg_policies where tablename='ai_usage_events' and policyname='own ai usage events'
+  ) then
+    create policy "own ai usage events"
+      on public.ai_usage_events for select
+      using (auth.uid() = user_id);
+  end if;
+end $$;
+
 -- ── Grants ───────────────────────────────────────────────────────────────────
 -- Authenticated role needs SELECT on the view; service_role has full access.
 
 grant select on public.user_credits to authenticated;
 grant select on public.projects to authenticated;
 grant select on public.credit_ledger to authenticated;
+grant select on public.ai_usage_events to authenticated;
 
 revoke all on function public.reserve_stage_credits(uuid, uuid, text, integer)
   from public, anon, authenticated;

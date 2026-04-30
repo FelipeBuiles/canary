@@ -140,11 +140,11 @@ generation mode, crop/framing contract, transition hints, and optional
 - `draw/scene_NNN/panel_NNN.png`
 
 **What it does:** Runs image generation against the planner-owned prompt
-contracts. Routes to the configured `image_provider`. Subject references are
-loaded from project-relative prompt paths, while style/continuity references use
-the adjacent previous panel for smooth transitions or the style sample plus
-location plate otherwise. Generated image metadata records `planned_panel_id`.
-Pauses for human review before Stage 8.
+contracts through the LiteLLM gateway image alias. Subject references are loaded
+from project-relative prompt paths, while style/continuity references use the
+adjacent previous panel for smooth transitions or the style sample plus location
+plate otherwise. Generated image metadata records `planned_panel_id`. Pauses for
+human review before Stage 8.
 
 ---
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import os
+from decimal import Decimal, ROUND_CEILING
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -11,16 +12,7 @@ from supabase import Client
 
 from novel_to_comic.config import Config
 from novel_to_comic.state import PipelineState
-from novel_to_comic.usage import UsageRecord, calculate_cost, estimate_image_cost, estimate_text_cost, usage_has_billable_activity
-
-STAGE_MINIMUM_RESERVATION_CREDITS: dict[str, int] = {
-    "extract": 25,
-    "cast": 25,
-    "adapt": 25,
-    "plan": 25,
-    "draw": 25,
-}
-
+from novel_to_comic.usage import UsageRecord, calculate_cost, calculate_cost_breakdown, estimate_image_cost, estimate_text_cost, usage_has_billable_activity
 
 def credits_per_provider_usd() -> float:
     """Public credits charged per $1 of raw provider cost before markup."""
@@ -38,7 +30,12 @@ def reservation_buffer() -> float:
 
 
 def provider_usd_to_credits(cost_usd: float) -> int:
-    return math.ceil(cost_usd * credits_per_provider_usd() * model_cost_markup())
+    credits = (
+        Decimal(str(cost_usd))
+        * Decimal(str(credits_per_provider_usd()))
+        * Decimal(str(model_cost_markup()))
+    )
+    return int(credits.to_integral_value(rounding=ROUND_CEILING))
 
 
 def usage_to_credit_debit(usage: UsageRecord) -> tuple[int, float]:
@@ -65,8 +62,7 @@ def estimate_stage_credit_reservation(
     base_credits = provider_usd_to_credits(cost_usd)
     if base_credits <= 0:
         return 0
-    minimum = STAGE_MINIMUM_RESERVATION_CREDITS.get(stage, 0)
-    return max(minimum, math.ceil(base_credits * reservation_buffer()))
+    return math.ceil(base_credits * reservation_buffer())
 
 
 def estimate_stage_provider_cost_usd(
@@ -188,25 +184,40 @@ def _estimate_plan_cost(config: Config, project_dir: Path) -> float:
 
 
 def _estimate_draw_cost(config: Config, project_dir: Path) -> float:
+    from novel_to_comic.models.story_bible import StoryBible
+    from novel_to_comic.stages.s6_generate import _find_style_sample, estimate_panel_image_cost_usd
+
     prompts_dir = project_dir / "direct"
     if not prompts_dir.exists():
         return 0.0
-    count = 0
+    total = 0.0
+    model = config.effective_image_model()
+    quality = getattr(config, "image_quality", None)
+    style_sample = _find_style_sample(project_dir, config.style_template)
+    scene_to_location: dict[str, str] = {}
+    story_bible = _load_json_model(project_dir / "story_bible.json", StoryBible)
+    if story_bible is not None:
+        scene_to_location = {scene.id: scene.location_id for scene in story_bible.scenes}
     for prompt_path in prompts_dir.glob("*/panel_*.json"):
         try:
             scene_id = prompt_path.parent.name
             panel_number = int(prompt_path.stem.split("_")[1])
         except (IndexError, ValueError):
-            count += 1
+            total += estimate_image_cost(model, 1, quality=quality)
             continue
         output_path = project_dir / "draw" / scene_id / f"panel_{panel_number:03d}.png"
         if not output_path.exists():
-            count += 1
-    return estimate_image_cost(
-        config.effective_image_model(),
-        count,
-        quality=getattr(config, "image_quality", None),
-    )
+            try:
+                total += estimate_panel_image_cost_usd(
+                    config,
+                    project_dir,
+                    prompt_path,
+                    style_sample=style_sample,
+                    scene_to_location=scene_to_location,
+                )
+            except Exception:
+                total += estimate_image_cost(model, 1, quality=quality)
+    return total
 
 
 def get_balance_credits(db: Client, user_id: str) -> int:
@@ -273,6 +284,7 @@ def debit_model_usage(
 ) -> None:
     """Insert one settled credit ledger row for one model-provider call."""
     credits, cost_usd = usage_to_credit_debit(usage)
+    cost = calculate_cost_breakdown(usage)
     if credits <= 0:
         return
     db.table("credit_ledger").upsert(
@@ -286,11 +298,13 @@ def debit_model_usage(
             "usage_call_id": usage.call_id,
             "provider": usage.provider,
             "model": usage.model,
+            "provider_model": cost.provider_model,
             "operation": usage.operation,
             "input_tokens": usage.input_tokens,
             "output_tokens": usage.output_tokens,
             "image_count": usage.image_count,
             "cost_usd": cost_usd,
+            "cost_source": cost.source,
         },
         on_conflict="usage_call_id",
     ).execute()

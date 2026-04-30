@@ -24,21 +24,16 @@ function formatBytes(bytes: number): string {
 
 type ImageProvider = NonNullable<ConfigOverrides["image_provider"]>;
 
-const DEFAULT_IMAGE_MODEL = "gemini-3-pro-image-preview";
+const DEFAULT_IMAGE_MODEL = "canary/image-primary";
 const IMAGE_MODEL_OPTIONS: Array<{ value: string; label: string; provider: ImageProvider }> = [
-  { value: DEFAULT_IMAGE_MODEL, label: "Gemini 3 Pro Image", provider: "gemini" },
-  { value: "gemini-2.5-flash-image", label: "Gemini 2.5 Flash Image", provider: "gemini" },
-  { value: "gemini-2.5-pro-image", label: "Gemini 2.5 Pro Image", provider: "gemini" },
-  { value: "gemini-3.1-flash-image-preview", label: "Gemini 3.1 Flash Image", provider: "gemini" },
-  { value: "gemini-3.1-pro-image-preview", label: "Gemini 3.1 Pro Image", provider: "gemini" },
-  { value: "gpt-image-1.5", label: "OpenAI GPT Image 1.5", provider: "openai" },
-  { value: "gpt-image-2", label: "OpenAI GPT Image 2", provider: "openai" },
-  { value: "black-forest-labs/FLUX.2-pro", label: "FLUX.2 Pro", provider: "together" },
-  { value: "openai/gpt-image-1.5", label: "OpenAI GPT Image 1.5 via OpenRouter", provider: "openrouter" },
+  { value: DEFAULT_IMAGE_MODEL, label: "Primary image model", provider: "openai" },
+  { value: "canary/image-fast", label: "Fast image model", provider: "openrouter" },
 ];
 
 function _defaultProviderForModel(model: string): ImageProvider {
   const value = model.trim().toLowerCase();
+  if (value === "canary/image-primary") return "openai";
+  if (value === "canary/image-fast") return "openrouter";
   if (value.startsWith("gpt-image-") || value === "chatgpt-image-latest") return "openai";
   if (value.includes("/")) return "together";
   return "gemini";

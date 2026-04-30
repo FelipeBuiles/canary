@@ -1,8 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listProjects, getProjectStatus, createProject, generateProjectCover } from "./projects";
-import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenPlate, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate } from "./pipeline";
+import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenPlate, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate } from "./pipeline";
 import type { ConfigOverrides, StoryBible, CharacterVoice } from "../types/api";
-import { getBalance, getCreditHistory } from "./credits";
+import { getBalance, getCreditHistory, getPricingReference } from "./credits";
 import { getPackages, createCheckout } from "./billing";
 import {
   getStoryBible,
@@ -160,6 +160,20 @@ export function useStageEstimate(project: string | undefined, stage: string | un
     queryKey: ["project", project, "estimate", stage],
     queryFn: () => fetchStageEstimate(project!, stage!),
     enabled: !!project && !!stage && enabled,
+    staleTime: 60_000,
+  });
+}
+
+export function useRegenEstimate(
+  project: string | undefined,
+  sceneId: string | undefined,
+  panelNumber: number | undefined,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["project", project, "regen-estimate", sceneId, panelNumber],
+    queryFn: () => fetchRegenEstimate(project!, sceneId!, panelNumber!),
+    enabled: !!project && !!sceneId && panelNumber != null && enabled,
     staleTime: 60_000,
   });
 }
@@ -664,6 +678,14 @@ export function useCreditBalance() {
     queryKey: ["credits", "balance"],
     queryFn: getBalance,
     staleTime: 30_000,
+  });
+}
+
+export function usePricingReference() {
+  return useQuery({
+    queryKey: ["credits", "pricing-reference"],
+    queryFn: getPricingReference,
+    staleTime: Infinity,
   });
 }
 

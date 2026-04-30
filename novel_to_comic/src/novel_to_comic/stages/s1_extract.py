@@ -284,6 +284,7 @@ async def _extract_with_retry(
             user_content=user_content,
             temperature=0.4,
             max_output_tokens=65536,
+            feature="extract.story_bible",
         )
         last_usage = api_result.usage
         result = api_result.value

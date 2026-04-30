@@ -6,7 +6,8 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from novel_to_comic.config import Config, load_config, save_config
+from novel_to_comic.config import Config, save_config
+from novel_to_comic.ai import ai_request_context
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.prompting import build_style_sample_prompt
 
@@ -72,12 +73,19 @@ def _save_suggestions(project_dir, suggestions, title):
     path.write_text(json.dumps({"title": title, "suggestions": suggestions}, indent=2))
 
 
-async def _suggest_styles(config: Config, bible, existing_labels: list[str] | None = None) -> tuple[list[dict], object | None]:
+async def _suggest_styles(
+    config: Config,
+    bible,
+    project_dir,
+    user_id: str,
+    project_id: str | None,
+    existing_labels: list[str] | None = None,
+) -> tuple[list[dict], object | None]:
     from novel_to_comic.clients import text
 
     avoid = ""
     if existing_labels:
-        joined = ", ".join(f'"{l}"' for l in existing_labels)
+        joined = ", ".join(f'"{label}"' for label in existing_labels)
         avoid = f"\nThese styles have already been suggested and must NOT be repeated or closely paraphrased: [{joined}]. "
 
     system = (
@@ -107,11 +115,19 @@ async def _suggest_styles(config: Config, bible, existing_labels: list[str] | No
         f'[{{"label": "Style Name (2-4 words)", "template": "40-70 word description"}}, ...]'
     )
 
-    api_result = await text.generate_json(
-        config=config, model=config.effective_prompt_model(),
-        system_prompt=system, user_content=user,
-        temperature=1.0,
-    )
+    with ai_request_context(
+        user_id=user_id,
+        project_id=project_id,
+        project_name=project_dir.name,
+        workspace_id=str(project_dir.parent),
+        stage="style",
+    ):
+        api_result = await text.generate_json(
+            config=config, model=config.effective_prompt_model(),
+            system_prompt=system, user_content=user,
+            temperature=1.0,
+            feature="style.suggestions",
+        )
     result = api_result.value
     if isinstance(result, list):
         return result, api_result.usage
@@ -120,14 +136,26 @@ async def _suggest_styles(config: Config, bible, existing_labels: list[str] | No
     return [], api_result.usage
 
 
-async def _generate_style_sample(config, bible, project_dir, sample_path):
+async def _generate_style_sample(config, bible, project_dir, sample_path, user_id: str, project_id: str | None):
     from novel_to_comic.clients import flux
     from novel_to_comic.usage import calculate_cost
     prompt = build_style_sample_prompt(config, bible)
     meta = _style_sample_meta(config, prompt)
 
     sample_path.parent.mkdir(exist_ok=True)
-    result = await flux.generate_image(config=config, prompt=prompt, output_path=sample_path)
+    with ai_request_context(
+        user_id=user_id,
+        project_id=project_id,
+        project_name=project_dir.name,
+        workspace_id=str(project_dir.parent),
+        stage="style",
+    ):
+        result = await flux.generate_image(
+            config=config,
+            prompt=prompt,
+            output_path=sample_path,
+            feature="style.sample",
+        )
     if result.usage:
         meta["cost_usd"] = round(calculate_cost(result.usage), 6)
         meta["usage"] = result.usage.model_dump()
@@ -145,7 +173,7 @@ async def _generate_style_samples_parallel(config, bible, project_dir, indices, 
         template = s.get("template", config.style_template)
         sample_config = config.model_copy(update={"style_template": template})
         sample_path = samples_dir / f"style_{idx}.png"
-        result = await _generate_style_sample(sample_config, bible, project_dir, sample_path)
+        result = await _generate_style_sample(sample_config, bible, project_dir, sample_path, user_id, project_id)
         if result.usage:
             state = load_state(project_dir)
             record_misc_usage(state, result.usage)
@@ -157,11 +185,6 @@ async def _generate_style_samples_parallel(config, bible, project_dir, indices, 
                 result.usage,
                 description=f"Model call: style sample {idx}",
             )
-
-    if config.uses_gemini_image_provider():
-        for i in indices:
-            await _one(i)
-        return
 
     await asyncio.gather(*[_one(i) for i in indices])
 
@@ -231,12 +254,20 @@ async def suggest_styles(
             })
             existing = _load_suggestions(project_dir) or []
             existing_labels = [s.get("label", "") for s in existing if isinstance(s, dict)]
-            new_suggestions, usage = await _suggest_styles(config, bible, existing_labels=existing_labels)
+            project_id = get_project_id(get_db(), user_id, project_name)
+            new_suggestions, usage = await _suggest_styles(
+                config,
+                bible,
+                project_dir,
+                user_id,
+                project_id,
+                existing_labels=existing_labels,
+            )
             if usage:
                 debit_model_usage(
                     get_db(),
                     user_id,
-                    get_project_id(get_db(), user_id, project_name),
+                    project_id,
                     usage,
                     description="Model call: style suggestions",
                 )
@@ -298,11 +329,21 @@ async def generate_style_samples(
         sample_config = config.model_copy(update={"style_template": template})
         sample_path = project_dir / "samples" / f"style_{idx}.png"
 
+        project_id = get_project_id(get_db(), user_id, project_name)
+
         async def _runner(
             sample_config=sample_config,
             sample_path=sample_path,
+            project_id=project_id,
         ) -> None:
-            result = await _generate_style_sample(sample_config, bible, project_dir, sample_path)
+            result = await _generate_style_sample(
+                sample_config,
+                bible,
+                project_dir,
+                sample_path,
+                user_id,
+                project_id,
+            )
             if result.usage:
                 from novel_to_comic.state import load_state, record_misc_usage, save_state
                 st = load_state(project_dir)
@@ -311,7 +352,7 @@ async def generate_style_samples(
                 debit_model_usage(
                     get_db(),
                     user_id,
-                    get_project_id(get_db(), user_id, project_name),
+                    project_id,
                     result.usage,
                     description=f"Model call: style sample {idx}",
                 )

@@ -46,8 +46,6 @@ def configure_logging() -> None:
     )
     logging.getLogger("uvicorn.access").disabled = True
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("google_genai").setLevel(logging.WARNING)
-    logging.getLogger("google_genai._api_client").setLevel(logging.WARNING)
     configure_telemetry()
 
 

@@ -1,720 +1,21 @@
-"""Image generation: routes to Gemini native, OpenAI, Together AI, or OpenRouter.
+"""Image generation compatibility wrapper backed by the internal AI gateway."""
 
-Routing rule:
-  - config.image_provider == "gemini"     →  Gemini via google-genai
-  - config.image_provider == "openai"     →  OpenAI Images API
-  - config.image_provider == "openrouter" →  OpenRouter (OpenAI API-compatible endpoint)
-  - config.image_provider == "together"   →  Together AI
-"""
+from __future__ import annotations
 
 import asyncio
-import base64
-import io
-import logging
 from pathlib import Path
-from typing import Any
 
-from tenacity import (
-    retry,
-    retry_if_exception,
-    stop_after_attempt,
-    wait_exponential,
-    wait_random_exponential,
-)
-from openai import AsyncOpenAI
-from together import AsyncTogether
-
-from novel_to_comic.clients.api_logging import image_payload_summary, log_call_end, log_call_start
+from novel_to_comic.ai import generate_image as ai_generate_image
 from novel_to_comic.config import Config
-from novel_to_comic.clients.gemini import get_client
-from novel_to_comic.usage import ApiResult, UsageRecord
-
-logger = logging.getLogger("canary.google")
-image_logger = logging.getLogger("canary.image")
-
-
-# ── Together AI capability flags ──────────────────────────────────────────────
-
-def _supports_steps(model: str) -> bool:
-    lower = model.lower()
-    return any(x in lower for x in ("schnell", "-dev", "flex", "stable-diffusion", "juggernaut"))
-
-
-def _supports_n(model: str) -> bool:
-    return "google/" not in model.lower()
-
-
-def _supports_image_url(model: str) -> bool:
-    """Only kontext models accept image_url for img2img."""
-    return "kontext" in model.lower()
-
-
-def _supports_negative_prompt(model: str) -> bool:
-    lower = model.lower()
-    return any(x in lower for x in ("stable-diffusion", "sdxl", "juggernaut", "sd-xl"))
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _get_together_client(config: Config) -> AsyncTogether:
-    return AsyncTogether(api_key=config.together_api_key)
-
-
-def _get_openai_client(config: Config) -> AsyncOpenAI:
-    return AsyncOpenAI(api_key=config.openai_api_key)
-
-
-def _get_openrouter_client(config: Config) -> AsyncOpenAI:
-    return AsyncOpenAI(
-        api_key=config.openrouter_api_key,
-        base_url="https://openrouter.ai/api/v1",
-    )
-
-
-def _encode_image_sync(path: Path) -> str:
-    with open(path, "rb") as f:
-        return base64.b64encode(f.read()).decode()
-
-
-def _openai_size_for_dims(width: int, height: int) -> str:
-    """Map arbitrary dimensions to OpenAI-supported output sizes."""
-    if height <= 0:
-        return "1024x1024"
-    ratio = width / height
-    # OpenAI GPT Image supports portrait 1024x1536, square 1024x1024, landscape 1536x1024.
-    if ratio < 0.87:
-        return "1024x1536"
-    if ratio > 1.15:
-        return "1536x1024"
-    return "1024x1024"
-
-
-def _exception_chain(exc: BaseException) -> list[BaseException]:
-    chain: list[BaseException] = []
-    seen: set[int] = set()
-    node: BaseException | None = exc
-    while node is not None and id(node) not in seen:
-        seen.add(id(node))
-        chain.append(node)
-        node = getattr(node, "__cause__", None) or getattr(node, "__context__", None)
-    return chain
-
-
-def _simple_obj_summary(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, (list, tuple)):
-        return [_simple_obj_summary(item) for item in value]
-    if isinstance(value, dict):
-        return {str(k): _simple_obj_summary(v) for k, v in value.items()}
-    if hasattr(value, "model_dump"):
-        try:
-            return _simple_obj_summary(value.model_dump())
-        except Exception:
-            pass
-    attrs: dict[str, Any] = {}
-    for name in (
-        "finish_reason",
-        "finish_message",
-        "block_reason",
-        "safety_ratings",
-        "prompt_feedback",
-    ):
-        item = getattr(value, name, None)
-        if item is not None:
-            attrs[name] = _simple_obj_summary(item)
-    return attrs or str(value)
-
-
-def _gemini_failure_details(response: Any) -> str:
-    details: dict[str, Any] = {}
-    prompt_feedback = getattr(response, "prompt_feedback", None)
-    if prompt_feedback is not None:
-        details["prompt_feedback"] = _simple_obj_summary(prompt_feedback)
-    candidates = getattr(response, "candidates", None) or []
-    candidate_details: list[Any] = []
-    for candidate in candidates:
-        candidate_details.append(
-            {
-                "finish_reason": _simple_obj_summary(getattr(candidate, "finish_reason", None)),
-                "finish_message": _simple_obj_summary(getattr(candidate, "finish_message", None)),
-                "safety_ratings": _simple_obj_summary(getattr(candidate, "safety_ratings", None)),
-            }
-        )
-    if candidate_details:
-        details["candidates"] = candidate_details
-    if not details:
-        return ""
-    return f" Gemini details: {details}"
-
-
-def is_rate_limited_error(exc: BaseException) -> bool:
-    """Return True when an exception chain indicates provider throttling/quota."""
-    tokens = ("429", "resource_exhausted", "rate limit", "quota")
-    for node in _exception_chain(exc):
-        code = getattr(node, "code", None)
-        status = getattr(node, "status", None)
-        if code == 429:
-            return True
-        if isinstance(status, str) and status.upper() == "RESOURCE_EXHAUSTED":
-            return True
-        text = str(node).lower()
-        if any(tok in text for tok in tokens):
-            return True
-        # Some SDK errors put structured details on .args / .response
-        args_text = " ".join(str(a).lower() for a in getattr(node, "args", ()) if a is not None)
-        if any(tok in args_text for tok in tokens):
-            return True
-        response: Any = getattr(node, "response", None)
-        if response is not None:
-            resp_text = str(response).lower()
-            if any(tok in resp_text for tok in tokens):
-                return True
-    return False
-
-
-def _is_retryable_gemini_image_error(exc: BaseException) -> bool:
-    # Always retry on explicit quota/rate-limit failures.
-    if is_rate_limited_error(exc):
-        return True
-    # Retry common transient transport/server failures.
-    transient_tokens = (
-        "deadline exceeded",
-        "timed out",
-        "timeout",
-        "temporarily unavailable",
-        "internal server error",
-        "service unavailable",
-        "connection reset",
-        "connecterror",
-    )
-    chain_text = " ".join(str(node).lower() for node in _exception_chain(exc))
-    return any(tok in chain_text for tok in transient_tokens)
-
-
-# ── Gemini native implementation ──────────────────────────────────────────────
-
-@retry(
-    wait=wait_random_exponential(multiplier=4, max=180),
-    stop=stop_after_attempt(8),
-    retry=retry_if_exception(_is_retryable_gemini_image_error),
-    reraise=True,
-)
-async def _generate_gemini_image(
-    config: Config,
-    prompt: str,
-    output_path: Path,
-    reference_paths: list[Path] | None = None,
-    width: int | None = None,
-    height: int | None = None,
-    style_refs: list[Path] | None = None,
-) -> Path:
-    """Generate image via Gemini generateContent with response_modalities=IMAGE.
-
-    ``width`` and ``height``, when provided, override ``config.image_width/height``
-    for the aspect ratio hint and post-crop.  Pass per-panel dimensions (from
-    the ImagePrompt) so each shot type gets the correct portrait ratio rather
-    than always using the global config default.
-
-    Subject refs are placed BEFORE style refs so character identity — the
-    hardest consistency problem — gets the strongest positional weight.
-    Caller is responsible for deduping style_refs (prefer a single scene
-    anchor once available, otherwise a global style sample + optional plate).
-    """
-    from google.genai import types as gtypes
-
-    valid_refs = [p for p in (reference_paths or []) if p.exists()]
-    valid_style_refs = [p for p in (style_refs or []) if p.exists()]
-    call_id, started = log_call_start(
-        logger,
-        provider="gemini",
-        operation="generate",
-        task="image",
-        params={
-            "model": config.image_model,
-            "refs": len(valid_refs),
-            "style_refs": len(valid_style_refs),
-            "width": width or config.image_width,
-            "height": height or config.image_height,
-        },
-        payload=image_payload_summary(prompt),
-    )
-    client = get_client(config)
-    contents: list = []
-    reference_notes: list[str] = []
-
-    # Subject refs first — strongest positional weight goes to character identity.
-    # Cap at 4 to support multi-character dialogue panels without overrunning the
-    # model's effective reference-image budget.
-    subject_count = 0
-    if reference_paths:
-        for ref_path in [p for p in reference_paths if p.exists()][:4]:
-            ref_bytes = await asyncio.to_thread(ref_path.read_bytes)
-            contents.append(gtypes.Part.from_bytes(data=ref_bytes, mime_type="image/png"))
-            subject_count += 1
-    if subject_count:
-        if subject_count == 1:
-            reference_notes.append(
-                "Image 1 is a character identity reference. Preserve that "
-                "character's face, build, hair, and clothing continuity."
-            )
-        else:
-            reference_notes.append(
-                f"Images 1-{subject_count} are character identity references. "
-                "Preserve each character's face, build, hair, and clothing continuity."
-            )
-
-    # Style / continuity refs after subjects. Capped at 2; caller dedups so this
-    # is typically a single scene anchor, or style_sample (+ plate) for the
-    # first panel of a scene.
-    style_count = 0
-    for ref_path in [p for p in (style_refs or []) if p.exists()][:2]:
-        ref_bytes = await asyncio.to_thread(ref_path.read_bytes)
-        contents.append(gtypes.Part.from_bytes(data=ref_bytes, mime_type="image/png"))
-        style_count += 1
-    if style_count:
-        start = subject_count + 1
-        end = subject_count + style_count
-        if style_count == 1:
-            reference_notes.append(
-                f"Image {start} is a visual style reference. "
-                "Match its rendering medium, palette, mark-making, and lighting language "
-                "without copying its exact composition unless requested."
-            )
-        else:
-            # Two style refs: first is the global style sample, second is the location plate.
-            reference_notes.append(
-                f"Image {start} is a global visual style reference: match its rendering "
-                "medium, palette, mark-making, and lighting language."
-            )
-            reference_notes.append(
-                f"Image {end} is a location/environment reference: match its spatial "
-                "setting and atmosphere, not its rendering style."
-            )
-
-    # Nudge Gemini toward the requested aspect ratio.  The model picks its own
-    # resolution, so we hint in the prompt and then center-crop as a fallback.
-    w = width or config.image_width
-    h = height or config.image_height
-    target_ratio = w / h
-    if abs(target_ratio - 1.0) < 0.05:
-        shape_hint = "SQUARE panel (equal width and height, 1:1 ratio)."
-    elif target_ratio < 1.0:
-        shape_hint = "VERTICAL PORTRAIT panel (taller than wide)."
-    else:
-        shape_hint = "HORIZONTAL LANDSCAPE panel (wider than tall)."
-    reference_instruction = "\n".join(reference_notes)
-    if reference_instruction:
-        reference_instruction = (
-            "REFERENCE IMAGE INSTRUCTIONS:\n"
-            f"{reference_instruction}\n"
-            "The written panel prompt is authoritative for action, camera, framing, and subject count.\n\n"
-        )
-    contents.append(reference_instruction + prompt + f"\n\nCompose as a {shape_hint}")
-
-    try:
-        response = await client.aio.models.generate_content(
-            model=config.image_model,
-            contents=contents,
-            config=gtypes.GenerateContentConfig(response_modalities=["IMAGE", "TEXT"]),
-        )
-
-        candidates = getattr(response, "candidates", None) or []
-        if not candidates:
-            text = getattr(response, "text", "no text")
-            raise ValueError(
-                f"No candidates in Gemini response. Model said: {text}."
-                f"{_gemini_failure_details(response)}"
-            )
-        content = getattr(candidates[0], "content", None)
-        parts = getattr(content, "parts", None) or []
-        for part in parts:
-            if hasattr(part, "inline_data") and part.inline_data:
-                raw = part.inline_data.data
-                image_bytes = base64.b64decode(raw) if isinstance(raw, str) else bytes(raw)
-
-                # Post-process: center-crop to the configured aspect ratio if the
-                # returned image is significantly off (handles both landscape→square
-                # and portrait→square corrections).
-                try:
-                    from PIL import Image as _PILImage
-                    _img = _PILImage.open(io.BytesIO(image_bytes))
-                    _sw, _sh = _img.size
-                    _src_ratio = _sw / _sh
-                    if abs(_src_ratio - target_ratio) > 0.1:
-                        if _src_ratio > target_ratio:
-                            # Too wide — crop horizontally
-                            _new_w = int(_sh * target_ratio)
-                            _left = (_sw - _new_w) // 2
-                            _img = _img.crop((_left, 0, _left + _new_w, _sh))
-                        else:
-                            # Too tall — crop vertically
-                            _new_h = int(_sw / target_ratio)
-                            _top = (_sh - _new_h) // 2
-                            _img = _img.crop((0, _top, _sw, _top + _new_h))
-                        _buf = io.BytesIO()
-                        _img.save(_buf, format="PNG")
-                        image_bytes = _buf.getvalue()
-                except Exception:
-                    pass  # if crop fails, save the original
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                await asyncio.to_thread(output_path.write_bytes, image_bytes)
-                log_call_end(
-                    logger,
-                    call_id=call_id,
-                    started=started,
-                    provider="gemini",
-                    operation="generate",
-                    task="image",
-                    ok=True,
-                    result={
-                        "image_bytes": len(image_bytes),
-                        "candidates": len(getattr(response, "candidates", []) or []),
-                    },
-                )
-                return output_path
-
-        text = getattr(response, "text", "no text")
-        raise ValueError(
-            f"No image part in Gemini response. Model said: {text}."
-            f"{_gemini_failure_details(response)}"
-        )
-    except Exception as e:
-        log_call_end(
-            logger,
-            call_id=call_id,
-            started=started,
-            provider="gemini",
-            operation="generate",
-            task="image",
-            ok=False,
-            error=e,
-        )
-        raise
-
-
-# ── Together AI implementation ────────────────────────────────────────────────
-
-@retry(wait=wait_exponential(min=5, max=120), stop=stop_after_attempt(5))
-async def _generate_together_image(
-    config: Config,
-    prompt: str,
-    output_path: Path,
-    width: int | None = None,
-    height: int | None = None,
-    steps: int | None = None,
-    reference_paths: list[Path] | None = None,
-) -> Path:
-    """Generate image via Together AI (FLUX.2, SD, etc.)."""
-    call_id, started = log_call_start(
-        image_logger,
-        provider="together",
-        operation="generate",
-        task="image",
-        params={
-            "model": config.image_model,
-            "refs": len([p for p in (reference_paths or []) if p.exists()]),
-            "width": width or config.image_width,
-            "height": height or config.image_height,
-            "steps": steps or config.image_steps,
-        },
-        payload=image_payload_summary(prompt),
-    )
-    client = _get_together_client(config)
-
-    kwargs: dict = {
-        "model": config.image_model,
-        "prompt": prompt,
-        "width": width or config.image_width,
-        "height": height or config.image_height,
-        "response_format": "b64_json",
-    }
-    if _supports_n(config.image_model):
-        kwargs["n"] = 1
-    if _supports_steps(config.image_model):
-        kwargs["steps"] = steps or config.image_steps
-    neg = getattr(config, "negative_prompt", "")
-    if neg and _supports_negative_prompt(config.image_model):
-        kwargs["negative_prompt"] = neg
-
-    if reference_paths and _supports_image_url(config.image_model):
-        valid = [p for p in reference_paths if p.exists()][:8]
-        if valid:
-            encoded = [
-                f"data:image/png;base64,{await asyncio.to_thread(_encode_image_sync, p)}"
-                for p in valid
-            ]
-            if len(encoded) == 1:
-                kwargs["image_url"] = encoded[0]
-            else:
-                try:
-                    kwargs["image_urls"] = encoded
-                    response = await client.images.generate(**kwargs)
-                    if not response.data or not response.data[0].b64_json:
-                        raise ValueError("Empty multi-ref response")
-                    image_data = base64.b64decode(response.data[0].b64_json)
-                    output_path.parent.mkdir(parents=True, exist_ok=True)
-                    await asyncio.to_thread(output_path.write_bytes, image_data)
-                    log_call_end(
-                        image_logger,
-                        call_id=call_id,
-                        started=started,
-                        provider="together",
-                        operation="generate",
-                        task="image",
-                        ok=True,
-                        result={"image_bytes": len(image_data), "ref_mode": "multi"},
-                    )
-                    return output_path
-                except Exception:
-                    kwargs.pop("image_urls", None)
-                    kwargs["image_url"] = encoded[0]
-
-    try:
-        response = await client.images.generate(**kwargs)
-        if not response.data or not response.data[0].b64_json:
-            raise ValueError("Empty image response from Together AI")
-
-        image_data = base64.b64decode(response.data[0].b64_json)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        await asyncio.to_thread(output_path.write_bytes, image_data)
-        log_call_end(
-            image_logger,
-            call_id=call_id,
-            started=started,
-            provider="together",
-            operation="generate",
-            task="image",
-            ok=True,
-            result={"image_bytes": len(image_data), "ref_mode": "single_or_none"},
-        )
-        return output_path
-    except Exception as e:
-        log_call_end(
-            image_logger,
-            call_id=call_id,
-            started=started,
-            provider="together",
-            operation="generate",
-            task="image",
-            ok=False,
-            error=e,
-        )
-        raise
-
-
-@retry(wait=wait_exponential(min=5, max=120), stop=stop_after_attempt(5))
-async def _generate_openai_image(
-    config: Config,
-    prompt: str,
-    output_path: Path,
-    width: int | None = None,
-    height: int | None = None,
-    reference_paths: list[Path] | None = None,
-    style_refs: list[Path] | None = None,
-) -> tuple[Path, int, int]:
-    """Generate image via OpenAI Images API (GPT Image family).
-
-    Returns (output_path, input_tokens, output_tokens). Token counts come from
-    response.usage (gpt-image-1 and later). Both are 0 for older models that
-    don't return usage data; callers fall back to per_image_usd in that case.
-    """
-    subject_refs = [p for p in (reference_paths or []) if p.exists()]
-    aux_refs = [p for p in (style_refs or []) if p.exists()]
-    edit_refs = (subject_refs + aux_refs)[:8]
-    call_id, started = log_call_start(
-        image_logger,
-        provider="openai",
-        operation="generate",
-        task="image",
-        params={
-            "model": config.image_model,
-            "subject_refs": len(subject_refs),
-            "style_refs": len(aux_refs),
-            "width": width or config.image_width,
-            "height": height or config.image_height,
-        },
-        payload=image_payload_summary(prompt),
-    )
-    client = _get_openai_client(config)
-    w = width or config.image_width
-    h = height or config.image_height
-    size = _openai_size_for_dims(w, h)
-    quality = (getattr(config, "image_quality", "auto") or "auto").lower()
-    if quality not in {"auto", "low", "medium", "high"}:
-        quality = "auto"
-
-    file_handles = []
-    try:
-        if edit_refs:
-            # Condition generation on references through the edit endpoint.
-            # OpenAI supports up to 16 input images; we cap to 8 for latency.
-            for path in edit_refs:
-                file_handles.append(open(path, "rb"))
-            response = await client.images.edit(
-                model=config.image_model,
-                prompt=prompt,
-                image=file_handles,
-                size=size,
-                quality=quality,
-            )
-        else:
-            response = await client.images.generate(
-                model=config.image_model,
-                prompt=prompt,
-                size=size,
-                quality=quality,
-            )
-        if not response.data or not response.data[0].b64_json:
-            raise ValueError("Empty image response from OpenAI")
-
-        image_data = base64.b64decode(response.data[0].b64_json)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        await asyncio.to_thread(output_path.write_bytes, image_data)
-
-        usage = getattr(response, "usage", None)
-        input_tokens = getattr(usage, "input_tokens", 0) or 0
-        output_tokens = getattr(usage, "output_tokens", 0) or 0
-
-        log_call_end(
-            image_logger,
-            call_id=call_id,
-            started=started,
-            provider="openai",
-            operation="generate",
-            task="image",
-            ok=True,
-            result={"image_bytes": len(image_data), "input_tokens": input_tokens, "output_tokens": output_tokens},
-        )
-        return output_path, input_tokens, output_tokens
-    except Exception as e:
-        log_call_end(
-            image_logger,
-            call_id=call_id,
-            started=started,
-            provider="openai",
-            operation="generate",
-            task="image",
-            ok=False,
-            error=e,
-        )
-        raise
-    finally:
-        for handle in file_handles:
-            try:
-                handle.close()
-            except Exception:
-                pass
-
-
-# ── OpenRouter implementation ───────────────────────────────────────────────────
-
-_OPENROUTER_IMG2IMG_MODELS: frozenset = frozenset({
-    "stability-ai/stable-diffusion-xl-base-1.0",
-    "stability-ai/sd3.5-medium",
-    "stability-ai/sd3-large",
-    "playgroundai/playground-v2.5",
-    "playgroundai/playground-v2",
-})
-
-
-def _supports_openrouter_img2img(model: str) -> bool:
-    return model.lower() in _OPENROUTER_IMG2IMG_MODELS
-
-
-@retry(wait=wait_exponential(min=5, max=120), stop=stop_after_attempt(5))
-async def _generate_openrouter_image(
-    config: Config,
-    prompt: str,
-    output_path: Path,
-    width: int | None = None,
-    height: int | None = None,
-    reference_paths: list[Path] | None = None,
-    style_refs: list[Path] | None = None,
-) -> Path:
-    """Generate image via OpenRouter (OpenAI API-compatible endpoint).
-
-    Reference images are passed as image_url for models that support img2img.
-    """
-    subject_refs = [p for p in (reference_paths or []) if p.exists()]
-    aux_refs = [p for p in (style_refs or []) if p.exists()]
-    # OpenRouter's images.generate compatibility path only supports one
-    # image_url here. Prefer the style anchor when present; character identity
-    # still comes through the written visual anchors in the prompt.
-    edit_refs = (aux_refs or subject_refs)[:1]
-    call_id, started = log_call_start(
-        image_logger,
-        provider="openrouter",
-        operation="generate",
-        task="image",
-        params={
-            "model": config.image_model,
-            "subject_refs": len(subject_refs),
-            "style_refs": len(aux_refs),
-            "width": width or config.image_width,
-            "height": height or config.image_height,
-        },
-        payload=image_payload_summary(prompt),
-    )
-    client = _get_openrouter_client(config)
-    w = width or config.image_width
-    h = height or config.image_height
-    size = _openai_size_for_dims(w, h)
-
-    kwargs: dict = {
-        "model": config.image_model,
-        "prompt": prompt,
-        "size": size,
-        "response_format": "b64_json",
-    }
-
-    # Add reference image as image_url for img2img models
-    if edit_refs and _supports_openrouter_img2img(config.image_model):
-        encoded = f"data:image/png;base64,{await asyncio.to_thread(_encode_image_sync, edit_refs[0])}"
-        kwargs["image_url"] = encoded
-
-    try:
-        response = await client.images.generate(**kwargs)
-        if not response.data or not response.data[0].b64_json:
-            raise ValueError("Empty image response from OpenRouter")
-
-        image_data = base64.b64decode(response.data[0].b64_json)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        await asyncio.to_thread(output_path.write_bytes, image_data)
-        log_call_end(
-            image_logger,
-            call_id=call_id,
-            started=started,
-            provider="openrouter",
-            operation="generate",
-            task="image",
-            ok=True,
-            result={"image_bytes": len(image_data)},
-        )
-        return output_path
-    except Exception as e:
-        log_call_end(
-            image_logger,
-            call_id=call_id,
-            started=started,
-            provider="openrouter",
-            operation="generate",
-            task="image",
-            ok=False,
-            error=e,
-        )
-        raise
-
-
-# ── Public API ────────────────────────────────────────────────────────────────
+from novel_to_comic.usage import ApiResult
 
 
 def _generation_config(config: Config) -> Config:
     model = config.effective_image_model()
     if model.lower().startswith("imagen-"):
         raise ValueError(
-            "Imagen image models are no longer supported. Use a Gemini image "
-            "model such as gemini-3-pro-image-preview or a supported provider model path."
+            "Imagen image models are no longer supported. Use a gateway image "
+            "alias such as canary/image-primary or canary/image-fast."
         )
     if model != config.image_model:
         return config.model_copy(update={"image_model": model})
@@ -732,6 +33,7 @@ async def _downscale_dev_output(config: Config, path: Path, width: int, height: 
         return path
     try:
         from PIL import Image as _PILImage
+
         img = await asyncio.to_thread(_PILImage.open, path)
         if img.width <= width and img.height <= height:
             return path
@@ -751,39 +53,33 @@ async def generate_image(
     steps: int | None = None,
     reference_image_path: Path | None = None,
     ref_type: str = "subject",
+    feature: str = "image.generate",
 ) -> ApiResult[Path]:
-    """Generate a single image using the configured image provider.
+    """Generate a single image through the AI gateway.
 
-    ref_type controls whether the reference image is treated as a subject
-    (character identity) or style reference by the Gemini provider.
+    ref_type controls whether the reference image is treated as a subject or
+    style reference.
     """
     config = _generation_config(config)
     width, height = _effective_dimensions(config, width, height)
     steps = config.effective_image_steps(steps)
     is_style = ref_type == "style"
     refs = None if is_style else ([reference_image_path] if reference_image_path else None)
-    srefs = [reference_image_path] if (is_style and reference_image_path) else None
-    provider = config.image_provider
-    model = config.effective_image_model()
-    input_tokens = output_tokens = 0
-    if provider == "gemini":
-        raw = await _generate_gemini_image(config, prompt, output_path, refs, width, height, srefs)
-    elif provider == "openai":
-        raw, input_tokens, output_tokens = await _generate_openai_image(config, prompt, output_path, width, height, refs, srefs)
-    elif provider == "openrouter":
-        raw = await _generate_openrouter_image(config, prompt, output_path, width, height, refs, srefs)
-    elif provider == "together":
-        raw = await _generate_together_image(config, prompt, output_path, width, height, steps, refs)
-    else:
-        raise ValueError(f"Unsupported image provider: {provider}")
-    final = await _downscale_dev_output(config, raw, width, height)
-    return ApiResult(
-        value=final,
-        usage=UsageRecord(
-            provider=provider, model=model, operation="image",
-            image_count=1, input_tokens=input_tokens, output_tokens=output_tokens,
-        ),
+    style_refs = [reference_image_path] if (is_style and reference_image_path) else None
+    result = await ai_generate_image(
+        config=config,
+        model=config.effective_image_model(),
+        prompt=prompt,
+        output_path=output_path,
+        width=width,
+        height=height,
+        steps=steps,
+        reference_paths=refs,
+        style_refs=style_refs,
+        feature=feature,
     )
+    final = await _downscale_dev_output(config, result.value, width, height)
+    return ApiResult(value=final, usage=result.usage)
 
 
 async def generate_image_multi_ref(
@@ -796,40 +92,25 @@ async def generate_image_multi_ref(
     steps: int | None = None,
     ref_type: str = "subject",
     style_refs: list[Path] | None = None,
+    feature: str = "image.generate_multi_ref",
 ) -> ApiResult[Path]:
-    """Generate a panel image conditioned on character reference images and style refs.
-
-    reference_paths — subject/character refs (identity conditioning).
-    style_refs      — style/environment refs: style sample, location plate, scene anchor.
-                      Placed after subject refs for Gemini so character identity
-                      has priority. Together currently uses subject refs only.
-                      OpenAI uses subject+style refs through the image edit endpoint.
-    """
+    """Generate an image conditioned on subject and style references."""
     config = _generation_config(config)
     width, height = _effective_dimensions(config, width, height)
     steps = config.effective_image_steps(steps)
-    provider = config.image_provider
-    model = config.effective_image_model()
-    input_tokens = output_tokens = 0
-    if provider == "gemini":
-        raw = await _generate_gemini_image(config, prompt, output_path, reference_paths, width, height, style_refs)
-    elif provider == "openai":
-        raw, input_tokens, output_tokens = await _generate_openai_image(
-            config, prompt, output_path, width, height, reference_paths, style_refs,
-        )
-    elif provider == "openrouter":
-        raw = await _generate_openrouter_image(
-            config, prompt, output_path, width, height, reference_paths, style_refs,
-        )
-    elif provider == "together":
-        raw = await _generate_together_image(config, prompt, output_path, width, height, steps, reference_paths)
-    else:
-        raise ValueError(f"Unsupported image provider: {provider}")
-    final = await _downscale_dev_output(config, raw, width, height)
-    return ApiResult(
-        value=final,
-        usage=UsageRecord(
-            provider=provider, model=model, operation="image",
-            image_count=1, input_tokens=input_tokens, output_tokens=output_tokens,
-        ),
+    subject_refs = reference_paths if ref_type != "style" else []
+    merged_style_refs = [*([] if ref_type != "style" else reference_paths), *(style_refs or [])]
+    result = await ai_generate_image(
+        config=config,
+        model=config.effective_image_model(),
+        prompt=prompt,
+        output_path=output_path,
+        width=width,
+        height=height,
+        steps=steps,
+        reference_paths=subject_refs,
+        style_refs=merged_style_refs or None,
+        feature=feature,
     )
+    final = await _downscale_dev_output(config, result.value, width, height)
+    return ApiResult(value=final, usage=result.usage)

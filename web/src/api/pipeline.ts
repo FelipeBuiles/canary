@@ -108,3 +108,13 @@ export function fetchStageEstimate(
     `/projects/${encodeURIComponent(project)}/estimate?stage=${encodeURIComponent(stage)}`,
   );
 }
+
+export function fetchRegenEstimate(
+  project: string,
+  sceneId: string,
+  panelNumber: number,
+): Promise<{ scene_id: string; panel_number: number; credits: number }> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/regen-estimate?scene_id=${encodeURIComponent(sceneId)}&panel_number=${panelNumber}`,
+  );
+}

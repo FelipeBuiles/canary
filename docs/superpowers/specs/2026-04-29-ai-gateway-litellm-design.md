@@ -297,6 +297,12 @@ The AI client finalizes `ai_usage_events`. Billing settlement should consume
 the finalized event and then write `credit_ledger` rows, either immediately or
 through existing stage settlement flows.
 
+Cost calculation is still transitional. Now that LiteLLM/Langfuse captures
+provider usage and spend metadata, rewrite `usage.calculate_cost()` and the
+credit settlement path around finalized gateway events instead of relying on
+alias-local static pricing rules. In particular, image aliases can map to
+providers with different token or per-image billing semantics.
+
 Failure billing policy:
 
 - `AI_BILL_FAILED_REQUESTS=provider_usage_only` by default.

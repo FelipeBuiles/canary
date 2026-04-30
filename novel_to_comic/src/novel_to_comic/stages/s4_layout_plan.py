@@ -426,6 +426,7 @@ async def _plan_scene_llm(
         user_content=user,
         temperature=0.4,
         max_output_tokens=16384,
+        feature="plan.scene_layout",
     )
     if usage_records is not None and api_result.usage is not None:
         usage_records.append(api_result.usage)

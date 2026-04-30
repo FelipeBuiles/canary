@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
 from novel_to_comic.config import Config, LANGUAGE_NAMES, save_config
+from novel_to_comic.ai import ai_request_context
 from novel_to_comic.assembly.html_renderer import build_page_html, resolve_theme, write_theme_css, THEMES
 from novel_to_comic.layout_planning import (
     apply_page_layout_preset,
@@ -273,6 +274,7 @@ async def _generate_lettering_style(config: Config) -> tuple[dict[str, str], obj
             user_content=user,
             temperature=0.45,
             max_output_tokens=1400,
+            feature="compose.lettering_style",
         )
         result = api_result.value
     except Exception:
@@ -309,6 +311,7 @@ async def _translate_text_items(config: Config, items: list[dict]) -> tuple[dict
         user_content=user,
         temperature=0.2,
         max_output_tokens=6000,
+        feature="compose.translate_text",
     )
     result = api_result.value
     if isinstance(result, dict):
@@ -473,7 +476,14 @@ async def generate_page_style_vars(
     """Generate page-level lettering/panel CSS variables from the active image style."""
     project_dir, config, state = project
 
-    style_vars, usage = await _generate_lettering_style(config)
+    with ai_request_context(
+        user_id=user_id,
+        project_id=get_project_id(get_db(), user_id, project_name),
+        project_name=project_name,
+        workspace_id=str(project_dir.parent),
+        stage="compose",
+    ):
+        style_vars, usage = await _generate_lettering_style(config)
     if usage:
         debit_model_usage(
             get_db(),
@@ -598,7 +608,14 @@ async def translate_page_bubbles(
                         "text": bubble.text,
                     })
 
-    translations, usage = await _translate_text_items(config, items)
+    with ai_request_context(
+        user_id=user_id,
+        project_id=get_project_id(get_db(), user_id, project_name),
+        project_name=project_name,
+        workspace_id=str(project_dir.parent),
+        stage="compose",
+    ):
+        translations, usage = await _translate_text_items(config, items)
     if usage:
         debit_model_usage(
             get_db(),
@@ -660,7 +677,14 @@ async def translate_single_page_bubbles(
                     "text": bubble.text,
                 })
 
-    translations, usage = await _translate_text_items(config, items)
+    with ai_request_context(
+        user_id=user_id,
+        project_id=get_project_id(get_db(), user_id, project_name),
+        project_name=project_name,
+        workspace_id=str(project_dir.parent),
+        stage="compose",
+    ):
+        translations, usage = await _translate_text_items(config, items)
     if usage:
         debit_model_usage(
             get_db(),
