@@ -71,9 +71,6 @@ export function AdaptRoom() {
 
   // Characters in current scene for filter chips
   const filterChars = screenplay?.characters ?? [];
-  const narrationBeats = screenplay?.beats
-    .map((beat, index) => ({ beat, index }))
-    .filter(({ beat }) => beat.type === "narration") ?? [];
   const filteredBeats = screenplay?.beats.filter((beat) => {
     if (!activeCharFilter) return true;
     return beat.character_id === activeCharFilter;

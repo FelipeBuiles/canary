@@ -116,7 +116,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
 
   const current = projects?.find((p) => p.name === name);
   const projectTitle = current?.project_name ?? name ?? t("PROJECT INDEX");
-  const settingsPath = name ? `/project/${encodeURIComponent(name)}/settings` : "/settings";
+  const settingsPath = name ? `/project/${encodeURIComponent(name)}/settings` : "/account";
   const isSettingsActive = location.pathname.endsWith("/settings");
 
   const styleSuggestions = stylesData?.suggestions ?? [];
@@ -165,7 +165,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
 
   const activeStageRoute = pipelineStages.find((stage) =>
     location.pathname.endsWith(`/${stage.route}`),
-  )?.route ?? pipelineStages[0]?.route ?? "";
+  )?.route ?? (isSettingsActive ? "" : pipelineStages[0]?.route ?? "");
 
   const stageDetails = useMemo<Record<string, string>>(() => {
     const details: Record<string, string> = {};
@@ -503,7 +503,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           </span>
         </Link>
 
-        <div className="relative min-h-0 flex-1">
+        <div className="relative min-h-0 flex-1 mb-8">
           <nav ref={navRef} aria-label="Pipeline stages" className="h-full overflow-y-auto py-4 2xl:py-5 min-[2200px]:py-8">
             {name ? pipelineStages.map((stage) => renderStageRow(stage)) : (
               <div className="px-4 py-4 font-meta text-[0.6rem] tracking-[0.14em] text-bristol/35">
@@ -511,6 +511,21 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
               </div>
             )}
           </nav>
+        </div>
+
+        <div className="border-t border-bristol/10">
+          <Link
+            to={settingsPath}
+            className={cn(
+              "flex w-full items-center gap-3 border-l-[3px] px-5 py-3 font-meta text-[0.62rem] tracking-[0.14em] transition-colors xl:px-6 2xl:text-[0.68rem] min-[2200px]:px-9 min-[2200px]:py-4 min-[2200px]:text-[0.9rem]",
+              isSettingsActive
+                ? "border-l-narrator-gold bg-bristol/8 text-bristol"
+                : "border-transparent text-bristol/45 hover:bg-bristol/5 hover:text-bristol/70",
+            )}
+          >
+            <span className="text-[0.48rem] 2xl:text-[0.52rem] min-[2200px]:text-[0.72rem]">⊙</span>
+            {t("Settings")}
+          </Link>
         </div>
 
         <div className="border-t border-bristol/10 p-4 2xl:p-5 min-[2200px]:p-7">
@@ -542,15 +557,6 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
             </div>
           )}
           <CreditBalance className="mt-3 2xl:mt-4" />
-          <div className="mt-3 flex justify-center gap-3 font-meta text-[0.58rem] tracking-[0.08em] text-bristol/30 2xl:text-[0.66rem] min-[2200px]:mt-6 min-[2200px]:text-[1rem]">
-            <Link to={settingsPath} className={isSettingsActive ? "text-bristol" : "hover:text-bristol/60"}>
-              {t("Settings")}
-            </Link>
-            <span>·</span>
-            <a href="https://github.com/anthropics/canary/issues" target="_blank" rel="noreferrer" className="hover:text-bristol/60">
-              {t("Support")}
-            </a>
-          </div>
         </div>
       </aside>
     </>

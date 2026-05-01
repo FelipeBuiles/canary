@@ -27,6 +27,12 @@ export function createProject(
   });
 }
 
+export function deleteProject(name: string): Promise<void> {
+  return apiFetch(`/projects/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+}
+
 export function generateProjectCover(
   project: string,
 ): Promise<{ status: string; path: string; job: GenerationJob | null }> {

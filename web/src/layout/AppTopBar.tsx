@@ -99,9 +99,8 @@ export function AppTopBar() {
                 </div>
               </div>
               {[
-                ["Profile & Account", "/settings", "⊙"],
+                ["Account", "/account", "⊙"],
                 ["Credits & Billing", "/credits", "◆"],
-                ["Settings", "/settings", "⊙"],
               ].map(([label, to, mark]) => (
                 <Link
                   key={label}

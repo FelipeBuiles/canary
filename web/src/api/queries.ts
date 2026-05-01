@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { listProjects, getProjectStatus, createProject, generateProjectCover } from "./projects";
+import { listProjects, getProjectStatus, createProject, deleteProject, generateProjectCover } from "./projects";
 import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenPlate, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate } from "./pipeline";
 import type { ConfigOverrides, StoryBible, CharacterVoice } from "../types/api";
 import { getBalance, getCreditHistory, getPricingReference } from "./credits";
@@ -67,6 +67,16 @@ export function useGenerateProjectCover() {
   return useMutation({
     mutationFn: ({ project }: { project: string }) => generateProjectCover(project),
     onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+}
+
+export function useDeleteProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name }: { name: string }) => deleteProject(name),
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
   });
