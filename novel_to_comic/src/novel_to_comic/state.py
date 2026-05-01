@@ -42,8 +42,8 @@ class StageState(BaseModel):
     error: Optional[str] = None
 
 
-STAGE_NAMES = ["extract", "cast", "adapt", "plan", "storyboard", "direct", "draw", "compose"]
-CHECKPOINT_STAGES = {"extract", "cast", "direct", "draw"}
+STAGE_NAMES = ["extract", "style", "cast", "adapt", "plan", "storyboard", "direct", "draw", "compose"]
+CHECKPOINT_STAGES = {"extract", "style", "cast", "direct", "draw"}
 
 
 class PipelineState(BaseModel):

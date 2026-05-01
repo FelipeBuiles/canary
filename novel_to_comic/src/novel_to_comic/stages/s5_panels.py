@@ -1,4 +1,4 @@
-"""Stage 5 compatibility projection: LayoutPlan -> PanelBreakdown JSON.
+"""Stage 5b compatibility projection: LayoutPlan -> PanelBreakdown JSON.
 
 This stage remains only to support existing storyboard-facing artifacts and UI
 while the canonical structural source of truth has moved to layout_plan.

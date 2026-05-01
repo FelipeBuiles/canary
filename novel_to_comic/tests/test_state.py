@@ -41,10 +41,10 @@ class TestStageState:
 
 
 class TestPipelineState:
-    def test_creates_all_8_stages_on_init(self):
+    def test_creates_all_stages_on_init(self):
         state = create_initial_state("my-project", "novel.txt")
         assert list(state.stages.keys()) == STAGE_NAMES
-        assert len(state.stages) == 8
+        assert len(state.stages) == len(STAGE_NAMES)
 
     def test_total_cost_starts_at_zero(self):
         state = create_initial_state("p", "n.txt")
@@ -52,12 +52,12 @@ class TestPipelineState:
 
     def test_stage_names_are_in_order(self):
         assert STAGE_NAMES == [
-            "extract", "cast", "adapt", "plan",
+            "extract", "style", "cast", "adapt", "plan",
             "storyboard", "direct", "draw", "compose",
         ]
 
     def test_checkpoint_stages(self):
-        assert CHECKPOINT_STAGES == {"extract", "cast", "direct", "draw"}
+        assert CHECKPOINT_STAGES == {"extract", "style", "cast", "direct", "draw"}
         # plan, storyboard, compose are NOT checkpoints
         assert "plan" not in CHECKPOINT_STAGES
         assert "storyboard" not in CHECKPOINT_STAGES

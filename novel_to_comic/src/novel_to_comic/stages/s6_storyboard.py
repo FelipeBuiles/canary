@@ -1,4 +1,4 @@
-"""Stage 5: Panel JSON → compact structured image prompt specs.
+"""Stage 6: Panel JSON → compact structured image prompt specs.
 
 Assembles panel-specific prompt specs from structured pipeline artifacts.  The
 selected style is stored for review, but Stage 6 prepends the current active
