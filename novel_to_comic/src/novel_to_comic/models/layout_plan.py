@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 PanelImportance = Literal["standard", "accent", "hero", "splash", "inset"]
@@ -86,6 +86,13 @@ class LLMNarrationDecisionSpec(BaseModel):
     panel_index: int | None = None
     preferred_zone: CaptionZone = "top"
     decision_reason: str
+
+    @field_validator("preferred_zone", mode="before")
+    @classmethod
+    def _normalize_zone(cls, v: str) -> str:
+        if v == "center":
+            return "overlay_center"
+        return v
 
 
 class PlannedPanel(BaseModel):

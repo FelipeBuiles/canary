@@ -127,11 +127,10 @@ def _image_summary(refs: list[tuple[Path, bytes | None]]) -> list[dict[str, Any]
 
 def _metadata(feature: str, operation: str, model_alias: str, event_id: str) -> dict[str, Any]:
     ctx = current_ai_request_context()
-    tags = ["canary", feature, operation]
-    if ctx.stage:
-        tags.append(ctx.stage)
+    tags = [ctx.stage, operation]
     return {
-        "generation_name": feature,
+        "trace_name": feature,
+        "generation_name": model_alias,
         "trace_id": ctx.request_id or event_id,
         "session_id": ctx.project_id or ctx.project_name or ctx.workspace_id,
         "user_id": ctx.user_id,

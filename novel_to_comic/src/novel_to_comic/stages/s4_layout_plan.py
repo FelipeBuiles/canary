@@ -669,6 +669,7 @@ def _build_narration_decisions(
         if beat.type == "narration"
     }
     panel_by_index = {panel.panel_number: panel for panel in panels}
+    max_panel = max(panel_by_index) if panel_by_index else 0
     decisions: list[NarrationDecision] = []
     used: set[int] = set()
 
@@ -676,7 +677,11 @@ def _build_narration_decisions(
         beat = narration_by_index.get(spec.beat_index)
         if beat is None:
             continue
-        panel = panel_by_index.get(spec.panel_index or -1)
+        # Clamp panel_index to valid range before lookup
+        raw_idx = spec.panel_index
+        if raw_idx is not None and max_panel > 0:
+            raw_idx = max(1, min(raw_idx, max_panel))
+        panel = panel_by_index.get(raw_idx or -1)
         if spec.decision == "rendered" and panel is None:
             panel = panels[-1] if panels else None
             warnings.append(
