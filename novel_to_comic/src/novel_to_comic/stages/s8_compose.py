@@ -1,4 +1,4 @@
-"""Stage 7: Panel images → ComicPage JSON → HTML → PNG → PDF/CBZ.
+"""Stage 8: Panel images → ComicPage JSON → HTML → PNG → PDF/CBZ.
 
 Two distinct responsibilities:
 

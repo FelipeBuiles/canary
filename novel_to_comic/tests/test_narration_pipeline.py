@@ -3,7 +3,7 @@ from novel_to_comic.models.layout_plan import LLMNarrationDecisionSpec, PlannedP
 from novel_to_comic.models.panel import ScreenplayBeat
 from novel_to_comic.models.story_bible import Location, StoryBible
 from novel_to_comic.prompting import build_planned_panel_prompt_spec
-from novel_to_comic.stages.s4_layout_plan import (
+from novel_to_comic.stages.s5_layout_plan import (
     _build_narration_decisions,
     _sync_rendered_narration,
 )

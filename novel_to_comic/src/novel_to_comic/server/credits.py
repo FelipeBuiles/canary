@@ -73,6 +73,8 @@ def estimate_stage_provider_cost_usd(
 ) -> float:
     if stage == "extract":
         return _estimate_extract_cost(config, project_dir, state)
+    if stage == "style":
+        return _estimate_style_cost(config, project_dir)
     if stage == "cast":
         return _estimate_cast_cost(config, project_dir)
     if stage == "adapt":
@@ -120,6 +122,16 @@ def _load_json_model(path: Path, model):
         return None
 
 
+def _estimate_style_cost(config: Config, project_dir: Path) -> float:
+    from novel_to_comic import artifacts
+    if artifacts.style_suggestions_path(project_dir).exists():
+        return 0.0
+    from novel_to_comic.usage import estimate_text_cost
+    story_bible_path = artifacts.story_bible_path(project_dir)
+    context = _safe_text(story_bible_path)[:3000]
+    return estimate_text_cost(config.effective_prompt_model(), context)
+
+
 def _estimate_cast_cost(config: Config, project_dir: Path) -> float:
     from novel_to_comic.models.story_bible import StoryBible
 
@@ -142,7 +154,7 @@ def _estimate_cast_cost(config: Config, project_dir: Path) -> float:
 
 
 def _estimate_adapt_cost(config: Config, project_dir: Path) -> float:
-    from novel_to_comic.stages.s3_screenplay import PROMPT_PATH
+    from novel_to_comic.stages.s4_screenplay import PROMPT_PATH
     from novel_to_comic.models.story_bible import StoryBible
 
     story_bible = _load_json_model(project_dir / "story_bible.json", StoryBible)
@@ -164,7 +176,7 @@ def _estimate_adapt_cost(config: Config, project_dir: Path) -> float:
 
 def _estimate_plan_cost(config: Config, project_dir: Path) -> float:
     from novel_to_comic.models.story_bible import StoryBible
-    from novel_to_comic.stages.s4_layout_plan import _PLAN_SCENE_SYSTEM
+    from novel_to_comic.stages.s5_layout_plan import _PLAN_SCENE_SYSTEM
 
     story_bible = _load_json_model(project_dir / "story_bible.json", StoryBible)
     if story_bible is None:
@@ -185,7 +197,7 @@ def _estimate_plan_cost(config: Config, project_dir: Path) -> float:
 
 def _estimate_draw_cost(config: Config, project_dir: Path) -> float:
     from novel_to_comic.models.story_bible import StoryBible
-    from novel_to_comic.stages.s6_generate import _find_style_sample, estimate_panel_image_cost_usd
+    from novel_to_comic.stages.s7_draw import _find_style_sample, estimate_panel_image_cost_usd
 
     prompts_dir = project_dir / "direct"
     if not prompts_dir.exists():

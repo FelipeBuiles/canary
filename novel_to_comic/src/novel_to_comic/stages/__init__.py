@@ -18,25 +18,27 @@ class Stage:
 # and Stage must be defined before those modules are loaded.
 from novel_to_comic.stages import (  # noqa: E402
     s1_extract,
-    s2_index,
-    s3_screenplay,
-    s4_layout_plan,
-    s4_panels,
-    s5_prompts,
-    s6_generate,
-    s7_assemble,
+    s2_style,
+    s3_cast,
+    s4_screenplay,
+    s5_layout_plan,
+    s5_panels,
+    s6_storyboard,
+    s7_draw,
+    s8_compose,
 )
 
 REGISTRY: dict[str, Stage] = {
     m.STAGE.name: m.STAGE
     for m in [
         s1_extract,
-        s2_index,
-        s3_screenplay,
-        s4_layout_plan,
-        s4_panels,
-        s5_prompts,
-        s6_generate,
-        s7_assemble,
+        s2_style,
+        s3_cast,
+        s4_screenplay,
+        s5_layout_plan,
+        s5_panels,
+        s6_storyboard,
+        s7_draw,
+        s8_compose,
     ]
 }

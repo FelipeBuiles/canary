@@ -48,7 +48,6 @@ from ..credits import (
 )
 from ..db import get_db
 from ..deps import get_project, project_key
-from .styles import is_style_selected
 from ..generation_jobs import (
     enqueue_generation_job,
     find_active_generation_job,
@@ -346,7 +345,7 @@ async def regen_panel_estimate(
     user_id: str = Depends(get_current_user),
 ):
     """Return the estimated credit cost to regenerate one panel image."""
-    from novel_to_comic.stages.s6_generate import estimate_panel_image_cost_usd
+    from novel_to_comic.stages.s7_draw import estimate_panel_image_cost_usd
     project_dir, config, _state = project
     prompt_path = artifacts.panel_prompt_path(project_dir, scene_id, panel_number)
     if not prompt_path.exists():
@@ -379,21 +378,25 @@ async def run_pipeline(
     if existing and not existing.done():
         raise HTTPException(409, "A stage is already running for this project")
 
-    # Style gate: extract must be done, target includes post-extract stage,
-    # and no style selected → block. Does NOT gate stage=extract or regen-* endpoints.
-    _POST_EXTRACT = {"cast", "adapt", "plan", "storyboard", "direct", "draw", "compose"}
-    extract_done = state.stages["extract"].status.value in ("complete", "awaiting_review")
-    target_includes_post_extract = (
-        stage is None
-        or stage in _POST_EXTRACT
-    )
-    if extract_done and target_includes_post_extract and not is_style_selected(project_dir, config):
-        raise HTTPException(403, "Select a style before running post-extract stages.")
-
     if stage == "compose":
         draw_error = _draw_ready_for_compose_error(project_dir)
         if draw_error:
             raise HTTPException(409, draw_error)
+
+    # Gate: post-style stages require style to be approved
+    _POST_STYLE_STAGES = {"cast", "adapt", "plan", "storyboard", "direct", "draw", "compose"}
+    if stage is None or stage in _POST_STYLE_STAGES:
+        from ..routers.styles import is_style_selected
+        style_state = state.stages.get("style")
+        style_incomplete = style_state is None or style_state.status not in (
+            StageStatus.COMPLETE,
+        )
+        if style_incomplete or not is_style_selected(project_dir, config):
+            raise HTTPException(
+                403,
+                "Style must be approved before running post-style stages. "
+                "Run style stage and approve it first.",
+            )
 
     if stage and rerun:
         _reset_stage_and_downstream(state, stage)
@@ -524,7 +527,7 @@ async def regen_panel(
         planned_panel_id = None
 
     async def _runner() -> None:
-        from novel_to_comic.stages import s6_generate
+        from novel_to_comic.stages import s7_draw
         clear_panel_acceptance(project_dir, scene_id, panel_number)
         db = get_db()
         pid = get_project_id(db, user_id, project_name)
@@ -535,7 +538,7 @@ async def regen_panel(
             workspace_id=str(project_dir.parent),
             stage="draw",
         ):
-            result = await s6_generate.regenerate_panel_image(
+            result = await s7_draw.regenerate_panel_image(
                 config,
                 project_dir,
                 scene_id,
@@ -678,7 +681,7 @@ async def regen_panel_with_instruction(
     )
 
     async def _runner() -> None:
-        from novel_to_comic.stages import s6_generate
+        from novel_to_comic.stages import s7_draw
 
         with ai_request_context(
             user_id=user_id,
@@ -687,7 +690,7 @@ async def regen_panel_with_instruction(
             workspace_id=str(project_dir.parent),
             stage="draw",
         ):
-            result = await s6_generate.regenerate_panel_image(
+            result = await s7_draw.regenerate_panel_image(
                 config,
                 project_dir,
                 scene_id,
@@ -738,7 +741,7 @@ async def regen_ref(
     pkey = project_key(user_id, project_name)
 
     async def _runner() -> None:
-        from novel_to_comic.stages import s2_index
+        from novel_to_comic.stages import s3_cast
         with ai_request_context(
             user_id=user_id,
             project_id=get_project_id(get_db(), user_id, project_name),
@@ -746,7 +749,7 @@ async def regen_ref(
             workspace_id=str(project_dir.parent),
             stage="cast",
         ):
-            result = await s2_index.regenerate_character_ref(
+            result = await s3_cast.regenerate_character_ref(
                 config,
                 project_dir,
                 char_id,
@@ -804,7 +807,7 @@ async def regen_plate(
     pkey = project_key(user_id, project_name)
 
     async def _runner() -> None:
-        from novel_to_comic.stages import s2_index
+        from novel_to_comic.stages import s3_cast
         with ai_request_context(
             user_id=user_id,
             project_id=get_project_id(get_db(), user_id, project_name),
@@ -812,7 +815,7 @@ async def regen_plate(
             workspace_id=str(project_dir.parent),
             stage="cast",
         ):
-            result = await s2_index.regenerate_location_plate(
+            result = await s3_cast.regenerate_location_plate(
                 config,
                 project_dir,
                 loc_id,

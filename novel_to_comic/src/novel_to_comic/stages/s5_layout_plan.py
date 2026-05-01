@@ -1,4 +1,4 @@
-"""Stage 4: Screenplay -> LayoutPlan JSON.
+"""Stage 5: Screenplay -> LayoutPlan JSON.
 
 Two planning modes are supported, controlled by ``config.plan_mode``:
 

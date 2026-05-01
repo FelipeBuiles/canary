@@ -10,6 +10,7 @@ from novel_to_comic.config import Config, save_config
 from novel_to_comic.ai import ai_request_context
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.prompting import build_style_sample_prompt
+from novel_to_comic.stages.s2_style import generate_suggestions
 
 from ..auth import get_current_user
 from ..credits import debit_model_usage, get_project_id
@@ -73,67 +74,6 @@ def _save_suggestions(project_dir, suggestions, title):
     path.write_text(json.dumps({"title": title, "suggestions": suggestions}, indent=2))
 
 
-async def _suggest_styles(
-    config: Config,
-    bible,
-    project_dir,
-    user_id: str,
-    project_id: str | None,
-    existing_labels: list[str] | None = None,
-) -> tuple[list[dict], object | None]:
-    from novel_to_comic.clients import text
-
-    avoid = ""
-    if existing_labels:
-        joined = ", ".join(f'"{label}"' for label in existing_labels)
-        avoid = f"\nThese styles have already been suggested and must NOT be repeated or closely paraphrased: [{joined}]. "
-
-    system = (
-        "You are a visual art director for adapted fiction. Given a story's details, generate 5 "
-        "distinct visual style templates for image generation prompts. "
-        "Each style must come from a completely different visual tradition — span painting, printmaking, "
-        "photography, animation, textile, folk art, editorial, fine art, street art, or any other visual language. "
-        "Do NOT default to cinematic or photorealistic. "
-        f"{avoid}"
-        "At least 3 of the 5 should complement the story's mood — but include at least 1 unexpected or contrasting choice "
-        "that could reveal a surprising side of the story. "
-        "Each template is a single paragraph of 40-70 words of vivid, specific visual direction. "
-        "Write naturally — do NOT follow a rigid 'medium, palette, lighting, composition, mood' formula. "
-        "Vary sentence structure, what you emphasize, and how you describe each style. "
-        "Output a JSON array only, no markdown. "
-        f"{config.generation_language_instruction()}"
-    )
-    user = (
-        f'Story: "{bible.title}" by {bible.author}\n'
-        f"Style notes: {bible.style_notes or 'none'}\n"
-        f"Genre/tone: {', '.join({s.scene_type for s in bible.scenes})}\n\n"
-        f"Generate 5 style options that would suit this story's tone. "
-        f"Each template must describe a general visual aesthetic — do NOT reference specific characters, "
-        f"locations, or plot elements from the story. The template will be combined with story details later, "
-        f"so it should only define the visual style (medium, palette, texture, atmosphere). "
-        f"Output JSON array of 5 objects: "
-        f'[{{"label": "Style Name (2-4 words)", "template": "40-70 word description"}}, ...]'
-    )
-
-    with ai_request_context(
-        user_id=user_id,
-        project_id=project_id,
-        project_name=project_dir.name,
-        workspace_id=str(project_dir.parent),
-        stage="style",
-    ):
-        api_result = await text.generate_json(
-            config=config, model=config.effective_prompt_model(),
-            system_prompt=system, user_content=user,
-            temperature=1.0,
-            feature="style.suggestions",
-        )
-    result = api_result.value
-    if isinstance(result, list):
-        return result, api_result.usage
-    if isinstance(result, dict):
-        return result.get("styles", []), api_result.usage
-    return [], api_result.usage
 
 
 async def _generate_style_sample(config, bible, project_dir, sample_path, user_id: str, project_id: str | None):
@@ -261,14 +201,18 @@ async def suggest_styles(
             existing = _load_suggestions(project_dir) or []
             existing_labels = [s.get("label", "") for s in existing if isinstance(s, dict)]
             project_id = get_project_id(get_db(), user_id, project_name)
-            new_suggestions, usage = await _suggest_styles(
-                config,
-                bible,
-                project_dir,
-                user_id,
-                project_id,
-                existing_labels=existing_labels,
-            )
+            with ai_request_context(
+                user_id=user_id,
+                project_id=project_id,
+                project_name=project_dir.name,
+                workspace_id=str(project_dir.parent),
+                stage="style",
+            ):
+                new_suggestions, usage = await generate_suggestions(
+                    config,
+                    bible,
+                    existing_labels=existing_labels,
+                )
             if usage:
                 debit_model_usage(
                     get_db(),

@@ -8,7 +8,7 @@ from novel_to_comic.config import Config
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.server.routers.stages import list_images
 from novel_to_comic.state import create_initial_state
-from novel_to_comic.stages import s6_generate
+from novel_to_comic.stages import s7_draw
 
 
 def test_generate_panel_writes_failure_metadata(tmp_path, monkeypatch):
@@ -16,7 +16,7 @@ def test_generate_panel_writes_failure_metadata(tmp_path, monkeypatch):
     prompt_dir.mkdir(parents=True)
     prompt_path = prompt_dir / "panel_001.json"
     prompt = ImagePrompt(
-        prompt_version=s6_generate.IMAGE_PROMPT_VERSION,
+        prompt_version=s7_draw.IMAGE_PROMPT_VERSION,
         planned_panel_id="scene_001:panel_001",
         scene_id="scene_001",
         panel_number=1,
@@ -31,14 +31,14 @@ def test_generate_panel_writes_failure_metadata(tmp_path, monkeypatch):
         raise ValueError("No image part in Gemini response. Gemini details: IMAGE_PROHIBITED_CONTENT")
 
     monkeypatch.setattr(
-        s6_generate.flux,
+        s7_draw.flux,
         "generate_image_multi_ref",
         fail_generate_image_multi_ref,
     )
 
     with pytest.raises(ValueError, match="No image part"):
         asyncio.run(
-            s6_generate._generate_panel(
+            s7_draw._generate_panel(
                 Config(),
                 tmp_path,
                 prompt_path,
@@ -96,7 +96,7 @@ def test_panel_estimate_counts_actual_uploaded_references(tmp_path):
     ).model_dump_json())
 
     config = Config(image_model="canary/image-fast")
-    cost = s6_generate.estimate_panel_image_cost_usd(
+    cost = s7_draw.estimate_panel_image_cost_usd(
         config,
         tmp_path,
         prompt_path,
@@ -143,6 +143,7 @@ def test_list_images_marks_failure_metadata_as_failed_even_with_existing_image(t
         "status": "failed",
         "image_available": True,
         "accepted": False,
+        "version_count": 0,
         "failure_classification": "generation_error",
         "failure_message": "Image generation failed during regeneration.",
     }]

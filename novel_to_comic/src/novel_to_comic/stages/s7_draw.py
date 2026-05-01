@@ -1,4 +1,4 @@
-"""Stage 6: Image prompts → Panel images
+"""Stage 7: Image prompts → Panel images
 
 Generates panel images using the assembled prompts and character reference
 images for multi-reference consistency.

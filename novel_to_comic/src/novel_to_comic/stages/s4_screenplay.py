@@ -1,4 +1,4 @@
-"""Stage 3: Scene text → Screenplay format
+"""Stage 4: Scene text → Screenplay format
 
 Converts prose scenes into observable-action screenplays suitable for
 comic panel breakdown.
@@ -191,7 +191,7 @@ async def run(
     scene_ids: list[str] | None = None,
     on_event: EventCallback | None = None,
 ) -> None:
-    """Execute Stage 3: Convert scenes to screenplays."""
+    """Execute Stage 4: Convert scenes to screenplays."""
     emit = on_event or _NOOP
 
     story_bible = artifacts.read_story_bible(project_dir)
@@ -254,7 +254,7 @@ async def run(
               "done": state.stages["adapt"].items_done,
               "total": state.stages["adapt"].items_total})
         save_state(state, project_dir)
-        console.print("[green]Stage 3 complete.[/green]")
+        console.print("[green]Stage 4 complete.[/green]")
 
     except Exception as e:
         fail_stage(state, "adapt", str(e))

@@ -1,4 +1,4 @@
-"""Stage 2: character reference images + location plates.
+"""Stage 3: character reference images + location plates.
 
 Part A: Generate character reference sheets
 Part B: Generate location background plates
@@ -479,7 +479,7 @@ async def run(
     loc_ids: list[str] | None = None,
     on_event: EventCallback | None = None,
 ) -> None:
-    """Execute Stage 2: generate character reference images and location plates."""
+    """Execute Stage 3: generate character reference images and location plates."""
     emit = on_event or _NOOP
 
     story_bible = artifacts.read_story_bible(project_dir)
@@ -515,9 +515,9 @@ async def run(
         save_state(state, project_dir)
 
         if not is_partial:
-            console.print("[yellow]Stage 2 complete — awaiting review.[/yellow]")
+            console.print("[yellow]Stage 3 complete — awaiting review.[/yellow]")
             console.print("Review character refs in: refs/")
-            console.print("Run [bold]pipeline approve --project . --stage index[/bold] to continue.")
+            console.print("Run [bold]pipeline approve --project . --stage cast[/bold] to continue.")
 
     except Exception as e:
         fail_stage(state, "cast", str(e))

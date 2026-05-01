@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, RedirectResponse
 
-from novel_to_comic.stages import s7_assemble
+from novel_to_comic.stages import s8_compose
 from novel_to_comic.storage import export_url, r2_configured, upload_export
 
 from ..auth import get_current_user
@@ -23,7 +23,7 @@ async def trigger_export(
     if fmt not in ("pdf", "cbz"):
         raise HTTPException(400, "Format must be 'pdf' or 'cbz'")
 
-    await s7_assemble.run(config, project_dir, state, formats=[fmt], rebuild=False)
+    await s8_compose.run(config, project_dir, state, formats=[fmt], rebuild=False)
 
     export_path = project_dir / "exports" / f"comic.{fmt}"
     if not export_path.exists():
