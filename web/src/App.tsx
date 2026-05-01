@@ -1,7 +1,8 @@
 import { Navigate, Routes, Route } from "react-router-dom";
 import { Shell } from "./layout/Shell";
 import { Library } from "./pages/Library";
-import { Settings } from "./pages/Settings";
+import { AccountPage } from "./pages/AccountPage";
+import { ProjectSettingsPage } from "./pages/ProjectSettingsPage";
 import { ProjectRooms } from "./layout/ProjectRooms";
 import { NavigateToRoom } from "./pages/NavigateToRoom";
 import { StoryBibleRoom } from "./pages/rooms/StoryBibleRoom";
@@ -41,9 +42,9 @@ export function App() {
             path="dev/primitives"
             element={import.meta.env.DEV ? <PrimitiveReference /> : <Navigate to="/" replace />}
           />
-          <Route path="settings" element={<Settings />} />
+          <Route path="account" element={<AccountPage />} />
           <Route path="credits" element={<CreditsPage />} />
-          <Route path="project/:name/settings" element={<Settings />} />
+          <Route path="project/:name/settings" element={<ProjectSettingsPage />} />
           <Route path="project/:name" element={<ProjectRooms />}>
             <Route index element={<NavigateToRoom />} />
             <Route path="extract" element={<StoryBibleRoom />} />

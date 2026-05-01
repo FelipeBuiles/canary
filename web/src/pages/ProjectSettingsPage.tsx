@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { useParams } from "react-router-dom";
-import { useProjectConfig, useUpdateProjectConfig } from "../api/queries";
-import { SectionLabel } from "../components/SectionLabel";
-import { SectionDivider } from "../components/SectionDivider";
+import { useNavigate, useParams } from "react-router-dom";
+import { useProjectConfig, useUpdateProjectConfig, useDeleteProject } from "../api/queries";
+import { SettingsLayout } from "../components/ui/SettingsLayout";
+import { ConfirmModal } from "../components/ui/ConfirmModal";
 import { Card } from "../components/ui/Card";
 import { SelectField, SwitchField, TextField } from "../components/ui/Field";
+import { Button } from "../components/ui/Button";
 import { LANGUAGES, useI18n } from "../i18n";
 import type { LanguageCode } from "../i18n";
 import { useShowDevContent } from "../lib/devContent";
@@ -32,6 +33,13 @@ const TEXT_MODEL_FIELDS: Array<{ key: keyof ConfigOverrides; label: string; hint
   { key: "screenplay_model", label: "ADAPT MODEL", hint: "Stage 3 — screenplay adaptation" },
   { key: "panel_model", label: "PLAN MODEL", hint: "Stage 4 — layout planning" },
   { key: "prompt_model", label: "PROMPT MODEL", hint: "Style suggestions, lettering, translation" },
+];
+
+const TABS = [
+  { id: "language", label: "Language" },
+  { id: "dev", label: "Dev Content" },
+  { id: "models", label: "Model Config" },
+  { id: "delete", label: "Delete Project" },
 ];
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
@@ -81,12 +89,16 @@ function ImageModelField({
   );
 }
 
-export function Settings() {
+export function ProjectSettingsPage() {
   const { name } = useParams();
+  const navigate = useNavigate();
   const { language, setLanguage, t } = useI18n();
   const { data: config } = useProjectConfig(name);
   const updateConfig = useUpdateProjectConfig();
+  const deleteMutation = useDeleteProject();
   const [showDevContent, setShowDevContent] = useShowDevContent();
+  const [activeTab, setActiveTab] = useState("language");
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const updating = updateConfig.isPending;
   const patch = (data: Parameters<typeof updateConfig.mutate>[0]["data"]) => {
@@ -94,48 +106,38 @@ export function Settings() {
     updateConfig.mutate({ project: name, data });
   };
 
+  function handleDelete() {
+    if (!name) return;
+    deleteMutation.mutate(
+      { name },
+      { onSuccess: () => navigate("/") },
+    );
+  }
+
   return (
-    <div className="space-y-10">
-      <section>
-        <SectionLabel tone="red">{t("STUDIO CONFIG // PREFERENCES")}</SectionLabel>
-        <h1 className="mt-4 max-w-[14ch] display-impact">{t("SETTINGS")}</h1>
-        <p className="mt-5 lead-pulp max-w-[44rem]">
-          {t("Studio-wide preferences and, when a project is active, its pipeline configuration.")}
-        </p>
-      </section>
+    <>
+      <SettingsLayout
+        kicker={`PROJECT SETTINGS // ${name?.toUpperCase() ?? ""}`}
+        title="Settings"
+        subtitle="Project pipeline configuration and preferences."
+        tabs={TABS}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+      >
+        {activeTab === "language" && (
+          <Card className="px-5">
+            <Row label={t("UI LANGUAGE")} hint={t("Controls the studio interface language. Stored locally.")}>
+              <SelectField
+                value={language}
+                onChange={(e) => setLanguage(e.target.value as LanguageCode)}
+                className="max-w-sm bg-bristol font-meta text-[0.72rem] tracking-[0.1em]"
+              >
+                {LANGUAGES.map((l) => (
+                  <option key={l.code} value={l.code}>{l.label}</option>
+                ))}
+              </SelectField>
+            </Row>
 
-      <section>
-        <SectionDivider number={1} label="STUDIO" />
-        <Card className="mt-5 px-5">
-          <Row label={t("UI LANGUAGE")} hint={t("Controls the studio interface language. Stored locally.")}>
-            <SelectField
-              value={language}
-              onChange={(e) => setLanguage(e.target.value as LanguageCode)}
-              className="max-w-sm bg-bristol font-meta text-[0.72rem] tracking-[0.1em]"
-            >
-              {LANGUAGES.map((l) => (
-                <option key={l.code} value={l.code}>{l.label}</option>
-              ))}
-            </SelectField>
-          </Row>
-
-          <Row
-            label={t("SHOW DEV CONTENT")}
-            hint={t("Shows raw file paths, model names, SHA hashes, and generation parameters for debugging.")}
-          >
-            <SwitchField
-              checked={showDevContent}
-              onCheckedChange={setShowDevContent}
-              label={t("SHOW DEV CONTENT")}
-            />
-          </Row>
-        </Card>
-      </section>
-
-      {name && (
-        <section>
-          <SectionDivider number={2} label={`PROJECT · ${name.toUpperCase()}`} />
-          <Card className="mt-5 px-5">
             <Row
               label={t("OUTPUT LANGUAGE")}
               hint={t("Controls generated dialogue, narration, style suggestions, and prompt artifacts for this project.")}
@@ -151,6 +153,21 @@ export function Settings() {
                 ))}
               </SelectField>
             </Row>
+          </Card>
+        )}
+
+        {activeTab === "dev" && (
+          <Card className="px-5">
+            <Row
+              label={t("SHOW DEV CONTENT")}
+              hint={t("Shows raw file paths, model names, SHA hashes, and generation parameters for debugging.")}
+            >
+              <SwitchField
+                checked={showDevContent}
+                onCheckedChange={setShowDevContent}
+                label={t("SHOW DEV CONTENT")}
+              />
+            </Row>
 
             <Row
               label={t("DEV / DEMO MODE")}
@@ -163,7 +180,11 @@ export function Settings() {
                 label={t("DEV / DEMO MODE")}
               />
             </Row>
+          </Card>
+        )}
 
+        {activeTab === "models" && (
+          <Card className="px-5">
             <Row
               label={t("QUALITY PRESET")}
               hint={t("Overrides all four text model fields at once. DEV mode forces Fast regardless.")}
@@ -242,8 +263,45 @@ export function Settings() {
               />
             </Row>
           </Card>
-        </section>
-      )}
-    </div>
+        )}
+
+        {activeTab === "delete" && (
+          <Card className="px-5" tone="bristol">
+            <div className="py-4">
+              <div className="font-display text-[1.1rem] leading-tight tracking-[-0.02em] uppercase">
+                Delete this project
+              </div>
+              <p className="mt-3 text-[0.88rem] leading-6 text-ink-black/65">
+                This will permanently delete the project{" "}
+                <span className="font-bold font-meta text-[0.72rem] tracking-[0.08em]">{name}</span>{" "}
+                and all associated pipeline data, assets, and generated files. This action cannot be undone.
+              </p>
+              <div className="mt-5">
+                <Button
+                  variant="outline"
+                  size="md"
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="border-hero-red text-hero-red hover:bg-chip-red/40 hover:text-hero-red"
+                >
+                  Delete Project
+                </Button>
+              </div>
+            </div>
+          </Card>
+        )}
+      </SettingsLayout>
+
+      <ConfirmModal
+        open={showDeleteConfirm}
+        title="Delete Project"
+        body={`This will permanently delete "${name}" and all its data. This cannot be undone.`}
+        confirmInput={name}
+        confirmLabel="Delete Project"
+        busy={deleteMutation.isPending}
+        destructive
+        onConfirm={handleDelete}
+        onClose={() => setShowDeleteConfirm(false)}
+      />
+    </>
   );
 }
