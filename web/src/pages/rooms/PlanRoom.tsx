@@ -1,12 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import {
   useLayoutPlan,
-  useNarrationDecisionImpact,
   useProjectStatus,
   useStoryBible,
   useUpdateNarrationDecision,
 } from "../../api/queries";
+import { Icon } from "../../components/ui/Icon";
 import { RoomHeader } from "../../components/ui/RoomHeader";
 import { StateBlock } from "../../components/ui/StateBlock";
 import { RerunStageAction } from "../../components/ui/RerunStageAction";
@@ -36,12 +36,17 @@ const IMPORTANCE_SIZE: Record<string, string> = {
 function PlanPanelCard({
   panel,
   resolveName,
+  narrationDecisions,
+  onNarrationClick,
 }: {
   panel: PlannedPanel;
   resolveName: (id: string) => string;
+  narrationDecisions: NarrationDecision[];
+  onNarrationClick: (decision: NarrationDecision) => void;
 }) {
   const importanceStyle = IMPORTANCE_STYLES[panel.importance] ?? IMPORTANCE_STYLES.standard;
   const importanceSz = IMPORTANCE_SIZE[panel.importance] ?? IMPORTANCE_SIZE.standard;
+  const hasNarration = narrationDecisions.length > 0;
 
   return (
     <article className="min-h-[180px] border-[2px] border-ink-black/8 bg-pulp-paper px-6 py-5 transition-colors duration-150 hover:border-ink-black/24">
@@ -91,19 +96,36 @@ function PlanPanelCard({
         </div>
       )}
 
-      {panel.dialogue.length > 0 && (
+      {panel.dialogue.filter((d) => d.type !== "narration").length > 0 && (
         <div className="mt-3 space-y-1.5">
-          {panel.dialogue.map((d, i) => (
-            <div
-              key={i}
-              className={
-                d.type === "narration"
-                  ? "border-l-[3px] border-narrator-gold py-0.5 pl-3 text-[0.92rem] font-semibold italic leading-6 text-ink-black/78"
-                  : "border-l-[3px] border-hero-red py-0.5 pl-3 text-[0.92rem] font-semibold italic leading-6 text-ink-black/78"
-              }
+          {panel.dialogue
+            .filter((d) => d.type !== "narration")
+            .map((d, i) => (
+              <div
+                key={i}
+                className="border-l-[3px] border-hero-red py-0.5 pl-3 text-[0.92rem] font-semibold italic leading-6 text-ink-black/78"
+              >
+                Dialogue: &ldquo;{d.text}&rdquo;
+              </div>
+            ))}
+        </div>
+      )}
+
+      {/* Narration strips — one per decision, always visible, each opens its own review modal */}
+      {hasNarration && (
+        <div className="mt-3 space-y-1.5">
+          {narrationDecisions.map((nd) => (
+            <button
+              key={nd.beat_id}
+              type="button"
+              onClick={() => onNarrationClick(nd)}
+              className="flex w-full cursor-pointer items-center gap-2 border-l-[3px] border-narrator-gold/60 py-0.5 pl-3 text-left transition-colors hover:border-narrator-gold hover:bg-narrator-gold/8"
             >
-              {d.type === "narration" ? "Caption" : "Dialogue"}: "{d.text}"
-            </div>
+              <span className="text-[0.82rem] font-semibold italic leading-6 text-ink-black/70">
+                {nd.decision === "rendered" ? "Caption" : "Removed"}
+                : &ldquo;{nd.source_text}&rdquo;
+              </span>
+            </button>
           ))}
         </div>
       )}
@@ -134,169 +156,132 @@ function PageBreakBand({ page }: { page: PlannedPage }) {
   );
 }
 
-function NarrationDecisionCard({
+function NarrationReviewModal({
+  isOpen,
+  onClose,
   project,
   decision,
-  panels,
 }: {
+  isOpen: boolean;
+  onClose: () => void;
   project: string;
   decision: NarrationDecision;
-  panels: PlannedPanel[];
 }) {
-  const [draft, setDraft] = useState<Partial<NarrationDecision>>({
-    decision: decision.decision,
-    mode: decision.mode,
-    panel_id: decision.panel_id,
-    preferred_zone: decision.preferred_zone,
-    caption_text_override: decision.caption_text_override,
-    decision_reason: decision.decision_reason,
-  });
-  const patch = useMemo(() => draft, [draft]);
-  const impact = useNarrationDecisionImpact(project, decision.beat_id, patch);
+  const [draft, setDraft] = useState<NarrationDecision["decision"]>(
+    decision.decision === "rendered" ? "rendered" : "dropped",
+  );
   const updateDecision = useUpdateNarrationDecision();
-  const selectedDecision = draft.decision ?? decision.decision;
-  const selectedMode = draft.mode ?? decision.mode;
+
+  // Reset draft when decision changes
+  useEffect(() => {
+    setDraft(decision.decision === "rendered" ? "rendered" : "dropped");
+  }, [decision.decision]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
+
+  const OPTIONS: { value: NarrationDecision["decision"]; label: string }[] = [
+    { value: "rendered", label: "Show as caption" },
+    { value: "dropped", label: "Remove" },
+  ];
 
   function apply() {
-    const summary = impact.data;
-    if (summary?.requires_confirmation) {
-      const ok = window.confirm(
-        `Apply narration change?\n\nImpact: ${summary.impact}\nStages: ${summary.affected_stages.join(", ")}\nEstimated hold: ${(summary.estimated_credits ?? 0).toLocaleString()} credits\n\n${summary.reason}`,
-      );
-      if (!ok) return;
-    }
-    updateDecision.mutate({ project, beatId: decision.beat_id, patch });
+    updateDecision.mutate(
+      { project, beatId: decision.beat_id, patch: { decision: draft } },
+      { onSuccess: onClose },
+    );
   }
 
   return (
-    <article className="border-[1.5px] border-narrator-gold/45 bg-narrator-gold/10 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="font-meta text-[0.58rem] font-bold tracking-[0.18em] text-narrator-gold uppercase">
-            Source narration · beat {decision.beat_index}
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink-black/80 p-4 backdrop-blur-[3px]"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Narration review"
+    >
+      <div
+        className="w-full max-w-[440px] border-[2px] border-ink-black bg-bristol shadow-ink"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b-[2px] border-ink-black px-4 py-3">
+          <div className="font-display text-[1.1rem] font-bold uppercase leading-none tracking-[-0.04em] text-ink-black">
+            Narration
           </div>
-          <p className="mt-1 text-[0.9rem] font-semibold leading-6 text-ink-black">
-            "{decision.source_text}"
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="border-[2px] border-ink-black/20 p-1.5 text-ink-black/60 transition-colors hover:border-ink-black hover:text-ink-black"
+          >
+            <Icon name="x" size={14} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="px-5 py-4">
+          <p className="text-[0.92rem] font-semibold leading-6 text-ink-black">
+            &ldquo;{decision.source_text}&rdquo;
           </p>
-        </div>
-        {decision.fallback_decision && (
-          <span className="shrink-0 border border-warn-orange px-2 py-0.5 font-meta text-[0.55rem] tracking-[0.12em] text-warn-orange uppercase">
-            fallback
-          </span>
-        )}
-      </div>
 
-      {decision.candidate_reason && (
-        <p className="mt-2 text-[0.76rem] leading-5 text-ink-fade">
-          {decision.candidate_reason}
-        </p>
-      )}
-
-      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <label className="block">
-          <span className="font-meta text-[0.55rem] tracking-[0.14em] text-ink-black/50 uppercase">Decision</span>
-          <select
-            value={selectedDecision}
-            onChange={(e) => setDraft((d) => ({
-              ...d,
-              decision: e.target.value as NarrationDecision["decision"],
-              mode: e.target.value === "rendered" ? (d.mode ?? "attached_caption") : null,
-              panel_id: e.target.value === "rendered" ? (d.panel_id ?? panels[0]?.panel_id ?? null) : null,
-            }))}
-            className="mt-1 w-full border border-ink-black/20 bg-bristol px-2 py-1.5 text-[0.8rem]"
-          >
-            <option value="rendered">Rendered</option>
-            <option value="visualized">Visualized</option>
-            <option value="dropped">Dropped</option>
-          </select>
-        </label>
-
-        <label className="block">
-          <span className="font-meta text-[0.55rem] tracking-[0.14em] text-ink-black/50 uppercase">Mode</span>
-          <select
-            value={selectedMode ?? "attached_caption"}
-            disabled={selectedDecision !== "rendered"}
-            onChange={(e) => setDraft((d) => ({ ...d, mode: e.target.value as NarrationDecision["mode"] }))}
-            className="mt-1 w-full border border-ink-black/20 bg-bristol px-2 py-1.5 text-[0.8rem] disabled:opacity-50"
-          >
-            <option value="attached_caption">Attached caption</option>
-            <option value="caption_panel">Caption panel</option>
-          </select>
-        </label>
-
-        <label className="block">
-          <span className="font-meta text-[0.55rem] tracking-[0.14em] text-ink-black/50 uppercase">Panel</span>
-          <select
-            value={draft.panel_id ?? ""}
-            disabled={selectedDecision !== "rendered"}
-            onChange={(e) => setDraft((d) => ({ ...d, panel_id: e.target.value || null }))}
-            className="mt-1 w-full border border-ink-black/20 bg-bristol px-2 py-1.5 text-[0.8rem] disabled:opacity-50"
-          >
-            {panels.map((panel) => (
-              <option key={panel.panel_id} value={panel.panel_id}>
-                Panel {String(panel.panel_number).padStart(2, "0")}
-              </option>
+          <div className="mt-5 space-y-2">
+            {OPTIONS.map((opt) => (
+              <label
+                key={opt.value}
+                className={`flex cursor-pointer items-center gap-3 border-[1.5px] px-3 py-2.5 transition-colors ${
+                  draft === opt.value
+                    ? "border-ink-black bg-ink-black/5"
+                    : "border-ink-black/12 hover:border-ink-black/30"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="narration-decision"
+                  value={opt.value}
+                  checked={draft === opt.value}
+                  onChange={() => setDraft(opt.value)}
+                  className="accent-ink-black"
+                />
+                <span className="text-[0.82rem] font-semibold text-ink-black">{opt.label}</span>
+              </label>
             ))}
-          </select>
-        </label>
-
-        <label className="block">
-          <span className="font-meta text-[0.55rem] tracking-[0.14em] text-ink-black/50 uppercase">Zone</span>
-          <select
-            value={draft.preferred_zone ?? "top"}
-            disabled={selectedDecision !== "rendered"}
-            onChange={(e) => setDraft((d) => ({ ...d, preferred_zone: e.target.value as NarrationDecision["preferred_zone"] }))}
-            className="mt-1 w-full border border-ink-black/20 bg-bristol px-2 py-1.5 text-[0.8rem] disabled:opacity-50"
-          >
-            <option value="top">Top</option>
-            <option value="bottom">Bottom</option>
-            <option value="left">Left</option>
-            <option value="right">Right</option>
-            <option value="overlay_center">Overlay center</option>
-            <option value="none">None</option>
-          </select>
-        </label>
-      </div>
-
-      <label className="mt-3 block">
-        <span className="font-meta text-[0.55rem] tracking-[0.14em] text-ink-black/50 uppercase">
-          Caption override
-        </span>
-        <input
-          value={draft.caption_text_override ?? ""}
-          placeholder="Blank uses exact source quote"
-          onChange={(e) => setDraft((d) => ({ ...d, caption_text_override: e.target.value || null }))}
-          className="mt-1 w-full border border-ink-black/20 bg-bristol px-2 py-1.5 text-[0.82rem]"
-        />
-      </label>
-
-      <label className="mt-3 block">
-        <span className="font-meta text-[0.55rem] tracking-[0.14em] text-ink-black/50 uppercase">
-          Decision reason
-        </span>
-        <textarea
-          value={draft.decision_reason ?? ""}
-          onChange={(e) => setDraft((d) => ({ ...d, decision_reason: e.target.value }))}
-          className="mt-1 min-h-[64px] w-full border border-ink-black/20 bg-bristol px-2 py-1.5 text-[0.82rem]"
-        />
-      </label>
-
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-        <div className="text-[0.74rem] leading-5 text-ink-fade">
-          {impact.isLoading ? "Analyzing impact..." : impact.data
-            ? `${impact.data.impact.replace(/_/g, " ")} · ${impact.data.affected_stages.join(", ") || "compose"} · ~${(impact.data.estimated_credits ?? 0).toLocaleString()} credits`
-            : "Impact preview unavailable"}
+          </div>
         </div>
-        <button
-          type="button"
-          onClick={apply}
-          disabled={updateDecision.isPending}
-          className="border-[1.5px] border-ink-black bg-bristol px-3 py-1.5 font-meta text-[0.62rem] font-bold tracking-[0.12em] uppercase hover:bg-ink-black hover:text-bristol disabled:opacity-50"
-        >
-          {updateDecision.isPending ? "Applying..." : "Apply narration"}
-        </button>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 border-t-[2px] border-ink-black px-4 py-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 font-meta text-[0.62rem] font-bold tracking-[0.12em] uppercase text-ink-black/60 hover:text-ink-black"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={apply}
+            disabled={updateDecision.isPending || draft === decision.decision}
+            className="border-[1.5px] border-ink-black bg-bristol px-3 py-1.5 font-meta text-[0.62rem] font-bold tracking-[0.12em] uppercase hover:bg-ink-black hover:text-bristol disabled:opacity-40"
+          >
+            {updateDecision.isPending ? "Applying..." : "Apply"}
+          </button>
+        </div>
       </div>
-    </article>
+    </div>
   );
 }
 
@@ -308,6 +293,7 @@ export function PlanRoom() {
   const [searchParams, setSearchParams] = useSearchParams();
   const resolveName = useCharacterName(name);
   const { isCompact, toggle } = useHeaderMode();
+  const [activeNarration, setActiveNarration] = useState<NarrationDecision | null>(null);
 
   const stageInfo = status?.stages?.plan;
   const stageStatus = stageInfo?.status ?? "pending";
@@ -325,6 +311,18 @@ export function PlanRoom() {
   const sceneNarrationDecisions = plan
     ? plan.narration_decisions.filter((d) => d.scene_id === activeScene)
     : [];
+
+  // Group narration decisions by panel — match by panel_id OR shared beat_id
+  const narrationByPanel: Record<string, NarrationDecision[]> = {};
+  for (const nd of sceneNarrationDecisions) {
+    const matched = scenePanels.find(
+      (p) => p.panel_id === nd.panel_id || p.beat_ids.includes(nd.beat_id),
+    );
+    const pid = matched?.panel_id ?? nd.panel_id ?? "";
+    if (!pid) continue;
+    if (!narrationByPanel[pid]) narrationByPanel[pid] = [];
+    narrationByPanel[pid].push(nd);
+  }
 
   const panelCountByScene = plan
     ? Object.fromEntries(
@@ -438,31 +436,6 @@ export function PlanRoom() {
           <div className="min-h-0 min-w-0 overflow-hidden">
             {scenePanels.length > 0 ? (
               <div className="h-full min-h-0 overflow-y-auto p-6 md:p-8">
-                {sceneNarrationDecisions.length > 0 && name && (
-                  <section className="mb-6 space-y-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="font-meta text-[0.62rem] font-bold tracking-[0.2em] text-narrator-gold uppercase">
-                          Narration audit
-                        </div>
-                        <p className="mt-1 text-[0.78rem] leading-5 text-ink-fade">
-                          Review source captions before expensive downstream generation.
-                        </p>
-                      </div>
-                      <span className="font-meta text-[0.58rem] tracking-[0.16em] text-ink-black/45 uppercase">
-                        {sceneNarrationDecisions.length} source quote{sceneNarrationDecisions.length !== 1 ? "s" : ""}
-                      </span>
-                    </div>
-                    {sceneNarrationDecisions.map((decision) => (
-                      <NarrationDecisionCard
-                        key={decision.beat_id}
-                        project={name}
-                        decision={decision}
-                        panels={scenePanels}
-                      />
-                    ))}
-                  </section>
-                )}
                 <div className="grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
                   {gridItems.map((item) =>
                     item.kind === "page" ? (
@@ -472,6 +445,8 @@ export function PlanRoom() {
                         key={item.panel.panel_id}
                         panel={item.panel}
                         resolveName={resolveName}
+                        narrationDecisions={narrationByPanel[item.panel.panel_id] ?? []}
+                        onNarrationClick={setActiveNarration}
                       />
                     ),
                   )}
@@ -488,6 +463,15 @@ export function PlanRoom() {
             )}
           </div>
         </section>
+
+        {name && activeNarration && (
+          <NarrationReviewModal
+            isOpen
+            onClose={() => setActiveNarration(null)}
+            project={name}
+            decision={activeNarration}
+          />
+        )}
       </div>
     </RoomShell>
   );

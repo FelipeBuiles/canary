@@ -170,25 +170,6 @@ export function AdaptRoom() {
                     </div>
                   )}
 
-                  {narrationBeats.length > 0 && (
-                    <div className="mb-5 mt-5 border-[1.5px] border-narrator-gold/50 bg-narrator-gold/10 p-4">
-                      <div className="font-meta text-[0.62rem] font-bold tracking-[0.18em] text-ink-black/55 uppercase">
-                        Narration candidates: {narrationBeats.length}
-                      </div>
-                      <div className="mt-2 space-y-1">
-                        {narrationBeats.map(({ beat, index }) => (
-                          <a
-                            key={`${index}-${beat.content}`}
-                            href={`#beat-${index + 1}`}
-                            className="block text-[0.82rem] font-semibold leading-5 text-ink-black hover:underline"
-                          >
-                            {index + 1}. "{beat.content}"
-                          </a>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
                   {/* Beats */}
                   {(filteredBeats ?? []).map((beat, i) => {
                     const isDialogue = beat.type === "dialogue";
