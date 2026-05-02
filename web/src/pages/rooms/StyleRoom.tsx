@@ -211,12 +211,12 @@ function StyleCard({
 }
 
 export function StyleRoom() {
-  const { name } = useParams<{ name: string }>();
+  const { id } = useParams<{ id: string }>();
   const { isCompact, toggle } = useHeaderMode();
-  const projectName = name ?? "";
-  const { data: stylesData, isLoading, refetch: refetchStyles } = useStyles(name);
-  const { data: projectConfig } = useProjectConfig(name);
-  const { data: storyBible } = useStoryBible(name);
+  const projectName = id ?? "";
+  const { data: stylesData, isLoading, refetch: refetchStyles } = useStyles(id);
+  const { data: projectConfig } = useProjectConfig(id);
+  const { data: storyBible } = useStoryBible(id);
   const suggestStyles = useSuggestStyles();
   const generateSamples = useGenerateStyleSamples();
   const pendingSet = usePendingIndices(projectName);
@@ -225,7 +225,7 @@ export function StyleRoom() {
   const { add, attachJobs, updateJob, remove } = useStyleGenStore();
   const [sampleError, setSampleError] = useState<string | null>(null);
   const { data: generationJobs } = useGenerationJobs(
-    name,
+    id,
     Object.values(styleJobIds),
   );
   const events = usePipelineStore((s) => s.events);
@@ -322,7 +322,7 @@ export function StyleRoom() {
     return <RoomShell isLoading loadingText="LOADING STYLES…" />;
   }
 
-  if (!name) {
+  if (!id) {
     return (
       <RoomShell
         isEmpty
@@ -426,7 +426,7 @@ export function StyleRoom() {
             <StyleCard
               key={s.index}
               suggestion={s}
-              projectName={name}
+              projectName={id}
               isGenerating={pendingSet.has(s.index)}
               queueState={
                 pendingSet.has(s.index)

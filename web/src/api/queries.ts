@@ -75,7 +75,7 @@ export function useGenerateProjectCover() {
 export function useDeleteProject() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ name }: { name: string }) => deleteProject(name),
+    mutationFn: ({ id }: { id: string }) => deleteProject(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["projects"] });
     },

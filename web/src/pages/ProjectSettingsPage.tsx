@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useProjectConfig, useUpdateProjectConfig, useDeleteProject } from "../api/queries";
+import { useProjectConfig, useProjectStatus, useUpdateProjectConfig, useDeleteProject } from "../api/queries";
 import { SettingsLayout } from "../components/ui/SettingsLayout";
 import { ConfirmModal } from "../components/ui/ConfirmModal";
 import { Card } from "../components/ui/Card";
@@ -47,10 +47,11 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
 }
 
 export function ProjectSettingsPage() {
-  const { name } = useParams();
+  const { id } = useParams();
   const navigate = useNavigate();
   const { language, setLanguage, t } = useI18n();
-  const { data: config } = useProjectConfig(name);
+  const { data: config } = useProjectConfig(id);
+  const { data: status } = useProjectStatus(id);
   const updateConfig = useUpdateProjectConfig();
   const deleteMutation = useDeleteProject();
   const [showDevContent, setShowDevContent] = useShowDevContent();
@@ -58,15 +59,16 @@ export function ProjectSettingsPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const updating = updateConfig.isPending;
+  const projectTitle = status?.project_name ?? id ?? "";
   const patch = (data: Parameters<typeof updateConfig.mutate>[0]["data"]) => {
-    if (!name) return;
-    updateConfig.mutate({ project: name, data });
+    if (!id) return;
+    updateConfig.mutate({ project: id, data });
   };
 
   function handleDelete() {
-    if (!name) return;
+    if (!id) return;
     deleteMutation.mutate(
-      { name },
+      { id },
       { onSuccess: () => navigate("/") },
     );
   }
@@ -74,7 +76,7 @@ export function ProjectSettingsPage() {
   return (
     <>
       <SettingsLayout
-        kicker={`PROJECT SETTINGS // ${name?.toUpperCase() ?? ""}`}
+        kicker={`PROJECT SETTINGS // ${projectTitle.toUpperCase()}`}
         title="Settings"
         subtitle="Project pipeline configuration and preferences."
         tabs={TABS}
@@ -217,7 +219,7 @@ export function ProjectSettingsPage() {
               </div>
               <p className="mt-3 text-[0.88rem] leading-6 text-ink-black/65">
                 This will permanently delete the project{" "}
-                <span className="font-bold font-meta text-[0.72rem] tracking-[0.08em]">{name}</span>{" "}
+                <span className="font-bold font-meta text-[0.72rem] tracking-[0.08em]">{projectTitle}</span>{" "}
                 and all associated pipeline data, assets, and generated files. This action cannot be undone.
               </p>
               <div className="mt-5">
@@ -238,8 +240,8 @@ export function ProjectSettingsPage() {
       <ConfirmModal
         open={showDeleteConfirm}
         title="Delete Project"
-        body={`This will permanently delete "${name}" and all its data. This cannot be undone.`}
-        confirmInput={name}
+        body={`This will permanently delete "${projectTitle}" and all its data. This cannot be undone.`}
+        confirmInput={projectTitle}
         confirmLabel="Delete Project"
         busy={deleteMutation.isPending}
         destructive

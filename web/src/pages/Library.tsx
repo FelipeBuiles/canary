@@ -54,16 +54,16 @@ function NewProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
         { file, name, configOverrides },
         {
           onSuccess: (data) => {
-            queryClient.removeQueries({ queryKey: ["project", data.name] });
+            queryClient.removeQueries({ queryKey: ["project", data.id] });
             clearEvents();
             // Start the pipeline, then navigate to the first stage room
             runPipeline.mutate(
-              { project: data.name },
+              { project: data.id },
               {
                 onSuccess: () => {
-                  connect(data.name);
+                  connect(data.id);
                   onClose();
-                  navigate(`/project/${encodeURIComponent(data.name)}/extract`);
+                  navigate(`/project/${encodeURIComponent(data.id)}/extract`);
                 },
               },
             );
@@ -136,22 +136,22 @@ export function Library() {
         project.has_cover ||
         project.cover_job?.status === "queued" ||
         project.cover_job?.status === "running" ||
-        coverRequestedProjects.has(project.name)
+        coverRequestedProjects.has(project.id)
       ) {
         continue;
       }
-      coverRequestedProjects.add(project.name);
+      coverRequestedProjects.add(project.id);
       window.setTimeout(() => {
-        setPendingCovers((current) => new Set(current).add(project.name));
+        setPendingCovers((current) => new Set(current).add(project.id));
       }, 0);
       generateCover.mutate(
-        { project: project.name },
+        { project: project.id },
         {
           onSuccess: (data) => {
             if (data.status === "exists") {
               setPendingCovers((current) => {
                 const next = new Set(current);
-                next.delete(project.name);
+                next.delete(project.id);
                 return next;
               });
             }
@@ -159,7 +159,7 @@ export function Library() {
           onError: () => {
             setPendingCovers((current) => {
               const next = new Set(current);
-              next.delete(project.name);
+              next.delete(project.id);
               return next;
             });
           },
@@ -175,7 +175,7 @@ export function Library() {
         const covered = new Set(
           (result.data ?? [])
             .filter((project) => project.has_cover || project.cover_job?.status === "failed")
-            .map((project) => project.name),
+            .map((project) => project.id),
         );
         if (!covered.size) return;
         setPendingCovers((current) => {
@@ -252,10 +252,10 @@ export function Library() {
 
           {projects?.map((project) => (
             <ProjectCard
-              key={project.name}
+              key={project.id}
               project={project}
               coverPending={
-                pendingCovers.has(project.name) ||
+                pendingCovers.has(project.id) ||
                 project.cover_job?.status === "queued" ||
                 project.cover_job?.status === "running"
               }

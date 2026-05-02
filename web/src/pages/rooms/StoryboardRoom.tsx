@@ -131,24 +131,24 @@ function StoryboardPanelCard({
 }
 
 export function StoryboardRoom() {
-  const { name } = useParams<{ name: string }>();
-  const { data: summaries, isLoading } = usePanelSummaries(name);
-  const { data: status } = useProjectStatus(name);
-  const { data: bible } = useStoryBible(name);
+  const { id } = useParams<{ id: string }>();
+  const { data: summaries, isLoading } = usePanelSummaries(id);
+  const { data: status } = useProjectStatus(id);
+  const { data: bible } = useStoryBible(id);
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedScene = searchParams.get("scene");
   const activeScene = selectedScene ?? summaries?.[0]?.scene_id;
-  const { data: panels, isLoading: loadingPanels } = usePanelsForScene(name, activeScene);
+  const { data: panels, isLoading: loadingPanels } = usePanelsForScene(id, activeScene);
   const updatePanel = useUpdatePanel();
   const stageInfo = status?.stages?.storyboard;
   const stageStatus = stageInfo?.status ?? "pending";
-  const resolveName = useCharacterName(name);
+  const resolveName = useCharacterName(id);
   const { isCompact, toggle } = useHeaderMode();
 
   const handleSavePanel = (panel: PanelBreakdown, patch: Partial<PanelBreakdown>) => {
-    if (!name || !activeScene) return;
+    if (!id || !activeScene) return;
     updatePanel.mutate({
-      project: name,
+      project: id,
       sceneId: activeScene,
       data: { ...panel, ...patch },
     });
@@ -165,7 +165,7 @@ export function StoryboardRoom() {
     return <RoomShell isLoading loadingText="LOADING PANEL BREAKDOWNS…" />;
   }
 
-  if (!summaries?.length || !name) {
+  if (!summaries?.length || !id) {
     return (
       <RoomShell>
         <StagePlaceholder
@@ -178,7 +178,7 @@ export function StoryboardRoom() {
     );
   }
 
-  const rerunAction = <RerunStageAction project={name} stage="storyboard" label="Storyboard" />;
+  const rerunAction = <RerunStageAction project={id} stage="storyboard" label="Storyboard" />;
 
   return (
     <RoomShell>

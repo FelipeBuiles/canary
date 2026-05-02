@@ -1,16 +1,16 @@
 import { useEffect } from "react";
 import { usePipelineStore } from "../store/pipeline";
 
-export function useSSE(projectName: string | undefined, enabled: boolean) {
+export function useSSE(projectId: string | undefined, enabled: boolean) {
   const connect = usePipelineStore((state) => state.connect);
   const disconnect = usePipelineStore((state) => state.disconnect);
 
   useEffect(() => {
-    if (!projectName || !enabled) {
+    if (!projectId || !enabled) {
       disconnect();
       return;
     }
-    connect(projectName);
+    connect(projectId);
     return () => disconnect();
-  }, [projectName, enabled, connect, disconnect]);
+  }, [projectId, enabled, connect, disconnect]);
 }

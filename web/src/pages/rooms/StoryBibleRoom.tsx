@@ -178,10 +178,10 @@ export function LocationCard({
 }
 
 export function StoryBibleRoom() {
-  const { name } = useParams<{ name: string }>();
+  const { id } = useParams<{ id: string }>();
   const { isCompact, toggle } = useHeaderMode();
-  const { data: bible, isLoading, error } = useStoryBible(name);
-  const { data: status } = useProjectStatus(name);
+  const { data: bible, isLoading, error } = useStoryBible(id);
+  const { data: status } = useProjectStatus(id);
   const updateBible = useUpdateStoryBible();
 
   const stageInfo = status?.stages?.extract;
@@ -191,7 +191,7 @@ export function StoryBibleRoom() {
     return <RoomShell isLoading loadingText="LOADING STORY BIBLE…" />;
   }
 
-  if (error || !bible || !name) {
+  if (error || !bible || !id) {
     return (
       <RoomShell>
         <StagePlaceholder
@@ -209,7 +209,7 @@ export function StoryBibleRoom() {
       ...bible,
       characters: bible.characters.map(c => c.id === updatedChar.id ? updatedChar : c)
     };
-    updateBible.mutate({ project: name, data: newBible });
+    updateBible.mutate({ project: id, data: newBible });
   };
 
   const handleUpdateLocation = (updatedLoc: Location) => {
@@ -217,7 +217,7 @@ export function StoryBibleRoom() {
       ...bible,
       locations: bible.locations.map(l => l.id === updatedLoc.id ? updatedLoc : l)
     };
-    updateBible.mutate({ project: name, data: newBible });
+    updateBible.mutate({ project: id, data: newBible });
   };
 
   return (
@@ -228,7 +228,7 @@ export function StoryBibleRoom() {
         onToggle={toggle}
         title={bible.title}
         lead={`by ${bible.author} · ${bible.total_scenes} scene${bible.total_scenes !== 1 ? "s" : ""} extracted into the narrative frame.`}
-        actions={<RerunStageAction project={name} stage="extract" label="Extract" />}
+        actions={<RerunStageAction project={id} stage="extract" label="Extract" />}
       />
 
       <div className="grid gap-10 xl:grid-cols-2">

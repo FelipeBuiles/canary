@@ -40,7 +40,6 @@ from ..auth import get_current_user
 from ..credits import (
     debit_model_usage,
     estimate_stage_credit_reservation,
-    get_project_id,
     provider_usd_to_credits,
     release_reservation,
     release_stage_reservations,
@@ -323,7 +322,7 @@ def _append_instruction_log(
 
 @router.get("/estimate")
 async def estimate_stage_cost(
-    project_name: str,
+    project_id: str,
     stage: str = Query(...),
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
@@ -338,7 +337,7 @@ async def estimate_stage_cost(
 
 @router.get("/regen-estimate")
 async def regen_panel_estimate(
-    project_name: str,
+    project_id: str,
     scene_id: str = Query(...),
     panel_number: int = Query(...),
     project=Depends(get_project),
@@ -358,14 +357,14 @@ async def regen_panel_estimate(
 @router.post("/run")
 async def run_pipeline(
     request: Request,
-    project_name: str,
+    project_id: str,
     stage: Optional[str] = Query(None),
     rerun: bool = Query(False),
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
-    pkey = project_key(user_id, project_name)
+    pkey = project_key(user_id, project_id)
 
     if stage and stage not in STAGE_NAMES:
         raise HTTPException(400, f"Unknown stage: {stage}. Valid: {STAGE_NAMES}")
@@ -403,8 +402,6 @@ async def run_pipeline(
         _clear_outputs_for_rerun(project_dir, stage)
         save_state(state, project_dir)
 
-    project_id = get_project_id(get_db(), user_id, project_name)
-
     queue: asyncio.Queue = asyncio.Queue()
     request.app.state.event_queues[pkey] = queue
 
@@ -418,7 +415,7 @@ async def run_pipeline(
     running[pkey] = task
     logger.info(
         "[bold blue]Pipeline queued[/] project=[white]%s[/] stage=[bold]%s[/]",
-        project_name,
+        project_dir.name,
         stage or "all",
     )
     return {"status": "started", "stage": stage or "all"}
@@ -427,12 +424,12 @@ async def run_pipeline(
 @router.post("/regen-extract")
 async def regen_extract(
     request: Request,
-    project_name: str,
+    project_id: str,
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
-    pkey = project_key(user_id, project_name)
+    pkey = project_key(user_id, project_id)
 
     # Concurrency guard
     running = request.app.state.running_tasks
@@ -449,13 +446,12 @@ async def regen_extract(
     # Run extract stage via SSE pipeline (same pattern as POST /run?stage=extract)
     queue: asyncio.Queue = asyncio.Queue()
     request.app.state.event_queues[pkey] = queue
-    project_id = get_project_id(get_db(), user_id, project_name)
     job = _run_stage_with_credits("extract", config, project_dir, state, queue, user_id, project_id)
     task = asyncio.create_task(_run_job(pkey, request, job))
     running[pkey] = task
     logger.info(
         "[bold blue]Pipeline queued[/] project=[white]%s[/] stage=[bold]extract[/] mode=regen",
-        project_name,
+        project_dir.name,
     )
 
     return {"status": "started", "stage": "extract"}
@@ -464,10 +460,10 @@ async def regen_extract(
 @router.get("/events")
 async def event_stream(
     request: Request,
-    project_name: str,
+    project_id: str,
     user_id: str = Depends(get_current_user),
 ):
-    pkey = project_key(user_id, project_name)
+    pkey = project_key(user_id, project_id)
     queue = request.app.state.event_queues.get(pkey)
     if not queue:
         raise HTTPException(404, "No active run for this project")
@@ -503,14 +499,14 @@ async def event_stream(
 @router.post("/regen")
 async def regen_panel(
     request: Request,
-    project_name: str,
+    project_id: str,
     scene_id: str = Query(...),
     panel_number: int = Query(...),
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
-    pkey = project_key(user_id, project_name)
+    pkey = project_key(user_id, project_id)
 
     running = request.app.state.running_tasks
     existing = running.get(pkey)
@@ -529,12 +525,10 @@ async def regen_panel(
     async def _runner() -> None:
         from novel_to_comic.stages import s7_draw
         clear_panel_acceptance(project_dir, scene_id, panel_number)
-        db = get_db()
-        pid = get_project_id(db, user_id, project_name)
         with ai_request_context(
             user_id=user_id,
-            project_id=pid,
-            project_name=project_name,
+            project_id=project_id,
+            project_name=project_dir.name,
             workspace_id=str(project_dir.parent),
             stage="draw",
         ):
@@ -546,9 +540,9 @@ async def regen_panel(
             )
         if result.usage:
             debit_model_usage(
-                db,
+                get_db(),
                 user_id,
-                pid,
+                project_id,
                 result.usage,
                 stage="draw",
                 description=f"Model call: regenerate panel {scene_id}/{panel_number:03d}",
@@ -592,13 +586,13 @@ async def regen_panel(
 @router.post("/regen-instructed")
 async def regen_panel_with_instruction(
     request: Request,
-    project_name: str,
+    project_id: str,
     body: InstructedPanelRegenRequest,
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
-    pkey = project_key(user_id, project_name)
+    pkey = project_key(user_id, project_id)
     scene_id = body.scene_id
     panel_number = body.panel_number
 
@@ -631,8 +625,8 @@ async def regen_panel_with_instruction(
     try:
         with ai_request_context(
             user_id=user_id,
-            project_id=get_project_id(get_db(), user_id, project_name),
-            project_name=project_name,
+            project_id=project_id,
+            project_name=project_dir.name,
             workspace_id=str(project_dir.parent),
             stage="draw",
         ):
@@ -652,7 +646,7 @@ async def regen_panel_with_instruction(
     except Exception as exc:
         logger.exception(
             "Panel instruction rewrite failed project=%s scene=%s panel=%s",
-            project_name,
+            project_dir.name,
             scene_id,
             panel_number,
         )
@@ -663,7 +657,7 @@ async def regen_panel_with_instruction(
         debit_model_usage(
             db,
             user_id,
-            get_project_id(db, user_id, project_name),
+            project_id,
             rewrite.usage,
             stage="draw",
             description=f"Model call: rewrite panel prompt {scene_id}/{panel_number:03d}",
@@ -685,8 +679,8 @@ async def regen_panel_with_instruction(
 
         with ai_request_context(
             user_id=user_id,
-            project_id=get_project_id(get_db(), user_id, project_name),
-            project_name=project_name,
+            project_id=project_id,
+            project_name=project_dir.name,
             workspace_id=str(project_dir.parent),
             stage="draw",
         ):
@@ -697,11 +691,10 @@ async def regen_panel_with_instruction(
                 panel_number,
             )
         if result.usage:
-            runner_db = get_db()
             debit_model_usage(
-                runner_db,
+                get_db(),
                 user_id,
-                get_project_id(runner_db, user_id, project_name),
+                project_id,
                 result.usage,
                 stage="draw",
                 description=f"Model call: regenerate instructed panel {scene_id}/{panel_number:03d}",
@@ -732,20 +725,20 @@ async def regen_panel_with_instruction(
 @router.post("/regen-ref")
 async def regen_ref(
     request: Request,
-    project_name: str,
+    project_id: str,
     char_id: str = Query(...),
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
-    pkey = project_key(user_id, project_name)
+    pkey = project_key(user_id, project_id)
 
     async def _runner() -> None:
         from novel_to_comic.stages import s3_cast
         with ai_request_context(
             user_id=user_id,
-            project_id=get_project_id(get_db(), user_id, project_name),
-            project_name=project_name,
+            project_id=project_id,
+            project_name=project_dir.name,
             workspace_id=str(project_dir.parent),
             stage="cast",
         ):
@@ -755,11 +748,10 @@ async def regen_ref(
                 char_id,
             )
         if result.usage:
-            db = get_db()
             debit_model_usage(
-                db,
+                get_db(),
                 user_id,
-                get_project_id(db, user_id, project_name),
+                project_id,
                 result.usage,
                 stage="cast",
                 description=f"Model call: regenerate character ref {char_id}",
@@ -798,20 +790,20 @@ async def regen_ref(
 @router.post("/regen-plate")
 async def regen_plate(
     request: Request,
-    project_name: str,
+    project_id: str,
     loc_id: str = Query(...),
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
-    pkey = project_key(user_id, project_name)
+    pkey = project_key(user_id, project_id)
 
     async def _runner() -> None:
         from novel_to_comic.stages import s3_cast
         with ai_request_context(
             user_id=user_id,
-            project_id=get_project_id(get_db(), user_id, project_name),
-            project_name=project_name,
+            project_id=project_id,
+            project_name=project_dir.name,
             workspace_id=str(project_dir.parent),
             stage="cast",
         ):
@@ -821,11 +813,10 @@ async def regen_plate(
                 loc_id,
             )
         if result.usage:
-            db = get_db()
             debit_model_usage(
-                db,
+                get_db(),
                 user_id,
-                get_project_id(db, user_id, project_name),
+                project_id,
                 result.usage,
                 stage="cast",
                 description=f"Model call: regenerate location plate {loc_id}",
@@ -864,11 +855,11 @@ async def regen_plate(
 @router.get("/generation-jobs")
 def get_generation_jobs(
     request: Request,
-    project_name: str,
+    project_id: str,
     ids: list[str] | None = Query(None),
     user_id: str = Depends(get_current_user),
 ):
-    pkey = project_key(user_id, project_name)
+    pkey = project_key(user_id, project_id)
     jobs = [
         job
         for job in request.app.state.generation_jobs.values()
@@ -879,7 +870,7 @@ def get_generation_jobs(
 
 
 @router.post("/approve/{stage}")
-def approve(stage: str, project_name: str, project=Depends(get_project)):
+def approve(stage: str, project_id: str, project=Depends(get_project)):
     project_dir, config, state = project
     if stage not in STAGE_NAMES:
         raise HTTPException(400, f"Unknown stage: {stage}")
@@ -898,7 +889,7 @@ def approve(stage: str, project_name: str, project=Depends(get_project)):
 @router.post("/reset/{stage}")
 def reset_stage(
     stage: str,
-    project_name: str,
+    project_id: str,
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
@@ -918,7 +909,7 @@ def reset_stage(
     state.stages[stage] = StageState()
     save_state(state, project_dir)
     db = get_db()
-    release_stage_reservations(db, user_id, get_project_id(db, user_id, project_name), stage)
+    release_stage_reservations(db, user_id, project_id, stage)
     return {
         "status": "reset",
         "stage": stage,
@@ -929,7 +920,7 @@ def reset_stage(
 @router.post("/reset-stale")
 def reset_stale(
     request: Request,
-    project_name: str,
+    project_id: str,
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
@@ -946,7 +937,6 @@ def reset_stale(
     reset = reset_stale_stages(state)
     save_state(state, project_dir)
     db = get_db()
-    project_id = get_project_id(db, user_id, project_name)
     for stage in reset:
         release_stage_reservations(db, user_id, project_id, stage)
     return {
@@ -957,7 +947,7 @@ def reset_stale(
 
 
 @router.get("/stage-error/{stage}")
-def get_stage_error(stage: str, project_name: str, project=Depends(get_project)):
+def get_stage_error(stage: str, project_id: str, project=Depends(get_project)):
     """Get the error message from a failed stage."""
     project_dir, config, state = project
     if stage not in STAGE_NAMES:

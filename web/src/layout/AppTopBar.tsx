@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { supabase } from "../lib/supabase";
-import { useCreditBalance } from "../api/queries";
+import { useCreditBalance, useProjectStatus } from "../api/queries";
 import { useAuth } from "../hooks/useAuth";
 import { cn } from "../lib/cn";
 
@@ -12,16 +12,18 @@ function initials(email?: string | null) {
 }
 
 export function AppTopBar() {
-  const { name } = useParams();
+  const { id: projectId } = useParams<{ id: string }>();
   const location = useLocation();
   const { user } = useAuth();
   const { data: balance } = useCreditBalance();
+  const { data: status } = useProjectStatus(projectId);
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   const credits = balance?.balance_credits ?? 0;
   const isLow = credits < 150;
-  const inProject = location.pathname.startsWith("/project/") && !!name;
+  const inProject = location.pathname.startsWith("/project/") && !!projectId;
+  const projectTitle = status?.project_name ?? projectId;
   const studioName = String(user?.user_metadata?.studio_name || "Inkwell Studio");
   const email = user?.email ?? "jesse@pulp.studio";
 
@@ -44,7 +46,7 @@ export function AppTopBar() {
             </Link>
             <span className="h-5 w-px bg-ink-black/14" />
             <span className="min-w-0 truncate font-meta text-[0.62rem] font-bold uppercase tracking-[0.18em] text-ink-black/45">
-              {name}
+              {projectTitle}
             </span>
           </>
         ) : (

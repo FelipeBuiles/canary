@@ -16,17 +16,17 @@ import { useCharacterName } from "../../hooks/useCharacterName";
 import { useHeaderMode } from "../../hooks/useHeaderMode";
 
 export function AdaptRoom() {
-  const { name } = useParams<{ name: string }>();
-  const { data: summaries, isLoading: loadingList } = useScreenplays(name);
-  const { data: status } = useProjectStatus(name);
-  const { data: bible } = useStoryBible(name);
+  const { id } = useParams<{ id: string }>();
+  const { data: summaries, isLoading: loadingList } = useScreenplays(id);
+  const { data: status } = useProjectStatus(id);
+  const { data: bible } = useStoryBible(id);
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedScene = searchParams.get("scene");
   const activeScene = selectedScene ?? summaries?.[0]?.scene_id ?? null;
-  const { data: screenplay, isLoading: loadingScript } = useScreenplay(name, activeScene);
+  const { data: screenplay, isLoading: loadingScript } = useScreenplay(id, activeScene);
   const stageInfo = status?.stages?.adapt;
   const stageStatus = stageInfo?.status ?? "pending";
-  const resolveName = useCharacterName(name);
+  const resolveName = useCharacterName(id);
   const { isCompact, toggle } = useHeaderMode();
 
   // Character filter state
@@ -42,7 +42,7 @@ export function AdaptRoom() {
     return <RoomShell isLoading loadingText="LOADING SCREENPLAYS…" />;
   }
 
-  if (!summaries?.length || !name) {
+  if (!summaries?.length || !id) {
     return (
       <RoomShell>
         <StagePlaceholder
@@ -55,7 +55,7 @@ export function AdaptRoom() {
     );
   }
 
-  const rerunAction = <RerunStageAction project={name} stage="adapt" label="Adapt" />;
+  const rerunAction = <RerunStageAction project={id} stage="adapt" label="Adapt" />;
 
   // Build scene → title map from story bible
   const sceneTitleMap: Record<string, string> = {};

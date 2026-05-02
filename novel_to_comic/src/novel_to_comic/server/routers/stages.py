@@ -231,12 +231,12 @@ def update_prompt(scene_id: str, panel_number: int, body: dict, project=Depends(
 @router.get("/images")
 def list_images(
     request: Request,
-    project_name: str,
+    project_id: str,
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
-    pkey = project_key(user_id, project_name)
+    pkey = project_key(user_id, project_id)
     images_dir = project_dir / "draw"
     if not images_dir.exists():
         return []

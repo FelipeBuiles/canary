@@ -54,6 +54,7 @@ export interface StageInfo {
 }
 
 export interface ProjectSummary {
+  id: string;
   name: string;
   project_name: string;
   author?: string | null;
@@ -66,6 +67,7 @@ export interface ProjectSummary {
 }
 
 export interface ProjectStatus {
+  id: string;
   project_name: string;
   created_at: string;
   total_cost_usd: number;

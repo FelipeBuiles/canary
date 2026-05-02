@@ -26,7 +26,7 @@ from novel_to_comic.models.comic_page import Bubble, ComicPage, Sfx, BUBBLE_PRES
 from novel_to_comic.models.story_bible import StoryBible
 
 from ..auth import get_current_user
-from ..credits import debit_model_usage, get_project_id
+from ..credits import debit_model_usage
 from ..db import get_db
 from ..deps import get_project
 
@@ -467,7 +467,7 @@ def update_page(page_num: int, body: dict, project=Depends(get_project)):
 @router.post("/pages/style-vars/generate")
 async def generate_page_style_vars(
     request: Request,
-    project_name: str,
+    project_id: str,
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
@@ -476,8 +476,8 @@ async def generate_page_style_vars(
 
     with ai_request_context(
         user_id=user_id,
-        project_id=get_project_id(get_db(), user_id, project_name),
-        project_name=project_name,
+        project_id=project_id,
+        project_name=project_dir.name,
         workspace_id=str(project_dir.parent),
         stage="compose",
     ):
@@ -486,7 +486,7 @@ async def generate_page_style_vars(
         debit_model_usage(
             get_db(),
             user_id,
-            get_project_id(get_db(), user_id, project_name),
+            project_id,
             usage,
             stage="compose",
             description="Model call: page style",
@@ -574,7 +574,7 @@ def apply_bubble_preset(body: dict, project=Depends(get_project)):
 @router.post("/pages/translate-bubbles")
 async def translate_page_bubbles(
     body: dict,
-    project_name: str,
+    project_id: str,
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
@@ -608,8 +608,8 @@ async def translate_page_bubbles(
 
     with ai_request_context(
         user_id=user_id,
-        project_id=get_project_id(get_db(), user_id, project_name),
-        project_name=project_name,
+        project_id=project_id,
+        project_name=project_dir.name,
         workspace_id=str(project_dir.parent),
         stage="compose",
     ):
@@ -618,7 +618,7 @@ async def translate_page_bubbles(
         debit_model_usage(
             get_db(),
             user_id,
-            get_project_id(get_db(), user_id, project_name),
+            project_id,
             usage,
             stage="compose",
             description="Model call: translate bubbles",
@@ -649,7 +649,7 @@ async def translate_page_bubbles(
 async def translate_single_page_bubbles(
     page_num: int,
     body: dict,
-    project_name: str,
+    project_id: str,
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
@@ -677,8 +677,8 @@ async def translate_single_page_bubbles(
 
     with ai_request_context(
         user_id=user_id,
-        project_id=get_project_id(get_db(), user_id, project_name),
-        project_name=project_name,
+        project_id=project_id,
+        project_name=project_dir.name,
         workspace_id=str(project_dir.parent),
         stage="compose",
     ):
@@ -687,7 +687,7 @@ async def translate_single_page_bubbles(
         debit_model_usage(
             get_db(),
             user_id,
-            get_project_id(get_db(), user_id, project_name),
+            project_id,
             usage,
             stage="compose",
             description=f"Model call: translate page {page_num}",
@@ -902,7 +902,7 @@ def delete_character_voice(character_id: str, project=Depends(get_project)):
 
 
 @router.get("/pages/{page_num}/preview")
-def page_preview(page_num: int, project_name: str, project=Depends(get_project)):
+def page_preview(page_num: int, project_id: str, project=Depends(get_project)):
     project_dir, config, state = project
     cp = _load_page(project_dir, page_num)
 
@@ -916,7 +916,7 @@ def page_preview(page_num: int, project_name: str, project=Depends(get_project))
         project_dir,
         custom_css,
         character_voices=character_voices,
-        image_url_fn=lambda rel: f"/api/projects/{project_name}/files/{rel}",
+        image_url_fn=lambda rel: f"/api/projects/{project_id}/files/{rel}",
         font_url_fn=lambda filename: f"/static/fonts/{filename}",
     )
     return HTMLResponse(html)

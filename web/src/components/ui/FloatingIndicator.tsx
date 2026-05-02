@@ -5,12 +5,12 @@ import { Icon } from "./Icon";
 import { cn } from "../../lib/cn";
 
 export function FloatingIndicator() {
-  const { name } = useParams<{ name: string }>();
+  const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const { data: status } = useProjectStatus(name);
+  const { data: status } = useProjectStatus(id);
 
-  if (!name || !status || !status.is_running) {
+  if (!id || !status || !status.is_running) {
     return null;
   }
 
@@ -24,7 +24,7 @@ export function FloatingIndicator() {
 
   const stageInfo = status.stages[runningStage];
   const route = STAGE_ROUTES[runningStage];
-  const jumpPath = `/project/${encodeURIComponent(name)}/${route}`;
+  const jumpPath = `/project/${encodeURIComponent(id)}/${route}`;
   const onRunningStageScreen = location.pathname === jumpPath;
 
   if (onRunningStageScreen) {

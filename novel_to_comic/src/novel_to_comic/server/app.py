@@ -82,32 +82,32 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
     app.include_router(
         pipeline.router,
-        prefix="/api/projects/{project_name}",
+        prefix="/api/projects/{project_id}",
         tags=["pipeline"],
     )
     app.include_router(
         pages.router,
-        prefix="/api/projects/{project_name}",
+        prefix="/api/projects/{project_id}",
         tags=["pages"],
     )
     app.include_router(
         export.router,
-        prefix="/api/projects/{project_name}/export",
+        prefix="/api/projects/{project_id}/export",
         tags=["export"],
     )
     app.include_router(
         config.router,
-        prefix="/api/projects/{project_name}/config",
+        prefix="/api/projects/{project_id}/config",
         tags=["config"],
     )
     app.include_router(
         stages.router,
-        prefix="/api/projects/{project_name}",
+        prefix="/api/projects/{project_id}",
         tags=["stages"],
     )
     app.include_router(
         styles.router,
-        prefix="/api/projects/{project_name}",
+        prefix="/api/projects/{project_id}",
         tags=["styles"],
     )
 

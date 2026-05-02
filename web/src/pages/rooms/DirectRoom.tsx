@@ -275,21 +275,21 @@ function PanelTabStrip({
 }
 
 export function DirectRoom() {
-  const { name } = useParams<{ name: string }>();
-  const { data: summaries, isLoading } = usePromptSummaries(name);
-  const { data: status } = useProjectStatus(name);
-  const { data: bible } = useStoryBible(name);
+  const { id } = useParams<{ id: string }>();
+  const { data: summaries, isLoading } = usePromptSummaries(id);
+  const { data: status } = useProjectStatus(id);
+  const { data: bible } = useStoryBible(id);
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedScene = searchParams.get("scene");
   const selectedPanel = Number(searchParams.get("panel"));
   const activeScene = selectedScene ?? summaries?.[0]?.scene_id;
-  const { data: prompts, isLoading: loadingPrompts } = usePromptsForScene(name, activeScene);
+  const { data: prompts, isLoading: loadingPrompts } = usePromptsForScene(id, activeScene);
   const updatePrompt = useUpdatePrompt();
   const stageInfo = status?.stages?.direct;
   const stageStatus = stageInfo?.status ?? "pending";
-  const resolveName = useCharacterName(name);
+  const resolveName = useCharacterName(id);
   const { isCompact, toggle } = useHeaderMode();
-  const { data: stylesData } = useStyles(name);
+  const { data: stylesData } = useStyles(id);
   const activeStyle = stylesData?.active_index != null
     ? (stylesData.suggestions.find((s) => s.index === stylesData.active_index) ?? null)
     : null;
@@ -301,9 +301,9 @@ export function DirectRoom() {
     null;
 
   const handleSavePrompt = (prompt: ImagePrompt, patch: Partial<ImagePrompt>) => {
-    if (!name || !activeScene) return;
+    if (!id || !activeScene) return;
     updatePrompt.mutate({
-      project: name,
+      project: id,
       sceneId: activeScene,
       data: { ...prompt, ...patch },
     });
@@ -329,7 +329,7 @@ export function DirectRoom() {
     return <RoomShell isLoading loadingText="LOADING IMAGE PROMPTS…" />;
   }
 
-  if (!summaries?.length || !name) {
+  if (!summaries?.length || !id) {
     return (
       <RoomShell>
         <StagePlaceholder
@@ -342,7 +342,7 @@ export function DirectRoom() {
     );
   }
 
-  const rerunAction = <RerunStageAction project={name} stage="direct" label="Direct" />;
+  const rerunAction = <RerunStageAction project={id} stage="direct" label="Direct" />;
 
   return (
     <RoomShell>
