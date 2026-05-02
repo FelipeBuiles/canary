@@ -17,7 +17,6 @@ _SECRET_FIELDS = {
 _SETTABLE_FIELDS = {
     "quality_preset",
     "target_language",
-    "style_template",
     "dev_mode",
     "image_provider",
     "image_model",
