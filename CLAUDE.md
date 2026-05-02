@@ -40,3 +40,13 @@ cd web && npm test
 Copy a project's `config.yaml` for API keys. LiteLLM gateway must be running
 (`docker compose up litellm`) before the pipeline server can generate anything.
 Key env vars: `LITELLM_BASE_URL`, `LITELLM_API_KEY`, `LITELLM_MASTER_KEY`.
+
+## graphify
+
+This project has a graphify knowledge graph at graphify-out/.
+
+Rules:
+- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
+- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
+- For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep — these traverse the graph's EXTRACTED + INFERRED edges instead of scanning files
+- After modifying code files in this session, run `graphify update .` to keep the graph current (AST-only, no API cost)

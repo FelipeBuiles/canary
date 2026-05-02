@@ -1,0 +1,19 @@
+AGENTS.md          # graphify install files — don't extract your own instructions as knowledge
+CLAUDE.md
+
+.claude/
+.codex/
+.playwright-cli/
+.ruff_cache/
+.venv/
+clickhouse/
+litellm/
+novel_to_comic/.pytest_cache/
+novel_to_comic/.ruff_cache/
+novel_to_comic/.venv
+
+samples/
+projects/
+
+web/node_modules/
+.env
