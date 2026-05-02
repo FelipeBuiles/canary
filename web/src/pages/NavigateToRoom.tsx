@@ -4,8 +4,8 @@ import { useProjectStatus } from "../api/queries";
 import { STAGE_ORDER, STAGE_ROUTES } from "../types/api";
 
 export function NavigateToRoom() {
-  const { name } = useParams<{ name: string }>();
-  const { data: status, isLoading, error } = useProjectStatus(name);
+  const { id } = useParams<{ id: string }>();
+  const { data: status, isLoading, error } = useProjectStatus(id);
 
   const activeStage = useMemo(() => {
     if (!status) return null;
@@ -23,7 +23,7 @@ export function NavigateToRoom() {
     return STAGE_ROUTES[stage];
   }, [status]);
 
-  if (!name) return null;
+  if (!id) return null;
   if (isLoading || !activeStage) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
@@ -42,5 +42,5 @@ export function NavigateToRoom() {
       </div>
     );
   }
-  return <Navigate to={`/project/${encodeURIComponent(name)}/${activeStage}`} replace />;
+  return <Navigate to={`/project/${encodeURIComponent(id)}/${activeStage}`} replace />;
 }

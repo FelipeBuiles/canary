@@ -4,7 +4,7 @@ import type { PipelineEvent } from "../types/api";
 interface PipelineStore {
   connected: boolean;
   events: PipelineEvent[];
-  connect: (projectName: string) => void;
+  connect: (projectId: string) => void;
   disconnect: () => void;
   clearEvents: () => void;
 }
@@ -32,10 +32,10 @@ export const usePipelineStore = create<PipelineStore>((set) => ({
   connected: false,
   events: [],
 
-  connect: (projectName: string) => {
+  connect: (projectId: string) => {
     usePipelineStore.getState().disconnect();
     const es = new EventSource(
-      `/api/projects/${encodeURIComponent(projectName)}/events`,
+      `/api/projects/${encodeURIComponent(projectId)}/events`,
     );
     es.onmessage = (e) => {
       try {
@@ -58,7 +58,7 @@ export const usePipelineStore = create<PipelineStore>((set) => ({
       if (eventSource !== null) {
         reconnectTimer = setTimeout(() => {
           reconnectDelay = Math.min(reconnectDelay * 2, 30_000);
-          usePipelineStore.getState().connect(projectName);
+          usePipelineStore.getState().connect(projectId);
         }, reconnectDelay);
       }
     };

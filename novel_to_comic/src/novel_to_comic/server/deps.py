@@ -8,25 +8,42 @@ from novel_to_comic.config import Config, load_config
 from novel_to_comic.state import PipelineState, load_state
 
 from .auth import get_current_user
+from .db import get_db
 
 
 def get_projects_dir(request: Request) -> Path:
     return request.app.state.projects_dir
 
 
-def project_key(user_id: str, project_name: str) -> str:
+def project_key(user_id: str, project_id: str) -> str:
     """Composite key used for all in-memory state dicts (event queues, running tasks, etc.)."""
-    return f"{user_id}:{project_name}"
+    return f"{user_id}:{project_id}"
+
+
+def _resolve_project_slug(user_id: str, project_id: str) -> str:
+    """Look up the filesystem slug for a project UUID."""
+    result = (
+        get_db()
+        .table("projects")
+        .select("name")
+        .eq("user_id", user_id)
+        .eq("id", project_id)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(404, f"Project '{project_id}' not found")
+    return result.data[0]["name"]
 
 
 def get_project(
-    project_name: str,
+    project_id: str,
     request: Request,
     user_id: str = Depends(get_current_user),
 ) -> tuple[Path, Config, PipelineState]:
-    d = request.app.state.projects_dir / user_id / project_name
+    slug = _resolve_project_slug(user_id, project_id)
+    d = request.app.state.projects_dir / user_id / slug
     if not d.is_dir() or not (d / "state.json").exists():
-        raise HTTPException(404, f"Project '{project_name}' not found")
+        raise HTTPException(404, f"Project '{project_id}' not found")
     config, _ = load_config(d)
     state = load_state(d)
     return d, config, state

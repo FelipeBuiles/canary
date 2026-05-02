@@ -65,7 +65,7 @@ export function ProjectCard({ project, coverPending = false }: Props) {
   const stageLabel = project.furthest_stage
     ? stageName(project.furthest_stage as (typeof STAGE_ORDER)[number])
     : null;
-  const coverUrl = `/api/projects/${encodeURIComponent(project.name)}/files/cover/cover.png`;
+  const coverUrl = `/api/projects/${encodeURIComponent(project.id)}/files/cover/cover.png`;
 
   const stageKey = project.furthest_stage as StageName | null;
   const coverStyle = stageKey ? STAGE_COVER_STYLE[stageKey] : undefined;
@@ -75,7 +75,7 @@ export function ProjectCard({ project, coverPending = false }: Props) {
 
   return (
     <Link
-      to={`/project/${encodeURIComponent(project.name)}`}
+      to={`/project/${encodeURIComponent(project.id)}`}
       aria-label={`${t("OPEN FILE")}: ${project.project_name}`}
       className="group block h-full focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
     >

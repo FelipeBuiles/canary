@@ -391,10 +391,10 @@ function LocationPlateCard({
 }
 
 export function CastRoom() {
-  const { name } = useParams<{ name: string }>();
+  const { id } = useParams<{ id: string }>();
   const { isCompact, toggle } = useHeaderMode();
-  const { data: bible, isLoading } = useStoryBible(name);
-  const { data: status } = useProjectStatus(name);
+  const { data: bible, isLoading } = useStoryBible(id);
+  const { data: status } = useProjectStatus(id);
   const isCastStageRunning = status?.stages?.cast?.status === "running";
   const stageRegenerating = isCastStageRunning;
   const stageInfo = status?.stages?.cast;
@@ -404,7 +404,7 @@ export function CastRoom() {
     return <RoomShell isLoading loadingText="LOADING CAST…" />;
   }
 
-  if (!bible || !name) {
+  if (!bible || !id) {
     return (
       <RoomShell>
         <StagePlaceholder
@@ -425,7 +425,7 @@ export function CastRoom() {
         onToggle={toggle}
         title="CHARACTER & LOCATION REFS"
         lead="Reference sheets and location plates produced by the casting director — each used as the visual anchor for every downstream panel."
-        actions={<RerunStageAction project={name} stage="cast" label="Cast" disabled={stageRegenerating} />}
+        actions={<RerunStageAction project={id} stage="cast" label="Cast" disabled={stageRegenerating} />}
       />
 
       <section className="grid gap-10 xl:grid-cols-2">
@@ -438,7 +438,7 @@ export function CastRoom() {
               <CharacterCastCard
                 key={char.id}
                 character={char}
-                projectName={name}
+                projectName={id}
                 stageRegenerating={stageRegenerating}
               />
             ))}
@@ -454,7 +454,7 @@ export function CastRoom() {
               <LocationPlateCard
                 key={loc.id}
                 location={loc}
-                projectName={name}
+                projectName={id}
                 stageRegenerating={stageRegenerating}
               />
             ))}

@@ -14,9 +14,9 @@ import { useActiveRegens, useRegenStore } from "../../store/regen";
 import type { ImageStatus } from "../../types/api";
 
 export function DrawRoom() {
-  const { name } = useParams<{ name: string }>();
+  const { id } = useParams<{ id: string }>();
   const { isCompact, toggle } = useHeaderMode();
-  const projectRegens = useActiveRegens(name ?? "");
+  const projectRegens = useActiveRegens(id ?? "");
   const bustTimestamps = useRegenStore((s) => s.bustTimestamps);
   const errors = useRegenStore((s) => s.errors);
   const begin = useRegenStore((s) => s.begin);
@@ -31,38 +31,38 @@ export function DrawRoom() {
   const regenJobIds = Object.values(projectRegens)
     .map((regen) => regen.jobId)
     .filter((jobId): jobId is string => !!jobId);
-  const { data: generationJobs } = useGenerationJobs(name, regenJobIds);
+  const { data: generationJobs } = useGenerationJobs(id, regenJobIds);
   const regenModes = new Map(
     regeningKeys.map((key) => [key, projectRegens[key]?.status ?? "queued"] as const),
   );
   const runningRegenCount = Object.values(projectRegens).filter((regen) => regen.status === "running").length;
   const queuedRegenCount = Object.values(projectRegens).filter((regen) => regen.status === "queued").length;
 
-  const { data: status } = useProjectStatus(name);
+  const { data: status } = useProjectStatus(id);
   const { data: images, isLoading } = useImages(
-    name,
+    id,
     regeningKeys.length > 0 || status?.stages?.draw?.status === "running" ? 2000 : undefined,
   );
-  const { data: promptSummaries } = usePromptSummaries(name);
+  const { data: promptSummaries } = usePromptSummaries(id);
   const { mutate: regen } = useRegenPanel();
 
   function handleRegen(sceneId: string, panelNumber: number) {
-    if (!name) return;
+    if (!id) return;
     const key = `${sceneId}-${panelNumber}`;
-    begin(name, key);
+    begin(id, key);
     regen(
-      { project: name, sceneId, panelNumber },
+      { project: id, sceneId, panelNumber },
       {
-        onSuccess: (data) => attachJob(name, key, data.job),
+        onSuccess: (data) => attachJob(id, key, data.job),
         onError: (err) => {
-          fail(name, key, err instanceof Error ? err.message : "Regeneration failed");
+          fail(id, key, err instanceof Error ? err.message : "Regeneration failed");
         },
       },
     );
   }
 
   useEffect(() => {
-    if (!name || !generationJobs?.jobs.length) return;
+    if (!id || !generationJobs?.jobs.length) return;
     const activeByJobId = new Map(
       Object.values(projectRegens)
         .filter((regen) => regen.jobId)
@@ -71,11 +71,11 @@ export function DrawRoom() {
     for (const job of generationJobs.jobs) {
       const regen = activeByJobId.get(job.id);
       if (!regen) continue;
-      if (job.status === "complete") complete(name, regen.key);
-      else if (job.status === "failed") fail(name, regen.key, job.error ?? "Regeneration failed");
-      else updateJob(name, regen.key, job);
+      if (job.status === "complete") complete(id, regen.key);
+      else if (job.status === "failed") fail(id, regen.key, job.error ?? "Regeneration failed");
+      else updateJob(id, regen.key, job);
     }
-  }, [generationJobs, projectRegens, name, updateJob, complete, fail]);
+  }, [generationJobs, projectRegens, id, updateJob, complete, fail]);
 
   const generateStage = status?.stages?.draw;
   const failedItems = generateStage?.items_failed ?? [];
@@ -193,26 +193,26 @@ export function DrawRoom() {
   }
 
   useEffect(() => {
-    if (!name || !generationJobs) return;
+    if (!id || !generationJobs) return;
     const reportedIds = new Set(generationJobs.jobs.map((job) => job.id));
     for (const regen of Object.values(projectRegens)) {
       if (!regen.jobId || reportedIds.has(regen.jobId)) continue;
       const image = imageByKey.get(regen.key);
       if (image?.status === "done") {
-        complete(name, regen.key);
+        complete(id, regen.key);
         continue;
       }
       if (image?.status === "failed") {
-        fail(name, regen.key, "Generation failed");
+        fail(id, regen.key, "Generation failed");
         continue;
       }
       fail(
-        name,
+        id,
         regen.key,
         "Generation job tracking was lost (server restart/interruption). Use Quick Re-Do.",
       );
     }
-  }, [generationJobs, imageByKey, projectRegens, name, complete, fail]);
+  }, [generationJobs, imageByKey, projectRegens, id, complete, fail]);
 
   const scenes = [...new Set([...images?.map((img) => img.scene_id) ?? [], ...(promptSummaries?.map((s) => s.scene_id) ?? [])])];
 
@@ -222,7 +222,7 @@ export function DrawRoom() {
     return <RoomShell isLoading loadingText="LOADING PANEL GALLERY…" />;
   }
 
-  if ((!images?.length && !promptSummaries?.length && regeningKeys.length === 0) || !name) {
+  if ((!images?.length && !promptSummaries?.length && regeningKeys.length === 0) || !id) {
     return (
       <RoomShell>
         <StagePlaceholder
@@ -254,11 +254,11 @@ export function DrawRoom() {
   const selectedPanelKey = selectedPanel
     ? `${selectedPanel.sceneId}-${selectedPanel.panelNumber}`
     : null;
-  const selectedPanelBust = selectedPanelKey && name
-    ? bustTimestamps[`${name}/${selectedPanelKey}`]
+  const selectedPanelBust = selectedPanelKey && id
+    ? bustTimestamps[`${id}/${selectedPanelKey}`]
     : undefined;
   const selectedPanelBaseUrl = selectedPanel
-    ? `/api/projects/${encodeURIComponent(name!)}/files/draw/${selectedPanel.sceneId}/panel_${String(selectedPanel.panelNumber).padStart(3, "0")}.png`
+    ? `/api/projects/${encodeURIComponent(id!)}/files/draw/${selectedPanel.sceneId}/panel_${String(selectedPanel.panelNumber).padStart(3, "0")}.png`
     : "";
   const selectedPanelImageUrl = selectedPanelBust
     ? `${selectedPanelBaseUrl}?t=${selectedPanelBust}`
@@ -272,9 +272,9 @@ export function DrawRoom() {
         onToggle={toggle}
         title="PANEL GALLERY"
         lead="Every generated panel at a glance — regenerate individual frames, review failures, switch scenes."
-        actions={<RerunStageAction project={name} stage="draw" label="Draw" itemsAtRisk={`${images?.length ?? 0} generated panels will be lost`} />}
+        actions={<RerunStageAction project={id} stage="draw" label="Draw" itemsAtRisk={`${images?.length ?? 0} generated panels will be lost`} />}
       />
-      <StyleCallout project={name} />
+      <StyleCallout project={id} />
       <div className="flex max-w-full overflow-x-auto" role="tablist" aria-label="Panel filters">
         <button
           type="button"
@@ -311,13 +311,13 @@ export function DrawRoom() {
         <div className="grid gap-x-5 gap-y-7 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
           {displayImages.map((img) => {
             const key = `${img.scene_id}-${img.panel_number}`;
-            const bust = name ? bustTimestamps[`${name}/${key}`] : undefined;
-            const baseUrl = `/api/projects/${encodeURIComponent(name!)}/files/draw/${img.scene_id}/panel_${String(img.panel_number).padStart(3, "0")}.png`;
+            const bust = id ? bustTimestamps[`${id}/${key}`] : undefined;
+            const baseUrl = `/api/projects/${encodeURIComponent(id!)}/files/draw/${img.scene_id}/panel_${String(img.panel_number).padStart(3, "0")}.png`;
             const imageUrl = bust ? `${baseUrl}?t=${bust}` : baseUrl;
             const isFailed = failedItems.includes(
               `${img.scene_id}/panel_${String(img.panel_number).padStart(3, "0")}`,
             );
-            const regenError = name ? errors[`${name}/${key}`] : undefined;
+            const regenError = id ? errors[`${id}/${key}`] : undefined;
             return (
               <PanelCard
                 key={key}
@@ -369,14 +369,14 @@ export function DrawRoom() {
           </div>
         </aside>
       </section>
-      {selectedPanel && selectedPanelImage && name && (
+      {selectedPanel && selectedPanelImage && id && (
         <PanelDetailModal
           isOpen={!!selectedPanel}
           onClose={() => setSelectedPanel(null)}
           onPrev={prevPanel ? () => setSelectedPanel({ sceneId: prevPanel.scene_id, panelNumber: prevPanel.panel_number }) : null}
           onNext={nextPanel ? () => setSelectedPanel({ sceneId: nextPanel.scene_id, panelNumber: nextPanel.panel_number }) : null}
           onNextUnaccepted={nextUnacceptedPanel ? () => setSelectedPanel({ sceneId: nextUnacceptedPanel.scene_id, panelNumber: nextUnacceptedPanel.panel_number }) : null}
-          project={name}
+          project={id}
           sceneId={selectedPanel.sceneId}
           panelNumber={selectedPanel.panelNumber}
           imageUrl={selectedPanelImageUrl}

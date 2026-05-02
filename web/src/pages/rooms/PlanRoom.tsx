@@ -286,12 +286,12 @@ function NarrationReviewModal({
 }
 
 export function PlanRoom() {
-  const { name } = useParams<{ name: string }>();
-  const { data: plan, isLoading } = useLayoutPlan(name);
-  const { data: status } = useProjectStatus(name);
-  const { data: bible } = useStoryBible(name);
+  const { id } = useParams<{ id: string }>();
+  const { data: plan, isLoading } = useLayoutPlan(id);
+  const { data: status } = useProjectStatus(id);
+  const { data: bible } = useStoryBible(id);
   const [searchParams, setSearchParams] = useSearchParams();
-  const resolveName = useCharacterName(name);
+  const resolveName = useCharacterName(id);
   const { isCompact, toggle } = useHeaderMode();
   const [activeNarration, setActiveNarration] = useState<NarrationDecision | null>(null);
 
@@ -380,7 +380,7 @@ export function PlanRoom() {
     return <RoomShell isLoading loadingText="LOADING LAYOUT PLAN…" />;
   }
 
-  if (!plan || sceneIds.length === 0 || !name) {
+  if (!plan || sceneIds.length === 0 || !id) {
     return (
       <RoomShell>
         <StagePlaceholder
@@ -393,7 +393,7 @@ export function PlanRoom() {
     );
   }
 
-  const rerunAction = <RerunStageAction project={name} stage="plan" label="Plan" />;
+  const rerunAction = <RerunStageAction project={id} stage="plan" label="Plan" />;
 
   return (
     <RoomShell>
@@ -464,11 +464,11 @@ export function PlanRoom() {
           </div>
         </section>
 
-        {name && activeNarration && (
+        {id && activeNarration && (
           <NarrationReviewModal
             isOpen
             onClose={() => setActiveNarration(null)}
-            project={name}
+            project={id}
             decision={activeNarration}
           />
         )}

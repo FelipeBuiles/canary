@@ -13,7 +13,7 @@ from novel_to_comic.prompting import build_style_sample_prompt
 from novel_to_comic.stages.s2_style import generate_suggestions
 
 from ..auth import get_current_user
-from ..credits import debit_model_usage, get_project_id
+from ..credits import debit_model_usage
 from ..db import get_db
 from ..deps import get_project, project_key
 from ..generation_jobs import (
@@ -143,7 +143,7 @@ def _get_bible(project_dir):
 
 
 @router.get("/styles")
-def get_styles(project_name: str, project=Depends(get_project)):
+def get_styles(project_id: str, project=Depends(get_project)):
     project_dir, config, state = project
     suggestions = _load_suggestions(project_dir) or []
 
@@ -170,12 +170,12 @@ def get_styles(project_name: str, project=Depends(get_project)):
 @router.post("/styles/suggest")
 async def suggest_styles(
     request: Request,
-    project_name: str,
+    project_id: str,
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
-    pkey = project_key(user_id, project_name)
+    pkey = project_key(user_id, project_id)
 
     style_running = request.app.state.style_tasks
     existing = style_running.get(pkey)
@@ -200,7 +200,6 @@ async def suggest_styles(
             })
             existing = _load_suggestions(project_dir) or []
             existing_labels = [s.get("label", "") for s in existing if isinstance(s, dict)]
-            project_id = get_project_id(get_db(), user_id, project_name)
             with ai_request_context(
                 user_id=user_id,
                 project_id=project_id,
@@ -237,13 +236,13 @@ async def suggest_styles(
 @router.post("/styles/generate-samples")
 async def generate_style_samples(
     request: Request,
-    project_name: str,
+    project_id: str,
     body: dict,
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
-    pkey = project_key(user_id, project_name)
+    pkey = project_key(user_id, project_id)
 
     indices = body.get("indices", [])
     if not indices or not isinstance(indices, list):
@@ -278,8 +277,6 @@ async def generate_style_samples(
         template = s.get("template", config.style_template)
         sample_config = config.model_copy(update={"style_template": template})
         sample_path = project_dir / "samples" / f"style_{idx}.png"
-
-        project_id = get_project_id(get_db(), user_id, project_name)
 
         async def _runner(
             sample_config=sample_config,
@@ -323,7 +320,7 @@ async def generate_style_samples(
 
 
 @router.patch("/styles/active")
-def set_active_style(project_name: str, body: dict, project=Depends(get_project)):
+def set_active_style(project_id: str, body: dict, project=Depends(get_project)):
     project_dir, config, state = project
 
     index = body.get("index")

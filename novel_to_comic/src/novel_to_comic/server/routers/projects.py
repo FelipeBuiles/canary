@@ -18,7 +18,7 @@ from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.state import STAGE_NAMES, StageStatus, create_initial_state, is_stale, load_state, save_state
 
 from ..auth import get_current_user
-from ..credits import debit_model_usage, get_project_id
+from ..credits import debit_model_usage
 from ..db import get_db
 from ..deps import get_project, get_projects_dir, project_key
 from .styles import is_style_selected
@@ -130,8 +130,8 @@ def _stage_payload(project_dir: Path, name: str, state) -> dict:
     }
 
 
-def _is_project_running(user_id: str, project_name: str, request: Request) -> bool:
-    key = project_key(user_id, project_name)
+def _is_project_running(user_id: str, project_id: str, request: Request) -> bool:
+    key = project_key(user_id, project_id)
     task = request.app.state.running_tasks.get(key)
     return task is not None and not task.done()
 
@@ -324,13 +324,14 @@ async def create_project(
     # Register project in DB. On failure, clean up the directory so filesystem
     # and DB don't get out of sync.
     try:
-        get_db().table("projects").insert({"user_id": user_id, "name": slug}).execute()
+        db_result = get_db().table("projects").insert({"user_id": user_id, "name": slug}).execute()
+        project_id = db_result.data[0]["id"] if db_result.data else None
     except Exception as exc:
         shutil.rmtree(project_dir, ignore_errors=True)
         logger.exception("Failed to register project %s for user %s", slug, user_id)
         raise HTTPException(500, "Failed to register project. Please try again.") from exc
 
-    return {"name": slug, "project_name": name, "status": "created"}
+    return {"id": project_id, "name": slug, "project_name": name, "status": "created"}
 
 
 @router.get("/")
@@ -343,7 +344,7 @@ def list_projects(
     rows = (
         get_db()
         .table("projects")
-        .select("name, created_at")
+        .select("id, name, created_at")
         .eq("user_id", user_id)
         .order("created_at", desc=True)
         .execute()
@@ -355,35 +356,36 @@ def list_projects(
         if not d.is_dir() or not state_file.exists():
             continue  # orphaned DB row — directory missing, skip silently
         state = load_state(d)
-        pkey = project_key(user_id, row["name"])
+        pkey = project_key(user_id, row["id"])
         cover_job = _latest_project_cover_job(request, pkey)
         furthest = None
         for name in STAGE_NAMES:
             if _stage_payload(d, name, state)["status"] in ("complete", "awaiting_review"):
                 furthest = name
         results.append({
+            "id": row["id"],
             "name": row["name"],
             "project_name": state.project_name,
             "author": _story_bible_author(d),
             "created_at": state.created_at.isoformat(),
             "total_cost_usd": state.total_cost_usd,
             "furthest_stage": furthest,
-            "is_running": _is_project_running(user_id, row["name"], request),
+            "is_running": _is_project_running(user_id, row["id"], request),
             "has_cover": _cover_path(d).exists(),
             "cover_job": generation_job_payload(request.app, cover_job) if cover_job else None,
         })
     return results
 
 
-@router.get("/{project_name}/status")
+@router.get("/{project_id}/status")
 def project_status(
     request: Request,
-    project_name: str,
+    project_id: str,
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
-    running = _is_project_running(user_id, project_name, request)
+    running = _is_project_running(user_id, project_id, request)
 
     # Reconcile draw stage only when a task was running and has just finished.
     # This avoids mutating state on every GET /status poll.
@@ -400,12 +402,13 @@ def project_status(
         .table("projects")
         .select("share_token, is_public")
         .eq("user_id", user_id)
-        .eq("name", project_name)
+        .eq("id", project_id)
         .execute()
     )
     share_info = db_row.data[0] if db_row.data else {}
 
     return {
+        "id": project_id,
         "project_name": state.project_name,
         "created_at": state.created_at.isoformat(),
         "total_cost_usd": state.total_cost_usd,
@@ -420,16 +423,16 @@ def project_status(
     }
 
 
-@router.post("/{project_name}/cover")
+@router.post("/{project_id}/cover")
 async def generate_cover(
     request: Request,
-    project_name: str,
+    project_id: str,
     force: bool = Query(False),
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
-    pkey = project_key(user_id, project_name)
+    pkey = project_key(user_id, project_id)
 
     cover_path = _cover_path(project_dir)
     if cover_path.exists() and not force:
@@ -447,7 +450,7 @@ async def generate_cover(
         }
 
     async def _runner() -> None:
-        await _generate_project_cover(config, project_dir, user_id, get_project_id(get_db(), user_id, project_name))
+        await _generate_project_cover(config, project_dir, user_id, project_id)
 
     prune_finished_generation_jobs(request.app)
     job = enqueue_generation_job(
@@ -466,17 +469,17 @@ async def generate_cover(
     }
 
 
-@router.delete("/{project_name}")
+@router.delete("/{project_id}")
 def delete_project(
     request: Request,
-    project_name: str,
+    project_id: str,
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
-    if _is_project_running(user_id, project_name, request):
+    if _is_project_running(user_id, project_id, request):
         raise HTTPException(409, "Cannot delete a project while a stage is running")
 
-    get_db().table("projects").delete().eq("user_id", user_id).eq("name", project_name).execute()
+    get_db().table("projects").delete().eq("user_id", user_id).eq("id", project_id).execute()
     shutil.rmtree(project_dir)
-    return {"status": "deleted", "name": project_name}
+    return {"status": "deleted", "id": project_id}

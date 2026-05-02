@@ -85,15 +85,15 @@ function stageDetail(stage: PipelineNavStage, fallbackDetail?: string | null) {
 }
 
 export function SideNav({ showDesktop = true }: SideNavProps) {
-  const { name } = useParams();
+  const { id: projectId } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
   const { stageName, t } = useI18n();
   const navRef = useRef<HTMLElement>(null);
   const [compactStageDetails, setCompactStageDetails] = useState(false);
-  const { data: status } = useProjectStatus(name);
+  const { data: status } = useProjectStatus(projectId);
   const { data: projects } = useProjects();
-  const { data: stylesData } = useStyles(name);
+  const { data: stylesData } = useStyles(projectId);
   const storyBibleReady =
     status?.stages.extract?.status === "awaiting_review" ||
     status?.stages.extract?.status === "complete";
@@ -103,20 +103,20 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   const directReady = status?.stages.direct?.status != null && status.stages.direct.status !== "pending";
   const drawReady = status?.stages.draw?.status != null && status.stages.draw.status !== "pending";
   const composeReady = status?.stages.compose?.status != null && status.stages.compose.status !== "pending";
-  const { data: storyBible } = useStoryBible(name, storyBibleReady);
-  const { data: screenplays } = useScreenplays(adaptReady ? name : undefined);
-  const { data: panelSummaries } = usePanelSummaries(planReady || storyboardReady ? name : undefined);
-  const { data: promptSummaries } = usePromptSummaries(directReady ? name : undefined);
-  const { data: images } = useImages(drawReady ? name : undefined);
-  const { data: pages } = usePages(composeReady ? name : undefined);
+  const { data: storyBible } = useStoryBible(projectId, storyBibleReady);
+  const { data: screenplays } = useScreenplays(adaptReady ? projectId : undefined);
+  const { data: panelSummaries } = usePanelSummaries(planReady || storyboardReady ? projectId : undefined);
+  const { data: promptSummaries } = usePromptSummaries(directReady ? projectId : undefined);
+  const { data: images } = useImages(drawReady ? projectId : undefined);
+  const { data: pages } = usePages(composeReady ? projectId : undefined);
   const runPipeline = useRunPipeline();
   const approveStage = useApproveStage();
   const connect = usePipelineStore((state) => state.connect);
   const clearEvents = usePipelineStore((state) => state.clearEvents);
 
-  const current = projects?.find((p) => p.name === name);
-  const projectTitle = current?.project_name ?? name ?? t("PROJECT INDEX");
-  const settingsPath = name ? `/project/${encodeURIComponent(name)}/settings` : "/account";
+  const current = projects?.find((p) => p.id === projectId);
+  const projectTitle = current?.project_name ?? projectId ?? t("PROJECT INDEX");
+  const settingsPath = projectId ? `/project/${encodeURIComponent(projectId)}/settings` : "/account";
   const isSettingsActive = location.pathname.endsWith("/settings");
 
   const styleSuggestions = stylesData?.suggestions ?? [];
@@ -239,7 +239,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     ? STAGE_ORDER.find((stage) => status.stages[stage]?.status === "awaiting_review")
     : null;
   const styleNeedsSelection =
-    !!name &&
+    !!projectId &&
     !status?.style_selected &&
     (status?.stages.extract?.status === "complete" || status?.stages.extract?.status === "awaiting_review");
   const isRunning = status?.is_running ?? false;
@@ -247,7 +247,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   // Determine which stage will actually run when the user clicks NEXT STAGE,
   // so we can show a credit estimate before they commit to the action.
   const nextRunStage = useMemo<StageName | undefined>(() => {
-    if (!status || isRunning || styleNeedsSelection || !name) return undefined;
+    if (!status || isRunning || styleNeedsSelection || !projectId) return undefined;
     // Approving extract → navigates to style selection (no model cost).
     if (needsApproval === "extract") return undefined;
     // For other approval stages, pipeline runs from the first pending stage after approval.
@@ -269,9 +269,9 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
       const st = status.stages[s]?.status;
       return !st || st === "pending";
     });
-  }, [status, isRunning, styleNeedsSelection, needsApproval, name]);
+  }, [status, isRunning, styleNeedsSelection, needsApproval, projectId]);
 
-  const { data: nextStageEstimate } = useStageEstimate(name, nextRunStage);
+  const { data: nextStageEstimate } = useStageEstimate(projectId, nextRunStage);
   const [showCostConfirm, setShowCostConfirm] = useState(false);
 
   const measureStageDetails = useCallback(() => {
@@ -311,31 +311,31 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   }, [measureStageDetails, pipelineStages, stageDetails, activeStageRoute]);
 
   function handleRun() {
-    if (!name) return;
+    if (!projectId) return;
     clearEvents();
     runPipeline.mutate(
-      { project: name },
-      { onSuccess: () => connect(name) },
+      { project: projectId },
+      { onSuccess: () => connect(projectId) },
     );
   }
 
   function handleContinue() {
-    if (!name || isRunning) return;
+    if (!projectId || isRunning) return;
     if (needsApproval) {
       approveStage.mutate(
-        { project: name, stage: needsApproval },
+        { project: projectId, stage: needsApproval },
         {
           onSuccess: () => {
             // After approving extract, go to style selection before running cast.
             // style_selected comes from config.yaml so it's never stale.
             if (needsApproval === "extract" && !status?.style_selected) {
-              navigate(`/project/${encodeURIComponent(name)}/styles`);
+              navigate(`/project/${encodeURIComponent(projectId)}/styles`);
               return;
             }
             clearEvents();
             runPipeline.mutate(
-              { project: name },
-              { onSuccess: () => connect(name) },
+              { project: projectId },
+              { onSuccess: () => connect(projectId) },
             );
           },
         },
@@ -343,7 +343,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
       return;
     }
     if (styleNeedsSelection) {
-      navigate(`/project/${encodeURIComponent(name)}/styles`);
+      navigate(`/project/${encodeURIComponent(projectId)}/styles`);
       return;
     }
 
@@ -359,8 +359,8 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     if (brokenStage) {
       clearEvents();
       runPipeline.mutate(
-        { project: name, stage: brokenStage, rerun: true },
-        { onSuccess: () => connect(name) },
+        { project: projectId, stage: brokenStage, rerun: true },
+        { onSuccess: () => connect(projectId) },
       );
       return;
     }
@@ -405,7 +405,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
       <button
         key={stage.key}
         type="button"
-        onClick={() => name && navigate(`/project/${encodeURIComponent(name)}/${stage.route}`)}
+        onClick={() => projectId && navigate(`/project/${encodeURIComponent(projectId)}/${stage.route}`)}
         aria-label={`${stage.label}: ${statusLabel}. ${detail}`}
         className={rowClassName}
       >
@@ -464,11 +464,11 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           </span>
         </span>
       </Link>
-      {name && (
+      {projectId && (
         <select
           aria-label={t("PIPELINE STAGE")}
           value={activeStageRoute}
-          onChange={(event) => navigate(`/project/${encodeURIComponent(name)}/${event.target.value}`)}
+          onChange={(event) => navigate(`/project/${encodeURIComponent(projectId)}/${event.target.value}`)}
           className="max-w-[9.5rem] border border-bristol/20 bg-ink-black px-2 py-2 font-meta text-[0.56rem] tracking-[0.12em] text-bristol"
         >
           {pipelineStages.map((stage) => (
@@ -505,7 +505,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
 
         <div className="relative min-h-0 flex-1 mb-8">
           <nav ref={navRef} aria-label="Pipeline stages" className="h-full overflow-y-auto py-4 2xl:py-5 min-[2200px]:py-8">
-            {name ? pipelineStages.map((stage) => renderStageRow(stage)) : (
+            {projectId ? pipelineStages.map((stage) => renderStageRow(stage)) : (
               <div className="px-4 py-4 font-meta text-[0.6rem] tracking-[0.14em] text-bristol/35">
                 {t("NO PROJECT SELECTED")}
               </div>
@@ -529,7 +529,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
         </div>
 
         <div className="border-t border-bristol/10 p-4 2xl:p-5 min-[2200px]:p-7">
-          {name && (
+          {projectId && (
             <button
               type="button"
               onClick={handleContinueClick}
@@ -550,7 +550,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
             onConfirm={() => { setShowCostConfirm(false); handleContinue(); }}
             onClose={() => setShowCostConfirm(false)}
           />
-          {name && nextStageEstimate && nextStageEstimate.credits > 0 && !isRunning && (
+          {projectId && nextStageEstimate && nextStageEstimate.credits > 0 && !isRunning && (
             <div className="mt-2 flex items-center justify-center gap-1.5 font-meta text-[0.56rem] tracking-[0.12em] text-bristol/45 2xl:text-[0.62rem]">
               <span className="text-narrator-gold/70">~{nextStageEstimate.credits.toLocaleString()}</span>
               <span>credit hold</span>

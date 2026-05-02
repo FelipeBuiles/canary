@@ -5,15 +5,15 @@ export function listProjects(): Promise<ProjectSummary[]> {
   return apiFetch<ProjectSummary[]>("/projects/");
 }
 
-export function getProjectStatus(name: string): Promise<ProjectStatus> {
-  return apiFetch<ProjectStatus>(`/projects/${encodeURIComponent(name)}/status`);
+export function getProjectStatus(id: string): Promise<ProjectStatus> {
+  return apiFetch<ProjectStatus>(`/projects/${encodeURIComponent(id)}/status`);
 }
 
 export function createProject(
   file: File,
   name: string,
   configOverrides?: Partial<ConfigOverrides>,
-): Promise<{ name: string; project_name: string; status: string }> {
+): Promise<{ id: string; name: string; project_name: string; status: string }> {
   const form = new FormData();
   form.append("file", file);
   form.append("name", name);
@@ -27,16 +27,16 @@ export function createProject(
   });
 }
 
-export function deleteProject(name: string): Promise<void> {
-  return apiFetch(`/projects/${encodeURIComponent(name)}`, {
+export function deleteProject(id: string): Promise<void> {
+  return apiFetch(`/projects/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
 }
 
 export function generateProjectCover(
-  project: string,
+  projectId: string,
 ): Promise<{ status: string; path: string; job: GenerationJob | null }> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/cover`, {
+  return apiFetch(`/projects/${encodeURIComponent(projectId)}/cover`, {
     method: "POST",
   });
 }

@@ -35,7 +35,7 @@ function isInputFocused() {
 }
 
 export function ComposeRoom() {
-  const { name } = useParams<{ name: string }>();
+  const { id } = useParams<{ id: string }>();
 
   // ── Tab / sub-mode state ─────────────────────────────────────────────────
   const [tab, setTab] = useState<ComposeTab>("edit");
@@ -47,17 +47,17 @@ export function ComposeRoom() {
   const [searchParams, setSearchParams] = useSearchParams();
   const currentPage = Number(searchParams.get("page") ?? 1);
 
-  const { data: projectStatus } = useProjectStatus(name);
+  const { data: projectStatus } = useProjectStatus(id);
   const composeStageStatus = projectStatus?.stages?.compose?.status ?? "pending";
-  const { data: pageList, isLoading: loadingList, refetch: refetchPageList } = usePages(name);
+  const { data: pageList, isLoading: loadingList, refetch: refetchPageList } = usePages(id);
   const safePage = pageList?.length ? Math.min(currentPage, pageList.length) : undefined;
-  const { data: page, isLoading: loadingPage } = usePage(name, safePage);
+  const { data: page, isLoading: loadingPage } = usePage(id, safePage);
 
-  const { pages: allPages, isLoading: loadingAllPages } = useAllPages(name, pageList);
+  const { pages: allPages, isLoading: loadingAllPages } = useAllPages(id, pageList);
 
   const pageIdx = (safePage ?? 1) - 1;
 
-  const { data: projectConfig } = useProjectConfig(name);
+  const { data: projectConfig } = useProjectConfig(id);
   const [outputLanguageOverride, setOutputLanguageOverride] = useState<"en" | "es" | "fr" | null>(null);
   const outputLanguage = outputLanguageOverride ?? projectConfig?.target_language ?? "en";
 
@@ -96,10 +96,10 @@ export function ComposeRoom() {
   // ── Patch helpers ────────────────────────────────────────────────────────
   function patchPage(patch: Partial<ComicPage>, targetPageNum?: number) {
     const pNum = targetPageNum ?? safePage;
-    if (!name || !pNum) return;
+    if (!id || !pNum) return;
     const targetPage = targetPageNum ? allPages[targetPageNum - 1] : page;
     if (targetPage) pushUndo(targetPage);
-    updatePageMut.mutate({ project: name, pageNum: pNum, data: patch });
+    updatePageMut.mutate({ project: id, pageNum: pNum, data: patch });
   }
 
   function handleUpdateBubble(panelId: string, bubbleId: string, bPatch: Partial<Bubble>, targetPageNum?: number) {
@@ -147,7 +147,7 @@ export function ComposeRoom() {
 
   // ── Element delete / unpin ───────────────────────────────────────────────
   function handleDeleteElement(panelId: string, type: "bubble" | "sfx", elementId: string) {
-    if (!name || !safePage || !page) return;
+    if (!id || !safePage || !page) return;
     pushUndo(page);
     if (type === "bubble") {
       patchPage({ panels: [{ id: panelId, remove_bubble_ids: [elementId] }] as unknown as ComicPage["panels"] });
@@ -172,7 +172,7 @@ export function ComposeRoom() {
 
   // ── Add elements ─────────────────────────────────────────────────────────
   function handleAddBubble(bubbleType: "speech" | "thought" | "narration") {
-    if (!page || !name || !safePage) return;
+    if (!page || !id || !safePage) return;
     const targetPanel = selection?.panelId ? page.panels.find((p) => p.id === selection.panelId) : page.panels[0];
     if (!targetPanel) return;
     pushUndo(page);
@@ -180,7 +180,7 @@ export function ComposeRoom() {
   }
 
   function handleAddSfx() {
-    if (!page || !name || !safePage) return;
+    if (!page || !id || !safePage) return;
     const targetPanel = selection?.panelId ? page.panels.find((p) => p.id === selection.panelId) : page.panels[0];
     if (!targetPanel) return;
     pushUndo(page);
@@ -190,46 +190,46 @@ export function ComposeRoom() {
   // ── Undo / redo ──────────────────────────────────────────────────────────
   function handleUndo() {
     const prev = popUndo();
-    if (!prev || !name || !safePage || !page) return;
+    if (!prev || !id || !safePage || !page) return;
     useComposeStore.setState((s) => ({ redoStack: [...s.redoStack, structuredClone(page)] }));
-    replacePageMut.mutate({ project: name, pageNum: safePage, data: prev });
+    replacePageMut.mutate({ project: id, pageNum: safePage, data: prev });
   }
 
   function handleRedo() {
     const next = popRedo();
-    if (!next || !name || !safePage || !page) return;
+    if (!next || !id || !safePage || !page) return;
     useComposeStore.setState((s) => ({ undoStack: [...s.undoStack, structuredClone(page)] }));
-    replacePageMut.mutate({ project: name, pageNum: safePage, data: next });
+    replacePageMut.mutate({ project: id, pageNum: safePage, data: next });
   }
 
   // ── Export / style / translate ───────────────────────────────────────────
   function handleExport(format: "pdf" | "cbz") {
-    if (!name) return;
+    if (!id) return;
     exportMut.mutate(
-      { project: name, format },
-      { onSuccess: (result) => { window.open(result.url ?? downloadExportUrl(name, format), "_blank"); } },
+      { project: id, format },
+      { onSuccess: (result) => { window.open(result.url ?? downloadExportUrl(id, format), "_blank"); } },
     );
   }
 
   function handleGeneratePageStyle() {
-    if (!name) return;
-    generatePageStyleMut.mutate({ project: name });
+    if (!id) return;
+    generatePageStyleMut.mutate({ project: id });
   }
 
   function handleTranslateBubbles(targetLanguage: "en" | "es" | "fr") {
-    if (!name) return;
-    translateBubblesMut.mutate({ project: name, targetLanguage });
+    if (!id) return;
+    translateBubblesMut.mutate({ project: id, targetLanguage });
   }
 
   function handleOutputLanguageChange(targetLanguage: "en" | "es" | "fr") {
     setOutputLanguageOverride(targetLanguage);
-    if (!name) return;
-    updateProjectConfigMut.mutate({ project: name, data: { target_language: targetLanguage } });
+    if (!id) return;
+    updateProjectConfigMut.mutate({ project: id, data: { target_language: targetLanguage } });
   }
 
   function handleThemeChange(theme: string) {
-    if (!name) return;
-    setThemeMut.mutate({ project: name, theme });
+    if (!id) return;
+    setThemeMut.mutate({ project: id, theme });
   }
 
   // ── Script → Canvas deep-link ────────────────────────────────────────────
@@ -242,7 +242,7 @@ export function ComposeRoom() {
 
   // ── Poll while compose is running ────────────────────────────────────────
   useEffect(() => {
-    if (!name) return;
+    if (!id) return;
     const waitingForPages =
       composeStageStatus === "running" ||
       (composeStageStatus === "complete" && !pageList?.length);
@@ -250,7 +250,7 @@ export function ComposeRoom() {
     void refetchPageList();
     const interval = window.setInterval(() => { void refetchPageList(); }, 2000);
     return () => window.clearInterval(interval);
-  }, [name, composeStageStatus, pageList?.length, refetchPageList]);
+  }, [id, composeStageStatus, pageList?.length, refetchPageList]);
 
   // ── Keyboard shortcuts ───────────────────────────────────────────────────
   useEffect(() => {
@@ -297,7 +297,7 @@ export function ComposeRoom() {
     );
   }
 
-  if (!pageList?.length || !name) {
+  if (!pageList?.length || !id) {
     const stageInfo = projectStatus?.stages?.compose;
     return (
       <div className="flex min-h-[40vh] items-center justify-center">
@@ -326,7 +326,7 @@ export function ComposeRoom() {
         onMatchStyle={handleGeneratePageStyle}
         rerunAction={
           <RerunStageAction
-            project={name}
+            project={id}
             stage="compose"
             label="Compose"
             className="min-h-7 border border-ink-black/20 px-3 py-1 text-[0.5rem] tracking-[0.16em] text-ink-black/50 hover:text-ink-black"
@@ -342,7 +342,7 @@ export function ComposeRoom() {
 
           {editSubMode === "canvas" && (
             <LayoutMode
-              project={name}
+              project={id}
               pageList={pageList}
               page={page}
               pageNumber={pageNumber}
@@ -374,7 +374,7 @@ export function ComposeRoom() {
 
           {editSubMode === "script" && (
             <ScriptMode
-              project={name}
+              project={id}
               pages={allPages}
               isLoading={loadingAllPages}
               pageIdx={pageIdx}
@@ -392,7 +392,7 @@ export function ComposeRoom() {
       {/* Export tab */}
       {tab === "export" && (
         <PreviewMode
-          project={name}
+          project={id}
           pages={allPages}
           pageList={pageList}
           isLoading={loadingAllPages}

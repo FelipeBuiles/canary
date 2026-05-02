@@ -44,8 +44,8 @@ export function App() {
           />
           <Route path="account" element={<AccountPage />} />
           <Route path="credits" element={<CreditsPage />} />
-          <Route path="project/:name/settings" element={<ProjectSettingsPage />} />
-          <Route path="project/:name" element={<ProjectRooms />}>
+          <Route path="project/:id/settings" element={<ProjectSettingsPage />} />
+          <Route path="project/:id" element={<ProjectRooms />}>
             <Route index element={<NavigateToRoom />} />
             <Route path="extract" element={<StoryBibleRoom />} />
             <Route path="cast" element={<CastRoom />} />
