@@ -1,13 +1,14 @@
 import { useParams } from "react-router-dom";
 import { useProjectStatus } from "../api/queries";
-import { STAGE_DISPLAY_NAMES, STAGE_ORDER } from "../types/api";
+import { STAGE_ORDER } from "../types/api";
+import { getBackendStageUiLabel, getUiCompletedCount, UI_STAGES } from "../lib/uiStages";
 
 export function Footer() {
   const { name } = useParams();
   const { data: status } = useProjectStatus(name);
 
   const completedStages = status
-    ? STAGE_ORDER.filter((stage) => status.stages[stage]?.status === "complete").length
+    ? getUiCompletedCount(status)
     : 0;
   const activeStage =
     status &&
@@ -25,10 +26,10 @@ export function Footer() {
 
         <div className="flex flex-wrap items-center gap-5 text-[0.55rem]">
           <span className="font-meta tracking-[0.12em] text-bristol/80 tabular-nums">
-            Progress: {completedStages}/7
+            Progress: {completedStages}/{UI_STAGES.length}
           </span>
           <span className="font-meta tracking-[0.12em] text-narrator-gold">
-            Status: {activeStage ? STAGE_DISPLAY_NAMES[activeStage] : "Standby"}
+            Status: {activeStage ? getBackendStageUiLabel(activeStage).toUpperCase() : "Standby"}
           </span>
         </div>
       </div>

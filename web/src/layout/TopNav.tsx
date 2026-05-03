@@ -1,6 +1,6 @@
 import { Link, useParams, useLocation } from "react-router-dom";
 import { useRunAction } from "../hooks/useRunAction";
-import { STAGE_ORDER, STAGE_ROUTES } from "../types/api";
+import { UI_STAGES } from "../lib/uiStages";
 import { Button } from "../components/ui/Button";
 import { useI18n } from "../i18n";
 
@@ -17,16 +17,13 @@ function ProfileIcon({ to }: { to: string }) {
 }
 
 export function TopNav() {
-  const { name } = useParams();
+  const { id } = useParams();
   const location = useLocation();
   const { handleRun, isPending } = useRunAction();
-  const { stageName, t } = useI18n();
+  const { t } = useI18n();
 
   const currentRoom = location.pathname.split("/").pop() ?? "";
-  const activeRouteStage = Object.entries(STAGE_ROUTES).find(
-    ([, route]) => route === currentRoom,
-  )?.[0];
-  const settingsPath = name ? `/project/${encodeURIComponent(name)}/settings` : "/settings";
+  const settingsPath = id ? `/project/${encodeURIComponent(id)}/settings` : "/settings";
 
   return (
     <header className="shrink-0 border-b-[2px] border-ink-black bg-pulp-paper">
@@ -36,14 +33,14 @@ export function TopNav() {
         </Link>
 
         <nav className="hidden flex-1 items-end justify-center gap-5 xl:flex">
-          {STAGE_ORDER.map((stage) => {
-            const isActive = stage === activeRouteStage;
-            const route = STAGE_ROUTES[stage];
-            const to = name ? `/project/${encodeURIComponent(name)}/${route}` : "/";
+          {UI_STAGES.map((stage) => {
+            const isActive = stage.route === currentRoom;
+            const route = stage.route;
+            const to = id ? `/project/${encodeURIComponent(id)}/${route}` : "/";
 
-            return name ? (
+            return id ? (
               <Link
-                key={stage}
+                key={stage.key}
                 to={to}
                 className={`border-b-[3px] pb-1 font-display text-[0.8rem] tracking-[-0.03em] ${
                   isActive
@@ -51,14 +48,14 @@ export function TopNav() {
                     : "border-transparent text-ink-black/45 hover:text-ink-black/70"
                 }`}
               >
-                {stageName(stage)}
+                {stage.label.toUpperCase()}
               </Link>
             ) : (
               <span
-                key={stage}
+                key={stage.key}
                 className="border-b-[3px] pb-1 font-display text-[0.8rem] tracking-[-0.03em] border-transparent text-ink-black/45"
               >
-                {stageName(stage)}
+                {stage.label.toUpperCase()}
               </span>
             );
           })}
@@ -66,8 +63,8 @@ export function TopNav() {
 
         <div className="flex items-center gap-4">
           <Button
-            onClick={() => name && handleRun(name)}
-            disabled={!name || isPending}
+            onClick={() => id && handleRun(id)}
+            disabled={!id || isPending}
             size="lg"
             className="px-7"
           >

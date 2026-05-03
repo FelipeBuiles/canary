@@ -1,6 +1,7 @@
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useProjectStatus } from "../../api/queries";
-import { STAGE_DISPLAY_NAMES, STAGE_ORDER, STAGE_ROUTES } from "../../types/api";
+import { STAGE_ORDER } from "../../types/api";
+import { BACKEND_STAGE_TO_UI_ROUTE, getBackendStageUiLabel } from "../../lib/uiStages";
 import { Icon } from "./Icon";
 import { cn } from "../../lib/cn";
 
@@ -23,7 +24,8 @@ export function FloatingIndicator() {
   }
 
   const stageInfo = status.stages[runningStage];
-  const route = STAGE_ROUTES[runningStage];
+  const route = BACKEND_STAGE_TO_UI_ROUTE[runningStage];
+  const stageLabel = getBackendStageUiLabel(runningStage).toUpperCase();
   const jumpPath = `/project/${encodeURIComponent(id)}/${route}`;
   const onRunningStageScreen = location.pathname === jumpPath;
 
@@ -48,7 +50,7 @@ export function FloatingIndicator() {
             RUNNING
           </div>
           <div className="font-display text-[0.82rem] font-bold tracking-[-0.03em]">
-            {STAGE_DISPLAY_NAMES[runningStage]}
+            {stageLabel}
           </div>
         </div>
       </div>
@@ -73,7 +75,7 @@ export function FloatingIndicator() {
           onClick={() => navigate(jumpPath)}
           className="flex w-full items-center justify-center gap-1 border-[2px] border-ink-black bg-pulp-paper px-3 py-1.5 font-meta text-[0.55rem] tracking-[0.16em] hover:bg-ink-black/5 transition-colors"
         >
-          JUMP TO {STAGE_DISPLAY_NAMES[runningStage].toUpperCase()}
+          JUMP TO {stageLabel}
           <Icon name="arrow-right" size={10} />
         </button>
       </div>

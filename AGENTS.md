@@ -90,13 +90,3 @@ All paths are repo-relative.
 - For broad searches, exclude noisy paths such as `.git`, `node_modules`,
   `web/dist`, `.playwright-cli`, project outputs, and binary assets.
 - Start a fresh session for unrelated work instead of carrying long histories.
-
-## graphify
-
-This project has a graphify knowledge graph at graphify-out/.
-
-Rules:
-- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
-- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
-- For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep — these traverse the graph's EXTRACTED + INFERRED edges instead of scanning files
-- After modifying code files in this session, run `graphify update .` to keep the graph current (AST-only, no API cost)

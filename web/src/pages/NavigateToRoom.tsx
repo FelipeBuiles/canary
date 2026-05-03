@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 import { Navigate, useParams } from "react-router-dom";
 import { useProjectStatus } from "../api/queries";
-import { STAGE_ORDER, STAGE_ROUTES } from "../types/api";
+import { BACKEND_STAGE_TO_UI_ROUTE } from "../lib/uiStages";
+import { STAGE_ORDER } from "../types/api";
 
 export function NavigateToRoom() {
   const { id } = useParams<{ id: string }>();
@@ -20,7 +21,7 @@ export function NavigateToRoom() {
       STAGE_ORDER.find((s) => status.stages[s]?.status === "failed") ??
       STAGE_ORDER.find((s) => status.stages[s]?.status === "pending") ??
       STAGE_ORDER[STAGE_ORDER.length - 1];
-    return STAGE_ROUTES[stage];
+    return BACKEND_STAGE_TO_UI_ROUTE[stage];
   }, [status]);
 
   if (!id) return null;
