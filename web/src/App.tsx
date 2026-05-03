@@ -8,8 +8,7 @@ import { NavigateToRoom } from "./pages/NavigateToRoom";
 import { StoryBibleRoom } from "./pages/rooms/StoryBibleRoom";
 import { CastRoom } from "./pages/rooms/CastRoom";
 import { AdaptRoom } from "./pages/rooms/AdaptRoom";
-import { PlanRoom } from "./pages/rooms/PlanRoom";
-import { StoryboardRoom } from "./pages/rooms/StoryboardRoom";
+import { ShotPlanRoom } from "./pages/rooms/ShotPlanRoom";
 import { DirectRoom } from "./pages/rooms/DirectRoom";
 import { DrawRoom } from "./pages/rooms/DrawRoom";
 import { ComposeRoom } from "./pages/rooms/ComposeRoom";
@@ -50,8 +49,7 @@ export function App() {
             <Route path="extract" element={<StoryBibleRoom />} />
             <Route path="cast" element={<CastRoom />} />
             <Route path="adapt" element={<AdaptRoom />} />
-            <Route path="plan" element={<PlanRoom />} />
-            <Route path="storyboard" element={<StoryboardRoom />} />
+            <Route path="shot-plan" element={<ShotPlanRoom />} />
             <Route path="direct" element={<DirectRoom />} />
             <Route path="draw" element={<DrawRoom />} />
             <Route path="compose" element={<ComposeRoom />} />

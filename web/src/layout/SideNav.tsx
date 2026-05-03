@@ -19,12 +19,15 @@ import {
 import { Icon } from "../components/ui/Icon";
 import { useI18n } from "../i18n";
 import { cn } from "../lib/cn";
+import { getShotPlanAction, getShotPlanSubStatus } from "../lib/shotPlan";
+import { getBackendStageUiLabel, UI_STAGES } from "../lib/uiStages";
 import { usePipelineStore } from "../store/pipeline";
-import { STAGE_ORDER, STAGE_ROUTES } from "../types/api";
+import { STAGE_ORDER } from "../types/api";
 import type { StageName, StageStatus } from "../types/api";
+import type { UiStageKey } from "../lib/uiStages";
 
 type PipelineNavStage = {
-  key: StageName | "style";
+  key: UiStageKey;
   route: string;
   label: string;
   status: StageStatus;
@@ -88,7 +91,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   const { id: projectId } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const { stageName, t } = useI18n();
+  const { t } = useI18n();
   const navRef = useRef<HTMLElement>(null);
   const [compactStageDetails, setCompactStageDetails] = useState(false);
   const { data: status } = useProjectStatus(projectId);
@@ -113,6 +116,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   const approveStage = useApproveStage();
   const connect = usePipelineStore((state) => state.connect);
   const clearEvents = usePipelineStore((state) => state.clearEvents);
+  const shotPlanAction = useMemo(() => getShotPlanAction(status), [status]);
 
   const current = projects?.find((p) => p.id === projectId);
   const projectTitle = current?.project_name ?? projectId ?? t("PROJECT INDEX");
@@ -132,36 +136,50 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
       : "pending";
 
   const pipelineStages = useMemo<PipelineNavStage[]>(() => {
-    const stages: PipelineNavStage[] = [];
-    for (const stage of STAGE_ORDER) {
-      const info = status?.stages[stage];
-      stages.push({
-        key: stage,
-        route: STAGE_ROUTES[stage],
-        label: stageName(stage),
-        status: info?.status ?? "pending",
-        itemsDone: info?.items_done ?? 0,
-        itemsTotal: info?.items_total ?? 0,
-        failedCount: info?.items_failed.length ?? 0,
-        needsApproval: info?.status === "awaiting_review",
-      });
-
-      if (stage === "extract") {
-        stages.push({
+    return UI_STAGES.map((stage) => {
+      if (stage.key === "style") {
+        return {
           key: "style",
-          route: "styles",
-          label: t("Styles").toUpperCase(),
+          route: stage.route,
+          label: stage.label.toUpperCase(),
           status: styleStatus,
           itemsDone: styleItemsDone,
           itemsTotal: styleItemsTotal,
           failedCount: 0,
           needsApproval: false,
           detail: activeStyle ? activeStyle.label : null,
-        });
+        };
       }
-    }
-    return stages;
-  }, [activeStyle, stageName, status?.stages, styleItemsDone, styleItemsTotal, styleStatus, t]);
+
+      if (stage.key === "shot-plan") {
+        const shotPlan = getShotPlanSubStatus(status);
+        return {
+          key: "shot-plan",
+          route: stage.route,
+          label: stage.label.toUpperCase(),
+          status: shotPlan.status,
+          itemsDone: shotPlan.itemsDone,
+          itemsTotal: shotPlan.itemsTotal,
+          failedCount: shotPlan.failedCount,
+          needsApproval: shotPlan.status === "awaiting_review",
+          detail: shotPlan.detail,
+        };
+      }
+
+      const backendStage = stage.backendStages[0];
+      const info = status?.stages[backendStage];
+      return {
+        key: stage.key,
+        route: stage.route,
+        label: stage.label.toUpperCase(),
+        status: info?.status ?? "pending",
+        itemsDone: info?.items_done ?? 0,
+        itemsTotal: info?.items_total ?? 0,
+        failedCount: info?.items_failed.length ?? 0,
+        needsApproval: info?.status === "awaiting_review",
+      };
+    });
+  }, [activeStyle, status, styleItemsDone, styleItemsTotal, styleStatus]);
 
   const activeStageRoute = pipelineStages.find((stage) =>
     location.pathname.endsWith(`/${stage.route}`),
@@ -198,7 +216,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
 
     if (panelSummaries?.length) {
       const panelCount = panelSummaries.reduce((sum, scene) => sum + scene.panel_count, 0);
-      details.storyboard = [
+      details["shot-plan"] = [
         plural(panelSummaries.length, "scene"),
         plural(panelCount, "panel"),
       ].join(" · ");
@@ -238,6 +256,21 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   const needsApproval = status
     ? STAGE_ORDER.find((stage) => status.stages[stage]?.status === "awaiting_review")
     : null;
+  const brokenStage = useMemo(() => status
+    ? STAGE_ORDER.find((s) => {
+        const info = status.stages[s];
+        if (!info) return false;
+        return info.status === "failed"
+          || (info.status === "complete" && (info.items_failed?.length ?? 0) > 0);
+      })
+    : undefined, [status]);
+  const pendingStage = useMemo(() => status
+    ? STAGE_ORDER.find((s) => {
+        const st = status.stages[s]?.status;
+        return !st || st === "pending";
+      })
+    : undefined, [status]);
+  const nextAttentionStage = needsApproval ?? brokenStage ?? pendingStage;
   const styleNeedsSelection =
     !!projectId &&
     !status?.style_selected &&
@@ -248,6 +281,13 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   // so we can show a credit estimate before they commit to the action.
   const nextRunStage = useMemo<StageName | undefined>(() => {
     if (!status || isRunning || styleNeedsSelection || !projectId) return undefined;
+    if (
+      nextAttentionStage &&
+      (nextAttentionStage === "plan" || nextAttentionStage === "storyboard") &&
+      shotPlanAction.kind !== "none"
+    ) {
+      return shotPlanAction.estimateStage;
+    }
     // Approving extract → navigates to style selection (no model cost).
     if (needsApproval === "extract") return undefined;
     // For other approval stages, pipeline runs from the first pending stage after approval.
@@ -259,17 +299,13 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
       });
     }
     // Rerun the root broken stage if one exists.
-    const brokenStage = STAGE_ORDER.find((s) => {
-      const info = status.stages[s];
-      return info && (info.status === "failed" || (info.status === "complete" && (info.items_failed?.length ?? 0) > 0));
-    });
     if (brokenStage) return brokenStage;
     // Normal advance: first pending stage.
     return STAGE_ORDER.find((s) => {
       const st = status.stages[s]?.status;
       return !st || st === "pending";
     });
-  }, [status, isRunning, styleNeedsSelection, needsApproval, projectId]);
+  }, [status, isRunning, styleNeedsSelection, projectId, nextAttentionStage, shotPlanAction, needsApproval, brokenStage]);
 
   const { data: nextStageEstimate } = useStageEstimate(projectId, nextRunStage);
   const [showCostConfirm, setShowCostConfirm] = useState(false);
@@ -322,6 +358,23 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   function handleContinue() {
     if (!projectId || isRunning) return;
     if (needsApproval) {
+      if ((needsApproval === "plan" || needsApproval === "storyboard") && shotPlanAction.kind === "approve") {
+        approveStage.mutate(
+          { project: projectId, stage: shotPlanAction.backendStage },
+          {
+            onSuccess: () => {
+              if (shotPlanAction.runAfterApprove && shotPlanAction.estimateStage) {
+                clearEvents();
+                runPipeline.mutate(
+                  { project: projectId, stage: shotPlanAction.estimateStage },
+                  { onSuccess: () => connect(projectId) },
+                );
+              }
+            },
+          },
+        );
+        return;
+      }
       approveStage.mutate(
         { project: projectId, stage: needsApproval },
         {
@@ -350,12 +403,25 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     // Find the earliest stage that needs attention — either failed outright
     // or "complete" with failed items (partial failure that blocks downstream).
     // Rerunning from the root cause is better than retrying the surface symptom.
-    const brokenStage = STAGE_ORDER.find((s) => {
-      const info = status?.stages[s];
-      if (!info) return false;
-      return info.status === "failed"
-        || (info.status === "complete" && (info.items_failed?.length ?? 0) > 0);
-    });
+    if (
+      nextAttentionStage &&
+      (nextAttentionStage === "plan" || nextAttentionStage === "storyboard") &&
+      shotPlanAction.kind !== "none"
+    ) {
+      clearEvents();
+      if (shotPlanAction.kind === "run") {
+        runPipeline.mutate(
+          { project: projectId, stage: shotPlanAction.backendStage },
+          { onSuccess: () => connect(projectId) },
+        );
+      } else if (shotPlanAction.kind === "rerun") {
+        runPipeline.mutate(
+          { project: projectId, stage: shotPlanAction.backendStage, rerun: true },
+          { onSuccess: () => connect(projectId) },
+        );
+      }
+      return;
+    }
     if (brokenStage) {
       clearEvents();
       runPipeline.mutate(
@@ -384,6 +450,13 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
 
   function continueButtonLabel() {
     if (isRunning) return t("RUNNING…");
+    if (
+      nextAttentionStage &&
+      (nextAttentionStage === "plan" || nextAttentionStage === "storyboard") &&
+      shotPlanAction.kind !== "none"
+    ) {
+      return shotPlanAction.label.toUpperCase();
+    }
     if (needsApproval) return "APPROVE & CONTINUE";
     if (styleNeedsSelection) return "PICK STYLE";
     return "NEXT STAGE";
@@ -542,7 +615,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           )}
           <ConfirmDrawer
             open={showCostConfirm}
-            title={`Start ${nextRunStage ? stageName(nextRunStage) : "stage"}?`}
+            title={`Start ${nextRunStage ? getBackendStageUiLabel(nextRunStage) : "stage"}?`}
             body="Credits will be reserved now and settled to actual usage once the stage completes. Any unused portion of the hold is released automatically."
             estimatedCredits={nextStageEstimate?.credits}
             confirmLabel={continueButtonLabel().replace("APPROVE & ", "")}

@@ -2,9 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   STAGE_ORDER,
   STAGE_DISPLAY_NAMES,
-  STAGE_ROUTES,
-  ROUTE_TO_STAGE,
 } from "../types/api";
+import { BACKEND_STAGE_TO_UI_ROUTE, UI_STAGES } from "../lib/uiStages";
 
 describe("STAGE_ORDER", () => {
   it("contains exactly 8 stages in order", () => {
@@ -35,30 +34,29 @@ describe("STAGE_DISPLAY_NAMES", () => {
   });
 });
 
-describe("STAGE_ROUTES", () => {
-  it("every stage route equals the stage name", () => {
-    for (const stage of STAGE_ORDER) {
-      expect(STAGE_ROUTES[stage]).toBe(stage);
-    }
+describe("UI_STAGES", () => {
+  it("contains one user-facing shot plan stage and no plan/storyboard UI stages", () => {
+    const keys = UI_STAGES.map((stage) => stage.key);
+    expect(keys.filter((key) => key === "shot-plan")).toHaveLength(1);
+    expect(keys).not.toContain("plan");
+    expect(keys).not.toContain("storyboard");
   });
 
-  it("every route maps back to the same stage via ROUTE_TO_STAGE", () => {
-    for (const stage of STAGE_ORDER) {
-      expect(ROUTE_TO_STAGE[stage]).toBe(stage);
-    }
-  });
-});
-
-describe("ROUTE_TO_STAGE", () => {
-  it("has exactly 8 entries", () => {
-    expect(Object.keys(ROUTE_TO_STAGE)).toHaveLength(8);
+  it("maps plan and storyboard backend stages to the shot plan route", () => {
+    expect(BACKEND_STAGE_TO_UI_ROUTE.plan).toBe("shot-plan");
+    expect(BACKEND_STAGE_TO_UI_ROUTE.storyboard).toBe("shot-plan");
   });
 
-  it("round-trips through STAGE_ROUTES", () => {
-    const reversed: Record<string, string> = {};
-    for (const [stage, route] of Object.entries(STAGE_ROUTES)) {
-      reversed[route] = stage;
-    }
-    expect(reversed).toEqual(ROUTE_TO_STAGE);
+  it("uses product vocabulary for visible stages", () => {
+    expect(UI_STAGES.map((stage) => stage.label)).toEqual([
+      "Extract",
+      "Look & Feel",
+      "Cast & Places",
+      "Script",
+      "Shot Plan",
+      "Prompt Review",
+      "Generate Panels",
+      "Letter & Compose",
+    ]);
   });
 });
