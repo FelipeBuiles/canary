@@ -441,7 +441,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
       handleContinue();
       return;
     }
-    if (nextStageEstimate && nextStageEstimate.credits > 0) {
+    if (nextStageEstimate && nextStageEstimate.estimate_credits > 0) {
       setShowCostConfirm(true);
       return;
     }
@@ -617,16 +617,18 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
             open={showCostConfirm}
             title={`Start ${nextRunStage ? getBackendStageUiLabel(nextRunStage) : "stage"}?`}
             body="Credits will be reserved now and settled to actual usage once the stage completes. Any unused portion of the hold is released automatically."
-            estimatedCredits={nextStageEstimate?.credits}
+            cost={nextStageEstimate}
             confirmLabel={continueButtonLabel().replace("APPROVE & ", "")}
             busy={approveStage.isPending || runPipeline.isPending}
             onConfirm={() => { setShowCostConfirm(false); handleContinue(); }}
             onClose={() => setShowCostConfirm(false)}
           />
-          {projectId && nextStageEstimate && nextStageEstimate.credits > 0 && !isRunning && (
+          {projectId && nextStageEstimate && nextStageEstimate.estimate_credits > 0 && !isRunning && (
             <div className="mt-2 flex items-center justify-center gap-1.5 font-meta text-[0.56rem] tracking-[0.12em] text-bristol/45 2xl:text-[0.62rem]">
-              <span className="text-narrator-gold/70">~{nextStageEstimate.credits.toLocaleString()}</span>
-              <span>credit hold</span>
+              <span className="text-narrator-gold/70">Est. {nextStageEstimate.estimate_credits.toLocaleString()}</span>
+              {nextStageEstimate.reserved_credits > 0 && (
+                <span>· Reserves up to {nextStageEstimate.reserved_credits.toLocaleString()}</span>
+              )}
             </div>
           )}
           <CreditBalance className="mt-3 2xl:mt-4" />

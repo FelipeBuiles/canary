@@ -3,6 +3,7 @@
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -24,7 +25,7 @@ from novel_to_comic.prompting import render_panel_prompt_body
 from novel_to_comic.state import load_state
 
 from ..auth import get_current_user
-from ..credits import estimate_stage_credit_reservation
+from ..credits import estimate_stage_credit_breakdown
 from ..deps import get_project, project_key
 from ..generation_jobs import find_active_generation_job
 from ..panel_acceptance import accept_panel, clear_panel_acceptance, is_panel_accepted
@@ -112,14 +113,24 @@ def estimate_narration_decision_impact(beat_id: str, body: dict, project=Depends
         data["mode"] = None
         data["panel_id"] = None
     after = type(before).model_validate(data)
-    impact = classify_narration_change_impact(before, after)
-    stage_credits = {
-        stage: estimate_stage_credit_reservation(config, project_dir, state, stage)
+    impact: dict[str, Any] = dict(classify_narration_change_impact(before, after))
+    stage_costs = {
+        stage: estimate_stage_credit_breakdown(config, project_dir, state, stage)
         for stage in impact["affected_stages"]
         if stage in {"adapt", "plan", "storyboard", "direct", "draw", "compose"}
     }
-    impact["estimated_credits"] = sum(stage_credits.values())
-    impact["stage_credits"] = stage_credits
+    impact["estimated_credits"] = sum(s["estimate_credits"] for s in stage_costs.values())
+    impact["reserved_credits"] = sum(
+        s["reserved_credits"] for s in stage_costs.values() if s["reserved_credits"] is not None
+    )
+    impact["stage_credits"] = {
+        stage: {
+            "estimate_credits": s["estimate_credits"],
+            "reserved_credits": s["reserved_credits"],
+            "confidence": s["confidence"],
+        }
+        for stage, s in stage_costs.items()
+    }
     return impact
 
 

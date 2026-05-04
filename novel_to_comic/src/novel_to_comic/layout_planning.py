@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal, TypedDict, cast
 
 from novel_to_comic import artifacts
 from novel_to_comic.assembly.html_renderer import PAGE_H, PAGE_W
 from novel_to_comic.models.comic_page import Bubble, ComicPage, PagePanel, Sfx
-from novel_to_comic.models.layout_plan import LayoutPlan, NarrationDecision, PanelGeometry, PlannedPage, PlannedPanel
+from novel_to_comic.models.layout_plan import GenerationMode, ImageFitStatus, LayoutPlan, NarrationDecision, PanelGeometry, PanelImportance, PlannedPage, PlannedPanel, RegenerationStatus, ShapeIntent
 from novel_to_comic.models.panel import DialogueLine, PanelBreakdown
 from novel_to_comic.models.story_bible import StoryBible
 
@@ -235,10 +236,18 @@ def sync_narration_decisions(plan: LayoutPlan) -> LayoutPlan:
     return plan
 
 
+class NarrationChangeImpact(TypedDict):
+    impact: str
+    affected_stages: list[str]
+    affected_panels: list[str]
+    requires_confirmation: bool
+    reason: str
+
+
 def classify_narration_change_impact(
     before: NarrationDecision,
     after: NarrationDecision,
-) -> dict[str, object]:
+) -> NarrationChangeImpact:
     affected_panels = sorted(
         {
             panel_id
@@ -275,7 +284,7 @@ def classify_narration_change_impact(
     }
 
 
-def apply_narration_decision_patch(plan: LayoutPlan, beat_id: str, patch: dict) -> tuple[LayoutPlan, dict[str, object]]:
+def apply_narration_decision_patch(plan: LayoutPlan, beat_id: str, patch: dict) -> tuple[LayoutPlan, NarrationChangeImpact]:
     decisions = {decision.beat_id: decision for decision in plan.narration_decisions}
     before = decisions.get(beat_id)
     if before is None:
@@ -346,7 +355,17 @@ def _default_polygon_for_shape(shape_intent: str) -> list[list[float]]:
     return []
 
 
-def _panel_geometry_style(geometry: PanelGeometry, index: int) -> dict[str, object]:
+class _PanelGeometryStyle(TypedDict):
+    x: float
+    y: float
+    width: float
+    height: float
+    clip_path: str | None
+    z_index: int
+    shape_intent: ShapeIntent
+
+
+def _panel_geometry_style(geometry: PanelGeometry, index: int) -> _PanelGeometryStyle:
     x, y, width, height = _region_to_pixels(geometry.region)
     polygon = geometry.polygon or _default_polygon_for_shape(geometry.shape_intent)
     return {
@@ -418,7 +437,7 @@ def project_layout_plan_to_pages(
                 alt_idx = 0
                 for bi, dl in enumerate(breakdown.dialogue):
                     is_narration = dl.type == "narration"
-                    side = char_sides.get(dl.character_id)
+                    side = char_sides.get(dl.character_id) if dl.character_id else None
                     if side is None and not is_narration:
                         side = alt[alt_idx % 2]
                         alt_idx += 1
@@ -428,12 +447,12 @@ def project_layout_plan_to_pages(
                             type=dl.type if dl.type in ("speech", "thought", "narration") else "speech",
                             text=dl.text,
                             speaker_id=dl.character_id or None,
-                            speaker_name=char_name_map.get(dl.character_id) if show_labels else None,
+                            speaker_name=char_name_map.get(dl.character_id) if dl.character_id and show_labels else None,
                             source_beat_id=dl.source_beat_id,
                             source_text=dl.source_text,
                             narration_mode=dl.narration_mode,
                             preferred_zone=dl.preferred_zone,
-                            side=side or "left",
+                            side=cast(Literal["left", "right", "center"], side or "left"),
                         )
                     )
                 sfx = Sfx(text=breakdown.sfx) if breakdown.sfx else None
@@ -501,9 +520,9 @@ def apply_panel_override(
     plan: LayoutPlan,
     panel_id: str,
     *,
-    importance: str | None = None,
-    shape_intent: str | None = None,
-    generation_mode: str | None = None,
+    importance: PanelImportance | None = None,
+    shape_intent: ShapeIntent | None = None,
+    generation_mode: GenerationMode | None = None,
 ) -> LayoutPlan:
     panel = planned_panel_index(plan).get(panel_id)
     if panel is None:

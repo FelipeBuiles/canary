@@ -2,15 +2,14 @@ import { useEffect, useRef } from "react";
 import { cn } from "../../lib/cn";
 import { Button } from "./Button";
 import { DestructiveButton } from "./DestructiveButton";
-import type { StageName } from "../../types/api";
+import type { StageName, StageCostEstimate } from "../../types/api";
 import { STAGE_DISPLAY_NAMES } from "../../types/api";
 
 export interface RerunDrawerProps {
   open: boolean;
   stageName: string;
   impactStages: StageName[];
-  estimatedCredits: string;
-  creditsAreEstimated?: boolean;
+  cost?: StageCostEstimate;
   itemsAtRisk?: string;
   onConfirm: () => void;
   onClose: () => void;
@@ -22,8 +21,7 @@ export function RerunDrawer({
   open,
   stageName,
   impactStages,
-  estimatedCredits,
-  creditsAreEstimated = false,
+  cost,
   itemsAtRisk,
   onConfirm,
   onClose,
@@ -156,17 +154,39 @@ export function RerunDrawer({
                 {itemsAtRisk}
               </p>
             )}
-            <div className="mt-3 flex items-baseline gap-3">
-              <span className="font-meta text-[0.58rem] tracking-[0.16em] uppercase text-ink-black/60">
-                Credit hold{creditsAreEstimated ? " (est.)" : ""}
-              </span>
-              <span className={cn(
-                "font-display text-[1.1rem] font-bold",
-                estimatedCredits === "…" && "animate-pulse text-ink-black/40",
-              )}>
-                {estimatedCredits}
-              </span>
-            </div>
+            {cost != null ? (
+              <div className="mt-3">
+                <div className="flex items-baseline gap-3">
+                  <span className="font-meta text-[0.58rem] tracking-[0.16em] uppercase text-ink-black/60">
+                    Estimated
+                  </span>
+                  <span className="font-display text-[1.1rem] font-bold">
+                    {cost.estimate_credits.toLocaleString()} credits
+                  </span>
+                </div>
+                {cost.reserved_credits > 0 && (
+                  <div className="mt-1 flex items-baseline gap-3">
+                    <span className="font-meta text-[0.58rem] tracking-[0.16em] uppercase text-ink-black/60">
+                      Reserved
+                    </span>
+                    <span className="font-display text-[1.0rem]">
+                      {cost.reserved_credits.toLocaleString()} credits
+                    </span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="mt-3 flex items-baseline gap-3">
+                <span className="font-meta text-[0.58rem] tracking-[0.16em] uppercase text-ink-black/60">
+                  Credit hold (est.)
+                </span>
+                <span className={cn(
+                  "font-display text-[1.1rem] font-bold animate-pulse text-ink-black/40",
+                )}>
+                  …
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="mt-5 flex flex-wrap items-center justify-end gap-3">

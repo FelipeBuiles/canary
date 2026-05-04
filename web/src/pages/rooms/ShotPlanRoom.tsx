@@ -88,10 +88,10 @@ function ShotPlanActionButton({ project }: { project: string }) {
   const clearEvents = usePipelineStore((state) => state.clearEvents);
 
   const busy = runPipeline.isPending || approveStage.isPending || status?.is_running;
-  const credits = estimate?.credits;
+  const estimateCredits = estimate?.estimate_credits;
   const label =
-    credits && credits > 0
-      ? `${action.label} · Est. ${credits.toLocaleString()} credits`
+    estimateCredits && estimateCredits > 0
+      ? `${action.label} · Est. ${estimateCredits.toLocaleString()} credits`
       : action.label;
 
   function run(stage: "plan" | "storyboard", rerun = false) {

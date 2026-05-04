@@ -98,8 +98,8 @@ export function PanelDetailModal({
   const unacceptPanel = useUnacceptPanel();
   const { data: creditBalance } = useCreditBalance();
   const { data: regenEstimate } = useRegenEstimate(project, sceneId, panelNumber, isOpen);
-  const regenCredits: number | null = regenEstimate?.credits ?? null;
-  const creditsLabel = regenCredits !== null ? String(regenCredits) : "…";
+  const regenCredits: number | null = regenEstimate?.estimate_credits ?? null;
+  const creditsLabel = regenCredits !== null ? `Est. ${regenCredits.toLocaleString()} credits` : "…";
 
   useEffect(() => {
     if (originalPrompt) {
@@ -463,7 +463,7 @@ export function PanelDetailModal({
                 <a href="/credits" className="underline">Add credits</a>
               </div>
               <Button onClick={() => runCreditAction(pendingCreditAction)}>
-                CONFIRM · {creditsLabel} ◆
+                CONFIRM · {creditsLabel}
               </Button>
               <Button variant="outline" onClick={() => setPendingCreditAction(null)}>
                 ✕
@@ -494,7 +494,7 @@ export function PanelDetailModal({
                 onClick={() => runCreditAction("instruction")}
                 disabled={isInstructionBusy || !instruction.trim()}
               >
-                {isInstructionBusy ? "APPLYING..." : `APPLY & REGEN · ${creditsLabel} ◆`}
+                {isInstructionBusy ? "APPLYING..." : `APPLY & REGEN · ${creditsLabel}`}
               </Button>
               <Button
                 variant="outline"
@@ -545,11 +545,11 @@ export function PanelDetailModal({
               </Button>
               {hasChanges && (
                 <Button onClick={() => runCreditAction("generate")} disabled={isGenerating}>
-                  {isGenerating ? "SAVING..." : `GENERATE · ${creditsLabel} ◆`}
+                  {isGenerating ? "SAVING..." : `GENERATE · ${creditsLabel}`}
                 </Button>
               )}
               <Button variant="outline" onClick={() => runCreditAction("quick")}>
-                ↺ RE-DO · {creditsLabel} ◆
+                ↺ RE-DO · {creditsLabel}
               </Button>
               <Button variant="outline" onClick={() => setIsDetailsOpen(true)}>
                 DETAILS

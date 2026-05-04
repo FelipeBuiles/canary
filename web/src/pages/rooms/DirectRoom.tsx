@@ -1,13 +1,18 @@
-import { useRef } from "react";
+import { useState, useRef } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import {
+  useApproveStage,
   usePromptSummaries,
   usePromptsForScene,
+  useRunPipeline,
+  useStageEstimate,
   useUpdatePrompt,
   useProjectStatus,
   useStoryBible,
   useStyles,
 } from "../../api/queries";
+import { Button } from "../../components/ui/Button";
+import { ConfirmDrawer } from "../../components/ui/ConfirmDrawer";
 import { RoomHeader } from "../../components/ui/RoomHeader";
 import { CollapsibleSection } from "../../components/ui/CollapsibleSection";
 import { EditableText } from "../../components/ui/EditableText";
@@ -16,10 +21,13 @@ import { RerunStageAction } from "../../components/ui/RerunStageAction";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { SceneSidebar } from "../../components/ui/SceneSidebar";
 import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
+import { WarningOverrideDrawer } from "../../components/ui/WarningOverrideDrawer";
 import { useCharacterName } from "../../hooks/useCharacterName";
 import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { renderPanelPromptBody } from "../../lib/prompting";
-import type { ImagePrompt } from "../../types/api";
+import { detectAllWarnings } from "../../lib/promptWarnings";
+import { usePipelineStore } from "../../store/pipeline";
+import type { ImagePrompt, PromptWarning } from "../../types/api";
 
 function SummaryTile({
   label,
@@ -153,20 +161,23 @@ function DirectPromptDetail({
         </div>
       </div>
 
-      {/* Assembled prompt */}
+      {/* Assembled prompt — collapsed by default */}
       <div className="mt-7">
-        <div className="mb-3 flex items-center justify-between">
-          <div className="font-meta text-[0.72rem] font-bold tracking-[0.2em] text-ink-black/45">
-            ASSEMBLED PROMPT
+        <CollapsibleSection
+          title="ASSEMBLED PROMPT"
+          storageKey="direct.assembledPrompt"
+          defaultExpanded={false}
+        >
+          <div className="pt-2">
+            <EditableText
+              value={prompt.full_prompt}
+              onSave={(full_prompt) => onSave({ full_prompt })}
+              multiline
+              className="block min-h-[200px] whitespace-pre-wrap bg-ink-black px-7 py-7 font-meta text-[11px] font-medium leading-6 text-bristol"
+              inputClassName="min-h-[200px] bg-ink-black text-bristol font-mono text-xs"
+            />
           </div>
-        </div>
-        <EditableText
-          value={prompt.full_prompt}
-          onSave={(full_prompt) => onSave({ full_prompt })}
-          multiline
-          className="block min-h-[200px] whitespace-pre-wrap bg-ink-black px-7 py-7 font-meta text-[11px] font-medium leading-6 text-bristol"
-          inputClassName="min-h-[200px] bg-ink-black text-bristol font-mono text-xs"
-        />
+        </CollapsibleSection>
       </div>
 
       {/* Technical parameters collapsible */}
@@ -200,10 +211,12 @@ function PanelTabStrip({
   prompts,
   activePanel,
   onSelect,
+  warningsByPanel,
 }: {
   prompts: ImagePrompt[];
   activePanel: number;
   onSelect: (n: number) => void;
+  warningsByPanel: Map<number, PromptWarning[]>;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -235,6 +248,8 @@ function PanelTabStrip({
       >
         {prompts.map((prompt) => {
           const isActive = prompt.panel_number === activePanel;
+          const panelWarnings = warningsByPanel.get(prompt.panel_number) ?? [];
+          const hasWarnings = panelWarnings.length > 0;
           return (
             <button
               key={`${prompt.scene_id}-${prompt.panel_number}`}
@@ -244,11 +259,19 @@ function PanelTabStrip({
               onClick={() => onSelect(prompt.panel_number)}
               className={
                 isActive
-                  ? "shrink-0 bg-ink-black px-7 py-3 font-meta text-[0.82rem] font-bold tracking-[0.12em] text-pulp-paper"
-                  : "shrink-0 border-y border-r border-panel-line bg-pulp-paper px-7 py-3 font-meta text-[0.82rem] font-bold tracking-[0.12em] text-ink-black/62 hover:bg-surface-container"
+                  ? "relative shrink-0 bg-ink-black px-7 py-3 font-meta text-[0.82rem] font-bold tracking-[0.12em] text-pulp-paper"
+                  : "relative shrink-0 border-y border-r border-panel-line bg-pulp-paper px-7 py-3 font-meta text-[0.82rem] font-bold tracking-[0.12em] text-ink-black/62 hover:bg-surface-container"
               }
             >
               Panel {String(prompt.panel_number).padStart(2, "0")}
+              {hasWarnings && (
+                <span
+                  className="absolute right-1.5 top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[var(--color-warn-orange)] font-meta text-[0.5rem] font-bold text-white"
+                  aria-label={`${panelWarnings.length} warning${panelWarnings.length !== 1 ? "s" : ""}`}
+                >
+                  {panelWarnings.length}
+                </span>
+              )}
             </button>
           );
         })}
@@ -273,6 +296,102 @@ function PanelTabStrip({
     </div>
   );
 }
+
+// ── DirectApproveAction ───────────────────────────────────────────────────────
+
+function DirectApproveAction({
+  project,
+  allWarnings,
+}: {
+  project: string;
+  allWarnings: PromptWarning[];
+}) {
+  const { data: status } = useProjectStatus(project);
+  const stageStatus = status?.stages?.direct?.status;
+  const isAwaiting = stageStatus === "awaiting_review";
+
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [warningOpen, setWarningOpen] = useState(false);
+
+  const { data: estimate } = useStageEstimate(project, "draw", confirmOpen || warningOpen);
+  const approveStage = useApproveStage();
+  const runPipeline = useRunPipeline();
+  const connect = usePipelineStore((s) => s.connect);
+  const clearEvents = usePipelineStore((s) => s.clearEvents);
+
+  const busy =
+    approveStage.isPending || runPipeline.isPending || (status?.is_running ?? false);
+
+  const hasWarnings = allWarnings.length > 0;
+  const estimateCredits = estimate?.estimate_credits ?? 0;
+
+  const ctaLabel = hasWarnings
+    ? `Review ${allWarnings.length} Warning${allWarnings.length !== 1 ? "s" : ""} Before Approving`
+    : estimateCredits > 0
+    ? `Approve Prompts & Run Generate Panels · Est. ${estimateCredits.toLocaleString()} credits`
+    : "Approve Prompts & Run Generate Panels";
+
+  function doApproveAndRun() {
+    clearEvents();
+    approveStage.mutate(
+      { project, stage: "direct" },
+      {
+        onSuccess: () => {
+          runPipeline.mutate(
+            { project, stage: "draw" },
+            { onSuccess: () => connect(project) },
+          );
+        },
+      },
+    );
+  }
+
+  function handleClick() {
+    if (hasWarnings) {
+      setWarningOpen(true);
+    } else {
+      setConfirmOpen(true);
+    }
+  }
+
+  if (!isAwaiting) return null;
+
+  return (
+    <>
+      <Button
+        size="sm"
+        variant={hasWarnings ? "outline" : "primary"}
+        disabled={busy}
+        onClick={handleClick}
+        style={hasWarnings ? { borderColor: "var(--color-warn-orange)", color: "var(--color-warn-orange)" } : undefined}
+      >
+        {busy ? "Working…" : ctaLabel}
+      </Button>
+
+      <ConfirmDrawer
+        open={confirmOpen}
+        title="Run Generate Panels?"
+        body="Approving prompts is free. Generating panels will reserve credits for the draw stage. Unused reserved credits are released after the stage completes."
+        cost={estimate}
+        confirmLabel="Approve & Run Generate Panels"
+        onConfirm={() => { setConfirmOpen(false); doApproveAndRun(); }}
+        onClose={() => setConfirmOpen(false)}
+        busy={busy}
+      />
+
+      <WarningOverrideDrawer
+        open={warningOpen}
+        warnings={allWarnings}
+        cost={estimate}
+        onConfirm={() => { setWarningOpen(false); doApproveAndRun(); }}
+        onClose={() => setWarningOpen(false)}
+        busy={busy}
+      />
+    </>
+  );
+}
+
+// ── DirectRoom (main) ─────────────────────────────────────────────────────────
 
 export function DirectRoom() {
   const { id } = useParams<{ id: string }>();
@@ -299,6 +418,15 @@ export function DirectRoom() {
     prompts?.find((prompt) => prompt.panel_number === selectedPanel) ??
     prompts?.[0] ??
     null;
+
+  // Compute warnings for active scene's prompts
+  const sceneWarnings = prompts ? detectAllWarnings(prompts) : [];
+  const warningsByPanel = new Map<number, PromptWarning[]>();
+  for (const w of sceneWarnings) {
+    const list = warningsByPanel.get(w.panel_number) ?? [];
+    list.push(w);
+    warningsByPanel.set(w.panel_number, list);
+  }
 
   const handleSavePrompt = (prompt: ImagePrompt, patch: Partial<ImagePrompt>) => {
     if (!id || !activeScene) return;
@@ -343,6 +471,7 @@ export function DirectRoom() {
   }
 
   const rerunAction = <RerunStageAction project={id} stage="direct" label="Direct" />;
+  const approveAction = id ? <DirectApproveAction project={id} allWarnings={sceneWarnings} /> : null;
 
   return (
     <RoomShell>
@@ -350,8 +479,25 @@ export function DirectRoom() {
         <RoomHeader
           kicker="DIRECT"
           title="IMAGE PROMPTS"
-          lead="Compiled prompts with character and location refs baked in — the last human-readable artifact before image generation."
-          actions={rerunAction}
+          lead={
+            <span>
+              Compiled prompts with character and location refs baked in — the last human-readable artifact before image generation.
+              {sceneWarnings.length > 0 && (
+                <span
+                  className="ml-3 font-meta text-[0.65rem] tracking-[0.08em]"
+                  style={{ color: "var(--color-warn-orange)" }}
+                >
+                  ⚠ {sceneWarnings.length} prompt{sceneWarnings.length !== 1 ? "s" : ""} have warnings — review before approving
+                </span>
+              )}
+            </span>
+          }
+          actions={
+            <div className="flex items-center gap-2">
+              {approveAction}
+              {rerunAction}
+            </div>
+          }
           compact={isCompact}
           onToggle={toggle}
         />
@@ -381,6 +527,7 @@ export function DirectRoom() {
                   prompts={prompts}
                   activePanel={activePrompt.panel_number}
                   onSelect={selectPanel}
+                  warningsByPanel={warningsByPanel}
                 />
                 <DirectPromptDetail
                   prompt={activePrompt}

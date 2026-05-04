@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import type { GenerationJob, InstructedPanelRegenResponse } from "../types/api";
+import type { GenerationJob, InstructedPanelRegenResponse, StageCostEstimate, RegenCostEstimate } from "../types/api";
 
 export function runPipeline(
   project: string,
@@ -103,7 +103,7 @@ export function regenExtract(
 export function fetchStageEstimate(
   project: string,
   stage: string,
-): Promise<{ stage: string; credits: number }> {
+): Promise<StageCostEstimate> {
   return apiFetch(
     `/projects/${encodeURIComponent(project)}/estimate?stage=${encodeURIComponent(stage)}`,
   );
@@ -113,7 +113,7 @@ export function fetchRegenEstimate(
   project: string,
   sceneId: string,
   panelNumber: number,
-): Promise<{ scene_id: string; panel_number: number; credits: number }> {
+): Promise<RegenCostEstimate> {
   return apiFetch(
     `/projects/${encodeURIComponent(project)}/regen-estimate?scene_id=${encodeURIComponent(sceneId)}&panel_number=${panelNumber}`,
   );

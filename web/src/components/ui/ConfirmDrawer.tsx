@@ -1,12 +1,14 @@
 import { useEffect, useRef } from "react";
 import { cn } from "../../lib/cn";
 import { Button } from "./Button";
+import { CostBreakdown } from "../cost/CostBreakdown";
+import type { CostEstimate } from "../../types/api";
 
 export interface ConfirmDrawerProps {
   open: boolean;
   title: string;
   body: string;
-  estimatedCredits?: number;
+  cost?: CostEstimate;
   confirmLabel?: string;
   onConfirm: () => void;
   onClose: () => void;
@@ -17,7 +19,7 @@ export function ConfirmDrawer({
   open,
   title,
   body,
-  estimatedCredits,
+  cost,
   confirmLabel = "Confirm",
   onConfirm,
   onClose,
@@ -110,21 +112,7 @@ export function ConfirmDrawer({
             {body}
           </p>
 
-          {estimatedCredits != null && estimatedCredits > 0 && (
-            <div className="mt-4 bg-bristol p-4" style={{ borderLeft: "3px solid var(--color-narrator-gold)" }}>
-              <div className="flex items-baseline gap-3">
-                <span className="font-meta text-[0.58rem] tracking-[0.16em] uppercase text-ink-black/60">
-                  Credit hold (est.)
-                </span>
-                <span className="font-display text-[1.1rem] font-bold">
-                  {estimatedCredits.toLocaleString()} credits
-                </span>
-              </div>
-              <p className="mt-1.5 font-meta text-[0.6rem] leading-4 tracking-[0.06em] text-ink-black/45">
-                Reserved now, settled to actual usage after the stage completes. Unused credits are released.
-              </p>
-            </div>
-          )}
+          {cost != null && <CostBreakdown cost={cost} />}
 
           <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
             <Button variant="outline" size="md" onClick={onClose} disabled={busy}>
