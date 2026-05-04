@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import {
   usePages,
@@ -12,6 +12,7 @@ import {
   useUpdateProjectConfig,
   useProjectStatus,
   useSetTheme,
+  useImages,
 } from "../../api/queries";
 import { downloadExportUrl } from "../../api/pages";
 import { RerunStageAction } from "../../components/ui/RerunStageAction";
@@ -21,10 +22,13 @@ import { ScriptMode } from "../../components/compose/ScriptMode";
 import { LayoutMode } from "../../components/compose/LayoutMode";
 import { PreviewMode } from "../../components/compose/PreviewMode";
 import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
+import { IssueMode } from "../../components/compose/IssueMode";
 import { useAllPages } from "../../hooks/useAllPages";
 import { useComposeStore } from "../../store/compose";
 import type { ComicPage, Bubble, Sfx, PagePanel } from "../../types/api";
 import type { ComposeTab, EditSubMode } from "../../components/compose/compose-types";
+import { detectIssues } from "../../lib/issueEngine";
+import type { ComposeIssue } from "../../lib/issueEngine";
 import "../../components/compose/comic-page.css";
 
 function isInputFocused() {
@@ -54,6 +58,12 @@ export function ComposeRoom() {
   const { data: page, isLoading: loadingPage } = usePage(id, safePage);
 
   const { pages: allPages, isLoading: loadingAllPages } = useAllPages(id, pageList);
+
+  const { data: images } = useImages(id);
+  const issues = useMemo(
+    () => detectIssues(allPages.filter((p): p is ComicPage => p !== undefined), images ?? []),
+    [allPages, images],
+  );
 
   const pageIdx = (safePage ?? 1) - 1;
 
@@ -240,6 +250,23 @@ export function ComposeRoom() {
     select(panelId, "bubble", bubbleId);
   }
 
+  // ── Export → Issues navigation ───────────────────────────────────────────
+  function handleGoToIssues() {
+    setTab("edit");
+    setEditSubMode("issues");
+  }
+
+  // ── Issue deep-link ──────────────────────────────────────────────────────
+  function handleGoToIssue(issue: ComposeIssue) {
+    setPageNum(issue.pageNumber);
+    setEditSubMode("canvas");
+    if (issue.panelId && issue.bubbleId) {
+      select(issue.panelId, "bubble", issue.bubbleId);
+    } else {
+      deselect();
+    }
+  }
+
   // ── Poll while compose is running ────────────────────────────────────────
   useEffect(() => {
     if (!id) return;
@@ -338,7 +365,7 @@ export function ComposeRoom() {
       {/* Edit tab */}
       {tab === "edit" && (
         <>
-          <EditSubTabs subMode={editSubMode} onSubModeChange={setEditSubMode} />
+          <EditSubTabs subMode={editSubMode} onSubModeChange={setEditSubMode} issueCount={issues.length} />
 
           {editSubMode === "canvas" && (
             <LayoutMode
@@ -372,6 +399,10 @@ export function ComposeRoom() {
             />
           )}
 
+          {editSubMode === "issues" && (
+            <IssueMode issues={issues} onGoToIssue={handleGoToIssue} />
+          )}
+
           {editSubMode === "script" && (
             <ScriptMode
               project={id}
@@ -401,11 +432,13 @@ export function ComposeRoom() {
           activeTheme={activeTheme}
           outputLanguage={outputLanguage}
           isTranslatingBubbles={translateBubblesMut.isPending}
+          issues={issues}
           onPageSelect={(idx) => setPageNum(idx + 1)}
           onExport={handleExport}
           onThemeChange={handleThemeChange}
           onOutputLanguageChange={handleOutputLanguageChange}
           onTranslateBubbles={handleTranslateBubbles}
+          onReviewIssues={handleGoToIssues}
         />
       )}
 

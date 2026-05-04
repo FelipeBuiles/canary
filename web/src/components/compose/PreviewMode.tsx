@@ -1,8 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ComicPage, PageSummary } from "../../types/api";
 import { Button } from "../ui/Button";
+import { ConfirmDrawer } from "../ui/ConfirmDrawer";
 import { pagePreviewUrl } from "../../api/pages";
 import { cn } from "../../lib/cn";
+import type { ComposeIssue } from "../../lib/issueEngine";
 
 const THEMES = [
   { id: "default", label: "Default" },
@@ -28,11 +30,27 @@ interface PreviewModeProps {
   activeTheme: string;
   outputLanguage: "en" | "es" | "fr";
   isTranslatingBubbles: boolean;
+  issues: ComposeIssue[];
   onPageSelect: (idx: number) => void;
   onExport: (format: "pdf" | "cbz") => void;
   onThemeChange: (theme: string) => void;
   onOutputLanguageChange: (lang: "en" | "es" | "fr") => void;
   onTranslateBubbles: (lang: "en" | "es" | "fr") => void;
+  onReviewIssues: () => void;
+}
+
+function buildExportDrawerBody(issues: ComposeIssue[]): string {
+  const errors = issues.filter((i) => i.severity === "error").length;
+  const warnings = issues.filter((i) => i.severity === "warning").length;
+  const parts: string[] = [];
+  if (errors > 0) parts.push(`${errors} error${errors !== 1 ? "s" : ""}`);
+  if (warnings > 0) parts.push(`${warnings} warning${warnings !== 1 ? "s" : ""}`);
+  const summary = parts.join(" and ");
+  return (
+    `${issues.length} issue${issues.length !== 1 ? "s" : ""} need attention — including ${summary}. ` +
+    `Panels with unaccepted images or missing text may not be print-ready. ` +
+    `You can still export; review and fix issues first for best results.`
+  );
 }
 
 export function PreviewMode({
@@ -45,12 +63,23 @@ export function PreviewMode({
   activeTheme,
   outputLanguage,
   isTranslatingBubbles,
+  issues,
   onPageSelect,
   onExport,
   onThemeChange,
   onOutputLanguageChange,
   onTranslateBubbles,
+  onReviewIssues,
 }: PreviewModeProps) {
+  const [exportDrawerFormat, setExportDrawerFormat] = useState<"pdf" | "cbz" | null>(null);
+
+  function handleExportClick(format: "pdf" | "cbz") {
+    if (issues.length > 0) {
+      setExportDrawerFormat(format);
+    } else {
+      onExport(format);
+    }
+  }
   const spreadStart = pageIdx % 2 === 0 ? pageIdx : pageIdx - 1;
   const totalSpreads = Math.ceil(pageList.length / 2);
   const spreadIdx = Math.floor(spreadStart / 2);
@@ -94,6 +123,20 @@ export function PreviewMode({
           isLoading={isLoading}
           leftSummary={leftSummary}
           rightSummary={rightSummary}
+        />
+
+        {/* Export ConfirmDrawer */}
+        <ConfirmDrawer
+          open={exportDrawerFormat !== null}
+          title="Export with issues?"
+          body={exportDrawerFormat !== null ? buildExportDrawerBody(issues) : ""}
+          confirmLabel={`EXPORT ${exportDrawerFormat?.toUpperCase()} ANYWAY`}
+          busy={isExporting}
+          onConfirm={() => {
+            if (exportDrawerFormat) onExport(exportDrawerFormat);
+            setExportDrawerFormat(null);
+          }}
+          onClose={() => setExportDrawerFormat(null)}
         />
 
         {/* Right sidebar */}
@@ -151,6 +194,52 @@ export function PreviewMode({
             </Button>
           </div>
 
+          {/* Production Check */}
+          <div className="border-[2px] border-ink-black bg-surface-container p-3 shadow-ink-sm">
+            <div className="mb-2 font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/50">
+              PRODUCTION CHECK
+            </div>
+            {issues.length === 0 ? (
+              <div className="flex items-center gap-1.5">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-3.5 w-3.5 text-archive-sage"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M20 6L9 17l-5-5" />
+                </svg>
+                <span className="font-meta text-[0.52rem] tracking-[0.12em] text-ink-black/50">
+                  READY TO EXPORT
+                </span>
+              </div>
+            ) : (
+              <>
+                <div className="mb-2 flex flex-wrap gap-2">
+                  {issues.filter((i) => i.severity === "error").length > 0 && (
+                    <span className="flex items-center gap-1 font-meta text-[0.5rem] tracking-[0.1em] text-hero-red">
+                      <span className="h-1.5 w-1.5 rounded-full bg-hero-red" />
+                      {issues.filter((i) => i.severity === "error").length} ERROR{issues.filter((i) => i.severity === "error").length !== 1 ? "S" : ""}
+                    </span>
+                  )}
+                  {issues.filter((i) => i.severity === "warning").length > 0 && (
+                    <span className="flex items-center gap-1 font-meta text-[0.5rem] tracking-[0.1em] text-narrator-gold">
+                      <span className="h-1.5 w-1.5 rounded-full bg-narrator-gold" />
+                      {issues.filter((i) => i.severity === "warning").length} WARNING{issues.filter((i) => i.severity === "warning").length !== 1 ? "S" : ""}
+                    </span>
+                  )}
+                </div>
+                <Button size="sm" variant="secondary" fullWidth onClick={onReviewIssues}>
+                  REVIEW ISSUES
+                </Button>
+              </>
+            )}
+          </div>
+
           {/* Export info */}
           <div className="border-[2px] border-ink-black bg-surface-container p-3 shadow-ink-sm">
             <div className="mb-2 font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/50">EXPORT</div>
@@ -166,10 +255,10 @@ export function PreviewMode({
               ))}
             </div>
             <div className="space-y-1.5">
-              <Button size="sm" fullWidth onClick={() => onExport("pdf")} disabled={isExporting}>
+              <Button size="sm" fullWidth onClick={() => handleExportClick("pdf")} disabled={isExporting}>
                 {isExporting ? "EXPORTING..." : "EXPORT PDF"}
               </Button>
-              <Button size="sm" variant="secondary" fullWidth onClick={() => onExport("cbz")} disabled={isExporting}>
+              <Button size="sm" variant="secondary" fullWidth onClick={() => handleExportClick("cbz")} disabled={isExporting}>
                 CBZ
               </Button>
             </div>

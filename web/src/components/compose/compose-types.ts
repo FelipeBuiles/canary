@@ -1,2 +1,2 @@
 export type ComposeTab = "edit" | "export";
-export type EditSubMode = "canvas" | "script";
+export type EditSubMode = "canvas" | "script" | "issues";

@@ -7,6 +7,7 @@ import logging
 import shutil
 import time
 from typing import Optional
+import uuid as uuid_lib
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -122,7 +123,7 @@ async def _run_stage_with_credits(
     db = get_db()
     try:
         reservation_credits = estimate_stage_credit_reservation(config, project_dir, state, stage)
-        reservation_id = reserve_credits(db, user_id, project_id, stage, reservation_credits)
+        reservation_id, job_id = reserve_credits(db, user_id, project_id, stage, reservation_credits)
     except Exception as exc:
         # Insufficient credits or DB error — fail the stage so the UI reflects it.
         message = getattr(exc, "detail", str(exc))
@@ -149,6 +150,7 @@ async def _run_stage_with_credits(
             UsageRecord.model_validate(usage),
             stage=stage,
             description=f"Model call: {stage}",
+            job_id=job_id,
         )
     if reservation_id:
         release_reservation(db, reservation_id)
@@ -531,6 +533,8 @@ async def regen_panel(
     except Exception:
         planned_panel_id = None
 
+    regen_job_id = str(uuid_lib.uuid4())
+
     async def _runner() -> None:
         from novel_to_comic.stages import s7_draw
         clear_panel_acceptance(project_dir, scene_id, panel_number)
@@ -555,6 +559,7 @@ async def regen_panel(
                 result.usage,
                 stage="draw",
                 description=f"Model call: regenerate panel {scene_id}/{panel_number:03d}",
+                job_id=regen_job_id,
             )
 
     existing = find_active_generation_job(
@@ -661,6 +666,7 @@ async def regen_panel_with_instruction(
         )
         raise HTTPException(502, f"Could not rewrite the panel prompt: {exc}") from exc
 
+    instructed_job_id = str(uuid_lib.uuid4())
     db = get_db()
     if rewrite.usage:
         debit_model_usage(
@@ -670,6 +676,7 @@ async def regen_panel_with_instruction(
             rewrite.usage,
             stage="draw",
             description=f"Model call: rewrite panel prompt {scene_id}/{panel_number:03d}",
+            job_id=instructed_job_id,
         )
 
     prompt_path.write_text(updated_prompt.model_dump_json(indent=2))
@@ -707,6 +714,7 @@ async def regen_panel_with_instruction(
                 result.usage,
                 stage="draw",
                 description=f"Model call: regenerate instructed panel {scene_id}/{panel_number:03d}",
+                job_id=instructed_job_id,
             )
 
     prune_finished_generation_jobs(request.app)
@@ -742,6 +750,8 @@ async def regen_ref(
     project_dir, config, state = project
     pkey = project_key(user_id, project_id)
 
+    char_ref_job_id = str(uuid_lib.uuid4())
+
     async def _runner() -> None:
         from novel_to_comic.stages import s3_cast
         with ai_request_context(
@@ -764,6 +774,7 @@ async def regen_ref(
                 result.usage,
                 stage="cast",
                 description=f"Model call: regenerate character ref {char_id}",
+                job_id=char_ref_job_id,
             )
 
     existing = find_active_generation_job(
@@ -806,6 +817,7 @@ async def regen_plate(
 ):
     project_dir, config, state = project
     pkey = project_key(user_id, project_id)
+    plate_job_id = str(uuid_lib.uuid4())
 
     async def _runner() -> None:
         from novel_to_comic.stages import s3_cast
@@ -829,6 +841,7 @@ async def regen_plate(
                 result.usage,
                 stage="cast",
                 description=f"Model call: regenerate location plate {loc_id}",
+                job_id=plate_job_id,
             )
 
     existing = find_active_generation_job(

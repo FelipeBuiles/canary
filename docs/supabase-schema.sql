@@ -102,7 +102,8 @@ alter table public.credit_ledger
   add column if not exists output_tokens integer not null default 0,
   add column if not exists image_count integer not null default 0,
   add column if not exists cost_usd numeric(12, 6),
-  add column if not exists cost_source text;
+  add column if not exists cost_source text,
+  add column if not exists job_id uuid;
 
 alter table public.ai_usage_events
   add column if not exists provider_cost_usd numeric(12, 6),
@@ -133,7 +134,8 @@ create or replace function public.reserve_stage_credits(
   p_user_id       uuid,
   p_project_id    uuid,
   p_stage         text,
-  p_amount_credits integer
+  p_amount_credits integer,
+  p_job_id        uuid default null
 )
 returns uuid
 language plpgsql
@@ -168,7 +170,8 @@ begin
     amount_credits,
     status,
     stage,
-    description
+    description,
+    job_id
   )
   values (
     p_user_id,
@@ -176,7 +179,8 @@ begin
     -p_amount_credits,
     'reserved',
     p_stage,
-    'Reserved: ' || p_stage
+    'Reserved: ' || p_stage,
+    p_job_id
   )
   returning id into v_reservation_id;
 
@@ -188,6 +192,10 @@ $$;
 
 create index if not exists credit_ledger_user_created_idx
   on public.credit_ledger (user_id, created_at desc);
+
+create index if not exists credit_ledger_job_id_idx
+  on public.credit_ledger (user_id, job_id)
+  where job_id is not null;
 
 create index if not exists credit_ledger_payment_intent_idx
   on public.credit_ledger (stripe_payment_intent_id)
@@ -279,7 +287,7 @@ grant select on public.projects to authenticated;
 grant select on public.credit_ledger to authenticated;
 grant select on public.ai_usage_events to authenticated;
 
-revoke all on function public.reserve_stage_credits(uuid, uuid, text, integer)
+revoke all on function public.reserve_stage_credits(uuid, uuid, text, integer, uuid)
   from public, anon, authenticated;
-grant execute on function public.reserve_stage_credits(uuid, uuid, text, integer)
+grant execute on function public.reserve_stage_credits(uuid, uuid, text, integer, uuid)
   to service_role;
