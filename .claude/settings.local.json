@@ -1,4 +1,17 @@
 {
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import sys,json,os,subprocess; d=json.load(sys.stdin); p=d.get('file_path',''); r=subprocess.run(['wc','-l',p],capture_output=True,text=True) if os.path.isfile(p) else None; lines=int(r.stdout.split()[0]) if r and r.returncode==0 else 0; print(f'DELEGATION REMINDER: {p} has {lines} lines. If you are reading this only to answer a question or summarize — not to edit — stop and use ask-ai instead.') if lines>300 else None\""
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "Bash(git:*)",
@@ -82,7 +95,8 @@
       "Bash(pdftotext /Users/jbuiles/Code/canary/projects/the-flowers/input/walker_flowers.pdf -)",
       "Bash(.venv/bin/python:*)",
       "Bash(node -e \"console.log\\([1,2,3].findLastIndex\\(x => x < 3\\)\\)\")",
-      "Bash(npm test *)"
+      "Bash(npm test *)",
+      "Bash(echo \"Exit: $?\")"
     ]
   }
 }
