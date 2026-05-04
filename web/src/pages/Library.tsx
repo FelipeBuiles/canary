@@ -56,16 +56,11 @@ function NewProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
           onSuccess: (data) => {
             queryClient.removeQueries({ queryKey: ["project", data.id] });
             clearEvents();
-            // Start the pipeline, then navigate to the first stage room
+            onClose();
+            navigate(`/project/${encodeURIComponent(data.id)}/extract`);
             runPipeline.mutate(
-              { project: data.id },
-              {
-                onSuccess: () => {
-                  connect(data.id);
-                  onClose();
-                  navigate(`/project/${encodeURIComponent(data.id)}/extract`);
-                },
-              },
+              { project: data.id, stage: "extract" },
+              { onSuccess: () => connect(data.id) },
             );
           },
         },

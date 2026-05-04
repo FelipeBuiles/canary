@@ -156,60 +156,6 @@ async def _run_stage_with_credits(
         release_reservation(db, reservation_id)
 
 
-async def _run_full_pipeline(
-    config,
-    project_dir,
-    state,
-    queue: asyncio.Queue,
-    user_id: str,
-    project_id: str | None,
-):
-    """Run all stages in order, stopping at checkpoints or failures."""
-    for stage in STAGE_NAMES:
-        if stage == "compose":
-            draw_error = _draw_ready_for_compose_error(project_dir)
-            if draw_error:
-                fail_stage(state, "compose", draw_error)
-                save_state(state, project_dir)
-                queue.put_nowait({"type": "stage_fail", "stage": "compose", "message": draw_error})
-                break
-
-        s = state.stages[stage]
-        if s.status.value in ("complete",):
-            # Verify the stage's output actually exists — if it was falsely
-            # marked complete (e.g. a bug that has since been fixed), auto-recover.
-            stage_outputs = REGISTRY[stage].outputs(project_dir)
-            if stage_outputs and not stage_outputs[0].exists():
-                logger.warning(
-                    "Stage %s marked complete but output %s missing — resetting and rerunning",
-                    stage, stage_outputs[0],
-                )
-                _reset_stage_and_downstream(state, stage)
-                _clear_outputs_for_rerun(project_dir, stage)
-                save_state(state, project_dir)
-                # Fall through to run this stage
-            else:
-                continue
-        if s.status == StageStatus.AWAITING_REVIEW:
-            queue.put_nowait({
-                "type": "log", "stage": stage, "level": "warn",
-                "message": f"Stage '{stage}' is awaiting review — stopping.",
-            })
-            break
-
-        await _run_stage_with_credits(stage, config, project_dir, state, queue, user_id, project_id)
-
-        # Stop if stage failed or hit a checkpoint
-        s = state.stages[stage]
-        if s.status == StageStatus.FAILED:
-            break
-        if s.status == StageStatus.AWAITING_REVIEW:
-            queue.put_nowait({
-                "type": "log", "stage": stage, "level": "info",
-                "message": f"Stage '{stage}' awaiting review.",
-            })
-            break
-
 
 async def _run_job(pkey: str, request: Request, job):
     """Wrap a pipeline task so lifecycle cleanup is consistent."""
@@ -393,9 +339,12 @@ async def run_pipeline(
         if draw_error:
             raise HTTPException(409, draw_error)
 
+    if not stage:
+        raise HTTPException(400, "stage parameter is required")
+
     # Gate: post-style stages require style to be approved
     _POST_STYLE_STAGES = {"cast", "adapt", "plan", "storyboard", "direct", "draw", "compose"}
-    if stage is None or stage in _POST_STYLE_STAGES:
+    if stage in _POST_STYLE_STAGES:
         from ..routers.styles import is_style_selected
         style_state = state.stages.get("style")
         style_incomplete = style_state is None or style_state.status not in (
@@ -416,10 +365,7 @@ async def run_pipeline(
     queue: asyncio.Queue = asyncio.Queue()
     request.app.state.event_queues[pkey] = queue
 
-    if stage:
-        job = _run_stage_with_credits(stage, config, project_dir, state, queue, user_id, project_id)
-    else:
-        job = _run_full_pipeline(config, project_dir, state, queue, user_id, project_id)
+    job = _run_stage_with_credits(stage, config, project_dir, state, queue, user_id, project_id)
 
     task = asyncio.create_task(_run_job(pkey, request, job))
 

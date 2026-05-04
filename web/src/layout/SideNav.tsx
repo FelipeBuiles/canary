@@ -309,6 +309,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
 
   const { data: nextStageEstimate } = useStageEstimate(projectId, nextRunStage);
   const [showCostConfirm, setShowCostConfirm] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
 
   const measureStageDetails = useCallback(() => {
     const nav = navRef.current;
@@ -333,6 +334,10 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   }, []);
 
   useEffect(() => {
+    if (isRunning) setRunError(null);
+  }, [isRunning]);
+
+  useEffect(() => {
     const nav = navRef.current;
     if (!nav) return;
 
@@ -347,16 +352,21 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   }, [measureStageDetails, pipelineStages, stageDetails, activeStageRoute]);
 
   function handleRun() {
-    if (!projectId) return;
+    if (!projectId || !pendingStage) return;
+    setRunError(null);
     clearEvents();
     runPipeline.mutate(
-      { project: projectId },
-      { onSuccess: () => connect(projectId) },
+      { project: projectId, stage: pendingStage },
+      {
+        onSuccess: () => connect(projectId),
+        onError: (e) => setRunError(e instanceof Error ? e.message : "Failed to start pipeline"),
+      },
     );
   }
 
   function handleContinue() {
     if (!projectId || isRunning) return;
+    setRunError(null);
     if (needsApproval) {
       if ((needsApproval === "plan" || needsApproval === "storyboard") && shotPlanAction.kind === "approve") {
         approveStage.mutate(
@@ -367,10 +377,14 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
                 clearEvents();
                 runPipeline.mutate(
                   { project: projectId, stage: shotPlanAction.estimateStage },
-                  { onSuccess: () => connect(projectId) },
+                  {
+                    onSuccess: () => connect(projectId),
+                    onError: (e) => setRunError(e instanceof Error ? e.message : "Failed to start pipeline"),
+                  },
                 );
               }
             },
+            onError: (e) => setRunError(e instanceof Error ? e.message : "Failed to approve stage"),
           },
         );
         return;
@@ -388,9 +402,13 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
             clearEvents();
             runPipeline.mutate(
               { project: projectId },
-              { onSuccess: () => connect(projectId) },
+              {
+                onSuccess: () => connect(projectId),
+                onError: (e) => setRunError(e instanceof Error ? e.message : "Failed to start pipeline"),
+              },
             );
           },
+          onError: (e) => setRunError(e instanceof Error ? e.message : "Failed to approve stage"),
         },
       );
       return;
@@ -412,12 +430,18 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
       if (shotPlanAction.kind === "run") {
         runPipeline.mutate(
           { project: projectId, stage: shotPlanAction.backendStage },
-          { onSuccess: () => connect(projectId) },
+          {
+            onSuccess: () => connect(projectId),
+            onError: (e) => setRunError(e instanceof Error ? e.message : "Failed to start pipeline"),
+          },
         );
       } else if (shotPlanAction.kind === "rerun") {
         runPipeline.mutate(
           { project: projectId, stage: shotPlanAction.backendStage, rerun: true },
-          { onSuccess: () => connect(projectId) },
+          {
+            onSuccess: () => connect(projectId),
+            onError: (e) => setRunError(e instanceof Error ? e.message : "Failed to start pipeline"),
+          },
         );
       }
       return;
@@ -426,7 +450,10 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
       clearEvents();
       runPipeline.mutate(
         { project: projectId, stage: brokenStage, rerun: true },
-        { onSuccess: () => connect(projectId) },
+        {
+          onSuccess: () => connect(projectId),
+          onError: (e) => setRunError(e instanceof Error ? e.message : "Failed to start pipeline"),
+        },
       );
       return;
     }
@@ -623,7 +650,12 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
             onConfirm={() => { setShowCostConfirm(false); handleContinue(); }}
             onClose={() => setShowCostConfirm(false)}
           />
-          {projectId && nextStageEstimate && nextStageEstimate.estimate_credits > 0 && !isRunning && (
+          {runError && (
+            <div className="mt-2 px-1 font-meta text-[0.56rem] tracking-[0.12em] text-hero-red/80 2xl:text-[0.62rem]" role="alert">
+              {runError}
+            </div>
+          )}
+          {!runError && projectId && nextStageEstimate && nextStageEstimate.estimate_credits > 0 && !isRunning && (
             <div className="mt-2 flex items-center justify-center gap-1.5 font-meta text-[0.56rem] tracking-[0.12em] text-bristol/45 2xl:text-[0.62rem]">
               <span className="text-narrator-gold/70">Est. {nextStageEstimate.estimate_credits.toLocaleString()}</span>
               {nextStageEstimate.reserved_credits > 0 && (
