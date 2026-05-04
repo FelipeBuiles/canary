@@ -127,7 +127,7 @@ export function CreditsPage() {
           </span>
         </div>
         <p className="mt-6 max-w-[42rem] text-[1rem] font-semibold leading-7 text-ink-black/54">
-          Credits are consumed by model calls. Reserved credits are returned when an action finishes, resets, or fails.
+          Credits power your production pipeline. Each paid stage shows an estimate before you commit. Reserved credits are held while the stage runs and released once it finishes — you're only charged for actual model usage.
         </p>
         <div className="mt-8 flex items-center gap-5">
           <div className="font-meta text-[0.66rem] font-bold uppercase tracking-[0.22em] text-ink-black/42">
@@ -144,12 +144,15 @@ export function CreditsPage() {
 
       <section className="mt-14 border-l-[4px] border-ink-black/45 bg-surface-container px-7 py-5">
         <div className="mb-3 font-meta text-[0.66rem] font-bold uppercase tracking-[0.22em] text-ink-black/45">
-          How costs are shown
+          How credits work
         </div>
         <ul className="space-y-2 font-body text-[0.92rem] font-bold leading-6 text-ink-black/68">
           {(pricingRef?.notes ?? [
-            "Costs are estimated where you start an action, using that project's current settings.",
-            "Final charges come from the model usage reported after the request finishes.",
+            "Estimated credits are projected before an action starts, based on your project's current inputs.",
+            "Reserved credits are a temporary hold made when a paid stage begins — not a final charge.",
+            "Final charges are settled from actual model usage once the stage finishes. Any unused reserved credits are released.",
+            "Deterministic steps like Shot Plan layout and prompt assembly have no credit hold.",
+            "Panel regeneration is charged from model usage after it completes — no separate hold is made.",
           ]).map((note) => (
             <li key={note}>{note}</li>
           ))}

@@ -85,6 +85,26 @@ export interface CreditBalance {
   balance_credits: number;
 }
 
+export type CostConfidence = "low_variance" | "usually_within_estimate" | "variable";
+
+export interface CostEstimate {
+  estimate_credits: number;
+  reserved_credits: number | null;
+  reservation_multiplier: number;
+  confidence: CostConfidence;
+}
+
+export interface StageCostEstimate extends CostEstimate {
+  stage: string;
+  reserved_credits: number;
+}
+
+export interface RegenCostEstimate extends CostEstimate {
+  scene_id: string;
+  panel_number: number;
+  reserved_credits: null;
+}
+
 export interface CreditTransaction {
   id: string;
   amount_credits: number;
@@ -313,6 +333,12 @@ export interface NarrationDecision {
   caption_text_override: string | null;
 }
 
+export interface StageCreditBreakdown {
+  estimate_credits: number;
+  reserved_credits: number | null;
+  confidence: CostConfidence;
+}
+
 export interface NarrationImpact {
   impact: "compose_only" | "plan_only" | "redraw_selected_panels" | "replan_scene";
   affected_stages: string[];
@@ -320,7 +346,8 @@ export interface NarrationImpact {
   requires_confirmation: boolean;
   reason: string;
   estimated_credits?: number;
-  stage_credits?: Record<string, number>;
+  reserved_credits?: number;
+  stage_credits?: Record<string, StageCreditBreakdown>;
 }
 
 export interface PanelGeometry {
@@ -586,6 +613,22 @@ export interface RestorePanelImageVersionResponse {
   panel_number: number;
   restored: PanelImageVersion;
   versions: PanelImageVersion[];
+}
+
+export type PromptWarningCode =
+  | "missing_character_ref"
+  | "thin_composition"
+  | "thin_setting"
+  | "text_in_prompt"
+  | "missing_style"
+  | "inconsistent_dimensions";
+
+export interface PromptWarning {
+  code: PromptWarningCode;
+  label: string;
+  detail: string;
+  scene_id: string;
+  panel_number: number;
 }
 
 export interface CharacterVoice {

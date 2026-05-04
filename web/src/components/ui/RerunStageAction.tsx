@@ -30,11 +30,6 @@ export function RerunStageAction({
   const busy = disabled || isPending;
 
   const estimate = useStageEstimate(project, stage, open);
-  const estimatedCredits = estimate.isLoading
-    ? "…"
-    : estimate.data
-      ? `${estimate.data.credits.toLocaleString()} credits`
-      : impact.credits;
 
   function confirmRerun() {
     handleRun(project, stage, true);
@@ -55,8 +50,7 @@ export function RerunStageAction({
         open={open}
         stageName={label}
         impactStages={impact.downstream}
-        estimatedCredits={estimatedCredits}
-        creditsAreEstimated={!estimate.data}
+        cost={estimate.data}
         itemsAtRisk={itemsAtRisk}
         confirmLabel={`Rerun ${STAGE_DISPLAY_NAMES[stage]}`}
         busy={busy}

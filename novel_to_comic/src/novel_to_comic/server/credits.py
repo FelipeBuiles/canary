@@ -6,6 +6,7 @@ import math
 import os
 from decimal import Decimal, ROUND_CEILING
 from pathlib import Path
+from typing import Literal, TypedDict
 
 from fastapi import HTTPException
 from supabase import Client
@@ -13,6 +14,15 @@ from supabase import Client
 from novel_to_comic.config import Config
 from novel_to_comic.state import PipelineState
 from novel_to_comic.usage import UsageRecord, calculate_cost, calculate_cost_breakdown, estimate_image_cost, estimate_text_cost, usage_has_billable_activity
+
+CostConfidence = Literal["low_variance", "usually_within_estimate", "variable"]
+
+
+class CreditEstimate(TypedDict):
+    estimate_credits: int
+    reserved_credits: int | None
+    reservation_multiplier: float
+    confidence: CostConfidence
 
 def credits_per_provider_usd() -> float:
     """Public credits charged per $1 of raw provider cost before markup."""
@@ -65,6 +75,53 @@ def estimate_stage_credit_reservation(
     return math.ceil(base_credits * reservation_buffer())
 
 
+def estimate_stage_credit_cost(
+    config: Config,
+    project_dir: Path,
+    state: PipelineState,
+    stage: str,
+) -> int:
+    """Unbuffered projected final cost in public credits."""
+    cost_usd = estimate_stage_provider_cost_usd(config, project_dir, state, stage)
+    return provider_usd_to_credits(cost_usd)
+
+
+def stage_cost_confidence(stage: str) -> CostConfidence:
+    _map: dict[str, CostConfidence] = {
+        "extract": "usually_within_estimate",
+        "style": "usually_within_estimate",
+        "cast": "variable",
+        "adapt": "usually_within_estimate",
+        "plan": "usually_within_estimate",
+        "storyboard": "low_variance",
+        "direct": "low_variance",
+        "draw": "variable",
+        "compose": "low_variance",
+    }
+    return _map.get(stage, "variable")
+
+
+def estimate_stage_credit_breakdown(
+    config: Config,
+    project_dir: Path,
+    state: PipelineState,
+    stage: str,
+) -> CreditEstimate:
+    """Full cost breakdown: estimate, reservation, multiplier, and confidence."""
+    multiplier = reservation_buffer()
+    estimate = estimate_stage_credit_cost(config, project_dir, state, stage)
+    if estimate > 0:
+        reserved: int | None = math.ceil(estimate * multiplier)
+    else:
+        reserved = 0
+    return CreditEstimate(
+        estimate_credits=estimate,
+        reserved_credits=reserved,
+        reservation_multiplier=multiplier,
+        confidence=stage_cost_confidence(stage),
+    )
+
+
 def estimate_stage_provider_cost_usd(
     config: Config,
     project_dir: Path,
@@ -83,6 +140,7 @@ def estimate_stage_provider_cost_usd(
         return _estimate_plan_cost(config, project_dir)
     if stage == "draw":
         return _estimate_draw_cost(config, project_dir)
+    # storyboard, direct, compose: deterministic, no model cost
     return 0.0
 
 

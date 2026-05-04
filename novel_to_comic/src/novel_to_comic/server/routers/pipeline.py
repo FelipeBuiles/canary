@@ -39,6 +39,7 @@ from novel_to_comic.ai import ai_request_context
 from ..auth import get_current_user
 from ..credits import (
     debit_model_usage,
+    estimate_stage_credit_breakdown,
     estimate_stage_credit_reservation,
     provider_usd_to_credits,
     release_reservation,
@@ -327,12 +328,12 @@ async def estimate_stage_cost(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
-    """Return the estimated credit reservation for running a stage."""
+    """Return the estimated credit breakdown for running a stage."""
     if stage not in STAGE_NAMES:
         raise HTTPException(400, f"Unknown stage: {stage}. Valid: {STAGE_NAMES}")
     project_dir, config, state = project
-    credits = estimate_stage_credit_reservation(config, project_dir, state, stage)
-    return {"stage": stage, "credits": credits}
+    breakdown = estimate_stage_credit_breakdown(config, project_dir, state, stage)
+    return {"stage": stage, **breakdown}
 
 
 @router.get("/regen-estimate")
@@ -345,13 +346,21 @@ async def regen_panel_estimate(
 ):
     """Return the estimated credit cost to regenerate one panel image."""
     from novel_to_comic.stages.s7_draw import estimate_panel_image_cost_usd
+    from ..credits import reservation_buffer, stage_cost_confidence
     project_dir, config, _state = project
     prompt_path = artifacts.panel_prompt_path(project_dir, scene_id, panel_number)
     if not prompt_path.exists():
         raise HTTPException(404, f"Prompt not found: {scene_id}/panel_{panel_number:03d}")
     cost_usd = estimate_panel_image_cost_usd(config, project_dir, prompt_path)
-    credits = max(1, provider_usd_to_credits(cost_usd)) if cost_usd > 0 else 1
-    return {"scene_id": scene_id, "panel_number": panel_number, "credits": credits}
+    estimate_credits = max(1, provider_usd_to_credits(cost_usd)) if cost_usd > 0 else 1
+    return {
+        "scene_id": scene_id,
+        "panel_number": panel_number,
+        "estimate_credits": estimate_credits,
+        "reserved_credits": None,
+        "reservation_multiplier": reservation_buffer(),
+        "confidence": stage_cost_confidence("draw"),
+    }
 
 
 @router.post("/run")

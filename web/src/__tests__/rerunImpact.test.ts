@@ -16,18 +16,9 @@ describe("RERUN_IMPACT", () => {
     expect(RERUN_IMPACT["style"]).toBeDefined();
   });
 
-  it("every entry has downstream and credit fields", () => {
+  it("every entry has a downstream field", () => {
     for (const [, impact] of Object.entries(RERUN_IMPACT)) {
       expect(Array.isArray(impact.downstream)).toBe(true);
-      expect(typeof impact.credits).toBe("string");
-      expect(typeof impact.creditsAreEstimated).toBe("boolean");
-    }
-  });
-
-  it("creditsAreEstimated is true for all entries", () => {
-    // These are authorization holds; final debits are recorded per model call.
-    for (const impact of Object.values(RERUN_IMPACT)) {
-      expect(impact.creditsAreEstimated).toBe(true);
     }
   });
 
@@ -75,9 +66,4 @@ describe("RERUN_IMPACT", () => {
     expect(style.downstream).toEqual(extract.downstream);
   });
 
-  it("credit strings are non-empty", () => {
-    for (const [, impact] of Object.entries(RERUN_IMPACT)) {
-      expect(impact.credits.length).toBeGreaterThan(0);
-    }
-  });
 });
