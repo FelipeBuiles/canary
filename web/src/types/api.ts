@@ -112,6 +112,7 @@ export interface CreditTransaction {
   stage: string | null;
   description: string | null;
   project_id: string | null;
+  job_id?: string | null;
   created_at: string;
   provider?: string | null;
   model?: string | null;

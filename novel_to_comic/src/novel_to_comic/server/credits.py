@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import os
+import uuid as uuid_lib
 from decimal import Decimal, ROUND_CEILING
 from pathlib import Path
 from typing import Literal, TypedDict
@@ -317,10 +318,18 @@ def reserve_credits(
     project_id: str | None,
     stage: str,
     amount_credits: int,
-) -> str | None:
-    """Atomically reserve credits and return the reserved ledger row id."""
+    *,
+    job_id: str | None = None,
+) -> tuple[str | None, str]:
+    """Atomically reserve credits and return (reservation_id, job_id).
+
+    Generates a fresh job_id UUID if none is provided. Returns reservation_id=None
+    when amount_credits <= 0 (no hold needed), but always returns a job_id.
+    """
+    if job_id is None:
+        job_id = str(uuid_lib.uuid4())
     if amount_credits <= 0:
-        return None
+        return None, job_id
     result = (
         db.rpc(
             "reserve_stage_credits",
@@ -329,6 +338,7 @@ def reserve_credits(
                 "p_project_id": project_id,
                 "p_stage": stage,
                 "p_amount_credits": amount_credits,
+                "p_job_id": job_id,
             },
         )
         .execute()
@@ -340,7 +350,7 @@ def reserve_credits(
             402,
             f"Insufficient credits — {balance} available, {amount_credits} required for '{stage}'",
         )
-    return str(reservation_id)
+    return str(reservation_id), job_id
 
 
 def debit_model_usage(
@@ -351,6 +361,7 @@ def debit_model_usage(
     *,
     stage: str | None = None,
     description: str,
+    job_id: str | None = None,
 ) -> None:
     """Insert one settled credit ledger row for one model-provider call."""
     credits, cost_usd = usage_to_credit_debit(usage)
@@ -378,6 +389,7 @@ def debit_model_usage(
             "image_count": usage.image_count,
             "cost_usd": cost_usd,
             "cost_source": cost.source if cost else None,
+            "job_id": job_id,
         },
         on_conflict="usage_call_id",
     ).execute()
