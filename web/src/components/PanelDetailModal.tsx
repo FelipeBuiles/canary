@@ -3,11 +3,10 @@ import type { ImagePrompt } from "../types/api";
 import { PromptLineageCard } from "./PromptLineageCard";
 import { Button } from "./ui/Button";
 import { Icon } from "./ui/Icon";
-import { GenerationDetailsModal } from "./ui/GenerationDetailsModal";
+import { ConfirmDrawer } from "./ui/ConfirmDrawer";
 import { LazyImage } from "./ui/LazyImage";
 import {
   useAcceptPanel,
-  useCreditBalance,
   useImageGenerationMeta,
   usePanelImageVersions,
   useProjectConfig,
@@ -19,8 +18,11 @@ import {
   useUnacceptPanel,
   useUpdatePrompt,
 } from "../api/queries";
+import { redactDevParameters, redactDevText, useShowDevContent } from "../lib/devContent";
 import { useRegenStore } from "../store/regen";
 import { useQueryClient } from "@tanstack/react-query";
+
+type TabId = "review" | "edit" | "prompt" | "history" | "metadata";
 
 interface PanelDetailModalProps {
   isOpen: boolean;
@@ -47,6 +49,670 @@ function fileUrl(project: string, relativePath: string) {
     .join("/")}`;
 }
 
+// ── Tab: Review ───────────────────────────────────────────────────────────────
+
+function ReviewTabContent({
+  project,
+  sceneId,
+  panelNumber,
+  imageUrl,
+  status,
+  accepted,
+  versionCount,
+  onNextUnaccepted,
+  onNext,
+  onClose,
+  regenCredits,
+  creditsLabel,
+  onQuickRedo,
+  onGoToEdit,
+}: {
+  project: string;
+  sceneId: string;
+  panelNumber: number;
+  imageUrl: string;
+  status?: string;
+  accepted: boolean;
+  versionCount: number;
+  onNextUnaccepted?: (() => void) | null;
+  onNext: (() => void) | null;
+  onClose: () => void;
+  regenCredits: number | null;
+  creditsLabel: string;
+  onQuickRedo: () => void;
+  onGoToEdit: () => void;
+}) {
+  const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
+  const [confirmRedo, setConfirmRedo] = useState(false);
+
+  const shouldLoadVersions = versionCount > 0;
+  const { data: versionData } = usePanelImageVersions(project, sceneId, panelNumber, shouldLoadVersions);
+  const restoreVersion = useRestorePanelImageVersion();
+  const acceptPanel = useAcceptPanel();
+  const unacceptPanel = useUnacceptPanel();
+  const bust = useRegenStore((s) => s.bust);
+  const queryClient = useQueryClient();
+
+  const versionEntries = versionData?.versions ?? [];
+  const hasVersionHistory = !!versionData?.has_history && versionEntries.some((v) => !v.current);
+  const currentVersion = versionEntries.find((v) => v.current);
+  const selectedVersionEntry = selectedVersion == null
+    ? currentVersion
+    : versionEntries.find((v) => v.version === selectedVersion) ?? currentVersion;
+  const displayedImageUrl = selectedVersionEntry && !selectedVersionEntry.current
+    ? fileUrl(project, selectedVersionEntry.image_path)
+    : imageUrl;
+  const versionLabel = hasVersionHistory && currentVersion
+    ? `v${currentVersion.version} / ${versionEntries.length}`
+    : null;
+
+  const handleAccept = () => {
+    acceptPanel.mutate(
+      { project, sceneId, panelNumber },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: ["project", project, "images"] });
+        },
+      },
+    );
+  };
+
+  const handleUndoAccept = () => {
+    unacceptPanel.mutate({ project, sceneId, panelNumber });
+  };
+
+  const handleNextPanel = () => {
+    const next = onNextUnaccepted ?? onNext;
+    if (next) next(); else onClose();
+  };
+
+  const handleRestoreVersion = () => {
+    if (!selectedVersionEntry || selectedVersionEntry.current) return;
+    const key = `${sceneId}-${panelNumber}`;
+    restoreVersion.mutate(
+      { project, sceneId, panelNumber, version: selectedVersionEntry.version },
+      {
+        onSuccess: () => {
+          bust(project, key);
+          setSelectedVersion(null);
+        },
+      },
+    );
+  };
+
+  return (
+    <div className="flex h-full flex-col gap-4 overflow-y-auto p-4">
+      {hasVersionHistory && (
+        <div className="border-b-[2px] border-panel-line pb-4">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="font-meta text-[0.58rem] tracking-[0.2em] text-ink-black/45">VERSION HISTORY</div>
+            <div className="font-meta text-[0.58rem] text-ink-black/45">{versionLabel}</div>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            {versionEntries.map((version) => {
+              const selected = selectedVersionEntry?.version === version.version;
+              return (
+                <button
+                  key={`${version.version}-${version.image_path}`}
+                  type="button"
+                  onClick={() => setSelectedVersion(version.version)}
+                  className={`group relative h-14 w-14 overflow-hidden border-[3px] transition-colors ${
+                    selected ? "border-hero-red" : "border-pulp-paper shadow-[0_0_0_1px_var(--color-panel-line)] hover:border-ink-black/40"
+                  }`}
+                  title={version.current ? "Current version" : `Version ${version.version}`}
+                >
+                  <img
+                    src={fileUrl(project, version.image_path)}
+                    alt={version.current ? "Current" : `v${version.version}`}
+                    className="h-full w-full object-cover"
+                  />
+                  {version.current && (
+                    <span className="absolute bottom-0 right-0 bg-ink-black px-1.5 py-0.5 font-meta text-[0.46rem] font-bold text-bristol">
+                      NOW
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+            {selectedVersionEntry && !selectedVersionEntry.current && (
+              <Button variant="outline" className="ml-1 h-10" onClick={handleRestoreVersion} disabled={restoreVersion.isPending}>
+                {restoreVersion.isPending ? "RESTORING..." : `RESTORE v${selectedVersionEntry.version}`}
+              </Button>
+            )}
+          </div>
+          {selectedVersionEntry && !selectedVersionEntry.current && (
+            <div className="mt-3 flex min-h-[240px] items-center justify-center bg-ink-black">
+              <img
+                src={displayedImageUrl}
+                alt={`Version ${selectedVersionEntry.version}`}
+                className="max-h-[240px] object-contain"
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {accepted ? (
+          <>
+            <div className="flex items-center gap-3 bg-archive-sage px-4 py-3 font-meta text-[0.7rem] font-bold uppercase tracking-[0.16em] text-bristol">
+              <Icon name="check" size={14} />
+              Panel Accepted
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={handleUndoAccept} disabled={unacceptPanel.isPending}>
+                ↩ Undo Accept
+              </Button>
+              <Button onClick={handleNextPanel}>Next Panel →</Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <Button
+              className="w-full bg-archive-sage"
+              onClick={handleAccept}
+              disabled={acceptPanel.isPending || status !== "done"}
+            >
+              ✓ ACCEPT PANEL
+            </Button>
+            {onNextUnaccepted && (
+              <Button variant="outline" className="w-full" onClick={onNextUnaccepted}>
+                Next Unaccepted →
+              </Button>
+            )}
+          </>
+        )}
+      </div>
+
+      <div className="border-t-[2px] border-panel-line pt-3">
+        <div className="font-meta text-[0.55rem] tracking-[0.18em] text-ink-black/40 mb-2">QUICK ACTIONS</div>
+        <div className="space-y-2">
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={onGoToEdit}
+          >
+            FIX &amp; REGENERATE…
+          </Button>
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => setConfirmRedo(true)}
+            disabled={status !== "done" && status !== "failed"}
+          >
+            ↺ Quick Re-Do · {creditsLabel}
+          </Button>
+        </div>
+      </div>
+
+      <ConfirmDrawer
+        open={confirmRedo}
+        title="Quick Re-Do"
+        body="Regenerate this panel with the same prompt. The current image will be archived."
+        cost={regenCredits != null ? { estimate_credits: regenCredits, reserved_credits: null, reservation_multiplier: 1, confidence: "low_variance" } : undefined}
+        confirmLabel={`Re-Do · ${creditsLabel}`}
+        onConfirm={() => { setConfirmRedo(false); onQuickRedo(); }}
+        onClose={() => setConfirmRedo(false)}
+      />
+    </div>
+  );
+}
+
+// ── Tab: Edit ─────────────────────────────────────────────────────────────────
+
+function EditTabContent({
+  project,
+  sceneId,
+  panelNumber,
+  draft,
+  originalPrompt,
+  onDraftChange,
+  regenCredits,
+  creditsLabel,
+  lastRewrittenPrompt,
+  onInstructionRegen,
+  onGenerateFromDraft,
+}: {
+  project: string;
+  sceneId: string;
+  panelNumber: number;
+  draft: ImagePrompt;
+  originalPrompt: ImagePrompt | undefined;
+  onDraftChange: (patch: Partial<ImagePrompt>) => void;
+  regenCredits: number | null;
+  creditsLabel: string;
+  lastRewrittenPrompt: ImagePrompt | null;
+  onInstructionRegen: (instruction: string) => void;
+  onGenerateFromDraft: () => void;
+}) {
+  const [instruction, setInstruction] = useState("");
+  const [instructionError, setInstructionError] = useState<string | null>(null);
+  const [confirmInstruction, setConfirmInstruction] = useState(false);
+  const [confirmGenerate, setConfirmGenerate] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const instructedRegen = useRegenPanelWithInstruction();
+  const updatePrompt = useUpdatePrompt();
+  const begin = useRegenStore((s) => s.begin);
+  const attachJob = useRegenStore((s) => s.attachJob);
+  const fail = useRegenStore((s) => s.fail);
+  const regenPanel = useRegenPanel();
+  const queryClient = useQueryClient();
+
+  const hasChanges = originalPrompt ? JSON.stringify(draft) !== JSON.stringify(originalPrompt) : false;
+  const isInstructionBusy = instructedRegen.isPending;
+
+  const handleInstructionRegen = () => {
+    const trimmed = instruction.trim();
+    if (!trimmed) { setInstructionError("Add a short visual instruction first."); return; }
+    setInstructionError(null);
+    onInstructionRegen(trimmed);
+    setInstruction("");
+    setConfirmInstruction(false);
+  };
+
+  const handleGenerateFromDraft = async () => {
+    setIsGenerating(true);
+    try {
+      await updatePrompt.mutateAsync({ project, sceneId, data: draft });
+      queryClient.invalidateQueries({ queryKey: ["project", project, "direct", sceneId] });
+      const key = `${sceneId}-${panelNumber}`;
+      begin(project, key);
+      regenPanel.mutate(
+        { project, sceneId, panelNumber },
+        {
+          onSuccess: (data) => attachJob(project, key, data.job),
+          onError: (err) => fail(project, key, err instanceof Error ? err.message : "Regeneration failed"),
+        },
+      );
+      onGenerateFromDraft();
+    } finally {
+      setIsGenerating(false);
+      setConfirmGenerate(false);
+    }
+  };
+
+  const costObj = regenCredits != null
+    ? { estimate_credits: regenCredits, reserved_credits: null as null, reservation_multiplier: 1, confidence: "low_variance" as const }
+    : undefined;
+
+  return (
+    <div className="flex h-full flex-col gap-4 overflow-y-auto p-4">
+      {lastRewrittenPrompt && (
+        <details className="border-[2px] border-archive-sage/40 bg-archive-sage/8">
+          <summary className="cursor-pointer px-3 py-2 font-meta text-[0.58rem] tracking-[0.16em] text-archive-sage">
+            REWRITTEN BY LAST REGEN ↓
+          </summary>
+          <div className="px-3 pb-3 pt-1 space-y-1 text-[0.72rem] text-ink-black/70">
+            {lastRewrittenPrompt.setting && (
+              <p><span className="font-semibold">Setting:</span> {lastRewrittenPrompt.setting}</p>
+            )}
+            {lastRewrittenPrompt.composition && (
+              <p><span className="font-semibold">Composition:</span> {lastRewrittenPrompt.composition}</p>
+            )}
+          </div>
+        </details>
+      )}
+
+      <div>
+        <label className="mb-1.5 block font-meta text-[0.58rem] tracking-[0.18em] text-ink-black/45">
+          NATURAL-LANGUAGE INSTRUCTION
+        </label>
+        <textarea
+          value={instruction}
+          onChange={(e) => { setInstruction(e.target.value); if (instructionError) setInstructionError(null); }}
+          maxLength={500}
+          rows={2}
+          className="w-full resize-none border-[2px] border-ink-black/25 bg-bristol px-3 py-2.5 font-body text-[0.9rem] leading-6 text-ink-black outline-none focus:border-ink-black"
+          placeholder="Describe what to change visually…"
+        />
+        {instructionError && (
+          <p className="mt-1 text-sm text-hero-red">{instructionError}</p>
+        )}
+        <Button
+          className="mt-2 w-full"
+          onClick={() => {
+            const trimmed = instruction.trim();
+            if (!trimmed) { setInstructionError("Add a short visual instruction first."); return; }
+            setInstructionError(null);
+            setConfirmInstruction(true);
+          }}
+          disabled={isInstructionBusy || !instruction.trim()}
+        >
+          {isInstructionBusy ? "APPLYING..." : `APPLY & REGEN · ${creditsLabel}`}
+        </Button>
+      </div>
+
+      <div className="border-t-[2px] border-panel-line pt-3">
+        <PromptLineageCard
+          prompt={draft}
+          onSave={onDraftChange}
+          mode="edit"
+          showAdvanced
+          project={project}
+        />
+        {hasChanges && (
+          <Button className="mt-3 w-full" onClick={() => setConfirmGenerate(true)} disabled={isGenerating}>
+            {isGenerating ? "SAVING..." : `GENERATE FROM EDITS · ${creditsLabel}`}
+          </Button>
+        )}
+      </div>
+
+      <ConfirmDrawer
+        open={confirmInstruction}
+        title="Apply & Regenerate"
+        body={`Regenerate this panel using your instruction. Instruction: "${instruction.trim()}"`}
+        cost={costObj}
+        confirmLabel={`Apply & Regen · ${creditsLabel}`}
+        onConfirm={handleInstructionRegen}
+        onClose={() => setConfirmInstruction(false)}
+        busy={isInstructionBusy}
+      />
+      <ConfirmDrawer
+        open={confirmGenerate}
+        title="Generate from Edits"
+        body="Save your prompt edits and regenerate this panel."
+        cost={costObj}
+        confirmLabel={`Generate · ${creditsLabel}`}
+        onConfirm={handleGenerateFromDraft}
+        onClose={() => setConfirmGenerate(false)}
+        busy={isGenerating}
+      />
+    </div>
+  );
+}
+
+// ── Tab: Prompt ───────────────────────────────────────────────────────────────
+
+function PromptTabContent({
+  prompt,
+  projectConfig,
+  lastRewrittenPrompt,
+}: {
+  prompt: ImagePrompt;
+  projectConfig: import("../api/config").ProjectConfig | undefined;
+  lastRewrittenPrompt: ImagePrompt | null;
+}) {
+  const [showRaw, setShowRaw] = useState(false);
+  const [showDevContent] = useShowDevContent();
+
+  const effectiveModel = projectConfig?.dev_mode && projectConfig?.image_model === "canary/image-primary"
+    ? (projectConfig?.fallback_image_model || "canary/image-fast")
+    : projectConfig?.image_model;
+
+  const rawPrompt = (prompt.full_prompt || "").trim();
+  const style = (projectConfig?.style_template ?? prompt.style ?? "").trim();
+  const fullPromptWithStyle = (prompt.prompt_version ?? 1) >= 2
+    ? (style ? `${style}\n\n${rawPrompt}` : rawPrompt)
+    : (style ? `${style}\n\n${prompt.full_prompt}` : prompt.full_prompt);
+  const visibleRaw = showDevContent ? fullPromptWithStyle : redactDevText(fullPromptWithStyle);
+
+  return (
+    <div className="overflow-y-auto p-4 space-y-4">
+      {lastRewrittenPrompt && (
+        <div className="border-[2px] border-archive-sage/40 bg-archive-sage/8 px-3 py-2">
+          <div className="font-meta text-[0.56rem] tracking-[0.14em] text-archive-sage">UPDATED BY LAST REGEN</div>
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {(prompt.composition || (lastRewrittenPrompt?.composition)) && (
+          <div>
+            <div className="font-meta text-[0.54rem] tracking-[0.18em] text-ink-black/40 mb-1">COMPOSITION</div>
+            <p className="text-[0.82rem] leading-6 text-ink-black">
+              {lastRewrittenPrompt?.composition ?? prompt.composition}
+            </p>
+          </div>
+        )}
+        {(prompt.setting || lastRewrittenPrompt?.setting) && (
+          <div>
+            <div className="font-meta text-[0.54rem] tracking-[0.18em] text-ink-black/40 mb-1">SETTING</div>
+            <p className="text-[0.82rem] leading-6 text-ink-black">
+              {lastRewrittenPrompt?.setting ?? prompt.setting}
+            </p>
+          </div>
+        )}
+        {prompt.subjects && prompt.subjects.length > 0 && (
+          <div>
+            <div className="font-meta text-[0.54rem] tracking-[0.18em] text-ink-black/40 mb-1">SUBJECTS</div>
+            <ul className="space-y-1">
+              {prompt.subjects.map((s, i) => (
+                <li key={i} className="text-[0.82rem] leading-6 text-ink-black">
+                  <span className="font-semibold">{s.name}</span>
+                  {s.action && <span className="text-ink-black/60"> — {s.action}</span>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {prompt.style && (
+          <div>
+            <div className="font-meta text-[0.54rem] tracking-[0.18em] text-ink-black/40 mb-1">STYLE</div>
+            <p className="text-[0.82rem] leading-6 text-ink-black">{prompt.style}</p>
+          </div>
+        )}
+        {effectiveModel && (
+          <div>
+            <div className="font-meta text-[0.54rem] tracking-[0.18em] text-ink-black/40 mb-1">MODEL</div>
+            <p className="font-mono text-[0.78rem] text-ink-black/70">{showDevContent ? effectiveModel : "—"}</p>
+          </div>
+        )}
+      </div>
+
+      <div className="border-t-[2px] border-panel-line pt-3">
+        <button
+          type="button"
+          onClick={() => setShowRaw(!showRaw)}
+          className="flex items-center gap-2 font-meta text-[0.58rem] tracking-[0.16em] text-ink-black/45 hover:text-ink-black"
+        >
+          {showRaw ? "▲" : "▼"} ASSEMBLED PROMPT
+        </button>
+        {showRaw && (
+          <pre className="mt-2 whitespace-pre-wrap border-[2px] border-ink-black/15 bg-bristol p-3 font-mono text-xs leading-relaxed text-ink-black">
+            {visibleRaw}
+          </pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Tab: History ──────────────────────────────────────────────────────────────
+
+function HistoryTabContent({
+  project,
+  sceneId,
+  panelNumber,
+  versionCount,
+  imageUrl,
+}: {
+  project: string;
+  sceneId: string;
+  panelNumber: number;
+  versionCount: number;
+  imageUrl: string;
+}) {
+  const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
+  const shouldLoadVersions = versionCount > 0;
+  const { data: versionData } = usePanelImageVersions(project, sceneId, panelNumber, shouldLoadVersions);
+  const restoreVersion = useRestorePanelImageVersion();
+  const bust = useRegenStore((s) => s.bust);
+
+  const versionEntries = versionData?.versions ?? [];
+  const hasHistory = !!versionData?.has_history && versionEntries.some((v) => !v.current);
+
+  const selectedVersionEntry = selectedVersion == null
+    ? versionEntries.find((v) => v.current)
+    : versionEntries.find((v) => v.version === selectedVersion);
+
+  const handleRestore = () => {
+    if (!selectedVersionEntry || selectedVersionEntry.current) return;
+    const key = `${sceneId}-${panelNumber}`;
+    restoreVersion.mutate(
+      { project, sceneId, panelNumber, version: selectedVersionEntry.version },
+      {
+        onSuccess: () => { bust(project, key); setSelectedVersion(null); },
+      },
+    );
+  };
+
+  if (!hasHistory) {
+    return (
+      <div className="flex h-full items-center justify-center p-4 text-center">
+        <div className="text-ink-black/40">
+          <div className="font-meta text-[0.62rem] tracking-[0.18em]">NO PREVIOUS VERSIONS</div>
+          <div className="mt-2 text-[0.78rem]">Version history appears after regeneration.</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full flex-col gap-4 overflow-y-auto p-4">
+      <div className="flex flex-wrap gap-2">
+        {versionEntries.map((version) => {
+          const selected = (selectedVersion ?? versionEntries.find((v) => v.current)?.version) === version.version;
+          return (
+            <button
+              key={`${version.version}-${version.image_path}`}
+              type="button"
+              onClick={() => setSelectedVersion(version.version)}
+              className={`group relative h-16 w-16 overflow-hidden border-[3px] transition-colors ${
+                selected ? "border-hero-red" : "border-pulp-paper shadow-[0_0_0_1px_var(--color-panel-line)] hover:border-ink-black/40"
+              }`}
+              title={version.current ? "Current version" : `Version ${version.version}`}
+            >
+              <img
+                src={fileUrl(project, version.image_path)}
+                alt={version.current ? "Current" : `v${version.version}`}
+                className="h-full w-full object-cover"
+              />
+              {version.current && (
+                <span className="absolute bottom-0 right-0 bg-ink-black px-1.5 py-0.5 font-meta text-[0.42rem] font-bold text-bristol">
+                  CURRENT
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {selectedVersionEntry && (
+        <div className="flex min-h-[200px] items-center justify-center bg-ink-black">
+          <img
+            src={selectedVersionEntry.current ? imageUrl : fileUrl(project, selectedVersionEntry.image_path)}
+            alt={`Version ${selectedVersionEntry.version}`}
+            className="max-h-[240px] object-contain"
+          />
+        </div>
+      )}
+
+      {selectedVersionEntry && !selectedVersionEntry.current && (
+        <Button onClick={handleRestore} disabled={restoreVersion.isPending}>
+          {restoreVersion.isPending ? "RESTORING..." : `RESTORE v${selectedVersionEntry.version}`}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+// ── Tab: Metadata ─────────────────────────────────────────────────────────────
+
+function MetadataTabContent({
+  project,
+  panelRelPath,
+  draft,
+  projectConfig,
+  sceneId,
+  panelNumber,
+}: {
+  project: string;
+  panelRelPath: string;
+  draft: ImagePrompt;
+  projectConfig: import("../api/config").ProjectConfig | undefined;
+  sceneId: string;
+  panelNumber: number;
+}) {
+  const { data: generationMeta } = useImageGenerationMeta(project, panelRelPath, true);
+  const [showDevContent] = useShowDevContent();
+
+  const fallbackBody = (draft.full_prompt || "").trim();
+  const fallbackStyle = (projectConfig?.style_template ?? draft.style ?? "").trim();
+  const fallbackPrompt = (draft.prompt_version ?? 1) >= 2
+    ? (fallbackStyle ? `${fallbackStyle}\n\n${fallbackBody}` : fallbackBody)
+    : (fallbackStyle ? `${fallbackStyle}\n\n${draft.full_prompt}` : draft.full_prompt);
+  const fallbackParams: Record<string, unknown> = {
+    scene_id: sceneId, panel_number: panelNumber,
+    image_model: projectConfig?.image_model, width: draft.width, height: draft.height, steps: draft.steps,
+  };
+
+  const prompt = generationMeta?.prompt ?? fallbackPrompt;
+  const parameters = generationMeta?.parameters ?? fallbackParams;
+  const visiblePrompt = showDevContent ? prompt : redactDevText(prompt);
+  const visibleParameters = showDevContent ? parameters : redactDevParameters(parameters);
+
+  return (
+    <div className="overflow-y-auto p-4 space-y-4">
+      {!showDevContent && (
+        <div className="border-[2px] border-ink-black/15 bg-chip-gold px-3 py-2 font-meta text-[0.48rem] tracking-[0.14em] text-ink-black/65">
+          DEV CONTENT HIDDEN. ENABLE IN SETTINGS TO VIEW RAW PATHS, MODEL NAMES, AND FULL PARAMETERS.
+        </div>
+      )}
+      {!generationMeta && (
+        <div className="font-meta text-[0.52rem] tracking-[0.14em] text-ink-black/45">
+          FALLBACK DETAILS (IMAGE PREDATES METADATA)
+        </div>
+      )}
+
+      {generationMeta?.error && (
+        <div>
+          <div className="font-meta text-[0.5rem] tracking-[0.18em] text-hero-red mb-1">MODEL ERROR</div>
+          <div className="border-[2px] border-hero-red bg-hero-red/8 p-3">
+            <div className="font-meta text-[0.6rem] tracking-[0.12em] text-ink-black">
+              {generationMeta.classification === "provider_blocked" ? "PROVIDER BLOCKED" : "GENERATION FAILED"}
+              {generationMeta.recoverable ? " · RECOVERABLE" : ""}
+            </div>
+            <p className="mt-2 text-sm leading-6 text-ink-black/75">
+              {generationMeta.user_message ?? "Review the raw model response below and edit the prompt if needed."}
+            </p>
+            {generationMeta.recovery && (
+              <pre className="mt-3 whitespace-pre-wrap border border-ink-black/20 bg-bristol p-2 font-mono text-[0.68rem] leading-relaxed text-ink-black/70">
+                {JSON.stringify(generationMeta.recovery, null, 2)}
+              </pre>
+            )}
+          </div>
+          <pre className="mt-2 whitespace-pre-wrap border-[2px] border-hero-red bg-bristol p-3 font-mono text-xs leading-relaxed text-ink-black">
+            {JSON.stringify(generationMeta.error, null, 2)}
+          </pre>
+        </div>
+      )}
+
+      <div>
+        <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45 mb-1">FULL PROMPT</div>
+        <pre className="whitespace-pre-wrap border-[2px] border-ink-black/15 bg-bristol p-3 font-mono text-xs leading-relaxed text-ink-black">
+          {visiblePrompt}
+        </pre>
+      </div>
+
+      <div>
+        <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45 mb-1">PARAMETERS</div>
+        <pre className="whitespace-pre-wrap border-[2px] border-ink-black/15 bg-bristol p-3 font-mono text-xs leading-relaxed text-ink-black">
+          {JSON.stringify(visibleParameters, null, 2)}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+// ── PanelDetailModal ──────────────────────────────────────────────────────────
+
+const TABS: Array<{ id: TabId; label: string }> = [
+  { id: "review", label: "Review" },
+  { id: "edit", label: "Edit" },
+  { id: "prompt", label: "Prompt" },
+  { id: "history", label: "History" },
+  { id: "metadata", label: "Metadata" },
+];
+
 export function PanelDetailModal({
   isOpen,
   onClose,
@@ -64,53 +730,32 @@ export function PanelDetailModal({
   versionCount = 0,
   onNextUnaccepted,
 }: PanelDetailModalProps) {
+  const [activeTab, setActiveTab] = useState<TabId>("review");
   const [draft, setDraft] = useState<ImagePrompt | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
-  const [instruction, setInstruction] = useState("");
-  const [instructionError, setInstructionError] = useState<string | null>(null);
-  const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
-  const [footerMode, setFooterMode] = useState<"reviewing" | "writing" | "accepted">(
-    accepted ? "accepted" : "reviewing",
-  );
-  const [pendingCreditAction, setPendingCreditAction] = useState<"quick" | "instruction" | "generate" | null>(null);
+  const [lastRewrittenPrompt, setLastRewrittenPrompt] = useState<ImagePrompt | null>(null);
   const queryClient = useQueryClient();
   const begin = useRegenStore((s) => s.begin);
   const attachJob = useRegenStore((s) => s.attachJob);
-  const bust = useRegenStore((s) => s.bust);
   const fail = useRegenStore((s) => s.fail);
 
   const { data: prompts } = usePromptsForScene(project, sceneId);
   const { data: projectConfig } = useProjectConfig(project);
-  const originalPrompt = prompts?.find(
-    (p) => p.scene_id === sceneId && p.panel_number === panelNumber
-  );
+  const originalPrompt = prompts?.find((p) => p.scene_id === sceneId && p.panel_number === panelNumber);
   const panelRelPath = `draw/${sceneId}/panel_${String(panelNumber).padStart(3, "0")}.png`;
-  const { data: generationMeta } = useImageGenerationMeta(project, panelRelPath, isDetailsOpen);
-  const shouldLoadVersions = isOpen && versionCount > 0;
-  const { data: versionData } = usePanelImageVersions(project, sceneId, panelNumber, shouldLoadVersions);
-
-  const updatePrompt = useUpdatePrompt();
-  const regenPanel = useRegenPanel();
-  const instructedRegen = useRegenPanelWithInstruction();
-  const restoreVersion = useRestorePanelImageVersion();
-  const acceptPanel = useAcceptPanel();
-  const unacceptPanel = useUnacceptPanel();
-  const { data: creditBalance } = useCreditBalance();
   const { data: regenEstimate } = useRegenEstimate(project, sceneId, panelNumber, isOpen);
   const regenCredits: number | null = regenEstimate?.estimate_credits ?? null;
   const creditsLabel = regenCredits !== null ? `Est. ${regenCredits.toLocaleString()} credits` : "…";
+  const regenPanel = useRegenPanel();
+  const instructedRegen = useRegenPanelWithInstruction();
 
   useEffect(() => {
-    if (originalPrompt) {
-      setDraft({ ...originalPrompt });
-    }
+    if (originalPrompt) setDraft({ ...originalPrompt });
   }, [originalPrompt]);
 
   useEffect(() => {
-    setFooterMode(accepted ? "accepted" : "reviewing");
-    setSelectedVersion(null);
-  }, [accepted, sceneId, panelNumber]);
+    setLastRewrittenPrompt(null);
+    setActiveTab(versionCount > 0 ? "review" : "review");
+  }, [sceneId, panelNumber, versionCount]);
 
   useEffect(() => {
     if (isOpen) {
@@ -118,9 +763,7 @@ export function PanelDetailModal({
     } else {
       document.body.style.overflow = "";
     }
-    return () => {
-      document.body.style.overflow = "";
-    };
+    return () => { document.body.style.overflow = ""; };
   }, [isOpen]);
 
   useEffect(() => {
@@ -136,178 +779,44 @@ export function PanelDetailModal({
 
   if (!isOpen || !draft) return null;
 
-  const versionEntries = versionData?.versions ?? [];
-  const hasVersionHistory = !!versionData?.has_history && versionEntries.some((version) => !version.current);
-  const currentVersion = versionEntries.find((version) => version.current);
-  const selectedVersionEntry = selectedVersion == null
-    ? currentVersion
-    : versionEntries.find((version) => version.version === selectedVersion) ?? currentVersion;
-  const displayedImageUrl = selectedVersionEntry && !selectedVersionEntry.current
-    ? fileUrl(project, selectedVersionEntry.image_path)
-    : imageUrl;
-  const displayedImageAvailable = selectedVersionEntry && !selectedVersionEntry.current
-    ? true
-    : imageAvailable;
-  const versionLabel = hasVersionHistory && currentVersion
-    ? `v${currentVersion.version} / ${versionEntries.length}`
-    : null;
-
-  const handleSave = (patch: Partial<ImagePrompt>) => {
-    setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
-  };
-
-  const lowCredits = (creditBalance?.balance_credits ?? 0) < (regenCredits ?? 1);
-
-  function runCreditAction(action: "quick" | "instruction" | "generate") {
-    if (lowCredits && pendingCreditAction !== action) {
-      setPendingCreditAction(action);
-      return;
-    }
-    setPendingCreditAction(null);
-    if (action === "quick") handleQuickRedo();
-    if (action === "instruction") handleInstructionRegen();
-    if (action === "generate") void handleGenerate();
-  }
+  const isFailed = status === "failed" || !!errorMessage || !!failureClassification;
+  const failureTitle = failureClassification === "provider_blocked" ? "PROVIDER BLOCKED" : "GENERATION FAILED";
+  const failureMessage = errorMessage
+    || (failureClassification === "provider_blocked"
+      ? "The image provider blocked this panel. Edit the prompt and regenerate before composing."
+      : "Image generation failed. Check Metadata for the raw model response, edit the prompt if needed.");
 
   const handleQuickRedo = () => {
     const key = `${sceneId}-${panelNumber}`;
     begin(project, key);
-    setFooterMode("reviewing");
     regenPanel.mutate(
       { project, sceneId, panelNumber },
       {
         onSuccess: (data) => attachJob(project, key, data.job),
         onError: (err) => fail(project, key, err instanceof Error ? err.message : "Regeneration failed"),
-      }
+      },
     );
   };
 
-  const handleInstructionRegen = () => {
-    const trimmed = instruction.trim();
-    if (!trimmed) {
-      setInstructionError("Add a short visual instruction first.");
-      return;
-    }
-    setInstructionError(null);
+  const handleInstructionRegen = (instruction: string) => {
     const key = `${sceneId}-${panelNumber}`;
     begin(project, key);
     instructedRegen.mutate(
-      { project, sceneId, panelNumber, instruction: trimmed },
+      { project, sceneId, panelNumber, instruction },
       {
         onSuccess: (data) => {
           attachJob(project, key, data.job);
+          setLastRewrittenPrompt(data.prompt);
           queryClient.invalidateQueries({ queryKey: ["project", project, "direct", sceneId] });
-          setInstruction("");
-          setFooterMode("reviewing");
         },
-        onError: (err) => {
-          const message = err instanceof Error ? err.message : "Instruction regeneration failed";
-          setInstructionError(message);
-          fail(project, key, message);
-        },
+        onError: (err) => fail(project, key, err instanceof Error ? err.message : "Instruction regeneration failed"),
       },
     );
   };
 
-  const handleGenerate = async () => {
-    if (!draft) return;
-    setIsGenerating(true);
-    try {
-      await updatePrompt.mutateAsync({
-        project,
-        sceneId,
-        data: draft,
-      });
-      queryClient.invalidateQueries({ queryKey: ["project", project, "direct", sceneId] });
-
-      const key = `${sceneId}-${panelNumber}`;
-      begin(project, key);
-      regenPanel.mutate(
-        { project, sceneId, panelNumber },
-        {
-          onSuccess: (data) => attachJob(project, key, data.job),
-          onError: (err) => fail(project, key, err instanceof Error ? err.message : "Regeneration failed"),
-        }
-      );
-      setFooterMode("reviewing");
-    } finally {
-      setIsGenerating(false);
-    }
+  const handleDraftChange = (patch: Partial<ImagePrompt>) => {
+    setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
   };
-
-  const handleAccept = () => {
-    acceptPanel.mutate(
-      { project, sceneId, panelNumber },
-      { onSuccess: () => setFooterMode("accepted") },
-    );
-  };
-
-  const handleUndoAccept = () => {
-    unacceptPanel.mutate(
-      { project, sceneId, panelNumber },
-      { onSuccess: () => setFooterMode("reviewing") },
-    );
-  };
-
-  const handleNextPanel = () => {
-    const next = onNextUnaccepted ?? onNext;
-    if (next) next();
-    else onClose();
-  };
-
-  const handleRestoreVersion = () => {
-    if (!selectedVersionEntry || selectedVersionEntry.current) return;
-    const key = `${sceneId}-${panelNumber}`;
-    restoreVersion.mutate(
-      { project, sceneId, panelNumber, version: selectedVersionEntry.version },
-      {
-        onSuccess: () => {
-          bust(project, key);
-          setSelectedVersion(null);
-          setFooterMode("reviewing");
-        },
-      },
-    );
-  };
-
-  const hasChanges = draft && originalPrompt
-    ? JSON.stringify(draft) !== JSON.stringify(originalPrompt)
-    : false;
-  const fallbackBody = (draft.full_prompt || "").trim();
-  const fallbackStyle = (projectConfig?.style_template ?? draft.style ?? "").trim();
-  const fallbackPrompt = (draft.prompt_version ?? 1) >= 2
-    ? (fallbackStyle ? `${fallbackStyle}\n\n${fallbackBody}` : fallbackBody)
-    : (fallbackStyle ? `${fallbackStyle}\n\n${draft.full_prompt}` : draft.full_prompt);
-  const fallbackPromptWithContinuity = draft.continuity_note
-    ? `${fallbackPrompt}\n\n${draft.continuity_note}`
-    : fallbackPrompt;
-  const effectiveModel = projectConfig?.dev_mode && projectConfig?.image_model === "canary/image-primary"
-    ? (projectConfig?.fallback_image_model || "canary/image-fast")
-    : projectConfig?.image_model;
-  const effectiveSteps = projectConfig?.dev_mode
-    ? Math.min(draft.steps, projectConfig?.dev_image_steps ?? draft.steps)
-    : draft.steps;
-  const fallbackParams: Record<string, unknown> = {
-    scene_id: sceneId,
-    panel_number: panelNumber,
-    image_model: effectiveModel,
-    width: draft.width,
-    height: draft.height,
-    steps: effectiveSteps,
-    style_template: projectConfig?.style_template ?? draft.style,
-    subject_refs: draft.reference_image_paths,
-    style_refs: [],
-    continuity_note: draft.continuity_note,
-  };
-  const isFailed = status === "failed" || !!errorMessage || !!failureClassification;
-  const isInstructionBusy = instructedRegen.isPending;
-  const failureTitle = failureClassification === "provider_blocked"
-    ? "PROVIDER BLOCKED"
-    : "GENERATION FAILED";
-  const failureMessage = errorMessage
-    || (failureClassification === "provider_blocked"
-      ? "The image provider blocked this panel. Edit the prompt and regenerate before composing."
-      : "Image generation failed. Open Details for the raw model response, edit the prompt if needed, then regenerate.");
 
   return (
     <div
@@ -321,62 +830,50 @@ export function PanelDetailModal({
         className="flex h-[90vh] w-[95vw] max-w-[1400px] flex-col bg-bristol border-[4px] border-ink-black"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Header */}
         <div className="flex items-center justify-between border-b-[2px] border-ink-black p-4 min-h-[4.5rem]">
           <div className="flex items-center gap-3">
             {onPrev ? (
-              <button
-                onClick={onPrev}
-                className="p-2 text-ink-black/50 hover:text-hero-red transition-colors"
-              >
+              <button onClick={onPrev} className="p-2 text-ink-black/50 hover:text-hero-red transition-colors">
                 <Icon name="chevron-left" size={20} />
               </button>
             ) : (
               <span className="w-9" />
             )}
             <div>
-              <div className="font-meta text-[0.46rem] tracking-[0.16em] text-ink-black/45">
-                {sceneId.toUpperCase()}
-              </div>
+              <div className="font-meta text-[0.46rem] tracking-[0.16em] text-ink-black/45">{sceneId.toUpperCase()}</div>
               <div className="font-display text-[1.25rem] font-bold tracking-[-0.04em]">
                 PANEL {String(panelNumber).padStart(2, "0")}
               </div>
             </div>
             {onNext ? (
-              <button
-                onClick={onNext}
-                className="p-2 text-ink-black/50 hover:text-hero-red transition-colors"
-              >
+              <button onClick={onNext} className="p-2 text-ink-black/50 hover:text-hero-red transition-colors">
                 <Icon name="chevron-right" size={20} />
               </button>
             ) : (
               <span className="w-9" />
             )}
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 text-ink-black/50 hover:text-hero-red transition-colors"
-          >
+          <button onClick={onClose} className="p-2 text-ink-black/50 hover:text-hero-red transition-colors">
             <Icon name="x" size={20} />
           </button>
         </div>
 
+        {/* Body */}
         <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[1fr_1fr]">
+          {/* Left: image */}
           <div className="border-r-[2px] border-ink-black p-4 min-h-0">
             <div className="flex h-full w-full flex-col gap-3">
               {isFailed && (
                 <div className="border-[2px] border-hero-red bg-hero-red/8 p-3">
-                  <div className="font-meta text-[0.58rem] tracking-[0.16em] text-hero-red">
-                    {failureTitle}
-                  </div>
-                  <p className="mt-1 text-sm leading-6 text-ink-black/75">
-                    {failureMessage}
-                  </p>
+                  <div className="font-meta text-[0.58rem] tracking-[0.16em] text-hero-red">{failureTitle}</div>
+                  <p className="mt-1 text-sm leading-6 text-ink-black/75">{failureMessage}</p>
                 </div>
               )}
               <div className="flex min-h-0 flex-1 items-center justify-center bg-ink-black">
-                {displayedImageAvailable ? (
+                {imageAvailable ? (
                   <LazyImage
-                    src={displayedImageUrl}
+                    src={imageUrl}
                     alt={`Panel ${panelNumber}`}
                     containerClassName="h-full w-full"
                     className="object-contain"
@@ -390,193 +887,91 @@ export function PanelDetailModal({
             </div>
           </div>
 
-          <div className="p-4 overflow-y-auto min-h-0">
-            {hasVersionHistory && (
-              <div className="mb-4 border-b-[2px] border-panel-line pb-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <div className="font-meta text-[0.62rem] tracking-[0.22em] text-ink-black/48">
-                    VERSION HISTORY
-                  </div>
-                  <div className="font-meta text-[0.62rem] font-bold tracking-[0.12em] text-ink-black/50">
-                    {selectedVersionEntry
-                      ? `v${selectedVersionEntry.version} of ${versionEntries.length}`
-                      : versionLabel}
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-end gap-2">
-                  {versionEntries.map((version) => {
-                    const selected = selectedVersionEntry?.version === version.version;
-                    return (
-                      <button
-                        key={`${version.version}-${version.image_path}`}
-                        type="button"
-                        onClick={() => setSelectedVersion(version.version)}
-                        className={`group relative h-14 w-14 overflow-hidden border-[3px] transition-colors ${
-                          selected
-                            ? "border-hero-red"
-                            : "border-pulp-paper shadow-[0_0_0_1px_var(--color-panel-line)] hover:border-ink-black/40"
-                        }`}
-                        title={version.current ? "Current version" : `Version ${version.version}`}
-                      >
-                        <img
-                          src={fileUrl(project, version.image_path)}
-                          alt={version.current ? "Current panel version" : `Panel version ${version.version}`}
-                          className="h-full w-full object-cover"
-                        />
-                        {version.current && (
-                          <span className="absolute bottom-0 right-0 bg-ink-black px-1.5 py-0.5 font-meta text-[0.46rem] font-bold text-bristol">
-                            NOW
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                  {selectedVersionEntry && !selectedVersionEntry.current && (
-                    <Button
-                      variant="outline"
-                      className="ml-1 h-10"
-                      onClick={handleRestoreVersion}
-                      disabled={restoreVersion.isPending}
-                    >
-                      {restoreVersion.isPending ? "RESTORING..." : `RESTORE v${selectedVersionEntry.version}`}
-                    </Button>
-                  )}
-                </div>
-              </div>
-            )}
-            <PromptLineageCard
-              prompt={draft}
-              onSave={handleSave}
-              mode="edit"
-              showAdvanced
-              project={project}
-            />
+          {/* Right: tabs */}
+          <div className="flex min-h-0 flex-col">
+            {/* Tab bar */}
+            <div className="flex border-b-[2px] border-ink-black/15 overflow-x-auto shrink-0">
+              {TABS.map(({ id, label }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setActiveTab(id)}
+                  className={`shrink-0 border-r-[2px] border-ink-black/10 px-5 py-3 font-meta text-[0.6rem] tracking-[0.14em] transition-colors last:border-r-0 ${
+                    activeTab === id
+                      ? "bg-ink-black text-bristol"
+                      : "bg-bristol text-ink-black/50 hover:text-ink-black"
+                  }`}
+                >
+                  {label.toUpperCase()}
+                </button>
+              ))}
+            </div>
+
+            {/* Tab content */}
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {activeTab === "review" && (
+                <ReviewTabContent
+                  project={project}
+                  sceneId={sceneId}
+                  panelNumber={panelNumber}
+                  imageUrl={imageUrl}
+                  status={status}
+                  accepted={accepted}
+                  versionCount={versionCount}
+                  onNextUnaccepted={onNextUnaccepted}
+                  onNext={onNext}
+                  onClose={onClose}
+                  regenCredits={regenCredits}
+                  creditsLabel={creditsLabel}
+                  onQuickRedo={handleQuickRedo}
+                  onGoToEdit={() => setActiveTab("edit")}
+                />
+              )}
+              {activeTab === "edit" && (
+                <EditTabContent
+                  project={project}
+                  sceneId={sceneId}
+                  panelNumber={panelNumber}
+                  draft={draft}
+                  originalPrompt={originalPrompt}
+                  onDraftChange={handleDraftChange}
+                  regenCredits={regenCredits}
+                  creditsLabel={creditsLabel}
+                  lastRewrittenPrompt={lastRewrittenPrompt}
+                  onInstructionRegen={handleInstructionRegen}
+                  onGenerateFromDraft={() => {}}
+                />
+              )}
+              {activeTab === "prompt" && (
+                <PromptTabContent
+                  prompt={draft}
+                  projectConfig={projectConfig}
+                  lastRewrittenPrompt={lastRewrittenPrompt}
+                />
+              )}
+              {activeTab === "history" && (
+                <HistoryTabContent
+                  project={project}
+                  sceneId={sceneId}
+                  panelNumber={panelNumber}
+                  versionCount={versionCount}
+                  imageUrl={imageUrl}
+                />
+              )}
+              {activeTab === "metadata" && (
+                <MetadataTabContent
+                  project={project}
+                  panelRelPath={panelRelPath}
+                  draft={draft}
+                  projectConfig={projectConfig}
+                  sceneId={sceneId}
+                  panelNumber={panelNumber}
+                />
+              )}
+            </div>
           </div>
         </div>
-
-        <div className="border-t-[2px] border-ink-black p-4">
-          {pendingCreditAction ? (
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex min-h-12 flex-1 items-center gap-3 border-[2px] border-warn-orange bg-chip-gold px-4 font-body text-[0.9rem] font-bold text-warn-orange">
-                <Icon name="alert" size={16} />
-                Only {(creditBalance?.balance_credits ?? 0).toLocaleString()} credits remaining ·
-                <a href="/credits" className="underline">Add credits</a>
-              </div>
-              <Button onClick={() => runCreditAction(pendingCreditAction)}>
-                CONFIRM · {creditsLabel}
-              </Button>
-              <Button variant="outline" onClick={() => setPendingCreditAction(null)}>
-                ✕
-              </Button>
-            </div>
-          ) : footerMode === "writing" ? (
-            <div className="flex flex-wrap items-start gap-3">
-              <div className="min-w-[18rem] flex-1">
-                <textarea
-                  value={instruction}
-                  onChange={(event) => {
-                    setInstruction(event.target.value);
-                    if (instructionError) setInstructionError(null);
-                  }}
-                  maxLength={500}
-                  rows={1}
-                  className="min-h-14 w-full resize-none border-[3px] border-hero-red bg-bristol px-5 py-3 text-[1rem] font-semibold leading-7 text-ink-black outline-none"
-                  placeholder="Describe what to fix..."
-                />
-                {instructionError && (
-                  <p className="mt-2 text-sm leading-5 text-hero-red">
-                    {instructionError}
-                  </p>
-                )}
-              </div>
-              <Button
-                className="min-h-14 px-8"
-                onClick={() => runCreditAction("instruction")}
-                disabled={isInstructionBusy || !instruction.trim()}
-              >
-                {isInstructionBusy ? "APPLYING..." : `APPLY & REGEN · ${creditsLabel}`}
-              </Button>
-              <Button
-                variant="outline"
-                className="min-h-14"
-                onClick={() => {
-                  setFooterMode("reviewing");
-                  setInstruction("");
-                  setInstructionError(null);
-                }}
-              >
-                CANCEL
-              </Button>
-            </div>
-          ) : footerMode === "accepted" ? (
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex min-h-13 flex-1 items-center gap-3 bg-archive-sage px-5 font-meta text-[0.76rem] font-bold uppercase tracking-[0.18em] text-bristol">
-                <Icon name="check" size={16} />
-                Panel Accepted
-                <span className="hidden font-body text-[0.82rem] normal-case tracking-normal text-bristol/70 sm:inline">
-                  Locked into compose
-                </span>
-              </div>
-              <Button variant="outline" onClick={handleUndoAccept} disabled={unacceptPanel.isPending}>
-                ↩ Undo Accept
-              </Button>
-              <Button onClick={handleNextPanel}>
-                Next Panel →
-              </Button>
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="mr-auto font-meta text-[0.7rem] font-bold tracking-[0.12em] text-ink-black/45">
-                {versionLabel ? `${versionLabel} · ` : ""}{draft.width}×{draft.height}
-              </div>
-              <Button
-                className="min-w-[14rem] flex-1 bg-archive-sage"
-                onClick={handleAccept}
-                disabled={acceptPanel.isPending || status !== "done"}
-              >
-                ✓ ACCEPT PANEL
-              </Button>
-              <Button
-                variant="outline"
-                className="min-w-[14rem] flex-1"
-                onClick={() => setFooterMode("writing")}
-              >
-                FIX & REGENERATE...
-              </Button>
-              {hasChanges && (
-                <Button onClick={() => runCreditAction("generate")} disabled={isGenerating}>
-                  {isGenerating ? "SAVING..." : `GENERATE · ${creditsLabel}`}
-                </Button>
-              )}
-              <Button variant="outline" onClick={() => runCreditAction("quick")}>
-                ↺ RE-DO · {creditsLabel}
-              </Button>
-              <Button variant="outline" onClick={() => setIsDetailsOpen(true)}>
-                DETAILS
-              </Button>
-              <Button variant="outline" onClick={onClose}>
-                CLOSE
-              </Button>
-            </div>
-          )}
-        </div>
       </div>
-      <GenerationDetailsModal
-        isOpen={isDetailsOpen}
-        onClose={() => setIsDetailsOpen(false)}
-        title={`${sceneId.toUpperCase()} / PANEL ${String(panelNumber).padStart(2, "0")}`}
-        imageUrl={imageUrl}
-        imageAvailable={imageAvailable}
-        prompt={generationMeta?.prompt ?? fallbackPromptWithContinuity}
-        parameters={generationMeta?.parameters ?? fallbackParams}
-        error={generationMeta?.error}
-        classification={generationMeta?.classification}
-        recoverable={generationMeta?.recoverable}
-        userMessage={generationMeta?.user_message}
-        recovery={generationMeta?.recovery}
-        failedAt={generationMeta?.failed_at}
-        isFallback={!generationMeta}
-      />
     </div>
   );
 }
