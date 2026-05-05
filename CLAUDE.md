@@ -1,14 +1,14 @@
-# Delegation Rules
+# Delegation Rules — MANDATORY
 
-**Check these before every file read:**
+**STOP before every Read. Run `ask-ai` or `ai-write` instead unless the task requires editing/debugging.**
 
-| Situation | Action |
-|-----------|--------|
-| Reading 1+ file >300 lines to answer a factual question | Use `ask-ai` |
-| Reading 2+ files just to summarize or understand something | Use `ask-ai` |
-| Grepping across 5+ files for a bulk answer | Use `ask-ai` |
-| Writing boilerplate, test stubs, fixture files, or docs | Use `ai-write` |
-| Any editing, debugging, or architectural reasoning task | Use Claude directly |
+| If you are about to... | You MUST... |
+|------------------------|-------------|
+| Read 1+ file >300 lines to answer a factual question | `ask-ai` — do NOT use Read |
+| Read 2+ files to summarize or understand something | `ask-ai` — do NOT use Read |
+| Grep across 5+ files for a bulk answer | `ask-ai` — do NOT use Bash grep |
+| Write boilerplate, test stubs, fixture files, or docs | `ai-write` — do NOT write it yourself |
+| Edit, debug, or reason across abstractions | Use Claude directly (Read is fine) |
 
 ```bash
 # Tools are in PATH via ~/Code/delegate

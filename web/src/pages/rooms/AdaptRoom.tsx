@@ -77,8 +77,8 @@ export function AdaptRoom() {
   });
 
   return (
-    <RoomShell>
-      <div className="flex h-[calc(100vh-3rem)] min-h-0 flex-col gap-3 md:h-[calc(100vh-5rem)] md:gap-8">
+    <RoomShell fullHeight>
+      <div className="flex h-full min-h-0 flex-col gap-3 md:gap-8">
         <RoomHeader
           kicker="ADAPT"
           title="SCREENPLAY VIEWER"

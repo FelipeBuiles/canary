@@ -342,19 +342,15 @@ async def run_pipeline(
     if not stage:
         raise HTTPException(400, "stage parameter is required")
 
-    # Gate: post-style stages require style to be approved
+    # Gate: post-style stages require a style to have been selected
     _POST_STYLE_STAGES = {"cast", "adapt", "plan", "storyboard", "direct", "draw", "compose"}
     if stage in _POST_STYLE_STAGES:
         from ..routers.styles import is_style_selected
-        style_state = state.stages.get("style")
-        style_incomplete = style_state is None or style_state.status not in (
-            StageStatus.COMPLETE,
-        )
-        if style_incomplete or not is_style_selected(project_dir, config):
+        if not is_style_selected(project_dir, config):
             raise HTTPException(
                 403,
-                "Style must be approved before running post-style stages. "
-                "Run style stage and approve it first.",
+                "Style must be selected before running post-style stages. "
+                "Pick a style first.",
             )
 
     if stage and rerun:

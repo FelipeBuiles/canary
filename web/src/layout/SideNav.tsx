@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { CreditBalance } from "../components/CreditBalance";
 import { ConfirmDrawer } from "../components/ui/ConfirmDrawer";
 import {
   useApproveStage,
@@ -280,7 +279,9 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   // Determine which stage will actually run when the user clicks NEXT STAGE,
   // so we can show a credit estimate before they commit to the action.
   const nextRunStage = useMemo<StageName | undefined>(() => {
-    if (!status || isRunning || styleNeedsSelection || !projectId) return undefined;
+    if (!status || isRunning || !projectId) return undefined;
+    // Pure style navigation (no pending approval): no credits spent, nothing to estimate.
+    if (styleNeedsSelection && !needsApproval) return undefined;
     if (
       nextAttentionStage &&
       (nextAttentionStage === "plan" || nextAttentionStage === "storyboard") &&
@@ -288,9 +289,8 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     ) {
       return shotPlanAction.estimateStage;
     }
-    // Approving extract → navigates to style selection (no model cost).
-    if (needsApproval === "extract") return undefined;
-    // For other approval stages, pipeline runs from the first pending stage after approval.
+    // For approval stages, find the first pending stage after approval so we can
+    // show the cost estimate upfront (including extract → cast & places).
     if (needsApproval) {
       const idx = STAGE_ORDER.indexOf(needsApproval);
       return STAGE_ORDER.slice(idx + 1).find((s) => {
@@ -399,9 +399,10 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
               navigate(`/project/${encodeURIComponent(projectId)}/styles`);
               return;
             }
+            if (!pendingStage) return;
             clearEvents();
             runPipeline.mutate(
-              { project: projectId },
+              { project: projectId, stage: pendingStage },
               {
                 onSuccess: () => connect(projectId),
                 onError: (e) => setRunError(e instanceof Error ? e.message : "Failed to start pipeline"),
@@ -461,10 +462,10 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     handleRun();
   }
 
-  // Gate the button click behind a cost confirmation when the next action will
-  // spend credits. Free actions (style selection, extract approval) pass through.
   function handleContinueClick() {
-    if (styleNeedsSelection || needsApproval === "extract") {
+    // Pure style navigation: extract is already complete, just need to pick a style.
+    // No credits spent yet so skip the cost drawer.
+    if (styleNeedsSelection && !needsApproval) {
       handleContinue();
       return;
     }
@@ -495,7 +496,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     const statusLabel = stageStatusLabel(stage);
     const statusGlyph = stageStatusGlyph(stage);
     const rowClassName = cn(
-      "w-full border-l-[3px] px-5 py-4 text-left transition-colors xl:px-6 xl:py-4 2xl:py-5 min-[2200px]:border-l-[5px] min-[2200px]:px-9 min-[2200px]:py-7",
+      "w-full border-l-[3px] px-5 py-2 text-left transition-colors xl:px-6 xl:py-3 2xl:py-5 min-[2200px]:border-l-[5px] min-[2200px]:px-9 min-[2200px]:py-7",
       isActive
         ? "border-narrator-gold bg-bristol/8"
         : "border-transparent hover:bg-bristol/5",
@@ -528,7 +529,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
             {statusGlyph}
           </span>
         </div>
-        <div className="mt-2.5 h-[4px] bg-bristol/10 min-[2200px]:mt-4 min-[2200px]:h-[6px]">
+        <div className="mt-1.5 h-[4px] bg-bristol/10 xl:mt-2 2xl:mt-2.5 min-[2200px]:mt-4 min-[2200px]:h-[6px]">
           <div
             className={cn("h-full transition-all duration-300", progressTone(stage))}
             style={{ width: `${progressWidth(stage)}%` }}
@@ -538,7 +539,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           data-stage-detail
           {...(isActive ? { "data-active": "" } : {})}
           className={cn(
-            "mt-2 flex items-baseline justify-between gap-2 font-meta text-[0.62rem] tracking-[0.06em] 2xl:text-[0.72rem] min-[2200px]:mt-3 min-[2200px]:text-[1rem]",
+            "mt-1 flex items-baseline justify-between gap-2 font-meta text-[0.62rem] tracking-[0.06em] 2xl:mt-2 2xl:text-[0.72rem] min-[2200px]:mt-3 min-[2200px]:text-[1rem]",
             compactStageDetails && !isActive && "hidden",
             isActive ? "text-bristol/62" : "text-bristol/42",
           )}
@@ -584,7 +585,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   return (
     <>
       {mobileNav}
-      <aside className="hidden h-screen w-[240px] shrink-0 flex-col bg-ink-black text-bristol md:flex xl:w-[270px] 2xl:w-[320px] min-[2200px]:w-[430px]">
+      <aside className="hidden h-full w-[240px] shrink-0 flex-col bg-ink-black text-bristol md:flex xl:w-[270px] 2xl:w-[320px] min-[2200px]:w-[430px]">
         <Link
           to="/"
           className="flex items-center gap-4 border-b border-bristol/10 px-5 py-5 xl:px-6 xl:py-6 min-[2200px]:gap-6 min-[2200px]:px-9 min-[2200px]:py-8"
@@ -603,8 +604,8 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           </span>
         </Link>
 
-        <div className="relative min-h-0 flex-1 mb-8">
-          <nav ref={navRef} aria-label="Pipeline stages" className="h-full overflow-y-auto py-4 2xl:py-5 min-[2200px]:py-8">
+        <div className="relative min-h-0 flex-1">
+          <nav ref={navRef} aria-label="Pipeline stages" className="h-full overflow-y-auto py-2 pb-4 xl:py-3 xl:pb-6 2xl:py-5 2xl:pb-8 min-[2200px]:py-8">
             {projectId ? pipelineStages.map((stage) => renderStageRow(stage)) : (
               <div className="px-4 py-4 font-meta text-[0.6rem] tracking-[0.14em] text-bristol/35">
                 {t("NO PROJECT SELECTED")}
@@ -663,7 +664,6 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
               )}
             </div>
           )}
-          <CreditBalance className="mt-3 2xl:mt-4" />
         </div>
       </aside>
     </>

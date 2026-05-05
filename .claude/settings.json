@@ -1,5 +1,16 @@
 {
   "hooks": {
-    "PreToolUse": []
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"DELEGATION CHECK (CLAUDE.md rules):\\n- Reading 1+ file >300 lines to answer a factual question? USE ask-ai\\n- Reading 2+ files just to summarize or understand? USE ask-ai\\n- Grepping across 5+ files for a bulk answer? USE ask-ai\\n- Writing boilerplate, test stubs, fixture files, or docs? USE ai-write\\nOnly read directly if editing, debugging, or doing architectural reasoning.\"}}'",
+            "statusMessage": "Checking delegation rules..."
+          }
+        ]
+      }
+    ]
   }
 }

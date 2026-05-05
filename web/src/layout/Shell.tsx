@@ -5,11 +5,14 @@ import { FloatingIndicator } from "../components/ui/FloatingIndicator";
 import { cn } from "../lib/cn";
 import { useI18n } from "../i18n";
 
+const FULL_HEIGHT_ROUTES = ["/shot-plan", "/adapt", "/direct"];
+
 export function Shell() {
   const location = useLocation();
   const isCompose = location.pathname.endsWith("/compose");
   const isLibrary = location.pathname === "/";
   const showDesktopProjectNav = location.pathname.startsWith("/project/");
+  const isFullHeight = FULL_HEIGHT_ROUTES.some((r) => location.pathname.endsWith(r));
   const { t } = useI18n();
 
   return (
@@ -25,7 +28,8 @@ export function Shell() {
         <SideNav showDesktop={showDesktopProjectNav} />
         <main id="main-content" className="min-w-0 flex-1 overflow-y-auto bg-pulp-paper">
           <div className={cn(
-            "flex min-h-full w-full flex-col px-5 py-6 md:px-10 md:py-10",
+            "flex w-full flex-col px-5 py-6 md:px-10 md:py-10",
+            isFullHeight ? "h-full" : "min-h-full",
             !isCompose && !isLibrary && "mx-auto max-w-[1560px]"
           )}>
             <Outlet />

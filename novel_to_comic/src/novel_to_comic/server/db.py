@@ -10,6 +10,14 @@ _client: Client | None = None
 _httpx_client: httpx.Client | None = None
 
 
+def reset_db() -> None:
+    global _client, _httpx_client
+    if _httpx_client is not None:
+        _httpx_client.close()
+    _client = None
+    _httpx_client = None
+
+
 def get_db() -> Client:
     global _client, _httpx_client
     if _client is None:

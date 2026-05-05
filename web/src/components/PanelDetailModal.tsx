@@ -66,6 +66,7 @@ function ReviewTabContent({
   creditsLabel,
   onQuickRedo,
   onGoToEdit,
+  onDisplayUrlChange,
 }: {
   project: string;
   sceneId: string;
@@ -81,6 +82,7 @@ function ReviewTabContent({
   creditsLabel: string;
   onQuickRedo: () => void;
   onGoToEdit: () => void;
+  onDisplayUrlChange: (url: string) => void;
 }) {
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const [confirmRedo, setConfirmRedo] = useState(false);
@@ -102,6 +104,11 @@ function ReviewTabContent({
   const displayedImageUrl = selectedVersionEntry && !selectedVersionEntry.current
     ? fileUrl(project, selectedVersionEntry.image_path)
     : imageUrl;
+
+  useEffect(() => {
+    onDisplayUrlChange(displayedImageUrl);
+  }, [displayedImageUrl, onDisplayUrlChange]);
+
   const versionLabel = hasVersionHistory && currentVersion
     ? `v${currentVersion.version} / ${versionEntries.length}`
     : null;
@@ -733,6 +740,11 @@ export function PanelDetailModal({
   const [activeTab, setActiveTab] = useState<TabId>("review");
   const [draft, setDraft] = useState<ImagePrompt | null>(null);
   const [lastRewrittenPrompt, setLastRewrittenPrompt] = useState<ImagePrompt | null>(null);
+  const [activeDisplayUrl, setActiveDisplayUrl] = useState<string>(imageUrl);
+
+  useEffect(() => {
+    setActiveDisplayUrl(imageUrl);
+  }, [imageUrl, sceneId, panelNumber]);
   const queryClient = useQueryClient();
   const begin = useRegenStore((s) => s.begin);
   const attachJob = useRegenStore((s) => s.attachJob);
@@ -873,7 +885,7 @@ export function PanelDetailModal({
               <div className="flex min-h-0 flex-1 items-center justify-center bg-ink-black">
                 {imageAvailable ? (
                   <LazyImage
-                    src={imageUrl}
+                    src={activeDisplayUrl}
                     alt={`Panel ${panelNumber}`}
                     containerClassName="h-full w-full"
                     className="object-contain"
@@ -925,6 +937,7 @@ export function PanelDetailModal({
                   creditsLabel={creditsLabel}
                   onQuickRedo={handleQuickRedo}
                   onGoToEdit={() => setActiveTab("edit")}
+                  onDisplayUrlChange={setActiveDisplayUrl}
                 />
               )}
               {activeTab === "edit" && (
