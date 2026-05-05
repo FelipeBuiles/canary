@@ -2,13 +2,14 @@
 
 from pathlib import Path
 
+import httpx
 from fastapi import Depends, HTTPException, Request
 
 from novel_to_comic.config import Config, load_config
 from novel_to_comic.state import PipelineState, load_state
 
 from .auth import get_current_user
-from .db import get_db
+from .db import get_db, reset_db
 
 
 def get_projects_dir(request: Request) -> Path:
@@ -20,9 +21,8 @@ def project_key(user_id: str, project_id: str) -> str:
     return f"{user_id}:{project_id}"
 
 
-def _resolve_project_slug(user_id: str, project_id: str) -> str:
-    """Look up the filesystem slug for a project UUID."""
-    result = (
+def _db_query_projects(user_id: str, project_id: str):
+    return (
         get_db()
         .table("projects")
         .select("name")
@@ -30,6 +30,15 @@ def _resolve_project_slug(user_id: str, project_id: str) -> str:
         .eq("id", project_id)
         .execute()
     )
+
+
+def _resolve_project_slug(user_id: str, project_id: str) -> str:
+    """Look up the filesystem slug for a project UUID."""
+    try:
+        result = _db_query_projects(user_id, project_id)
+    except httpx.ConnectError:
+        reset_db()
+        result = _db_query_projects(user_id, project_id)
     if not result.data:
         raise HTTPException(404, f"Project '{project_id}' not found")
     return result.data[0]["name"]

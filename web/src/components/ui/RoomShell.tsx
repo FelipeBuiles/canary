@@ -8,6 +8,7 @@ interface RoomShellProps {
   isEmpty?: boolean;
   emptyTitle?: string;
   emptyDescription?: string;
+  fullHeight?: boolean;
   children?: ReactNode;
 }
 
@@ -17,6 +18,7 @@ export function RoomShell({
   isEmpty,
   emptyTitle = "NOT AVAILABLE",
   emptyDescription = "This room is not ready yet.",
+  fullHeight,
   children,
 }: RoomShellProps) {
   const { t } = useI18n();
@@ -34,5 +36,5 @@ export function RoomShell({
     );
   }
 
-  return <div className="space-y-10">{children}</div>;
+  return <div className={fullHeight ? "h-full" : "space-y-10"}>{children}</div>;
 }
