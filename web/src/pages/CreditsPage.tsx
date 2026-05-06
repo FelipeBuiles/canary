@@ -40,7 +40,7 @@ function groupTransactions(txs: CreditTransaction[]): LedgerGroup[] {
     const settled = rows.filter((r) => r.status === "settled");
     const estimate = reservation ? Math.abs(reservation.amount_credits) : 0;
     const actual = settled.reduce((s, r) => s + Math.abs(r.amount_credits), 0);
-    const isReleased = reservation?.status === "released";
+    const isReleased = !reservation || reservation.status === "released";
     const returned = isReleased ? Math.max(0, estimate - actual) : 0;
     const status: LedgerGroup["status"] =
       !isReleased ? "in_flight" : actual > 0 ? "complete" : "failed";

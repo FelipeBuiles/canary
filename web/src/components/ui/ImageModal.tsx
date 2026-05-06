@@ -11,9 +11,11 @@ interface ImageModalProps {
   /** Optional heading shown in the modal title bar above the image. */
   title?: string;
   actions?: ReactNode;
+  /** When provided, renders a sidebar panel alongside the image. */
+  sidebar?: ReactNode;
 }
 
-export function ImageModal({ isOpen, onClose, src, alt, title, actions }: ImageModalProps) {
+export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar }: ImageModalProps) {
   useEffect(() => {
     if (!isOpen) return;
     const prev = document.body.style.overflow;
@@ -40,11 +42,11 @@ export function ImageModal({ isOpen, onClose, src, alt, title, actions }: ImageM
       aria-label={title ?? alt}
     >
       <div
-        className="flex max-h-full w-full max-w-[600px] flex-col border-[2px] border-ink-black bg-bristol shadow-ink"
+        className={`flex max-h-full w-full flex-col border-[2px] border-ink-black bg-bristol shadow-ink ${sidebar ? "max-w-[900px]" : "max-w-[600px]"}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Title bar */}
-        <div className="flex items-center justify-between border-b-[2px] border-ink-black px-4 py-3">
+        <div className="flex items-center justify-between border-b-[2px] border-ink-black px-4 py-3 shrink-0">
           <div>
             {title && (
               <div className="font-display text-[1.25rem] font-bold uppercase leading-none tracking-[-0.04em] text-ink-black">
@@ -65,19 +67,26 @@ export function ImageModal({ isOpen, onClose, src, alt, title, actions }: ImageM
           </button>
         </div>
 
-        {/* Image */}
-        <div className="flex-1 bg-ink-black">
-          <LazyImage
-            src={src}
-            alt={alt}
-            containerClassName="w-full"
-            className="max-h-[65vh] w-full object-contain"
-          />
+        {/* Body: image + optional sidebar */}
+        <div className={`min-h-0 flex-1 ${sidebar ? "grid grid-cols-[1fr_280px]" : "flex flex-col"}`}>
+          <div className="flex items-center justify-center bg-ink-black min-h-0">
+            <LazyImage
+              src={src}
+              alt={alt}
+              containerClassName="w-full h-full"
+              className={`w-full object-contain ${sidebar ? "max-h-[65vh]" : "max-h-[65vh]"}`}
+            />
+          </div>
+          {sidebar && (
+            <div className="border-l-[2px] border-ink-black overflow-y-auto bg-bristol p-5">
+              {sidebar}
+            </div>
+          )}
         </div>
 
         {/* Actions */}
         {actions && (
-          <div className="flex items-center justify-end gap-2 border-t-[2px] border-ink-black px-4 py-3">
+          <div className="flex items-center justify-end gap-2 border-t-[2px] border-ink-black px-4 py-3 shrink-0">
             {actions}
           </div>
         )}

@@ -16,6 +16,7 @@ function resolveTailDirection(bubble: Bubble): "up" | "down" {
 function bubbleStyle(bubble: Bubble): React.CSSProperties | undefined {
   const style: React.CSSProperties & Record<`--${string}`, string> = {};
   const isPinned = bubble.x != null && bubble.y != null;
+  const isNarration = bubble.type === "narration";
 
   if (isPinned) {
     style.left = `${Math.round(bubble.x!)}px`;
@@ -27,16 +28,16 @@ function bubbleStyle(bubble: Bubble): React.CSSProperties | undefined {
   if (bubble.font_color) style.color = bubble.font_color;
   if (bubble.fill_color) {
     style.background = bubble.fill_color;
-    style["--bubble-bg"] = bubble.fill_color;
+    if (!isNarration) style["--bubble-bg"] = bubble.fill_color;
   }
   if (bubble.border_color) {
     style.borderColor = bubble.border_color;
-    style["--bubble-border"] = bubble.border_color;
+    if (!isNarration) style["--bubble-border"] = bubble.border_color;
   }
   if (bubble.border_width != null) {
     const width = `${Math.round(bubble.border_width)}px`;
     style.borderWidth = width;
-    style["--bubble-border-width"] = width;
+    if (!isNarration) style["--bubble-border-width"] = width;
   }
   if (bubble.border_radius != null) style.borderRadius = `${Math.round(bubble.border_radius)}px`;
 
@@ -55,15 +56,15 @@ export function BubbleElement({ bubble, selected }: BubbleElementProps) {
 
   // Build class list
   const classes: string[] = [];
-  if (isNarration && !isPinned) {
-    classes.push("caption");
+  if (isNarration) {
+    classes.push("caption", bubble.type);
   } else {
     classes.push("bubble", bubble.type, bubble.side);
   }
 
   if (isPinned) classes.push("pinned");
   if (bubble.full_width) classes.push("full-width");
-  if (hasSvgTail) classes.push("svg-tail");
+  if (hasSvgTail && !isNarration) classes.push("svg-tail");
   else if (bubble.type === "speech") classes.push(`tail-${resolveTailDirection(bubble)}`);
   if (selected) classes.push("selected");
 
@@ -78,11 +79,11 @@ export function BubbleElement({ bubble, selected }: BubbleElementProps) {
       aria-label={`${bubble.type} bubble: ${bubble.text}`}
       style={bubbleStyle(bubble)}
     >
-      {bubble.speaker_name && (
+      {bubble.speaker_name && !isNarration && (
         <span className="speaker">{bubble.speaker_name}:</span>
       )}
       {bubble.text}
-      {hasSvgTail && <SvgTail bubble={bubble} />}
+      {hasSvgTail && !isNarration && <SvgTail bubble={bubble} />}
     </div>
   );
 }

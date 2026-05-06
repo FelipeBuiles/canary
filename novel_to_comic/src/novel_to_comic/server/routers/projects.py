@@ -18,7 +18,7 @@ from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.state import STAGE_NAMES, StageStatus, create_initial_state, is_stale, load_state, save_state
 
 from ..auth import get_current_user
-from ..credits import debit_model_usage
+from ..credits import debit_model_usage, provider_usd_to_credits
 from ..db import get_db
 from ..deps import get_project, get_projects_dir, project_key
 from .styles import is_style_selected
@@ -121,8 +121,8 @@ def _stage_payload(project_dir: Path, name: str, state) -> dict:
         "items_done": s.items_done,
         "items_total": s.items_total,
         "items_failed": s.items_failed,
-        "cost_usd": s.cost_usd,
-        "estimated_cost_usd": s.estimated_cost_usd,
+        "cost_credits": provider_usd_to_credits(s.cost_usd),
+        "estimated_cost_credits": provider_usd_to_credits(s.estimated_cost_usd),
         "error": error,
         "started_at": s.started_at.isoformat() if s.started_at else None,
         "finished_at": s.finished_at.isoformat() if s.finished_at else None,
@@ -368,7 +368,7 @@ def list_projects(
             "project_name": state.project_name,
             "author": _story_bible_author(d),
             "created_at": state.created_at.isoformat(),
-            "total_cost_usd": state.total_cost_usd,
+            "total_cost_credits": provider_usd_to_credits(state.total_cost_usd),
             "furthest_stage": furthest,
             "is_running": _is_project_running(user_id, row["id"], request),
             "has_cover": _cover_path(d).exists(),
@@ -411,9 +411,9 @@ def project_status(
         "id": project_id,
         "project_name": state.project_name,
         "created_at": state.created_at.isoformat(),
-        "total_cost_usd": state.total_cost_usd,
-        "misc_cost_usd": state.misc_cost_usd,
-        "total_estimated_cost_usd": total_estimated,
+        "total_cost_credits": provider_usd_to_credits(state.total_cost_usd),
+        "misc_cost_credits": provider_usd_to_credits(state.misc_cost_usd),
+        "total_estimated_cost_credits": provider_usd_to_credits(total_estimated),
         "is_running": running,
         "has_cover": _cover_path(project_dir).exists(),
         "style_selected": is_style_selected(project_dir, config),

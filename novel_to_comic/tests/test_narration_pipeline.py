@@ -9,12 +9,13 @@ from novel_to_comic.stages.s5_layout_plan import (
 )
 
 
-def test_narration_fallback_preserves_source_quote():
+def test_narration_fallback_uses_adapted_caption_and_preserves_source_quote():
     beats = [
         ScreenplayBeat(type="action", content="Myop lays down her flowers."),
         ScreenplayBeat(
             type="narration",
-            content="And the summer was over.",
+            content="Summer ends in that silent moment.",
+            source_text="And the summer was over.",
             narration_reason="Authorial closing turn.",
         ),
     ]
@@ -30,11 +31,13 @@ def test_narration_fallback_preserves_source_quote():
     panels = _sync_rendered_narration([panel], decisions)
 
     assert decisions[0].source_text == "And the summer was over."
+    assert decisions[0].caption_text == "Summer ends in that silent moment."
     assert decisions[0].decision == "rendered"
     assert decisions[0].fallback_decision is True
-    assert warnings == ['scene_004: fallback narration decision for "And the summer was over."']
+    assert warnings == ['scene_004: fallback narration decision for "Summer ends in that silent moment."']
     assert panels[0].dialogue[0]["type"] == "narration"
-    assert panels[0].dialogue[0]["text"] == "And the summer was over."
+    assert panels[0].dialogue[0]["text"] == "Summer ends in that silent moment."
+    assert panels[0].dialogue[0]["source_text"] == "And the summer was over."
     assert panels[0].dialogue[0]["source_beat_id"] == "scene_004:beat_002"
 
 
@@ -43,7 +46,8 @@ def test_llm_narration_decision_attaches_caption_to_panel():
         ScreenplayBeat(type="action", content="Myop lays down her flowers."),
         ScreenplayBeat(
             type="narration",
-            content="And the summer was over.",
+            content="Summer ends in that silent moment.",
+            source_text="And the summer was over.",
             narration_reason="Authorial closing turn.",
         ),
     ]
@@ -76,6 +80,77 @@ def test_llm_narration_decision_attaches_caption_to_panel():
     assert panels[0].has_narration_caption is True
     assert panels[0].preferred_caption_zone == "bottom"
     assert panels[0].dialogue[0]["narration_mode"] == "attached_caption"
+    assert panels[0].dialogue[0]["text"] == "Summer ends in that silent moment."
+    assert panels[0].dialogue[0]["source_text"] == "And the summer was over."
+
+
+def test_sync_narration_decisions_removes_duplicate_untracked_caption():
+    decision_panel = PlannedPanel(
+        panel_id="scene_004:panel_001",
+        scene_id="scene_004",
+        panel_number=1,
+        beat_ids=["scene_004:beat_001", "scene_004:beat_002"],
+    )
+    duplicate_panel = PlannedPanel(
+        panel_id="scene_004:panel_002",
+        scene_id="scene_004",
+        panel_number=2,
+        beat_ids=["scene_004:beat_002", "scene_004:beat_003"],
+        dialogue=[
+            {
+                "character_id": None,
+                "text": "And the summer was over.",
+                "type": "narration",
+                "source_beat_id": None,
+                "source_text": None,
+                "narration_mode": None,
+                "preferred_zone": None,
+            }
+        ],
+        has_narration_caption=True,
+        narration_mode="attached_caption",
+        preferred_caption_zone="top",
+    )
+    decisions = [
+        _build_narration_decisions(
+            "scene_004",
+            [
+                LLMNarrationDecisionSpec(
+                    beat_index=2,
+                    decision="rendered",
+                    mode="attached_caption",
+                    panel_index=1,
+                    preferred_zone="bottom",
+                    decision_reason="The line is the story's final turn.",
+                )
+            ],
+            [decision_panel, duplicate_panel],
+            [
+                ScreenplayBeat(type="action", content="Myop lays down her flowers."),
+                ScreenplayBeat(
+                    type="narration",
+                    content="Summer ends in that silent moment.",
+                    source_text="And the summer was over.",
+                    narration_reason="Authorial closing turn.",
+                ),
+                ScreenplayBeat(type="action", content="She turns away."),
+            ],
+            [],
+        )[0]
+    ]
+
+    panels = _sync_rendered_narration([decision_panel, duplicate_panel], decisions)
+
+    narration_lines = [
+        line
+        for panel in panels
+        for line in panel.dialogue
+        if line.get("type") == "narration"
+    ]
+    assert len(narration_lines) == 1
+    assert narration_lines[0]["text"] == "Summer ends in that silent moment."
+    assert panels[0].has_narration_caption is True
+    assert panels[1].has_narration_caption is False
 
 
 def test_image_prompt_uses_caption_metadata_without_quote(tmp_path):

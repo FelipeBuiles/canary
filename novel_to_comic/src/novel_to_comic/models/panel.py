@@ -44,6 +44,7 @@ class ScreenplayBeat(BaseModel):
     type: str  # "action", "dialogue", "narration", "sfx", "transition"
     character_id: Optional[str] = None
     content: str
+    source_text: Optional[str] = None  # Exact source prose for adapted narration captions
     direction: Optional[str] = None
     transition_type: Optional[str] = None  # "smooth_continuation", "match_cut", "hard_cut"
     narration_reason: Optional[str] = None

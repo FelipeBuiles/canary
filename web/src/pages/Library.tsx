@@ -121,7 +121,7 @@ export function Library() {
   const [pendingCovers, setPendingCovers] = useState<Set<string>>(new Set());
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const runningCount = projects?.filter((p) => p.is_running).length ?? 0;
-  const totalInkUsage = (projects ?? []).reduce((sum, project) => sum + project.total_cost_usd, 0);
+  const totalInkUsage = (projects ?? []).reduce((sum, project) => sum + project.total_cost_credits, 0);
 
   useEffect(() => {
     if (!projects?.length) return;
@@ -233,10 +233,10 @@ export function Library() {
           <div className="space-y-3">
             <StatRow label="ARCHIVE FILES">{projects?.length ?? 0}</StatRow>
             <StatRow label="LIVE BOARDS">{runningCount}</StatRow>
-            <StatRow label="TOTAL INK USAGE">${totalInkUsage.toFixed(2)}</StatRow>
+            <StatRow label="TOTAL INK USAGE">{totalInkUsage.toLocaleString()} credits</StatRow>
           </div>
           <p className="mt-3 font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/50">
-            {t("Ink usage = total AI generation cost")}
+            {t("Ink usage = total AI generation credits")}
           </p>
         </aside>
       </section>

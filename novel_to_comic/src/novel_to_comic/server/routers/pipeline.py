@@ -39,6 +39,7 @@ from novel_to_comic.ai import ai_request_context
 
 from ..auth import get_current_user
 from ..credits import (
+    CreditEstimate,
     debit_model_usage,
     estimate_stage_credit_breakdown,
     estimate_stage_credit_reservation,
@@ -110,6 +111,15 @@ async def _run_stage(stage: str, config, project_dir, state, queue: asyncio.Queu
 
 
 
+# Stages that auto-chain: when the first stage completes, the rest run automatically.
+# The chain stops at the first failure or awaiting_review checkpoint.
+STAGE_AUTO_CHAIN: dict[str, list[str]] = {
+    "adapt": ["plan", "storyboard", "direct"],
+    "plan": ["storyboard", "direct"],
+    "storyboard": ["direct"],
+}
+
+
 async def _run_stage_with_credits(
     stage: str,
     config,
@@ -132,28 +142,42 @@ async def _run_stage_with_credits(
         queue.put_nowait({"type": "stage_fail", "stage": stage, "message": message})
         return
 
-    with ai_request_context(
-        user_id=user_id,
-        project_id=project_id,
-        project_name=project_dir.name,
-        workspace_id=str(project_dir.parent),
-        stage=stage,
-    ):
-        await _run_stage(stage, config, project_dir, state, queue)
-
-    s = state.stages[stage]
-    for usage in s.usage_log:
-        debit_model_usage(
-            db,
-            user_id,
-            project_id,
-            UsageRecord.model_validate(usage),
+    try:
+        with ai_request_context(
+            user_id=user_id,
+            project_id=project_id,
+            project_name=project_dir.name,
+            workspace_id=str(project_dir.parent),
             stage=stage,
-            description=f"Model call: {stage}",
-            job_id=job_id,
-        )
-    if reservation_id:
-        release_reservation(db, reservation_id)
+        ):
+            await _run_stage(stage, config, project_dir, state, queue)
+
+        s = state.stages[stage]
+        for usage in s.usage_log:
+            debit_model_usage(
+                db,
+                user_id,
+                project_id,
+                UsageRecord.model_validate(usage),
+                stage=stage,
+                description=f"Model call: {stage}",
+                job_id=job_id,
+            )
+    finally:
+        if reservation_id:
+            release_reservation(db, reservation_id)
+
+    # Auto-chain: if the stage completed (not awaiting_review, not failed),
+    # automatically run the next stages in the chain.
+    if s.status == StageStatus.COMPLETE and stage in STAGE_AUTO_CHAIN:
+        for next_stage in STAGE_AUTO_CHAIN[stage]:
+            next_s = state.stages[next_stage]
+            if next_s.status != StageStatus.PENDING:
+                continue
+            await _run_stage_with_credits(next_stage, config, project_dir, state, queue, user_id, project_id)
+            # Stop if the chained stage failed or hit a review checkpoint
+            if state.stages[next_stage].status in (StageStatus.FAILED, StageStatus.AWAITING_REVIEW):
+                break
 
 
 
@@ -276,11 +300,23 @@ async def estimate_stage_cost(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
-    """Return the estimated credit breakdown for running a stage."""
+    """Return the estimated credit breakdown for running a stage (and its auto-chain)."""
     if stage not in STAGE_NAMES:
         raise HTTPException(400, f"Unknown stage: {stage}. Valid: {STAGE_NAMES}")
     project_dir, config, state = project
-    breakdown = estimate_stage_credit_breakdown(config, project_dir, state, stage)
+
+    # Sum costs for the stage and all stages it will auto-chain into.
+    chain = [stage] + STAGE_AUTO_CHAIN.get(stage, [])
+    breakdown = estimate_stage_credit_breakdown(config, project_dir, state, chain[0])
+    for chained in chain[1:]:
+        extra = estimate_stage_credit_breakdown(config, project_dir, state, chained)
+        breakdown = CreditEstimate(
+            estimate_credits=breakdown["estimate_credits"] + extra["estimate_credits"],
+            reserved_credits=(breakdown["reserved_credits"] or 0) + (extra["reserved_credits"] or 0),
+            reservation_multiplier=breakdown["reservation_multiplier"],
+            confidence=breakdown["confidence"],
+        )
+
     return {"stage": stage, **breakdown}
 
 
@@ -598,7 +634,15 @@ async def regen_panel_with_instruction(
         patch = parse_instruction_patch(rewrite.value)
         updated_prompt = apply_instruction_patch(prompt, patch)
     except PromptInstructionError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        logger.warning(
+            "Panel instruction rewrite could not be applied project=%s scene=%s panel=%s reason=%s rewrite=%s",
+            project_dir.name,
+            scene_id,
+            panel_number,
+            exc,
+            json.dumps(rewrite.value, ensure_ascii=False)[:1000] if "rewrite" in locals() else None,
+        )
+        raise HTTPException(400, f"Prompt rewrite could not be applied: {exc}") from exc
     except Exception as exc:
         logger.exception(
             "Panel instruction rewrite failed project=%s scene=%s panel=%s",

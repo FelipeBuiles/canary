@@ -27,6 +27,20 @@ async def _lifespan(app: FastAPI):
             ", ".join(missing),
         )
 
+    async def _release_stale_reservations():
+        import logging
+        from .db import get_db
+        from .credits import release_all_stale_reservations
+        log = logging.getLogger(__name__)
+        try:
+            released = await asyncio.to_thread(release_all_stale_reservations, get_db())
+            if released:
+                log.info("Released %d stale credit reservation(s) from previous server run", released)
+        except Exception as exc:
+            log.warning("Could not clean up stale credit reservations on startup: %s", exc)
+
+    asyncio.create_task(_release_stale_reservations())
+
     worker_count = max(1, int(os.environ.get("CANARY_GENERATION_WORKERS", "5")))
     app.state.generation_worker_tasks = [
         asyncio.create_task(generation_worker(app))

@@ -161,6 +161,7 @@ def instruction_rewrite_system_prompt() -> str:
         "Allowed operation shapes are: "
         '{"type":"panel","field":"composition|setting|lighting|mood|constraints|continuity_note","value":"..."}, '
         '{"type":"subject","subject_index":0,"field":"action|expression|position","value":"..."}. '
+        "For an accepted visual instruction, always return at least one operation. "
         "Use subject_index from the supplied context when editing a subject. "
         "For character appearance consistency, strengthen action/expression/position or constraints; do not edit identity. "
         "For provider-safe requests, rewrite toward non-graphic, non-sexualized, text-free visual direction while preserving the scene. "

@@ -213,6 +213,11 @@ export function AdaptRoom() {
                           <div className="mt-2 max-w-[68ch] font-body text-[0.98rem] font-semibold leading-7 text-ink-black">
                             "{beat.content}"
                           </div>
+                          {beat.source_text && beat.source_text !== beat.content && (
+                            <div className="mt-2 max-w-[72ch] font-body text-[0.76rem] italic leading-5 text-ink-black/55">
+                              Source: "{beat.source_text}"
+                            </div>
+                          )}
                           {beat.narration_reason && (
                             <div className="mt-3 border-l-[3px] border-narrator-gold/60 pl-4 text-[0.78rem] leading-6 text-ink-fade">
                               {beat.narration_reason}

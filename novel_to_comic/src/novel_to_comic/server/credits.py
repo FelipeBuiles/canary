@@ -422,3 +422,14 @@ def release_stage_reservations(
     else:
         q = q.is_("project_id", "null")
     q.execute()
+
+
+def release_all_stale_reservations(db: Client) -> int:
+    """Release every in-flight reservation — safe to call on server startup when no pipeline is running."""
+    result = (
+        db.table("credit_ledger")
+        .update({"status": "released"})
+        .eq("status", "reserved")
+        .execute()
+    )
+    return len(result.data) if result.data else 0

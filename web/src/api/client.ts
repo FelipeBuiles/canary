@@ -19,7 +19,14 @@ export async function apiFetch<T>(
   });
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`API ${res.status}: ${body}`);
+    let message = body;
+    try {
+      const parsed = JSON.parse(body) as { detail?: unknown };
+      if (typeof parsed.detail === "string") message = parsed.detail;
+    } catch {
+      // Keep the raw response body when the server did not return JSON.
+    }
+    throw new Error(`API ${res.status}: ${message}`);
   }
   return res.json();
 }

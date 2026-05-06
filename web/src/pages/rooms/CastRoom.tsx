@@ -188,6 +188,53 @@ function CharacterCastCard({
         src={`${refUrl}?t=${timestamp}`}
         alt={character.name}
         title={character.name.toUpperCase()}
+        sidebar={(
+          <div className="space-y-5">
+            <div>
+              <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">VISUAL ANCHOR</div>
+              <p className="text-[0.82rem] leading-6 text-ink-black">{character.visual_anchor}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">AGE</div>
+                <p className="text-[0.82rem] text-ink-black">{character.age_range}</p>
+              </div>
+              <div>
+                <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">GENDER</div>
+                <p className="text-[0.82rem] text-ink-black">{character.gender}</p>
+              </div>
+            </div>
+            {character.default_outfit && (
+              <div>
+                <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">DEFAULT OUTFIT</div>
+                <p className="text-[0.82rem] leading-6 text-ink-black">{character.default_outfit}</p>
+              </div>
+            )}
+            {character.distinguishing_features.length > 0 && (
+              <div>
+                <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-2">DISTINGUISHING FEATURES</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {character.distinguishing_features.map((f) => (
+                    <Tag key={f}>{f}</Tag>
+                  ))}
+                </div>
+              </div>
+            )}
+            {character.relationships.length > 0 && (
+              <div>
+                <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-2">RELATIONSHIPS</div>
+                <ul className="space-y-1.5">
+                  {character.relationships.map((r) => (
+                    <li key={r.character_id} className="text-[0.78rem] leading-5 text-ink-black/80">
+                      <span className="font-semibold capitalize">{r.character_id.replace(/_/g, " ")}</span>
+                      <span className="text-ink-black/50"> — {r.relationship}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
         actions={(
           <>
             <Button variant="outline" size="sm" onClick={() => setIsModalOpen(false)}>
@@ -371,6 +418,26 @@ function LocationPlateCard({
         src={`${plateUrl}?t=${timestamp}`}
         alt={location.name}
         title={location.name.toUpperCase()}
+        sidebar={(
+          <div className="space-y-5">
+            <div>
+              <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">VISUAL ANCHOR</div>
+              <p className="text-[0.82rem] leading-6 text-ink-black">{location.visual_anchor}</p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              {location.time_of_day && (
+                <div>
+                  <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">TIME OF DAY</div>
+                  <Tag>{location.time_of_day}</Tag>
+                </div>
+              )}
+              <div>
+                <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">MOOD</div>
+                <Tag>{location.mood}</Tag>
+              </div>
+            </div>
+          </div>
+        )}
         actions={(
           <>
             <Button variant="outline" size="sm" onClick={() => setIsModalOpen(false)}>
