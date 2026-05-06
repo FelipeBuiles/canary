@@ -172,7 +172,7 @@ def planned_panel_to_breakdown(panel: PlannedPanel) -> PanelBreakdown:
 
 
 def _caption_text(decision: NarrationDecision) -> str:
-    return decision.caption_text_override or decision.source_text
+    return decision.caption_text_override or decision.caption_text or decision.source_text
 
 
 def _remove_narration_from_panel(panel: PlannedPanel, beat_id: str) -> PlannedPanel:

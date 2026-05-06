@@ -8,8 +8,8 @@ function stage(status: StageStatus, failed: string[] = []): StageInfo {
     items_done: 0,
     items_total: 0,
     items_failed: failed,
-    cost_usd: 0,
-    estimated_cost_usd: 0,
+    cost_credits: 0,
+    estimated_cost_credits: 0,
     error: null,
     started_at: null,
     finished_at: null,
@@ -22,9 +22,9 @@ function status(plan?: StageStatus, storyboard?: StageStatus): ProjectStatus {
     id: "project",
     project_name: "Project",
     created_at: "2026-05-02T00:00:00Z",
-    total_cost_usd: 0,
-    misc_cost_usd: 0,
-    total_estimated_cost_usd: 0,
+    total_cost_credits: 0,
+    misc_cost_credits: 0,
+    total_estimated_cost_credits: 0,
     is_running: false,
     has_cover: false,
     style_selected: true,
@@ -46,32 +46,23 @@ describe("getShotPlanAction", () => {
     });
   });
 
-  it("approves layout and builds board when plan needs review", () => {
-    expect(getShotPlanAction(status("awaiting_review"))).toMatchObject({
-      kind: "approve",
-      backendStage: "plan",
-      estimateStage: "storyboard",
-      runAfterApprove: true,
-    });
-  });
-
-  it("builds board when layout is complete and board is pending", () => {
-    expect(getShotPlanAction(status("complete", "pending"))).toMatchObject({
+  it("runs plan when no stages exist yet", () => {
+    expect(getShotPlanAction(status())).toMatchObject({
       kind: "run",
-      backendStage: "storyboard",
-      label: "Build Board",
+      backendStage: "plan",
+      label: "Run Shot Plan",
     });
   });
 
-  it("approves storyboard when board needs review", () => {
-    expect(getShotPlanAction(status("complete", "awaiting_review"))).toMatchObject({
-      kind: "approve",
-      backendStage: "storyboard",
-      label: "Approve Shot Plan & Continue",
+  it("reruns plan when layout failed", () => {
+    expect(getShotPlanAction(status("failed"))).toMatchObject({
+      kind: "rerun",
+      backendStage: "plan",
+      label: "Fix Shot Plan",
     });
   });
 
-  it("reruns the failed sub-stage", () => {
+  it("reruns storyboard when board failed", () => {
     expect(getShotPlanAction(status("complete", "failed"))).toMatchObject({
       kind: "rerun",
       backendStage: "storyboard",
@@ -85,13 +76,39 @@ describe("getShotPlanAction", () => {
       label: "Shot Plan Complete",
     });
   });
+
+  it("has no local action while plan is running (storyboard auto-chains)", () => {
+    expect(getShotPlanAction(status("running"))).toEqual({
+      kind: "none",
+      label: "Running…",
+    });
+  });
+
+  it("has no local action while storyboard is running", () => {
+    expect(getShotPlanAction(status("complete", "running"))).toEqual({
+      kind: "none",
+      label: "Running…",
+    });
+  });
 });
 
 describe("getShotPlanSubStatus", () => {
-  it("summarizes layout and board review state", () => {
-    expect(getShotPlanSubStatus(status("complete", "awaiting_review"))).toMatchObject({
-      status: "awaiting_review",
-      detail: "Layout complete · Board needs review",
+  it("shows running when plan is complete and storyboard is auto-chaining", () => {
+    expect(getShotPlanSubStatus(status("complete", "pending"))).toMatchObject({
+      status: "running",
+    });
+  });
+
+  it("shows complete when both stages are done", () => {
+    expect(getShotPlanSubStatus(status("complete", "complete"))).toMatchObject({
+      status: "complete",
+      detail: "Layout complete · Board complete",
+    });
+  });
+
+  it("shows failed when storyboard failed", () => {
+    expect(getShotPlanSubStatus(status("complete", "failed"))).toMatchObject({
+      status: "failed",
     });
   });
 });

@@ -7,7 +7,6 @@ import { ConfirmDrawer } from "./ui/ConfirmDrawer";
 import { LazyImage } from "./ui/LazyImage";
 import {
   useAcceptPanel,
-  useImageGenerationMeta,
   usePanelImageVersions,
   useProjectConfig,
   usePromptsForScene,
@@ -18,11 +17,11 @@ import {
   useUnacceptPanel,
   useUpdatePrompt,
 } from "../api/queries";
-import { redactDevParameters, redactDevText, useShowDevContent } from "../lib/devContent";
+import { redactDevText, useShowDevContent } from "../lib/devContent";
 import { useRegenStore } from "../store/regen";
 import { useQueryClient } from "@tanstack/react-query";
 
-type TabId = "review" | "edit" | "prompt" | "history" | "metadata";
+type TabId = "review" | "edit" | "prompt";
 
 interface PanelDetailModalProps {
   isOpen: boolean;
@@ -523,201 +522,12 @@ function PromptTabContent({
   );
 }
 
-// ── Tab: History ──────────────────────────────────────────────────────────────
-
-function HistoryTabContent({
-  project,
-  sceneId,
-  panelNumber,
-  versionCount,
-  imageUrl,
-}: {
-  project: string;
-  sceneId: string;
-  panelNumber: number;
-  versionCount: number;
-  imageUrl: string;
-}) {
-  const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
-  const shouldLoadVersions = versionCount > 0;
-  const { data: versionData } = usePanelImageVersions(project, sceneId, panelNumber, shouldLoadVersions);
-  const restoreVersion = useRestorePanelImageVersion();
-  const bust = useRegenStore((s) => s.bust);
-
-  const versionEntries = versionData?.versions ?? [];
-  const hasHistory = !!versionData?.has_history && versionEntries.some((v) => !v.current);
-
-  const selectedVersionEntry = selectedVersion == null
-    ? versionEntries.find((v) => v.current)
-    : versionEntries.find((v) => v.version === selectedVersion);
-
-  const handleRestore = () => {
-    if (!selectedVersionEntry || selectedVersionEntry.current) return;
-    const key = `${sceneId}-${panelNumber}`;
-    restoreVersion.mutate(
-      { project, sceneId, panelNumber, version: selectedVersionEntry.version },
-      {
-        onSuccess: () => { bust(project, key); setSelectedVersion(null); },
-      },
-    );
-  };
-
-  if (!hasHistory) {
-    return (
-      <div className="flex h-full items-center justify-center p-4 text-center">
-        <div className="text-ink-black/40">
-          <div className="font-meta text-[0.62rem] tracking-[0.18em]">NO PREVIOUS VERSIONS</div>
-          <div className="mt-2 text-[0.78rem]">Version history appears after regeneration.</div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex h-full flex-col gap-4 overflow-y-auto p-4">
-      <div className="flex flex-wrap gap-2">
-        {versionEntries.map((version) => {
-          const selected = (selectedVersion ?? versionEntries.find((v) => v.current)?.version) === version.version;
-          return (
-            <button
-              key={`${version.version}-${version.image_path}`}
-              type="button"
-              onClick={() => setSelectedVersion(version.version)}
-              className={`group relative h-16 w-16 overflow-hidden border-[3px] transition-colors ${
-                selected ? "border-hero-red" : "border-pulp-paper shadow-[0_0_0_1px_var(--color-panel-line)] hover:border-ink-black/40"
-              }`}
-              title={version.current ? "Current version" : `Version ${version.version}`}
-            >
-              <img
-                src={fileUrl(project, version.image_path)}
-                alt={version.current ? "Current" : `v${version.version}`}
-                className="h-full w-full object-cover"
-              />
-              {version.current && (
-                <span className="absolute bottom-0 right-0 bg-ink-black px-1.5 py-0.5 font-meta text-[0.42rem] font-bold text-bristol">
-                  CURRENT
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {selectedVersionEntry && (
-        <div className="flex min-h-[200px] items-center justify-center bg-ink-black">
-          <img
-            src={selectedVersionEntry.current ? imageUrl : fileUrl(project, selectedVersionEntry.image_path)}
-            alt={`Version ${selectedVersionEntry.version}`}
-            className="max-h-[240px] object-contain"
-          />
-        </div>
-      )}
-
-      {selectedVersionEntry && !selectedVersionEntry.current && (
-        <Button onClick={handleRestore} disabled={restoreVersion.isPending}>
-          {restoreVersion.isPending ? "RESTORING..." : `RESTORE v${selectedVersionEntry.version}`}
-        </Button>
-      )}
-    </div>
-  );
-}
-
-// ── Tab: Metadata ─────────────────────────────────────────────────────────────
-
-function MetadataTabContent({
-  project,
-  panelRelPath,
-  draft,
-  projectConfig,
-  sceneId,
-  panelNumber,
-}: {
-  project: string;
-  panelRelPath: string;
-  draft: ImagePrompt;
-  projectConfig: import("../api/config").ProjectConfig | undefined;
-  sceneId: string;
-  panelNumber: number;
-}) {
-  const { data: generationMeta } = useImageGenerationMeta(project, panelRelPath, true);
-  const [showDevContent] = useShowDevContent();
-
-  const fallbackBody = (draft.full_prompt || "").trim();
-  const fallbackStyle = (projectConfig?.style_template ?? draft.style ?? "").trim();
-  const fallbackPrompt = (draft.prompt_version ?? 1) >= 2
-    ? (fallbackStyle ? `${fallbackStyle}\n\n${fallbackBody}` : fallbackBody)
-    : (fallbackStyle ? `${fallbackStyle}\n\n${draft.full_prompt}` : draft.full_prompt);
-  const fallbackParams: Record<string, unknown> = {
-    scene_id: sceneId, panel_number: panelNumber,
-    image_model: projectConfig?.image_model, width: draft.width, height: draft.height, steps: draft.steps,
-  };
-
-  const prompt = generationMeta?.prompt ?? fallbackPrompt;
-  const parameters = generationMeta?.parameters ?? fallbackParams;
-  const visiblePrompt = showDevContent ? prompt : redactDevText(prompt);
-  const visibleParameters = showDevContent ? parameters : redactDevParameters(parameters);
-
-  return (
-    <div className="overflow-y-auto p-4 space-y-4">
-      {!showDevContent && (
-        <div className="border-[2px] border-ink-black/15 bg-chip-gold px-3 py-2 font-meta text-[0.48rem] tracking-[0.14em] text-ink-black/65">
-          DEV CONTENT HIDDEN. ENABLE IN SETTINGS TO VIEW RAW PATHS, MODEL NAMES, AND FULL PARAMETERS.
-        </div>
-      )}
-      {!generationMeta && (
-        <div className="font-meta text-[0.52rem] tracking-[0.14em] text-ink-black/45">
-          FALLBACK DETAILS (IMAGE PREDATES METADATA)
-        </div>
-      )}
-
-      {generationMeta?.error && (
-        <div>
-          <div className="font-meta text-[0.5rem] tracking-[0.18em] text-hero-red mb-1">MODEL ERROR</div>
-          <div className="border-[2px] border-hero-red bg-hero-red/8 p-3">
-            <div className="font-meta text-[0.6rem] tracking-[0.12em] text-ink-black">
-              {generationMeta.classification === "provider_blocked" ? "PROVIDER BLOCKED" : "GENERATION FAILED"}
-              {generationMeta.recoverable ? " · RECOVERABLE" : ""}
-            </div>
-            <p className="mt-2 text-sm leading-6 text-ink-black/75">
-              {generationMeta.user_message ?? "Review the raw model response below and edit the prompt if needed."}
-            </p>
-            {generationMeta.recovery && (
-              <pre className="mt-3 whitespace-pre-wrap border border-ink-black/20 bg-bristol p-2 font-mono text-[0.68rem] leading-relaxed text-ink-black/70">
-                {JSON.stringify(generationMeta.recovery, null, 2)}
-              </pre>
-            )}
-          </div>
-          <pre className="mt-2 whitespace-pre-wrap border-[2px] border-hero-red bg-bristol p-3 font-mono text-xs leading-relaxed text-ink-black">
-            {JSON.stringify(generationMeta.error, null, 2)}
-          </pre>
-        </div>
-      )}
-
-      <div>
-        <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45 mb-1">FULL PROMPT</div>
-        <pre className="whitespace-pre-wrap border-[2px] border-ink-black/15 bg-bristol p-3 font-mono text-xs leading-relaxed text-ink-black">
-          {visiblePrompt}
-        </pre>
-      </div>
-
-      <div>
-        <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45 mb-1">PARAMETERS</div>
-        <pre className="whitespace-pre-wrap border-[2px] border-ink-black/15 bg-bristol p-3 font-mono text-xs leading-relaxed text-ink-black">
-          {JSON.stringify(visibleParameters, null, 2)}
-        </pre>
-      </div>
-    </div>
-  );
-}
-
 // ── PanelDetailModal ──────────────────────────────────────────────────────────
 
 const TABS: Array<{ id: TabId; label: string }> = [
   { id: "review", label: "Review" },
   { id: "edit", label: "Edit" },
   { id: "prompt", label: "Prompt" },
-  { id: "history", label: "History" },
-  { id: "metadata", label: "Metadata" },
 ];
 
 export function PanelDetailModal({
@@ -753,7 +563,6 @@ export function PanelDetailModal({
   const { data: prompts } = usePromptsForScene(project, sceneId);
   const { data: projectConfig } = useProjectConfig(project);
   const originalPrompt = prompts?.find((p) => p.scene_id === sceneId && p.panel_number === panelNumber);
-  const panelRelPath = `draw/${sceneId}/panel_${String(panelNumber).padStart(3, "0")}.png`;
   const { data: regenEstimate } = useRegenEstimate(project, sceneId, panelNumber, isOpen);
   const regenCredits: number | null = regenEstimate?.estimate_credits ?? null;
   const creditsLabel = regenCredits !== null ? `Est. ${regenCredits.toLocaleString()} credits` : "…";
@@ -801,6 +610,7 @@ export function PanelDetailModal({
   const handleQuickRedo = () => {
     const key = `${sceneId}-${panelNumber}`;
     begin(project, key);
+    onClose();
     regenPanel.mutate(
       { project, sceneId, panelNumber },
       {
@@ -813,6 +623,7 @@ export function PanelDetailModal({
   const handleInstructionRegen = (instruction: string) => {
     const key = `${sceneId}-${panelNumber}`;
     begin(project, key);
+    onClose();
     instructedRegen.mutate(
       { project, sceneId, panelNumber, instruction },
       {
@@ -952,7 +763,7 @@ export function PanelDetailModal({
                   creditsLabel={creditsLabel}
                   lastRewrittenPrompt={lastRewrittenPrompt}
                   onInstructionRegen={handleInstructionRegen}
-                  onGenerateFromDraft={() => {}}
+                  onGenerateFromDraft={onClose}
                 />
               )}
               {activeTab === "prompt" && (
@@ -962,25 +773,7 @@ export function PanelDetailModal({
                   lastRewrittenPrompt={lastRewrittenPrompt}
                 />
               )}
-              {activeTab === "history" && (
-                <HistoryTabContent
-                  project={project}
-                  sceneId={sceneId}
-                  panelNumber={panelNumber}
-                  versionCount={versionCount}
-                  imageUrl={imageUrl}
-                />
-              )}
-              {activeTab === "metadata" && (
-                <MetadataTabContent
-                  project={project}
-                  panelRelPath={panelRelPath}
-                  draft={draft}
-                  projectConfig={projectConfig}
-                  sceneId={sceneId}
-                  panelNumber={panelNumber}
-                />
-              )}
+
             </div>
           </div>
         </div>

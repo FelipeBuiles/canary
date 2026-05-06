@@ -280,8 +280,9 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   // so we can show a credit estimate before they commit to the action.
   const nextRunStage = useMemo<StageName | undefined>(() => {
     if (!status || isRunning || !projectId) return undefined;
-    // Pure style navigation (no pending approval): no credits spent, nothing to estimate.
-    if (styleNeedsSelection && !needsApproval) return undefined;
+    // Style selection is next (either pure navigation, or after approving extract):
+    // no stage runs until the user picks a style.
+    if (styleNeedsSelection) return undefined;
     if (
       nextAttentionStage &&
       (nextAttentionStage === "plan" || nextAttentionStage === "storyboard") &&
@@ -368,27 +369,6 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     if (!projectId || isRunning) return;
     setRunError(null);
     if (needsApproval) {
-      if ((needsApproval === "plan" || needsApproval === "storyboard") && shotPlanAction.kind === "approve") {
-        approveStage.mutate(
-          { project: projectId, stage: shotPlanAction.backendStage },
-          {
-            onSuccess: () => {
-              if (shotPlanAction.runAfterApprove && shotPlanAction.estimateStage) {
-                clearEvents();
-                runPipeline.mutate(
-                  { project: projectId, stage: shotPlanAction.estimateStage },
-                  {
-                    onSuccess: () => connect(projectId),
-                    onError: (e) => setRunError(e instanceof Error ? e.message : "Failed to start pipeline"),
-                  },
-                );
-              }
-            },
-            onError: (e) => setRunError(e instanceof Error ? e.message : "Failed to approve stage"),
-          },
-        );
-        return;
-      }
       approveStage.mutate(
         { project: projectId, stage: needsApproval },
         {

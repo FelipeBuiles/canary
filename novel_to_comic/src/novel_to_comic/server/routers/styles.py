@@ -78,7 +78,6 @@ def _save_suggestions(project_dir, suggestions, title):
 
 async def _generate_style_sample(config, bible, project_dir, sample_path, user_id: str, project_id: str | None):
     from novel_to_comic.clients import flux
-    from novel_to_comic.usage import calculate_cost
     prompt = build_style_sample_prompt(config, bible)
     meta = _style_sample_meta(config, prompt)
 
@@ -96,9 +95,6 @@ async def _generate_style_sample(config, bible, project_dir, sample_path, user_i
             output_path=sample_path,
             feature="style.sample",
         )
-    if result.usage:
-        meta["cost_usd"] = round(calculate_cost(result.usage), 6)
-        meta["usage"] = result.usage.model_dump()
     _sample_meta_path(sample_path).write_text(json.dumps(meta, indent=2, sort_keys=True))
     return result
 

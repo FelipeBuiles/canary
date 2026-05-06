@@ -41,6 +41,69 @@ function _defaultProviderForModel(model: string): ImageProvider {
 
 type RenderPreset = "fast_draft" | "balanced" | "high_quality";
 
+interface CreditRange {
+  min: number;
+  max: number;
+}
+
+function estimateProjectCredits({
+  fileSizeBytes,
+  imageModel,
+  renderPreset,
+  devMode,
+  maxPanelsPerScene,
+}: {
+  fileSizeBytes: number;
+  imageModel: string;
+  renderPreset: RenderPreset;
+  devMode: boolean;
+  maxPanelsPerScene: number;
+}): CreditRange {
+  // Estimate scenes from file size (~10 KB per scene)
+  const estimatedScenes = devMode
+    ? 1
+    : Math.max(1, Math.min(150, Math.round(fileSizeBytes / 10_000)));
+
+  // Panels: scenes × avg fill factor (scenes rarely hit the max)
+  const estimatedPanels = Math.round(estimatedScenes * maxPanelsPerScene * 0.7);
+
+  // Image cost per panel in USD, keyed by model + preset
+  const modelLower = imageModel.toLowerCase();
+  let imageCostPerPanel: number;
+  if (modelLower === "canary/image-primary" || modelLower.includes("gpt-image")) {
+    imageCostPerPanel =
+      renderPreset === "high_quality" ? 0.28 : renderPreset === "balanced" ? 0.042 : 0.011;
+  } else if (modelLower === "canary/image-fast" || modelLower.includes("gemini") || modelLower.includes("flash")) {
+    imageCostPerPanel = 0.015;
+  } else if (modelLower.includes("flux")) {
+    imageCostPerPanel = renderPreset === "high_quality" ? 0.075 : 0.055;
+  } else {
+    imageCostPerPanel = 0.025;
+  }
+  if (devMode) imageCostPerPanel *= 0.6; // dev mode downscales image quality
+
+  // Text-stage costs (USD)
+  const extractCost = Math.max(0.01, fileSizeBytes * 0.000003); // ~$0.003/KB
+  const castCost = 0.05; // character & location reference images
+  const perSceneText = 0.035; // adapt + plan per scene
+  const textCostUsd = extractCost + castCost + estimatedScenes * perSceneText;
+  const imageCostUsd = estimatedPanels * imageCostPerPanel;
+  const totalUsd = textCostUsd + imageCostUsd;
+
+  // 100 credits per $1 (default rate matches backend PULP_CREDITS_PER_PROVIDER_USD)
+  const base = Math.ceil(totalUsd * 100);
+  return {
+    min: Math.max(10, Math.round(base * 0.75)),
+    max: Math.round(base * 1.5),
+  };
+}
+
+function formatCreditRange(range: CreditRange): string {
+  const fmt = (n: number) =>
+    n >= 10_000 ? `${(n / 1000).toFixed(0)}k` : n.toLocaleString();
+  return `~${fmt(range.min)}–${fmt(range.max)}`;
+}
+
 export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepProps) {
   const { language, t } = useI18n();
   const [name, setName] = useState("");
@@ -289,19 +352,40 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
         </button>
 
         {/* Credit preview strip */}
-        <div className="mt-3 flex items-center justify-between gap-3 border-[2px] border-ink-black bg-chip-gold px-4 py-2 shadow-ink-sm">
-          <div>
-            <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60">
-              {t("CREDITS REQUIRED")}
+        {(() => {
+          const estimate = file
+            ? estimateProjectCredits({
+                fileSizeBytes: file.size,
+                imageModel,
+                renderPreset: devMode ? "fast_draft" : renderPreset,
+                devMode,
+                maxPanelsPerScene,
+              })
+            : null;
+          return (
+            <div className="mt-3 flex items-center justify-between gap-3 border-[2px] border-ink-black bg-chip-gold px-4 py-2 shadow-ink-sm">
+              <div>
+                <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60">
+                  {t("ESTIMATED CREDITS")}
+                </div>
+                <div className="mt-0.5 font-display text-[1.05rem] font-bold leading-none tracking-[-0.03em] text-ink-black tabular-nums">
+                  {estimate ? formatCreditRange(estimate) : t("Upload a file to estimate")}
+                </div>
+              </div>
+              <div className="text-right font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/55">
+                {estimate ? (
+                  <>
+                    {devMode ? "1 scene (dev)" : `~${Math.max(1, Math.round((file?.size ?? 0) / 10_000))} scenes`}
+                    <br />
+                    {maxPanelsPerScene} {t("panels/scene")}
+                  </>
+                ) : (
+                  <>{maxPanelsPerScene} {t("panels/scene")}</>
+                )}
+              </div>
             </div>
-            <div className="mt-0.5 font-display text-[1.05rem] font-bold leading-none tracking-[-0.03em] text-ink-black tabular-nums">
-              Reservation checked before each model-backed action
-            </div>
-          </div>
-          <div className="text-right font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/55">
-            {maxPanelsPerScene} {t("panels/scene")}
-          </div>
-        </div>
+          );
+        })()}
 
         {showAdvanced && (
           <div className="mt-4 space-y-3 border-t-[2px] border-ink-black pt-4">

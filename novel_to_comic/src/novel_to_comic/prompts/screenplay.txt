@@ -17,13 +17,17 @@ CONVERT DESCRIPTION TO VISIBLE ACTION.
 "She felt afraid" → "She backs against the wall, eyes wide, hands trembling at her sides"
 Remove all interiority (feelings, backstory) unless it can be shown as a physical action or thought bubble.
 
-NARRATION: SOURCE-FIRST AND RARE.
+NARRATION: ADAPTED CAPTIONS WITH SOURCE TRACE, AND RARE.
 Emit first-class narration beats only when the finished comic would lose important source meaning if the passage were represented only as image, action, dialogue, or SFX.
 Narration is a preservation tool, not a default storytelling layer.
-Use exact source wording and punctuation for narration content, except for cleaning obvious OCR/page artifacts.
+For narration beats, "source_text" is the exact source wording and punctuation, except for cleaning obvious OCR/page artifacts.
+For narration beats, "content" is the finished comic caption: faithful to source_text, short, self-contained, and readable without surrounding prose.
+Do not leave vague pronouns or references in "content" if the source sentence only makes sense in the novel context.
+Do not add facts, symbolism, or explanation that are not supported by the source passage.
+Keep source_text in the original source language. Write content in the requested output language.
 Do not invent narration. Do not explain symbolism. Do not caption scenery or emotion that the image can carry clearly.
 Good narration candidates include explicit narrator turns, time/place context that cannot be inferred visually, ironic reversals, and closing lines whose exact language is essential.
-For every narration beat, include narration_reason explaining why the exact source line may need a caption.
+For every narration beat, include narration_reason explaining why this source passage may need a caption.
 
 THOUGHT BUBBLES: use sparingly (max 2 per scene) for interior monologue that cannot be shown any other way.
 
@@ -60,7 +64,8 @@ Output JSON:
     {
       "type": "action" | "dialogue" | "narration" | "sfx" | "transition",
       "character_id": "..." (null for action/sfx/transition),
-      "content": "exact dialogue text OR observable action description",
+      "content": "exact dialogue text OR observable action description OR adapted narration caption",
+      "source_text": "optional exact source wording, required when type is \"narration\"",
       "direction": "optional visual direction note (camera angle, emphasis, etc.)",
       "transition_type": "optional one of \"smooth_continuation\" | \"match_cut\" | \"hard_cut\" (only for transition beats)",
       "narration_reason": "optional short reason, required when type is \"narration\""

@@ -26,6 +26,7 @@ class LayoutPlanBeatRef(BaseModel):
     type: str
     character_id: str | None = None
     content: str
+    source_text: str | None = None
     direction: str | None = None
     transition_type: str | None = None
     narration_reason: str | None = None
@@ -39,6 +40,7 @@ class NarrationDecision(BaseModel):
     scene_id: str
     beat_index: int
     source_text: str
+    caption_text: str | None = None
     candidate_reason: str | None = None
     decision: NarrationDecisionStatus
     mode: NarrationMode | None = None

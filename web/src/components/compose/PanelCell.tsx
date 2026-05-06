@@ -16,6 +16,11 @@ interface PanelCellProps {
   imageBaseUrl: string;
 }
 
+function captionZoneClass(preferredZone: string | null | undefined): string {
+  const zone = preferredZone && preferredZone !== "none" ? preferredZone : "top";
+  return `zone-${zone.replaceAll("_", "-")}`;
+}
+
 /**
  * One panel cell in the grid — composes image + bubbles + SFX.
  * Mirrors Python html_renderer._panel_html().
@@ -63,6 +68,11 @@ export function PanelCell({
 
   const isReframing = reframePanelId === panel.id;
   const isActive = selectedPanelId === panel.id;
+  const narrationByZone = autoNarration.reduce<Record<string, typeof autoNarration>>((acc, bubble) => {
+    const zoneClass = captionZoneClass(bubble.preferred_zone);
+    acc[zoneClass] = [...(acc[zoneClass] ?? []), bubble];
+    return acc;
+  }, {});
 
   const panelClass = [
     "panel",
@@ -84,9 +94,9 @@ export function PanelCell({
         imageOffsetY={panel.image_offset_y}
       />
 
-      {autoNarration.length > 0 && (
-        <div className="captions">
-          {autoNarration.map((b) => (
+      {Object.entries(narrationByZone).map(([zoneClass, bubbles]) => (
+        <div key={zoneClass} className={`captions ${zoneClass}`}>
+          {bubbles.map((b) => (
             <BubbleElement
               key={b.id}
               bubble={b}
@@ -94,7 +104,7 @@ export function PanelCell({
             />
           ))}
         </div>
-      )}
+      ))}
 
       {autoSpeech.length > 0 && (
         <div className="bubble-auto">

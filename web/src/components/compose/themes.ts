@@ -14,7 +14,7 @@ export const BASE_VARS: Record<string, string> = {
   "--caption-bg":           "#F7F0DC",
   "--caption-border":       "#9B8A5A",
   "--caption-color":        "#3A2A10",
-  "--caption-font-size":    "11px",
+  "--caption-font-size":    "26px",
   "--bubble-bg":            "#FFFFFF",
   "--bubble-border":        "#1A1A1A",
   "--bubble-border-width":  "2px",
@@ -120,6 +120,10 @@ export function sanitizeStyleVars(input: Record<string, string> | undefined): Re
   const bubbleFontSize = normalizePx(out["--bubble-font-size"], 16, 200);
   if (bubbleFontSize) out["--bubble-font-size"] = bubbleFontSize;
   else delete out["--bubble-font-size"];
+
+  const captionFontSize = normalizePx(out["--caption-font-size"], 14, 80);
+  if (captionFontSize) out["--caption-font-size"] = captionFontSize;
+  else delete out["--caption-font-size"];
 
   const bubbleRadius = normalizePx(out["--bubble-radius"], 6, 120);
   if (bubbleRadius) out["--bubble-radius"] = bubbleRadius;

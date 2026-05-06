@@ -45,8 +45,8 @@ export interface StageInfo {
   items_done: number;
   items_total: number;
   items_failed: string[];
-  cost_usd: number;
-  estimated_cost_usd: number;
+  cost_credits: number;
+  estimated_cost_credits: number;
   error: string | null;
   started_at: string | null;
   finished_at: string | null;
@@ -59,7 +59,7 @@ export interface ProjectSummary {
   project_name: string;
   author?: string | null;
   created_at: string;
-  total_cost_usd: number;
+  total_cost_credits: number;
   furthest_stage: string | null;
   is_running: boolean;
   has_cover: boolean;
@@ -70,9 +70,9 @@ export interface ProjectStatus {
   id: string;
   project_name: string;
   created_at: string;
-  total_cost_usd: number;
-  misc_cost_usd: number;
-  total_estimated_cost_usd: number;
+  total_cost_credits: number;
+  misc_cost_credits: number;
+  total_estimated_cost_credits: number;
   is_running: boolean;
   has_cover: boolean;
   style_selected: boolean;
@@ -274,6 +274,7 @@ export interface ScreenplayBeat {
   type: string;
   character_id: string | null;
   content: string;
+  source_text?: string | null;
   direction: string | null;
   transition_type: string | null;
   narration_reason?: string | null;
@@ -311,6 +312,7 @@ export interface LayoutPlanBeatRef {
   type: string;
   character_id: string | null;
   content: string;
+  source_text?: string | null;
   direction: string | null;
   transition_type: string | null;
   narration_reason?: string | null;
@@ -324,6 +326,7 @@ export interface NarrationDecision {
   scene_id: string;
   beat_index: number;
   source_text: string;
+  caption_text: string | null;
   candidate_reason: string | null;
   decision: "rendered" | "visualized" | "dropped";
   mode: "attached_caption" | "caption_panel" | null;

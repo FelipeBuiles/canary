@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import {
-  useApproveStage,
   useLayoutPlan,
   usePanelsForScene,
   usePanelSummaries,
@@ -83,11 +82,10 @@ function ShotPlanActionButton({ project }: { project: string }) {
   const estimateStage = action.kind === "none" ? undefined : action.estimateStage;
   const { data: estimate } = useStageEstimate(project, estimateStage);
   const runPipeline = useRunPipeline();
-  const approveStage = useApproveStage();
   const connect = usePipelineStore((state) => state.connect);
   const clearEvents = usePipelineStore((state) => state.clearEvents);
 
-  const busy = runPipeline.isPending || approveStage.isPending || status?.is_running;
+  const busy = runPipeline.isPending || status?.is_running;
   const estimateCredits = estimate?.estimate_credits;
   const label =
     estimateCredits && estimateCredits > 0
@@ -103,13 +101,6 @@ function ShotPlanActionButton({ project }: { project: string }) {
     if (action.kind === "none") return;
     if (action.kind === "run") { run(action.backendStage); return; }
     if (action.kind === "rerun") { run(action.backendStage, true); return; }
-    if (action.kind === "approve") {
-      const a = action;
-      approveStage.mutate(
-        { project, stage: a.backendStage },
-        { onSuccess: () => { if (a.runAfterApprove && a.estimateStage) run(a.estimateStage); } },
-      );
-    }
   }
 
   return (

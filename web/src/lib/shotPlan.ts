@@ -19,13 +19,6 @@ export type ShotPlanAction =
       estimateStage: ShotPlanBackendStage;
       label: string;
     }
-  | {
-      kind: "approve";
-      backendStage: ShotPlanBackendStage;
-      estimateStage?: ShotPlanBackendStage;
-      label: string;
-      runAfterApprove?: boolean;
-    }
   | { kind: "none"; label: string };
 
 function info(status: ProjectStatus | undefined, stage: ShotPlanBackendStage): StageInfo | undefined {
@@ -51,14 +44,15 @@ export function getShotPlanSubStatus(status: ProjectStatus | undefined): ShotPla
   let compositeStatus: StageStatus = "pending";
   if (plan?.status === "failed" || storyboard?.status === "failed") {
     compositeStatus = "failed";
-  } else if (plan?.status === "running" || storyboard?.status === "running") {
-    compositeStatus = "running";
   } else if (failedCount > 0) {
     compositeStatus = "failed";
-  } else if (plan?.status === "awaiting_review" || storyboard?.status === "awaiting_review") {
-    compositeStatus = "awaiting_review";
+  } else if (plan?.status === "running" || storyboard?.status === "running") {
+    compositeStatus = "running";
   } else if (plan?.status === "complete" && storyboard?.status === "complete") {
     compositeStatus = "complete";
+  } else if (plan?.status === "complete") {
+    // plan done, storyboard still auto-chaining
+    compositeStatus = "running";
   }
 
   const layoutLabel = label(plan, "complete", "pending");
@@ -81,32 +75,22 @@ export function getShotPlanAction(status: ProjectStatus | undefined): ShotPlanAc
   const plan = info(status, "plan");
   const storyboard = info(status, "storyboard");
 
+  // Failures: offer a rerun (which auto-chains the rest)
   if (plan?.status === "failed" || (plan?.items_failed.length ?? 0) > 0) {
     return { kind: "rerun", backendStage: "plan", estimateStage: "plan", label: "Fix Shot Plan" };
   }
-  if (!plan || plan.status === "pending") {
-    return { kind: "run", backendStage: "plan", estimateStage: "plan", label: "Run Shot Plan" };
-  }
-  if (plan.status === "running") return { kind: "none", label: "Shot Plan Running" };
-  if (plan.status === "awaiting_review") {
-    return {
-      kind: "approve",
-      backendStage: "plan",
-      estimateStage: "storyboard",
-      label: "Approve Layout & Build Board",
-      runAfterApprove: true,
-    };
-  }
-
   if (storyboard?.status === "failed" || (storyboard?.items_failed.length ?? 0) > 0) {
     return { kind: "rerun", backendStage: "storyboard", estimateStage: "storyboard", label: "Fix Board" };
   }
-  if (!storyboard || storyboard.status === "pending") {
-    return { kind: "run", backendStage: "storyboard", estimateStage: "storyboard", label: "Build Board" };
+
+  // Running states
+  if (plan?.status === "running" || storyboard?.status === "running") {
+    return { kind: "none", label: "Running…" };
   }
-  if (storyboard.status === "running") return { kind: "none", label: "Board Running" };
-  if (storyboard.status === "awaiting_review") {
-    return { kind: "approve", backendStage: "storyboard", label: "Approve Shot Plan & Continue" };
+
+  // Plan not yet started (auto-chains storyboard+direct)
+  if (!plan || plan.status === "pending") {
+    return { kind: "run", backendStage: "plan", estimateStage: "plan", label: "Run Shot Plan" };
   }
 
   return { kind: "none", label: "Shot Plan Complete" };

@@ -52,7 +52,7 @@ _BASE_VARS: dict[str, str] = {
     "--caption-bg":           "#F7F0DC",
     "--caption-border":       "#9B8A5A",
     "--caption-color":        "#3A2A10",
-    "--caption-font-size":    "11px",
+    "--caption-font-size":    "26px",
     "--bubble-bg":            "#FFFFFF",
     "--bubble-border":        "#1A1A1A",
     "--bubble-border-width":  "2px",
@@ -225,27 +225,60 @@ body {
 /* ── Narration captions — auto (top of panel) ── */
 .captions {
   position: absolute;
-  top: 6px;
-  left: 6px;
-  right: 6px;
+  top: 10px;
+  left: 10px;
+  right: 10px;
   z-index: 2;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  align-items: flex-start;
+  gap: 8px;
   pointer-events: none;
+}
+
+.captions.zone-bottom {
+  top: auto;
+  bottom: 10px;
+}
+
+.captions.zone-right {
+  left: auto;
+  width: 44%;
+}
+
+.captions.zone-left {
+  right: auto;
+  width: 44%;
+}
+
+.captions.zone-overlay-center {
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%);
+  align-items: center;
 }
 
 .caption {
   background: var(--caption-bg);
-  border: 1px solid var(--caption-border);
+  border: 2px solid var(--caption-border);
+  border-radius: 2px;
   color: var(--caption-color);
-  padding: 5px 9px;
-  font-family: 'Bangers', 'Arial Narrow', fantasy, sans-serif;
+  padding: 8px 14px;
+  font-family: 'ComicNeue', 'Comic Neue', 'Comic Sans MS', cursive, sans-serif;
   font-size: var(--caption-font-size);
+  font-weight: bold;
   line-height: 1.35;
-  letter-spacing: 0.02em;
+  max-width: 86%;
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.24);
+  word-break: break-word;
   user-select: none;
   -webkit-user-select: none;
+}
+
+.caption.full-width {
+  width: 100%;
+  max-width: 100%;
+  text-align: center;
 }
 
 /* ── Speech/thought bubbles — auto (flex-end at panel bottom) ── */
@@ -468,7 +501,7 @@ _THEME_HEADER = """\
  *    --caption-bg              background (#F7F0DC)
  *    --caption-border          border (#9B8A5A)
  *    --caption-color           text colour (#3A2A10)
- *    --caption-font-size       (11px)
+ *    --caption-font-size       (26px)
  *
  *  Speech / thought bubbles
  *    --bubble-bg               background (#FFFFFF)
@@ -621,6 +654,13 @@ def _resolve_tail_direction(bubble: Bubble) -> str:
     return "up"  # default: bubble at bottom → tail points up
 
 
+def _caption_zone_class(preferred_zone: str | None) -> str:
+    zone = preferred_zone or "top"
+    if zone == "none":
+        zone = "top"
+    return f"zone-{zone.replace('_', '-')}"
+
+
 def _bubble_html(bubble: Bubble, character_voices: dict[str, dict] | None = None) -> str:
     """Render one Bubble to an HTML element string.
 
@@ -628,7 +668,8 @@ def _bubble_html(bubble: Bubble, character_voices: dict[str, dict] | None = None
     a speaker_id matching a voice, the voice style is applied first, then
     per-bubble overrides take precedence.
     """
-    classes = ["bubble", bubble.type, bubble.side]
+    is_narration = bubble.type == "narration"
+    classes = ["caption", bubble.type] if is_narration else ["bubble", bubble.type, bubble.side]
     inline: list[str] = []
     has_svg_tail = False
 
@@ -682,7 +723,7 @@ def _bubble_html(bubble: Bubble, character_voices: dict[str, dict] | None = None
     if getattr(bubble, "border_radius", None) is not None:
         inline.append(f"border-radius: {bubble.border_radius}px")
 
-    if bubble.tail_x is not None and bubble.tail_y is not None:
+    if bubble.tail_x is not None and bubble.tail_y is not None and not is_narration:
         classes.append("svg-tail")
         has_svg_tail = True
     elif bubble.type == "speech":
@@ -693,7 +734,7 @@ def _bubble_html(bubble: Bubble, character_voices: dict[str, dict] | None = None
     cls = " ".join(classes)
 
     speaker_html = ""
-    if bubble.speaker_name:
+    if bubble.speaker_name and not is_narration:
         speaker_html = f'<span class="speaker">{_e(bubble.speaker_name)}:</span>'
 
     tail_html = _svg_tail(bubble) if has_svg_tail else ""
@@ -770,14 +811,17 @@ def _panel_html(
                       if b.type != "narration" and b.x is None]
     pinned         = [b for b in panel.bubbles if b.x is not None]
 
-    # Auto narration → .captions container at top
+    # Auto narration → zone-aware .captions containers
     captions_html = ""
     if auto_narration:
-        items = "\n".join(
-            f'    <div class="caption" data-id="{_e(b.id)}">{_e(b.text)}</div>'
-            for b in auto_narration
-        )
-        captions_html = f'  <div class="captions">\n{items}\n  </div>'
+        groups: dict[str, list[Bubble]] = {}
+        for bubble in auto_narration:
+            groups.setdefault(_caption_zone_class(bubble.preferred_zone), []).append(bubble)
+        containers: list[str] = []
+        for zone_class, bubbles in groups.items():
+            items = "\n".join(f"    {_bubble_html(b, character_voices)}" for b in bubbles)
+            containers.append(f'  <div class="captions {zone_class}">\n{items}\n  </div>')
+        captions_html = "\n".join(containers)
 
     # Auto speech/thought → .bubble-auto flex container at bottom
     auto_html = ""
