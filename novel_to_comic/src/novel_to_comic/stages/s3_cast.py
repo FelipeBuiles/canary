@@ -230,7 +230,8 @@ def _character_ref_prompt(config: Config, story_bible: StoryBible, char: Charact
         f"bottom-right: three-quarter with one hand raised in gesture. "
         f"All four figures are the SAME character - identical face, hair, build, and clothing. "
         f"Each figure is fully contained within its quadrant with white space around it - no figure touches or crosses the edge of the image. "
-        f"Pure white background. Full body head to toe in each quadrant, no cropping. No text, no labels, no grid lines.\n\n"
+        f"Pure white background. Full body head to toe in each quadrant, no cropping. No text, no labels, no grid lines. "
+        f"Clean controlled surfaces; no noisy grain, speckled dappling, repeated texture fields, or muddy micro-detail.\n\n"
         f"Render every figure in the style described above."
     )
 
@@ -238,8 +239,9 @@ def _character_ref_prompt(config: Config, story_bible: StoryBible, char: Charact
 def _location_plate_prompt(config: Config, loc) -> str:
     return (
         f"{config.style_template} {loc.visual_anchor} "
-        f"Wide establishing shot, no characters present, detailed background, "
-        f"cinematic composition. No text."
+        f"Wide establishing shot, no characters present, clean readable background, "
+        f"cinematic composition. No text. No noisy grain, speckled dappling, "
+        f"repeated texture fields, pattern tiling, or muddy micro-detail."
     )
 
 

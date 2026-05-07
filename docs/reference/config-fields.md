@@ -36,7 +36,7 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `image_width` | `int` | `1024` | Target image width (Gemini ignores; Together/OpenAI respect it) |
 | `image_height` | `int` | `1024` | Target image height |
 | `image_steps` | `int` | `28` | Inference steps |
-| `image_quality` | `str` | `'auto'` | OpenAI GPT Image quality: `auto` \| `low` \| `medium` \| `high` |
+| `image_quality` | `str` | `'medium'` | OpenAI GPT Image quality: `auto` \| `low` \| `medium` \| `high` |
 | `flux_guidance_scale` | `float` | `3.5` | Guidance scale for FLUX/Together AI models |
 | `continuity_mode` | `str` | `'hybrid'` | Character consistency mode: `off` \| `text_only` \| `ref_only` \| `hybrid` |
 | `negative_prompt` | `str` | `'ugly, deformed, blurry, ...'` | Applied to Together AI / SDXL models only (Gemini ignores) |

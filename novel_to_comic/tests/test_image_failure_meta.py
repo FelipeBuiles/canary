@@ -107,6 +107,45 @@ def test_panel_estimate_counts_actual_uploaded_references(tmp_path):
     assert cost == pytest.approx(0.0575)
 
 
+def test_gpt_image_2_reference_resolution_keeps_location_plate_text_only(tmp_path):
+    sample_dir = tmp_path / "samples"
+    sample_dir.mkdir()
+    style_path = sample_dir / "style_1.png"
+    style_path.write_bytes(b"style")
+
+    plate_dir = tmp_path / "plates"
+    plate_dir.mkdir()
+    plate_path = plate_dir / "loc_001.png"
+    plate_path.write_bytes(b"plate")
+
+    prompt = ImagePrompt(
+        scene_id="scene_001",
+        panel_number=1,
+        full_prompt="A panel.",
+        width=768,
+        height=1024,
+        steps=28,
+    )
+
+    _, primary_style_refs = s7_draw.resolve_panel_reference_paths(
+        Config(),
+        tmp_path,
+        prompt,
+        style_sample=style_path,
+        scene_to_location={"scene_001": "loc_001"},
+    )
+    _, fast_style_refs = s7_draw.resolve_panel_reference_paths(
+        Config(image_model="canary/image-fast"),
+        tmp_path,
+        prompt,
+        style_sample=style_path,
+        scene_to_location={"scene_001": "loc_001"},
+    )
+
+    assert primary_style_refs == [style_path]
+    assert fast_style_refs == [style_path, plate_path]
+
+
 def test_list_images_marks_failure_metadata_as_failed_even_with_existing_image(tmp_path):
     scene_dir = tmp_path / "draw" / "scene_001"
     scene_dir.mkdir(parents=True)

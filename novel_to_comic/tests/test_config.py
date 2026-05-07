@@ -52,6 +52,12 @@ class TestConfigDefaults:
     def test_style_template_is_populated(self):
         cfg = Config()
         assert len(cfg.style_template) > 0
+        assert "noisy grain" in cfg.style_template
+        assert "repeated texture fields" in cfg.style_template
+
+    def test_image_quality_defaults_to_medium(self):
+        cfg = Config()
+        assert cfg.image_quality == "medium"
 
     def test_cost_limit_default_is_none(self):
         cfg = Config()

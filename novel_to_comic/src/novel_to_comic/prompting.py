@@ -494,13 +494,100 @@ def render_panel_prompt_body(prompt: ImagePrompt) -> str:
     )
 
 
+_GENERATION_RENDERING_CONSTRAINTS = (
+    "Render clean, coherent surfaces with readable forms. Avoid stochastic grain, "
+    "speckled dappling, repeated brush dabs, tiled patterns, JPEG artifacts, noisy "
+    "micro-detail, and muddy over-texturing. If the selected style mentions "
+    "brushwork, hatching, weave, or texture, interpret it as broad intentional "
+    "structure rather than all-over noise."
+)
+
+_REFERENCE_CONSTRAINTS = (
+    "Use reference images only for identity, continuity, palette, and broad style. "
+    "Do not copy sample-image artifacts, borders, layout grids, repeated texture "
+    "fields, background patterns, or incidental noise."
+)
+
+
+def _render_subject_lines(prompt: ImagePrompt) -> list[str]:
+    subjects = getattr(prompt, "subjects", []) or []
+    lines: list[str] = []
+    for subject in subjects:
+        details = [
+            subject.name,
+            subject.identity,
+            subject.action,
+            f"expression: {subject.expression}" if subject.expression else "",
+            f"position: {subject.position}" if subject.position else "",
+        ]
+        line = ", ".join(_clean(part) for part in details if _clean(part))
+        if line:
+            lines.append(f"- {line}")
+    return lines
+
+
+def _append_section(sections: list[str], title: str, content: str | list[str] | None) -> None:
+    if isinstance(content, list):
+        cleaned = [line for line in content if _clean(line)]
+        if cleaned:
+            sections.append(f"{title}:\n" + "\n".join(cleaned))
+        return
+    text = _clean(content or "")
+    if text:
+        sections.append(f"{title}:\n{text}")
+
+
 def render_generation_prompt(prompt: ImagePrompt, style_template: str) -> str:
     style = _clean(style_template or getattr(prompt, "style", None))
     body = _clean(getattr(prompt, "full_prompt", "")) or render_panel_prompt_body(prompt)
-    output = f"{style}\n\n{body}" if style else body
+    has_structured_fields = any([
+        getattr(prompt, "subjects", None),
+        getattr(prompt, "composition", None),
+        getattr(prompt, "setting", None),
+        getattr(prompt, "lighting", None),
+        getattr(prompt, "mood", None),
+        getattr(prompt, "props", None),
+        getattr(prompt, "constraints", None),
+    ])
+    sections: list[str] = ["Create one finished comic panel image."]
+
+    _append_section(sections, "Style", style)
+    _append_section(sections, "Characters", _render_subject_lines(prompt))
+    _append_section(sections, "Composition", getattr(prompt, "composition", None))
+    _append_section(sections, "Setting", getattr(prompt, "setting", None))
+    _append_section(sections, "Lighting", getattr(prompt, "lighting", None))
+    _append_section(sections, "Mood", getattr(prompt, "mood", None))
+    _append_section(
+        sections,
+        "Key props",
+        [f"- {_clean(prop)}" for prop in (getattr(prompt, "props", []) or [])],
+    )
+
+    constraints = _clean(getattr(prompt, "constraints", None))
+    if getattr(prompt, "has_narration_caption", False):
+        note = (
+            "narration caption will be lettered in post-production only; "
+            "do not draw caption boxes, speech bubbles, labels, signs, or readable text"
+        )
+        constraints = f"{constraints}; {note}" if constraints else note
+    constraint_lines = [
+        f"- {part.strip()}"
+        for part in constraints.split(";")
+        if part.strip()
+    ]
+    constraint_lines.extend([
+        f"- {_GENERATION_RENDERING_CONSTRAINTS}",
+        f"- {_REFERENCE_CONSTRAINTS}",
+    ])
+    _append_section(sections, "Constraints", constraint_lines)
+
+    if body and not has_structured_fields:
+        _append_section(sections, "Panel brief", body)
+
+    output = "\n\n".join(sections)
 
     if getattr(prompt, "continuity_note", None):
-        output = f"{output}\n\n{prompt.continuity_note}"
+        output = f"{output}\n\nContinuity:\n{prompt.continuity_note}"
 
     return output
 
@@ -523,11 +610,13 @@ def build_style_sample_prompt(config: Config, story_bible: StoryBible) -> str:
         "Use a single portrait 4:5 panel, filled edge to edge with no letterboxing, "
         "pillarboxing, border margins, text, speech bubbles, or captions. "
         "The selected visual medium must be obvious at first glance: emphasize its "
-        "materials, mark-making, texture, color handling, rendering conventions, "
-        "lighting language, and composition choices.\n\n"
+        "materials, mark-making, color handling, rendering conventions, lighting "
+        "language, and composition choices while keeping surfaces clean and readable.\n\n"
         "STYLE AUTHORITY - demonstrate this exactly:\n"
         f"{config.style_template}\n\n"
         "Every visible choice should support the style authority above. Do not fall "
         "back to generic cinematic, comic, or digital illustration defaults unless "
-        "they are explicitly part of that style."
+        "they are explicitly part of that style. Avoid stochastic grain, speckled "
+        "dappling, repeated texture fields, pattern tiling, compression artifacts, "
+        "and muddy micro-detail."
     )

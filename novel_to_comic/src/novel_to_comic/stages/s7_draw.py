@@ -15,7 +15,7 @@ from rich.console import Console
 
 from novel_to_comic import artifacts
 from novel_to_comic.clients import flux
-from novel_to_comic.config import Config
+from novel_to_comic.config import Config, GATEWAY_IMAGE_PRIMARY_MODEL
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.layout_planning import load_layout_plan, prompt_path_for_panel, scene_panel_map
 from novel_to_comic.models.prompt import ImagePrompt
@@ -67,6 +67,22 @@ def _should_use_prev_panel_image(prev_transition_type: str | None) -> bool:
 
 def _use_continuity_refs(config: Config) -> bool:
     return getattr(config, "continuity_mode", "hybrid") in {"ref_only", "hybrid"}
+
+
+def _uses_gpt_image_2(config: Config) -> bool:
+    model = config.effective_image_model().strip().lower()
+    return model in {
+        "gpt-image-2",
+        "openai/gpt-image-2",
+        GATEWAY_IMAGE_PRIMARY_MODEL,
+    }
+
+
+def _use_location_plate_refs(config: Config) -> bool:
+    # GPT Image 2 processes every supplied image at high fidelity, so location
+    # plates can leak repeated background textures into panels. Keep locations
+    # text-driven for the primary GPT Image route.
+    return not _uses_gpt_image_2(config)
 
 
 def _find_style_sample(project_dir: Path, style_template: str) -> Path | None:
@@ -149,7 +165,7 @@ def resolve_panel_reference_paths(
         if style_sample and style_sample.exists():
             style_refs.append(style_sample)
         loc_id = (scene_to_location or {}).get(prompt.scene_id)
-        if loc_id:
+        if loc_id and _use_location_plate_refs(config):
             plate = project_dir / "plates" / f"{loc_id}.png"
             if plate.exists():
                 style_refs.append(plate)
@@ -185,11 +201,13 @@ def estimate_panel_image_cost_usd(
         style_sample=style_sample,
         scene_to_location=scene_to_location,
     )
+    generation_prompt = render_generation_prompt(prompt, config.style_template)
     return estimate_image_cost(
         config.effective_image_model(),
         1,
         quality=getattr(config, "image_quality", None),
         ref_count=len(subject_refs) + len(style_refs),
+        prompt_text=generation_prompt,
     )
 
 
@@ -274,8 +292,10 @@ async def _generate_panel(
     Style / continuity refs are chosen in priority order per panel:
       - previous panel image (N-1) from the same scene when transition metadata
         indicates smooth continuity.
-      - style_sample + location plate — used for any panel that lacks a
-                       smooth-continuity predecessor (not only the first panel).
+      - style_sample + location plate — used for non-GPT-Image primary routes
+                       when a panel lacks a smooth-continuity predecessor.
+                       GPT Image 2 keeps location context text-only to avoid
+                       high-fidelity texture leakage from plates.
 
     Subject refs (character sheets / pose crops) are always passed first to
     flux.generate_image_multi_ref so character identity gets the strongest

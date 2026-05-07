@@ -39,7 +39,11 @@ model_list:
       vertex_location: os.environ/VERTEXAI_LOCATION
 
 litellm_settings:
-  callbacks: ["langfuse"]
+  # Langfuse logging happens directly from the Canary AI client (see
+  # ai/client.py::_log_langfuse_generation). The built-in LiteLLM callback was
+  # removed because it can't reach the image-edit endpoints' prompt/output —
+  # that's where "default-message-value" inputs and missing image cost came
+  # from on traces.
   set_verbose: false
   num_retries: 3
   retry_after: 2

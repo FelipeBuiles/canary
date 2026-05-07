@@ -145,7 +145,7 @@ def test_generate_image_writes_b64_response(monkeypatch, tmp_path: Path):
     assert request is not None
     assert request["url"].endswith("/v1/images/generations")
     assert request["json"]["model"] == "canary/image-primary"
-    assert request["json"]["quality"] == "auto"
+    assert request["json"]["quality"] == "medium"
     assert "steps" not in request["json"]
     assert "response_format" not in request["json"]
 
@@ -202,6 +202,31 @@ def test_generate_image_with_references_uses_image_edits(monkeypatch, tmp_path: 
     assert "response_format" not in request["data"]
     assert request["files"][0][0] == "image"
     assert request["files"][0][1][0] == "character.png"
+
+
+def test_gpt_image_2_alias_uses_exact_valid_panel_size(monkeypatch, tmp_path: Path):
+    image_bytes = b"fake png"
+    _patch_http(monkeypatch, {
+        "id": "img_1",
+        "model": "openai/gpt-image-2",
+        "data": [{"b64_json": base64.b64encode(image_bytes).decode()}],
+    })
+
+    output_path = tmp_path / "panel.png"
+    asyncio.run(
+        client.generate_image(
+            config=Config(),
+            model="canary/image-primary",
+            prompt="draw this",
+            output_path=output_path,
+            width=768,
+            height=1344,
+        )
+    )
+
+    request = _FakeAsyncClient.last_request
+    assert request is not None
+    assert request["json"]["size"] == "768x1344"
 
 
 def test_failed_request_estimate_all_finalizes_billable_usage(monkeypatch, _patch_events):

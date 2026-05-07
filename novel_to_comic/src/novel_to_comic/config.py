@@ -115,7 +115,7 @@ class Config(BaseModel):
     image_width: int = 1024
     image_height: int = 1024
     image_steps: int = 28
-    image_quality: str = "auto"  # OpenAI GPT Image quality: auto | low | medium | high
+    image_quality: str = "medium"  # OpenAI GPT Image quality: auto | low | medium | high
     flux_guidance_scale: float = 3.5
     continuity_mode: str = "hybrid"  # off | text_only | ref_only | hybrid
 
@@ -134,11 +134,12 @@ class Config(BaseModel):
     # Style template (injected into every image prompt).
     # Default is intentionally generic — no art style, no medium, no rendering technique.
     # Override in config.yaml to get the look you want:
-    #   Realistic:   "Cinematic photorealistic, natural lighting, film grain, shallow DOF."
+    #   Realistic:   "Cinematic photorealistic, natural lighting, shallow DOF."
     #   Comic:       "Bold graphic novel style, cel-shaded coloring, thick ink outlines."
     #   Painted:     "Oil painting, visible brushwork, rich saturated colour."
     style_template: str = (
-        "High quality visual storytelling. Dramatic natural lighting, detailed environments. "
+        "High quality visual storytelling. Dramatic natural lighting, clean readable environments. "
+        "Controlled surface detail without noisy grain, speckled dappling, repeated texture fields, or muddy micro-detail. "
         "Faces rendered with natural individuality and subtle imperfection — never idealized or airbrushed. "
         "All facial expressions understated and restrained; emotion conveyed through the eyes and posture alone."
     )
@@ -381,7 +382,7 @@ negative_prompt: "{config.negative_prompt}"  # applied to Together AI models onl
 #
 # Realistic:
 #   style_template: |
-#     Cinematic photorealistic, natural film grain, shallow depth of field,
+#     Cinematic photorealistic, natural lighting, shallow depth of field,
 #     dramatic practical lighting, true-to-life skin texture. Faces with
 #     natural asymmetry and lived-in features. Never illustrated or painted.
 #
@@ -393,7 +394,7 @@ negative_prompt: "{config.negative_prompt}"  # applied to Together AI models onl
 # Painted / painterly:
 #   style_template: |
 #     Oil painting, visible loose brushwork, rich saturated colour,
-#     dramatic chiaroscuro lighting, textured canvas feel.
+#     dramatic chiaroscuro lighting, clean readable surfaces.
 #
 style_template: |
   {config.style_template}

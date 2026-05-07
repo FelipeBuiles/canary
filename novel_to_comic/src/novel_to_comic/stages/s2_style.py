@@ -32,6 +32,11 @@ _SYSTEM_PROMPT = (
     "At least 3 of the 5 should complement the story's mood — but include at least 1 unexpected or contrasting choice "
     "that could reveal a surprising side of the story. "
     "Each template is a single paragraph of 40-70 words of vivid, specific visual direction. "
+    "Prioritize controlled, readable rendering with coherent shapes and intentional marks. "
+    "Do not ask for stochastic grain, noisy speckling, all-over dappling, repeated texture fields, "
+    "compression artifacts, muddy micro-detail, or pattern tiling. If a style includes brushwork, "
+    "hatching, weave, or other surface treatment, describe it as broad intentional structure rather "
+    "than noise. "
     "Write naturally — do NOT follow a rigid 'medium, palette, lighting, composition, mood' formula. "
     "Vary sentence structure, what you emphasize, and how you describe each style. "
     "Output a JSON array only, no markdown. "
@@ -65,7 +70,7 @@ async def generate_suggestions(
         f"Generate 5 style options that would suit this story's tone. "
         f"Each template must describe a general visual aesthetic — do NOT reference specific characters, "
         f"locations, or plot elements from the story. The template will be combined with story details later, "
-        f"so it should only define the visual style (medium, palette, texture, atmosphere). "
+        f"so it should only define the visual style (medium, palette, surface handling, atmosphere). "
         f"Output JSON array of 5 objects: "
         f'[{{"label": "Style Name (2-4 words)", "template": "40-70 word description"}}, ...]'
     )

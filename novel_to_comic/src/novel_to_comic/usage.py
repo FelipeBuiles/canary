@@ -136,23 +136,29 @@ def estimate_image_cost(
     count: int,
     quality: str | None = None,
     ref_count: int = 0,
+    prompt_text: str | int | None = None,
 ) -> float:
     """Pre-call cost estimate for count images.
 
-    ref_count is the number of reference images being sent as input (edit
-    operations). Models that charge for input images have input_cost_per_image
-    set in litellm_pricing_overrides.yaml.
+    For token-priced image models (e.g. gpt-image-2), the resolver scales by
+    estimated prompt tokens, per-reference image input tokens, and per-quality
+    output tokens — same per-token rates the actual-usage path uses. For models
+    priced per-image, falls back to output_cost_per_image plus per-reference
+    input cost, both sourced from litellm_pricing_overrides.yaml.
     """
     resolver = get_pricing_resolver()
-    breakdown = resolver.estimate_image_cost(model, count)
+    prompt_tokens = estimate_token_count(prompt_text) if prompt_text is not None else 0
+    breakdown = resolver.estimate_image_cost(
+        model,
+        count,
+        quality=quality,
+        ref_count=ref_count,
+        prompt_tokens=prompt_tokens,
+    )
     if breakdown.source == "unknown_pricing":
         _warn_unknown_model(model)
         return 0.0
-    per_image = breakdown.cost_usd / count if count > 0 else 0.0
-    resolved_model = resolver.resolve_model(model)
-    if resolved_model in {"gpt-image-2", "openai/gpt-image-2"} and quality == "high":
-        per_image = 0.28
-    return count * per_image + resolver.estimate_ref_input_cost(model, ref_count)
+    return breakdown.cost_usd
 
 
 def audit_pricing(extra_models: list[str] | None = None) -> list[str]:

@@ -160,34 +160,94 @@ class PricingResolver:
             output_tokens=output_tokens,
         )
 
-    def estimate_image_cost(self, model: str, count: int) -> CostBreakdown:
-        return self.calculate(model_alias=model, operation="image", image_count=count)
+    def estimate_image_cost(
+        self,
+        model: str,
+        count: int,
+        *,
+        quality: str | None = None,
+        ref_count: int = 0,
+        prompt_tokens: int = 0,
+    ) -> CostBreakdown:
+        """Project the USD cost of `count` image requests.
 
-    def estimate_ref_input_cost(self, model: str, ref_count: int) -> float:
-        """Estimate input cost for reference images in image edit operations.
-
-        Checks model_overrides first so entries can extend models already in the
-        LiteLLM cost map (e.g. adding input_cost_per_image to a model that only
-        has output_cost_per_image in the cached map).
+        For models priced per-token (e.g. gpt-image-2), translates the request
+        into estimated input/output tokens and uses the same per-token math the
+        `calculate()` path uses for actual usage. For models priced per-image,
+        falls back to `output_cost_per_image` and adds per-reference input cost
+        from the override yaml.
         """
-        if ref_count <= 0:
-            return 0.0
         resolved = self.resolve_model(model)
-        overrides = self._overrides.get("model_overrides") or {}
-        spec: dict[str, Any] | None = None
-        for key in self._candidate_keys(resolved):
-            spec = overrides.get(key)
-            if spec:
-                break
-        if not spec:
+        pricing, source = self._pricing_for(resolved)
+        if pricing is None:
+            return CostBreakdown(
+                cost_usd=0.0,
+                source=source,
+                model_alias=model,
+                provider_model=resolved,
+                pricing_snapshot=self.pricing_snapshot,
+            )
+
+        input_per_token = float(pricing.get("input_cost_per_token") or 0.0)
+        output_per_token = float(pricing.get("output_cost_per_token") or 0.0)
+
+        if input_per_token > 0 or output_per_token > 0:
+            token_meta = self._image_token_meta(resolved)
+            ref_tokens = int(token_meta.get("image_input_tokens_per_ref") or 0)
+            quality_table = token_meta.get("image_output_tokens_by_quality") or {}
+            quality_key = (quality or "auto").lower()
+            output_tokens_per_image = int(
+                quality_table.get(quality_key)
+                or quality_table.get("auto")
+                or quality_table.get("medium")
+                or 0
+            )
+            input_tokens = prompt_tokens + ref_tokens * ref_count
+            output_tokens = output_tokens_per_image * count
+            cost_usd = input_tokens * input_per_token + output_tokens * output_per_token
+            return CostBreakdown(
+                cost_usd=cost_usd,
+                source=source,
+                model_alias=model,
+                provider_model=resolved,
+                pricing_snapshot=self.pricing_snapshot,
+            )
+
+        per_image = float(
+            pricing.get("output_cost_per_image")
+            or pricing.get("input_cost_per_image")
+            or pricing.get("per_image_usd")
+            or 0.0
+        )
+        ref_image_cost = float(pricing.get("input_cost_per_image") or 0.0)
+        if ref_image_cost <= 0 and ref_count > 0:
+            # Cached cost map often only carries `output_cost_per_image`; the
+            # override yaml is where per-reference pricing lives.
+            overrides = self._overrides.get("model_overrides") or {}
             for key in self._candidate_keys(resolved):
-                spec = self._cost_map.get(key)
-                if spec:
+                spec = overrides.get(key)
+                if isinstance(spec, dict) and spec.get("input_cost_per_image"):
+                    ref_image_cost = float(spec["input_cost_per_image"])
                     break
-        if not spec:
-            return 0.0
-        cost_per_ref = float(spec.get("input_cost_per_image") or 0.0)
-        return ref_count * cost_per_ref
+        cost_usd = count * per_image + ref_image_cost * ref_count
+        return CostBreakdown(
+            cost_usd=cost_usd,
+            source=source,
+            model_alias=model,
+            provider_model=resolved,
+            pricing_snapshot=self.pricing_snapshot,
+        )
+
+    def _image_token_meta(self, model: str) -> dict[str, Any]:
+        """Return image_input_tokens_per_ref / image_output_tokens_by_quality if set."""
+        overrides = self._overrides.get("model_overrides") or {}
+        for key in self._candidate_keys(model):
+            spec = overrides.get(key)
+            if not isinstance(spec, dict):
+                continue
+            if "image_input_tokens_per_ref" in spec or "image_output_tokens_by_quality" in spec:
+                return spec
+        return {}
 
 
 _DEFAULT_RESOLVER: PricingResolver | None = None
