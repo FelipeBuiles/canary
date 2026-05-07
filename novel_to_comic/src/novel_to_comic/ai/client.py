@@ -8,6 +8,7 @@ import datetime
 import hashlib
 import json
 import logging
+import os
 import time
 import uuid
 from pathlib import Path
@@ -16,7 +17,7 @@ from typing import Any
 import httpx
 
 from novel_to_comic.ai.context import current_ai_request_context
-from novel_to_comic.config import Config
+from novel_to_comic.config import Config, GATEWAY_IMAGE_PRIMARY_MODEL
 from novel_to_comic.usage import (
     ApiResult,
     UsageRecord,
@@ -307,6 +308,11 @@ def _finalize_event(
     error: BaseException | None = None,
     error_response: httpx.Response | None = None,
     config: Config | None = None,
+    operation: str = "text",
+    metadata: dict[str, Any] | None = None,
+    langfuse_input: Any = None,
+    langfuse_output: Any = None,
+    started_at: datetime.datetime | None = None,
 ) -> None:
     provider_model = str((response_data or {}).get("model") or (usage.provider_model if usage else None) or model_alias)
     cost = calculate_cost_breakdown(usage) if usage is not None else None
@@ -346,14 +352,171 @@ def _finalize_event(
     except Exception as exc:
         logger.warning("ai_usage_events update failed for %s: %s", event_id, exc)
         return
-    if status != "succeeded" and billable and usage is not None:
-        _settle_failed_event_usage(usage, feature=feature)
+    if billable and usage is not None:
+        _settle_event_usage(usage, feature=feature, status=status)
+    if status != "cancelled" and metadata is not None:
+        _log_langfuse_generation(
+            metadata=metadata,
+            feature=feature,
+            operation=operation,
+            model_alias=model_alias,
+            provider_model=provider_model,
+            status=status,
+            generation_id=event_id,
+            input_payload=langfuse_input,
+            output_payload=langfuse_output,
+            usage=usage,
+            cost_usd=cost_usd,
+            start_time=started_at or datetime.datetime.now(datetime.UTC),
+            end_time=datetime.datetime.now(datetime.UTC),
+            error=error,
+        )
 
 
-def _settle_failed_event_usage(usage: UsageRecord, *, feature: str) -> None:
+def _truncate_for_log(text: str, max_chars: int = 4000) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + f"... [+{len(text) - max_chars} chars]"
+
+
+def _langfuse_endpoint() -> tuple[str, str] | None:
+    public = os.environ.get("LANGFUSE_PUBLIC_KEY")
+    secret = os.environ.get("LANGFUSE_SECRET_KEY")
+    host = os.environ.get("CANARY_LANGFUSE_HOST") or os.environ.get("LANGFUSE_HOST")
+    if not (public and secret and host):
+        return None
+    auth = base64.b64encode(f"{public}:{secret}".encode()).decode()
+    return host.rstrip("/"), auth
+
+
+async def _post_langfuse_batch(host: str, auth: str, batch: list[dict[str, Any]]) -> None:
+    try:
+        await _http.post(
+            f"{host}/api/public/ingestion",
+            headers={
+                "Authorization": f"Basic {auth}",
+                "Content-Type": "application/json",
+            },
+            json={"batch": batch},
+        )
+    except Exception as exc:
+        logger.warning("Langfuse ingestion failed: %s", exc)
+
+
+def _log_langfuse_generation(
+    *,
+    metadata: dict[str, Any] | None,
+    feature: str,
+    operation: str,
+    model_alias: str,
+    provider_model: str,
+    status: str,
+    generation_id: str,
+    input_payload: Any,
+    output_payload: Any,
+    usage: UsageRecord | None,
+    cost_usd: float | None,
+    start_time: datetime.datetime,
+    end_time: datetime.datetime,
+    error: BaseException | None = None,
+) -> None:
+    """Send one generation observation (and its trace) to Langfuse via REST.
+
+    Replaces LiteLLM's built-in langfuse callback so we control input/output
+    formatting (especially for image endpoints, where prompt/output don't fit
+    the chat-completion shape LiteLLM assumes).
+    """
+    endpoint = _langfuse_endpoint()
+    if endpoint is None or metadata is None:
+        return
+    host, auth = endpoint
+    trace_id = metadata.get("trace_id") or generation_id
+    tags = [tag for tag in (metadata.get("tags") or []) if tag]
+
+    usage_details: dict[str, int] = {}
+    if usage is not None:
+        usage_details = {
+            "input": int(usage.input_tokens or 0),
+            "output": int(usage.output_tokens or 0),
+            "total": int((usage.input_tokens or 0) + (usage.output_tokens or 0)),
+        }
+        if usage.image_count:
+            usage_details["images"] = int(usage.image_count)
+
+    cost_details: dict[str, float] = {}
+    if cost_usd is not None:
+        cost_details["total"] = float(cost_usd)
+
+    obs_metadata = {
+        "operation": operation,
+        "feature": feature,
+        "status": status,
+        **(metadata.get("metadata") or {}),
+    }
+    if error is not None:
+        obs_metadata["error_type"] = type(error).__name__
+        obs_metadata["error_message"] = str(error)[:500]
+
+    now = datetime.datetime.now(datetime.UTC).isoformat()
+    batch = [
+        {
+            "id": str(uuid.uuid4()),
+            "type": "trace-create",
+            "timestamp": now,
+            "body": {
+                "id": trace_id,
+                "name": metadata.get("trace_name") or feature,
+                "sessionId": metadata.get("session_id"),
+                "userId": metadata.get("user_id"),
+                "tags": tags,
+                "metadata": metadata.get("metadata") or {},
+                "timestamp": start_time.isoformat(),
+            },
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "type": "generation-create",
+            "timestamp": now,
+            "body": {
+                "id": generation_id,
+                "traceId": trace_id,
+                "name": metadata.get("generation_name") or model_alias,
+                "model": provider_model or model_alias,
+                "input": input_payload,
+                "output": output_payload,
+                "usageDetails": usage_details,
+                "costDetails": cost_details,
+                "metadata": obs_metadata,
+                "startTime": start_time.isoformat(),
+                "endTime": end_time.isoformat(),
+                "level": "DEFAULT" if status == "succeeded" else "ERROR",
+                "statusMessage": (str(error)[:500] if error else None) if status != "succeeded" else None,
+            },
+        },
+    ]
+
+    try:
+        asyncio.create_task(_post_langfuse_batch(host, auth, batch))
+    except RuntimeError:
+        # No running loop (synchronous test context, etc.); skip silently.
+        pass
+
+
+def _settle_event_usage(usage: UsageRecord, *, feature: str, status: str) -> None:
+    """Debit the credit ledger for one AI call as soon as it finishes.
+
+    Settling per-call (rather than at end-of-stage) means a server crash mid-stage
+    only loses the in-flight request — every API call that returned has already
+    been charged. The upsert is idempotent on usage_call_id so duplicate debits
+    from upstream callers collapse to a single ledger row.
+    """
     ctx = current_ai_request_context()
     if not ctx.user_id:
         return
+    if status == "succeeded":
+        description = f"Model call: {feature}"
+    else:
+        description = f"Model call {status}: {feature}"
     try:
         from novel_to_comic.server.credits import debit_model_usage
         from novel_to_comic.server.db import get_db
@@ -364,7 +527,8 @@ def _settle_failed_event_usage(usage: UsageRecord, *, feature: str) -> None:
             ctx.project_id,
             usage,
             stage=ctx.stage,
-            description=f"Model call failed/refused: {feature}",
+            description=description,
+            job_id=ctx.job_id,
         )
     except Exception:
         return
@@ -478,6 +642,11 @@ async def _chat_completion(
         estimated_cost_usd=estimated_cost_usd,
     )
     started = time.perf_counter()
+    started_at = datetime.datetime.now(datetime.UTC)
+    langfuse_input = [
+        {"role": "system", "content": _truncate_for_log(effective_system)},
+        {"role": "user", "content": _truncate_for_log(user_content)},
+    ]
     response: httpx.Response | None = None
     try:
         response = await _post_with_retry(
@@ -511,6 +680,11 @@ async def _chat_completion(
             usage=usage,
             response_data=data,
             config=config,
+            operation=operation,
+            metadata=metadata,
+            langfuse_input=langfuse_input,
+            langfuse_output=_truncate_for_log(text),
+            started_at=started_at,
         )
         return {"text": text, "usage": usage}
     except asyncio.CancelledError as exc:
@@ -523,6 +697,10 @@ async def _chat_completion(
             error=exc,
             error_response=response,
             config=config,
+            operation=operation,
+            metadata=metadata,
+            langfuse_input=langfuse_input,
+            started_at=started_at,
         )
         raise
     except AIRefusalError as exc:
@@ -539,6 +717,10 @@ async def _chat_completion(
             error=exc,
             error_response=response,
             config=config,
+            operation=operation,
+            metadata=metadata,
+            langfuse_input=langfuse_input,
+            started_at=started_at,
         )
         raise
     except Exception as exc:
@@ -562,6 +744,10 @@ async def _chat_completion(
             error=exc,
             error_response=response,
             config=config,
+            operation=operation,
+            metadata=metadata,
+            langfuse_input=langfuse_input,
+            started_at=started_at,
         )
         raise
 
@@ -599,14 +785,20 @@ async def generate_image(
     # them through aliases can make the proxy fail before the provider responds.
     params = {
         "model": model,
-        "size": _image_size(width, height),
+        "size": _image_size(model, width, height),
         "n": 1,
     }
     # if steps is not None:
     #     params["steps"] = steps
     if config.image_quality:
         params["quality"] = config.image_quality
-    estimated_cost_usd = estimate_image_cost(model, 1, ref_count=len(ref_data)) or None
+    estimated_cost_usd = estimate_image_cost(
+        model,
+        1,
+        quality=config.image_quality,
+        ref_count=len(ref_data),
+        prompt_text=prompt,
+    ) or None
     _insert_event(
         event_id=event_id,
         model_alias=model,
@@ -622,6 +814,14 @@ async def generate_image(
         estimated_cost_usd=estimated_cost_usd,
     )
     started = time.perf_counter()
+    started_at = datetime.datetime.now(datetime.UTC)
+    langfuse_input: dict[str, Any] = {
+        "prompt": _truncate_for_log(prompt),
+        "size": params.get("size"),
+        "quality": params.get("quality"),
+        "ref_count": len(ref_data),
+        "references": _image_summary(ref_reads),
+    }
     response: httpx.Response | None = None
     try:
         endpoint = "/v1/images/edits" if ref_data else "/v1/images/generations"
@@ -648,6 +848,12 @@ async def generate_image(
         output_path.parent.mkdir(parents=True, exist_ok=True)
         await asyncio.to_thread(output_path.write_bytes, image_bytes)
         usage = _extract_usage(data, event_id, model, operation, response.headers)
+        langfuse_output = {
+            "output_path": str(output_path),
+            "image_bytes": len(image_bytes),
+            "image_sha256": hashlib.sha256(image_bytes).hexdigest(),
+            "size": params.get("size"),
+        }
         _finalize_event(
             event_id=event_id,
             status="succeeded",
@@ -657,6 +863,11 @@ async def generate_image(
             usage=usage,
             response_data=data,
             config=config,
+            operation=operation,
+            metadata=metadata,
+            langfuse_input=langfuse_input,
+            langfuse_output=langfuse_output,
+            started_at=started_at,
         )
         return ApiResult(value=output_path, usage=usage)
     except asyncio.CancelledError as exc:
@@ -669,6 +880,10 @@ async def generate_image(
             error=exc,
             error_response=response,
             config=config,
+            operation=operation,
+            metadata=metadata,
+            langfuse_input=langfuse_input,
+            started_at=started_at,
         )
         raise
     except AIRefusalError as exc:
@@ -685,6 +900,10 @@ async def generate_image(
             error=exc,
             error_response=response,
             config=config,
+            operation=operation,
+            metadata=metadata,
+            langfuse_input=langfuse_input,
+            started_at=started_at,
         )
         raise
     except Exception as exc:
@@ -707,11 +926,40 @@ async def generate_image(
             error=exc,
             error_response=response,
             config=config,
+            operation=operation,
+            metadata=metadata,
+            langfuse_input=langfuse_input,
+            started_at=started_at,
         )
         raise
 
 
-def _image_size(width: int, height: int) -> str:
+def _is_gpt_image_2(model: str) -> bool:
+    normalized = (model or "").strip().lower()
+    return normalized in {
+        "gpt-image-2",
+        "openai/gpt-image-2",
+        GATEWAY_IMAGE_PRIMARY_MODEL,
+    }
+
+
+def _valid_gpt_image_2_size(width: int, height: int) -> bool:
+    if width <= 0 or height <= 0:
+        return False
+    if width % 16 != 0 or height % 16 != 0:
+        return False
+    if max(width, height) > 3840:
+        return False
+    if max(width, height) / min(width, height) > 3:
+        return False
+    pixels = width * height
+    return 655_360 <= pixels <= 8_294_400
+
+
+def _image_size(model: str, width: int, height: int) -> str:
+    if _is_gpt_image_2(model) and _valid_gpt_image_2_size(width, height):
+        return f"{width}x{height}"
+
     # Thresholds map to the three OpenAI-supported sizes: portrait (1024×1536,
     # ratio≈0.67), square (1024×1024, ratio=1.0), landscape (1536×1024, ratio≈1.5).
     # 0.87 and 1.15 are the midpoints between those ratios.

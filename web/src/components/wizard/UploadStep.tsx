@@ -117,7 +117,7 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
   const [imageWidth, setImageWidth] = useState(1024);
   const [imageHeight, setImageHeight] = useState(1024);
   const [imageSteps, setImageSteps] = useState(28);
-  const [imageQuality, setImageQuality] = useState<"auto" | "low" | "medium" | "high">("auto");
+  const [imageQuality, setImageQuality] = useState<"auto" | "low" | "medium" | "high">("medium");
   const [maxPanelsPerScene, setMaxPanelsPerScene] = useState(8);
   const [maxPanelsPerPage, setMaxPanelsPerPage] = useState(6);
   const [styleTemplate, setStyleTemplate] = useState("");
@@ -193,7 +193,7 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
         if (imageWidth !== 1024) overrides.image_width = imageWidth;
         if (imageHeight !== 1024) overrides.image_height = imageHeight;
         if (isTogetherProvider && imageSteps !== 28) overrides.image_steps = imageSteps;
-        if (isOpenAIProvider && imageQuality !== "auto") overrides.image_quality = imageQuality;
+        if (isOpenAIProvider && imageQuality !== "medium") overrides.image_quality = imageQuality;
         if (maxPanelsPerScene !== 8) overrides.max_panels_per_scene = maxPanelsPerScene;
         if (maxPanelsPerPage !== 6) overrides.max_panels_per_page = maxPanelsPerPage;
       }

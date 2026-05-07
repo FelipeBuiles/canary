@@ -34,7 +34,6 @@ from novel_to_comic.state import (
     reset_stale_stages,
     save_state,
 )
-from novel_to_comic.usage import UsageRecord
 from novel_to_comic.ai import ai_request_context
 
 from ..auth import get_current_user
@@ -149,21 +148,15 @@ async def _run_stage_with_credits(
             project_name=project_dir.name,
             workspace_id=str(project_dir.parent),
             stage=stage,
+            job_id=job_id,
         ):
             await _run_stage(stage, config, project_dir, state, queue)
 
         s = state.stages[stage]
-        for usage in s.usage_log:
-            debit_model_usage(
-                db,
-                user_id,
-                project_id,
-                UsageRecord.model_validate(usage),
-                stage=stage,
-                description=f"Model call: {stage}",
-                job_id=job_id,
-            )
     finally:
+        # Per-call debits land in the AI client as each API call returns
+        # (see ai.client._settle_event_usage), so a crash mid-stage only loses
+        # the in-flight request. Reservation just gets released either way.
         if reservation_id:
             release_reservation(db, reservation_id)
 
@@ -522,6 +515,7 @@ async def regen_panel(
             project_name=project_dir.name,
             workspace_id=str(project_dir.parent),
             stage="draw",
+            job_id=regen_job_id,
         ):
             result = await s7_draw.regenerate_panel_image(
                 config,
@@ -614,6 +608,7 @@ async def regen_panel_with_instruction(
     prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
     from novel_to_comic.clients import text
 
+    instructed_job_id = str(uuid_lib.uuid4())
     try:
         with ai_request_context(
             user_id=user_id,
@@ -621,6 +616,7 @@ async def regen_panel_with_instruction(
             project_name=project_dir.name,
             workspace_id=str(project_dir.parent),
             stage="draw",
+            job_id=instructed_job_id,
         ):
             rewrite = await text.generate_json(
                 config=config,
@@ -652,7 +648,6 @@ async def regen_panel_with_instruction(
         )
         raise HTTPException(502, f"Could not rewrite the panel prompt: {exc}") from exc
 
-    instructed_job_id = str(uuid_lib.uuid4())
     db = get_db()
     if rewrite.usage:
         debit_model_usage(
@@ -685,6 +680,7 @@ async def regen_panel_with_instruction(
             project_name=project_dir.name,
             workspace_id=str(project_dir.parent),
             stage="draw",
+            job_id=instructed_job_id,
         ):
             result = await s7_draw.regenerate_panel_image(
                 config,
@@ -746,6 +742,7 @@ async def regen_ref(
             project_name=project_dir.name,
             workspace_id=str(project_dir.parent),
             stage="cast",
+            job_id=char_ref_job_id,
         ):
             result = await s3_cast.regenerate_character_ref(
                 config,
@@ -813,6 +810,7 @@ async def regen_plate(
             project_name=project_dir.name,
             workspace_id=str(project_dir.parent),
             stage="cast",
+            job_id=plate_job_id,
         ):
             result = await s3_cast.regenerate_location_plate(
                 config,

@@ -1,3 +1,5 @@
+from pytest import approx
+
 from novel_to_comic.usage import UsageRecord, calculate_cost, calculate_cost_breakdown, estimate_image_cost
 from novel_to_comic.server.credits import provider_usd_to_credits
 
@@ -36,9 +38,17 @@ def test_image_alias_without_token_usage_uses_resolved_per_image_estimate():
         image_count=1,
     )
 
+    # Actual usage with no token data still falls through to output_cost_per_image.
     assert calculate_cost(usage) == 0.19
-    assert estimate_image_cost("canary/image-primary", 2) == 0.38
-    assert estimate_image_cost("canary/image-primary", 2, quality="high") == 0.56
+
+
+def test_token_priced_image_alias_estimates_via_quality_token_table():
+    # canary/image-primary → gpt-image-2, which is token-priced. The override yaml
+    # supplies image_output_tokens_by_quality so estimates scale by quality.
+    # 2 images × 1056 (auto/medium) × $0.00004 = $0.08448
+    assert estimate_image_cost("canary/image-primary", 2) == approx(0.08448)
+    # 2 images × 4160 (high) × $0.00004 = $0.3328
+    assert estimate_image_cost("canary/image-primary", 2, quality="high") == approx(0.3328)
 
 
 def test_fast_image_alias_estimates_reference_input_images():

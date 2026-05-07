@@ -20,6 +20,7 @@ class AIRequestContext:
     workspace_id: str | None = None
     stage: str | None = None
     request_id: str | None = None
+    job_id: str | None = None
 
 
 _current_ai_request_context: ContextVar[AIRequestContext] = ContextVar(
@@ -43,6 +44,7 @@ def ai_request_context(
     workspace_id: str | None = None,
     stage: str | None = None,
     request_id: str | None = None,
+    job_id: str | None = None,
 ) -> Iterator[AIRequestContext]:
     """Temporarily set request metadata for AI calls in this context."""
 
@@ -53,6 +55,7 @@ def ai_request_context(
         workspace_id=workspace_id,
         stage=stage,
         request_id=request_id,
+        job_id=job_id,
     )
     token = _current_ai_request_context.set(context)
     try:

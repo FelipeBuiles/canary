@@ -3,7 +3,7 @@
 from novel_to_comic.config import Config
 from novel_to_comic.models.layout_plan import PlannedPanel
 from novel_to_comic.models.story_bible import Character, Location, Scene, StoryBible
-from novel_to_comic.prompting import build_planned_panel_prompt_spec
+from novel_to_comic.prompting import build_planned_panel_prompt_spec, render_generation_prompt
 
 
 def _story_bible() -> StoryBible:
@@ -107,3 +107,33 @@ def test_prompt_does_not_split_non_sequential_then_phrase(tmp_path):
     prompt = build_planned_panel_prompt_spec(Config(), tmp_path, panel, _story_bible())
 
     assert "veering left then right along no particular path" in prompt.full_prompt
+
+
+def test_generation_prompt_uses_structured_brief_and_noise_guardrails(tmp_path):
+    panel = PlannedPanel(
+        panel_id="scene_002:panel_001",
+        scene_id="scene_002",
+        panel_number=1,
+        shot_type="wide",
+        camera_angle="low angle",
+        characters_present=["char_001"],
+        character_actions={"char_001": "walks through the woods"},
+        character_positions={"char_001": "center"},
+        background_description="Dense woods behind a farmhouse.",
+        lighting="warm morning light",
+        mood="playful safe",
+    )
+    prompt = build_planned_panel_prompt_spec(Config(), tmp_path, panel, _story_bible())
+
+    generation_prompt = render_generation_prompt(
+        prompt,
+        "Oil painting with broad expressive brushwork.",
+    )
+
+    assert "Style:\nOil painting with broad expressive brushwork." in generation_prompt
+    assert "Characters:\n- Myop, 1girl, child, black girl" in generation_prompt
+    assert "Composition:\nwide vertical panel" in generation_prompt
+    assert "Constraints:\n- exactly 1 character" in generation_prompt
+    assert "Avoid stochastic grain" in generation_prompt
+    assert "interpret it as broad intentional structure rather than all-over noise" in generation_prompt
+    assert "Do not copy sample-image artifacts" in generation_prompt
