@@ -221,8 +221,8 @@ def _planned_panel_text_blob(panel: PlannedPanel) -> str:
         panel.background_description,
         panel.lighting,
         panel.mood,
-        panel.sfx or "",
     ]
+    pieces.extend(s.text for s in panel.sfx)
     pieces.extend(panel.character_actions.values())
     pieces.extend(str(line.get("text", "")) for line in panel.dialogue)
     return " ".join(pieces).lower()

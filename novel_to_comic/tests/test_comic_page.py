@@ -10,6 +10,7 @@ from novel_to_comic.models.comic_page import (
     ComicPage,
     CharacterVoice,
     BUBBLE_PRESETS,
+    normalize_sfx_text,
 )
 
 
@@ -79,6 +80,115 @@ class TestSfx:
         assert s.rotation == 15.0
 
 
+class TestSfxValidation:
+    def test_text_validator_strips_markup(self):
+        s = Sfx(text="[SFX: BOOM]")
+        assert s.text == "BOOM"
+
+    def test_text_validator_rejects_empty(self):
+        with pytest.raises(ValidationError):
+            Sfx(text="[SFX: ]")
+
+    def test_defaults(self):
+        s = Sfx(text="POW")
+        assert s.kind == "impact"
+        assert s.intensity == 2
+        assert s.anchor == "auto"
+
+
+class TestPagePanelSfxMigration:
+    def test_legacy_null_becomes_empty_list(self):
+        panel = PagePanel(
+            id="x", image_path="a.png", scene_id="s", panel_number=1, sfx=None
+        )
+        assert panel.sfx == []
+
+    def test_legacy_single_dict_becomes_singleton_list(self):
+        panel = PagePanel(
+            id="x", image_path="a.png", scene_id="s", panel_number=1,
+            sfx={"text": "BOOM"},
+        )
+        assert len(panel.sfx) == 1
+        assert panel.sfx[0].text == "BOOM"
+
+    def test_legacy_single_with_markup_gets_cleaned(self):
+        panel = PagePanel(
+            id="x", image_path="a.png", scene_id="s", panel_number=1,
+            sfx={"text": "[SFX: CRACK]"},
+        )
+        assert panel.sfx[0].text == "CRACK"
+
+    def test_list_of_sfx_passes_through(self):
+        panel = PagePanel(
+            id="x", image_path="a.png", scene_id="s", panel_number=1,
+            sfx=[{"text": "BOOM"}, {"text": "AAH", "kind": "voice"}],
+        )
+        assert [s.text for s in panel.sfx] == ["BOOM", "AAH"]
+        assert panel.sfx[1].kind == "voice"
+
+
+class TestInferSfxKind:
+    def test_impact_default(self):
+        from novel_to_comic.models.comic_page import infer_sfx_kind
+        assert infer_sfx_kind("BOOM") == "impact"
+        assert infer_sfx_kind("CRACK") == "impact"
+
+    def test_mechanical(self):
+        from novel_to_comic.models.comic_page import infer_sfx_kind
+        assert infer_sfx_kind("BEEP") == "mechanical"
+        assert infer_sfx_kind("click click") == "mechanical"
+
+    def test_voice(self):
+        from novel_to_comic.models.comic_page import infer_sfx_kind
+        assert infer_sfx_kind("AAH!") == "voice"
+        assert infer_sfx_kind("gasp") == "voice"
+
+
+class TestInferSfxIntensity:
+    def test_loud_caps_with_emphasis(self):
+        from novel_to_comic.models.comic_page import infer_sfx_intensity
+        assert infer_sfx_intensity("BOOM!!!") == 3
+        assert infer_sfx_intensity("KRAAAKOOM") == 3
+
+    def test_medium_caps(self):
+        from novel_to_comic.models.comic_page import infer_sfx_intensity
+        assert infer_sfx_intensity("BOOM") == 2
+
+    def test_quiet_lowercase(self):
+        from novel_to_comic.models.comic_page import infer_sfx_intensity
+        assert infer_sfx_intensity("rustle") == 1
+
+
+class TestNormalizeSfxText:
+    def test_passthrough_clean_onomatopoeia(self):
+        assert normalize_sfx_text("BOOM") == "BOOM"
+        assert normalize_sfx_text("KRA-KOOM!") == "KRA-KOOM!"
+
+    def test_strips_bracket_markup(self):
+        assert normalize_sfx_text("[SFX: BOOM]") == "BOOM"
+        assert normalize_sfx_text("[SFX: TAT-DE-TA-TA-TA]") == "TAT-DE-TA-TA-TA"
+
+    def test_strips_bare_prefix(self):
+        assert normalize_sfx_text("SFX: WHOOSH") == "WHOOSH"
+        assert normalize_sfx_text("sfx: crash") == "crash"
+
+    def test_strips_only_brackets(self):
+        assert normalize_sfx_text("[CRACK]") == "CRACK"
+
+    def test_handles_whitespace(self):
+        assert normalize_sfx_text("  [  SFX:  BAM  ]  ") == "BAM"
+
+    def test_returns_none_for_empty(self):
+        assert normalize_sfx_text("") is None
+        assert normalize_sfx_text(None) is None
+        assert normalize_sfx_text("   ") is None
+        assert normalize_sfx_text("[SFX:]") is None
+        assert normalize_sfx_text("[]") is None
+
+    def test_preserves_inner_punctuation(self):
+        assert normalize_sfx_text("[SFX: BANG!?]") == "BANG!?"
+
+
 class TestPagePanel:
     def test_panels_default_empty(self):
         panel = PagePanel(
@@ -88,7 +198,7 @@ class TestPagePanel:
             panel_number=3,
         )
         assert panel.bubbles == []
-        assert panel.sfx is None
+        assert panel.sfx == []
         assert panel.grid_column is None
 
     def test_with_bubbles(self):

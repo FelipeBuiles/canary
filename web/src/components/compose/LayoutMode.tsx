@@ -27,7 +27,7 @@ interface LayoutModeProps {
   onZoomChange: (z: number) => void;
   onUpdatePanel: (panelId: string, patch: Partial<PagePanel>) => void;
   onUpdateBubble: (panelId: string, bubbleId: string, patch: Partial<Bubble>) => void;
-  onUpdateSfx: (panelId: string, patch: Partial<Sfx>) => void;
+  onUpdateSfx: (panelId: string, sfxIndex: number, patch: Partial<Sfx>) => void;
   onPanelReframeStart: (panelId: string) => void;
   onPanelReframeDragEnd: (panelId: string, newOffsetX: number, newOffsetY: number) => void;
   onResetPanelFrame: (panelId: string) => void;

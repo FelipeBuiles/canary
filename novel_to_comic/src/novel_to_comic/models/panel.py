@@ -4,6 +4,8 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, field_validator
 
+from novel_to_comic.models.comic_page import normalize_sfx_text
+
 
 class DialogueLine(BaseModel):
     character_id: Optional[str] = None  # None for narration (no speaker)
@@ -35,9 +37,28 @@ class PanelBreakdown(BaseModel):
     lighting: str  # "harsh overhead", "warm sunset"
     mood: str  # "tense", "hopeful"
     dialogue: list[DialogueLine] = []
-    sfx: Optional[str] = None  # "BOOM", "CRACK"
+    sfx: list[str] = []  # bare onomatopoeia, e.g. ["BOOM", "CRACK"]
     transition_type: Optional[str] = None  # "smooth_continuation", "match_cut", "hard_cut"
     transition_note: Optional[str] = None  # "smash cut", "fade"
+
+    @field_validator("sfx", mode="before")
+    @classmethod
+    def _migrate_sfx(cls, v: Any) -> list[str]:
+        if v is None:
+            return []
+        if isinstance(v, str):
+            cleaned = normalize_sfx_text(v)
+            return [cleaned] if cleaned else []
+        if isinstance(v, list):
+            out: list[str] = []
+            for item in v:
+                if not isinstance(item, str):
+                    continue
+                cleaned = normalize_sfx_text(item)
+                if cleaned:
+                    out.append(cleaned)
+            return out
+        return []
 
 
 class ScreenplayBeat(BaseModel):

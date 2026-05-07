@@ -126,13 +126,15 @@ export function PanelCell({
         />
       ))}
 
-      {panel.sfx && (
+      {panel.sfx.map((s, i) => (
         <SfxElement
-          sfx={panel.sfx}
+          key={i}
+          sfx={s}
           panelId={panel.id}
-          selected={selectedType === "sfx" && selectedElementId === `${panel.id}__sfx`}
+          index={i}
+          selected={selectedType === "sfx" && selectedElementId === `${panel.id}__sfx__${i}`}
         />
-      )}
+      ))}
 
       <div className="panel-id" data-panel-id={panel.id} title={`${panel.scene_id}/${panel.panel_number}`}>
         P{panelIndex + 1}

@@ -12,10 +12,15 @@ interface PropertyPanelProps {
   selection: { panelId: string; type: "bubble" | "sfx"; elementId: string } | null;
   panelReframeId: string | null;
   onUpdateBubble: (panelId: string, bubbleId: string, patch: Partial<Bubble>) => void;
-  onUpdateSfx: (panelId: string, patch: Partial<Sfx>) => void;
+  onUpdateSfx: (panelId: string, sfxIndex: number, patch: Partial<Sfx>) => void;
   onDeleteElement: (panelId: string, type: "bubble" | "sfx", elementId: string) => void;
   onUnpin: (panelId: string, type: "bubble" | "sfx", elementId: string) => void;
   onResetPanelFrame: (panelId: string) => void;
+}
+
+function parseSfxIndexFromId(elementId: string): number {
+  const m = elementId.match(/__sfx__(\d+)$/);
+  return m ? Number(m[1]) : 0;
 }
 
 const BUBBLE_TYPES = ["speech", "thought", "narration"] as const;
@@ -23,7 +28,7 @@ const SIDES = ["left", "right", "center"] as const;
 const FONT_OPTIONS = [
   { label: "Theme default", value: "" },
   { label: "Comic Neue", value: "'ComicNeue', 'Comic Neue', 'Comic Sans MS', cursive, sans-serif" },
-  { label: "Bangers", value: "'Bangers', 'Arial Narrow', fantasy, sans-serif" },
+  { label: "Bangers", value: "'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif" },
   { label: "System Sans", value: "Arial, Helvetica, sans-serif" },
   { label: "Serif", value: "Georgia, serif" },
   { label: "Mono", value: "'Courier New', monospace" },
@@ -57,10 +62,13 @@ function findBubble(page: ComicPage, panelId: string, bubbleId: string) {
   return { panel, bubble };
 }
 
-function findSfx(page: ComicPage, panelId: string) {
+function findSfx(page: ComicPage, panelId: string, elementId: string) {
   const panel = page.panels.find((p) => p.id === panelId);
-  if (!panel?.sfx) return null;
-  return { panel, sfx: panel.sfx };
+  if (!panel || panel.sfx.length === 0) return null;
+  const idx = parseSfxIndexFromId(elementId);
+  const sfx = panel.sfx[idx];
+  if (!sfx) return null;
+  return { panel, sfx, index: idx };
 }
 
 export function PropertyPanel({
@@ -113,15 +121,16 @@ export function PropertyPanel({
     );
   }
 
-  const sfxFound = findSfx(page, selection.panelId);
+  const sfxFound = findSfx(page, selection.panelId, selection.elementId);
   if (!sfxFound) return null;
   return (
     <SfxInspector
       panel={sfxFound.panel}
       sfx={sfxFound.sfx}
+      sfxIndex={sfxFound.index}
       panelId={selection.panelId}
       elementId={selection.elementId}
-      onUpdate={(patch) => onUpdateSfx(selection.panelId, patch)}
+      onUpdate={(patch) => onUpdateSfx(selection.panelId, sfxFound.index, patch)}
       onUnpin={() => onUnpin(selection.panelId, "sfx", selection.elementId)}
       onDelete={() => onDeleteElement(selection.panelId, "sfx", selection.elementId)}
     />
@@ -354,15 +363,29 @@ function BubbleInspector({
   );
 }
 
+const SFX_KINDS = ["impact", "mechanical", "voice", "ambient", "environment"] as const;
+const SFX_INTENSITIES = [1, 2, 3] as const;
+const SFX_ANCHORS = [
+  "auto",
+  "bottom-center",
+  "top-center",
+  "bottom-left",
+  "bottom-right",
+  "top-left",
+  "top-right",
+] as const;
+
 function SfxInspector({
   panel,
   sfx,
+  sfxIndex,
   onUpdate,
   onUnpin,
   onDelete,
 }: {
   panel: PagePanel;
   sfx: Sfx;
+  sfxIndex: number;
   panelId: string;
   elementId: string;
   onUpdate: (patch: Partial<Sfx>) => void;
@@ -370,10 +393,14 @@ function SfxInspector({
   onDelete: () => void;
 }) {
   const isPinned = sfx.x != null && sfx.y != null;
+  const totalSfx = panel.sfx.length;
 
   return (
     <Card className="overflow-hidden shadow-[3px_3px_0_0_var(--color-ink-black)]">
-      <SurfaceHeader kicker={`PANEL ${panel.panel_number}`} title="SFX" />
+      <SurfaceHeader
+        kicker={`PANEL ${panel.panel_number}`}
+        title={totalSfx > 1 ? `SFX ${sfxIndex + 1}/${totalSfx}` : "SFX"}
+      />
 
       <div className="space-y-3 p-3">
         <div>
@@ -384,6 +411,45 @@ function SfxInspector({
             inputClassName="ui-field"
           />
         </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <FieldLabel>KIND</FieldLabel>
+            <SelectField
+              value={sfx.kind ?? "impact"}
+              onChange={(e) => onUpdate({ kind: e.target.value as Sfx["kind"] })}
+            >
+              {SFX_KINDS.map((k) => (
+                <option key={k} value={k}>{k.toUpperCase()}</option>
+              ))}
+            </SelectField>
+          </div>
+          <div>
+            <FieldLabel>INTENSITY</FieldLabel>
+            <SelectField
+              value={String(sfx.intensity ?? 2)}
+              onChange={(e) => onUpdate({ intensity: Number(e.target.value) as Sfx["intensity"] })}
+            >
+              {SFX_INTENSITIES.map((n) => (
+                <option key={n} value={n}>{n} ({["quiet", "medium", "big"][n - 1]})</option>
+              ))}
+            </SelectField>
+          </div>
+        </div>
+
+        {!isPinned && (
+          <div>
+            <FieldLabel>ANCHOR</FieldLabel>
+            <SelectField
+              value={sfx.anchor ?? "auto"}
+              onChange={(e) => onUpdate({ anchor: e.target.value as Sfx["anchor"] })}
+            >
+              {SFX_ANCHORS.map((a) => (
+                <option key={a} value={a}>{a.toUpperCase()}</option>
+              ))}
+            </SelectField>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-2">
           <div>

@@ -31,7 +31,11 @@ For every narration beat, include narration_reason explaining why this source pa
 
 THOUGHT BUBBLES: use sparingly (max 2 per scene) for interior monologue that cannot be shown any other way.
 
-SFX: annotate meaningful sounds: [SFX: CRACK], [SFX: soft footsteps].
+SFX: short, lettered onomatopoeia only — the kind of sound a comic *draws* on the page.
+For sfx beats, "content" is the bare onomatopoeia (e.g. CRACK, BOOM, WHOOSH, KRA-KOOM, TAT-TAT-TAT). All caps preferred.
+Do NOT wrap content in brackets ("[SFX: ...]"). Do NOT prefix with "SFX:". The type field already classifies the beat.
+Do NOT use descriptive prose ("soft footsteps", "rustling leaves", "the creak of rope fiber"). That is ambience — drop it; the panel description will carry it.
+Emit sfx beats sparingly, only for sounds that punctuate a moment: impacts, gunshots, breaking glass, sudden cracks, alarms. Quiet/atmospheric sounds get no beat.
 
 TRANSITIONS: mark scene transitions: [TRANSITION: smash cut], [TRANSITION: fade to white].
 When a beat is a transition, include transition_type on that beat:
@@ -64,7 +68,7 @@ Output JSON:
     {
       "type": "action" | "dialogue" | "narration" | "sfx" | "transition",
       "character_id": "..." (null for action/sfx/transition),
-      "content": "exact dialogue text OR observable action description OR adapted narration caption",
+      "content": "exact dialogue text OR observable action description OR adapted narration caption OR bare sfx onomatopoeia (no brackets, no prefix)",
       "source_text": "optional exact source wording, required when type is \"narration\"",
       "direction": "optional visual direction note (camera angle, emphasis, etc.)",
       "transition_type": "optional one of \"smooth_continuation\" | \"match_cut\" | \"hard_cut\" (only for transition beats)",

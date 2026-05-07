@@ -33,6 +33,11 @@ from novel_to_comic.usage import UsageRecord, estimate_text_cost
 from novel_to_comic.config import Config
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.layout_planning import LAYOUT_PRESET_GEOMETRIES, select_layout_template
+from novel_to_comic.models.comic_page import (
+    infer_sfx_intensity,
+    infer_sfx_kind,
+    normalize_sfx_text,
+)
 from novel_to_comic.models.layout_plan import (
     LayoutPlan,
     LayoutPlanBeatRef,
@@ -43,8 +48,20 @@ from novel_to_comic.models.layout_plan import (
     PanelGeometry,
     PlannedPage,
     PlannedPanel,
+    PlannedSfx,
 )
 from novel_to_comic.models.panel import DialogueLine, Screenplay, ScreenplayBeat
+
+
+def _planned_sfx_from_beat(beat: ScreenplayBeat) -> PlannedSfx | None:
+    text = normalize_sfx_text(beat.content)
+    if not text:
+        return None
+    return PlannedSfx(
+        text=text,
+        kind=infer_sfx_kind(text),
+        intensity=infer_sfx_intensity(text),
+    )
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.state import (
     PipelineState,
@@ -368,7 +385,7 @@ def _panel_from_beat(
         lighting="",
         mood="tense" if beat.type == "transition" else "neutral",
         dialogue=_dialogue_line(beat),
-        sfx=beat.content if beat.type == "sfx" else None,
+        sfx=([s] if beat.type == "sfx" and (s := _planned_sfx_from_beat(beat)) else []),
         has_narration_caption=beat.type == "narration",
         narration_mode="attached_caption" if beat.type == "narration" else None,
         preferred_caption_zone="top" if beat.type == "narration" else None,
@@ -541,8 +558,18 @@ def _llm_spec_to_planned_panel(
             break
     dialogue = dialogue[:_MAX_DIALOGUE_PER_PANEL]
 
-    # SFX: use the last SFX beat in the covered set
-    sfx = next((b.content for b in reversed(covered_beats) if b.type == "sfx"), None)
+    # SFX: collect every sfx beat in the covered set, preserving order.
+    # Real panels often layer multiple sounds (impact + grunt, etc.).
+    sfx_list: list[PlannedSfx] = []
+    seen: set[str] = set()
+    for b in covered_beats:
+        if b.type != "sfx":
+            continue
+        planned = _planned_sfx_from_beat(b)
+        if planned is None or planned.text in seen:
+            continue
+        sfx_list.append(planned)
+        seen.add(planned.text)
 
     # Per-character metadata: prefer LLM-provided actions, fall back to beat-derived.
     # Action beats in screenplays frequently have character_id=null (narrator voice),
@@ -604,7 +631,7 @@ def _llm_spec_to_planned_panel(
         lighting=spec.lighting,
         mood=spec.mood,
         dialogue=dialogue,
-        sfx=sfx,
+        sfx=sfx_list,
         page_break_after=spec.page_break_after,
     )
 
