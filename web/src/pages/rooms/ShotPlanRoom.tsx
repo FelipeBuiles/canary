@@ -560,11 +560,11 @@ function PanelDetailPanel({
           )}
 
           {/* SFX */}
-          {panel.sfx && (
+          {panel.sfx.length > 0 && (
             <div>
               <FieldLabel>SFX</FieldLabel>
               <p className="mt-1 font-body text-[0.82rem] font-bold text-ink-black/70">
-                {panel.sfx}
+                {panel.sfx.map((s) => s.text).join(" · ")}
               </p>
             </div>
           )}

@@ -82,7 +82,7 @@ For each panel output:
 - lighting: specific and evocative
 - mood: single word
 - dialogue: [{character_id, text, type: "speech"|"thought"|"narration"}] — leave empty [] for action/insert panels
-- sfx: optional sound effect (null if none)
+- sfx: optional short onomatopoeia for a punctuating sound (e.g. "BOOM", "CRACK", "WHOOSH"). Bare text only — no brackets, no "SFX:" prefix. Null if no impact-class sound; ambience belongs in background_description, not here.
 - transition_type: optional one of "smooth_continuation" | "match_cut" | "hard_cut" (null if none)
 - transition_note: optional cut hint (null if none)
 

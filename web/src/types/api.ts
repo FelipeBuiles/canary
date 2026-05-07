@@ -300,7 +300,7 @@ export interface PanelBreakdown {
   lighting: string;
   mood: string;
   dialogue: DialogueLine[];
-  sfx: string | null;
+  sfx: string[];
   transition_type: string | null;
   transition_note: string | null;
 }
@@ -389,10 +389,16 @@ export interface PlannedPanel {
   lighting: string;
   mood: string;
   dialogue: DialogueLine[];
-  sfx: string | null;
+  sfx: PlannedSfx[];
   has_narration_caption?: boolean;
   narration_mode?: string | null;
   preferred_caption_zone?: string | null;
+}
+
+export interface PlannedSfx {
+  text: string;
+  kind: SfxKind;
+  intensity: 1 | 2 | 3;
 }
 
 export interface PlannedPage {
@@ -501,8 +507,21 @@ export interface Bubble {
   border_radius: number | null;
 }
 
+export type SfxKind = "impact" | "mechanical" | "voice" | "ambient" | "environment";
+export type SfxAnchor =
+  | "auto"
+  | "bottom-center"
+  | "top-center"
+  | "bottom-left"
+  | "bottom-right"
+  | "top-left"
+  | "top-right";
+
 export interface Sfx {
   text: string;
+  kind: SfxKind;
+  intensity: 1 | 2 | 3;
+  anchor: SfxAnchor;
   x: number | null;
   y: number | null;
   rotation: number;
@@ -518,7 +537,7 @@ export interface PagePanel {
   importance: string | null;
   generation_mode: string | null;
   bubbles: Bubble[];
-  sfx: Sfx | null;
+  sfx: Sfx[];
   image_offset_x: number | null;
   image_offset_y: number | null;
   grid_column: string | null;

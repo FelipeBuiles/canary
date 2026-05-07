@@ -7,7 +7,15 @@ from typing import Literal, TypedDict, cast
 
 from novel_to_comic import artifacts
 from novel_to_comic.assembly.html_renderer import PAGE_H, PAGE_W
-from novel_to_comic.models.comic_page import Bubble, ComicPage, PagePanel, Sfx
+from novel_to_comic.models.comic_page import (
+    Bubble,
+    ComicPage,
+    PagePanel,
+    Sfx,
+    infer_sfx_intensity,
+    infer_sfx_kind,
+    normalize_sfx_text,
+)
 from novel_to_comic.models.layout_plan import GenerationMode, ImageFitStatus, LayoutPlan, NarrationDecision, PanelGeometry, PanelImportance, PlannedPage, PlannedPanel, RegenerationStatus, ShapeIntent
 from novel_to_comic.models.panel import DialogueLine, PanelBreakdown
 from novel_to_comic.models.story_bible import StoryBible
@@ -165,7 +173,7 @@ def planned_panel_to_breakdown(panel: PlannedPanel) -> PanelBreakdown:
         lighting=panel.lighting,
         mood=panel.mood,
         dialogue=[DialogueLine.model_validate(line) for line in panel.dialogue],
-        sfx=panel.sfx,
+        sfx=[s.text for s in panel.sfx],
         transition_type=panel.transition_out,
         transition_note=None,
     )
@@ -418,12 +426,12 @@ def project_layout_plan_to_pages(
             existing_panel = existing_panels.get(planned_panel.panel_id)
 
             bubbles: list[Bubble]
-            sfx: Sfx | None
+            sfx_items: list[Sfx]
             image_offset_x: float | None
             image_offset_y: float | None
             if existing_panel:
                 bubbles = existing_panel.bubbles
-                sfx = existing_panel.sfx
+                sfx_items = existing_panel.sfx
                 image_offset_x = existing_panel.image_offset_x
                 image_offset_y = existing_panel.image_offset_y
             else:
@@ -455,7 +463,16 @@ def project_layout_plan_to_pages(
                             side=cast(Literal["left", "right", "center"], side or "left"),
                         )
                     )
-                sfx = Sfx(text=breakdown.sfx) if breakdown.sfx else None
+                sfx_items = []
+                for raw in breakdown.sfx:
+                    text = normalize_sfx_text(raw)
+                    if not text:
+                        continue
+                    sfx_items.append(Sfx(
+                        text=text,
+                        kind=infer_sfx_kind(text),
+                        intensity=infer_sfx_intensity(text),
+                    ))
                 image_offset_x = None
                 image_offset_y = None
 
@@ -469,7 +486,7 @@ def project_layout_plan_to_pages(
                     importance=planned_panel.importance,
                     generation_mode=planned_panel.generation_mode,
                     bubbles=bubbles,
-                    sfx=sfx,
+                    sfx=sfx_items,
                     image_offset_x=image_offset_x,
                     image_offset_y=image_offset_y,
                     **_panel_geometry_style(geometry, index),

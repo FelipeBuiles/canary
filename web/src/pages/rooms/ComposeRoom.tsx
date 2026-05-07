@@ -119,8 +119,8 @@ export function ComposeRoom() {
     );
   }
 
-  function handleUpdateSfx(panelId: string, sPatch: Partial<Sfx>) {
-    patchPage({ panels: [{ id: panelId, sfx: sPatch }] as ComicPage["panels"] });
+  function handleUpdateSfx(panelId: string, sfxIndex: number, sPatch: Partial<Sfx>) {
+    patchPage({ panels: [{ id: panelId, sfx: sPatch, sfx_index: sfxIndex }] as unknown as ComicPage["panels"] });
   }
 
   function handleUpdatePanel(panelId: string, pPatch: Partial<PagePanel>) {
@@ -156,13 +156,18 @@ export function ComposeRoom() {
   }
 
   // ── Element delete / unpin ───────────────────────────────────────────────
+  function parseSfxIndex(elementId: string): number {
+    const m = elementId.match(/__sfx__(\d+)$/);
+    return m ? Number(m[1]) : 0;
+  }
+
   function handleDeleteElement(panelId: string, type: "bubble" | "sfx", elementId: string) {
     if (!id || !safePage || !page) return;
     pushUndo(page);
     if (type === "bubble") {
       patchPage({ panels: [{ id: panelId, remove_bubble_ids: [elementId] }] as unknown as ComicPage["panels"] });
     } else {
-      patchPage({ panels: [{ id: panelId, remove_sfx: true }] as unknown as ComicPage["panels"] });
+      patchPage({ panels: [{ id: panelId, remove_sfx: parseSfxIndex(elementId) }] as unknown as ComicPage["panels"] });
     }
     deselect();
   }
@@ -171,13 +176,13 @@ export function ComposeRoom() {
     if (type === "bubble") {
       handleUpdateBubble(panelId, elementId, { x: null, y: null, tail_x: null, tail_y: null });
     } else {
-      handleUpdateSfx(panelId, { x: null, y: null });
+      handleUpdateSfx(panelId, parseSfxIndex(elementId), { x: null, y: null });
     }
   }
 
   function handleDragEnd(panelId: string, type: "bubble" | "sfx", elementId: string, x: number, y: number) {
     if (type === "bubble") handleUpdateBubble(panelId, elementId, { x, y });
-    else handleUpdateSfx(panelId, { x, y });
+    else handleUpdateSfx(panelId, parseSfxIndex(elementId), { x, y });
   }
 
   // ── Add elements ─────────────────────────────────────────────────────────

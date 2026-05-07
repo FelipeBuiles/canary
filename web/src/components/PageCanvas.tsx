@@ -64,21 +64,22 @@ export function PageCanvas({ page, projectName }: PageCanvasProps) {
                 </div>
               ))}
 
-              {/* SFX overlay */}
-              {panel.sfx && (
+              {/* SFX overlay — multi-SFX list */}
+              {panel.sfx.map((s, i) => (
                 <div
+                  key={i}
                   className="absolute font-display font-bold text-hero-red"
                   style={{
-                    fontSize: panel.sfx.font_size ? `${panel.sfx.font_size}px` : "1.2rem",
-                    transform: `rotate(${panel.sfx.rotation ?? -4}deg)`,
-                    ...(panel.sfx.x != null && panel.sfx.y != null
-                      ? { left: `${panel.sfx.x}px`, top: `${panel.sfx.y}px` }
-                      : { bottom: "18%", left: "50%", transform: `translateX(-50%) rotate(${panel.sfx.rotation ?? -4}deg)` }),
+                    fontSize: s.font_size ? `${s.font_size}px` : "1.2rem",
+                    transform: `rotate(${s.rotation ?? -4}deg)`,
+                    ...(s.x != null && s.y != null
+                      ? { left: `${s.x}px`, top: `${s.y}px` }
+                      : { bottom: "18%", left: "50%", transform: `translateX(-50%) rotate(${s.rotation ?? -4}deg)` }),
                   }}
                 >
-                  {panel.sfx.text.toUpperCase()}
+                  {s.text.toUpperCase()}
                 </div>
-              )}
+              ))}
             </div>
           );
         })}

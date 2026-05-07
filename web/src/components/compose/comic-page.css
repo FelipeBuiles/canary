@@ -4,6 +4,27 @@
  * Theme variables are applied via CSS custom properties from themes.ts.
  */
 
+@font-face {
+  font-family: 'Bangers';
+  src: url('/static/fonts/Bangers-Regular.ttf') format('truetype');
+  font-weight: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'ComicNeue';
+  src: url('/static/fonts/ComicNeue-Bold.ttf') format('truetype');
+  font-weight: bold;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'Comic Neue';
+  src: url('/static/fonts/ComicNeue-Bold.ttf') format('truetype');
+  font-weight: bold;
+  font-display: block;
+}
+
 .comic-page-root *,
 .comic-page-root *::before,
 .comic-page-root *::after {
@@ -52,7 +73,7 @@
   background: #b51822;
   color: #fff;
   padding: 5px 8px;
-  font-family: 'Bangers', fantasy, sans-serif;
+  font-family: 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif;
   font-size: 16px;
   letter-spacing: 0.08em;
   pointer-events: none;
@@ -77,7 +98,7 @@
   background: #1682dc;
   color: #fff;
   padding: 5px 8px;
-  font-family: 'Bangers', fantasy, sans-serif;
+  font-family: 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif;
   font-size: 16px;
   letter-spacing: 0.08em;
   pointer-events: none;
@@ -264,7 +285,7 @@
 /* Speaker label */
 .speaker {
   display: block;
-  font-family: 'Bangers', fantasy, sans-serif;
+  font-family: 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif;
   font-size: var(--speaker-font-size);
   color: var(--speaker-color);
   margin-bottom: 2px;
@@ -302,10 +323,7 @@
 /* ── SFX ── */
 .sfx {
   position: absolute;
-  bottom: 18%;
-  left: 50%;
-  transform: translateX(-50%) rotate(-4deg);
-  font-family: 'Bangers', fantasy, cursive;
+  font-family: 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif;
   font-size: var(--sfx-font-size);
   color: var(--sfx-color);
   text-shadow:
@@ -320,11 +338,32 @@
   -webkit-user-select: none;
 }
 
+/* Intensity scales */
+.sfx.intensity-1 { font-size: calc(var(--sfx-font-size) * 0.7); letter-spacing: 0.04em; }
+.sfx.intensity-2 { font-size: var(--sfx-font-size);              letter-spacing: 0.02em; }
+.sfx.intensity-3 { font-size: calc(var(--sfx-font-size) * 1.5); letter-spacing: 0.06em; font-weight: bolder; }
+
+/* Kind colour overrides */
+.sfx.kind-mechanical  { color: var(--sfx-mechanical-color, #2A6B8F); }
+.sfx.kind-voice       { color: var(--sfx-voice-color, #C2891A); }
+.sfx.kind-ambient     { color: var(--sfx-ambient-color, #777777); opacity: 0.85; text-shadow: 1px 1px 0 var(--sfx-shadow); }
+.sfx.kind-environment { color: var(--sfx-ambient-color, #777777); opacity: 0.85; text-shadow: 1px 1px 0 var(--sfx-shadow); }
+
+/* Anchor placements (used when not pinned) */
+.sfx.anchor-bottom-center { left: 50%; bottom: 18%; transform: translateX(-50%) rotate(var(--sfx-rotation, -4deg)); }
+.sfx.anchor-top-center    { left: 50%; top: 10%;   transform: translateX(-50%) rotate(var(--sfx-rotation, -4deg)); }
+.sfx.anchor-bottom-left   { left: 6%;  bottom: 12%; transform: rotate(var(--sfx-rotation, -4deg)); }
+.sfx.anchor-bottom-right  { right: 6%; bottom: 12%; transform: rotate(var(--sfx-rotation, -4deg)); }
+.sfx.anchor-top-left      { left: 6%;  top: 8%;    transform: rotate(var(--sfx-rotation, -4deg)); }
+.sfx.anchor-top-right     { right: 6%; top: 8%;    transform: rotate(var(--sfx-rotation, -4deg)); }
+
 /* ── SFX pinned by web editor (x/y set via inline style) ── */
 .sfx.pinned {
   bottom: auto;
   left: auto;
-  transform: none;  /* rotation applied via inline style instead */
+  right: auto;
+  top: auto;
+  /* transform: rotate(...) supplied inline */
 }
 
 /* ── Panel ID debug label ── */
@@ -350,7 +389,7 @@
   bottom: 10px;
   left: 0; right: 0;
   text-align: center;
-  font-family: 'Bangers', fantasy, sans-serif;
+  font-family: 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif;
   font-size: var(--page-num-font-size);
   color: var(--page-num-color);
   letter-spacing: 0.08em;

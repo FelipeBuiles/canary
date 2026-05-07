@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
+
+from novel_to_comic.models.comic_page import SfxKind, normalize_sfx_text
 
 
 PanelImportance = Literal["standard", "accent", "hero", "splash", "inset"]
@@ -97,6 +99,30 @@ class LLMNarrationDecisionSpec(BaseModel):
         return v
 
 
+class PlannedSfx(BaseModel):
+    """A planned sound effect carried from screenplay through the layout plan.
+
+    ``text`` is bare onomatopoeia (no markup; cleaned via
+    :func:`normalize_sfx_text`). ``kind`` and ``intensity`` are populated
+    by the planner — either from explicit LLM hints or via heuristic
+    inference at projection time.
+    """
+
+    text: str
+    kind: SfxKind = "impact"
+    intensity: Literal[1, 2, 3] = 2
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def _clean_text(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            cleaned = normalize_sfx_text(v)
+            if cleaned is None:
+                raise ValueError("PlannedSfx.text is empty after stripping markup")
+            return cleaned
+        return v
+
+
 class PlannedPanel(BaseModel):
     panel_id: str
     scene_id: str
@@ -125,11 +151,31 @@ class PlannedPanel(BaseModel):
     lighting: str = ""
     mood: str = ""
     dialogue: list[dict[str, str | None]] = Field(default_factory=list)
-    sfx: str | None = None
+    sfx: list[PlannedSfx] = Field(default_factory=list)
     has_narration_caption: bool = False
     narration_mode: NarrationMode | None = None
     preferred_caption_zone: CaptionZone | None = None
     page_break_after: bool = False
+
+    @field_validator("sfx", mode="before")
+    @classmethod
+    def _migrate_sfx(cls, v: Any) -> Any:
+        if v is None:
+            return []
+        if isinstance(v, str):
+            cleaned = normalize_sfx_text(v)
+            return [{"text": cleaned}] if cleaned else []
+        if isinstance(v, list):
+            out: list[Any] = []
+            for item in v:
+                if isinstance(item, str):
+                    cleaned = normalize_sfx_text(item)
+                    if cleaned:
+                        out.append({"text": cleaned})
+                else:
+                    out.append(item)
+            return out
+        return v
 
 
 class PlannedPage(BaseModel):

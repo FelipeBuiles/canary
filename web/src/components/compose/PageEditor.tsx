@@ -4,6 +4,11 @@ import { ScaledContainer } from "./ScaledContainer";
 import { ComicPageCanvas } from "./ComicPageCanvas";
 import { exceedsThreshold } from "./coordinates";
 
+function parseSfxIndexFromId(elementId: string): number {
+  const m = elementId.match(/__sfx__(\d+)$/);
+  return m ? Number(m[1]) : 0;
+}
+
 interface PageEditorProps {
   page: ComicPage;
   project: string;
@@ -129,7 +134,8 @@ export function PageEditor({
       const sfxEl = closest(target, "[data-sfx][data-editor-selectable]");
       if (sfxEl) {
         const panelId = sfxEl.getAttribute("data-sfx")!;
-        const elementId = `${panelId}__sfx`;
+        const sfxIndex = Number(sfxEl.getAttribute("data-sfx-index") ?? "0");
+        const elementId = `${panelId}__sfx__${sfxIndex}`;
         onSelect(panelId, "sfx", elementId);
         if (onDragEnd && canvas && scale) {
           const panelEl = closest(sfxEl, "[data-panel-id]");
@@ -246,7 +252,7 @@ export function PageEditor({
   const selectedPanelId = selectedId
     ? page.panels.find((panel) =>
         panel.bubbles.some((b) => b.id === selectedId) ||
-        (selectedType === "sfx" && `${panel.id}__sfx` === selectedId),
+        (selectedType === "sfx" && selectedId.startsWith(`${panel.id}__sfx`)),
       )?.id ?? null
     : null;
 
@@ -264,8 +270,11 @@ export function PageEditor({
         if (panelId) onSelect(panelId, "bubble", bubbleId);
         return;
       }
-      const panelId = selectable.getAttribute("data-sfx");
-      if (panelId) onSelect(panelId, "sfx", `${panelId}__sfx`);
+      const sfxPanelId = selectable.getAttribute("data-sfx");
+      if (sfxPanelId) {
+        const sfxIndex = Number(selectable.getAttribute("data-sfx-index") ?? "0");
+        onSelect(sfxPanelId, "sfx", `${sfxPanelId}__sfx__${sfxIndex}`);
+      }
     },
     [onSelect],
   );
@@ -324,8 +333,12 @@ function buildDisplayPage(
             ),
           };
         }
-        if (elementDrag.type === "sfx" && panel.sfx) {
-          return { ...panel, sfx: { ...panel.sfx, x, y } };
+        if (elementDrag.type === "sfx" && panel.sfx.length > 0) {
+          const idx = parseSfxIndexFromId(elementDrag.elementId);
+          return {
+            ...panel,
+            sfx: panel.sfx.map((s, i) => (i === idx ? { ...s, x, y } : s)),
+          };
         }
       }
       // Optimistic panel reframe drag

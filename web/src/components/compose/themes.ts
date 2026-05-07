@@ -30,6 +30,9 @@ export const BASE_VARS: Record<string, string> = {
   "--sfx-color":            "#CC1111",
   "--sfx-shadow":           "#000000",
   "--sfx-font-size":        "37px",
+  "--sfx-mechanical-color": "#2A6B8F",
+  "--sfx-voice-color":      "#C2891A",
+  "--sfx-ambient-color":    "#777777",
   "--page-num-color":       "#AAAAAA",
   "--page-num-font-size":   "17px",
 };

@@ -17,9 +17,93 @@ Web dashboard pipeline (future):
 
 from __future__ import annotations
 
-from typing import Literal
+import re
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+SfxKind = Literal["impact", "mechanical", "voice", "ambient", "environment"]
+SfxAnchor = Literal[
+    "auto",
+    "bottom-center",
+    "top-center",
+    "bottom-left",
+    "bottom-right",
+    "top-left",
+    "top-right",
+]
+
+_SFX_BRACKETS_RE = re.compile(r"^\s*\[\s*(.*?)\s*\]\s*$", re.DOTALL)
+_SFX_PREFIX_RE = re.compile(r"^\s*sfx\s*[:\-]\s*", re.IGNORECASE)
+
+_SFX_KIND_KEYWORDS: dict[str, SfxKind] = {
+    # mechanical / electronic
+    "beep": "mechanical", "buzz": "mechanical", "tick": "mechanical",
+    "click": "mechanical", "whirr": "mechanical", "hum": "mechanical",
+    "ring": "mechanical", "ding": "mechanical", "rrrr": "mechanical",
+    # voice / vocal
+    "aah": "voice", "ahh": "voice", "ooh": "voice", "ooo": "voice",
+    "gasp": "voice", "scream": "voice", "groan": "voice", "moan": "voice",
+    "yelp": "voice", "shriek": "voice", "wail": "voice", "sigh": "voice",
+    "huff": "voice", "puff": "voice", "haha": "voice", "uggh": "voice",
+    # ambient / environmental
+    "rustle": "ambient", "whisper": "ambient", "patter": "ambient",
+    "drip": "ambient", "creak": "ambient", "wind": "environment",
+    "rain": "environment", "thunder": "environment",
+}
+
+
+def normalize_sfx_text(raw: str | None) -> str | None:
+    """Strip ``[SFX: ...]`` / ``SFX:`` markup leaked from LLM output.
+
+    Returns ``None`` for empty or pure-markup input so callers can drop the
+    SFX entirely instead of rendering literal brackets on the page.
+    """
+    if not raw:
+        return None
+    s = str(raw).strip()
+    for _ in range(3):
+        m = _SFX_BRACKETS_RE.match(s)
+        if m:
+            s = m.group(1).strip()
+            continue
+        m2 = _SFX_PREFIX_RE.match(s)
+        if m2:
+            s = s[m2.end():].strip()
+            continue
+        break
+    return s or None
+
+
+def infer_sfx_kind(text: str) -> SfxKind:
+    """Heuristic mapping from onomatopoeia to ``SfxKind``.
+
+    Falls back to ``"impact"`` — the safest default for a single SFX, and
+    the mode that uses the existing ``--sfx-color`` theme variable.
+    """
+    low = text.lower()
+    for needle, kind in _SFX_KIND_KEYWORDS.items():
+        if needle in low:
+            return kind
+    return "impact"
+
+
+def infer_sfx_intensity(text: str) -> Literal[1, 2, 3]:
+    """Heuristic mapping from a cleaned SFX string to intensity 1-3.
+
+    3 = big sounds (all caps + emphasis or repeated vowels).
+    2 = standard onomatopoeia.
+    1 = quiet / lowercase / descriptive prose that slipped through.
+    """
+    if not text:
+        return 2
+    has_upper = any(c.isupper() for c in text)
+    has_lower = any(c.islower() for c in text)
+    if has_upper and not has_lower:
+        if "!" in text or any(text.count(c) >= 3 for c in "OAEIUM"):
+            return 3
+        return 2
+    return 1
 
 
 class Bubble(BaseModel):
@@ -88,19 +172,37 @@ class Bubble(BaseModel):
 class Sfx(BaseModel):
     """A sound effect overlay on a panel.
 
-    Position contract (mirrors Bubble):
-    • x, y = None  → CSS default: centered horizontally, bottom 18% of panel
+    Position contract:
+    • x, y = None  → CSS layout: ``anchor`` controls which corner/edge
+                     the SFX is glued to (``"auto"`` lets the renderer pick
+                     based on order in ``PagePanel.sfx``).
     • x, y = float → pinned by web editor (absolute px from panel top-left)
 
-    ``rotation`` is in degrees; default matches the CSS −4 ° tilt.
-    ``font_size`` overrides ``--sfx-font-size`` when set.
+    ``kind`` selects the colour theme (``--sfx-color`` for impact, plus
+    per-kind variables for mechanical/voice/ambient/environment).
+    ``intensity`` 1-3 scales the rendered font size.
+    ``rotation`` is in degrees. ``font_size`` overrides the per-intensity
+    size when set.
     """
 
     text: str
+    kind: SfxKind = "impact"
+    intensity: Literal[1, 2, 3] = 2
+    anchor: SfxAnchor = "auto"
     x: float | None = None
     y: float | None = None
-    rotation: float = -4.0          # degrees; matches CSS default
-    font_size: int | None = None    # px override; None = use --sfx-font-size var
+    rotation: float = -4.0
+    font_size: int | None = None
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def _clean_text(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            cleaned = normalize_sfx_text(v)
+            if cleaned is None:
+                raise ValueError("Sfx.text is empty after stripping markup")
+            return cleaned
+        return v
 
 
 class PagePanel(BaseModel):
@@ -114,7 +216,7 @@ class PagePanel(BaseModel):
     importance: str | None = None
     generation_mode: str | None = None
     bubbles: list[Bubble] = Field(default_factory=list)
-    sfx: Sfx | None = None
+    sfx: list[Sfx] = Field(default_factory=list)
     # Optional panel image offset in px from the default object-position.
     image_offset_x: float | None = None
     image_offset_y: float | None = None
@@ -130,6 +232,15 @@ class PagePanel(BaseModel):
     clip_path: str | None = None
     z_index: int | None = None
     shape_intent: str | None = None
+
+    @field_validator("sfx", mode="before")
+    @classmethod
+    def _migrate_sfx(cls, v: Any) -> Any:
+        if v is None:
+            return []
+        if isinstance(v, (dict, Sfx)):
+            return [v]
+        return v
 
 
 class ComicPage(BaseModel):

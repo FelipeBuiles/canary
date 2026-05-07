@@ -22,7 +22,7 @@ from novel_to_comic.layout_planning import (
     reorder_planned_pages,
     save_layout_plan,
 )
-from novel_to_comic.models.comic_page import Bubble, ComicPage, Sfx, BUBBLE_PRESETS, CharacterVoice
+from novel_to_comic.models.comic_page import Bubble, ComicPage, Sfx, BUBBLE_PRESETS, CharacterVoice, normalize_sfx_text
 from novel_to_comic.models.story_bible import StoryBible
 
 from ..auth import get_current_user
@@ -454,18 +454,37 @@ def update_page(page_num: int, body: dict, project=Depends(get_project)):
                 panel.bubbles = ordered + remaining
 
             # ── Remove SFX ──
-            if panel_patch.get("remove_sfx"):
-                panel.sfx = None
+            # remove_sfx: true            → clear all SFX on the panel
+            # remove_sfx: <int index>     → remove a single SFX by index
+            if "remove_sfx" in panel_patch:
+                target = panel_patch["remove_sfx"]
+                if target is True:
+                    panel.sfx = []
+                elif isinstance(target, int) and 0 <= target < len(panel.sfx):
+                    panel.sfx.pop(target)
 
             # ── Update or create SFX ──
+            # sfx: { ...fields }                → update SFX at sfx_index (default 0),
+            #                                     create one if list is empty
+            # sfx: [ {...}, {...} ]             → replace whole list
             elif "sfx" in panel_patch:
                 sfx_data = panel_patch["sfx"]
-                if panel.sfx:
-                    for field in ("x", "y", "rotation", "font_size", "text"):
-                        if field in sfx_data:
-                            setattr(panel.sfx, field, sfx_data[field])
+                if isinstance(sfx_data, list):
+                    panel.sfx = [Sfx.model_validate(item) for item in sfx_data]
                 else:
-                    panel.sfx = Sfx(text=sfx_data.get("text", "SFX!"))
+                    idx = panel_patch.get("sfx_index", 0)
+                    if 0 <= idx < len(panel.sfx):
+                        target_sfx = panel.sfx[idx]
+                        for field in ("x", "y", "rotation", "font_size", "text", "kind", "intensity", "anchor"):
+                            if field in sfx_data:
+                                value = sfx_data[field]
+                                if field == "text":
+                                    value = normalize_sfx_text(value) or value
+                                setattr(target_sfx, field, value)
+                    else:
+                        text = normalize_sfx_text(sfx_data.get("text")) or "SFX!"
+                        new_sfx = Sfx.model_validate({**sfx_data, "text": text})
+                        panel.sfx.append(new_sfx)
 
     artifacts.write_compose_page(project_dir, page_num, cp)
     return cp.model_dump()

@@ -68,6 +68,9 @@ _BASE_VARS: dict[str, str] = {
     "--sfx-color":            "#CC1111",
     "--sfx-shadow":           "#000000",
     "--sfx-font-size":        "37px",
+    "--sfx-mechanical-color": "#2A6B8F",
+    "--sfx-voice-color":      "#C2891A",
+    "--sfx-ambient-color":    "#777777",
     "--page-num-color":       "#AAAAAA",
     "--page-num-font-size":   "17px",
 }
@@ -385,7 +388,7 @@ body {
 /* Speaker label */
 .speaker {
   display: block;
-  font-family: 'Bangers', fantasy, sans-serif;
+  font-family: 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif;
   font-size: var(--speaker-font-size);
   color: var(--speaker-color);
   margin-bottom: 2px;
@@ -423,10 +426,7 @@ body {
 /* ── SFX ── */
 .sfx {
   position: absolute;
-  bottom: 18%;
-  left: 50%;
-  transform: translateX(-50%) rotate(-4deg);
-  font-family: 'Bangers', fantasy, cursive;
+  font-family: 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif;
   font-size: var(--sfx-font-size);
   color: var(--sfx-color);
   text-shadow:
@@ -441,11 +441,32 @@ body {
   -webkit-user-select: none;
 }
 
-/* ── SFX pinned by web editor (x/y set via inline style) ── */
+/* Intensity scales */
+.sfx.intensity-1 { font-size: calc(var(--sfx-font-size) * 0.7); letter-spacing: 0.04em; }
+.sfx.intensity-2 { font-size: var(--sfx-font-size);              letter-spacing: 0.02em; }
+.sfx.intensity-3 { font-size: calc(var(--sfx-font-size) * 1.5); letter-spacing: 0.06em; font-weight: bolder; }
+
+/* Kind colour overrides */
+.sfx.kind-mechanical  { color: var(--sfx-mechanical-color); }
+.sfx.kind-voice       { color: var(--sfx-voice-color); }
+.sfx.kind-ambient     { color: var(--sfx-ambient-color); opacity: 0.85; text-shadow: 1px 1px 0 var(--sfx-shadow); }
+.sfx.kind-environment { color: var(--sfx-ambient-color); opacity: 0.85; text-shadow: 1px 1px 0 var(--sfx-shadow); }
+
+/* Anchor placements — used when not pinned */
+.sfx.anchor-bottom-center { left: 50%; bottom: 18%; transform: translateX(-50%) rotate(var(--sfx-rotation, -4deg)); }
+.sfx.anchor-top-center    { left: 50%; top: 10%;   transform: translateX(-50%) rotate(var(--sfx-rotation, -4deg)); }
+.sfx.anchor-bottom-left   { left: 6%;  bottom: 12%; transform: rotate(var(--sfx-rotation, -4deg)); }
+.sfx.anchor-bottom-right  { right: 6%; bottom: 12%; transform: rotate(var(--sfx-rotation, -4deg)); }
+.sfx.anchor-top-left      { left: 6%;  top: 8%;    transform: rotate(var(--sfx-rotation, -4deg)); }
+.sfx.anchor-top-right     { right: 6%; top: 8%;    transform: rotate(var(--sfx-rotation, -4deg)); }
+
+/* Pinned: coordinates and rotation supplied via inline style */
 .sfx.pinned {
   bottom: auto;
   left: auto;
-  transform: none;  /* rotation applied via inline style instead */
+  right: auto;
+  top: auto;
+  /* transform: rotate(...) supplied inline */
 }
 
 /* ── Panel ID debug label ── */
@@ -466,7 +487,7 @@ body {
   bottom: 10px;
   left: 0; right: 0;
   text-align: center;
-  font-family: 'Bangers', fantasy, sans-serif;
+  font-family: 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif;
   font-size: var(--page-num-font-size);
   color: var(--page-num-color);
   letter-spacing: 0.08em;
@@ -741,6 +762,53 @@ def _bubble_html(bubble: Bubble, character_voices: dict[str, dict] | None = None
     return f'<div class="{cls}" data-id="{_e(bubble.id)}"{style_attr}>{speaker_html}{_e(bubble.text)}{tail_html}</div>'
 
 
+_AUTO_SFX_ANCHORS = (
+    "bottom-center",
+    "top-right",
+    "top-left",
+    "bottom-right",
+    "bottom-left",
+    "top-center",
+)
+_AUTO_SFX_ROTATIONS = (-4.0, 6.0, -8.0, 3.0, -2.0, 5.0)
+
+
+def _render_sfx_block(sfx_list: list[Sfx]) -> str:
+    """Render the SFX layer for a panel.
+
+    Multiple SFX cycle through ``_AUTO_SFX_ANCHORS`` so they don't all stack
+    in the same place; rotations cycle through ``_AUTO_SFX_ROTATIONS`` for
+    organic typographic variety. Pinned SFX (x/y set by the editor) keep
+    their explicit position and rotation.
+    """
+    if not sfx_list:
+        return ""
+    parts: list[str] = []
+    for idx, sfx in enumerate(sfx_list):
+        classes = ["sfx", f"kind-{sfx.kind}", f"intensity-{sfx.intensity}"]
+        inline: list[str] = []
+        if sfx.x is not None and sfx.y is not None:
+            classes.append("pinned")
+            inline += [
+                f"left: {sfx.x:.0f}px",
+                f"top: {sfx.y:.0f}px",
+                f"transform: rotate({sfx.rotation:.1f}deg)",
+            ]
+        else:
+            anchor = sfx.anchor if sfx.anchor != "auto" else _AUTO_SFX_ANCHORS[idx % len(_AUTO_SFX_ANCHORS)]
+            classes.append(f"anchor-{anchor}")
+            rot = sfx.rotation if sfx.rotation != -4.0 else _AUTO_SFX_ROTATIONS[idx % len(_AUTO_SFX_ROTATIONS)]
+            inline.append(f"--sfx-rotation: {rot:.1f}deg")
+        if sfx.font_size is not None:
+            inline.append(f"font-size: {sfx.font_size}px")
+        style_attr = f' style="{"; ".join(inline)}"' if inline else ""
+        parts.append(
+            f'  <div class="{" ".join(classes)}" data-sfx="true" data-sfx-index="{idx}"{style_attr}>'
+            f'{_e(sfx.text.upper())}</div>'
+        )
+    return "\n".join(parts)
+
+
 def _panel_html(
     panel: PagePanel,
     project_dir: Path,
@@ -832,25 +900,8 @@ def _panel_html(
     # Pinned bubbles → absolute within panel
     pinned_html = "\n".join(f"  {_bubble_html(b, character_voices)}" for b in pinned)
 
-    # SFX
-    sfx_html = ""
-    if panel.sfx:
-        sfx = panel.sfx
-        classes = ["sfx"]
-        inline: list[str] = []
-        if sfx.x is not None and sfx.y is not None:
-            classes.append("pinned")
-            inline += [
-                f"left: {sfx.x:.0f}px",
-                f"top: {sfx.y:.0f}px",
-                f"transform: rotate({sfx.rotation:.1f}deg)",
-            ]
-        elif sfx.rotation != -4.0:
-            inline.append(f"transform: translateX(-50%) rotate({sfx.rotation:.1f}deg)")
-        if sfx.font_size is not None:
-            inline.append(f"font-size: {sfx.font_size}px")
-        style_attr = f' style="{"; ".join(inline)}"' if inline else ""
-        sfx_html = f'  <div class="{" ".join(classes)}" data-sfx="true"{style_attr}>{_e(sfx.text.upper())}</div>'
+    # SFX — multi-SFX per panel, with auto anchor cycling for variety.
+    sfx_html = _render_sfx_block(panel.sfx)
 
     # Debug label
     pid_html = (

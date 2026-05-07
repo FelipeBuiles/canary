@@ -46,7 +46,15 @@ from novel_to_comic.layout_planning import (
     planned_panel_index,
     planned_panel_to_breakdown,
 )
-from novel_to_comic.models.comic_page import Bubble, ComicPage, PagePanel, Sfx
+from novel_to_comic.models.comic_page import (
+    Bubble,
+    ComicPage,
+    PagePanel,
+    Sfx,
+    infer_sfx_intensity,
+    infer_sfx_kind,
+    normalize_sfx_text,
+)
 from novel_to_comic.models.panel import PanelBreakdown
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.state import (
@@ -211,13 +219,23 @@ def _build_comic_page(
         elif layout == "5" and idx == 1:
             grid_column = "3"
 
+        sfx_items: list[Sfx] = []
+        for raw in bd.sfx:
+            text = normalize_sfx_text(raw)
+            if not text:
+                continue
+            sfx_items.append(Sfx(
+                text=text,
+                kind=infer_sfx_kind(text),
+                intensity=infer_sfx_intensity(text),
+            ))
         panels.append(PagePanel(
             id=f"{bd.scene_id}-{bd.panel_number:03d}",
             image_path=rel_img,
             scene_id=bd.scene_id,
             panel_number=bd.panel_number,
             bubbles=bubbles,
-            sfx=Sfx(text=bd.sfx) if bd.sfx else None,
+            sfx=sfx_items,
             grid_column=grid_column,
         ))
 
