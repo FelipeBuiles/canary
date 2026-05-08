@@ -23,6 +23,7 @@ import { SceneSidebar } from "../../components/ui/SceneSidebar";
 import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
 import { WarningOverrideDrawer } from "../../components/ui/WarningOverrideDrawer";
 import { useCharacterName } from "../../hooks/useCharacterName";
+import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { renderPanelPromptBody } from "../../lib/prompting";
 import { detectAllWarnings } from "../../lib/promptWarnings";
@@ -339,7 +340,14 @@ function DirectApproveAction({
         onSuccess: () => {
           runPipeline.mutate(
             { project, stage: "draw" },
-            { onSuccess: () => connect(project) },
+            {
+              onSuccess: () => connect(project),
+              onError: (err) =>
+                maybeShowInsufficientCredits(err, {
+                  actionLabel: "Run DRAW",
+                  onRetry: doApproveAndRun,
+                }),
+            },
           );
         },
       },

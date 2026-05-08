@@ -17,7 +17,7 @@ from typing import Any
 import httpx
 
 from novel_to_comic.ai.context import current_ai_request_context
-from novel_to_comic.config import Config, GATEWAY_IMAGE_PRIMARY_MODEL
+from novel_to_comic.config import Config, is_gpt_image_2
 from novel_to_comic.usage import (
     ApiResult,
     UsageRecord,
@@ -153,8 +153,6 @@ def _provider_from_model(model: str | None) -> str:
     if not model:
         return "litellm"
     lower = model.lower()
-    if lower.startswith("canary/"):
-        return "litellm"
     if "/" in lower:
         return lower.split("/", 1)[0]
     if lower.startswith("gemini"):
@@ -163,6 +161,7 @@ def _provider_from_model(model: str | None) -> str:
         return "anthropic"
     if lower.startswith("gpt") or lower.startswith("dall-e"):
         return "openai"
+    # Bare gateway aliases (extract-fast, image-balanced, etc.) land here.
     return "litellm"
 
 
@@ -934,15 +933,6 @@ async def generate_image(
         raise
 
 
-def _is_gpt_image_2(model: str) -> bool:
-    normalized = (model or "").strip().lower()
-    return normalized in {
-        "gpt-image-2",
-        "openai/gpt-image-2",
-        GATEWAY_IMAGE_PRIMARY_MODEL,
-    }
-
-
 def _valid_gpt_image_2_size(width: int, height: int) -> bool:
     if width <= 0 or height <= 0:
         return False
@@ -957,7 +947,7 @@ def _valid_gpt_image_2_size(width: int, height: int) -> bool:
 
 
 def _image_size(model: str, width: int, height: int) -> str:
-    if _is_gpt_image_2(model) and _valid_gpt_image_2_size(width, height):
+    if is_gpt_image_2(model) and _valid_gpt_image_2_size(width, height):
         return f"{width}x{height}"
 
     # Thresholds map to the three OpenAI-supported sizes: portrait (1024×1536,

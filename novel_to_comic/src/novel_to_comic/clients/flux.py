@@ -15,7 +15,7 @@ def _generation_config(config: Config) -> Config:
     if model.lower().startswith("imagen-"):
         raise ValueError(
             "Imagen image models are no longer supported. Use a gateway image "
-            "alias such as canary/image-primary or canary/image-fast."
+            "alias such as image-fast, image-balanced, or image-quality."
         )
     if model != config.image_model:
         return config.model_copy(update={"image_model": model})

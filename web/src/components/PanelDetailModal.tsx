@@ -19,6 +19,7 @@ import {
 } from "../api/queries";
 import { redactDevText, useShowDevContent } from "../lib/devContent";
 import { useRegenStore } from "../store/regen";
+import { maybeShowInsufficientCredits } from "../store/insufficientCredits";
 import { useQueryClient } from "@tanstack/react-query";
 
 type TabId = "review" | "edit" | "prompt";
@@ -327,7 +328,17 @@ function EditTabContent({
         { project, sceneId, panelNumber },
         {
           onSuccess: (data) => attachJob(project, key, data.job),
-          onError: (err) => fail(project, key, err instanceof Error ? err.message : "Regeneration failed"),
+          onError: (err) => {
+            if (
+              maybeShowInsufficientCredits(err, {
+                actionLabel: "Regenerate panel",
+                onRetry: handleGenerateFromDraft,
+              })
+            ) {
+              return;
+            }
+            fail(project, key, err instanceof Error ? err.message : "Regeneration failed");
+          },
         },
       );
       onGenerateFromDraft();
@@ -441,8 +452,8 @@ function PromptTabContent({
   const [showRaw, setShowRaw] = useState(false);
   const [showDevContent] = useShowDevContent();
 
-  const effectiveModel = projectConfig?.dev_mode && projectConfig?.image_model === "canary/image-primary"
-    ? (projectConfig?.fallback_image_model || "canary/image-fast")
+  const effectiveModel = projectConfig?.dev_mode && projectConfig?.image_model === "image-balanced"
+    ? (projectConfig?.fallback_image_model || "image-fast")
     : projectConfig?.image_model;
 
   const rawPrompt = (prompt.full_prompt || "").trim();
@@ -615,7 +626,17 @@ export function PanelDetailModal({
       { project, sceneId, panelNumber },
       {
         onSuccess: (data) => attachJob(project, key, data.job),
-        onError: (err) => fail(project, key, err instanceof Error ? err.message : "Regeneration failed"),
+        onError: (err) => {
+          if (
+            maybeShowInsufficientCredits(err, {
+              actionLabel: "Regenerate panel",
+              onRetry: handleQuickRedo,
+            })
+          ) {
+            return;
+          }
+          fail(project, key, err instanceof Error ? err.message : "Regeneration failed");
+        },
       },
     );
   };
@@ -632,7 +653,17 @@ export function PanelDetailModal({
           setLastRewrittenPrompt(data.prompt);
           queryClient.invalidateQueries({ queryKey: ["project", project, "direct", sceneId] });
         },
-        onError: (err) => fail(project, key, err instanceof Error ? err.message : "Instruction regeneration failed"),
+        onError: (err) => {
+          if (
+            maybeShowInsufficientCredits(err, {
+              actionLabel: "Regenerate panel",
+              onRetry: () => handleInstructionRegen(instruction),
+            })
+          ) {
+            return;
+          }
+          fail(project, key, err instanceof Error ? err.message : "Instruction regeneration failed");
+        },
       },
     );
   };

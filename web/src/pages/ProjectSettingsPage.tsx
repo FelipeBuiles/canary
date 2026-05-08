@@ -20,9 +20,9 @@ const QUALITY_PRESET_OPTIONS: Array<{ value: string; label: string; desc: string
 ];
 
 const IMAGE_PRESET_OPTIONS: Array<{ model: string; provider: string; label: string; desc: string }> = [
-  { model: "canary/image-primary", provider: "openai", label: "GPT Image 2", desc: "Best quality" },
-  { model: "canary/image-fallback", provider: "gemini", label: "Gemini Pro Image", desc: "Balanced" },
-  { model: "canary/image-fast", provider: "gemini", label: "Gemini Flash Image", desc: "Fastest" },
+  { model: "image-fast", provider: "gemini", label: "Gemini Flash Image", desc: "Fastest" },
+  { model: "image-balanced", provider: "openai", label: "GPT Image 2", desc: "Balanced" },
+  { model: "image-quality", provider: "gemini", label: "Gemini Pro Image", desc: "Best quality" },
 ];
 
 const TABS = [
@@ -167,7 +167,7 @@ export function ProjectSettingsPage() {
               hint={t("Selects the image generation model. Provider is configured automatically.")}
             >
               <SelectField
-                value={IMAGE_PRESET_OPTIONS.find((o) => o.model === config?.image_model) ? config?.image_model : "canary/image-primary"}
+                value={IMAGE_PRESET_OPTIONS.find((o) => o.model === config?.image_model) ? config?.image_model : "image-balanced"}
                 onChange={(e) => {
                   const selected = IMAGE_PRESET_OPTIONS.find((o) => o.model === e.target.value);
                   if (selected) {

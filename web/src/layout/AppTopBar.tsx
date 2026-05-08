@@ -65,13 +65,16 @@ export function AppTopBar() {
         <Link
           to="/credits"
           className={cn(
-            "hidden h-8 items-center gap-2 border border-ink-black/8 px-3 font-meta text-[0.62rem] font-bold tracking-[0.08em] sm:flex",
-            isLow ? "bg-chip-gold text-warn-orange" : "bg-surface-container text-ink-black/76",
+            "hidden h-8 items-center gap-2 border px-3 font-meta text-[0.62rem] font-bold tracking-[0.08em] sm:flex",
+            isLow
+              ? "border-narrator-gold/60 bg-chip-gold text-warn-orange"
+              : "border-ink-black/8 bg-surface-container text-ink-black/76",
           )}
+          aria-label={isLow ? "Credits low — top up" : `Credits: ${credits}`}
         >
           <span>◆</span>
           <span>{credits.toLocaleString()}</span>
-          <span className="text-ink-black/42">credits{isLow ? " · add" : ""}</span>
+          <span className="text-ink-black/42">credits{isLow ? " · top up" : ""}</span>
         </Link>
 
         <div ref={menuRef} className="relative">

@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { ConfirmDrawer } from "../components/ui/ConfirmDrawer";
 import {
   useApproveStage,
+  useCreditBalance,
   useImages,
   usePages,
   usePanelSummaries,
@@ -15,6 +16,7 @@ import {
   useStoryBible,
   useStyles,
 } from "../api/queries";
+import { maybeShowInsufficientCredits, useInsufficientCreditsStore } from "../store/insufficientCredits";
 import { Icon } from "../components/ui/Icon";
 import { useI18n } from "../i18n";
 import { cn } from "../lib/cn";
@@ -309,8 +311,15 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   }, [status, isRunning, styleNeedsSelection, projectId, nextAttentionStage, shotPlanAction, needsApproval, brokenStage]);
 
   const { data: nextStageEstimate } = useStageEstimate(projectId, nextRunStage);
+  const { data: creditBalance } = useCreditBalance();
+  const showInsufficient = useInsufficientCreditsStore((s) => s.show);
   const [showCostConfirm, setShowCostConfirm] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+
+  const requiredCredits = nextStageEstimate?.reserved_credits ?? nextStageEstimate?.estimate_credits ?? 0;
+  const balanceCredits = creditBalance?.balance_credits ?? 0;
+  const proactiveInsufficient =
+    !!nextRunStage && requiredCredits > 0 && balanceCredits < requiredCredits;
 
   const measureStageDetails = useCallback(() => {
     const nav = navRef.current;
@@ -352,6 +361,28 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     };
   }, [measureStageDetails, pipelineStages, stageDetails, activeStageRoute]);
 
+  const stageActionLabel = useCallback(
+    (stage: string | undefined) =>
+      stage ? `Run ${getBackendStageUiLabel(stage as StageName)}` : "Run stage",
+    [],
+  );
+
+  const handleRunError = useCallback(
+    (err: unknown, fallback: string, retry?: () => void) => {
+      if (
+        maybeShowInsufficientCredits(err, {
+          actionLabel: stageActionLabel(nextRunStage),
+          onRetry: retry,
+        })
+      ) {
+        setRunError(null);
+        return;
+      }
+      setRunError(err instanceof Error ? err.message : fallback);
+    },
+    [nextRunStage, stageActionLabel],
+  );
+
   function handleRun() {
     if (!projectId || !pendingStage) return;
     setRunError(null);
@@ -360,7 +391,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
       { project: projectId, stage: pendingStage },
       {
         onSuccess: () => connect(projectId),
-        onError: (e) => setRunError(e instanceof Error ? e.message : "Failed to start pipeline"),
+        onError: (e) => handleRunError(e, "Failed to start pipeline", handleRun),
       },
     );
   }
@@ -385,11 +416,11 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
               { project: projectId, stage: pendingStage },
               {
                 onSuccess: () => connect(projectId),
-                onError: (e) => setRunError(e instanceof Error ? e.message : "Failed to start pipeline"),
+                onError: (e) => handleRunError(e, "Failed to start pipeline", handleContinue),
               },
             );
           },
-          onError: (e) => setRunError(e instanceof Error ? e.message : "Failed to approve stage"),
+          onError: (e) => handleRunError(e, "Failed to approve stage", handleContinue),
         },
       );
       return;
@@ -413,7 +444,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           { project: projectId, stage: shotPlanAction.backendStage },
           {
             onSuccess: () => connect(projectId),
-            onError: (e) => setRunError(e instanceof Error ? e.message : "Failed to start pipeline"),
+            onError: (e) => handleRunError(e, "Failed to start pipeline", handleContinue),
           },
         );
       } else if (shotPlanAction.kind === "rerun") {
@@ -421,7 +452,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           { project: projectId, stage: shotPlanAction.backendStage, rerun: true },
           {
             onSuccess: () => connect(projectId),
-            onError: (e) => setRunError(e instanceof Error ? e.message : "Failed to start pipeline"),
+            onError: (e) => handleRunError(e, "Failed to start pipeline", handleContinue),
           },
         );
       }
@@ -433,7 +464,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
         { project: projectId, stage: brokenStage, rerun: true },
         {
           onSuccess: () => connect(projectId),
-          onError: (e) => setRunError(e instanceof Error ? e.message : "Failed to start pipeline"),
+          onError: (e) => handleRunError(e, "Failed to start pipeline", handleContinue),
         },
       );
       return;
@@ -447,6 +478,21 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     // No credits spent yet so skip the cost drawer.
     if (styleNeedsSelection && !needsApproval) {
       handleContinue();
+      return;
+    }
+    if (proactiveInsufficient && nextStageEstimate) {
+      showInsufficient({
+        info: {
+          balance_credits: balanceCredits,
+          required_credits: requiredCredits,
+          shortfall_credits: requiredCredits - balanceCredits,
+          stage: nextRunStage ?? null,
+          action: null,
+          message: `Insufficient credits — ${balanceCredits} available, ${requiredCredits} required`,
+        },
+        actionLabel: stageActionLabel(nextRunStage),
+        onRetry: handleContinue,
+      });
       return;
     }
     if (nextStageEstimate && nextStageEstimate.estimate_credits > 0) {
@@ -637,10 +683,21 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
             </div>
           )}
           {!runError && projectId && nextStageEstimate && nextStageEstimate.estimate_credits > 0 && !isRunning && (
-            <div className="mt-2 flex items-center justify-center gap-1.5 font-meta text-[0.56rem] tracking-[0.12em] text-bristol/45 2xl:text-[0.62rem]">
-              <span className="text-narrator-gold/70">Est. {nextStageEstimate.estimate_credits.toLocaleString()}</span>
-              {nextStageEstimate.reserved_credits > 0 && (
-                <span>· Reserves up to {nextStageEstimate.reserved_credits.toLocaleString()}</span>
+            <div className="mt-2 flex flex-col items-center gap-1 font-meta text-[0.56rem] tracking-[0.12em] text-bristol/45 2xl:text-[0.62rem]">
+              <div className="flex items-center justify-center gap-1.5">
+                <span className="text-narrator-gold/70">Est. {nextStageEstimate.estimate_credits.toLocaleString()}</span>
+                {nextStageEstimate.reserved_credits > 0 && (
+                  <span>· Reserves up to {nextStageEstimate.reserved_credits.toLocaleString()}</span>
+                )}
+              </div>
+              {proactiveInsufficient && (
+                <div className="mt-1 flex items-center gap-1.5 font-meta tracking-[0.1em] text-narrator-gold/85">
+                  <span>◆</span>
+                  <span>
+                    Short by {(requiredCredits - balanceCredits).toLocaleString()} —
+                    {" "}<span className="underline">top up to continue</span>
+                  </span>
+                </div>
               )}
             </div>
           )}

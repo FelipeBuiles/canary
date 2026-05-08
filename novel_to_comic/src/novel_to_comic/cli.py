@@ -6,14 +6,22 @@ from pathlib import Path
 import click
 from rich.console import Console
 
-from novel_to_comic.config import Config, GATEWAY_IMAGE_FAST_MODEL, GATEWAY_IMAGE_PRIMARY_MODEL, load_config, save_config
+from novel_to_comic.config import (
+    Config,
+    GATEWAY_IMAGE_BALANCED,
+    GATEWAY_IMAGE_FAST,
+    GATEWAY_IMAGE_QUALITY,
+    load_config,
+    save_config,
+)
 from novel_to_comic.state import create_initial_state, save_state
 
 console = Console()
 
 _INIT_IMAGE_MODEL_CHOICES: list[tuple[str, str]] = [
-    (GATEWAY_IMAGE_PRIMARY_MODEL, "Gateway primary image model"),
-    (GATEWAY_IMAGE_FAST_MODEL, "Gateway fast image model"),
+    (GATEWAY_IMAGE_FAST, "Fast image model (Gemini Flash Image)"),
+    (GATEWAY_IMAGE_BALANCED, "Balanced image model (gpt-image-2)"),
+    (GATEWAY_IMAGE_QUALITY, "Quality image model (Gemini Pro Image)"),
 ]
 
 

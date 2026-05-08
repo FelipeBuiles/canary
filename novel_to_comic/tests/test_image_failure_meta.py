@@ -95,7 +95,7 @@ def test_panel_estimate_counts_actual_uploaded_references(tmp_path):
         steps=28,
     ).model_dump_json())
 
-    config = Config(image_model="canary/image-fast")
+    config = Config(image_model="image-fast")
     cost = s7_draw.estimate_panel_image_cost_usd(
         config,
         tmp_path,
@@ -135,7 +135,7 @@ def test_gpt_image_2_reference_resolution_keeps_location_plate_text_only(tmp_pat
         scene_to_location={"scene_001": "loc_001"},
     )
     _, fast_style_refs = s7_draw.resolve_panel_reference_paths(
-        Config(image_model="canary/image-fast"),
+        Config(image_model="image-fast"),
         tmp_path,
         prompt,
         style_sample=style_path,

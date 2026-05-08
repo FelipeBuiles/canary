@@ -13,6 +13,7 @@ import { StatusPill } from "../../components/ui/StatusPill";
 import { RerunStageAction } from "../../components/ui/RerunStageAction";
 import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
 import type { Character, GenerationJob, Location } from "../../types/api";
+import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 
 function queuedLabel(job: GenerationJob | null) {
   if (!job) return "QUEUED";
@@ -80,7 +81,17 @@ function CharacterCastCard({
       { project: projectName, charId: character.id },
       {
         onSuccess: (data) => setActiveJob(data.job),
-        onError: (err) => setRegenError(err.message),
+        onError: (err) => {
+          if (
+            maybeShowInsufficientCredits(err, {
+              actionLabel: "Regenerate character",
+              onRetry: handleRegen,
+            })
+          ) {
+            return;
+          }
+          setRegenError(err.message);
+        },
       }
     );
   };
@@ -315,7 +326,16 @@ function LocationPlateCard({
       { project: projectName, locId: location.id },
       {
         onSuccess: (data) => setActiveJob(data.job),
-        onError: (err) => setLocalRegenError(err.message),
+        onError: (err) => {
+          if (
+            maybeShowInsufficientCredits(err, {
+              actionLabel: "Regenerate location plate",
+            })
+          ) {
+            return;
+          }
+          setLocalRegenError(err.message);
+        },
       }
     );
   };

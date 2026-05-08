@@ -21,14 +21,14 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `google_use_vertex_ai` | `bool` | `True` | Use Vertex AI ADC instead of Gemini developer API |
 | `google_cloud_project` | `str` | `''` | Google Cloud project ID for Vertex AI |
 | `google_cloud_location` | `str` | `'global'` | Vertex AI location |
-| `extraction_model` | `str` | `'canary/extract'` | Stage 1 gateway alias |
-| `screenplay_model` | `str` | `'canary/screenplay'` | Stage 3 gateway alias |
-| `panel_model` | `str` | `'canary/panel'` | Stage 4/5 gateway alias |
-| `prompt_model` | `str` | `'canary/prompt'` | Stage 6 gateway alias |
-| `quality_preset` | `QualityPreset or None` | `None` | Overrides all four text model fields. `fast` \| `balanced` \| `quality`. `dev_mode` forces `fast`. **Note:** All three presets currently resolve to the same gateway aliases — this is transitional during the LiteLLM migration; the LiteLLM `config.yaml` maps each alias to the appropriate model per deployment. |
+| `extraction_model` | `str` | `'extract-balanced'` | Stage 1 gateway alias |
+| `screenplay_model` | `str` | `'screenplay-balanced'` | Stage 3 gateway alias |
+| `panel_model` | `str` | `'panel-balanced'` | Stage 4/5 gateway alias |
+| `prompt_model` | `str` | `'prompt-balanced'` | Stage 6 gateway alias |
+| `quality_preset` | `QualityPreset or None` | `None` | Overrides all five intent fields (extract/adapt/plan/prompt/image). `fast` \| `balanced` \| `quality`. `dev_mode` forces `fast`. Each preset routes to a distinct gateway alias defined in `litellm/config.yaml`. |
 | `image_provider` | `Literal` | `'gemini'` | Legacy metadata field; runtime image calls use LiteLLM |
-| `image_model` | `str` | `'canary/image-primary'` | Primary image gateway alias |
-| `fallback_image_model` | `str` | `'canary/image-fallback'` | Fallback image gateway alias (used in dev mode) |
+| `image_model` | `str` | `'image-balanced'` | Image gateway alias |
+| `fallback_image_model` | `str` | `'image-fast'` | Fallback image gateway alias (used in dev mode) |
 | `dev_mode` | `bool` | `False` | Faster iteration: lower resolution/steps, uses fallback_image_model |
 | `dev_image_scale` | `float` | `0.5` | Scale factor for dev mode image dimensions |
 | `dev_image_steps` | `int` | `8` | Reduced diffusion steps in dev mode |
@@ -56,22 +56,25 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 Runtime AI calls go through `novel_to_comic.ai.client`, which calls LiteLLM
 OpenAI-compatible endpoints and records `ai_usage_events`.
 
+Aliases follow the `<intent>-<preset>` convention. Each (intent × preset) pair
+is one entry in `litellm/config.yaml`.
+
 ### Text aliases
 
-| Alias | Purpose |
-|-------|---------|
-| `canary/extract` | Story bible extraction |
-| `canary/screenplay` | Screenplay adaptation |
-| `canary/panel` | Layout planning and panel breakdown |
-| `canary/prompt` | Prompt rewrite, style, translation, and instruction tasks |
+| Intent | Fast | Balanced | Quality | Purpose |
+|--------|------|----------|---------|---------|
+| `extract` | `extract-fast` | `extract-balanced` | `extract-quality` | Story bible extraction |
+| `screenplay` | `screenplay-fast` | `screenplay-balanced` | `screenplay-quality` | Screenplay adaptation |
+| `panel` | `panel-fast` | `panel-balanced` | `panel-quality` | Layout planning and panel breakdown |
+| `prompt` | `prompt-fast` | `prompt-balanced` | `prompt-quality` | Prompt rewrite, style, translation, and instruction tasks |
 
 ### Image aliases
 
 | Alias | Purpose |
 |-------|---------|
-| `canary/image-primary` | Production image generation |
-| `canary/image-fallback` | Fallback image generation (used in dev mode) |
-| `canary/image-fast` | Legacy dev-mode alias (superseded by `canary/image-fallback`) |
+| `image-fast` | Fast / dev-mode image generation |
+| `image-balanced` | Balanced image generation (default; gpt-image-2) |
+| `image-quality` | Highest-fidelity image generation |
 
 ## Environment Variables
 
