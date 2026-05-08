@@ -312,6 +312,57 @@ def get_project_id(db: Client, user_id: str, project_name: str) -> str | None:
     return result.data[0]["id"] if result.data else None
 
 
+def insufficient_credits_detail(
+    *,
+    balance: int,
+    required: int,
+    stage: str | None,
+    action: str | None = None,
+) -> dict:
+    """Build the structured 402 payload the frontend renders into a buy-credits dialog."""
+    label = stage or action or "this action"
+    return {
+        "error": "insufficient_credits",
+        "balance_credits": int(balance),
+        "required_credits": int(required),
+        "shortfall_credits": max(0, int(required) - int(balance)),
+        "stage": stage,
+        "action": action,
+        "message": (
+            f"Insufficient credits — {balance} available, "
+            f"{required} required for '{label}'"
+        ),
+    }
+
+
+def assert_sufficient_credits(
+    db: Client,
+    user_id: str,
+    required_credits: int,
+    *,
+    stage: str | None = None,
+    action: str | None = None,
+) -> None:
+    """Raise a structured 402 if the user does not have enough credits for the action.
+
+    Used as a fast pre-check before queuing async work so the client can render
+    a buy-credits prompt instead of having to listen for an SSE failure.
+    """
+    if required_credits <= 0:
+        return
+    balance = get_balance_credits(db, user_id)
+    if balance < required_credits:
+        raise HTTPException(
+            402,
+            insufficient_credits_detail(
+                balance=balance,
+                required=required_credits,
+                stage=stage,
+                action=action,
+            ),
+        )
+
+
 def reserve_credits(
     db: Client,
     user_id: str,
@@ -348,7 +399,11 @@ def reserve_credits(
         balance = get_balance_credits(db, user_id)
         raise HTTPException(
             402,
-            f"Insufficient credits — {balance} available, {amount_credits} required for '{stage}'",
+            insufficient_credits_detail(
+                balance=balance,
+                required=amount_credits,
+                stage=stage,
+            ),
         )
     return str(reservation_id), job_id
 

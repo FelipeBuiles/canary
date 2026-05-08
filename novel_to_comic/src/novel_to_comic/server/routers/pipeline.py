@@ -39,6 +39,7 @@ from novel_to_comic.ai import ai_request_context
 from ..auth import get_current_user
 from ..credits import (
     CreditEstimate,
+    assert_sufficient_credits,
     debit_model_usage,
     estimate_stage_credit_breakdown,
     estimate_stage_credit_reservation,
@@ -135,10 +136,22 @@ async def _run_stage_with_credits(
         reservation_id, job_id = reserve_credits(db, user_id, project_id, stage, reservation_credits)
     except Exception as exc:
         # Insufficient credits or DB error — fail the stage so the UI reflects it.
-        message = getattr(exc, "detail", str(exc))
+        detail = getattr(exc, "detail", None)
+        if isinstance(detail, str):
+            message = detail
+        elif isinstance(detail, dict):
+            message = str(detail.get("message") or detail.get("error") or exc)
+        else:
+            message = str(exc)
         fail_stage(state, stage, message)
         save_state(state, project_dir)
-        queue.put_nowait({"type": "stage_fail", "stage": stage, "message": message})
+        event: dict[str, object] = {"type": "stage_fail", "stage": stage, "message": message}
+        if isinstance(detail, dict) and detail.get("error") == "insufficient_credits":
+            event["error_code"] = "insufficient_credits"
+            event["balance_credits"] = detail.get("balance_credits")
+            event["required_credits"] = detail.get("required_credits")
+            event["shortfall_credits"] = detail.get("shortfall_credits")
+        queue.put_nowait(event)
         return
 
     try:
@@ -387,6 +400,14 @@ async def run_pipeline(
         _clear_outputs_for_rerun(project_dir, stage)
         save_state(state, project_dir)
 
+    # Pre-check that the user can afford the stage (and its first auto-chain step,
+    # which would otherwise fail mid-run). Atomic reservation still happens inside
+    # the task — this is just the fast path that returns 402 with structured detail
+    # so the client can render a "buy more credits" prompt before any work starts.
+    db = get_db()
+    required_credits = estimate_stage_credit_reservation(config, project_dir, state, stage)
+    assert_sufficient_credits(db, user_id, required_credits, stage=stage)
+
     queue: asyncio.Queue = asyncio.Queue()
     request.app.state.event_queues[pkey] = queue
 
@@ -424,6 +445,10 @@ async def regen_extract(
     _reset_stage_and_downstream(state, "extract")
     _clear_outputs_for_rerun(project_dir, "extract")
     save_state(state, project_dir)
+
+    db = get_db()
+    required_credits = estimate_stage_credit_reservation(config, project_dir, state, "extract")
+    assert_sufficient_credits(db, user_id, required_credits, stage="extract")
 
     # Run extract stage via SSE pipeline (same pattern as POST /run?stage=extract)
     queue: asyncio.Queue = asyncio.Queue()
@@ -503,6 +528,14 @@ async def regen_panel(
         planned_panel_id = ImagePrompt.model_validate_json(prompt_path.read_text()).planned_panel_id
     except Exception:
         planned_panel_id = None
+
+    # Pre-check credits (panel regen has no upfront reservation, so we have to
+    # gate on the estimate ourselves to surface a buy-credits prompt cleanly).
+    from novel_to_comic.stages.s7_draw import estimate_panel_image_cost_usd
+
+    panel_cost_usd = estimate_panel_image_cost_usd(config, project_dir, prompt_path)
+    panel_estimate_credits = max(1, provider_usd_to_credits(panel_cost_usd)) if panel_cost_usd > 0 else 1
+    assert_sufficient_credits(get_db(), user_id, panel_estimate_credits, action="panel_regen")
 
     regen_job_id = str(uuid_lib.uuid4())
 
@@ -604,6 +637,13 @@ async def regen_panel_with_instruction(
         instruction = validate_user_instruction(body.instruction)
     except PromptInstructionError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+    # Pre-check credits before the prompt-rewrite call and the eventual image regen.
+    from novel_to_comic.stages.s7_draw import estimate_panel_image_cost_usd
+
+    panel_cost_usd = estimate_panel_image_cost_usd(config, project_dir, prompt_path)
+    panel_estimate_credits = max(1, provider_usd_to_credits(panel_cost_usd)) if panel_cost_usd > 0 else 1
+    assert_sufficient_credits(get_db(), user_id, panel_estimate_credits, action="panel_regen")
 
     prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
     from novel_to_comic.clients import text

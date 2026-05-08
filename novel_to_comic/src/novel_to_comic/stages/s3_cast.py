@@ -15,7 +15,7 @@ from rich.console import Console
 
 from novel_to_comic import artifacts
 from novel_to_comic.clients import flux
-from novel_to_comic.config import Config, GATEWAY_IMAGE_PRIMARY_MODEL
+from novel_to_comic.config import Config, is_gpt_image_2
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.models.story_bible import Character, StoryBible
 from novel_to_comic.text_utils import clean, shorten
@@ -206,9 +206,9 @@ def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
 
 
 def _character_ref_style_ref(config: Config, style_ref: Path | None) -> Path | None:
-    if config.effective_image_model() != GATEWAY_IMAGE_PRIMARY_MODEL:
+    if not is_gpt_image_2(config.effective_image_model()):
         return style_ref
-    # The primary gateway image route uses edit/reference-style conditioning.
+    # The gpt-image-2 route uses edit/reference-style conditioning.
     # Reusing a previous character sample here can copy that character's
     # clothing or body details into the next reference sheet.
     return None
@@ -353,9 +353,9 @@ async def _generate_character_refs(
     style_ref = _character_ref_style_ref(config, candidate_style_ref)
     if style_ref:
         console.print(f"[dim]Using style reference: {style_ref.name}[/dim]")
-    elif candidate_style_ref and config.effective_image_model() == GATEWAY_IMAGE_PRIMARY_MODEL:
+    elif candidate_style_ref and is_gpt_image_2(config.effective_image_model()):
         console.print(
-            "[dim]Skipping style image reference for primary gateway character sheets "
+            "[dim]Skipping style image reference for gpt-image-2 character sheets "
             "to avoid copying another character's outfit.[/dim]"
         )
     else:

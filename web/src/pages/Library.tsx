@@ -9,6 +9,7 @@ import { Icon } from "../components/ui/Icon";
 import { UploadStep } from "../components/wizard/UploadStep";
 import type { ConfigOverrides } from "../types/api";
 import { useI18n } from "../i18n";
+import { maybeShowInsufficientCredits } from "../store/insufficientCredits";
 
 const coverRequestedProjects = new Set<string>();
 
@@ -60,7 +61,13 @@ function NewProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
             navigate(`/project/${encodeURIComponent(data.id)}/extract`);
             runPipeline.mutate(
               { project: data.id, stage: "extract" },
-              { onSuccess: () => connect(data.id) },
+              {
+                onSuccess: () => connect(data.id),
+                onError: (err) =>
+                  maybeShowInsufficientCredits(err, {
+                    actionLabel: "Run EXTRACT",
+                  }),
+              },
             );
           },
         },

@@ -21,6 +21,7 @@ import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
 import { StyleCallout } from "../../components/wizard/StyleCallout";
 import { ConfirmDrawer } from "../../components/ui/ConfirmDrawer";
 import { useActiveRegens, useRegenStore } from "../../store/regen";
+import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { getPanelDisplayState, getPanelFilterBucket, type PanelFilterBucket } from "../../lib/panelState";
 import type { ImageStatus, StageCostEstimate } from "../../types/api";
 
@@ -145,8 +146,9 @@ function DrawCreditsEstimate({
 // ── Generation options ────────────────────────────────────────────────────────
 
 const MODEL_OPTIONS = [
-  { value: "canary/image-primary", label: "Primary (best quality)" },
-  { value: "canary/image-fast", label: "Fast (quick previews)" },
+  { value: "image-fast", label: "Fast (quick previews)" },
+  { value: "image-balanced", label: "Balanced (gpt-image-2)" },
+  { value: "image-quality", label: "Quality (Gemini Pro Image)" },
 ];
 
 const QUALITY_OPTIONS: Array<{ value: string; label: string }> = [
@@ -168,7 +170,7 @@ function GenerationOptionsPanel({ project }: { project: string }) {
           IMAGE MODEL
         </label>
         <select
-          value={config.image_model ?? "canary/image-primary"}
+          value={config.image_model ?? "image-balanced"}
           onChange={(e) => updateConfig({ project, data: { image_model: e.target.value } })}
           className="w-full border-[2px] border-ink-black/20 bg-bristol px-3 py-2 font-body text-[0.8rem] text-ink-black focus:border-ink-black focus:outline-none"
         >
@@ -437,13 +439,31 @@ export function DrawRoom() {
 
   function handleGenerateAllPending() {
     if (!id) return;
-    runPipeline({ project: id, stage: "draw", rerun: false });
+    runPipeline(
+      { project: id, stage: "draw", rerun: false },
+      {
+        onError: (err) =>
+          maybeShowInsufficientCredits(err, {
+            actionLabel: "Run DRAW",
+            onRetry: handleGenerateAllPending,
+          }),
+      },
+    );
     setConfirmAction(null);
   }
 
   function handleRetryFailed() {
     if (!id) return;
-    runPipeline({ project: id, stage: "draw", rerun: true });
+    runPipeline(
+      { project: id, stage: "draw", rerun: true },
+      {
+        onError: (err) =>
+          maybeShowInsufficientCredits(err, {
+            actionLabel: "Retry failed panels",
+            onRetry: handleRetryFailed,
+          }),
+      },
+    );
     setConfirmAction(null);
   }
 

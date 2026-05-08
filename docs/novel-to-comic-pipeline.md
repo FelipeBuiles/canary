@@ -74,26 +74,28 @@ Defaults in `config.py`, overridable in `config.yaml`.
 All text stages route through `novel_to_comic.ai.client` and LiteLLM gateway aliases.
 Provider routes live in `litellm/config.yaml`.
 
-| Stage | Default model | Config field |
-|-------|---------------|-------------|
-| Extract (1) | `canary/extract` | `extraction_model` |
-| Adapt (3) | `canary/screenplay` | `screenplay_model` |
-| Plan (4) | `canary/panel` | `panel_model` |
-| Direct (6) | `canary/prompt` | `prompt_model` |
+| Stage | Default alias (balanced) | Config field |
+|-------|--------------------------|-------------|
+| Extract (1) | `extract-balanced` | `extraction_model` |
+| Adapt (3) | `screenplay-balanced` | `screenplay_model` |
+| Plan (4) | `panel-balanced` | `panel_model` |
+| Direct (6) | `prompt-balanced` | `prompt_model` |
 
-Set `quality_preset: fast | balanced | quality` to override all four fields at once.
-`dev_mode` forces the `"fast"` preset regardless.
+Aliases are intent + preset (e.g. `extract-fast`, `screenplay-quality`).
+Set `quality_preset: fast | balanced | quality` to switch all five intents at once.
+`dev_mode` forces the `fast` preset regardless.
 
 ### Image generation
 
 Configured via gateway aliases in `config.yaml`:
 
 ```yaml
-image_model: "canary/image-primary"
-fallback_image_model: "canary/image-fast"
+image_model: "image-balanced"
+fallback_image_model: "image-fast"
 ```
 
-The LiteLLM proxy resolves those aliases to provider/model routes.
+Available image aliases: `image-fast`, `image-balanced`, `image-quality`.
+The LiteLLM proxy resolves them to provider/model routes.
 
 ---
 

@@ -5,12 +5,12 @@ from pathlib import Path
 
 from novel_to_comic.config import (
     Config,
-    GATEWAY_EXTRACT_MODEL,
-    GATEWAY_IMAGE_FAST_MODEL,
-    GATEWAY_IMAGE_PRIMARY_MODEL,
-    GATEWAY_PANEL_MODEL,
-    GATEWAY_PROMPT_MODEL,
-    GATEWAY_SCREENPLAY_MODEL,
+    GATEWAY_EXTRACT_BALANCED,
+    GATEWAY_IMAGE_BALANCED,
+    GATEWAY_IMAGE_FAST,
+    GATEWAY_PANEL_BALANCED,
+    GATEWAY_PROMPT_BALANCED,
+    GATEWAY_SCREENPLAY_BALANCED,
     LANGUAGE_NAMES,
     save_config,
     load_config,
@@ -65,12 +65,12 @@ class TestConfigDefaults:
 
     def test_gateway_aliases_are_default_models(self):
         cfg = Config()
-        assert cfg.extraction_model == GATEWAY_EXTRACT_MODEL
-        assert cfg.screenplay_model == GATEWAY_SCREENPLAY_MODEL
-        assert cfg.panel_model == GATEWAY_PANEL_MODEL
-        assert cfg.prompt_model == GATEWAY_PROMPT_MODEL
-        assert cfg.image_model == GATEWAY_IMAGE_PRIMARY_MODEL
-        assert cfg.fallback_image_model == GATEWAY_IMAGE_FAST_MODEL
+        assert cfg.extraction_model == GATEWAY_EXTRACT_BALANCED
+        assert cfg.screenplay_model == GATEWAY_SCREENPLAY_BALANCED
+        assert cfg.panel_model == GATEWAY_PANEL_BALANCED
+        assert cfg.prompt_model == GATEWAY_PROMPT_BALANCED
+        assert cfg.image_model == GATEWAY_IMAGE_BALANCED
+        assert cfg.fallback_image_model == GATEWAY_IMAGE_FAST
 
     def test_litellm_defaults_are_populated(self):
         cfg = Config()
@@ -84,9 +84,9 @@ class TestEffectiveImageModel:
         cfg = Config(dev_mode=False, image_model="gpt-image-1")
         assert cfg.effective_image_model() == "gpt-image-1"
 
-    def test_uses_fallback_when_dev_mode_and_default_pro_model(self):
-        cfg = Config(dev_mode=True, image_model=GATEWAY_IMAGE_PRIMARY_MODEL)
-        assert cfg.effective_image_model() == GATEWAY_IMAGE_FAST_MODEL
+    def test_uses_fallback_when_dev_mode_and_default_image_model(self):
+        cfg = Config(dev_mode=True, image_model=GATEWAY_IMAGE_BALANCED)
+        assert cfg.effective_image_model() == GATEWAY_IMAGE_FAST
 
     def test_uses_configured_model_when_dev_mode_and_custom_model(self):
         cfg = Config(dev_mode=True, image_model="gpt-image-1")
@@ -95,7 +95,7 @@ class TestEffectiveImageModel:
     def test_fallback_respects_explicit_override(self):
         cfg = Config(
             dev_mode=True,
-            image_model=GATEWAY_IMAGE_PRIMARY_MODEL,
+            image_model=GATEWAY_IMAGE_BALANCED,
             fallback_image_model="my-custom-model",
         )
         assert cfg.effective_image_model() == "my-custom-model"

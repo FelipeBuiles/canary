@@ -15,7 +15,7 @@ from rich.console import Console
 
 from novel_to_comic import artifacts
 from novel_to_comic.clients import flux
-from novel_to_comic.config import Config, GATEWAY_IMAGE_PRIMARY_MODEL
+from novel_to_comic.config import Config, is_gpt_image_2
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
 from novel_to_comic.layout_planning import load_layout_plan, prompt_path_for_panel, scene_panel_map
 from novel_to_comic.models.prompt import ImagePrompt
@@ -69,20 +69,11 @@ def _use_continuity_refs(config: Config) -> bool:
     return getattr(config, "continuity_mode", "hybrid") in {"ref_only", "hybrid"}
 
 
-def _uses_gpt_image_2(config: Config) -> bool:
-    model = config.effective_image_model().strip().lower()
-    return model in {
-        "gpt-image-2",
-        "openai/gpt-image-2",
-        GATEWAY_IMAGE_PRIMARY_MODEL,
-    }
-
-
 def _use_location_plate_refs(config: Config) -> bool:
     # GPT Image 2 processes every supplied image at high fidelity, so location
     # plates can leak repeated background textures into panels. Keep locations
-    # text-driven for the primary GPT Image route.
-    return not _uses_gpt_image_2(config)
+    # text-driven for the gpt-image-2 route.
+    return not is_gpt_image_2(config.effective_image_model())
 
 
 def _find_style_sample(project_dir: Path, style_template: str) -> Path | None:

@@ -18,21 +18,31 @@ _TEXT_PROVIDERS = ("gemini", "anthropic", "openai", "openrouter")
 MODEL_REGISTRY: dict[str, str] = {
     # Google Gemini
     "gemini-3.1-pro-preview": "gemini",
+    "gemini-3.1-flash-preview": "gemini",
     "gemini-3.1-flash-lite-preview": "gemini",
     "gemini-2.5-pro": "gemini",
     "gemini-2.5-flash": "gemini",
     "gemini-2.5-flash-lite": "gemini",
     # Anthropic Claude
-    "claude-opus-4-6": "anthropic",
+    "claude-opus-4-7": "anthropic",
     "claude-sonnet-4-6": "anthropic",
+    "claude-haiku-4-5": "anthropic",
     # OpenAI
     "gpt-5.4": "openai",
     "gpt-5.4-mini": "openai",
-    # Gateway aliases
-    "canary/extract": "litellm",
-    "canary/screenplay": "litellm",
-    "canary/panel": "litellm",
-    "canary/prompt": "litellm",
+    # Gateway aliases (intent-preset)
+    "extract-fast": "litellm",
+    "extract-balanced": "litellm",
+    "extract-quality": "litellm",
+    "screenplay-fast": "litellm",
+    "screenplay-balanced": "litellm",
+    "screenplay-quality": "litellm",
+    "panel-fast": "litellm",
+    "panel-balanced": "litellm",
+    "panel-quality": "litellm",
+    "prompt-fast": "litellm",
+    "prompt-balanced": "litellm",
+    "prompt-quality": "litellm",
 }
 
 

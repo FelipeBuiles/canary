@@ -21,36 +21,55 @@ LANGUAGE_NAMES: dict[str, str] = {
 QualityPreset = Literal["fast", "balanced", "quality"]
 FailedRequestBillingPolicy = Literal["provider_usage_only", "never", "estimate_all"]
 
-GATEWAY_EXTRACT_MODEL = "canary/extract"
-GATEWAY_SCREENPLAY_MODEL = "canary/screenplay"
-GATEWAY_PANEL_MODEL = "canary/panel"
-GATEWAY_PROMPT_MODEL = "canary/prompt"
-GATEWAY_IMAGE_PRIMARY_MODEL = "canary/image-primary"
-GATEWAY_IMAGE_FALLBACK_MODEL = "canary/image-fallback"
-GATEWAY_IMAGE_FAST_MODEL = "canary/image-fast"
+# Gateway aliases — one per (intent, preset) pair. Defined in litellm/config.yaml.
+GATEWAY_EXTRACT_FAST = "extract-fast"
+GATEWAY_EXTRACT_BALANCED = "extract-balanced"
+GATEWAY_EXTRACT_QUALITY = "extract-quality"
+GATEWAY_SCREENPLAY_FAST = "screenplay-fast"
+GATEWAY_SCREENPLAY_BALANCED = "screenplay-balanced"
+GATEWAY_SCREENPLAY_QUALITY = "screenplay-quality"
+GATEWAY_PANEL_FAST = "panel-fast"
+GATEWAY_PANEL_BALANCED = "panel-balanced"
+GATEWAY_PANEL_QUALITY = "panel-quality"
+GATEWAY_PROMPT_FAST = "prompt-fast"
+GATEWAY_PROMPT_BALANCED = "prompt-balanced"
+GATEWAY_PROMPT_QUALITY = "prompt-quality"
+GATEWAY_IMAGE_FAST = "image-fast"
+GATEWAY_IMAGE_BALANCED = "image-balanced"
+GATEWAY_IMAGE_QUALITY = "image-quality"
 
-# Quality preset → model for each text stage
-# NOTE: All three presets currently resolve to the same gateway aliases.
-# This is intentional during the LiteLLM gateway migration — the LiteLLM
-# config.yaml maps each alias to the appropriate model per deployment.
+# image-balanced is the only alias that resolves to OpenAI gpt-image-2. Used by
+# stage code that needs to enable the OpenAI image-edit / reference workflow.
+GPT_IMAGE_2_ALIASES: frozenset[str] = frozenset({GATEWAY_IMAGE_BALANCED})
+
+
+def is_gpt_image_2(model: str) -> bool:
+    """True if `model` resolves to OpenAI gpt-image-2 via the gateway or directly."""
+    normalized = (model or "").strip().lower()
+    return normalized in {"gpt-image-2", "openai/gpt-image-2"} or normalized in GPT_IMAGE_2_ALIASES
+
+
 _QUALITY_PRESETS: dict[QualityPreset, dict[str, str]] = {
     "fast": {
-        "extract": GATEWAY_EXTRACT_MODEL,
-        "adapt": GATEWAY_SCREENPLAY_MODEL,
-        "plan": GATEWAY_PANEL_MODEL,
-        "prompt": GATEWAY_PROMPT_MODEL,
+        "extract": GATEWAY_EXTRACT_FAST,
+        "adapt": GATEWAY_SCREENPLAY_FAST,
+        "plan": GATEWAY_PANEL_FAST,
+        "prompt": GATEWAY_PROMPT_FAST,
+        "image": GATEWAY_IMAGE_FAST,
     },
     "balanced": {
-        "extract": GATEWAY_EXTRACT_MODEL,
-        "adapt": GATEWAY_SCREENPLAY_MODEL,
-        "plan": GATEWAY_PANEL_MODEL,
-        "prompt": GATEWAY_PROMPT_MODEL,
+        "extract": GATEWAY_EXTRACT_BALANCED,
+        "adapt": GATEWAY_SCREENPLAY_BALANCED,
+        "plan": GATEWAY_PANEL_BALANCED,
+        "prompt": GATEWAY_PROMPT_BALANCED,
+        "image": GATEWAY_IMAGE_BALANCED,
     },
     "quality": {
-        "extract": GATEWAY_EXTRACT_MODEL,
-        "adapt": GATEWAY_SCREENPLAY_MODEL,
-        "plan": GATEWAY_PANEL_MODEL,
-        "prompt": GATEWAY_PROMPT_MODEL,
+        "extract": GATEWAY_EXTRACT_QUALITY,
+        "adapt": GATEWAY_SCREENPLAY_QUALITY,
+        "plan": GATEWAY_PANEL_QUALITY,
+        "prompt": GATEWAY_PROMPT_QUALITY,
+        "image": GATEWAY_IMAGE_QUALITY,
     },
 }
 
@@ -59,6 +78,7 @@ _QUALITY_PRESET_FIELDS: dict[str, str] = {
     "adapt": "screenplay_model",
     "plan": "panel_model",
     "prompt": "prompt_model",
+    "image": "image_model",
 }
 
 # Env var name → Config field name
@@ -87,14 +107,15 @@ class Config(BaseModel):
     google_cloud_project: str = ""
     google_cloud_location: str = "global"
 
-    # Model choices. Runtime AI calls use intent-level gateway aliases.
-    extraction_model: str = GATEWAY_EXTRACT_MODEL
-    screenplay_model: str = GATEWAY_SCREENPLAY_MODEL
-    panel_model: str = GATEWAY_PANEL_MODEL
-    prompt_model: str = GATEWAY_PROMPT_MODEL
+    # Model choices. Runtime AI calls use intent+preset gateway aliases.
+    # Per-stage fields default to the "balanced" alias; quality_preset overrides them.
+    extraction_model: str = GATEWAY_EXTRACT_BALANCED
+    screenplay_model: str = GATEWAY_SCREENPLAY_BALANCED
+    panel_model: str = GATEWAY_PANEL_BALANCED
+    prompt_model: str = GATEWAY_PROMPT_BALANCED
     image_provider: Literal["gemini", "openai", "openrouter", "together"] = "gemini"
-    image_model: str = GATEWAY_IMAGE_PRIMARY_MODEL
-    fallback_image_model: str = GATEWAY_IMAGE_FAST_MODEL
+    image_model: str = GATEWAY_IMAGE_BALANCED
+    fallback_image_model: str = GATEWAY_IMAGE_FAST
 
     # Output language for generated screenplay dialogue, panel text, and prompt artifacts.
     target_language: str = "en"
@@ -163,12 +184,16 @@ class Config(BaseModel):
     comic_theme: str = "auto"
 
     def effective_image_model(self) -> str:
-        if self.dev_mode and self.image_model == GATEWAY_IMAGE_PRIMARY_MODEL:
-            return self.fallback_image_model or GATEWAY_IMAGE_FAST_MODEL
-        return self.image_model
+        # In dev_mode an explicit user override wins. Only fall back to
+        # fallback_image_model when image_model is still at its default.
+        if self.dev_mode:
+            if self.image_model == Config.model_fields["image_model"].default:
+                return self.fallback_image_model or GATEWAY_IMAGE_FAST
+            return self.image_model
+        return self._effective_stage_model("image")
 
-    def _effective_text_model(self, stage: str) -> str:
-        """Resolve the effective text model for a pipeline stage.
+    def _effective_stage_model(self, stage: str) -> str:
+        """Resolve the effective gateway alias for a pipeline stage.
 
         Priority: dev_mode -> "fast" preset, else quality_preset if set, else raw field.
         """
@@ -188,16 +213,16 @@ class Config(BaseModel):
         return getattr(self, _QUALITY_PRESET_FIELDS[stage])
 
     def effective_extraction_model(self) -> str:
-        return self._effective_text_model("extract")
+        return self._effective_stage_model("extract")
 
     def effective_screenplay_model(self) -> str:
-        return self._effective_text_model("adapt")
+        return self._effective_stage_model("adapt")
 
     def effective_panel_model(self) -> str:
-        return self._effective_text_model("plan")
+        return self._effective_stage_model("plan")
 
     def effective_prompt_model(self) -> str:
-        return self._effective_text_model("prompt")
+        return self._effective_stage_model("prompt")
 
     def uses_gemini_image_provider(self) -> bool:
         return self.image_provider == "gemini"

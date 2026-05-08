@@ -289,15 +289,17 @@ Defaults in `config.py`, overridable via project `config.yaml` or `quality_prese
 
 Four configurable fields route through LiteLLM gateway aliases:
 
-| Stage | Field | Default | Notes |
-|-------|-------|---------|-------|
-| `extract` | `extraction_model` | `canary/extract` | Full-novel extraction |
-| `adapt` | `screenplay_model` | `canary/screenplay` | Screenplay writing |
-| `plan` | `panel_model` | `canary/panel` | Scene-level beat merging and layout planning |
-| `direct` (prompts) | `prompt_model` | `canary/prompt` | Prompt assembly |
+| Stage | Field | Default (balanced) | Notes |
+|-------|-------|--------------------|-------|
+| `extract` | `extraction_model` | `extract-balanced` | Full-novel extraction |
+| `adapt` | `screenplay_model` | `screenplay-balanced` | Screenplay writing |
+| `plan` | `panel_model` | `panel-balanced` | Scene-level beat merging and layout planning |
+| `direct` (prompts) | `prompt_model` | `prompt-balanced` | Prompt assembly |
 
+Aliases follow `<intent>-<preset>` (e.g. `extract-fast`, `screenplay-quality`).
 Provider routing lives in `litellm/config.yaml`.
-When `quality_preset` is set, all four fields are overridden. `dev_mode` forces the `"fast"` preset.
+When `quality_preset` is set, all five intents (the four above plus `image`) route to that preset's aliases.
+`dev_mode` forces the `fast` preset.
 Always use `config.effective_*_model()` methods to get the resolved model.
 
 ### Image generation (`image_model`)
@@ -306,10 +308,10 @@ Runtime image calls go through LiteLLM OpenAI-compatible image endpoints.
 `image_provider` is legacy metadata and should not be used for routing new code.
 
 Defaults:
-- `image_model: "canary/image-primary"`
-- `fallback_image_model: "canary/image-fast"`
+- `image_model: "image-balanced"`
+- `fallback_image_model: "image-fast"`
 
-`dev_mode: true` substitutes `fallback_image_model` for faster iteration.
+`dev_mode: true` substitutes `fallback_image_model` when `image_model` is at its default.
 
 ---
 

@@ -140,6 +140,10 @@ export interface PipelineEvent {
   done?: number;
   message?: string;
   level?: "info" | "warn" | "error" | "dim" | "bold";
+  error_code?: string;
+  balance_credits?: number;
+  required_credits?: number;
+  shortfall_credits?: number;
 }
 
 export type GenerationJobStatus = "queued" | "running" | "complete" | "failed";

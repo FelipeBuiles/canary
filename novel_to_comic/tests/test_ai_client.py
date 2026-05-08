@@ -73,7 +73,7 @@ def test_generate_structured_object_returns_dict_and_usage(monkeypatch, _patch_e
     result = asyncio.run(
         client.generate_structured_object(
             config=Config(),
-            model="canary/panel",
+            model="panel-balanced",
             system_prompt="Return JSON.",
             user_content="{}",
             feature="test.json",
@@ -84,7 +84,7 @@ def test_generate_structured_object_returns_dict_and_usage(monkeypatch, _patch_e
     assert result.usage is not None
     assert result.usage.call_id
     assert result.usage.provider == "openai"
-    assert result.usage.model == "canary/panel"
+    assert result.usage.model == "panel-balanced"
     assert result.usage.provider_model == "openai/gpt-5.4-mini"
     assert result.usage.input_tokens == 10
     assert result.usage.output_tokens == 3
@@ -103,7 +103,7 @@ def test_generate_text_does_not_store_prompt_in_params(monkeypatch, _patch_event
     asyncio.run(
         client.generate_text(
             config=Config(),
-            model="canary/screenplay",
+            model="screenplay-balanced",
             system_prompt="system secret",
             user_content="user secret",
             feature="test.text",
@@ -128,7 +128,7 @@ def test_generate_image_writes_b64_response(monkeypatch, tmp_path: Path):
     result = asyncio.run(
         client.generate_image(
             config=Config(),
-            model="canary/image-primary",
+            model="image-balanced",
             prompt="draw this",
             output_path=output_path,
             width=1024,
@@ -144,7 +144,7 @@ def test_generate_image_writes_b64_response(monkeypatch, tmp_path: Path):
     request = _FakeAsyncClient.last_request
     assert request is not None
     assert request["url"].endswith("/v1/images/generations")
-    assert request["json"]["model"] == "canary/image-primary"
+    assert request["json"]["model"] == "image-balanced"
     assert request["json"]["quality"] == "medium"
     assert "steps" not in request["json"]
     assert "response_format" not in request["json"]
@@ -159,7 +159,7 @@ def test_extract_usage_preserves_litellm_response_cost():
             "_hidden_params": {"response_cost": 0.0042},
         },
         "event_1",
-        "canary/panel",
+        "panel-balanced",
         "text",
     )
 
@@ -183,7 +183,7 @@ def test_generate_image_with_references_uses_image_edits(monkeypatch, tmp_path: 
     asyncio.run(
         client.generate_image(
             config=Config(),
-            model="canary/image-primary",
+            model="image-balanced",
             prompt="draw this",
             output_path=output_path,
             width=1024,
@@ -196,7 +196,7 @@ def test_generate_image_with_references_uses_image_edits(monkeypatch, tmp_path: 
     request = _FakeAsyncClient.last_request
     assert request is not None
     assert request["url"].endswith("/v1/images/edits")
-    assert request["data"]["model"] == "canary/image-primary"
+    assert request["data"]["model"] == "image-balanced"
     assert request["data"]["size"] == "1024x1536"
     # assert request["data"]["steps"] == "28"
     assert "response_format" not in request["data"]
@@ -216,7 +216,7 @@ def test_gpt_image_2_alias_uses_exact_valid_panel_size(monkeypatch, tmp_path: Pa
     asyncio.run(
         client.generate_image(
             config=Config(),
-            model="canary/image-primary",
+            model="image-balanced",
             prompt="draw this",
             output_path=output_path,
             width=768,
@@ -237,7 +237,7 @@ def test_failed_request_estimate_all_finalizes_billable_usage(monkeypatch, _patc
         asyncio.run(
             client.generate_text(
                 config=Config(ai_bill_failed_requests="estimate_all"),
-                model="canary/prompt",
+                model="prompt-balanced",
                 system_prompt="system",
                 user_content="user",
                 feature="test.failure",

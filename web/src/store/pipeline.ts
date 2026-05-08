@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import type { PipelineEvent } from "../types/api";
+import { useInsufficientCreditsStore } from "./insufficientCredits";
+import { STAGE_DISPLAY_NAMES, type StageName } from "../types/api";
 
 interface PipelineStore {
   connected: boolean;
@@ -41,6 +43,32 @@ export const usePipelineStore = create<PipelineStore>((set) => ({
       try {
         const event: PipelineEvent = JSON.parse(e.data);
         set((state) => ({ events: [...state.events, event] }));
+        if (
+          event.type === "stage_fail"
+          && event.error_code === "insufficient_credits"
+          && typeof event.balance_credits === "number"
+          && typeof event.required_credits === "number"
+        ) {
+          // A chained or in-flight stage hit a credit shortfall — surface the
+          // buy-credits dialog so the user can top up and continue.
+          const stage = event.stage ?? null;
+          const stageLabel = stage
+            ? (STAGE_DISPLAY_NAMES[stage as StageName] ?? stage)
+            : null;
+          useInsufficientCreditsStore.getState().show({
+            info: {
+              balance_credits: event.balance_credits,
+              required_credits: event.required_credits,
+              shortfall_credits:
+                event.shortfall_credits
+                ?? Math.max(0, event.required_credits - event.balance_credits),
+              stage,
+              action: null,
+              message: event.message ?? "Insufficient credits",
+            },
+            actionLabel: stageLabel ? `Run ${stageLabel}` : "Continue pipeline",
+          });
+        }
         if (event.type === "pipeline_done") {
           closeCurrentSource(es);
           set({ connected: false });

@@ -24,16 +24,17 @@ function formatBytes(bytes: number): string {
 
 type ImageProvider = NonNullable<ConfigOverrides["image_provider"]>;
 
-const DEFAULT_IMAGE_MODEL = "canary/image-primary";
+const DEFAULT_IMAGE_MODEL = "image-balanced";
 const IMAGE_MODEL_OPTIONS: Array<{ value: string; label: string; provider: ImageProvider }> = [
-  { value: DEFAULT_IMAGE_MODEL, label: "Primary image model", provider: "openai" },
-  { value: "canary/image-fast", label: "Fast image model", provider: "openrouter" },
+  { value: "image-fast", label: "Fast image model", provider: "gemini" },
+  { value: DEFAULT_IMAGE_MODEL, label: "Balanced image model", provider: "openai" },
+  { value: "image-quality", label: "Quality image model", provider: "gemini" },
 ];
 
 function _defaultProviderForModel(model: string): ImageProvider {
   const value = model.trim().toLowerCase();
-  if (value === "canary/image-primary") return "openai";
-  if (value === "canary/image-fast") return "openrouter";
+  if (value === "image-balanced") return "openai";
+  if (value === "image-fast" || value === "image-quality") return "gemini";
   if (value.startsWith("gpt-image-") || value === "chatgpt-image-latest") return "openai";
   if (value.includes("/")) return "together";
   return "gemini";
@@ -70,10 +71,10 @@ function estimateProjectCredits({
   // Image cost per panel in USD, keyed by model + preset
   const modelLower = imageModel.toLowerCase();
   let imageCostPerPanel: number;
-  if (modelLower === "canary/image-primary" || modelLower.includes("gpt-image")) {
+  if (modelLower === "image-balanced" || modelLower.includes("gpt-image")) {
     imageCostPerPanel =
       renderPreset === "high_quality" ? 0.28 : renderPreset === "balanced" ? 0.042 : 0.011;
-  } else if (modelLower === "canary/image-fast" || modelLower.includes("gemini") || modelLower.includes("flash")) {
+  } else if (modelLower === "image-fast" || modelLower === "image-quality" || modelLower.includes("gemini") || modelLower.includes("flash")) {
     imageCostPerPanel = 0.015;
   } else if (modelLower.includes("flux")) {
     imageCostPerPanel = renderPreset === "high_quality" ? 0.075 : 0.055;

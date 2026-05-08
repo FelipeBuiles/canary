@@ -13,6 +13,7 @@ import {
 import { Button } from "../../components/ui/Button";
 import { FieldLabel, SelectField, TextAreaField, TextField } from "../../components/ui/Field";
 import { Icon } from "../../components/ui/Icon";
+import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { RoomHeader } from "../../components/ui/RoomHeader";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { SceneSidebar } from "../../components/ui/SceneSidebar";
@@ -94,7 +95,17 @@ function ShotPlanActionButton({ project }: { project: string }) {
 
   function run(stage: "plan" | "storyboard", rerun = false) {
     clearEvents();
-    runPipeline.mutate({ project, stage, rerun }, { onSuccess: () => connect(project) });
+    runPipeline.mutate(
+      { project, stage, rerun },
+      {
+        onSuccess: () => connect(project),
+        onError: (err) =>
+          maybeShowInsufficientCredits(err, {
+            actionLabel: stage === "plan" ? "Run PLAN" : "Run STORYBOARD",
+            onRetry: () => run(stage, rerun),
+          }),
+      },
+    );
   }
 
   function handleClick() {

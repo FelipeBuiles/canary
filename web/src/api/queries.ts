@@ -722,7 +722,10 @@ export function useCreditBalance() {
   return useQuery({
     queryKey: ["credits", "balance"],
     queryFn: getBalance,
-    staleTime: 30_000,
+    // Stay fresh-ish but pick up Stripe webhook deposits when the user
+    // returns to the tab from Checkout.
+    staleTime: 15_000,
+    refetchOnWindowFocus: true,
   });
 }
 

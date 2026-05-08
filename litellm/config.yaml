@@ -1,40 +1,83 @@
 model_list:
-  - model_name: canary/extract
+  # ─── Stage 1: full-novel extraction ───────────────────────────────────────
+  - model_name: extract-fast
+    litellm_params:
+      model: vertex_ai/gemini-3.1-flash-lite-preview
+      vertex_project: os.environ/VERTEXAI_PROJECT
+      vertex_location: os.environ/VERTEXAI_LOCATION
+  - model_name: extract-balanced
+    litellm_params:
+      model: vertex_ai/gemini-3.1-flash-preview
+      vertex_project: os.environ/VERTEXAI_PROJECT
+      vertex_location: os.environ/VERTEXAI_LOCATION
+  - model_name: extract-quality
     litellm_params:
       model: vertex_ai/gemini-3.1-pro-preview
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
 
-  - model_name: canary/screenplay
+  # ─── Stage 3: screenplay / dialogue adaptation ────────────────────────────
+  - model_name: screenplay-fast
+    litellm_params:
+      model: anthropic/claude-haiku-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+  - model_name: screenplay-balanced
     litellm_params:
       model: anthropic/claude-sonnet-4-6
       api_key: os.environ/ANTHROPIC_API_KEY
+  - model_name: screenplay-quality
+    litellm_params:
+      model: anthropic/claude-opus-4-7
+      api_key: os.environ/ANTHROPIC_API_KEY
 
-  - model_name: canary/panel
+  # ─── Stage 4: layout / panel planning ─────────────────────────────────────
+  - model_name: panel-fast
+    litellm_params:
+      model: vertex_ai/gemini-3.1-flash-lite-preview
+      vertex_project: os.environ/VERTEXAI_PROJECT
+      vertex_location: os.environ/VERTEXAI_LOCATION
+  - model_name: panel-balanced
     litellm_params:
       model: openai/gpt-5.4-mini
       api_key: os.environ/OPENAI_API_KEY
+  - model_name: panel-quality
+    litellm_params:
+      model: openai/gpt-5.4
+      api_key: os.environ/OPENAI_API_KEY
 
-  - model_name: canary/prompt
+  # ─── Stage 5: image-prompt assembly (template filling) ────────────────────
+  # All three presets resolve to the same model — prompt assembly is light
+  # template-filling work and Flash-Lite is sufficient. Kept as three aliases
+  # so future tuning (e.g. quality → Flash) only touches this file.
+  - model_name: prompt-fast
+    litellm_params:
+      model: vertex_ai/gemini-3.1-flash-lite-preview
+      vertex_project: os.environ/VERTEXAI_PROJECT
+      vertex_location: os.environ/VERTEXAI_LOCATION
+  - model_name: prompt-balanced
+    litellm_params:
+      model: vertex_ai/gemini-3.1-flash-lite-preview
+      vertex_project: os.environ/VERTEXAI_PROJECT
+      vertex_location: os.environ/VERTEXAI_LOCATION
+  - model_name: prompt-quality
     litellm_params:
       model: vertex_ai/gemini-3.1-flash-lite-preview
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
 
-  - model_name: canary/image-primary
+  # ─── Image generation ─────────────────────────────────────────────────────
+  - model_name: image-fast
+    litellm_params:
+      model: vertex_ai/gemini-3.1-flash-image-preview
+      vertex_project: os.environ/VERTEXAI_PROJECT
+      vertex_location: os.environ/VERTEXAI_LOCATION
+  - model_name: image-balanced
     litellm_params:
       model: openai/gpt-image-2
       api_key: os.environ/OPENAI_API_KEY
-
-  - model_name: canary/image-fallback
+  - model_name: image-quality
     litellm_params:
       model: vertex_ai/gemini-3-pro-image-preview
-      vertex_project: os.environ/VERTEXAI_PROJECT
-      vertex_location: os.environ/VERTEXAI_LOCATION
-
-  - model_name: canary/image-fast
-    litellm_params:
-      model: vertex_ai/gemini-3.1-flash-image-preview
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
 

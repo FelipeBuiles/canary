@@ -2,6 +2,7 @@ import { Outlet, useLocation } from "react-router-dom";
 import { SideNav } from "./SideNav";
 import { AppTopBar } from "./AppTopBar";
 import { FloatingIndicator } from "../components/ui/FloatingIndicator";
+import { InsufficientCreditsDialog } from "../components/InsufficientCreditsDialog";
 import { cn } from "../lib/cn";
 import { useI18n } from "../i18n";
 
@@ -37,6 +38,7 @@ export function Shell() {
         </main>
       </div>
       <FloatingIndicator />
+      <InsufficientCreditsDialog />
     </div>
   );
 }
