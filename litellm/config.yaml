@@ -73,13 +73,13 @@ model_list:
       vertex_location: os.environ/VERTEXAI_LOCATION
   - model_name: image-balanced
     litellm_params:
-      model: openai/gpt-image-2
-      api_key: os.environ/OPENAI_API_KEY
-  - model_name: image-quality
-    litellm_params:
       model: vertex_ai/gemini-3-pro-image-preview
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
+  - model_name: image-quality
+    litellm_params:
+      model: openai/gpt-image-2
+      api_key: os.environ/OPENAI_API_KEY
 
 litellm_settings:
   # Langfuse logging happens directly from the Canary AI client (see

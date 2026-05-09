@@ -145,12 +145,6 @@ function DrawCreditsEstimate({
 
 // ── Generation options ────────────────────────────────────────────────────────
 
-const MODEL_OPTIONS = [
-  { value: "image-fast", label: "Fast (quick previews)" },
-  { value: "image-balanced", label: "Balanced (gpt-image-2)" },
-  { value: "image-quality", label: "Quality (Gemini Pro Image)" },
-];
-
 const QUALITY_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "quality", label: "Quality" },
   { value: "balanced", label: "Balanced" },
@@ -165,24 +159,10 @@ function GenerationOptionsPanel({ project }: { project: string }) {
 
   return (
     <div className="space-y-3">
-      <div>
-        <label className="mb-1 block font-meta text-[0.56rem] tracking-[0.18em] text-ink-black/45">
-          IMAGE MODEL
-        </label>
-        <select
-          value={config.image_model ?? "image-balanced"}
-          onChange={(e) => updateConfig({ project, data: { image_model: e.target.value } })}
-          className="w-full border-[2px] border-ink-black/20 bg-bristol px-3 py-2 font-body text-[0.8rem] text-ink-black focus:border-ink-black focus:outline-none"
-        >
-          {MODEL_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
-      </div>
       {config.quality_preset !== undefined && (
         <div>
           <label className="mb-1 block font-meta text-[0.56rem] tracking-[0.18em] text-ink-black/45">
-            QUALITY PRESET
+            GENERATION QUALITY
           </label>
           <select
             value={config.quality_preset ?? "balanced"}
@@ -434,7 +414,7 @@ export function DrawRoom() {
 
   function handleSetViewMode(mode: "grid" | "list") {
     setViewMode(mode);
-    try { localStorage.setItem("drawRoom.viewMode", mode); } catch {}
+    try { localStorage.setItem("drawRoom.viewMode", mode); } catch { /* localStorage may be unavailable */ }
   }
 
   function handleGenerateAllPending() {

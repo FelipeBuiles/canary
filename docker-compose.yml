@@ -57,7 +57,7 @@ services:
         condition: service_started
 
   langfuse-worker:
-    image: docker.io/langfuse/langfuse-worker:3.38
+    image: docker.io/langfuse/langfuse-worker:3.172.0
     restart: unless-stopped
     depends_on: &langfuse-depends-on
       langfuse-postgres:
@@ -98,7 +98,7 @@ services:
       REDIS_TLS_ENABLED: ${REDIS_TLS_ENABLED:-false}
 
   langfuse-web:
-    image: docker.io/langfuse/langfuse:3.38
+    image: docker.io/langfuse/langfuse:3.172.0
     restart: unless-stopped
     depends_on: *langfuse-depends-on
     ports:
@@ -136,7 +136,7 @@ services:
       retries: 10
 
   langfuse-clickhouse:
-    image: docker.io/clickhouse/clickhouse-server:24.8
+    image: docker.io/clickhouse/clickhouse-server:26.3.9.8
     restart: unless-stopped
     user: "101:101"
     environment:

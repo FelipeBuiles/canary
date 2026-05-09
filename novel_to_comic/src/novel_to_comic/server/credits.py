@@ -153,7 +153,7 @@ def _safe_text(path: Path, default: str = "") -> str:
 
 
 def _estimate_extract_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
-    from novel_to_comic.stages.s1_extract import PROMPT_PATH
+    from novel_to_comic.stages.s1_extract import PROMPT_PATH, estimate_story_bible_output_chars
 
     novel_path = Path(state.novel_path)
     if not novel_path.is_absolute():
@@ -170,7 +170,7 @@ def _estimate_extract_cost(config: Config, project_dir: Path, state: PipelineSta
     return estimate_text_cost(
         config.effective_extraction_model(),
         input_payload,
-        output_chars=65536 * 4,
+        output_chars=estimate_story_bible_output_chars(novel_text if isinstance(novel_text, str) else len(raw)),
     )
 
 
@@ -444,6 +444,7 @@ def debit_model_usage(
             "image_count": usage.image_count,
             "cost_usd": cost_usd,
             "cost_source": cost.source if cost else None,
+            "pricing_snapshot": cost.pricing_snapshot if cost else None,
             "job_id": job_id,
         },
         on_conflict="usage_call_id",

@@ -354,9 +354,6 @@ export function StyleRoom() {
   const anyGenerating = pendingSet.size > 0;
   const runningStyleCount = Object.values(styleJobStatuses).filter((status) => status === "running").length;
   const queuedStyleCount = Object.values(styleJobStatuses).filter((status) => status === "queued").length;
-  const effectiveModel = projectConfig?.dev_mode && projectConfig?.image_model === "image-balanced"
-    ? (projectConfig?.fallback_image_model || "image-fast")
-    : projectConfig?.image_model;
   const effectiveSteps = projectConfig?.dev_mode
     ? Math.min(projectConfig?.image_steps ?? 0, projectConfig?.dev_image_steps ?? 0)
     : projectConfig?.image_steps;
@@ -435,7 +432,6 @@ export function StyleRoom() {
               }
               fallbackPrompt={buildFallbackStyleSamplePrompt(s, storyBible)}
               fallbackParameters={{
-                image_model: effectiveModel,
                 width: projectConfig?.image_width,
                 height: projectConfig?.image_height,
                 steps: effectiveSteps,

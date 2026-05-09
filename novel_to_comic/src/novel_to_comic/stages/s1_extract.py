@@ -24,11 +24,24 @@ from novel_to_comic.state import (
     record_item_done,
     save_state,
 )
-from novel_to_comic.usage import ApiResult, estimate_text_cost
+from novel_to_comic.usage import ApiResult, estimate_text_cost, estimate_token_count
 
 console = Console()
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "extraction.txt"
+EXTRACT_MAX_OUTPUT_TOKENS = 65536
+ESTIMATED_STORY_BIBLE_MIN_OUTPUT_TOKENS = 12000
+ESTIMATED_STORY_BIBLE_MAX_OUTPUT_TOKENS = 24000
+
+
+def estimate_story_bible_output_chars(novel_text: str | bytes | int) -> int:
+    """Estimate Stage 1 JSON size without reserving the full max-token budget."""
+    input_tokens = estimate_token_count(novel_text)
+    output_tokens = max(
+        ESTIMATED_STORY_BIBLE_MIN_OUTPUT_TOKENS,
+        min(ESTIMATED_STORY_BIBLE_MAX_OUTPUT_TOKENS, input_tokens // 8),
+    )
+    return output_tokens * 4
 
 
 def _read_novel(novel_path: Path) -> str | bytes:
@@ -284,7 +297,7 @@ async def _extract_with_retry(
             system_prompt=system_prompt,
             user_content=user_content,
             temperature=0.4,
-            max_output_tokens=65536,
+            max_output_tokens=EXTRACT_MAX_OUTPUT_TOKENS,
             feature="extract.story_bible",
         )
         last_usage = api_result.usage
@@ -426,7 +439,7 @@ async def run(
         estimated = estimate_text_cost(
             config.effective_extraction_model(),
             system_prompt + "\n" + content_for_cost,
-            output_chars=65536 * 4,
+            output_chars=estimate_story_bible_output_chars(content_for_cost),
         )
         state.stages["extract"].estimated_cost_usd = estimated
         emit({"type": "stage_progress", "stage": "extract", "done": 2, "total": 4})

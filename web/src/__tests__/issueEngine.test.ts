@@ -40,7 +40,7 @@ function makePanel(overrides: Partial<PagePanel> = {}): PagePanel {
     importance: null,
     generation_mode: null,
     bubbles: [],
-    sfx: null,
+    sfx: [],
     image_offset_x: null,
     image_offset_y: null,
     grid_column: null,

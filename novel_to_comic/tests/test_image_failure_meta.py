@@ -104,7 +104,7 @@ def test_panel_estimate_counts_actual_uploaded_references(tmp_path):
         scene_to_location={"scene_001": "loc_001"},
     )
 
-    assert cost == pytest.approx(0.0575)
+    assert cost == pytest.approx(0.06868)
 
 
 def test_gpt_image_2_reference_resolution_keeps_location_plate_text_only(tmp_path):

@@ -147,10 +147,11 @@ State accumulates real costs via `record_item_done(usage=...)` and
 `estimate_image_cost()` set `estimated_cost_usd` on the stage state.
 
 `pricing.yaml` has been removed. Pricing now uses
-`litellm_model_prices.cached.json` (LiteLLM model pricing cache) plus
-`litellm_pricing_overrides.yaml` (project-specific overrides). `audit_pricing()`
-checks for missing entries on startup. Unknown models log a warning (once per
-model) and return $0.00.
+`litellm_model_prices.cached.json` (LiteLLM model pricing cache, refreshed on
+startup by TTL) plus `litellm_pricing_overrides.yaml` (project-specific
+overrides). `audit_pricing()` checks for missing entries on startup; missing
+pricing raises in production and logs a warning in development. Unknown models
+log a warning (once per model) and return $0.00.
 
 ### Text composited in post
 

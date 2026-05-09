@@ -452,10 +452,6 @@ function PromptTabContent({
   const [showRaw, setShowRaw] = useState(false);
   const [showDevContent] = useShowDevContent();
 
-  const effectiveModel = projectConfig?.dev_mode && projectConfig?.image_model === "image-balanced"
-    ? (projectConfig?.fallback_image_model || "image-fast")
-    : projectConfig?.image_model;
-
   const rawPrompt = (prompt.full_prompt || "").trim();
   const style = (projectConfig?.style_template ?? prompt.style ?? "").trim();
   const fullPromptWithStyle = (prompt.prompt_version ?? 1) >= 2
@@ -505,12 +501,6 @@ function PromptTabContent({
           <div>
             <div className="font-meta text-[0.54rem] tracking-[0.18em] text-ink-black/40 mb-1">STYLE</div>
             <p className="text-[0.82rem] leading-6 text-ink-black">{prompt.style}</p>
-          </div>
-        )}
-        {effectiveModel && (
-          <div>
-            <div className="font-meta text-[0.54rem] tracking-[0.18em] text-ink-black/40 mb-1">MODEL</div>
-            <p className="font-mono text-[0.78rem] text-ink-black/70">{showDevContent ? effectiveModel : "—"}</p>
           </div>
         )}
       </div>

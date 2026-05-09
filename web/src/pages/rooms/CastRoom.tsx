@@ -74,8 +74,7 @@ function CharacterCastCard({
     return () => window.clearInterval(interval);
   }, [stageRegenerating]);
 
-  const handleRegen = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const startRegen = () => {
     setRegenError(null);
     regenRef.mutate(
       { project: projectName, charId: character.id },
@@ -85,7 +84,7 @@ function CharacterCastCard({
           if (
             maybeShowInsufficientCredits(err, {
               actionLabel: "Regenerate character",
-              onRetry: handleRegen,
+              onRetry: startRegen,
             })
           ) {
             return;
@@ -94,6 +93,11 @@ function CharacterCastCard({
         },
       }
     );
+  };
+
+  const handleRegen = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    startRegen();
   };
 
   return (

@@ -168,6 +168,29 @@ def test_extract_usage_preserves_litellm_response_cost():
     assert usage.cost_source == "litellm_response_cost"
 
 
+def test_pricing_estimate_drift_pct_only_for_provider_reported_image_cost():
+    usage = client.UsageRecord(
+        provider="openai",
+        model="image-balanced",
+        provider_model="openai/gpt-image-2",
+        operation="image",
+        image_count=1,
+        cost_usd=0.075,
+        cost_source="litellm_response_header",
+    )
+
+    assert client._pricing_estimate_drift_pct(
+        operation="image",
+        estimated_cost_usd=0.05,
+        usage=usage,
+    ) == pytest.approx(50.0)
+    assert client._pricing_estimate_drift_pct(
+        operation="text",
+        estimated_cost_usd=0.05,
+        usage=usage,
+    ) is None
+
+
 def test_generate_image_with_references_uses_image_edits(monkeypatch, tmp_path: Path):
     image_bytes = b"fake png"
     _patch_http(monkeypatch, {

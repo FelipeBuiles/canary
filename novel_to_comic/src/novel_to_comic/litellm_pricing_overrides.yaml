@@ -24,30 +24,9 @@ aliases:
   image-quality: vertex_ai/gemini-3-pro-image-preview
 
 model_overrides:
-  # For token-priced image models, the cached `input_cost_per_token` and
-  # `output_cost_per_token` drive the math. We just need to know how many tokens
-  # a reference image and a generated image of each quality consume.
-  #
-  # Sources for the gpt-image-2 numbers below: OpenAI's published gpt-image-1
-  # token figures (square 1024x1024) — gpt-image-2 reuses the same accounting.
-  # Re-tune these after sampling actual usage rows if estimates drift.
-  gpt-image-2:
-    image_input_tokens_per_ref: 250
-    image_output_tokens_by_quality:
-      low: 272
-      medium: 1056
-      high: 4160
-      auto: 1056
-
-  # input_cost_per_image: per-reference-image cost added to edit/generation calls
-  # for models priced per-image (no token pricing). Derived from observed
-  # provider costs; re-verify after each model pricing update.
-  gemini-3-pro-image-preview:
-    input_cost_per_image: 0.007
-  gemini-3.1-flash-image-preview:
-    input_cost_per_image: 0.0125
-
-  # Models missing from the cached LiteLLM cost map
+  # Google Gemini text models.
+  # source: https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing,
+  # verified 2026-05-08.
   gemini-2.5-pro:
     input_cost_per_token: 0.00000125
     output_cost_per_token: 0.00001
@@ -60,34 +39,98 @@ model_overrides:
     input_cost_per_token: 0.0000001
     output_cost_per_token: 0.0000004
     mode: chat
-  gemini-3.1-flash-preview:
-    input_cost_per_token: 0.0000003
-    output_cost_per_token: 0.0000025
+  gemini-3.1-pro-preview:
+    input_cost_per_token: 0.000002
+    output_cost_per_token: 0.000012
     mode: chat
+  # Google does not list a separate Gemini 3.1 Flash text SKU on the Vertex page;
+  # use Gemini 3 Flash Preview standard rates until a distinct 3.1 text SKU appears.
+  # source: https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing,
+  # verified 2026-05-08.
+  gemini-3.1-flash-preview:
+    input_cost_per_token: 0.0000005
+    output_cost_per_token: 0.000003
+    mode: chat
+  gemini-3.1-flash-lite-preview:
+    input_cost_per_token: 0.00000025
+    output_cost_per_token: 0.0000015
+    mode: chat
+
+  # Anthropic Claude models.
+  # source: https://platform.claude.com/docs/en/about-claude/pricing,
+  # verified 2026-05-08.
   claude-haiku-4-5:
     input_cost_per_token: 0.000001
     output_cost_per_token: 0.000005
     mode: chat
-  claude-opus-4-7:
-    input_cost_per_token: 0.000015
-    output_cost_per_token: 0.000075
+  claude-sonnet-4-6:
+    input_cost_per_token: 0.000003
+    output_cost_per_token: 0.000015
     mode: chat
+  claude-opus-4-7:
+    input_cost_per_token: 0.000005
+    output_cost_per_token: 0.000025
+    mode: chat
+
+  # OpenAI text models.
+  # source: https://openai.com/api/pricing/,
+  # verified 2026-05-08.
   gpt-5.4:
     input_cost_per_token: 0.0000025
     output_cost_per_token: 0.000015
     mode: chat
+  gpt-5.4-mini:
+    input_cost_per_token: 0.00000075
+    output_cost_per_token: 0.0000045
+    mode: chat
+
+  # GPT-Image-2 has separate text-input, image-input, and image-output rates.
+  # `input_cost_per_token` is text input; `image_input_cost_per_token` applies
+  # to reference-image tokens in pre-call estimates.
+  # sources: https://openai.com/api/pricing/ and
+  # https://platform.openai.com/docs/guides/image-generation#cost-and-latency,
+  # verified 2026-05-08.
+  gpt-image-2:
+    input_cost_per_token: 0.000005
+    image_input_cost_per_token: 0.000008
+    output_cost_per_token: 0.00003
+    output_cost_per_image: 0.03168
+    image_input_tokens_per_ref: 250
+    image_output_tokens_by_quality:
+      low: 272
+      medium: 1056
+      high: 4160
+      auto: 1056
+    mode: image_generation
+
+  # Gemini image models. `input_cost_per_image` is the cost of one reference
+  # image at the documented input-image token count; output cost uses 1K output.
+  # source: https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing,
+  # verified 2026-05-08.
+  gemini-3-pro-image-preview:
+    input_cost_per_image: 0.00112
+    output_cost_per_image: 0.134
+    mode: image_generation
+  gemini-3.1-flash-image-preview:
+    input_cost_per_image: 0.00056
+    output_cost_per_image: 0.067
+    mode: image_generation
+
+  # Black Forest Labs / Together image models.
+  # sources: https://docs.bfl.ml/quick_start/pricing and https://www.together.ai/pricing,
+  # verified 2026-05-08.
   black-forest-labs/FLUX.1-pro:
-    output_cost_per_image: 0.055
+    output_cost_per_image: 0.04
     mode: image_generation
   black-forest-labs/FLUX.1-kontext-pro:
-    output_cost_per_image: 0.055
+    output_cost_per_image: 0.04
     mode: image_generation
   black-forest-labs/FLUX.2-kontext-pro:
-    output_cost_per_image: 0.075
+    output_cost_per_image: 0.03
     mode: image_generation
   black-forest-labs/FLUX.1-dev:
     output_cost_per_image: 0.025
     mode: image_generation
   black-forest-labs/FLUX.1-schnell:
-    output_cost_per_image: 0.006
+    output_cost_per_image: 0.0027
     mode: image_generation
