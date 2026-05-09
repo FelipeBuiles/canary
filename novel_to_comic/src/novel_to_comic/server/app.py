@@ -1,7 +1,9 @@
 """FastAPI application factory for the web dashboard."""
 
 import asyncio
+import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -10,28 +12,65 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from novel_to_comic.assembly.html_renderer import FONTS_DIR
+from novel_to_comic.model_costs import DEFAULT_COST_MAP_PATH, refresh_litellm_cost_cache
+from novel_to_comic.usage import audit_pricing
 
 from .generation_jobs import generation_worker
 from .logging import request_log_middleware
 from .routers import billing, config, credits, export, pages, pipeline, projects, stages, styles
 
+log = logging.getLogger(__name__)
+
+
+def _pricing_refresh_ttl_days() -> int:
+    raw = os.environ.get("PULP_PRICING_REFRESH_DAYS", "7")
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        log.warning("Invalid PULP_PRICING_REFRESH_DAYS=%r; using 7", raw)
+        return 7
+
+
+def _pricing_cache_age_seconds(cost_map_path: Path = DEFAULT_COST_MAP_PATH) -> float:
+    try:
+        return time.time() - cost_map_path.stat().st_mtime
+    except FileNotFoundError:
+        return float("inf")
+
+
+def _refresh_pricing_if_stale(cost_map_path: Path = DEFAULT_COST_MAP_PATH) -> None:
+    ttl_days = _pricing_refresh_ttl_days()
+    age_seconds = _pricing_cache_age_seconds(cost_map_path)
+    if age_seconds < ttl_days * 86400:
+        return
+    try:
+        meta = refresh_litellm_cost_cache(output_path=cost_map_path, timeout_seconds=10)
+        log.info("Refreshed LiteLLM cost cache: %s", meta)
+    except Exception as exc:
+        log.warning("LiteLLM cost cache refresh failed; using on-disk file: %s", exc)
+
+
+def _audit_pricing_at_startup() -> None:
+    missing = audit_pricing()
+    if not missing:
+        return
+    msg = f"Pricing entries missing for: {', '.join(missing)}"
+    env = (os.environ.get("CANARY_ENV") or os.environ.get("ENV") or "dev").lower()
+    if env == "production":
+        raise RuntimeError(msg)
+    log.warning(msg)
+
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    import logging
-    from novel_to_comic.usage import audit_pricing
-    missing = audit_pricing()
-    if missing:
-        logging.getLogger(__name__).warning(
-            "Models missing from LiteLLM pricing cache and local pricing fallback (cost tracking will be $0 for these): %s",
-            ", ".join(missing),
-        )
+    _audit_pricing_at_startup()
+    app.state.pricing_refresh_task = asyncio.create_task(
+        asyncio.to_thread(_refresh_pricing_if_stale)
+    )
 
     async def _release_stale_reservations():
-        import logging
         from .db import get_db
         from .credits import release_all_stale_reservations
-        log = logging.getLogger(__name__)
         try:
             released = await asyncio.to_thread(release_all_stale_reservations, get_db())
             if released:
@@ -50,9 +89,15 @@ async def _lifespan(app: FastAPI):
     # Close shared httpx pool used by ai/client.py
     from novel_to_comic.ai.client import _http
     await _http.aclose()
+    if not app.state.pricing_refresh_task.done():
+        app.state.pricing_refresh_task.cancel()
     for task in app.state.generation_worker_tasks:
         task.cancel()
-    await asyncio.gather(*app.state.generation_worker_tasks, return_exceptions=True)
+    await asyncio.gather(
+        app.state.pricing_refresh_task,
+        *app.state.generation_worker_tasks,
+        return_exceptions=True,
+    )
 
 
 def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:

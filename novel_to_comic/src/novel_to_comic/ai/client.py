@@ -309,6 +309,7 @@ def _finalize_event(
     config: Config | None = None,
     operation: str = "text",
     metadata: dict[str, Any] | None = None,
+    estimated_cost_usd: float | None = None,
     langfuse_input: Any = None,
     langfuse_output: Any = None,
     started_at: datetime.datetime | None = None,
@@ -338,12 +339,31 @@ def _finalize_event(
         "cost_usd": cost_usd,
         "cost_source": cost.source if cost is not None else None,
         "provider_cost_usd": usage.cost_usd if usage else None,
+        "estimated_cost_usd": estimated_cost_usd,
         "pricing_snapshot": cost.pricing_snapshot if cost is not None else None,
         "usage_json": (response_data or {}).get("usage") or {},
         "error_type": type(error).__name__ if error else None,
         "error_message": str(error)[:1000] if error else None,
         "error_json": _error_json(error, error_response),
     }
+    drift_pct = _pricing_estimate_drift_pct(
+        operation=operation,
+        estimated_cost_usd=estimated_cost_usd,
+        usage=usage,
+    )
+    if drift_pct is not None:
+        update["metadata_json"] = {
+            **(metadata or {}),
+            "pricing_estimate_drift_pct": drift_pct,
+        }
+        logger.info(
+            "pricing_estimate_drift_pct model_alias=%s provider_model=%s drift_pct=%.2f estimated_cost_usd=%.6f actual_cost_usd=%.6f",
+            model_alias,
+            provider_model,
+            drift_pct,
+            estimated_cost_usd,
+            usage.cost_usd if usage else 0.0,
+        )
     try:
         from novel_to_comic.server.db import get_db
 
@@ -366,6 +386,7 @@ def _finalize_event(
             output_payload=langfuse_output,
             usage=usage,
             cost_usd=cost_usd,
+            pricing_estimate_drift_pct=drift_pct,
             start_time=started_at or datetime.datetime.now(datetime.UTC),
             end_time=datetime.datetime.now(datetime.UTC),
             error=error,
@@ -386,6 +407,19 @@ def _langfuse_endpoint() -> tuple[str, str] | None:
         return None
     auth = base64.b64encode(f"{public}:{secret}".encode()).decode()
     return host.rstrip("/"), auth
+
+
+def _pricing_estimate_drift_pct(
+    *,
+    operation: str,
+    estimated_cost_usd: float | None,
+    usage: UsageRecord | None,
+) -> float | None:
+    if operation != "image" or estimated_cost_usd is None or estimated_cost_usd <= 0:
+        return None
+    if usage is None or usage.cost_usd is None:
+        return None
+    return ((float(usage.cost_usd) - float(estimated_cost_usd)) / float(estimated_cost_usd)) * 100.0
 
 
 async def _post_langfuse_batch(host: str, auth: str, batch: list[dict[str, Any]]) -> None:
@@ -417,6 +451,7 @@ def _log_langfuse_generation(
     cost_usd: float | None,
     start_time: datetime.datetime,
     end_time: datetime.datetime,
+    pricing_estimate_drift_pct: float | None = None,
     error: BaseException | None = None,
 ) -> None:
     """Send one generation observation (and its trace) to Langfuse via REST.
@@ -455,6 +490,8 @@ def _log_langfuse_generation(
     if error is not None:
         obs_metadata["error_type"] = type(error).__name__
         obs_metadata["error_message"] = str(error)[:500]
+    if pricing_estimate_drift_pct is not None:
+        obs_metadata["pricing_estimate_drift_pct"] = pricing_estimate_drift_pct
 
     now = datetime.datetime.now(datetime.UTC).isoformat()
     batch = [
@@ -493,6 +530,22 @@ def _log_langfuse_generation(
             },
         },
     ]
+    if pricing_estimate_drift_pct is not None:
+        batch.append(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "score-create",
+                "timestamp": now,
+                "body": {
+                    "traceId": trace_id,
+                    "observationId": generation_id,
+                    "name": "pricing_estimate_drift_pct",
+                    "value": float(pricing_estimate_drift_pct),
+                    "dataType": "NUMERIC",
+                    "comment": f"model_alias={model_alias}",
+                },
+            }
+        )
 
     try:
         asyncio.create_task(_post_langfuse_batch(host, auth, batch))
@@ -681,6 +734,7 @@ async def _chat_completion(
             config=config,
             operation=operation,
             metadata=metadata,
+            estimated_cost_usd=estimated_cost_usd,
             langfuse_input=langfuse_input,
             langfuse_output=_truncate_for_log(text),
             started_at=started_at,
@@ -698,6 +752,7 @@ async def _chat_completion(
             config=config,
             operation=operation,
             metadata=metadata,
+            estimated_cost_usd=estimated_cost_usd,
             langfuse_input=langfuse_input,
             started_at=started_at,
         )
@@ -718,6 +773,7 @@ async def _chat_completion(
             config=config,
             operation=operation,
             metadata=metadata,
+            estimated_cost_usd=estimated_cost_usd,
             langfuse_input=langfuse_input,
             started_at=started_at,
         )
@@ -745,6 +801,7 @@ async def _chat_completion(
             config=config,
             operation=operation,
             metadata=metadata,
+            estimated_cost_usd=estimated_cost_usd,
             langfuse_input=langfuse_input,
             started_at=started_at,
         )
@@ -864,6 +921,7 @@ async def generate_image(
             config=config,
             operation=operation,
             metadata=metadata,
+            estimated_cost_usd=estimated_cost_usd,
             langfuse_input=langfuse_input,
             langfuse_output=langfuse_output,
             started_at=started_at,
@@ -881,6 +939,7 @@ async def generate_image(
             config=config,
             operation=operation,
             metadata=metadata,
+            estimated_cost_usd=estimated_cost_usd,
             langfuse_input=langfuse_input,
             started_at=started_at,
         )
@@ -901,6 +960,7 @@ async def generate_image(
             config=config,
             operation=operation,
             metadata=metadata,
+            estimated_cost_usd=estimated_cost_usd,
             langfuse_input=langfuse_input,
             started_at=started_at,
         )
@@ -927,6 +987,7 @@ async def generate_image(
             config=config,
             operation=operation,
             metadata=metadata,
+            estimated_cost_usd=estimated_cost_usd,
             langfuse_input=langfuse_input,
             started_at=started_at,
         )

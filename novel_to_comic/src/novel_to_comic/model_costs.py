@@ -62,11 +62,16 @@ class PricingResolver:
             return {}
 
     def _snapshot_id(self) -> str:
-        try:
-            digest = hashlib.sha256(self.cost_map_path.read_bytes()).hexdigest()[:12]
-        except Exception:
-            digest = "unavailable"
-        return f"{self.cost_map_path.name}:{digest}"
+        h = hashlib.sha256()
+        for path in (self.cost_map_path, self.overrides_path):
+            try:
+                h.update(path.name.encode("utf-8"))
+                h.update(b"\0")
+                h.update(path.read_bytes())
+            except Exception:
+                h.update(path.name.encode("utf-8"))
+                h.update(b":<unavailable>")
+        return f"{self.cost_map_path.name}+overrides:{h.hexdigest()[:12]}"
 
     @property
     def pricing_snapshot(self) -> str:
@@ -84,16 +89,30 @@ class PricingResolver:
             keys.append(model.split("/", 1)[1])
         return list(dict.fromkeys(keys))
 
-    def _pricing_for(self, model: str) -> tuple[dict[str, Any] | None, str]:
+    def _cache_pricing_for(self, model: str) -> dict[str, Any] | None:
         for key in self._candidate_keys(model):
             spec = self._cost_map.get(key)
             if isinstance(spec, dict):
-                return spec, "litellm_cost_map"
+                return spec
+        return None
+
+    def _override_pricing_for(self, model: str) -> dict[str, Any] | None:
         overrides = self._overrides.get("model_overrides") or {}
         for key in self._candidate_keys(model):
             spec = overrides.get(key)
             if isinstance(spec, dict):
-                return spec, "canary_pricing_override"
+                return spec
+        return None
+
+    def _pricing_for(self, model: str) -> tuple[dict[str, Any] | None, str]:
+        cache_spec = self._cache_pricing_for(model)
+        override_spec = self._override_pricing_for(model)
+        if cache_spec is not None and override_spec is not None:
+            return {**cache_spec, **override_spec}, "litellm_cost_map+canary_pricing_override"
+        if cache_spec is not None:
+            return cache_spec, "litellm_cost_map"
+        if override_spec is not None:
+            return override_spec, "canary_pricing_override"
         return None, "unknown_pricing"
 
     def calculate(
@@ -191,10 +210,12 @@ class PricingResolver:
         input_per_token = float(pricing.get("input_cost_per_token") or 0.0)
         output_per_token = float(pricing.get("output_cost_per_token") or 0.0)
 
-        if input_per_token > 0 or output_per_token > 0:
-            token_meta = self._image_token_meta(resolved)
+        token_meta = self._image_token_meta(resolved)
+        quality_table = token_meta.get("image_output_tokens_by_quality") or {}
+
+        if (input_per_token > 0 or output_per_token > 0) and quality_table:
+            image_input_per_token = float(pricing.get("image_input_cost_per_token") or input_per_token)
             ref_tokens = int(token_meta.get("image_input_tokens_per_ref") or 0)
-            quality_table = token_meta.get("image_output_tokens_by_quality") or {}
             quality_key = (quality or "auto").lower()
             output_tokens_per_image = int(
                 quality_table.get(quality_key)
@@ -202,9 +223,13 @@ class PricingResolver:
                 or quality_table.get("medium")
                 or 0
             )
-            input_tokens = prompt_tokens + ref_tokens * ref_count
+            ref_input_tokens = ref_tokens * ref_count
             output_tokens = output_tokens_per_image * count
-            cost_usd = input_tokens * input_per_token + output_tokens * output_per_token
+            cost_usd = (
+                prompt_tokens * input_per_token
+                + ref_input_tokens * image_input_per_token
+                + output_tokens * output_per_token
+            )
             return CostBreakdown(
                 cost_usd=cost_usd,
                 source=source,
@@ -260,6 +285,12 @@ def get_pricing_resolver() -> PricingResolver:
     return _DEFAULT_RESOLVER
 
 
+def reset_pricing_resolver() -> None:
+    """Force the next pricing lookup to reload the cache and override files."""
+    global _DEFAULT_RESOLVER
+    _DEFAULT_RESOLVER = None
+
+
 def refresh_litellm_cost_cache(
     *,
     output_path: Path = DEFAULT_COST_MAP_PATH,
@@ -276,6 +307,8 @@ def refresh_litellm_cost_cache(
         raw = response.read()
     json.loads(raw.decode("utf-8"))
     output_path.write_bytes(raw)
+    if output_path == DEFAULT_COST_MAP_PATH:
+        reset_pricing_resolver()
     return {
         "source_url": source_url,
         "output_path": str(output_path),

@@ -1,0 +1,56 @@
+import os
+import time
+
+import pytest
+
+from novel_to_comic.server import app as server_app
+
+
+def test_pricing_audit_raises_in_production(monkeypatch):
+    monkeypatch.setattr(server_app, "audit_pricing", lambda: ["missing-model"])
+    monkeypatch.setenv("CANARY_ENV", "production")
+
+    with pytest.raises(RuntimeError, match="missing-model"):
+        server_app._audit_pricing_at_startup()
+
+
+def test_pricing_audit_warns_in_development(monkeypatch, caplog):
+    monkeypatch.setattr(server_app, "audit_pricing", lambda: ["missing-model"])
+    monkeypatch.setenv("CANARY_ENV", "dev")
+
+    with caplog.at_level("WARNING", logger=server_app.__name__):
+        server_app._audit_pricing_at_startup()
+
+    assert "missing-model" in caplog.text
+
+
+def test_stale_pricing_cache_refreshes(monkeypatch, tmp_path):
+    cache_path = tmp_path / "litellm_model_prices.cached.json"
+    cache_path.write_text("{}")
+    old = time.time() - (8 * 86400)
+    os.utime(cache_path, (old, old))
+    calls = []
+
+    def _refresh(*, output_path, timeout_seconds):
+        calls.append((output_path, timeout_seconds))
+        return {"output_path": str(output_path)}
+
+    monkeypatch.setenv("PULP_PRICING_REFRESH_DAYS", "7")
+    monkeypatch.setattr(server_app, "refresh_litellm_cost_cache", _refresh)
+
+    server_app._refresh_pricing_if_stale(cache_path)
+
+    assert calls == [(cache_path, 10)]
+
+
+def test_fresh_pricing_cache_skips_refresh(monkeypatch, tmp_path):
+    cache_path = tmp_path / "litellm_model_prices.cached.json"
+    cache_path.write_text("{}")
+    calls = []
+
+    monkeypatch.setenv("PULP_PRICING_REFRESH_DAYS", "7")
+    monkeypatch.setattr(server_app, "refresh_litellm_cost_cache", lambda **kwargs: calls.append(kwargs))
+
+    server_app._refresh_pricing_if_stale(cache_path)
+
+    assert calls == []

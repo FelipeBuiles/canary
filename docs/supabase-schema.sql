@@ -33,6 +33,7 @@ create table if not exists public.credit_ledger (
   image_count               integer     not null default 0,
   cost_usd                  numeric(12, 6),
   cost_source               text,
+  pricing_snapshot          text,
   project_id                uuid        references public.projects(id) on delete set null,
   created_at                timestamptz not null default now()
 );
@@ -103,6 +104,7 @@ alter table public.credit_ledger
   add column if not exists image_count integer not null default 0,
   add column if not exists cost_usd numeric(12, 6),
   add column if not exists cost_source text,
+  add column if not exists pricing_snapshot text,
   add column if not exists job_id uuid;
 
 alter table public.ai_usage_events

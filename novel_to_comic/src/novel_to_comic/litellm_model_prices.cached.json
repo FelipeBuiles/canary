@@ -1,8 +1,8 @@
 {
   "_canary_cache": {
     "source_url": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
-    "snapshot": "canary-minimal-2026-04-30",
-    "notes": "Minimal pinned fallback for Canary's configured models. Refresh with the full LiteLLM cost map when network access is available."
+    "snapshot": "canary-minimal-2026-05-08",
+    "notes": "Minimal startup fallback for Canary's configured models. Startup refresh replaces this file with the full LiteLLM cost map when the TTL expires; litellm_pricing_overrides.yaml remains authoritative for Canary aliases."
   },
   "vertex_ai/gemini-3.1-pro-preview": {
     "litellm_provider": "vertex_ai",
@@ -56,25 +56,25 @@
     "litellm_provider": "openai",
     "mode": "image_generation",
     "input_cost_per_token": 0.000005,
-    "output_cost_per_token": 0.00004,
-    "output_cost_per_image": 0.19
+    "output_cost_per_token": 0.00003,
+    "output_cost_per_image": 0.03168
   },
   "gpt-image-2": {
     "litellm_provider": "openai",
     "mode": "image_generation",
     "input_cost_per_token": 0.000005,
-    "output_cost_per_token": 0.00004,
-    "output_cost_per_image": 0.19
+    "output_cost_per_token": 0.00003,
+    "output_cost_per_image": 0.03168
   },
   "dall-e-3": {
     "litellm_provider": "openai",
     "mode": "image_generation",
-    "output_cost_per_image": 0.04
+    "output_cost_per_image": 0.134
   },
   "vertex_ai/gemini-3-pro-image-preview": {
     "litellm_provider": "vertex_ai",
     "mode": "image_generation",
-    "output_cost_per_image": 0.04
+    "output_cost_per_image": 0.134
   },
   "gemini-3-pro-image-preview": {
     "litellm_provider": "vertex_ai",
@@ -84,12 +84,12 @@
   "vertex_ai/gemini-3.1-flash-image-preview": {
     "litellm_provider": "vertex_ai",
     "mode": "image_generation",
-    "output_cost_per_image": 0.02
+    "output_cost_per_image": 0.067
   },
   "gemini-3.1-flash-image-preview": {
     "litellm_provider": "vertex_ai",
     "mode": "image_generation",
-    "output_cost_per_image": 0.02
+    "output_cost_per_image": 0.067
   },
   "openrouter/google/gemini-2.5-flash-image": {
     "litellm_provider": "openrouter",

@@ -164,8 +164,9 @@ def estimate_image_cost(
 def audit_pricing(extra_models: list[str] | None = None) -> list[str]:
     """Return model names that are used by the pipeline but missing pricing.
 
-    Covers: all text models in MODEL_REGISTRY, all image model defaults from Config,
-    and any additional model names passed in extra_models.
+    Covers: all text models in MODEL_REGISTRY, all gateway aliases in the
+    quality presets, all image model defaults from Config, and any additional
+    model names passed in extra_models.
 
     Usage:
         missing = audit_pricing()
@@ -173,19 +174,24 @@ def audit_pricing(extra_models: list[str] | None = None) -> list[str]:
             print("Missing pricing entries:", missing)
     """
     from novel_to_comic.clients.text import MODEL_REGISTRY
-    from novel_to_comic.config import Config
+    from novel_to_comic.config import Config, _QUALITY_PRESETS
 
     cfg = Config()
     known = set(MODEL_REGISTRY.keys())
-    known.update([
-        cfg.image_model,
-        cfg.fallback_image_model,
-        "gpt-image-2",
-        "dall-e-3",
-        "black-forest-labs/FLUX.1-kontext-pro",
-        "black-forest-labs/FLUX.2-kontext-pro",
-        "black-forest-labs/FLUX.1-pro",
-    ])
+    for preset in _QUALITY_PRESETS.values():
+        known.update(preset.values())
+    known.update(
+        [
+            cfg.image_model,
+            cfg.fallback_image_model,
+            cfg.effective_image_model(),
+            "gpt-image-2",
+            "dall-e-3",
+            "black-forest-labs/FLUX.1-kontext-pro",
+            "black-forest-labs/FLUX.2-kontext-pro",
+            "black-forest-labs/FLUX.1-pro",
+        ]
+    )
     if extra_models:
         known.update(extra_models)
 

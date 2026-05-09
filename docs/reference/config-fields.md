@@ -96,12 +96,14 @@ environment, not Canary runtime config.
 The local `pricing.yaml` file has been removed. Cost lookup now uses:
 
 - `litellm_model_prices.cached.json` — LiteLLM model pricing cache
-  (downloaded from the LiteLLM pricing endpoint at startup).
+  (downloaded from the LiteLLM pricing endpoint at startup when older than
+  `PULP_PRICING_REFRESH_DAYS`, default `7`).
 - `litellm_pricing_overrides.yaml` — project-specific overrides for models
   not in the LiteLLM cache or with custom pricing (e.g. input image costs).
 
 `audit_pricing()` on startup validates that all configured gateway aliases have
-pricing entries.
+pricing entries. Missing pricing raises in production (`CANARY_ENV=production`
+or `ENV=production`) and logs a warning in development.
 
 ## Config API Allowlist
 

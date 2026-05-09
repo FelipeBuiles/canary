@@ -14,21 +14,15 @@ import type { ConfigOverrides } from "../types/api";
 type QualityPreset = NonNullable<ConfigOverrides["quality_preset"]>;
 
 const QUALITY_PRESET_OPTIONS: Array<{ value: string; label: string; desc: string }> = [
-  { value: "fast", label: "Fast", desc: "Fastest text generation" },
-  { value: "balanced", label: "Balanced", desc: "Good quality, reasonable speed" },
-  { value: "quality", label: "Quality", desc: "Best quality, slower generation" },
-];
-
-const IMAGE_PRESET_OPTIONS: Array<{ model: string; provider: string; label: string; desc: string }> = [
-  { model: "image-fast", provider: "gemini", label: "Gemini Flash Image", desc: "Fastest" },
-  { model: "image-balanced", provider: "openai", label: "GPT Image 2", desc: "Balanced" },
-  { model: "image-quality", provider: "gemini", label: "Gemini Pro Image", desc: "Best quality" },
+  { value: "fast", label: "Fast", desc: "Lower cost and faster drafts" },
+  { value: "balanced", label: "Balanced", desc: "Default quality and runtime" },
+  { value: "quality", label: "Quality", desc: "Higher fidelity, slower and more expensive" },
 ];
 
 const TABS = [
   { id: "language", label: "Language" },
   { id: "dev", label: "Dev Content" },
-  { id: "models", label: "Model Config" },
+  { id: "models", label: "Generation" },
   { id: "delete", label: "Delete Project" },
 ];
 
@@ -130,7 +124,7 @@ export function ProjectSettingsPage() {
 
             <Row
               label={t("DEV / DEMO MODE")}
-              hint={t("Uses the faster image model, fewer steps, and smaller generated files for quick testing.")}
+              hint={t("Runs a smaller, faster generation path for quick testing.")}
             >
               <SwitchField
                 checked={!!config?.dev_mode}
@@ -145,8 +139,8 @@ export function ProjectSettingsPage() {
         {activeTab === "models" && (
           <Card className="px-5">
             <Row
-              label={t("TEXT QUALITY")}
-              hint={t("Controls speed vs quality for all text generation stages. DEV mode forces Fast.")}
+              label={t("GENERATION QUALITY")}
+              hint={t("Controls speed, fidelity, and cost across the whole pipeline. DEV mode forces Fast.")}
             >
               <SelectField
                 value={config?.quality_preset ?? "balanced"}
@@ -158,30 +152,6 @@ export function ProjectSettingsPage() {
               >
                 {QUALITY_PRESET_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>{option.label} — {option.desc}</option>
-                ))}
-              </SelectField>
-            </Row>
-
-            <Row
-              label={t("IMAGE MODEL")}
-              hint={t("Selects the image generation model. Provider is configured automatically.")}
-            >
-              <SelectField
-                value={IMAGE_PRESET_OPTIONS.find((o) => o.model === config?.image_model) ? config?.image_model : "image-balanced"}
-                onChange={(e) => {
-                  const selected = IMAGE_PRESET_OPTIONS.find((o) => o.model === e.target.value);
-                  if (selected) {
-                    patch({
-                      image_model: selected.model,
-                      image_provider: selected.provider as ConfigOverrides["image_provider"],
-                    });
-                  }
-                }}
-                disabled={!config || updating}
-                className="max-w-sm bg-bristol font-meta text-[0.72rem] tracking-[0.1em]"
-              >
-                {IMAGE_PRESET_OPTIONS.map((option) => (
-                  <option key={option.model} value={option.model}>{option.label} — {option.desc}</option>
                 ))}
               </SelectField>
             </Row>
