@@ -31,7 +31,7 @@ services:
   #   restart: unless-stopped
 
   litellm:
-    image: docker.litellm.ai/berriai/litellm:main-v1.67.0-stable
+    image: docker.litellm.ai/berriai/litellm:main-v1.83.14-stable
     command: ["--port", "4000", "--config", "/app/config.yaml"]
     ports:
       - "4000:4000"

@@ -8,7 +8,7 @@
 
 aliases:
   extract-fast: vertex_ai/gemini-3.1-flash-lite-preview
-  extract-balanced: vertex_ai/gemini-3.1-flash-preview
+  extract-balanced: vertex_ai/gemini-3-flash-preview
   extract-quality: vertex_ai/gemini-3.1-pro-preview
   screenplay-fast: anthropic/claude-haiku-4-5
   screenplay-balanced: anthropic/claude-sonnet-4-6
@@ -43,11 +43,11 @@ model_overrides:
     input_cost_per_token: 0.000002
     output_cost_per_token: 0.000012
     mode: chat
-  # Google does not list a separate Gemini 3.1 Flash text SKU on the Vertex page;
-  # use Gemini 3 Flash Preview standard rates until a distinct 3.1 text SKU appears.
-  # source: https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing,
-  # verified 2026-05-08.
-  gemini-3.1-flash-preview:
+  # Gemini 3 Flash Preview — Pro-level intelligence at Flash speed/price.
+  # Note the asymmetric naming: the flash text model is in the `3-` family
+  # while flash-lite and pro are in the `3.1-` family.
+  # source: https://openrouter.ai/google/gemini-3-flash-preview, verified 2026-05-08.
+  gemini-3-flash-preview:
     input_cost_per_token: 0.0000005
     output_cost_per_token: 0.000003
     mode: chat
