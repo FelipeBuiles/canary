@@ -89,7 +89,15 @@
       "Bash(rtk grep *)",
       "Bash(rtk tsc *)",
       "Bash(rtk wc *)",
-      "Bash(rtk read *)"
+      "Bash(rtk read *)",
+      "Bash(rtk curl *)",
+      "Bash(rtk docker *)",
+      "Bash(docker compose *)",
+      "WebFetch(domain:docs.cloud.google.com)",
+      "Bash(TOKEN=$\\(cat /tmp/gcp_token\\) *)",
+      "Bash(rtk git *)",
+      "WebFetch(domain:github.com)",
+      "Bash(docker pull *)"
     ]
   },
   "hooks": {
