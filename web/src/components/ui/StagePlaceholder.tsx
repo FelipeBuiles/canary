@@ -21,13 +21,21 @@ const STAGE_META: Record<StageName, StageMeta> = {
     outputs: ["Characters", "Locations", "Scenes", "Arcs"],
     icon: () => <span className="font-display text-lg font-black">01</span>,
   },
+  style: {
+    label: "LOOK & FEEL",
+    title: "Visual Style",
+    description: "Creates visual direction options and sample artwork so the comic has a consistent look before casting.",
+    inputs: ["Story bible"],
+    outputs: ["Style options", "Sample art"],
+    icon: () => <span className="font-display text-lg font-black">02</span>,
+  },
   cast: {
     label: "CAST",
     title: "Visual Casting",
     description: "Generates reference images for each character and location extracted from the story bible.",
     inputs: ["Story bible"],
     outputs: ["Character refs", "Location plates"],
-    icon: () => <span className="font-display text-lg font-black">02</span>,
+    icon: () => <span className="font-display text-lg font-black">03</span>,
   },
   adapt: {
     label: "ADAPT",
@@ -35,7 +43,7 @@ const STAGE_META: Record<StageName, StageMeta> = {
     description: "Transforms prose scenes into screenplay beats — action, dialogue, sfx, and stage direction.",
     inputs: ["Story bible", "Scenes"],
     outputs: ["Screenplay beats"],
-    icon: () => <span className="font-display text-lg font-black">03</span>,
+    icon: () => <span className="font-display text-lg font-black">04</span>,
   },
   plan: {
     label: "PLAN",
@@ -43,7 +51,7 @@ const STAGE_META: Record<StageName, StageMeta> = {
     description: "Groups beats into panels and pages, deciding panel count, importance, and page rhythm.",
     inputs: ["Screenplay"],
     outputs: ["Planned panels", "Planned pages"],
-    icon: () => <span className="font-display text-lg font-black">04</span>,
+    icon: () => <span className="font-display text-lg font-black">05</span>,
   },
   storyboard: {
     label: "STORYBOARD",
@@ -51,7 +59,7 @@ const STAGE_META: Record<StageName, StageMeta> = {
     description: "Details each planned panel — shot type, camera angle, character poses, expressions, and mood.",
     inputs: ["Screenplay", "Layout plan"],
     outputs: ["Panel breakdowns"],
-    icon: () => <span className="font-display text-lg font-black">05</span>,
+    icon: () => <span className="font-display text-lg font-black">06</span>,
   },
   direct: {
     label: "DIRECT",
@@ -59,7 +67,7 @@ const STAGE_META: Record<StageName, StageMeta> = {
     description: "Assembles fully-baked image prompts with style, composition, character refs, and continuity notes.",
     inputs: ["Panel breakdowns", "Character refs"],
     outputs: ["Image prompts"],
-    icon: () => <span className="font-display text-lg font-black">06</span>,
+    icon: () => <span className="font-display text-lg font-black">07</span>,
   },
   draw: {
     label: "DRAW",
@@ -67,7 +75,7 @@ const STAGE_META: Record<StageName, StageMeta> = {
     description: "Sends each prompt to the image model and collects generated panel artwork.",
     inputs: ["Image prompts", "Style"],
     outputs: ["Panel images"],
-    icon: () => <span className="font-display text-lg font-black">07</span>,
+    icon: () => <span className="font-display text-lg font-black">08</span>,
   },
   compose: {
     label: "COMPOSE",
@@ -75,7 +83,7 @@ const STAGE_META: Record<StageName, StageMeta> = {
     description: "Assembles panels, bubbles, sfx, and lettering onto final comic page layouts.",
     inputs: ["Panel images", "Layout plan"],
     outputs: ["Comic pages"],
-    icon: () => <span className="font-display text-lg font-black">08</span>,
+    icon: () => <span className="font-display text-lg font-black">09</span>,
   },
 };
 

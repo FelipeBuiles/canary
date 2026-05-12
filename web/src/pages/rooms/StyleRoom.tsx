@@ -4,15 +4,18 @@ import {
   useGenerationJobs,
   useStyles,
   useSuggestStyles,
+  useSuggestStylesEstimate,
   useGenerateStyleSamples,
   useSetActiveStyle,
   useImageGenerationMeta,
   useProjectConfig,
   useStoryBible,
+  useProjectStatus,
 } from "../../api/queries";
 import { RoomHeader } from "../../components/ui/RoomHeader";
 import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { Button } from "../../components/ui/Button";
+import { ConfirmDrawer } from "../../components/ui/ConfirmDrawer";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { GenerationDetailsModal } from "../../components/ui/GenerationDetailsModal";
 import { LazyImage } from "../../components/ui/LazyImage";
@@ -51,6 +54,7 @@ function StyleCard({
   suggestion,
   projectName,
   isGenerating,
+  actionsDisabled,
   queueState,
   fallbackPrompt,
   fallbackParameters,
@@ -58,6 +62,7 @@ function StyleCard({
   suggestion: StyleSuggestion;
   projectName: string;
   isGenerating: boolean;
+  actionsDisabled: boolean;
   queueState: "queued" | "running" | null;
   fallbackPrompt: string;
   fallbackParameters: Record<string, unknown>;
@@ -160,7 +165,7 @@ function StyleCard({
           <button
             type="button"
             onClick={handleGenerate}
-            disabled={isGenerating}
+            disabled={isGenerating || actionsDisabled}
             title={suggestion.has_sample ? "Regenerate sample" : "Generate sample"}
             className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center bg-ink-black/55 text-bristol transition-colors hover:bg-ink-black disabled:opacity-40"
           >
@@ -189,7 +194,7 @@ function StyleCard({
                 type="button"
                 className="inline-flex min-h-14 w-full items-center justify-center bg-hero-red px-5 py-3 font-meta text-[0.9rem] tracking-[0.18em] text-bristol transition-colors hover:bg-hero-red/90 disabled:cursor-not-allowed disabled:opacity-45"
                 onClick={() => setActive.mutate({ project: projectName, index: suggestion.index })}
-                disabled={isGenerating}
+                disabled={isGenerating || actionsDisabled}
               >
                 SELECT
               </button>
@@ -217,23 +222,29 @@ export function StyleRoom() {
   const { data: stylesData, isLoading, refetch: refetchStyles } = useStyles(id);
   const { data: projectConfig } = useProjectConfig(id);
   const { data: storyBible } = useStoryBible(id);
+  const { data: status } = useProjectStatus(id);
   const suggestStyles = useSuggestStyles();
-  const generateSamples = useGenerateStyleSamples();
-  const pendingSet = usePendingIndices(projectName);
-  const styleJobIds = useStyleJobIds(projectName);
-  const styleJobStatuses = useStyleJobStatuses(projectName);
-  const { add, attachJobs, updateJob, remove } = useStyleGenStore();
-  const [sampleError, setSampleError] = useState<string | null>(null);
   const { data: generationJobs } = useGenerationJobs(
     id,
-    Object.values(styleJobIds),
+    Object.values(useStyleJobIds(projectName)),
   );
+  const pendingSet = usePendingIndices(projectName);
+  const styleJobStatuses = useStyleJobStatuses(projectName);
+  const { updateJob, remove } = useStyleGenStore();
   const events = usePipelineStore((s) => s.events);
   const connect = usePipelineStore((s) => s.connect);
   const clearEvents = usePipelineStore((s) => s.clearEvents);
+  const [sampleError, setSampleError] = useState<string | null>(null);
   const [suggestionStatus, setSuggestionStatus] = useState<"idle" | "running" | "failed">("idle");
   const [suggestionError, setSuggestionError] = useState<string | null>(null);
-  const prevSuggestionCount = useRef(0);
+  const [showSuggestConfirm, setShowSuggestConfirm] = useState(false);
+
+  const styleStage = status?.stages.style;
+  const isStageGenerating = styleStage?.status === "running";
+
+  const isSuggesting = suggestionStatus === "running";
+  const styleActionsDisabled = isStageGenerating || isSuggesting || suggestStyles.isPending;
+  const { data: suggestEstimate } = useSuggestStylesEstimate(id, !isSuggesting);
 
   useEffect(() => {
     if (!projectName || !generationJobs?.jobs.length) return;
@@ -255,9 +266,8 @@ export function StyleRoom() {
     return () => window.clearTimeout(timer);
   }, [generationJobs, projectName, updateJob, remove]);
 
-  const isSuggesting = suggestionStatus === "running";
-
-  // Listen for SSE events to detect suggestion completion
+  // Track the suggest-more-styles SSE job: it streams stage_complete /
+  // stage_fail under the "style_suggest" stage tag.
   useEffect(() => {
     if (!isSuggesting) return;
     for (let i = events.length - 1; i >= 0; i--) {
@@ -267,19 +277,7 @@ export function StyleRoom() {
         const timer = window.setTimeout(() => {
           setSuggestionStatus("idle");
           setSuggestionError(null);
-          refetchStyles().then(({ data }) => {
-            const all = data?.suggestions ?? [];
-            const newIndices = all.slice(prevSuggestionCount.current).map((s) => s.index);
-            if (newIndices.length === 0) return;
-            add(projectName, newIndices);
-            generateSamples.mutate(
-              { project: projectName, indices: newIndices },
-              {
-                onSuccess: (d) => attachJobs(projectName, d.jobs),
-                onError: () => remove(projectName, newIndices),
-              },
-            );
-          });
+          refetchStyles();
         }, 0);
         return () => window.clearTimeout(timer);
       }
@@ -291,32 +289,17 @@ export function StyleRoom() {
         return () => window.clearTimeout(timer);
       }
     }
-  }, [events, isSuggesting, refetchStyles, add, attachJobs, generateSamples, projectName, remove]);
+  }, [events, isSuggesting, refetchStyles]);
 
-  // Auto-trigger suggestions on first visit when none exist yet
-  const autoTriggered = useRef(false);
+  // Refetch styles whenever the style pipeline stage emits progress so that
+  // newly written sample images appear as soon as each one finishes.
   useEffect(() => {
-    if (autoTriggered.current) return;
-    if (isLoading || !stylesData) return;
-    if (stylesData.suggestions.length > 0) return;
-    if (isSuggesting || suggestStyles.isPending) return;
-    if (!storyBible) return;
-    autoTriggered.current = true;
-    prevSuggestionCount.current = 0;
-    clearEvents();
-    setSuggestionStatus("running");
-    setSuggestionError(null);
-    suggestStyles.mutate(
-      { project: projectName },
-      {
-        onSuccess: () => connect(projectName),
-        onError: (err) => {
-          setSuggestionStatus("failed");
-          setSuggestionError(err.message);
-        },
-      },
-    );
-  }, [isLoading, stylesData, storyBible, isSuggesting]);
+    if (!events.length) return;
+    const last = events[events.length - 1];
+    if (last.stage !== "style") return;
+    if (last.type !== "stage_progress" && last.type !== "stage_complete") return;
+    refetchStyles();
+  }, [events, refetchStyles]);
 
   if (isLoading) {
     return <RoomShell isLoading loadingText="LOADING STYLES…" />;
@@ -335,7 +318,6 @@ export function StyleRoom() {
   const suggestions = stylesData?.suggestions ?? [];
 
   function startSuggestions() {
-    prevSuggestionCount.current = stylesData?.suggestions.length ?? 0;
     clearEvents();
     setSuggestionStatus("running");
     setSuggestionError(null);
@@ -367,43 +349,58 @@ export function StyleRoom() {
         title="LOOK & FEEL"
         lead="Pick the visual style that defines your comic. Generate samples to compare, then select one to lock it in."
         actions={
-          <div className="flex gap-2">
+          <div className="flex items-center gap-3">
             {anyGenerating && (
-              <span className="font-meta text-[0.48rem] tracking-[0.16em] text-ink-black/50 self-center">
+              <span className="font-meta text-[0.48rem] tracking-[0.16em] text-ink-black/50">
                 {runningStyleCount > 0 && `${runningStyleCount} RUNNING`}{runningStyleCount > 0 && queuedStyleCount > 0 && " / "}{queuedStyleCount > 0 && `${queuedStyleCount} QUEUED`}
               </span>
             )}
             {sampleError && (
-              <span className="font-meta text-[0.48rem] tracking-[0.16em] text-hero-red self-center">
+              <span className="font-meta text-[0.48rem] tracking-[0.16em] text-hero-red">
                 {sampleError}
               </span>
             )}
-            <Button
-              size="sm"
-              variant="primary"
-              onClick={startSuggestions}
-              disabled={suggestStyles.isPending || isSuggesting}
-            >
-              {suggestStyles.isPending || isSuggesting ? "SUGGESTING…" : "SUGGEST MORE STYLES"}
-            </Button>
+            <div className="flex flex-col items-end gap-1">
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => setShowSuggestConfirm(true)}
+                disabled={styleActionsDisabled}
+              >
+                {suggestStyles.isPending || isSuggesting
+                  ? "SUGGESTING…"
+                  : isStageGenerating
+                    ? "GENERATING…"
+                    : "SUGGEST MORE STYLES"}
+              </Button>
+              {suggestEstimate && suggestEstimate.estimate_credits > 0 && (
+                <span className="font-meta text-[0.48rem] tracking-[0.14em] text-ink-black/45">
+                  Est. {suggestEstimate.estimate_credits.toLocaleString()} credits
+                </span>
+              )}
+            </div>
           </div>
         }
       />
 
-      {(isSuggesting || suggestionStatus === "failed") && (
+      {(isSuggesting || isStageGenerating || suggestionStatus === "failed") && (
         <div className={`mt-4 border-[2px] border-ink-black p-3 ${
           suggestionStatus === "failed" ? "bg-hero-red text-bristol" : "bg-narrator-gold text-ink-black"
         }`}>
           <div className="flex items-center gap-2">
-            {isSuggesting && <span className="h-2.5 w-2.5 animate-pulse bg-hero-red" />}
+            {(isSuggesting || isStageGenerating) && <span className="h-2.5 w-2.5 animate-pulse bg-hero-red" />}
             <span className="font-meta text-[0.48rem] tracking-[0.16em]">
-              {suggestionStatus === "failed" ? "STYLE SUGGESTION FAILED" : "STYLE SUGGESTIONS RUNNING"}
+              {suggestionStatus === "failed"
+                ? "STYLE SUGGESTION FAILED"
+                : isStageGenerating
+                  ? "GENERATING STYLE OPTIONS"
+                  : "GENERATING ADDITIONAL STYLES"}
             </span>
           </div>
           <div className="mt-1 font-body text-[0.78rem] leading-relaxed">
             {suggestionStatus === "failed"
               ? suggestionError
-              : "Asking the art director for five visual directions. This usually takes a short model call."}
+              : "Asking the art director for visual directions and rendering one sample image per style. Samples appear as soon as each one finishes."}
           </div>
         </div>
       )}
@@ -412,8 +409,12 @@ export function StyleRoom() {
         <Surface padding="lg">
           <StateBlock
             minHeight="min-h-[22vh]"
-            title={isSuggesting ? "GENERATING STYLE SUGGESTIONS" : "NO STYLE SUGGESTIONS YET"}
-            description={isSuggesting ? "Options will appear automatically." : "Click \"Suggest More Styles\" to generate 5 options."}
+            title={isStageGenerating ? "GENERATING STYLE OPTIONS" : "NO STYLE SUGGESTIONS YET"}
+            description={
+              isStageGenerating
+                ? "Five style descriptions and sample images are on the way."
+                : "Approve the extract stage to start generating style options."
+            }
             icon="styles"
           />
         </Surface>
@@ -425,6 +426,7 @@ export function StyleRoom() {
               suggestion={s}
               projectName={id}
               isGenerating={pendingSet.has(s.index)}
+              actionsDisabled={styleActionsDisabled}
               queueState={
                 pendingSet.has(s.index)
                   ? styleJobStatuses[s.index] ?? "queued"
@@ -442,6 +444,20 @@ export function StyleRoom() {
           ))}
         </section>
       )}
+
+      <ConfirmDrawer
+        open={showSuggestConfirm}
+        title="Suggest more styles?"
+        body="Generates five additional style descriptions and sample images. Credits are reserved now and settled to actual usage."
+        cost={suggestEstimate}
+        confirmLabel="Suggest"
+        busy={suggestStyles.isPending || isSuggesting}
+        onConfirm={() => {
+          setShowSuggestConfirm(false);
+          startSuggestions();
+        }}
+        onClose={() => setShowSuggestConfirm(false)}
+      />
     </RoomShell>
   );
 }

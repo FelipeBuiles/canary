@@ -1,19 +1,32 @@
 """Style suggestion, sample generation, and active style selection."""
 
 import asyncio
-import hashlib
-import json
+import math
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from novel_to_comic.config import Config, save_config
+from novel_to_comic import artifacts
 from novel_to_comic.ai import ai_request_context
+from novel_to_comic.config import Config, save_config
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.prompting import build_style_sample_prompt
-from novel_to_comic.stages.s2_style import generate_suggestions
+from novel_to_comic.stages.s2_style import (
+    generate_sample_image,
+    generate_samples_for_indices,
+    generate_suggestions,
+    load_suggestions,
+    save_suggestions,
+)
 
 from ..auth import get_current_user
-from ..credits import debit_model_usage
+from ..credits import (
+    assert_sufficient_credits,
+    estimate_style_batch_cost_usd,
+    provider_usd_to_credits,
+    release_reservation,
+    reservation_buffer,
+    reserve_credits,
+    stage_cost_confidence,
+)
 from ..db import get_db
 from ..deps import get_project, project_key
 from ..generation_jobs import (
@@ -27,121 +40,50 @@ from ..generation_jobs import (
 router = APIRouter()
 
 
-def _sample_meta_path(sample_path):
-    return sample_path.with_suffix(f"{sample_path.suffix}.meta.json")
-
-
-def _style_sample_meta(config: Config, prompt: str) -> dict:
-    return {
-        "version": 1,
-        "kind": "style_sample",
-        "prompt": prompt,
-        "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-        "parameters": {
-            "image_model": config.effective_image_model(),
-            "width": config.image_width,
-            "height": config.image_height,
-            "steps": config.effective_image_steps(),
-            "guidance_scale": config.flux_guidance_scale,
-            "style_template": config.style_template,
-        },
-    }
-
-
-def _load_suggestions(project_dir):
-    path = project_dir / "samples" / "style_suggestions.json"
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text())
-        return data.get("suggestions") if isinstance(data, dict) else data
-    except Exception:
-        return None
-
-
 def is_style_selected(project_dir, config) -> bool:
     """Check whether an active style has been selected for this project."""
-    suggestions = _load_suggestions(project_dir) or []
     return any(
         s.get("template", "").strip() == config.style_template.strip()
-        for s in suggestions
+        for s in load_suggestions(project_dir)
     )
 
 
-def _save_suggestions(project_dir, suggestions, title):
-    path = project_dir / "samples" / "style_suggestions.json"
-    path.parent.mkdir(exist_ok=True)
-    path.write_text(json.dumps({"title": title, "suggestions": suggestions}, indent=2))
-
-
-
-
-async def _generate_style_sample(config, bible, project_dir, sample_path, user_id: str, project_id: str | None):
-    from novel_to_comic.clients import flux
-    prompt = build_style_sample_prompt(config, bible)
-    meta = _style_sample_meta(config, prompt)
-
-    sample_path.parent.mkdir(exist_ok=True)
-    with ai_request_context(
-        user_id=user_id,
-        project_id=project_id,
-        project_name=project_dir.name,
-        workspace_id=str(project_dir.parent),
-        stage="style",
-    ):
-        result = await flux.generate_image(
-            config=config,
-            prompt=prompt,
-            output_path=sample_path,
-            feature="style.sample",
-        )
-    _sample_meta_path(sample_path).write_text(json.dumps(meta, indent=2, sort_keys=True))
-    return result
-
-
-async def _generate_style_samples_parallel(config, bible, project_dir, indices, suggestions, user_id: str, project_id: str | None):
-    from novel_to_comic.state import load_state, record_misc_usage, save_state
-    samples_dir = project_dir / "samples"
-    samples_dir.mkdir(exist_ok=True)
-
-    async def _one(idx: int) -> None:
-        s = suggestions[idx - 1]
-        template = s.get("template", config.style_template)
-        sample_config = config.model_copy(update={"style_template": template})
-        sample_path = samples_dir / f"style_{idx}.png"
-        result = await _generate_style_sample(sample_config, bible, project_dir, sample_path, user_id, project_id)
-        if result.usage:
-            state = load_state(project_dir)
-            record_misc_usage(state, result.usage)
-            save_state(state, project_dir)
-            debit_model_usage(
-                get_db(),
-                user_id,
-                project_id,
-                result.usage,
-                description=f"Model call: style sample {idx}",
-            )
-
-    sem = asyncio.Semaphore(2)
-
-    async def _limited(idx: int) -> None:
-        async with sem:
-            await _one(idx)
-
-    await asyncio.gather(*[_limited(i) for i in indices])
-
-
 def _get_bible(project_dir):
-    path = project_dir / "story_bible.json"
+    path = artifacts.story_bible_path(project_dir)
     if not path.exists():
         return None
     return StoryBible.model_validate_json(path.read_text())
 
 
+def _suggest_batch_credit_estimate(config: Config, project_dir) -> dict:
+    cost_usd = estimate_style_batch_cost_usd(config, project_dir)
+    estimate = max(1, provider_usd_to_credits(cost_usd)) if cost_usd > 0 else 0
+    multiplier = reservation_buffer()
+    reserved = math.ceil(estimate * multiplier) if estimate > 0 else 0
+    return {
+        "estimate_credits": estimate,
+        "reserved_credits": reserved,
+        "reservation_multiplier": multiplier,
+        "confidence": stage_cost_confidence("style"),
+    }
+
+
+def _assert_no_pipeline_task(request: Request, pkey: str) -> None:
+    existing = request.app.state.running_tasks.get(pkey)
+    if existing and not existing.done():
+        raise HTTPException(409, "A stage is already running for this project")
+
+
+def _assert_no_style_task(request: Request, pkey: str) -> None:
+    existing = request.app.state.style_tasks.get(pkey)
+    if existing and not existing.done():
+        raise HTTPException(409, "A style operation is already running for this project")
+
+
 @router.get("/styles")
 def get_styles(project_id: str, project=Depends(get_project)):
-    project_dir, config, state = project
-    suggestions = _load_suggestions(project_dir) or []
+    project_dir, config, _state = project
+    suggestions = load_suggestions(project_dir)
 
     active_index: int | None = None
     for i, s in enumerate(suggestions, 1):
@@ -151,7 +93,7 @@ def get_styles(project_id: str, project=Depends(get_project)):
 
     result = []
     for i, s in enumerate(suggestions, 1):
-        sample_path = project_dir / "samples" / f"style_{i}.png"
+        sample_path = artifacts.style_sample_path(project_dir, i)
         result.append({
             "index": i,
             "label": s.get("label", f"Style {i}"),
@@ -163,6 +105,17 @@ def get_styles(project_id: str, project=Depends(get_project)):
     return {"suggestions": result, "active_index": active_index}
 
 
+@router.get("/styles/suggest-estimate")
+def suggest_estimate(
+    project_id: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),  # noqa: ARG001 — auth gate
+):
+    """Return the credit cost for one 'Suggest More Styles' batch (text + samples)."""
+    project_dir, config, _state = project
+    return _suggest_batch_credit_estimate(config, project_dir)
+
+
 @router.post("/styles/suggest")
 async def suggest_styles(
     request: Request,
@@ -170,17 +123,24 @@ async def suggest_styles(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
-    project_dir, config, state = project
+    project_dir, config, _state = project
     pkey = project_key(user_id, project_id)
 
+    _assert_no_pipeline_task(request, pkey)
+    _assert_no_style_task(request, pkey)
     style_running = request.app.state.style_tasks
-    existing = style_running.get(pkey)
-    if existing and not existing.done():
-        raise HTTPException(409, "A style operation is already running for this project")
 
     bible = _get_bible(project_dir)
     if not bible:
         raise HTTPException(404, "Story bible not found — run extract first.")
+
+    estimate = _suggest_batch_credit_estimate(config, project_dir)
+    required = estimate["reserved_credits"] or estimate["estimate_credits"]
+    db = get_db()
+    assert_sufficient_credits(db, user_id, required, action="style_suggest")
+    # Share one job_id across reservation + every per-call debit so the credit
+    # ledger collapses the batch into a single grouped row.
+    reservation_id, job_id = reserve_credits(db, user_id, project_id, "style", required)
 
     queue: asyncio.Queue = asyncio.Queue()
     request.app.state.event_queues[pkey] = queue
@@ -189,39 +149,40 @@ async def suggest_styles(
         queue.put_nowait({"type": "stage_begin", "stage": "style_suggest", "total": 1})
         try:
             queue.put_nowait({
-                "type": "log",
-                "stage": "style_suggest",
-                "level": "info",
+                "type": "log", "stage": "style_suggest", "level": "info",
                 "message": "Generating style suggestions...",
             })
-            existing = _load_suggestions(project_dir) or []
-            existing_labels = [s.get("label", "") for s in existing if isinstance(s, dict)]
+            existing_suggestions = load_suggestions(project_dir)
+            existing_count = len(existing_suggestions)
+            existing_labels = [s.get("label", "") for s in existing_suggestions if isinstance(s, dict)]
             with ai_request_context(
                 user_id=user_id,
                 project_id=project_id,
                 project_name=project_dir.name,
                 workspace_id=str(project_dir.parent),
                 stage="style",
+                job_id=job_id,
             ):
-                new_suggestions, usage = await generate_suggestions(
-                    config,
-                    bible,
-                    existing_labels=existing_labels,
+                new_suggestions, _usage = await generate_suggestions(
+                    config, bible, existing_labels=existing_labels,
                 )
-            if usage:
-                debit_model_usage(
-                    get_db(),
-                    user_id,
-                    project_id,
-                    usage,
-                    description="Model call: style suggestions",
+                merged = existing_suggestions + new_suggestions
+                save_suggestions(project_dir, merged, bible.title)
+                queue.put_nowait({
+                    "type": "log", "stage": "style_suggest", "level": "info",
+                    "message": f"Generating {len(new_suggestions)} sample images...",
+                })
+                new_indices = list(range(existing_count + 1, len(merged) + 1))
+                await generate_samples_for_indices(
+                    config, bible, project_dir, merged, new_indices,
                 )
-            _save_suggestions(project_dir, existing + new_suggestions, bible.title)
             queue.put_nowait({"type": "stage_progress", "stage": "style_suggest", "done": 1, "total": 1})
             queue.put_nowait({"type": "stage_complete", "stage": "style_suggest", "done": 1, "total": 1})
         except Exception as exc:
             queue.put_nowait({"type": "stage_fail", "stage": "style_suggest", "message": str(exc)})
         finally:
+            if reservation_id:
+                release_reservation(db, reservation_id)
             style_running.pop(pkey, None)
 
     task = asyncio.create_task(_job())
@@ -237,14 +198,18 @@ async def generate_style_samples(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
-    project_dir, config, state = project
+    """Regenerate sample images for specific style indices (per-card retry)."""
+    project_dir, config, _state = project
     pkey = project_key(user_id, project_id)
+
+    _assert_no_pipeline_task(request, pkey)
+    _assert_no_style_task(request, pkey)
 
     indices = body.get("indices", [])
     if not indices or not isinstance(indices, list):
         raise HTTPException(400, "Provide non-empty 'indices' list")
 
-    suggestions = _load_suggestions(project_dir)
+    suggestions = load_suggestions(project_dir)
     if not suggestions:
         raise HTTPException(404, "No style suggestions found — run suggest first.")
 
@@ -260,10 +225,7 @@ async def generate_style_samples(
     prune_finished_generation_jobs(request.app)
     for idx in indices:
         existing = find_active_generation_job(
-            request.app,
-            project_name=pkey,
-            kind="style_sample",
-            payload={"index": idx},
+            request.app, project_name=pkey, kind="style_sample", payload={"index": idx},
         )
         if existing:
             jobs.append(generation_job_payload(request.app, existing))
@@ -272,34 +234,17 @@ async def generate_style_samples(
         s = suggestions[idx - 1]
         template = s.get("template", config.style_template)
         sample_config = config.model_copy(update={"style_template": template})
-        sample_path = project_dir / "samples" / f"style_{idx}.png"
+        sample_path = artifacts.style_sample_path(project_dir, idx)
 
-        async def _runner(
-            sample_config=sample_config,
-            sample_path=sample_path,
-            project_id=project_id,
-            _sample_idx=idx,
-        ) -> None:
-            result = await _generate_style_sample(
-                sample_config,
-                bible,
-                project_dir,
-                sample_path,
-                user_id,
-                project_id,
-            )
-            if result.usage:
-                from novel_to_comic.state import load_state, record_misc_usage, save_state
-                st = load_state(project_dir)
-                record_misc_usage(st, result.usage)
-                save_state(st, project_dir)
-                debit_model_usage(
-                    get_db(),
-                    user_id,
-                    project_id,
-                    result.usage,
-                    description=f"Model call: style sample {_sample_idx}",
-                )
+        async def _runner(sample_config=sample_config, sample_path=sample_path) -> None:
+            with ai_request_context(
+                user_id=user_id,
+                project_id=project_id,
+                project_name=project_dir.name,
+                workspace_id=str(project_dir.parent),
+                stage="style",
+            ):
+                await generate_sample_image(sample_config, bible, sample_path)
 
         job = enqueue_generation_job(
             request.app,
@@ -317,13 +262,13 @@ async def generate_style_samples(
 
 @router.patch("/styles/active")
 def set_active_style(project_id: str, body: dict, project=Depends(get_project)):
-    project_dir, config, state = project
+    project_dir, config, _state = project
 
     index = body.get("index")
     if index is None:
         raise HTTPException(400, "Provide 'index'")
 
-    suggestions = _load_suggestions(project_dir)
+    suggestions = load_suggestions(project_dir)
     if not suggestions:
         raise HTTPException(404, "No style suggestions found — run suggest first.")
 

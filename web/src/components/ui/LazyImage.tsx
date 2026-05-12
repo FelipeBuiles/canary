@@ -7,6 +7,7 @@ interface LazyImageProps extends ImgHTMLAttributes<HTMLImageElement> {
   aspect?: string;
   skeletonClassName?: string;
   containerClassName?: string;
+  preserveAspectBox?: boolean;
 }
 
 export function LazyImage({
@@ -14,6 +15,7 @@ export function LazyImage({
   skeletonClassName,
   containerClassName,
   className,
+  preserveAspectBox = false,
   onLoad,
   onError,
   alt,
@@ -23,7 +25,11 @@ export function LazyImage({
 
   return (
     <div
-      className={cn("relative block overflow-hidden", containerClassName)}
+      className={cn(
+        "relative overflow-hidden",
+        preserveAspectBox ? "flex items-center justify-center" : "block",
+        containerClassName,
+      )}
       style={aspect ? { aspectRatio: aspect } : undefined}
     >
       {state !== "loaded" && (
@@ -35,7 +41,9 @@ export function LazyImage({
         {...imgProps}
         alt={alt ?? ""}
         className={cn(
-          "relative block w-full h-full object-cover transition-opacity duration-200",
+          preserveAspectBox
+            ? "relative block h-full w-full object-contain transition-opacity duration-200"
+            : "relative block w-full h-full object-cover transition-opacity duration-200",
           state === "loaded" ? "opacity-100" : "opacity-0",
           className,
         )}

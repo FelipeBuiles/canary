@@ -183,12 +183,49 @@ def _load_json_model(path: Path, model):
 
 def _estimate_style_cost(config: Config, project_dir: Path) -> float:
     from novel_to_comic import artifacts
-    if artifacts.style_suggestions_path(project_dir).exists():
-        return 0.0
+    from novel_to_comic.stages.s2_style import (
+        SAMPLE_COUNT,
+        load_suggestions,
+        missing_sample_indices,
+    )
     from novel_to_comic.usage import estimate_text_cost
-    story_bible_path = artifacts.story_bible_path(project_dir)
-    context = _safe_text(story_bible_path)[:3000]
-    return estimate_text_cost(config.effective_prompt_model(), context)
+
+    suggestions = load_suggestions(project_dir)
+    needs_suggestions = not suggestions
+    if needs_suggestions:
+        text_cost = estimate_text_cost(
+            config.effective_prompt_model(),
+            _safe_text(artifacts.story_bible_path(project_dir))[:3000],
+        )
+        sample_count = SAMPLE_COUNT
+    else:
+        text_cost = 0.0
+        sample_count = len(missing_sample_indices(project_dir, suggestions))
+
+    image_cost = estimate_image_cost(
+        config.effective_image_model(),
+        sample_count,
+        quality=getattr(config, "image_quality", None),
+    )
+    return text_cost + image_cost
+
+
+def estimate_style_batch_cost_usd(config: Config, project_dir: Path) -> float:
+    """Estimate provider cost for one 'Suggest More Styles' batch (text + samples)."""
+    from novel_to_comic import artifacts
+    from novel_to_comic.stages.s2_style import SAMPLE_COUNT
+    from novel_to_comic.usage import estimate_text_cost
+
+    text_cost = estimate_text_cost(
+        config.effective_prompt_model(),
+        _safe_text(artifacts.story_bible_path(project_dir))[:3000],
+    )
+    image_cost = estimate_image_cost(
+        config.effective_image_model(),
+        SAMPLE_COUNT,
+        quality=getattr(config, "image_quality", None),
+    )
+    return text_cost + image_cost
 
 
 def _estimate_cast_cost(config: Config, project_dir: Path) -> float:

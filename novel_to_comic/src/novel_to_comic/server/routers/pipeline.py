@@ -19,8 +19,11 @@ from novel_to_comic.stages import REGISTRY
 from novel_to_comic.prompt_instructions import (
     PromptInstructionError,
     apply_instruction_patch,
+    asset_instruction_rewrite_system_prompt,
+    asset_instruction_rewrite_user_content,
     instruction_rewrite_system_prompt,
     instruction_rewrite_user_content,
+    parse_asset_instruction_patch,
     parse_instruction_patch,
     validate_user_instruction,
 )
@@ -66,6 +69,16 @@ logger = logging.getLogger("canary.pipeline")
 class InstructedPanelRegenRequest(BaseModel):
     scene_id: str = Field(min_length=1)
     panel_number: int = Field(ge=1)
+    instruction: str = Field(min_length=1, max_length=500)
+
+
+class InstructedRefRegenRequest(BaseModel):
+    char_id: str = Field(min_length=1)
+    instruction: str = Field(min_length=1, max_length=500)
+
+
+class InstructedPlateRegenRequest(BaseModel):
+    loc_id: str = Field(min_length=1)
     instruction: str = Field(min_length=1, max_length=500)
 
 
@@ -375,6 +388,9 @@ async def run_pipeline(
     existing = running.get(pkey)
     if existing and not existing.done():
         raise HTTPException(409, "A stage is already running for this project")
+    existing_style = request.app.state.style_tasks.get(pkey)
+    if existing_style and not existing_style.done():
+        raise HTTPException(409, "A style operation is already running for this project")
 
     if stage == "compose":
         draw_error = _draw_ready_for_compose_error(project_dir)
@@ -439,6 +455,9 @@ async def regen_extract(
     existing = running.get(pkey)
     if existing and not existing.done():
         raise HTTPException(409, "A stage is already running for this project")
+    existing_style = request.app.state.style_tasks.get(pkey)
+    if existing_style and not existing_style.done():
+        raise HTTPException(409, "A style operation is already running for this project")
 
     # Keep behavior aligned with /run?stage=extract&rerun=1:
     # reset extract + all downstream stage state, and clear downstream outputs.
@@ -893,6 +912,298 @@ async def regen_plate(
     )
     return {
         "status": "queued",
+        "job": generation_job_payload(request.app, job),
+        "loc_id": loc_id,
+    }
+
+
+@router.post("/regen-ref-instructed")
+async def regen_ref_with_instruction(
+    request: Request,
+    project_id: str,
+    body: InstructedRefRegenRequest,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
+    project_dir, config, state = project
+    pkey = project_key(user_id, project_id)
+    char_id = body.char_id
+
+    existing_regen = find_active_generation_job(
+        request.app,
+        project_name=pkey,
+        kind="character_ref_regen",
+        payload={"char_id": char_id},
+    )
+    if existing_regen:
+        raise HTTPException(409, "A regeneration is already queued or running for this character")
+
+    bible = artifacts.read_story_bible(project_dir)
+    char = next((c for c in bible.characters if c.id == char_id), None)
+    if char is None:
+        raise HTTPException(404, f"Character not found: {char_id}")
+
+    try:
+        instruction = validate_user_instruction(body.instruction)
+    except PromptInstructionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    instructions_path = artifacts.character_ref_instructions_path(project_dir, char_id)
+    prior_addendum = artifacts.read_active_addendum(instructions_path)
+
+    rewrite_context = {
+        "character_name": char.name,
+        "visual_anchor": char.visual_anchor,
+        "default_outfit": char.default_outfit,
+        "distinguishing_features": char.distinguishing_features,
+        "prior_addendum": prior_addendum,
+    }
+
+    from novel_to_comic.clients import text
+
+    job_id = str(uuid_lib.uuid4())
+    rewrite = None
+    try:
+        with ai_request_context(
+            user_id=user_id,
+            project_id=project_id,
+            project_name=project_dir.name,
+            workspace_id=str(project_dir.parent),
+            stage="cast",
+            job_id=job_id,
+        ):
+            rewrite = await text.generate_json(
+                config=config,
+                model=config.effective_prompt_model(),
+                system_prompt=asset_instruction_rewrite_system_prompt("character_ref"),
+                user_content=asset_instruction_rewrite_user_content(
+                    instruction, "character_ref", rewrite_context
+                ),
+                temperature=0.2,
+                max_output_tokens=900,
+                feature="cast.character_ref_instruction_rewrite",
+            )
+        patch = parse_asset_instruction_patch(rewrite.value)
+    except PromptInstructionError as exc:
+        logger.warning(
+            "Character ref instruction rewrite could not be applied project=%s char=%s reason=%s rewrite=%s",
+            project_dir.name,
+            char_id,
+            exc,
+            json.dumps(rewrite.value, ensure_ascii=False)[:1000] if rewrite is not None else None,
+        )
+        raise HTTPException(400, f"Prompt rewrite could not be applied: {exc}") from exc
+    except Exception as exc:
+        logger.exception(
+            "Character ref instruction rewrite failed project=%s char=%s",
+            project_dir.name,
+            char_id,
+        )
+        raise HTTPException(502, f"Could not rewrite the character prompt: {exc}") from exc
+
+    if rewrite.usage:
+        debit_model_usage(
+            get_db(),
+            user_id,
+            project_id,
+            rewrite.usage,
+            stage="cast",
+            description=f"Model call: rewrite character ref prompt {char_id}",
+            job_id=job_id,
+        )
+
+    artifacts.append_instruction_log_entry(
+        instructions_path,
+        {
+            "created_at": datetime.now(UTC).isoformat(),
+            "instruction": instruction,
+            "patch": patch.model_dump(),
+        },
+    )
+
+    async def _runner() -> None:
+        from novel_to_comic.stages import s3_cast
+        with ai_request_context(
+            user_id=user_id,
+            project_id=project_id,
+            project_name=project_dir.name,
+            workspace_id=str(project_dir.parent),
+            stage="cast",
+            job_id=job_id,
+        ):
+            result = await s3_cast.regenerate_character_ref(config, project_dir, char_id)
+        if result.usage:
+            debit_model_usage(
+                get_db(),
+                user_id,
+                project_id,
+                result.usage,
+                stage="cast",
+                description=f"Model call: regenerate instructed character ref {char_id}",
+                job_id=job_id,
+            )
+
+    prune_finished_generation_jobs(request.app)
+    job = enqueue_generation_job(
+        request.app,
+        project_name=pkey,
+        kind="character_ref_regen",
+        label=f"Character ref / {char_id}",
+        payload={"char_id": char_id},
+        runner=_runner,
+        semaphore=generation_semaphore_for_config(request.app, config),
+    )
+    return {
+        "status": "queued",
+        "instruction_status": "accepted",
+        "patch_summary": patch.message,
+        "addendum": patch.addendum,
+        "job": generation_job_payload(request.app, job),
+        "char_id": char_id,
+    }
+
+
+@router.post("/regen-plate-instructed")
+async def regen_plate_with_instruction(
+    request: Request,
+    project_id: str,
+    body: InstructedPlateRegenRequest,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
+    project_dir, config, state = project
+    pkey = project_key(user_id, project_id)
+    loc_id = body.loc_id
+
+    existing_regen = find_active_generation_job(
+        request.app,
+        project_name=pkey,
+        kind="location_plate_regen",
+        payload={"loc_id": loc_id},
+    )
+    if existing_regen:
+        raise HTTPException(409, "A regeneration is already queued or running for this location")
+
+    bible = artifacts.read_story_bible(project_dir)
+    loc = next((candidate for candidate in bible.locations if candidate.id == loc_id), None)
+    if loc is None:
+        raise HTTPException(404, f"Location not found: {loc_id}")
+
+    try:
+        instruction = validate_user_instruction(body.instruction)
+    except PromptInstructionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    instructions_path = artifacts.location_plate_instructions_path(project_dir, loc_id)
+    prior_addendum = artifacts.read_active_addendum(instructions_path)
+
+    rewrite_context = {
+        "location_name": loc.name,
+        "visual_anchor": loc.visual_anchor,
+        "time_of_day": loc.time_of_day,
+        "mood": loc.mood,
+        "prior_addendum": prior_addendum,
+    }
+
+    from novel_to_comic.clients import text
+
+    job_id = str(uuid_lib.uuid4())
+    rewrite = None
+    try:
+        with ai_request_context(
+            user_id=user_id,
+            project_id=project_id,
+            project_name=project_dir.name,
+            workspace_id=str(project_dir.parent),
+            stage="cast",
+            job_id=job_id,
+        ):
+            rewrite = await text.generate_json(
+                config=config,
+                model=config.effective_prompt_model(),
+                system_prompt=asset_instruction_rewrite_system_prompt("location_plate"),
+                user_content=asset_instruction_rewrite_user_content(
+                    instruction, "location_plate", rewrite_context
+                ),
+                temperature=0.2,
+                max_output_tokens=900,
+                feature="cast.location_plate_instruction_rewrite",
+            )
+        patch = parse_asset_instruction_patch(rewrite.value)
+    except PromptInstructionError as exc:
+        logger.warning(
+            "Location plate instruction rewrite could not be applied project=%s loc=%s reason=%s rewrite=%s",
+            project_dir.name,
+            loc_id,
+            exc,
+            json.dumps(rewrite.value, ensure_ascii=False)[:1000] if rewrite is not None else None,
+        )
+        raise HTTPException(400, f"Prompt rewrite could not be applied: {exc}") from exc
+    except Exception as exc:
+        logger.exception(
+            "Location plate instruction rewrite failed project=%s loc=%s",
+            project_dir.name,
+            loc_id,
+        )
+        raise HTTPException(502, f"Could not rewrite the location prompt: {exc}") from exc
+
+    if rewrite.usage:
+        debit_model_usage(
+            get_db(),
+            user_id,
+            project_id,
+            rewrite.usage,
+            stage="cast",
+            description=f"Model call: rewrite location plate prompt {loc_id}",
+            job_id=job_id,
+        )
+
+    artifacts.append_instruction_log_entry(
+        instructions_path,
+        {
+            "created_at": datetime.now(UTC).isoformat(),
+            "instruction": instruction,
+            "patch": patch.model_dump(),
+        },
+    )
+
+    async def _runner() -> None:
+        from novel_to_comic.stages import s3_cast
+        with ai_request_context(
+            user_id=user_id,
+            project_id=project_id,
+            project_name=project_dir.name,
+            workspace_id=str(project_dir.parent),
+            stage="cast",
+            job_id=job_id,
+        ):
+            result = await s3_cast.regenerate_location_plate(config, project_dir, loc_id)
+        if result.usage:
+            debit_model_usage(
+                get_db(),
+                user_id,
+                project_id,
+                result.usage,
+                stage="cast",
+                description=f"Model call: regenerate instructed location plate {loc_id}",
+                job_id=job_id,
+            )
+
+    prune_finished_generation_jobs(request.app)
+    job = enqueue_generation_job(
+        request.app,
+        project_name=pkey,
+        kind="location_plate_regen",
+        label=f"Location plate / {loc_id}",
+        payload={"loc_id": loc_id},
+        runner=_runner,
+        semaphore=generation_semaphore_for_config(request.app, config),
+    )
+    return {
+        "status": "queued",
+        "instruction_status": "accepted",
+        "patch_summary": patch.message,
+        "addendum": patch.addendum,
         "job": generation_job_payload(request.app, job),
         "loc_id": loc_id,
     }

@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { useGenerationJobs, useProjectStatus, useStoryBible, useRegenRef, useRegenPlate } from "../../api/queries";
+import {
+  useGenerationJobs,
+  useProjectStatus,
+  useStoryBible,
+  useRegenRef,
+  useRegenRefWithInstruction,
+  useRegenPlate,
+  useRegenPlateWithInstruction,
+} from "../../api/queries";
 import { RoomHeader } from "../../components/ui/RoomHeader";
 import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { Tag } from "../../components/ui/Tag";
@@ -37,7 +45,11 @@ function CharacterCastCard({
   const [timestamp, setTimestamp] = useState(() => Date.now());
   const [activeJob, setActiveJob] = useState<GenerationJob | null>(null);
   const [regenError, setRegenError] = useState<string | null>(null);
+  const [instruction, setInstruction] = useState("");
+  const [instructionError, setInstructionError] = useState<string | null>(null);
+  const [lastAddendum, setLastAddendum] = useState<string | null>(null);
   const regenRef = useRegenRef();
+  const regenRefInstructed = useRegenRefWithInstruction();
   const { data: generationJobs } = useGenerationJobs(projectName, activeJob ? [activeJob.id] : []);
 
   useEffect(() => {
@@ -100,10 +112,43 @@ function CharacterCastCard({
     startRegen();
   };
 
+  const submitInstruction = () => {
+    const trimmed = instruction.trim();
+    if (!trimmed) {
+      setInstructionError("Add a short visual instruction first.");
+      return;
+    }
+    setInstructionError(null);
+    setRegenError(null);
+    regenRefInstructed.mutate(
+      { project: projectName, charId: character.id, instruction: trimmed },
+      {
+        onSuccess: (data) => {
+          setActiveJob(data.job);
+          setLastAddendum(data.addendum);
+          setInstruction("");
+        },
+        onError: (err) => {
+          if (
+            maybeShowInsufficientCredits(err, {
+              actionLabel: "Apply & regenerate character",
+              onRetry: submitInstruction,
+            })
+          ) {
+            return;
+          }
+          setInstructionError(err.message);
+        },
+      },
+    );
+  };
+
+  const isInstructionBusy = regenRefInstructed.isPending;
+
   return (
     <>
       <article className="group/cast-card overflow-hidden border-[3px] border-ink-black/8 bg-bristol transition-colors duration-150 hover:border-ink-black">
-        <div 
+        <div
           className="relative cursor-pointer bg-surface-container"
           onClick={() => !imgFailed && setIsModalOpen(true)}
         >
@@ -206,6 +251,42 @@ function CharacterCastCard({
         sidebar={(
           <div className="space-y-5">
             <div>
+              <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1.5">REQUEST A FIX</div>
+              {lastAddendum && (
+                <details className="mb-2 border-[2px] border-archive-sage/40 bg-archive-sage/8">
+                  <summary className="cursor-pointer px-2 py-1.5 font-meta text-[0.55rem] tracking-[0.16em] text-archive-sage">
+                    APPLIED ON LAST REGEN ↓
+                  </summary>
+                  <p className="px-2 pb-2 pt-1 text-[0.72rem] leading-5 text-ink-black/70">
+                    {lastAddendum}
+                  </p>
+                </details>
+              )}
+              <textarea
+                value={instruction}
+                onChange={(e) => {
+                  setInstruction(e.target.value);
+                  if (instructionError) setInstructionError(null);
+                }}
+                maxLength={500}
+                rows={2}
+                className="w-full resize-none border-[2px] border-ink-black/25 bg-bristol px-3 py-2 font-body text-[0.82rem] leading-5 text-ink-black outline-none focus:border-ink-black"
+                placeholder="Describe what to change visually…"
+                disabled={isInstructionBusy || !!activeJob}
+              />
+              {instructionError && (
+                <p className="mt-1 text-[0.72rem] text-hero-red">{instructionError}</p>
+              )}
+              <Button
+                className="mt-2 w-full"
+                size="sm"
+                onClick={submitInstruction}
+                disabled={isInstructionBusy || !!activeJob || !instruction.trim()}
+              >
+                {isInstructionBusy ? "APPLYING..." : "APPLY & REGEN"}
+              </Button>
+            </div>
+            <div>
               <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">VISUAL ANCHOR</div>
               <p className="text-[0.82rem] leading-6 text-ink-black">{character.visual_anchor}</p>
             </div>
@@ -284,7 +365,11 @@ function LocationPlateCard({
   const [timestamp, setTimestamp] = useState(() => Date.now());
   const [activeJob, setActiveJob] = useState<GenerationJob | null>(null);
   const [localRegenError, setLocalRegenError] = useState<string | null>(null);
+  const [instruction, setInstruction] = useState("");
+  const [instructionError, setInstructionError] = useState<string | null>(null);
+  const [lastAddendum, setLastAddendum] = useState<string | null>(null);
   const regenPlate = useRegenPlate();
+  const regenPlateInstructed = useRegenPlateWithInstruction();
   const { data: generationJobs } = useGenerationJobs(projectName, activeJob ? [activeJob.id] : []);
 
   const regenError = localRegenError;
@@ -343,6 +428,39 @@ function LocationPlateCard({
       }
     );
   };
+
+  const submitInstruction = () => {
+    const trimmed = instruction.trim();
+    if (!trimmed) {
+      setInstructionError("Add a short visual instruction first.");
+      return;
+    }
+    setInstructionError(null);
+    setLocalRegenError(null);
+    regenPlateInstructed.mutate(
+      { project: projectName, locId: location.id, instruction: trimmed },
+      {
+        onSuccess: (data) => {
+          setActiveJob(data.job);
+          setLastAddendum(data.addendum);
+          setInstruction("");
+        },
+        onError: (err) => {
+          if (
+            maybeShowInsufficientCredits(err, {
+              actionLabel: "Apply & regenerate plate",
+              onRetry: submitInstruction,
+            })
+          ) {
+            return;
+          }
+          setInstructionError(err.message);
+        },
+      },
+    );
+  };
+
+  const isInstructionBusy = regenPlateInstructed.isPending;
 
   return (
     <>
@@ -444,6 +562,42 @@ function LocationPlateCard({
         title={location.name.toUpperCase()}
         sidebar={(
           <div className="space-y-5">
+            <div>
+              <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1.5">REQUEST A FIX</div>
+              {lastAddendum && (
+                <details className="mb-2 border-[2px] border-archive-sage/40 bg-archive-sage/8">
+                  <summary className="cursor-pointer px-2 py-1.5 font-meta text-[0.55rem] tracking-[0.16em] text-archive-sage">
+                    APPLIED ON LAST REGEN ↓
+                  </summary>
+                  <p className="px-2 pb-2 pt-1 text-[0.72rem] leading-5 text-ink-black/70">
+                    {lastAddendum}
+                  </p>
+                </details>
+              )}
+              <textarea
+                value={instruction}
+                onChange={(e) => {
+                  setInstruction(e.target.value);
+                  if (instructionError) setInstructionError(null);
+                }}
+                maxLength={500}
+                rows={2}
+                className="w-full resize-none border-[2px] border-ink-black/25 bg-bristol px-3 py-2 font-body text-[0.82rem] leading-5 text-ink-black outline-none focus:border-ink-black"
+                placeholder="Describe what to change visually…"
+                disabled={isInstructionBusy || !!activeJob}
+              />
+              {instructionError && (
+                <p className="mt-1 text-[0.72rem] text-hero-red">{instructionError}</p>
+              )}
+              <Button
+                className="mt-2 w-full"
+                size="sm"
+                onClick={submitInstruction}
+                disabled={isInstructionBusy || !!activeJob || !instruction.trim()}
+              >
+                {isInstructionBusy ? "APPLYING..." : "APPLY & REGEN"}
+              </Button>
+            </div>
             <div>
               <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">VISUAL ANCHOR</div>
               <p className="text-[0.82rem] leading-6 text-ink-black">{location.visual_anchor}</p>

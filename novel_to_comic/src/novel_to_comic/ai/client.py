@@ -507,6 +507,8 @@ def _log_langfuse_generation(
                 "tags": tags,
                 "metadata": metadata.get("metadata") or {},
                 "timestamp": start_time.isoformat(),
+                "input": input_payload,
+                "output": output_payload,
             },
         },
         {

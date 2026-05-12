@@ -97,7 +97,8 @@
       "Bash(TOKEN=$\\(cat /tmp/gcp_token\\) *)",
       "Bash(rtk git *)",
       "WebFetch(domain:github.com)",
-      "Bash(docker pull *)"
+      "Bash(docker pull *)",
+      "Bash(awk -F: '{print $1}')"
     ]
   },
   "hooks": {

@@ -11,10 +11,9 @@ export type UiStageKey =
   | "compose";
 
 export type UiStage =
-  | { key: "style"; route: "styles"; label: string; backendStages: [] }
   | { key: "shot-plan"; route: "shot-plan"; label: string; backendStages: ["plan", "storyboard"] }
   | {
-      key: Exclude<UiStageKey, "style" | "shot-plan">;
+      key: Exclude<UiStageKey, "shot-plan">;
       route: string;
       label: string;
       backendStages: [StageName];
@@ -22,7 +21,7 @@ export type UiStage =
 
 export const UI_STAGES: UiStage[] = [
   { key: "extract", route: "extract", label: "Extract", backendStages: ["extract"] },
-  { key: "style", route: "styles", label: "Look & Feel", backendStages: [] },
+  { key: "style", route: "styles", label: "Look & Feel", backendStages: ["style"] },
   { key: "cast", route: "cast", label: "Cast & Places", backendStages: ["cast"] },
   { key: "adapt", route: "adapt", label: "Script", backendStages: ["adapt"] },
   { key: "shot-plan", route: "shot-plan", label: "Shot Plan", backendStages: ["plan", "storyboard"] },
@@ -33,6 +32,7 @@ export const UI_STAGES: UiStage[] = [
 
 export const BACKEND_STAGE_TO_UI_ROUTE: Record<StageName, string> = {
   extract: "extract",
+  style: "styles",
   cast: "cast",
   adapt: "adapt",
   plan: "shot-plan",
@@ -50,7 +50,6 @@ export function getBackendStageUiLabel(stage: StageName): string {
 export function getUiCompletedCount(status: ProjectStatus | undefined): number {
   if (!status) return 0;
   return UI_STAGES.filter((stage) => {
-    if (stage.key === "style") return status.style_selected;
     if (stage.key === "shot-plan") {
       return status.stages.plan?.status === "complete" && status.stages.storyboard?.status === "complete";
     }

@@ -6,9 +6,10 @@ import {
 import { BACKEND_STAGE_TO_UI_ROUTE, UI_STAGES } from "../lib/uiStages";
 
 describe("STAGE_ORDER", () => {
-  it("contains exactly 8 stages in order", () => {
-    expect(STAGE_ORDER).toHaveLength(8);
+  it("contains the nine pipeline stages in order", () => {
+    expect(STAGE_ORDER).toHaveLength(9);
     expect(STAGE_ORDER[0]).toBe("extract");
+    expect(STAGE_ORDER[1]).toBe("style");
     expect(STAGE_ORDER[STAGE_ORDER.length - 1]).toBe("compose");
   });
 
