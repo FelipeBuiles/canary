@@ -1,5 +1,12 @@
 import { apiFetch } from "./client";
-import type { GenerationJob, InstructedPanelRegenResponse, StageCostEstimate, RegenCostEstimate } from "../types/api";
+import type {
+  GenerationJob,
+  InstructedPanelRegenResponse,
+  InstructedPlateRegenResponse,
+  InstructedRefRegenResponse,
+  StageCostEstimate,
+  RegenCostEstimate,
+} from "../types/api";
 
 export function runPipeline(
   project: string,
@@ -72,6 +79,34 @@ export function regenPlate(
   return apiFetch(
     `/projects/${encodeURIComponent(project)}/regen-plate?loc_id=${encodeURIComponent(locId)}`,
     { method: "POST" },
+  );
+}
+
+export function regenRefWithInstruction(
+  project: string,
+  charId: string,
+  instruction: string,
+): Promise<InstructedRefRegenResponse> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/regen-ref-instructed`,
+    {
+      method: "POST",
+      body: JSON.stringify({ char_id: charId, instruction }),
+    },
+  );
+}
+
+export function regenPlateWithInstruction(
+  project: string,
+  locId: string,
+  instruction: string,
+): Promise<InstructedPlateRegenResponse> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/regen-plate-instructed`,
+    {
+      method: "POST",
+      body: JSON.stringify({ loc_id: locId, instruction }),
+    },
   );
 }
 

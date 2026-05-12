@@ -1,5 +1,6 @@
 export type StageName =
   | "extract"
+  | "style"
   | "cast"
   | "adapt"
   | "plan"
@@ -164,6 +165,7 @@ export interface GenerationJob {
 
 export const STAGE_ORDER: StageName[] = [
   "extract",
+  "style",
   "cast",
   "adapt",
   "plan",
@@ -175,6 +177,7 @@ export const STAGE_ORDER: StageName[] = [
 
 export const STAGE_DISPLAY_NAMES: Record<StageName, string> = {
   extract: "EXTRACT",
+  style: "LOOK & FEEL",
   cast: "CAST",
   adapt: "ADAPT",
   plan: "PLAN",
@@ -186,6 +189,7 @@ export const STAGE_DISPLAY_NAMES: Record<StageName, string> = {
 
 export const STAGE_ROUTES: Record<StageName, string> = {
   extract: "extract",
+  style: "styles",
   cast: "cast",
   adapt: "adapt",
   plan: "plan",
@@ -482,6 +486,24 @@ export interface InstructedPanelRegenResponse {
   panel_number: number;
   planned_panel_id?: string | null;
   prompt: ImagePrompt;
+}
+
+export interface InstructedRefRegenResponse {
+  status: string;
+  instruction_status: "accepted";
+  patch_summary: string;
+  addendum: string;
+  job: GenerationJob;
+  char_id: string;
+}
+
+export interface InstructedPlateRegenResponse {
+  status: string;
+  instruction_status: "accepted";
+  patch_summary: string;
+  addendum: string;
+  job: GenerationJob;
+  loc_id: string;
 }
 
 export interface Bubble {

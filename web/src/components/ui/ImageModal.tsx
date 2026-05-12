@@ -42,7 +42,7 @@ export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar 
       aria-label={title ?? alt}
     >
       <div
-        className={`flex max-h-full w-full flex-col border-[2px] border-ink-black bg-bristol shadow-ink ${sidebar ? "max-w-[900px]" : "max-w-[600px]"}`}
+        className={`flex max-h-[94vh] w-full flex-col border-[2px] border-ink-black bg-bristol shadow-ink ${sidebar ? "max-w-[1300px]" : "max-w-[1100px]"}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Title bar */}
@@ -68,13 +68,13 @@ export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar 
         </div>
 
         {/* Body: image + optional sidebar */}
-        <div className={`min-h-0 flex-1 ${sidebar ? "grid grid-cols-[1fr_280px]" : "flex flex-col"}`}>
-          <div className="flex items-center justify-center bg-ink-black min-h-0">
+        <div className={`min-h-0 flex-1 ${sidebar ? "grid grid-cols-[minmax(0,1fr)_320px]" : "flex flex-col"}`}>
+          <div className="flex min-h-[60vh] items-center justify-center bg-ink-black">
             <LazyImage
               src={src}
               alt={alt}
               containerClassName="w-full h-full"
-              className={`w-full object-contain ${sidebar ? "max-h-[65vh]" : "max-h-[65vh]"}`}
+              preserveAspectBox
             />
           </div>
           {sidebar && (

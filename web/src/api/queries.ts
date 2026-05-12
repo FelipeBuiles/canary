@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listProjects, getProjectStatus, createProject, deleteProject, generateProjectCover } from "./projects";
-import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenPlate, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate } from "./pipeline";
+import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate } from "./pipeline";
 import type { ConfigOverrides, StoryBible, CharacterVoice } from "../types/api";
 import { getBalance, getCreditHistory, getPricingReference } from "./credits";
 import { getPackages, createCheckout } from "./billing";
@@ -26,7 +26,7 @@ import {
   unacceptImagePanel,
 } from "./stages";
 import { listPages, getPage, updatePage, replacePage, reflowPages, generatePageStyleVars, translatePageBubbles, setTheme, applyBubblePreset, getBubblePresets, translateSinglePageBubbles, getCharacterVoices, putCharacterVoice, deleteCharacterVoice, reflowSinglePage, triggerExport, applyStructuralOperation } from "./pages";
-import { getStyles, suggestStyles, generateStyleSamples, setActiveStyle } from "./styles";
+import { getStyles, suggestStyles, fetchSuggestStylesEstimate, generateStyleSamples, setActiveStyle } from "./styles";
 import { getProjectConfig, updateProjectConfig } from "./config";
 
 // ── Projects ──────────────────────────────────────────────────────────────────
@@ -253,10 +253,38 @@ export function useRegenRef() {
   });
 }
 
+export function useRegenRefWithInstruction() {
+  return useMutation({
+    mutationFn: ({
+      project,
+      charId,
+      instruction,
+    }: {
+      project: string;
+      charId: string;
+      instruction: string;
+    }) => regenRefWithInstruction(project, charId, instruction),
+  });
+}
+
 export function useRegenPlate() {
   return useMutation({
     mutationFn: ({ project, locId }: { project: string; locId: string }) =>
       regenPlate(project, locId),
+  });
+}
+
+export function useRegenPlateWithInstruction() {
+  return useMutation({
+    mutationFn: ({
+      project,
+      locId,
+      instruction,
+    }: {
+      project: string;
+      locId: string;
+      instruction: string;
+    }) => regenPlateWithInstruction(project, locId, instruction),
   });
 }
 
@@ -690,6 +718,15 @@ export function useSuggestStyles() {
     onSuccess: (_data, { project }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "styles"] });
     },
+  });
+}
+
+export function useSuggestStylesEstimate(project: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ["project", project, "styles", "suggest-estimate"],
+    queryFn: () => fetchSuggestStylesEstimate(project!),
+    enabled: !!project && enabled,
+    staleTime: 60_000,
   });
 }
 

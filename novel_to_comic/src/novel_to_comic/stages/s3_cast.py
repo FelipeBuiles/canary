@@ -153,8 +153,9 @@ def _character_ref_meta(
     style_ref: Path | None,
     char: Character,
     prompt: str,
+    addendum: str = "",
 ) -> dict:
-    return {
+    meta = {
         **_asset_meta_common(config, project_dir, style_ref),
         "kind": "character_ref",
         "character_id": char.id,
@@ -162,6 +163,9 @@ def _character_ref_meta(
         "default_outfit": char.default_outfit,
         "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
     }
+    if addendum:
+        meta["instruction_addendum"] = addendum
+    return meta
 
 
 def _location_plate_meta(
@@ -170,14 +174,18 @@ def _location_plate_meta(
     style_ref: Path | None,
     loc,
     prompt: str,
+    addendum: str = "",
 ) -> dict:
-    return {
+    meta = {
         **_asset_meta_common(config, project_dir, style_ref),
         "kind": "location_plate",
         "location_id": loc.id,
         "visual_anchor": loc.visual_anchor,
         "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
     }
+    if addendum:
+        meta["instruction_addendum"] = addendum
+    return meta
 
 
 
@@ -214,15 +222,22 @@ def _character_ref_style_ref(config: Config, style_ref: Path | None) -> Path | N
     return None
 
 
-def _character_ref_prompt(config: Config, story_bible: StoryBible, char: Character) -> str:
+def _character_ref_prompt(
+    config: Config,
+    story_bible: StoryBible,
+    char: Character,
+    addendum: str = "",
+) -> str:
     # All four views in one image guarantees identical style, identical face,
     # identical rendering. Separate calls drift even with the same text prompt.
     identity_lock = _cast_identity_lock(char, story_bible)
+    addendum_block = f"\nUSER FIX NOTE: {addendum.strip()}\n" if addendum.strip() else ""
     return (
         f"{config.style_template}\n\n"
         f"CHARACTER REFERENCE SHEET - {char.name}, {char.gender}.\n"
         f"{identity_lock}\n"
-        f"{char.visual_anchor}\n\n"
+        f"{char.visual_anchor}\n"
+        f"{addendum_block}\n"
         f"One square image divided into a 2x2 grid of four equal panels: "
         f"top-left: front-facing, arms at sides; "
         f"top-right: three-quarter turn, near shoulder forward; "
@@ -236,12 +251,25 @@ def _character_ref_prompt(config: Config, story_bible: StoryBible, char: Charact
     )
 
 
-def _location_plate_prompt(config: Config, loc) -> str:
+def _location_plate_prompt(config: Config, loc, addendum: str = "") -> str:
+    addendum_block = f" USER FIX NOTE: {addendum.strip()}." if addendum.strip() else ""
     return (
-        f"{config.style_template} {loc.visual_anchor} "
+        f"{config.style_template} {loc.visual_anchor}{addendum_block} "
         f"Wide establishing shot, no characters present, clean readable background, "
         f"cinematic composition. No text. No noisy grain, speckled dappling, "
         f"repeated texture fields, pattern tiling, or muddy micro-detail."
+    )
+
+
+def _read_character_ref_addendum(project_dir: Path, char_id: str) -> str:
+    return artifacts.read_active_addendum(
+        artifacts.character_ref_instructions_path(project_dir, char_id)
+    )
+
+
+def _read_location_plate_addendum(project_dir: Path, loc_id: str) -> str:
+    return artifacts.read_active_addendum(
+        artifacts.location_plate_instructions_path(project_dir, loc_id)
     )
 
 
@@ -263,8 +291,9 @@ async def regenerate_character_ref(
         f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
     )
     style_ref = _character_ref_style_ref(config, _find_style_ref(project_dir, config.style_template))
-    prompt = _character_ref_prompt(config, story_bible, char)
-    meta = _character_ref_meta(config, project_dir, style_ref, char, prompt)
+    addendum = _read_character_ref_addendum(project_dir, char.id)
+    prompt = _character_ref_prompt(config, story_bible, char, addendum)
+    meta = _character_ref_meta(config, project_dir, style_ref, char, prompt, addendum)
 
     try:
         flux_result = None
@@ -306,8 +335,9 @@ async def regenerate_location_plate(
         f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
     )
     style_ref = _find_style_ref(project_dir, config.style_template)
-    prompt = _location_plate_prompt(config, loc)
-    meta = _location_plate_meta(config, project_dir, style_ref, loc, prompt)
+    addendum = _read_location_plate_addendum(project_dir, loc.id)
+    prompt = _location_plate_prompt(config, loc, addendum)
+    meta = _location_plate_meta(config, project_dir, style_ref, loc, prompt, addendum)
 
     try:
         flux_result = None
@@ -372,8 +402,9 @@ async def _generate_character_refs(
             char_dir = refs_dir / char.id
             char_dir.mkdir(parents=True, exist_ok=True)
             output_path = char_dir / "sheet.png"
-            prompt = _character_ref_prompt(config, story_bible, char)
-            meta = _character_ref_meta(config, project_dir, style_ref, char, prompt)
+            addendum = _read_character_ref_addendum(project_dir, char.id)
+            prompt = _character_ref_prompt(config, story_bible, char, addendum)
+            meta = _character_ref_meta(config, project_dir, style_ref, char, prompt, addendum)
 
             if artifacts.asset_matches_meta(output_path, meta):
                 # Migrate older sheets that pre-date cropped-pose references.
@@ -439,9 +470,10 @@ async def _generate_location_plates(
         task = progress.add_task("Location plates", total=len(locs_to_gen))
         for loc in locs_to_gen:
             output_path = plates_dir / f"{loc.id}.png"
-            prompt = _location_plate_prompt(config, loc)
+            addendum = _read_location_plate_addendum(project_dir, loc.id)
+            prompt = _location_plate_prompt(config, loc, addendum)
             style_ref = _find_style_ref(project_dir, config.style_template)
-            meta = _location_plate_meta(config, project_dir, style_ref, loc, prompt)
+            meta = _location_plate_meta(config, project_dir, style_ref, loc, prompt, addendum)
             if artifacts.asset_matches_meta(output_path, meta):
                 record_item_done(state, "cast", cost=0.0)
                 emit({"type": "log", "stage": "cast", "level": "dim",

@@ -704,7 +704,7 @@ export function PanelDetailModal({
         </div>
 
         {/* Body */}
-        <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[1fr_1fr]">
+        <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.8fr)]">
           {/* Left: image */}
           <div className="border-r-[2px] border-ink-black p-4 min-h-0">
             <div className="flex h-full w-full flex-col gap-3">
@@ -720,7 +720,7 @@ export function PanelDetailModal({
                     src={activeDisplayUrl}
                     alt={`Panel ${panelNumber}`}
                     containerClassName="h-full w-full"
-                    className="object-contain"
+                    preserveAspectBox
                   />
                 ) : (
                   <div className="px-6 text-center font-meta text-[0.7rem] font-bold uppercase tracking-[0.18em] text-bristol/55">

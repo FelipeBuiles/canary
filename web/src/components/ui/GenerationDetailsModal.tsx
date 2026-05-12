@@ -85,7 +85,7 @@ export function GenerationDetailsModal({
             <Icon name="x" size={20} />
           </button>
         </div>
-        <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[1fr_1fr]">
+        <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.8fr)]">
           <div className="min-h-0 border-r-[2px] border-ink-black p-4">
             <div className="flex h-full w-full items-center justify-center bg-ink-black">
               {imageAvailable ? (
@@ -93,7 +93,7 @@ export function GenerationDetailsModal({
                   src={imageUrl}
                   alt={title}
                   containerClassName="h-full w-full"
-                  className="object-contain"
+                  preserveAspectBox
                 />
               ) : (
                 <div className="px-6 text-center font-meta text-[0.7rem] font-bold uppercase tracking-[0.18em] text-bristol/55">

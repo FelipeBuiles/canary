@@ -384,6 +384,7 @@ const TEXT: Record<LanguageCode, Record<string, string>> = {
 const STAGES: Record<LanguageCode, Record<StageName, string>> = {
   en: {
     extract: "EXTRACT",
+    style: "LOOK & FEEL",
     cast: "CAST",
     adapt: "ADAPT",
     plan: "PLAN",
@@ -394,6 +395,7 @@ const STAGES: Record<LanguageCode, Record<StageName, string>> = {
   },
   es: {
     extract: "EXTRAER",
+    style: "ESTILO",
     cast: "REPARTO",
     adapt: "ADAPTAR",
     plan: "PLAN",
@@ -404,6 +406,7 @@ const STAGES: Record<LanguageCode, Record<StageName, string>> = {
   },
   fr: {
     extract: "EXTRAIRE",
+    style: "STYLE",
     cast: "CASTING",
     adapt: "ADAPTER",
     plan: "PLAN",

@@ -130,28 +130,9 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     : styleSuggestions.find((s) => s.index === stylesData.active_index) ?? null;
   const styleItemsTotal = styleSuggestions.length;
   const styleItemsDone = styleSuggestions.filter((s) => s.has_sample).length;
-  const styleStatus: StageStatus = activeStyle
-    ? "complete"
-    : styleItemsTotal > 0
-      ? "awaiting_review"
-      : "pending";
 
   const pipelineStages = useMemo<PipelineNavStage[]>(() => {
     return UI_STAGES.map((stage) => {
-      if (stage.key === "style") {
-        return {
-          key: "style",
-          route: stage.route,
-          label: stage.label.toUpperCase(),
-          status: styleStatus,
-          itemsDone: styleItemsDone,
-          itemsTotal: styleItemsTotal,
-          failedCount: 0,
-          needsApproval: false,
-          detail: activeStyle ? activeStyle.label : null,
-        };
-      }
-
       if (stage.key === "shot-plan") {
         const shotPlan = getShotPlanSubStatus(status);
         return {
@@ -180,7 +161,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
         needsApproval: info?.status === "awaiting_review",
       };
     });
-  }, [activeStyle, status, styleItemsDone, styleItemsTotal, styleStatus]);
+  }, [status]);
 
   const activeStageRoute = pipelineStages.find((stage) =>
     location.pathname.endsWith(`/${stage.route}`),
@@ -282,9 +263,6 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   // so we can show a credit estimate before they commit to the action.
   const nextRunStage = useMemo<StageName | undefined>(() => {
     if (!status || isRunning || !projectId) return undefined;
-    // Style selection is next (either pure navigation, or after approving extract):
-    // no stage runs until the user picks a style.
-    if (styleNeedsSelection) return undefined;
     if (
       nextAttentionStage &&
       (nextAttentionStage === "plan" || nextAttentionStage === "storyboard") &&
@@ -293,7 +271,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
       return shotPlanAction.estimateStage;
     }
     // For approval stages, find the first pending stage after approval so we can
-    // show the cost estimate upfront (including extract → cast & places).
+    // show the cost estimate upfront (including extract → style).
     if (needsApproval) {
       const idx = STAGE_ORDER.indexOf(needsApproval);
       return STAGE_ORDER.slice(idx + 1).find((s) => {
@@ -308,7 +286,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
       const st = status.stages[s]?.status;
       return !st || st === "pending";
     });
-  }, [status, isRunning, styleNeedsSelection, projectId, nextAttentionStage, shotPlanAction, needsApproval, brokenStage]);
+  }, [status, isRunning, projectId, nextAttentionStage, shotPlanAction, needsApproval, brokenStage]);
 
   const { data: nextStageEstimate } = useStageEstimate(projectId, nextRunStage);
   const { data: creditBalance } = useCreditBalance();
@@ -399,18 +377,21 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   function handleContinue() {
     if (!projectId || isRunning) return;
     setRunError(null);
+    if (needsApproval === "style" && styleNeedsSelection) {
+      navigate(`/project/${encodeURIComponent(projectId)}/styles`);
+      return;
+    }
     if (needsApproval) {
       approveStage.mutate(
         { project: projectId, stage: needsApproval },
         {
           onSuccess: () => {
-            // After approving extract, go to style selection before running cast.
-            // style_selected comes from config.yaml so it's never stale.
-            if (needsApproval === "extract" && !status?.style_selected) {
-              navigate(`/project/${encodeURIComponent(projectId)}/styles`);
-              return;
-            }
             if (!pendingStage) return;
+            // After approving extract → style stage, send the user to the
+            // style room so they see samples generate live.
+            if (pendingStage === "style") {
+              navigate(`/project/${encodeURIComponent(projectId)}/styles`);
+            }
             clearEvents();
             runPipeline.mutate(
               { project: projectId, stage: pendingStage },
@@ -474,9 +455,12 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   }
 
   function handleContinueClick() {
-    // Pure style navigation: extract is already complete, just need to pick a style.
-    // No credits spent yet so skip the cost drawer.
-    if (styleNeedsSelection && !needsApproval) {
+    // Pure navigation cases (no work to run, no credits to spend).
+    if (needsApproval === "style" && styleNeedsSelection) {
+      handleContinue();
+      return;
+    }
+    if (styleNeedsSelection && !needsApproval && !nextRunStage) {
       handleContinue();
       return;
     }
@@ -511,6 +495,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     ) {
       return shotPlanAction.label.toUpperCase();
     }
+    if (needsApproval === "style" && styleNeedsSelection) return "PICK STYLE";
     if (needsApproval) return "APPROVE & CONTINUE";
     if (styleNeedsSelection) return "PICK STYLE";
     return "NEXT STAGE";

@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import type { GenerationJob } from "../types/api";
+import type { CostEstimate, GenerationJob } from "../types/api";
 
 export interface StyleSuggestion {
   index: number;
@@ -22,6 +22,10 @@ export function suggestStyles(project: string): Promise<{ status: string }> {
   return apiFetch(`/projects/${encodeURIComponent(project)}/styles/suggest`, {
     method: "POST",
   });
+}
+
+export function fetchSuggestStylesEstimate(project: string): Promise<CostEstimate> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/styles/suggest-estimate`);
 }
 
 export function generateStyleSamples(

@@ -294,6 +294,10 @@ def character_ref_meta_path(project_dir: Path, char_id: str) -> Path:
     return asset_meta_path(character_ref_sheet_path(project_dir, char_id))
 
 
+def character_ref_instructions_path(project_dir: Path, char_id: str) -> Path:
+    return project_dir / "refs" / char_id / "instructions.jsonl"
+
+
 # ---------------------------------------------------------------------------
 # Location plates (plates)
 # ---------------------------------------------------------------------------
@@ -304,6 +308,38 @@ def location_plate_path(project_dir: Path, loc_id: str) -> Path:
 
 def location_plate_meta_path(project_dir: Path, loc_id: str) -> Path:
     return asset_meta_path(location_plate_path(project_dir, loc_id))
+
+
+def location_plate_instructions_path(project_dir: Path, loc_id: str) -> Path:
+    return project_dir / "plates" / f"{loc_id}.instructions.jsonl"
+
+
+def read_active_addendum(instructions_path: Path) -> str:
+    """Return the addendum from the most recent accepted instruction, or ""."""
+    if not instructions_path.exists():
+        return ""
+    last: str = ""
+    try:
+        for line in instructions_path.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except Exception:
+                continue
+            addendum = payload.get("patch", {}).get("addendum")
+            if isinstance(addendum, str) and addendum.strip():
+                last = addendum.strip()
+    except Exception:
+        return ""
+    return last
+
+
+def append_instruction_log_entry(instructions_path: Path, payload: dict) -> None:
+    instructions_path.parent.mkdir(parents=True, exist_ok=True)
+    with instructions_path.open("a") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
 
 
 # ---------------------------------------------------------------------------
