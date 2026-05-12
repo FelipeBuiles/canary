@@ -82,6 +82,11 @@ class InstructedPlateRegenRequest(BaseModel):
     instruction: str = Field(min_length=1, max_length=500)
 
 
+class InstructedPropRegenRequest(BaseModel):
+    prop_id: str = Field(min_length=1)
+    instruction: str = Field(min_length=1, max_length=500)
+
+
 async def _run_stage(stage: str, config, project_dir, state, queue: asyncio.Queue):
     """Execute a single stage, feeding events into the queue."""
     started = time.perf_counter()
@@ -1206,6 +1211,218 @@ async def regen_plate_with_instruction(
         "addendum": patch.addendum,
         "job": generation_job_payload(request.app, job),
         "loc_id": loc_id,
+    }
+
+
+@router.post("/regen-prop")
+async def regen_prop(
+    request: Request,
+    project_id: str,
+    prop_id: str = Query(...),
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
+    project_dir, config, state = project
+    pkey = project_key(user_id, project_id)
+    prop_job_id = str(uuid_lib.uuid4())
+
+    async def _runner() -> None:
+        from novel_to_comic.stages import s3_cast
+        with ai_request_context(
+            user_id=user_id,
+            project_id=project_id,
+            project_name=project_dir.name,
+            workspace_id=str(project_dir.parent),
+            stage="cast",
+            job_id=prop_job_id,
+        ):
+            result = await s3_cast.regenerate_prop_ref(
+                config,
+                project_dir,
+                prop_id,
+            )
+        if result.usage:
+            debit_model_usage(
+                get_db(),
+                user_id,
+                project_id,
+                result.usage,
+                stage="cast",
+                description=f"Model call: regenerate prop ref {prop_id}",
+                job_id=prop_job_id,
+            )
+
+    existing = find_active_generation_job(
+        request.app,
+        project_name=pkey,
+        kind="prop_ref_regen",
+        payload={"prop_id": prop_id},
+    )
+    if existing:
+        return {
+            "status": "queued",
+            "job": generation_job_payload(request.app, existing),
+            "prop_id": prop_id,
+        }
+
+    prune_finished_generation_jobs(request.app)
+    job = enqueue_generation_job(
+        request.app,
+        project_name=pkey,
+        kind="prop_ref_regen",
+        label=f"Prop ref / {prop_id}",
+        payload={"prop_id": prop_id},
+        runner=_runner,
+        semaphore=generation_semaphore_for_config(request.app, config),
+    )
+    return {
+        "status": "queued",
+        "job": generation_job_payload(request.app, job),
+        "prop_id": prop_id,
+    }
+
+
+@router.post("/regen-prop-instructed")
+async def regen_prop_with_instruction(
+    request: Request,
+    project_id: str,
+    body: InstructedPropRegenRequest,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
+    project_dir, config, state = project
+    pkey = project_key(user_id, project_id)
+    prop_id = body.prop_id
+
+    existing_regen = find_active_generation_job(
+        request.app,
+        project_name=pkey,
+        kind="prop_ref_regen",
+        payload={"prop_id": prop_id},
+    )
+    if existing_regen:
+        raise HTTPException(409, "A regeneration is already queued or running for this prop")
+
+    bible = artifacts.read_story_bible(project_dir)
+    prop = next((candidate for candidate in bible.props if candidate.id == prop_id), None)
+    if prop is None:
+        raise HTTPException(404, f"Prop not found: {prop_id}")
+
+    try:
+        instruction = validate_user_instruction(body.instruction)
+    except PromptInstructionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    instructions_path = artifacts.prop_ref_instructions_path(project_dir, prop_id)
+    prior_addendum = artifacts.read_active_addendum(instructions_path)
+
+    rewrite_context = {
+        "prop_name": prop.name,
+        "visual_anchor": prop.visual_anchor,
+        "prior_addendum": prior_addendum,
+    }
+
+    from novel_to_comic.clients import text
+
+    job_id = str(uuid_lib.uuid4())
+    rewrite = None
+    try:
+        with ai_request_context(
+            user_id=user_id,
+            project_id=project_id,
+            project_name=project_dir.name,
+            workspace_id=str(project_dir.parent),
+            stage="cast",
+            job_id=job_id,
+        ):
+            rewrite = await text.generate_json(
+                config=config,
+                model=config.effective_prompt_model(),
+                system_prompt=asset_instruction_rewrite_system_prompt("prop_ref"),
+                user_content=asset_instruction_rewrite_user_content(
+                    instruction, "prop_ref", rewrite_context
+                ),
+                temperature=0.2,
+                max_output_tokens=900,
+                feature="cast.prop_ref_instruction_rewrite",
+            )
+        patch = parse_asset_instruction_patch(rewrite.value)
+    except PromptInstructionError as exc:
+        logger.warning(
+            "Prop ref instruction rewrite could not be applied project=%s prop=%s reason=%s rewrite=%s",
+            project_dir.name,
+            prop_id,
+            exc,
+            json.dumps(rewrite.value, ensure_ascii=False)[:1000] if rewrite is not None else None,
+        )
+        raise HTTPException(400, f"Prompt rewrite could not be applied: {exc}") from exc
+    except Exception as exc:
+        logger.exception(
+            "Prop ref instruction rewrite failed project=%s prop=%s",
+            project_dir.name,
+            prop_id,
+        )
+        raise HTTPException(502, f"Could not rewrite the prop prompt: {exc}") from exc
+
+    if rewrite.usage:
+        debit_model_usage(
+            get_db(),
+            user_id,
+            project_id,
+            rewrite.usage,
+            stage="cast",
+            description=f"Model call: rewrite prop ref prompt {prop_id}",
+            job_id=job_id,
+        )
+
+    artifacts.append_instruction_log_entry(
+        instructions_path,
+        {
+            "created_at": datetime.now(UTC).isoformat(),
+            "instruction": instruction,
+            "patch": patch.model_dump(),
+        },
+    )
+
+    async def _runner() -> None:
+        from novel_to_comic.stages import s3_cast
+        with ai_request_context(
+            user_id=user_id,
+            project_id=project_id,
+            project_name=project_dir.name,
+            workspace_id=str(project_dir.parent),
+            stage="cast",
+            job_id=job_id,
+        ):
+            result = await s3_cast.regenerate_prop_ref(config, project_dir, prop_id)
+        if result.usage:
+            debit_model_usage(
+                get_db(),
+                user_id,
+                project_id,
+                result.usage,
+                stage="cast",
+                description=f"Model call: regenerate instructed prop ref {prop_id}",
+                job_id=job_id,
+            )
+
+    prune_finished_generation_jobs(request.app)
+    job = enqueue_generation_job(
+        request.app,
+        project_name=pkey,
+        kind="prop_ref_regen",
+        label=f"Prop ref / {prop_id}",
+        payload={"prop_id": prop_id},
+        runner=_runner,
+        semaphore=generation_semaphore_for_config(request.app, config),
+    )
+    return {
+        "status": "queued",
+        "instruction_status": "accepted",
+        "patch_summary": patch.message,
+        "addendum": patch.addendum,
+        "job": generation_job_payload(request.app, job),
+        "prop_id": prop_id,
     }
 
 

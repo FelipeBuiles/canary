@@ -9,7 +9,7 @@ generation, assembly, or project artifacts.
 ## Project Overview
 
 **What it is:** A Python/React application that converts novels (EPUB/TXT/PDF) into
-comic books (PDF/CBZ) via an 8-stage LLM + image-generation pipeline.
+comic books (PDF/CBZ) via a 9-stage LLM + image-generation pipeline.
 
 **Status:** Early MVP. The web server is the primary interface — the CLI only
 has `init` and `serve`. All pipeline operations are HTTP API endpoints.
@@ -38,13 +38,14 @@ novel_to_comic/src/novel_to_comic/
 ├── usage.py                    # UsageRecord, ApiResult, pricing, cost calculation
 ├── stages/
 │   ├── s1_extract.py       # Novel → Story Bible JSON
-│   ├── s2_index.py         # Character refs + location plates (cast) — no longer uses tenacity; retry handled by ai/client.py
-│   ├── s3_screenplay.py    # Scene prose → screenplay (adapt)
-│   ├── s4_layout_plan.py   # Screenplay → page/panel layout plan (plan)
-│   ├── s4_panels.py        # Layout plan → legacy PanelBreakdown (storyboard)
-│   ├── s5_prompts.py       # Planned panels → image prompts (direct)
-│   ├── s6_generate.py      # Image generation (draw)
-│   └── s7_assemble.py      # ComicPage JSON → HTML → PNG → PDF/CBZ (compose)
+│   ├── s2_style.py         # Story Bible → style suggestions + sample images
+│   ├── s3_cast.py          # Character refs + location plates (cast)
+│   ├── s4_screenplay.py    # Scene prose → screenplay (adapt)
+│   ├── s5_layout_plan.py   # Screenplay → page/panel layout plan (plan)
+│   ├── s5_panels.py        # Layout plan → legacy PanelBreakdown (storyboard)
+│   ├── s6_storyboard.py    # Planned panels → image prompts (direct)
+│   ├── s7_draw.py          # Image generation (draw)
+│   └── s8_compose.py       # ComicPage JSON → HTML → PNG → PDF/CBZ (compose)
 ├── models/
 │   ├── story_bible.py      # Character, Location, Scene, NarrativeArc, Prop
 │   ├── panel.py            # PanelBreakdown, DialogueLine, Screenplay, ScreenplayBeat
@@ -70,24 +71,29 @@ novel_to_comic/src/novel_to_comic/
 
 ---
 
-## The 8 Pipeline Stages
+## The 9 Pipeline Stages
 
 All stage names (used in state, API routes, and CLI paths):
 
 | # | Stage name | Module | Checkpoint? | LLM used |
 |---|-----------|--------|-------------|----------|
-| 1 | `extract` | `s1_extract.py` | Yes | Configurable text model (default: Gemini 3.1 Pro) |
-| 2 | `cast` | `s2_index.py` | Yes | Gemini (image gen) |
-| 3 | `adapt` | `s3_screenplay.py` | No | Configurable text model (default: Gemini 3.1 Pro) |
-| 4 | `plan` | `s4_layout_plan.py` | No | Configurable text model (default: Gemini Pro, `plan_mode: llm`) |
-| 5 | `storyboard` | `s4_panels.py` | No | None (projection from layout plan) |
-| 6 | `direct` | `s5_prompts.py` | No | Configurable text model (default: Gemini Flash-Lite) |
-| 7 | `draw` | `s6_generate.py` | Yes | Gemini / OpenAI / OpenRouter / Together |
-| 8 | `compose` | `s7_assemble.py` | No | None (deterministic) |
+| 1 | `extract` | `s1_extract.py` | Yes | Configurable text alias (`extract-*`) |
+| 2 | `style` | `s2_style.py` | Yes | Configurable prompt alias + image alias |
+| 3 | `cast` | `s3_cast.py` | Yes | Image alias through LiteLLM |
+| 4 | `adapt` | `s4_screenplay.py` | No | Configurable screenplay alias (`screenplay-*`) |
+| 5 | `plan` | `s5_layout_plan.py` | No | Configurable panel alias (`panel-*`, `plan_mode: llm`) |
+| 6 | `storyboard` | `s5_panels.py` | No | None (projection from layout plan) |
+| 7 | `direct` | `s6_storyboard.py` | No | None (deterministic prompt spec assembly) |
+| 8 | `draw` | `s7_draw.py` | Yes | Image alias through LiteLLM |
+| 9 | `compose` | `s8_compose.py` | No | None (deterministic) |
 
-**Checkpoint stages** (`CHECKPOINT_STAGES = {"extract", "cast", "direct", "draw"}`):
+**Checkpoint stages** (`CHECKPOINT_STAGES = {"extract", "style", "cast", "direct", "draw"}`):
 pipeline pauses at `awaiting_review` after the stage completes. Advance with
 `POST /api/projects/{project}/approve/{stage}` or the web UI.
+
+**File prefix warning:** stage file prefixes are not the public contract. `plan`
+and `storyboard` both use an `s5` prefix, and `direct` still lives in
+`s6_storyboard.py`. Use `STAGE_NAMES` and `REGISTRY` for stage order.
 
 ---
 
@@ -155,9 +161,17 @@ log a warning (once per model) and return $0.00.
 
 ### Text composited in post
 
-Speech bubbles, narration, SFX are rendered in Stage 8 (`compose`), never
+Speech bubbles, narration, SFX are rendered in Stage 9 (`compose`), never
 generated inside images. This avoids OCR issues and allows bubble editing without
 regenerating images.
+
+### Style is now a checkpoint stage
+
+Stage 2 (`style`) generates style suggestions and sample images under
+`samples/`, then pauses for review. The user selects an active style, which is
+persisted to `config.yaml` as `style_template`. Post-style stages (`cast`,
+`adapt`, `plan`, `storyboard`, `direct`, `draw`, `compose`) are blocked until
+`is_style_selected()` returns true.
 
 ### Visual anchors are sacred
 
@@ -181,34 +195,36 @@ calls in stage code.
 
 ### Style gate (backend-enforced)
 
-After extract completes, the backend blocks `POST /run` for any post-extract stage
-unless a style is selected. The check lives in `is_style_selected()` in
-`server/routers/styles.py` and is called from `pipeline.py`'s `run_pipeline()`.
-The status API returns `style_selected: bool` (sourced from `config.yaml`) so the
-frontend can gate navigation without depending on stale React Query cache.
+After `extract`, the normal flow is `style` review and approval. The backend
+blocks `POST /run` for any post-style stage unless a style is selected. The
+check lives in `is_style_selected()` in `server/routers/styles.py` and is called
+from `pipeline.py`'s `run_pipeline()`. The status API returns
+`style_selected: bool` (sourced from `config.yaml`) so the frontend can gate
+navigation without depending on stale React Query cache.
 
 ### Layout plan as planner-owned artifact
 
-Stage 4 (`plan`) produces `plan/layout_plan.json` — a `LayoutPlan` containing
+Stage 5 (`plan`) produces `plan/layout_plan.json` — a `LayoutPlan` containing
 `PlannedPage` and `PlannedPanel` records. Downstream stages (storyboard, direct,
 draw) read from this plan and project it into their own artifacts. The plan is
 the source of truth for page/panel structure.
 
-Default planning mode is `plan_mode: "llm"`: Stage 4 calls Gemini once per scene
-to merge screenplay beats into panels, add shot/lighting/mood metadata, and flag
+Default planning mode is `plan_mode: "llm"`: Stage 5 calls the configured panel
+model once per scene to merge screenplay beats into panels, add
+shot/lighting/mood metadata, and flag
 rare page breaks. If a scene-level LLM call fails, that scene falls back to the
 heuristic one-beat-per-panel planner. Use `plan_mode: "heuristic"` to force the
 deterministic fallback behavior.
 
 ### ComicPage JSON as editing surface
 
-`compose/pages/page_NNN.json` is the canonical artifact for Stage 8. It is
+`compose/pages/page_NNN.json` is the canonical artifact for Stage 9. It is
 read, edited manually or via the web editor, and re-rendered by the export API.
 Never write rendering logic that bypasses this JSON.
 
 ---
 
-## The Assembly System (Stage 8 — compose)
+## The Assembly System (Stage 9 — compose)
 
 ### Position contract (Bubble and Sfx)
 
@@ -339,9 +355,9 @@ SSE endpoint: `GET /api/projects/{project}/events`
 pending → running → awaiting_review (checkpoint stages only) → complete / failed
 ```
 
-**Stage names:** `["extract", "cast", "adapt", "plan", "storyboard", "direct", "draw", "compose"]`
+**Stage names:** `["extract", "style", "cast", "adapt", "plan", "storyboard", "direct", "draw", "compose"]`
 
-**Checkpoint stages:** `{"extract", "cast", "direct", "draw"}`
+**Checkpoint stages:** `{"extract", "style", "cast", "direct", "draw"}`
 
 Key helpers in `state.py`: `begin_stage`, `complete_stage`, `fail_stage`,
 `approve_stage`, `record_item_done`, `record_item_failed`, `record_api_usage`.
@@ -369,7 +385,7 @@ State writes are atomic: temp file + rename prevents corruption on crash.
 
 ### LayoutPlan (`models/layout_plan.py`)
 
-Planner-owned artifact produced by stage 4 (`plan`). Contains:
+Planner-owned artifact produced by stage 5 (`plan`). Contains:
 - `planned_pages: list[PlannedPage]` — page structure with panel geometries
 - `planned_panels: list[PlannedPanel]` — per-panel metadata (scene, shot type,
   shape intent, generation mode, crop/framing contract, camera note, lighting,
@@ -384,12 +400,12 @@ Key helpers in `layout_planning.py`:
 
 ### ComicPage (`models/comic_page.py`)
 
-Canonical editing surface for Stage 8. Contains page-level data plus per-panel
+Canonical editing surface for Stage 9. Contains page-level data plus per-panel
 `PagePanel` objects, each with `Bubble` list and optional `Sfx`.
 
 ### ImagePrompt (`models/prompt.py`)
 
-Produced by Stage 6 (`direct`). Contains `full_prompt` (assembled string),
+Produced by Stage 7 (`direct`). Contains `full_prompt` (assembled string),
 project-relative `reference_image_paths`, transition hints, `continuity_note`,
 and generation dimensions.
 
@@ -405,14 +421,16 @@ projects/my-novel/
 ├── input/
 │   └── novel.epub
 ├── scenes/                  # Extracted scene text files (scene_001.txt …)
+├── samples/                 # Style suggestions and sample images
+│   ├── style_suggestions.json
+│   └── style_N.png
 ├── refs/                    # Character reference sheets
 │   └── char_NNN/
-│       ├── front.png
-│       ├── three_quarter.png
-│       ├── side.png
-│       └── action.png
+│       ├── sheet.png
+│       ├── sheet.png.meta.json
+│       └── instructions.jsonl
 ├── plates/                  # Location background plates (loc_NNN.png …)
-├── adapt/                   # Per-scene screenplay JSON
+├── screenplays/             # Per-scene screenplay JSON
 │   └── scene_NNN.json
 ├── plan/
 │   └── layout_plan.json     # Planner-owned page/panel structure
@@ -425,7 +443,7 @@ projects/my-novel/
 ├── draw/                    # Generated panel images
 │   └── scene_NNN/
 │       └── panel_NNN.png
-├── compose/                 # Stage 8 output
+├── compose/                 # Stage 9 output
 │   ├── theme.css            # Editable CSS — regenerate with export
 │   ├── pages/
 │   │   ├── page_NNN.json    # Canonical editing surface (ComicPage)
@@ -450,11 +468,15 @@ projects/my-novel/
 
 ---
 
-## Next Planned Work
+## Current Focus
 
-1. **SVG bubble tails:** Add `tail_x`/`tail_y` to `Bubble`; render SVG `<path>`
-   tail pointing from bubble edge toward target point when pinned.
-2. **Web dashboard improvements:** Live SSE activity drawer, per-action cost
-   previews, bulk panel regeneration.
-3. **Visual page editor:** Drag-and-drop panel reordering across pages,
-   persistent version history.
+1. **Style and generation coherence:** active style samples feed cast and draw;
+   post-style stages are gated by `style_selected`.
+2. **Draw review loop:** per-panel acceptance, version history, targeted
+   regeneration, instruction-based prompt rewrites, and failed/missing image
+   blockers before compose.
+3. **Compose editor/export:** canonical `compose/pages/page_NNN.json`, page
+   reflow, structural operations, SVG bubble tails, character voice presets,
+   translation, previews, and PDF/CBZ export.
+4. **Credits/billing accuracy:** stage estimates, reservations, usage debits,
+   Stripe credit purchases, and pricing cache/override auditing.

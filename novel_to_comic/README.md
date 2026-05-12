@@ -23,7 +23,7 @@ The pipeline engine (`src/novel_to_comic/`) is a Python package that exposes a
 FastAPI web server. All pipeline operations (run, approve, export) are HTTP API
 endpoints — there is no `pipeline run` command.
 
-For documentation on the 8-stage pipeline, model configuration, and project
+For documentation on the 9-stage pipeline, model configuration, and project
 structure, see `docs/novel-to-comic-pipeline.md`.
 
 For agent-facing developer documentation, see `AGENTS.md` and

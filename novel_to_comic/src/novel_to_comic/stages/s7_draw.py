@@ -50,16 +50,19 @@ def _write_failure_meta(image_path: Path, payload: dict) -> None:
     artifacts.write_asset_failure(image_path, payload)
 
 
-def _should_use_prev_panel_image(prev_transition_type: str | None) -> bool:
+def _should_use_prev_panel_image(config: Config, prev_transition_type: str | None) -> bool:
     """Return True if the previous panel's image should be used as a style reference.
 
     Hard cuts (smash cut, fade to, cut to, scene change, time jump) can make the
     previous panel image actively harmful — the model might blend the previous scene
-    into the new one. Only use the previous panel image for smooth transitions.
+    into the new one. GPT Image edit requests are especially prone to repeating the
+    source image, so only match cuts get a previous-panel image on that route.
     """
     if not prev_transition_type:
         return False
     transition_type = (prev_transition_type or "").strip().lower()
+    if is_gpt_image_2(config.effective_image_model()):
+        return transition_type == "match_cut"
     if transition_type in _SOFT_CONTINUITY:
         return True
     return False
@@ -149,7 +152,7 @@ def resolve_panel_reference_paths(
                 prev_prompt = ImagePrompt.model_validate_json(prev_prompt_path.read_text())
             except Exception:
                 prev_prompt = None
-        if prev_image.exists() and _should_use_prev_panel_image(getattr(prev_prompt, "transition_out", None)):
+        if prev_image.exists() and _should_use_prev_panel_image(config, getattr(prev_prompt, "transition_out", None)):
             style_refs.append(prev_image)
 
     if not style_refs:

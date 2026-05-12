@@ -3,10 +3,10 @@
 These are the Pydantic models that flow between pipeline stages.
 
 - `story_bible.json` — carries the StoryBible (stage 1 output)
-- `plan/layout_plan.json` — carries LayoutPlan (stage 4 output)
-- `storyboard/scene_NNN/panel_NNN.json` — carries PanelBreakdown (stage 5 output)
-- `direct/scene_NNN/panel_NNN.json` — carries ImagePrompt (stage 6 output)
-- `compose/pages/page_NNN.json` — carries ComicPage (stage 8 output)
+- `plan/layout_plan.json` — carries LayoutPlan (stage 5 output)
+- `storyboard/scene_NNN/panel_NNN.json` — carries PanelBreakdown (stage 6 output)
+- `direct/scene_NNN/panel_NNN.json` — carries ImagePrompt (stage 7 output)
+- `compose/pages/page_NNN.json` — carries ComicPage (stage 9 output)
 
 ## Bubble _(comic_page.py)_
 
@@ -17,7 +17,12 @@ These are the Pydantic models that flow between pipeline stages.
 | `text` | `str` |  |
 | `speaker_id` | `str \| None` | `None` |
 | `speaker_name` | `str \| None` | `None` |
+| `source_beat_id` | `str \| None` | `None` |
+| `source_text` | `str \| None` | `None` |
+| `narration_mode` | `str \| None` | `None` |
+| `preferred_zone` | `str \| None` | `None` |
 | `side` | `Literal["left", "right", "center"]` | `"left"` |
+| `full_width` | `bool \| None` | `None` |
 | `x` | `float \| None` | `None` |
 | `y` | `float \| None` | `None` |
 | `width` | `float \| None` | `None` |
@@ -37,6 +42,9 @@ These are the Pydantic models that flow between pipeline stages.
 | Field | Type | Default |
 |-------|------|---------|
 | `text` | `str` |  |
+| `kind` | `SfxKind` | `"impact"` |
+| `intensity` | `Literal[1, 2, 3]` | `2` |
+| `anchor` | `SfxAnchor` | `"auto"` |
 | `x` | `float \| None` | `None` |
 | `y` | `float \| None` | `None` |
 | `rotation` | `float` | `-4.0` |
@@ -54,7 +62,7 @@ These are the Pydantic models that flow between pipeline stages.
 | `importance` | `str \| None` | `None` |
 | `generation_mode` | `str \| None` | `None` |
 | `bubbles` | `list[Bubble]` | `Field(default_factory=list)` |
-| `sfx` | `Sfx \| None` | `None` |
+| `sfx` | `list[Sfx]` | `Field(default_factory=list)` |
 | `image_offset_x` | `float \| None` | `None` |
 | `image_offset_y` | `float \| None` | `None` |
 | `grid_column` | `str \| None` | `None` |
@@ -86,6 +94,10 @@ These are the Pydantic models that flow between pipeline stages.
 | `character_id` | `Optional[str]` | `None` |
 | `text` | `str` |  |
 | `type` | `str` |  |
+| `source_beat_id` | `Optional[str]` | `None` |
+| `source_text` | `Optional[str]` | `None` |
+| `narration_mode` | `Optional[str]` | `None` |
+| `preferred_zone` | `Optional[str]` | `None` |
 
 ## PanelBreakdown _(panel.py)_
 
@@ -103,7 +115,7 @@ These are the Pydantic models that flow between pipeline stages.
 | `lighting` | `str` |  |
 | `mood` | `str` |  |
 | `dialogue` | `list[DialogueLine]` | `[]` |
-| `sfx` | `Optional[str]` | `None` |
+| `sfx` | `list[str]` | `[]` |
 | `transition_type` | `Optional[str]` | `None` |
 | `transition_note` | `Optional[str]` | `None` |
 
@@ -114,8 +126,10 @@ These are the Pydantic models that flow between pipeline stages.
 | `type` | `str` |  |
 | `character_id` | `Optional[str]` | `None` |
 | `content` | `str` |  |
+| `source_text` | `Optional[str]` | `None` |
 | `direction` | `Optional[str]` | `None` |
 | `transition_type` | `Optional[str]` | `None` |
+| `narration_reason` | `Optional[str]` | `None` |
 
 ## Screenplay _(panel.py)_
 
@@ -139,6 +153,9 @@ These are the Pydantic models that flow between pipeline stages.
 | `crop_policy` | `str \| None` | `None` |
 | `transition_in` | `str \| None` | `None` |
 | `transition_out` | `str \| None` | `None` |
+| `has_narration_caption` | `bool` | `False` |
+| `narration_mode` | `str \| None` | `None` |
+| `preferred_caption_zone` | `str \| None` | `None` |
 | `full_prompt` | `str` | `""` |
 | `style` | `str \| None` | `None` |
 | `composition` | `str \| None` | `None` |
@@ -273,7 +290,7 @@ These are the Pydantic models that flow between pipeline stages.
 
 ### LLMPanelSpec _(layout_plan.py)_
 
-Intermediate model for Stage 4 LLM scene-planning output before deterministic
+Intermediate model for Stage 5 LLM scene-planning output before deterministic
 conversion into `PlannedPanel`.
 
 | Field | Type | Default |

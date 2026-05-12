@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listProjects, getProjectStatus, createProject, deleteProject, generateProjectCover } from "./projects";
-import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate } from "./pipeline";
+import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate } from "./pipeline";
 import type { ConfigOverrides, StoryBible, CharacterVoice } from "../types/api";
 import { getBalance, getCreditHistory, getPricingReference } from "./credits";
 import { getPackages, createCheckout } from "./billing";
@@ -285,6 +285,27 @@ export function useRegenPlateWithInstruction() {
       locId: string;
       instruction: string;
     }) => regenPlateWithInstruction(project, locId, instruction),
+  });
+}
+
+export function useRegenProp() {
+  return useMutation({
+    mutationFn: ({ project, propId }: { project: string; propId: string }) =>
+      regenProp(project, propId),
+  });
+}
+
+export function useRegenPropWithInstruction() {
+  return useMutation({
+    mutationFn: ({
+      project,
+      propId,
+      instruction,
+    }: {
+      project: string;
+      propId: string;
+      instruction: string;
+    }) => regenPropWithInstruction(project, propId, instruction),
   });
 }
 

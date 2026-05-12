@@ -1,7 +1,7 @@
 [project]
 name = "novel-to-comic"
 version = "0.1.0"
-description = "A 7-stage pipeline that converts novels into graphic novels"
+description = "A 9-stage pipeline that converts novels into graphic novels"
 requires-python = ">=3.12"
 
 dependencies = [

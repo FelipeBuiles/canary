@@ -169,7 +169,11 @@ def planned_panel_to_breakdown(panel: PlannedPanel) -> PanelBreakdown:
         character_actions=panel.character_actions,
         character_expressions=panel.character_expressions,
         character_positions=panel.character_positions,
-        background_description=panel.background_description,
+        background_description=_append_visual_requirements(
+            panel.background_description,
+            panel.key_objects,
+            panel.visual_requirements,
+        ),
         lighting=panel.lighting,
         mood=panel.mood,
         dialogue=[DialogueLine.model_validate(line) for line in panel.dialogue],
@@ -177,6 +181,19 @@ def planned_panel_to_breakdown(panel: PlannedPanel) -> PanelBreakdown:
         transition_type=panel.transition_out,
         transition_note=None,
     )
+
+
+def _append_visual_requirements(
+    background: str,
+    key_objects: list[str],
+    visual_requirements: list[str],
+) -> str:
+    parts = [background.strip()] if background and background.strip() else []
+    if key_objects:
+        parts.append("Key objects: " + "; ".join(key_objects))
+    if visual_requirements:
+        parts.append("Must show: " + "; ".join(visual_requirements))
+    return " ".join(parts)
 
 
 def _caption_text(decision: NarrationDecision) -> str:

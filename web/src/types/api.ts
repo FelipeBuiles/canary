@@ -506,6 +506,15 @@ export interface InstructedPlateRegenResponse {
   loc_id: string;
 }
 
+export interface InstructedPropRegenResponse {
+  status: string;
+  instruction_status: "accepted";
+  patch_summary: string;
+  addendum: string;
+  job: GenerationJob;
+  prop_id: string;
+}
+
 export interface Bubble {
   id: string;
   type: "speech" | "thought" | "narration";

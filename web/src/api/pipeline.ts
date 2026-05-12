@@ -3,6 +3,7 @@ import type {
   GenerationJob,
   InstructedPanelRegenResponse,
   InstructedPlateRegenResponse,
+  InstructedPropRegenResponse,
   InstructedRefRegenResponse,
   StageCostEstimate,
   RegenCostEstimate,
@@ -106,6 +107,30 @@ export function regenPlateWithInstruction(
     {
       method: "POST",
       body: JSON.stringify({ loc_id: locId, instruction }),
+    },
+  );
+}
+
+export function regenProp(
+  project: string,
+  propId: string,
+): Promise<{ status: string; job: GenerationJob; prop_id: string }> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/regen-prop?prop_id=${encodeURIComponent(propId)}`,
+    { method: "POST" },
+  );
+}
+
+export function regenPropWithInstruction(
+  project: string,
+  propId: string,
+  instruction: string,
+): Promise<InstructedPropRegenResponse> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/regen-prop-instructed`,
+    {
+      method: "POST",
+      body: JSON.stringify({ prop_id: propId, instruction }),
     },
   );
 }

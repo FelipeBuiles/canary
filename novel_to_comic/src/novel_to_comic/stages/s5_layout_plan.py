@@ -51,6 +51,7 @@ from novel_to_comic.models.layout_plan import (
     PlannedSfx,
 )
 from novel_to_comic.models.panel import DialogueLine, Screenplay, ScreenplayBeat
+from novel_to_comic.text_utils import clean, shorten
 
 
 def _planned_sfx_from_beat(beat: ScreenplayBeat) -> PlannedSfx | None:
@@ -96,6 +97,8 @@ That means averaging {avg_per_panel} visual beats per panel -- you MUST merge co
 One panel per beat is wrong. One panel per dialogue line is wrong.
 Narration beats are adapted caption candidates with exact source provenance.
 They should not inflate the panel target unless a caption_panel is genuinely needed.
+Every non-narration beat must appear in exactly one panel's beat_indices. Do not skip beats.
+If preserving all visual beats requires more panels than the target, exceed the target.
 
 HOW TO MERGE
 ------------
@@ -104,8 +107,8 @@ HOW TO MERGE
 - An action beat immediately followed by a reaction or short line = one panel.
 - LONG ANNOUNCEMENTS / MONOLOGUES (5+ consecutive lines from the same off-screen source):
   Group 2-3 announcement lines together with one character reaction per group.
-  Show the character REACTING while the text plays. Pick representative lines -- you do
-  not need to include every single line from the screenplay.
+  Show the character REACTING while the text plays. Every dialogue beat still needs
+  to appear in exactly one panel's beat_indices.
 
 HARD CEILINGS (absolute maximums, only hit in genuinely extreme beats):
 - 4 beats per panel
@@ -118,6 +121,13 @@ PANEL FIELDS
   or physical action (e.g. {{"char_001": "arms raised, turning in a slow circle"}}).
   REQUIRED for every character in characters_present. Describe posture, gesture, or
   movement -- not speech or emotion (those belong in expressions/mood).
+- character_expressions: dict mapping character_id -> subtle specific facial expression
+  for every visible character (e.g. {{"char_001": "eyes narrowed, mouth held still"}}).
+- key_objects: list every plot-relevant visible object in the panel, including story props,
+  held/touched/used objects, evidence, weapons, letters, doors, phones, flowers, etc.
+- visual_requirements: 1-4 concrete physical details from the covered beats that the
+  generated image must show. Include action, expression, object, and spatial details.
+  Do not include dialogue text, captions, labels, or SFX lettering here.
 - background_description: panel-specific environmental DELTA from the location anchor
   (e.g. "smoldering debris left, boot prints in slush"). Leave empty if identical.
 - camera_note: one concrete composition sentence
@@ -173,9 +183,9 @@ OUTPUT FORMAT
 -------------
 Return {{"panels": [ {{...}}, ... ], "narration_decisions": [ {{...}}, ... ]}}.
 Each panel object has exactly these keys:
-  beat_indices, characters_present, character_actions, shot_type, camera_angle,
-  camera_note, lighting, mood, background_description, importance, shape_intent,
-  transition_out, page_break_after
+  beat_indices, characters_present, character_actions, character_expressions,
+  key_objects, visual_requirements, shot_type, camera_angle, camera_note, lighting,
+  mood, background_description, importance, shape_intent, transition_out, page_break_after
 Each narration_decisions object has exactly these keys:
   beat_index, decision, mode, panel_index, preferred_zone, decision_reason
 """
@@ -245,6 +255,163 @@ def _dialogue_line(beat: ScreenplayBeat) -> list[dict[str, str | None]]:
             type="speech",
         ).model_dump()]
     return []
+
+
+def _compact_text(value: str | None, max_chars: int = 180) -> str:
+    return shorten(clean(value or ""), max_chars).strip()
+
+
+def _append_unique(items: list[str], value: str | None, *, max_chars: int = 180) -> None:
+    text = _compact_text(value, max_chars)
+    if not text:
+        return
+    if text.lower() in {item.lower() for item in items}:
+        return
+    items.append(text)
+
+
+def _story_prop_lines(story_bible: StoryBible) -> list[str]:
+    lines: list[str] = []
+    for prop in getattr(story_bible, "props", []) or []:
+        anchor = _compact_text(prop.visual_anchor, 180)
+        label = f"{prop.id} ({prop.name})" if prop.id else prop.name
+        lines.append(f"  {label}: {anchor}" if anchor else f"  {label}")
+    return lines
+
+
+def _character_name_lookup(story_bible: StoryBible) -> dict[str, str]:
+    return {c.id: c.name for c in story_bible.characters}
+
+
+def _beat_visual_requirement(
+    beat: ScreenplayBeat,
+    character_names: dict[str, str],
+) -> str | None:
+    if beat.type == "narration":
+        return None
+    content = _compact_text(beat.content, 180)
+    direction = _compact_text(beat.direction, 140)
+
+    def _name(char_id: str | None) -> str | None:
+        if not char_id:
+            return None
+        return character_names.get(char_id, char_id)
+
+    if beat.type == "action":
+        actor = _name(beat.character_id)
+        pieces = [f"show {actor} {content}".strip() if actor else f"show {content}"]
+        if direction:
+            pieces.append(f"direction: {direction}")
+        return "; ".join(piece for piece in pieces if piece)
+    if beat.type == "dialogue":
+        speaker = _name(beat.character_id) or "off-screen/unseen speaker"
+        if direction:
+            return f"show {speaker}'s dialogue moment through {direction}; no lettering"
+        return (
+            f"show {speaker}'s dialogue moment through physical "
+            "body language or reaction; no lettering"
+        )
+    if beat.type == "sfx":
+        return f"show the visible source or result of the {content} sound effect; no lettering"
+    if beat.type == "transition":
+        detail = direction or content
+        return f"show the transition cue physically: {detail}"
+    return f"show {content}"
+
+
+def _visual_requirements_for_panel(
+    spec: LLMPanelSpec,
+    covered_pairs: list[tuple[int, ScreenplayBeat]],
+    story_bible: StoryBible,
+) -> list[str]:
+    character_names = _character_name_lookup(story_bible)
+    requirements: list[str] = []
+    for _beat_index, beat in covered_pairs:
+        _append_unique(requirements, _beat_visual_requirement(beat, character_names))
+    for requirement in spec.visual_requirements:
+        _append_unique(requirements, requirement)
+    return requirements[:12]
+
+
+def _key_objects_for_panel(
+    spec: LLMPanelSpec,
+    covered_pairs: list[tuple[int, ScreenplayBeat]],
+    story_bible: StoryBible,
+) -> list[str]:
+    objects: list[str] = []
+    for item in spec.key_objects:
+        _append_unique(objects, item, max_chars=120)
+
+    blob_parts: list[str] = [
+        spec.background_description,
+        spec.camera_note,
+        *spec.character_actions.values(),
+        *spec.character_expressions.values(),
+        *spec.key_objects,
+        *spec.visual_requirements,
+    ]
+    for _idx, beat in covered_pairs:
+        blob_parts.extend([beat.content, beat.direction or ""])
+    blob = " ".join(clean(part or "") for part in blob_parts).lower()
+
+    for prop in getattr(story_bible, "props", []) or []:
+        name = (prop.name or "").strip()
+        prop_id = (prop.id or "").strip()
+        if not name and not prop_id:
+            continue
+        name_hit = bool(name and name.lower() in blob)
+        id_hit = bool(prop_id and prop_id.lower() in blob)
+        if name_hit or id_hit:
+            _append_unique(objects, name or prop_id, max_chars=120)
+    return objects
+
+
+def _validate_llm_specs(specs: list[LLMPanelSpec], beats: list[ScreenplayBeat]) -> None:
+    """Fail fast when the planner drops or duplicates visual beats."""
+    visual_indices = {
+        idx
+        for idx, beat in enumerate(beats, start=1)
+        if beat.type != "narration"
+    }
+    coverage = {idx: 0 for idx in visual_indices}
+
+    for panel_number, spec in enumerate(specs, start=1):
+        if not spec.beat_indices:
+            raise ValueError(f"panel {panel_number} has no beat_indices")
+
+        invalid = [idx for idx in spec.beat_indices if idx < 1 or idx > len(beats)]
+        if invalid:
+            raise ValueError(f"panel {panel_number} references invalid beat_indices: {invalid}")
+
+        covered_visual = [
+            idx for idx in spec.beat_indices
+            if idx in visual_indices
+        ]
+        if len(covered_visual) > 4:
+            raise ValueError(
+                f"panel {panel_number} covers {len(covered_visual)} visual beats; maximum is 4"
+            )
+
+        dialogue_count = sum(
+            1
+            for idx in spec.beat_indices
+            if beats[idx - 1].type == "dialogue"
+        )
+        if dialogue_count > _MAX_DIALOGUE_PER_PANEL:
+            raise ValueError(
+                f"panel {panel_number} covers {dialogue_count} dialogue beats; "
+                f"maximum is {_MAX_DIALOGUE_PER_PANEL}"
+            )
+
+        for idx in covered_visual:
+            coverage[idx] += 1
+
+    missing = [idx for idx, count in coverage.items() if count == 0]
+    duplicated = [idx for idx, count in coverage.items() if count > 1]
+    if missing:
+        raise ValueError(f"LLM plan omitted visual beat_indices: {missing}")
+    if duplicated:
+        raise ValueError(f"LLM plan duplicated visual beat_indices: {duplicated}")
 
 
 def _aspect_for_shape(shape_intent: str) -> tuple[float, list[float]]:
@@ -345,6 +512,7 @@ def _panel_from_beat(
     beat_index: int,
     beat: ScreenplayBeat,
     scene_location_name: str,
+    story_bible: StoryBible,
 ) -> PlannedPanel:
     shape_intent = _shape_intent_for_beat(beat)
     importance = _importance_for_beat(beat)
@@ -356,6 +524,8 @@ def _panel_from_beat(
     if beat.character_id and beat.type == "dialogue":
         character_expressions[beat.character_id] = "speaking"
     character_positions = {beat.character_id: "center"} if beat.character_id else {}
+    fake_spec = LLMPanelSpec(beat_indices=[beat_index])
+    covered_pairs = [(beat_index, beat)]
     dialogue_load = 1 if beat.type == "dialogue" else 0
     caption_load = 1 if beat.type == "narration" else (1 if beat.type == "action" and not beat.character_id else 0)
     aspect_preference, aspect_range = _aspect_for_shape(shape_intent)
@@ -380,6 +550,8 @@ def _panel_from_beat(
         character_actions=character_actions,
         character_expressions=character_expressions,
         character_positions=character_positions,
+        key_objects=_key_objects_for_panel(fake_spec, covered_pairs, story_bible),
+        visual_requirements=_visual_requirements_for_panel(fake_spec, covered_pairs, story_bible),
         background_description=scene_location_name,
         camera_note=beat.direction or "",
         lighting="",
@@ -395,9 +567,10 @@ def _panel_from_beat(
 def _plan_scene_heuristic(
     screenplay: Screenplay,
     scene_location_name: str,
+    story_bible: StoryBible,
 ) -> tuple[list[PlannedPanel], list[NarrationDecision]]:
     panels = [
-        _panel_from_beat(screenplay.scene_id, beat_index, beat, scene_location_name)
+        _panel_from_beat(screenplay.scene_id, beat_index, beat, scene_location_name, story_bible)
         for beat_index, beat in enumerate(screenplay.beats, start=1)
     ]
     decisions = [
@@ -439,6 +612,7 @@ def _scene_planning_user_content(
         f"  {c.id} ({c.name}): {(c.visual_anchor or '')[:140]}"
         for c in scene_chars
     ) or "  (none)"
+    prop_lines = "\n".join(_story_prop_lines(story_bible)) or "  (none)"
 
     if location:
         loc_text = f"{location.name}: {(location.visual_anchor or '')[:200]}"
@@ -468,6 +642,7 @@ def _scene_planning_user_content(
         f"Scene: {screenplay.scene_id}\n"
         f"Location: {loc_text}\n"
         f"Characters:\n{chars_lines}\n"
+        f"Story props:\n{prop_lines}\n"
         f"Target: {target_panels} panels for {beat_count} beats "
         f"(~{beat_count/target_panels:.1f} beats per panel)\n\n"
         f"Beats ({beat_count} total):\n"
@@ -545,9 +720,15 @@ def _llm_spec_to_planned_panel(
     panel_index: int,
     spec: LLMPanelSpec,
     beats: list[ScreenplayBeat],
+    story_bible: StoryBible,
 ) -> PlannedPanel:
     """Deterministically convert one LLMPanelSpec into a PlannedPanel."""
-    covered_beats = [beats[i - 1] for i in spec.beat_indices if 0 < i <= len(beats)]
+    covered_pairs = [
+        (i, beats[i - 1])
+        for i in spec.beat_indices
+        if 0 < i <= len(beats)
+    ]
+    covered_beats = [beat for _idx, beat in covered_pairs]
     beat_ids = [_beat_id(scene_id, i) for i in spec.beat_indices if 0 < i <= len(beats)]
 
     # Aggregate dialogue lines, capped to prevent speech-bubble overflow.
@@ -575,7 +756,7 @@ def _llm_spec_to_planned_panel(
     # Action beats in screenplays frequently have character_id=null (narrator voice),
     # so beat-derived actions are sparse. The LLM fills this gap directly.
     character_actions: dict[str, str] = dict(spec.character_actions)
-    character_expressions: dict[str, str] = {}
+    character_expressions: dict[str, str] = dict(spec.character_expressions)
     for beat in covered_beats:
         cid = beat.character_id
         if not cid:
@@ -584,7 +765,7 @@ def _llm_spec_to_planned_panel(
             # Only use beat-derived action as fallback if LLM didn't provide one
             character_actions[cid] = beat.content
         elif beat.type == "dialogue":
-            character_expressions[cid] = "speaking"
+            character_expressions.setdefault(cid, "speaking")
 
     # Spread characters left -> center -> right
     character_positions: dict[str, str] = {}
@@ -626,6 +807,8 @@ def _llm_spec_to_planned_panel(
         character_actions=character_actions,
         character_expressions=character_expressions,
         character_positions=character_positions,
+        key_objects=_key_objects_for_panel(spec, covered_pairs, story_bible),
+        visual_requirements=_visual_requirements_for_panel(spec, covered_pairs, story_bible),
         background_description=spec.background_description,
         camera_note=spec.camera_note,
         lighting=spec.lighting,
@@ -835,14 +1018,15 @@ async def _plan_scene(
     loc_lighting = _location_lighting_hint(location.visual_anchor if location else "")
 
     if config.plan_mode == "heuristic":
-        return _plan_scene_heuristic(screenplay, scene_location_name)
+        return _plan_scene_heuristic(screenplay, scene_location_name, story_bible)
 
     try:
         specs, narration_specs = await _plan_scene_llm(config, screenplay, story_bible, usage_records=usage_records)
         if not specs:
             raise ValueError("LLM returned empty panel list")
+        _validate_llm_specs(specs, screenplay.beats)
         panels = [
-            _llm_spec_to_planned_panel(screenplay.scene_id, idx, spec, screenplay.beats)
+            _llm_spec_to_planned_panel(screenplay.scene_id, idx, spec, screenplay.beats, story_bible)
             for idx, spec in enumerate(specs, start=1)
         ]
         decisions = _build_narration_decisions(
@@ -864,7 +1048,7 @@ async def _plan_scene(
             f"{screenplay.scene_id}: LLM planning failed ({exc!s}), falling back to heuristic"
         )
         logger.warning("LLM planning failed for %s: %s", screenplay.scene_id, exc)
-        return _plan_scene_heuristic(screenplay, scene_location_name)
+        return _plan_scene_heuristic(screenplay, scene_location_name, story_bible)
 
 
 # ---------------------------------------------------------------------------
