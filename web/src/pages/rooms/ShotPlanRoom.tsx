@@ -935,7 +935,16 @@ export function ShotPlanRoom() {
   }
 
   if (loadingPlan || (!plan && subStatus.status !== "pending")) {
-    return <RoomShell isLoading loadingText="LOADING SHOT PLAN…" />;
+    return (
+      <RoomShell
+        isLoading
+        loadingText="LOADING SHOT PLAN…"
+        loadingStage="plan"
+        loadingStageStatus={subStatus.status}
+        loadingStageItemsDone={subStatus.itemsDone || undefined}
+        loadingStageItemsTotal={subStatus.itemsTotal || undefined}
+      />
+    );
   }
 
   if (!plan || !id) {

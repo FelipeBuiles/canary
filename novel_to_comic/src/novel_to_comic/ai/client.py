@@ -1040,10 +1040,71 @@ def _mime_type(path: Path) -> str:
     return "image/png"
 
 
+def _diagnose_empty_image_response(data: dict[str, Any]) -> str:
+    """Build a human-readable hint from a 200-OK image response that carries no image.
+
+    Providers (notably Gemini via LiteLLM) sometimes return 200 with empty data
+    instead of an error when a safety filter silently rejects the prompt. Look
+    for the standard places that carry diagnostic crumbs and surface them so the
+    user sees *why* — and so the failure classifier can route the message into
+    the "provider_blocked" bucket when applicable.
+    """
+    crumbs: list[str] = []
+
+    err = data.get("error")
+    if isinstance(err, dict):
+        msg = err.get("message") or err.get("error_message")
+        if isinstance(msg, str) and msg.strip():
+            crumbs.append(msg.strip())
+        code = err.get("code") or err.get("type")
+        if isinstance(code, str) and code.strip():
+            crumbs.append(f"code={code.strip()}")
+
+    choices = data.get("choices") or []
+    if isinstance(choices, list) and choices:
+        first_choice = choices[0] or {}
+        reason = first_choice.get("finish_reason")
+        if isinstance(reason, str) and reason.strip():
+            crumbs.append(f"finish_reason={reason.strip()}")
+        message = first_choice.get("message") or {}
+        refusal = message.get("refusal") if isinstance(message, dict) else None
+        if isinstance(refusal, str) and refusal.strip():
+            crumbs.append(refusal.strip())
+
+    candidates = data.get("candidates") or []
+    if isinstance(candidates, list) and candidates:
+        first_cand = candidates[0] or {}
+        reason = first_cand.get("finish_reason") or first_cand.get("finishReason")
+        if isinstance(reason, str) and reason.strip():
+            crumbs.append(f"finish_reason={reason.strip()}")
+        ratings = first_cand.get("safety_ratings") or first_cand.get("safetyRatings")
+        if isinstance(ratings, list):
+            blocked = [
+                r.get("category") for r in ratings
+                if isinstance(r, dict) and r.get("blocked")
+            ]
+            if blocked:
+                crumbs.append(f"safety_ratings blocked: {', '.join(str(c) for c in blocked)}")
+
+    pf = data.get("prompt_feedback") or data.get("promptFeedback")
+    if isinstance(pf, dict):
+        reason = pf.get("block_reason") or pf.get("blockReason")
+        if isinstance(reason, str) and reason.strip():
+            crumbs.append(f"block_reason={reason.strip()}")
+
+    if not crumbs:
+        return (
+            "The image provider returned an empty response with no diagnostic info. "
+            "This usually means the prompt was silently rejected by a safety filter, "
+            "or the provider was temporarily unable to render the request."
+        )
+    return "The image provider returned no image — " + "; ".join(crumbs)
+
+
 async def _decode_image_response(data: dict[str, Any]) -> bytes:
     items = data.get("data") or []
     if not items:
-        raise ValueError("LiteLLM image response did not include image data")
+        raise ValueError(_diagnose_empty_image_response(data))
     first = items[0]
     if first.get("b64_json"):
         return base64.b64decode(first["b64_json"])
@@ -1051,4 +1112,7 @@ async def _decode_image_response(data: dict[str, Any]) -> bytes:
         response = await _http.get(first["url"])
         response.raise_for_status()
         return response.content
-    raise ValueError("LiteLLM image response did not include b64_json or url")
+    raise ValueError(
+        "The image provider returned a response with neither inline image data nor a URL "
+        "to download. This is an unexpected provider response format."
+    )

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { ImagePrompt } from "../types/api";
 import { PromptLineageCard } from "./PromptLineageCard";
 import { Button } from "./ui/Button";
@@ -37,6 +37,7 @@ interface PanelDetailModalProps {
   status?: "done" | "failed" | "pending" | "queued" | "running" | "stale";
   failureClassification?: string | null;
   errorMessage?: string | null;
+  errorDetail?: string | null;
   accepted?: boolean;
   versionCount?: number;
   onNextUnaccepted?: (() => void) | null;
@@ -279,6 +280,8 @@ function EditTabContent({
   lastRewrittenPrompt,
   onInstructionRegen,
   onGenerateFromDraft,
+  starterInstruction,
+  onStarterConsumed,
 }: {
   project: string;
   sceneId: string;
@@ -291,9 +294,25 @@ function EditTabContent({
   lastRewrittenPrompt: ImagePrompt | null;
   onInstructionRegen: (instruction: string) => void;
   onGenerateFromDraft: () => void;
+  starterInstruction: string | null;
+  onStarterConsumed: () => void;
 }) {
   const [instruction, setInstruction] = useState("");
   const [instructionError, setInstructionError] = useState<string | null>(null);
+  const instructionTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (starterInstruction === null) return;
+    setInstruction(starterInstruction);
+    setInstructionError(null);
+    onStarterConsumed();
+    const node = instructionTextareaRef.current;
+    if (node) {
+      node.focus();
+      const end = node.value.length;
+      node.setSelectionRange(end, end);
+    }
+  }, [starterInstruction, onStarterConsumed]);
   const [confirmInstruction, setConfirmInstruction] = useState(false);
   const [confirmGenerate, setConfirmGenerate] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -319,29 +338,27 @@ function EditTabContent({
 
   const handleGenerateFromDraft = async () => {
     setIsGenerating(true);
+    const key = `${sceneId}-${panelNumber}`;
+    let startedRegen = false;
     try {
       await updatePrompt.mutateAsync({ project, sceneId, data: draft });
       queryClient.invalidateQueries({ queryKey: ["project", project, "direct", sceneId] });
-      const key = `${sceneId}-${panelNumber}`;
       begin(project, key);
-      regenPanel.mutate(
-        { project, sceneId, panelNumber },
-        {
-          onSuccess: (data) => attachJob(project, key, data.job),
-          onError: (err) => {
-            if (
-              maybeShowInsufficientCredits(err, {
-                actionLabel: "Regenerate panel",
-                onRetry: handleGenerateFromDraft,
-              })
-            ) {
-              return;
-            }
-            fail(project, key, err instanceof Error ? err.message : "Regeneration failed");
-          },
-        },
-      );
+      startedRegen = true;
+      const data = await regenPanel.mutateAsync({ project, sceneId, panelNumber });
+      attachJob(project, key, data.job);
       onGenerateFromDraft();
+    } catch (err) {
+      if (
+        maybeShowInsufficientCredits(err, {
+          actionLabel: "Regenerate panel",
+          onRetry: handleGenerateFromDraft,
+        })
+      ) {
+        if (startedRegen) fail(project, key, err instanceof Error ? err.message : "Regeneration failed");
+        return;
+      }
+      if (startedRegen) fail(project, key, err instanceof Error ? err.message : "Regeneration failed");
     } finally {
       setIsGenerating(false);
       setConfirmGenerate(false);
@@ -375,6 +392,7 @@ function EditTabContent({
           NATURAL-LANGUAGE INSTRUCTION
         </label>
         <textarea
+          ref={instructionTextareaRef}
           value={instruction}
           onChange={(e) => { setInstruction(e.target.value); if (instructionError) setInstructionError(null); }}
           maxLength={500}
@@ -544,11 +562,13 @@ export function PanelDetailModal({
   status,
   failureClassification,
   errorMessage,
+  errorDetail,
   accepted = false,
   versionCount = 0,
   onNextUnaccepted,
 }: PanelDetailModalProps) {
   const [activeTab, setActiveTab] = useState<TabId>("review");
+  const [editStarterInstruction, setEditStarterInstruction] = useState<string | null>(null);
   const [draft, setDraft] = useState<ImagePrompt | null>(null);
   const [lastRewrittenPrompt, setLastRewrittenPrompt] = useState<ImagePrompt | null>(null);
   const [activeDisplayUrl, setActiveDisplayUrl] = useState<string>(imageUrl);
@@ -607,55 +627,57 @@ export function PanelDetailModal({
     || (failureClassification === "provider_blocked"
       ? "The image provider blocked this panel. Edit the prompt and regenerate before composing."
       : "Image generation failed. Check Metadata for the raw model response, edit the prompt if needed.");
+  const failureStarter = failureClassification === "provider_blocked"
+    ? "The safety filter blocked this image — soften or remove the element it flagged (violence, gore, nudity, etc.) while keeping the panel's intent."
+    : "";
 
-  const handleQuickRedo = () => {
-    const key = `${sceneId}-${panelNumber}`;
-    begin(project, key);
-    onClose();
-    regenPanel.mutate(
-      { project, sceneId, panelNumber },
-      {
-        onSuccess: (data) => attachJob(project, key, data.job),
-        onError: (err) => {
-          if (
-            maybeShowInsufficientCredits(err, {
-              actionLabel: "Regenerate panel",
-              onRetry: handleQuickRedo,
-            })
-          ) {
-            return;
-          }
-          fail(project, key, err instanceof Error ? err.message : "Regeneration failed");
-        },
-      },
-    );
+  const handleFixWithPrompt = () => {
+    setEditStarterInstruction(failureStarter);
+    setActiveTab("edit");
   };
 
-  const handleInstructionRegen = (instruction: string) => {
+  const handleQuickRedo = async () => {
     const key = `${sceneId}-${panelNumber}`;
     begin(project, key);
-    onClose();
-    instructedRegen.mutate(
-      { project, sceneId, panelNumber, instruction },
-      {
-        onSuccess: (data) => {
-          attachJob(project, key, data.job);
-          setLastRewrittenPrompt(data.prompt);
-          queryClient.invalidateQueries({ queryKey: ["project", project, "direct", sceneId] });
-        },
-        onError: (err) => {
-          if (
-            maybeShowInsufficientCredits(err, {
-              actionLabel: "Regenerate panel",
-              onRetry: () => handleInstructionRegen(instruction),
-            })
-          ) {
-            return;
-          }
-          fail(project, key, err instanceof Error ? err.message : "Instruction regeneration failed");
-        },
-      },
-    );
+    try {
+      const data = await regenPanel.mutateAsync({ project, sceneId, panelNumber });
+      attachJob(project, key, data.job);
+      onClose();
+    } catch (err) {
+      if (
+        maybeShowInsufficientCredits(err, {
+          actionLabel: "Regenerate panel",
+          onRetry: handleQuickRedo,
+        })
+      ) {
+        fail(project, key, err instanceof Error ? err.message : "Regeneration failed");
+        return;
+      }
+      fail(project, key, err instanceof Error ? err.message : "Regeneration failed");
+    }
+  };
+
+  const handleInstructionRegen = async (instruction: string) => {
+    const key = `${sceneId}-${panelNumber}`;
+    begin(project, key);
+    try {
+      const data = await instructedRegen.mutateAsync({ project, sceneId, panelNumber, instruction });
+      attachJob(project, key, data.job);
+      setLastRewrittenPrompt(data.prompt);
+      queryClient.invalidateQueries({ queryKey: ["project", project, "direct", sceneId] });
+      onClose();
+    } catch (err) {
+      if (
+        maybeShowInsufficientCredits(err, {
+          actionLabel: "Regenerate panel",
+          onRetry: () => handleInstructionRegen(instruction),
+        })
+      ) {
+        fail(project, key, err instanceof Error ? err.message : "Instruction regeneration failed");
+        return;
+      }
+      fail(project, key, err instanceof Error ? err.message : "Instruction regeneration failed");
+    }
   };
 
   const handleDraftChange = (patch: Partial<ImagePrompt>) => {
@@ -712,6 +734,32 @@ export function PanelDetailModal({
                 <div className="border-[2px] border-hero-red bg-hero-red/8 p-3">
                   <div className="font-meta text-[0.58rem] tracking-[0.16em] text-hero-red">{failureTitle}</div>
                   <p className="mt-1 text-sm leading-6 text-ink-black/75">{failureMessage}</p>
+                  {errorDetail && (
+                    <details className="mt-2">
+                      <summary className="cursor-pointer font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/55 hover:text-hero-red">
+                        SHOW PROVIDER ERROR
+                      </summary>
+                      <pre className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap break-words border-[1px] border-ink-black/15 bg-bristol/60 p-2 font-mono text-[0.7rem] leading-5 text-ink-black/70">
+                        {errorDetail}
+                      </pre>
+                    </details>
+                  )}
+                  <div className="mt-2.5 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={handleQuickRedo}
+                      className="border-[2px] border-hero-red bg-bristol px-3 py-1.5 font-meta text-[0.58rem] tracking-[0.14em] text-hero-red transition-colors hover:bg-hero-red hover:text-bristol"
+                    >
+                      QUICK RE-DO · {creditsLabel}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleFixWithPrompt}
+                      className="border-[2px] border-ink-black bg-ink-black px-3 py-1.5 font-meta text-[0.58rem] tracking-[0.14em] text-bristol transition-colors hover:bg-ink-black/85"
+                    >
+                      FIX WITH PROMPT →
+                    </button>
+                  </div>
                 </div>
               )}
               <div className="flex min-h-0 flex-1 items-center justify-center bg-ink-black">
@@ -785,6 +833,8 @@ export function PanelDetailModal({
                   lastRewrittenPrompt={lastRewrittenPrompt}
                   onInstructionRegen={handleInstructionRegen}
                   onGenerateFromDraft={onClose}
+                  starterInstruction={editStarterInstruction}
+                  onStarterConsumed={() => setEditStarterInstruction(null)}
                 />
               )}
               {activeTab === "prompt" && (

@@ -73,8 +73,8 @@ is one entry in `litellm/config.yaml`.
 | Alias | Purpose |
 |-------|---------|
 | `image-fast` | Fast / dev-mode image generation |
-| `image-balanced` | Balanced image generation (default; gpt-image-2) |
-| `image-quality` | Highest-fidelity image generation |
+| `image-balanced` | Balanced image generation (default; Gemini Pro Image) |
+| `image-quality` | Highest-fidelity image generation (gpt-image-2) |
 
 ## Environment Variables
 

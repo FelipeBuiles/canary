@@ -13,10 +13,12 @@ export function runPipeline(
   project: string,
   stage?: string,
   rerun?: boolean,
+  retryFailed?: boolean,
 ): Promise<{ status: string; stage: string }> {
   const params = new URLSearchParams();
   if (stage) params.set("stage", stage);
   if (rerun) params.set("rerun", "1");
+  if (retryFailed) params.set("retry_failed", "1");
   const query = params.toString();
   return apiFetch(`/projects/${encodeURIComponent(project)}/run${query ? `?${query}` : ""}`, {
     method: "POST",

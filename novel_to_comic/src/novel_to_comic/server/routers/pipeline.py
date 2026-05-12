@@ -87,7 +87,15 @@ class InstructedPropRegenRequest(BaseModel):
     instruction: str = Field(min_length=1, max_length=500)
 
 
-async def _run_stage(stage: str, config, project_dir, state, queue: asyncio.Queue):
+async def _run_stage(
+    stage: str,
+    config,
+    project_dir,
+    state,
+    queue: asyncio.Queue,
+    *,
+    retry_failed: bool = False,
+):
     """Execute a single stage, feeding events into the queue."""
     started = time.perf_counter()
     logger.info(
@@ -99,7 +107,16 @@ async def _run_stage(stage: str, config, project_dir, state, queue: asyncio.Queu
         stage_obj = REGISTRY.get(stage)
         if not stage_obj:
             raise ValueError(f"Unknown stage: {stage}")
-        await stage_obj.run(config, project_dir, state, on_event=lambda e: queue.put_nowait(e))
+        extra_kwargs: dict = {}
+        if retry_failed and stage == "draw":
+            extra_kwargs["retry_failed"] = True
+        await stage_obj.run(
+            config,
+            project_dir,
+            state,
+            on_event=lambda e: queue.put_nowait(e),
+            **extra_kwargs,
+        )
         elapsed = time.perf_counter() - started
         status = state.stages[stage].status.value
         status_color = "green" if status in {"complete", "awaiting_review"} else "yellow"
@@ -146,6 +163,8 @@ async def _run_stage_with_credits(
     queue: asyncio.Queue,
     user_id: str,
     project_id: str | None,
+    *,
+    retry_failed: bool = False,
 ):
     """Reserve credits, run the stage, then settle or release the reservation."""
     db = get_db()
@@ -181,7 +200,7 @@ async def _run_stage_with_credits(
             stage=stage,
             job_id=job_id,
         ):
-            await _run_stage(stage, config, project_dir, state, queue)
+            await _run_stage(stage, config, project_dir, state, queue, retry_failed=retry_failed)
 
         s = state.stages[stage]
     finally:
@@ -377,6 +396,7 @@ async def run_pipeline(
     project_id: str,
     stage: Optional[str] = Query(None),
     rerun: bool = Query(False),
+    retry_failed: bool = Query(False),
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
@@ -387,6 +407,10 @@ async def run_pipeline(
         raise HTTPException(400, f"Unknown stage: {stage}. Valid: {STAGE_NAMES}")
     if rerun and not stage:
         raise HTTPException(400, "rerun=true requires a specific stage")
+    if retry_failed and stage != "draw":
+        raise HTTPException(400, "retry_failed=true is only supported for stage=draw")
+    if retry_failed and rerun:
+        raise HTTPException(400, "retry_failed and rerun are mutually exclusive")
 
     # Concurrency guard
     running = request.app.state.running_tasks
@@ -432,7 +456,9 @@ async def run_pipeline(
     queue: asyncio.Queue = asyncio.Queue()
     request.app.state.event_queues[pkey] = queue
 
-    job = _run_stage_with_credits(stage, config, project_dir, state, queue, user_id, project_id)
+    job = _run_stage_with_credits(
+        stage, config, project_dir, state, queue, user_id, project_id, retry_failed=retry_failed
+    )
 
     task = asyncio.create_task(_run_job(pkey, request, job))
 

@@ -36,6 +36,9 @@ console = Console()
 _clean = clean
 _shorten = shorten
 
+_GPT_LOCATION_PLATE_WIDTH = 1536
+_GPT_LOCATION_PLATE_HEIGHT = 1024
+
 def _tokens(value: str) -> set[str]:
     return {
         token
@@ -174,6 +177,8 @@ def _location_plate_meta(
     style_ref: Path | None,
     loc,
     prompt: str,
+    width: int | None = None,
+    height: int | None = None,
     addendum: str = "",
 ) -> dict:
     meta = {
@@ -183,6 +188,9 @@ def _location_plate_meta(
         "visual_anchor": loc.visual_anchor,
         "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
     }
+    if is_gpt_image_2(config.effective_image_model()) and width and height:
+        meta["width"] = width
+        meta["height"] = height
     if addendum:
         meta["instruction_addendum"] = addendum
     return meta
@@ -233,12 +241,12 @@ def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
     return None
 
 
-def _character_ref_style_ref(config: Config, style_ref: Path | None) -> Path | None:
+def _cast_asset_style_ref(config: Config, style_ref: Path | None) -> Path | None:
     if not is_gpt_image_2(config.effective_image_model()):
         return style_ref
-    # The gpt-image-2 route uses edit/reference-style conditioning.
-    # Reusing a previous character sample here can copy that character's
-    # clothing or body details into the next reference sheet.
+    # The gpt-image-2 route treats reference inputs as edit conditioning.
+    # Reusing the selected style sample for cast assets can carry over subject
+    # details or texture artifacts, so keep its cast refs text-driven.
     return None
 
 
@@ -272,13 +280,41 @@ def _character_ref_prompt(
 
 
 def _location_plate_prompt(config: Config, loc, addendum: str = "") -> str:
-    addendum_block = f" USER FIX NOTE: {addendum.strip()}." if addendum.strip() else ""
+    addendum_text = addendum.strip()
+    if is_gpt_image_2(config.effective_image_model()):
+        addendum_block = f"\nUSER FIX NOTE: {addendum_text}\n" if addendum_text else ""
+        return (
+            f"{config.style_template.strip()}\n\n"
+            f"LOCATION DESIGN PLATE\n"
+            f"{loc.visual_anchor}\n"
+            f"{addendum_block}\n"
+            f"Create a clean wide environment design plate, not a texture study. "
+            f"No characters present. No text. "
+            f"Build the image from large simple readable masses and clear silhouettes. "
+            f"Use only the setting elements from the anchor, grouped into major shapes such as "
+            f"tree masses, ground plane, path, water, building, fence, sky, or shadow when they apply. "
+            f"If the setting contains dense woods, underbrush, leaves, ferns, grass, debris, or bark, "
+            f"summarize them as a few grouped shapes with calm gaps between them. "
+            f"Leave broad quiet areas of sky, ground, water, or shadow; do not fill every surface. "
+            f"Use broad opaque gouache color blocks and clean edges with minimal brush texture. "
+            f"Do not render leaf-by-leaf, grass-blade-by-grass-blade, bark-chip-by-bark-chip, "
+            f"or fern-frond-by-fern-frond. "
+            f"No repeated stamps, pattern tiling, wallpaper texture, speckled dappling, "
+            f"noisy grain, muddy micro-detail, or fractal foliage."
+        )
+    addendum_block = f" USER FIX NOTE: {addendum_text}." if addendum_text else ""
     return (
         f"{config.style_template} {loc.visual_anchor}{addendum_block} "
         f"Wide establishing shot, no characters present, clean readable background, "
         f"cinematic composition. No text. No noisy grain, speckled dappling, "
         f"repeated texture fields, pattern tiling, or muddy micro-detail."
     )
+
+
+def _location_plate_dimensions(config: Config) -> tuple[int | None, int | None]:
+    if is_gpt_image_2(config.effective_image_model()):
+        return _GPT_LOCATION_PLATE_WIDTH, _GPT_LOCATION_PLATE_HEIGHT
+    return None, None
 
 
 def _prop_ref_prompt(config: Config, prop: Prop, addendum: str = "") -> str:
@@ -334,7 +370,7 @@ async def regenerate_character_ref(
     tmp_path = output_path.with_name(
         f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
     )
-    style_ref = _character_ref_style_ref(config, _find_style_ref(project_dir, config.style_template))
+    style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
     addendum = _read_character_ref_addendum(project_dir, char.id)
     prompt = _character_ref_prompt(config, story_bible, char, addendum)
     meta = _character_ref_meta(config, project_dir, style_ref, char, prompt, addendum)
@@ -378,7 +414,7 @@ async def regenerate_prop_ref(
     tmp_path = output_path.with_name(
         f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
     )
-    style_ref = _find_style_ref(project_dir, config.style_template)
+    style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
     addendum = _read_prop_ref_addendum(project_dir, prop.id)
     prompt = _prop_ref_prompt(config, prop, addendum)
     meta = _prop_ref_meta(config, project_dir, style_ref, prop, prompt, addendum)
@@ -420,10 +456,11 @@ async def regenerate_location_plate(
     tmp_path = output_path.with_name(
         f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
     )
-    style_ref = _find_style_ref(project_dir, config.style_template)
+    style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
     addendum = _read_location_plate_addendum(project_dir, loc.id)
     prompt = _location_plate_prompt(config, loc, addendum)
-    meta = _location_plate_meta(config, project_dir, style_ref, loc, prompt, addendum)
+    width, height = _location_plate_dimensions(config)
+    meta = _location_plate_meta(config, project_dir, style_ref, loc, prompt, width, height, addendum)
 
     try:
         flux_result = None
@@ -432,6 +469,8 @@ async def regenerate_location_plate(
                 config,
                 prompt,
                 tmp_path,
+                width=width,
+                height=height,
                 reference_image_path=style_ref,
                 ref_type="style",
                 feature="cast.location_plate",
@@ -466,13 +505,13 @@ async def _generate_character_refs(
     # Without it, the model applies different stylistic conventions per character
     # type (human → concept art, cat → anime, creature → dark fantasy).
     candidate_style_ref = _find_style_ref(project_dir, config.style_template)
-    style_ref = _character_ref_style_ref(config, candidate_style_ref)
+    style_ref = _cast_asset_style_ref(config, candidate_style_ref)
     if style_ref:
         console.print(f"[dim]Using style reference: {style_ref.name}[/dim]")
     elif candidate_style_ref and is_gpt_image_2(config.effective_image_model()):
         console.print(
-            "[dim]Skipping style image reference for gpt-image-2 character sheets "
-            "to avoid copying another character's outfit.[/dim]"
+            "[dim]Skipping style image reference for gpt-image-2 cast refs "
+            "to avoid copied subject details and texture artifacts.[/dim]"
         )
     else:
         console.print(
@@ -513,8 +552,8 @@ async def _generate_character_refs(
                       "message": f"Generating ref sheet for {char.name}"})
                 # Square 2x2 grid — each quadrant gives a full-body figure
                 # ~512x512px of space, enough to avoid edge clipping.
-                # Pass the style sample as a style reference to lock visual style
-                # across all characters regardless of their subject type.
+                # Pass the style sample when the active image model handles
+                # references reliably; gpt-image-2 cast refs stay text-driven.
                 flux_result = await flux.generate_image(
                     config, prompt, output_path,
                     width=1024, height=1024,
@@ -558,8 +597,21 @@ async def _generate_location_plates(
             output_path = plates_dir / f"{loc.id}.png"
             addendum = _read_location_plate_addendum(project_dir, loc.id)
             prompt = _location_plate_prompt(config, loc, addendum)
-            style_ref = _find_style_ref(project_dir, config.style_template)
-            meta = _location_plate_meta(config, project_dir, style_ref, loc, prompt, addendum)
+            style_ref = _cast_asset_style_ref(
+                config,
+                _find_style_ref(project_dir, config.style_template),
+            )
+            width, height = _location_plate_dimensions(config)
+            meta = _location_plate_meta(
+                config,
+                project_dir,
+                style_ref,
+                loc,
+                prompt,
+                width,
+                height,
+                addendum,
+            )
             if artifacts.asset_matches_meta(output_path, meta):
                 record_item_done(state, "cast", cost=0.0)
                 emit({"type": "log", "stage": "cast", "level": "dim",
@@ -576,6 +628,8 @@ async def _generate_location_plates(
                     config,
                     prompt,
                     output_path,
+                    width=width,
+                    height=height,
                     reference_image_path=style_ref,
                     ref_type="style",
                     feature="cast.location_plate",
@@ -599,10 +653,10 @@ async def _generate_prop_refs(
     """Generate one neutral-background reference image per story prop.
 
     Stage 1 already filters props down to those that recur or are plot-central,
-    so every prop in the bible gets a ref sheet. The image is conditioned on
-    the active style sample so prop refs share the panel art style — passing
-    a prop ref alongside character refs at draw time keeps the object visually
-    consistent across panels instead of relying on text descriptions alone.
+    so every prop in the bible gets a ref sheet. For models that handle visual
+    references reliably, the image is conditioned on the active style sample so
+    prop refs share the panel art style. For gpt-image-2, style stays text-only
+    to avoid edit-reference texture artifacts.
     """
     emit = on_event or _NOOP
     props_to_gen = [p for p in story_bible.props if not prop_ids or p.id in prop_ids]
@@ -613,7 +667,7 @@ async def _generate_prop_refs(
     emit({"type": "log", "stage": "cast", "level": "info",
           "message": "Generating prop reference images..."})
 
-    style_ref = _find_style_ref(project_dir, config.style_template)
+    style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
 
     with make_progress(on_event) as progress:
         task = progress.add_task("Prop refs", total=len(props_to_gen))

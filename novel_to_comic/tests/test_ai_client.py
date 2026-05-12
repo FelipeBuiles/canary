@@ -171,7 +171,7 @@ def test_extract_usage_preserves_litellm_response_cost():
 def test_pricing_estimate_drift_pct_only_for_provider_reported_image_cost():
     usage = client.UsageRecord(
         provider="openai",
-        model="image-balanced",
+        model="image-quality",
         provider_model="openai/gpt-image-2",
         operation="image",
         image_count=1,
@@ -239,7 +239,7 @@ def test_gpt_image_2_alias_uses_exact_valid_panel_size(monkeypatch, tmp_path: Pa
     asyncio.run(
         client.generate_image(
             config=Config(),
-            model="image-balanced",
+            model="image-quality",
             prompt="draw this",
             output_path=output_path,
             width=768,

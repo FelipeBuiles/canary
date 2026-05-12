@@ -24,6 +24,7 @@ interface PanelCardProps {
   regenMode?: "queued" | "running" | null;
   regenError?: string | null;
   isDrawRunning?: boolean;
+  isRetryFailedRunning?: boolean;
   title?: string;
   description?: string;
   onPanelClick?: () => void;
@@ -41,6 +42,7 @@ export function PanelCard({
   regenMode = null,
   regenError,
   isDrawRunning = false,
+  isRetryFailedRunning = false,
   title,
   description,
   onPanelClick,
@@ -49,6 +51,7 @@ export function PanelCard({
     { status, accepted, version_count: undefined },
     regenMode,
     isDrawRunning,
+    isRetryFailedRunning,
   );
   const badge = STATE_BADGE[displayState];
   const panelNum = String(panelNumber).padStart(2, "0");

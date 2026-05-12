@@ -13,9 +13,11 @@ export function getPanelDisplayState(
   img: Pick<ImageStatus, "status" | "accepted" | "version_count">,
   regenMode: "queued" | "running" | null,
   isDrawRunning: boolean,
+  isRetryFailedRunning: boolean = false,
 ): PanelDisplayState {
   if (img.accepted) return "accepted";
   if (regenMode === "queued" || regenMode === "running") return "generating";
+  if (isRetryFailedRunning && img.status === "failed") return "generating";
   if (img.status === "failed") return "failed";
   if (img.status === "stale") return "stale";
   if (isDrawRunning && img.status === "pending") return "generating";

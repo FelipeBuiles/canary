@@ -38,9 +38,9 @@ GATEWAY_IMAGE_FAST = "image-fast"
 GATEWAY_IMAGE_BALANCED = "image-balanced"
 GATEWAY_IMAGE_QUALITY = "image-quality"
 
-# image-balanced is the only alias that resolves to OpenAI gpt-image-2. Used by
+# image-quality is the only alias that resolves to OpenAI gpt-image-2. Used by
 # stage code that needs to enable the OpenAI image-edit / reference workflow.
-GPT_IMAGE_2_ALIASES: frozenset[str] = frozenset({GATEWAY_IMAGE_BALANCED})
+GPT_IMAGE_2_ALIASES: frozenset[str] = frozenset({GATEWAY_IMAGE_QUALITY})
 
 
 def is_gpt_image_2(model: str) -> bool:

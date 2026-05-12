@@ -188,7 +188,16 @@ export function StoryBibleRoom() {
   const stageStatus = stageInfo?.status ?? "pending";
 
   if (isLoading || (!bible && stageStatus !== "pending")) {
-    return <RoomShell isLoading loadingText="LOADING STORY BIBLE…" />;
+    return (
+      <RoomShell
+        isLoading
+        loadingText="LOADING STORY BIBLE…"
+        loadingStage="extract"
+        loadingStageStatus={stageStatus}
+        loadingStageItemsDone={stageInfo?.items_done}
+        loadingStageItemsTotal={stageInfo?.items_total}
+      />
+    );
   }
 
   if (error || !bible || !id) {

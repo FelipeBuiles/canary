@@ -935,7 +935,16 @@ export function CastRoom() {
   const stageStatus = stageInfo?.status ?? "pending";
 
   if (isLoading || (!bible && stageStatus !== "pending")) {
-    return <RoomShell isLoading loadingText="LOADING CAST…" />;
+    return (
+      <RoomShell
+        isLoading
+        loadingText="LOADING CAST…"
+        loadingStage="cast"
+        loadingStageStatus={stageStatus}
+        loadingStageItemsDone={stageInfo?.items_done}
+        loadingStageItemsTotal={stageInfo?.items_total}
+      />
+    );
   }
 
   if (!bible || !id) {
