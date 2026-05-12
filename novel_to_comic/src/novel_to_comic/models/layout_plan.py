@@ -69,6 +69,9 @@ class LLMPanelSpec(BaseModel):
     beat_indices: list[int]  # 1-indexed beat indices covered by this panel
     characters_present: list[str] = Field(default_factory=list)  # character IDs
     character_actions: dict[str, str] = Field(default_factory=dict)  # char_id -> body action
+    character_expressions: dict[str, str] = Field(default_factory=dict)  # char_id -> facial expression
+    key_objects: list[str] = Field(default_factory=list)  # visible objects/props that must appear
+    visual_requirements: list[str] = Field(default_factory=list)  # concrete must-show details
     shot_type: str = "medium"
     camera_angle: str = "eye-level"
     camera_note: str = ""
@@ -146,6 +149,8 @@ class PlannedPanel(BaseModel):
     character_actions: dict[str, str] = Field(default_factory=dict)
     character_expressions: dict[str, str] = Field(default_factory=dict)
     character_positions: dict[str, str] = Field(default_factory=dict)
+    key_objects: list[str] = Field(default_factory=list)
+    visual_requirements: list[str] = Field(default_factory=list)
     background_description: str = ""
     camera_note: str = ""
     lighting: str = ""

@@ -22,9 +22,9 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `google_cloud_project` | `str` | `''` | Google Cloud project ID for Vertex AI |
 | `google_cloud_location` | `str` | `'global'` | Vertex AI location |
 | `extraction_model` | `str` | `'extract-balanced'` | Stage 1 gateway alias |
-| `screenplay_model` | `str` | `'screenplay-balanced'` | Stage 3 gateway alias |
-| `panel_model` | `str` | `'panel-balanced'` | Stage 4/5 gateway alias |
-| `prompt_model` | `str` | `'prompt-balanced'` | Stage 6 gateway alias |
+| `screenplay_model` | `str` | `'screenplay-balanced'` | Stage 4 gateway alias |
+| `panel_model` | `str` | `'panel-balanced'` | Stage 5 gateway alias |
+| `prompt_model` | `str` | `'prompt-balanced'` | Prompt/style/instruction task gateway alias |
 | `quality_preset` | `QualityPreset or None` | `None` | Overrides all five intent fields (extract/adapt/plan/prompt/image). `fast` \| `balanced` \| `quality`. `dev_mode` forces `fast`. Each preset routes to a distinct gateway alias defined in `litellm/config.yaml`. |
 | `image_provider` | `Literal` | `'gemini'` | Legacy metadata field; runtime image calls use LiteLLM |
 | `image_model` | `str` | `'image-balanced'` | Image gateway alias |
@@ -41,7 +41,7 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `continuity_mode` | `str` | `'hybrid'` | Character consistency mode: `off` \| `text_only` \| `ref_only` \| `hybrid` |
 | `negative_prompt` | `str` | `'ugly, deformed, blurry, ...'` | Applied to Together AI / SDXL models only (Gemini ignores) |
 | `style_template` | `str` | `'High quality visual storytelling. ...'` | Injected verbatim at start of every image prompt |
-| `plan_mode` | `Literal` | `'llm'` | Stage 4 planning mode: `llm` \| `heuristic` |
+| `plan_mode` | `Literal` | `'llm'` | Stage 5 planning mode: `llm` \| `heuristic` |
 | `max_panels_per_scene` | `int` | `8` | Cap on panels per scene |
 | `max_panels_per_page` | `int` | `6` | Panels per assembled comic page |
 | `max_words_per_bubble` | `int` | `35` | Max words per dialogue bubble |
@@ -112,10 +112,14 @@ The `PATCH /config` endpoint accepts updates only for fields listed in
 the allowlist is silently ignored. The current allowlist:
 
 ```
-quality_preset, target_language, style_template, dev_mode, image_provider,
+quality_preset, target_language, dev_mode, image_provider,
 image_model, fallback_image_model, image_quality, image_steps,
 continuity_mode, plan_mode, comic_theme, negative_prompt,
 max_panels_per_scene, max_panels_per_page, max_words_per_bubble,
 parallel_batch_size, max_concurrent_requests, cost_limit_usd,
 flux_guidance_scale
 ```
+
+`style_template` is selected through the style workflow
+(`PATCH /api/projects/{project}/styles/active`), not the generic config PATCH
+endpoint.

@@ -98,7 +98,8 @@
       "Bash(rtk git *)",
       "WebFetch(domain:github.com)",
       "Bash(docker pull *)",
-      "Bash(awk -F: '{print $1}')"
+      "Bash(awk -F: '{print $1}')",
+      "Bash(ask-ai \"How are prompts built for image generation? Specifically, how are 'must shows' \\(props\\) and characters referenced in the final prompt sent to image gen? Do prompts include literal IDs like 'prop_001' or 'char_001'? Trace the full data flow from layout plan → prompt assembly → image generation call. Quote relevant code sections.\" /Users/jbuiles/Code/canary/novel_to_comic/src/novel_to_comic/prompting.py /Users/jbuiles/Code/canary/novel_to_comic/src/novel_to_comic/stages/s7_draw.py /Users/jbuiles/Code/canary/novel_to_comic/src/novel_to_comic/stages/s5_layout_plan.py /Users/jbuiles/Code/canary/novel_to_comic/src/novel_to_comic/models/prompt.py /Users/jbuiles/Code/canary/novel_to_comic/src/novel_to_comic/models/layout_plan.py)"
     ]
   },
   "hooks": {

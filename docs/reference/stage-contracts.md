@@ -11,16 +11,17 @@ it reads its inputs from disk and writes its own outputs. Never add cross-stage 
 
 | # | Stage | CLI/API name | LLM | Checkpoint? |
 |---|-------|-------------|-----|-------------|
-| 1 | Extract | `extract` | Configurable text model (default: Gemini 3.1 Pro) | Yes |
-| 2 | Cast | `cast` | Image gen (config.provider) | Yes |
-| 3 | Adapt | `adapt` | Configurable text model (default: Gemini 3.1 Pro) | No |
-| 4 | Plan | `plan` | Configurable text model (default: Gemini Pro, `plan_mode: llm`) | No |
-| 5 | Storyboard | `storyboard` | None (projection from layout plan) | No |
-| 6 | Direct | `direct` | Configurable text model (default: Gemini Flash-Lite) | No |
-| 7 | Draw | `draw` | Image gen (config.provider) | Yes |
-| 8 | Compose | `compose` | None (deterministic) | No |
+| 1 | Extract | `extract` | Configurable text alias (`extract-*`) | Yes |
+| 2 | Style | `style` | Configurable prompt alias + image alias | Yes |
+| 3 | Cast | `cast` | Image alias through LiteLLM | Yes |
+| 4 | Adapt | `adapt` | Configurable screenplay alias (`screenplay-*`) | No |
+| 5 | Plan | `plan` | Configurable panel alias (`panel-*`, `plan_mode: llm`) | No |
+| 6 | Storyboard | `storyboard` | None (projection from layout plan) | No |
+| 7 | Direct | `direct` | None (deterministic prompt spec assembly) | No |
+| 8 | Draw | `draw` | Image alias through LiteLLM | Yes |
+| 9 | Compose | `compose` | None (deterministic) | No |
 
-**Checkpoint stages** (`CHECKPOINT_STAGES = {"extract", "cast", "direct", "draw"}`):
+**Checkpoint stages** (`CHECKPOINT_STAGES = {"extract", "style", "cast", "direct", "draw"}`):
 pipeline pauses at `awaiting_review` after the stage completes. Advance with
 `POST /api/projects/{project}/approve/{stage}` via the API.
 
@@ -35,29 +36,51 @@ pipeline pauses at `awaiting_review` after the stage completes. Advance with
 - `story_bible.json` — central artifact; all downstream stages read this
 - `scenes/scene_NNN.txt` — one file per extracted scene
 
-**What it does:** Uses the configured text model (default: Gemini 3.1 Pro, 1M context)
+**What it does:** Uses the configured extraction model alias
 to extract characters, locations, scenes, narrative arcs, and props from the entire
 novel. Also splits the novel into per-scene text files.
 
 ---
 
-## Stage 2 — Cast (`s2_index.py`)
+## Stage 2 — Style (`s2_style.py`)
 
 **Reads:**
 - `story_bible.json`
-- `scenes/scene_NNN.txt`
 
 **Writes:**
-- `refs/char_NNN/` — character reference sheets: `front.png`, `three_quarter.png`, `side.png`, `action.png`
-- `plates/loc_NNN.png` — location background plates
+- `samples/style_suggestions.json` — generated style templates and metadata
+- `samples/style_N.png` — one sample image per suggestion
 
-**What it does:** Generates character reference images (4 angles) and location
-plates via the configured image provider. These reference images are injected
-into Stage 7 prompts.
+**What it does:** Generates five distinct visual style options and one sample
+image per option, then pauses for review. The selected style is persisted into
+`config.yaml` as `style_template`. Post-style stages are blocked until a style
+is selected.
 
 ---
 
-## Stage 3 — Adapt (`s3_screenplay.py`)
+## Stage 3 — Cast (`s3_cast.py`)
+
+**Reads:**
+- `story_bible.json`
+- `samples/style_suggestions.json` and matching `samples/style_N.png` when available
+- `config.yaml` active `style_template`
+
+**Writes:**
+- `refs/char_NNN/sheet.png` — 2x2 character reference sheet
+- `refs/char_NNN/sheet.png.meta.json` — generation metadata
+- `refs/char_NNN/instructions.jsonl` — accepted instruction addenda for targeted regen
+- `plates/loc_NNN.png` — location background plates
+- `plates/loc_NNN.png.meta.json` — generation metadata
+- `plates/loc_NNN.instructions.jsonl` — accepted instruction addenda for targeted regen
+
+**What it does:** Generates character reference images (4 angles) and location
+plates through the configured image alias. Style samples are used as visual
+references where supported. These reference images are injected into draw-stage
+requests.
+
+---
+
+## Stage 4 — Adapt (`s4_screenplay.py`)
 
 **Reads:**
 - `story_bible.json`
@@ -72,7 +95,7 @@ directly into the prompt.
 
 ---
 
-## Stage 4 — Plan (`s4_layout_plan.py`)
+## Stage 5 — Plan (`s5_layout_plan.py`)
 
 **Reads:**
 - `story_bible.json`
@@ -88,7 +111,7 @@ and mark rare narrative page breaks. If the LLM call fails for a scene, that sce
 falls back to the deterministic heuristic planner. `plan_mode: "heuristic"` keeps
 the one-beat-per-panel behavior.
 
-After scene planning, Stage 4 applies a cross-scene transition pass and an
+After scene planning, Stage 5 applies a cross-scene transition pass and an
 importance-aware paginator. The paginator selects `layout_template` values from
 `LAYOUT_PRESET_GEOMETRIES`, respects `page_break_after`, and gives `hero` /
 `splash` panels more visual space. This plan is the source of truth for all
@@ -96,7 +119,7 @@ downstream stage ordering.
 
 ---
 
-## Stage 5 — Storyboard (`s4_panels.py`)
+## Stage 6 — Storyboard (`s5_panels.py`)
 
 **Reads:**
 - `plan/layout_plan.json`
@@ -110,41 +133,47 @@ tools during the migration period.
 
 ---
 
-## Stage 6 — Direct (`s5_prompts.py`)
+## Stage 7 — Direct (`s6_storyboard.py`)
 
 **Reads:**
 - `plan/layout_plan.json`
 - `story_bible.json` (for character/location visual anchors)
-- `refs/char_NNN/*.png` (reference image paths)
+- `refs/char_NNN/sheet.png` (reference image paths)
 - `plates/loc_NNN.png` (plate paths)
 
 **Writes:**
 - `direct/scene_NNN/panel_NNN.json` — one `ImagePrompt` JSON per panel
 
-**What it does:** Assembles the complete image generation prompt for each panel.
-Injects `visual_anchor` fields verbatim, style template, and project-relative
-reference image paths. Prompt metadata carries `planned_panel_id`, shape intent,
-generation mode, crop/framing contract, transition hints, and optional
-`continuity_note`.
+**What it does:** Builds deterministic `ImagePrompt` specs for each planned
+panel. Prompts keep the style out of `full_prompt` for review; draw prepends the
+current active `style_template` at generation time so style changes do not
+require rebuilding prompt artifacts. Metadata carries `planned_panel_id`,
+caption hints, shape intent, generation mode, crop/framing contract, transition
+hints, and optional `continuity_note`.
 
 ---
 
-## Stage 7 — Draw (`s6_generate.py`)
+## Stage 8 — Draw (`s7_draw.py`)
 
 **Reads:**
 - `direct/scene_NNN/panel_NNN.json`
-- `refs/char_NNN/*.png` (loaded as binary for multi-reference)
+- `refs/char_NNN/sheet.png` (loaded as binary subject reference)
 - `plates/loc_NNN.png`
+- `samples/style_N.png` matching the active style when available
 
 **Writes:**
 - `draw/scene_NNN/panel_NNN.png`
+- `draw/scene_NNN/panel_NNN.png.meta.json`
+- `draw/scene_NNN/panel_NNN.png.failure.json` for provider/policy failures
+- `draw/panel_acceptance.json` for explicit panel acceptance state
 
 **What it does:** Runs image generation against the planner-owned prompt
-contracts through the LiteLLM gateway image alias. Subject references are loaded
-from project-relative prompt paths, while style/continuity references use the
-adjacent previous panel for smooth transitions or the style sample plus location
-plate otherwise. Generated image metadata records `planned_panel_id`. Pauses for
-human review before Stage 8.
+contracts through the LiteLLM gateway image alias. The active style template is
+prepended at generation time. Subject references are loaded from project-relative
+prompt paths, while style/continuity references use the adjacent previous panel
+for smooth transitions or the style sample plus location plate otherwise.
+Generated image metadata records `planned_panel_id`. Pauses for human review
+before compose.
 
 **Notes:**
 - `inter_request_delay` has been removed from the draw stage (it was always 0.0).
@@ -155,7 +184,7 @@ human review before Stage 8.
 
 ---
 
-## Stage 8 — Compose (`s7_assemble.py`)
+## Stage 9 — Compose (`s8_compose.py`)
 
 **Reads:**
 - `draw/scene_NNN/panel_NNN.png`
@@ -174,7 +203,7 @@ human review before Stage 8.
 
 **What it does:** Projects the layout plan into `ComicPage` JSON, then renders
 HTML via the theme system and screenshots to PNG via Playwright. The
-`page_NNN.json` file is the canonical Stage 8 editing surface. All page-editor
+`page_NNN.json` file is the canonical Stage 9 editing surface. All page-editor
 edits must persist through this JSON instead of bypassing it with renderer-only
 state.
 
@@ -213,14 +242,11 @@ state.
 Use the web UI or the pipeline API (not the CLI):
 
 ```bash
-# Run all stages from current state
-curl -X POST "http://localhost:8000/api/projects/my-novel/run"
-
-# Run a specific stage (clears downstream outputs)
+# Run a specific stage
 curl -X POST "http://localhost:8000/api/projects/my-novel/run?stage=draw"
 
-# Retry failed items within a stage
-curl -X POST "http://localhost:8000/api/projects/my-novel/run?stage=draw&retry_failed=true"
+# Rerun a stage from scratch and clear its downstream outputs
+curl -X POST "http://localhost:8000/api/projects/my-novel/run?stage=draw&rerun=true"
 
 # Approve a checkpoint stage
 curl -X POST "http://localhost:8000/api/projects/my-novel/approve/draw"
@@ -233,4 +259,5 @@ curl -X POST "http://localhost:8000/api/projects/my-novel/export"
 ```
 
 The state machine respects partial completion — already-done items are skipped
-unless `--force` or `retry_failed=true` is used.
+by stage code unless the stage is explicitly rerun with `rerun=true`, which
+resets the selected stage and downstream state/output paths first.

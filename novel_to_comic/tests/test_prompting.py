@@ -2,7 +2,7 @@
 
 from novel_to_comic.config import Config
 from novel_to_comic.models.layout_plan import PlannedPanel
-from novel_to_comic.models.story_bible import Character, Location, Scene, StoryBible
+from novel_to_comic.models.story_bible import Character, Location, Prop, Scene, StoryBible
 from novel_to_comic.prompting import build_planned_panel_prompt_spec, render_generation_prompt
 
 
@@ -49,6 +49,14 @@ def _story_bible() -> StoryBible:
             )
         ],
         narrative_arcs=[],
+        props=[
+            Prop(
+                id="prop_001",
+                name="Blue flowers",
+                visual_anchor="small vivid blue flowers with velvety petals",
+                first_appearance_scene="scene_002",
+            )
+        ],
     )
 
 
@@ -137,3 +145,36 @@ def test_generation_prompt_uses_structured_brief_and_noise_guardrails(tmp_path):
     assert "Avoid stochastic grain" in generation_prompt
     assert "interpret it as broad intentional structure rather than all-over noise" in generation_prompt
     assert "Do not copy sample-image artifacts" in generation_prompt
+
+
+def test_prompt_carries_key_objects_and_must_show_requirements(tmp_path):
+    panel = PlannedPanel(
+        panel_id="scene_002:panel_003",
+        scene_id="scene_002",
+        panel_number=3,
+        beat_ids=["scene_002:beat_004"],
+        shot_type="close-up",
+        camera_angle="high angle",
+        characters_present=["char_001"],
+        character_actions={"char_001": "pinches the blue flowers between careful fingers"},
+        character_expressions={"char_001": "mouth still, eyes fixed on the petals"},
+        character_positions={"char_001": "center foreground"},
+        key_objects=["Blue flowers"],
+        visual_requirements=[
+            "show the blue flowers pressed between her fingers",
+            "show her mouth still and eyes fixed on the petals",
+        ],
+        background_description="forest floor falls out of focus behind her hands",
+        lighting="thin sunlight through leaves",
+        mood="hushed",
+    )
+
+    prompt = build_planned_panel_prompt_spec(Config(), tmp_path, panel, _story_bible())
+    generation_prompt = render_generation_prompt(prompt, "Ink wash, quiet naturalism.")
+
+    assert "Key objects: Blue flowers" in prompt.full_prompt
+    assert "Must show: show the blue flowers pressed between her fingers" in prompt.full_prompt
+    assert "Blue flowers: small vivid blue flowers with velvety petals" in prompt.full_prompt
+    assert "Key objects:\n- Blue flowers" in generation_prompt
+    assert "Must show:\n- show the blue flowers pressed between her fingers" in generation_prompt
+    assert "Key props:\n- Blue flowers: small vivid blue flowers with velvety petals" in generation_prompt

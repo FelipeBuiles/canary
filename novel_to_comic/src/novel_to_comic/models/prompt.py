@@ -33,6 +33,8 @@ class ImagePrompt(BaseModel):
     lighting: str | None = None
     mood: str | None = None
     subjects: list[PromptSubject] = Field(default_factory=list)
+    key_objects: list[str] = Field(default_factory=list)
+    visual_requirements: list[str] = Field(default_factory=list)
     props: list[str] = Field(default_factory=list)
     constraints: str | None = None
     reference_image_paths: list[str] = Field(default_factory=list)  # Project-relative paths to character ref images

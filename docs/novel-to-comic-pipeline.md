@@ -1,11 +1,12 @@
 # Novel-to-Comic Pipeline
 
-An 8-stage Python/FastAPI/React application that converts a novel
+A 9-stage Python/FastAPI/React application that converts a novel
 (EPUB, TXT, or PDF) into a graphic novel (PDF/CBZ), using LLMs for story
 analysis and image generation models for panel artwork.
 
-**Cost estimate:** ~$25–35 for a 300-page novel (600 panels) at standard quality.  
-**PoC cost:** ~$2–5 for a 10-page short story (15–20 panels).
+**Cost estimate:** varies by LiteLLM gateway routing, image alias pricing, and
+reference-image usage. Use `/estimate` and the credits UI for project-specific
+stage estimates.
 
 ---
 
@@ -14,39 +15,43 @@ analysis and image generation models for panel artwork.
 ```
 Novel (EPUB / TXT / PDF)
   │
-  ▼ Stage 1 — Extract (configurable text model, default: gemini-3.1-pro-preview)
+  ▼ Stage 1 — Extract (configurable text alias)
   │   Full novel → Story Bible JSON
   │   Characters (visual anchors), locations, scenes, narrative arcs, props
   │   ► CHECKPOINT: review story_bible.json before continuing
   │
-  │   ── Style Gate: user must select a style before any post-extract stage runs ──
+  ▼ Stage 2 — Style (prompt alias + image alias)
+  │   Story Bible → 5 visual style templates + sample images
+  │   ► CHECKPOINT: pick an active style before continuing
   │
-  ▼ Stage 2 — Cast (image gen via LiteLLM gateway)
+  │   ── Style Gate: user must select a style before any post-style stage runs ──
+  │
+  ▼ Stage 3 — Cast (image gen via LiteLLM gateway)
   │   Character reference sheets (4 angles each) + location background plates
   │   ► CHECKPOINT: review refs/ and plates/ before continuing
   │
-  ▼ Stage 3 — Adapt (configurable text model, default: gemini-3.1-pro-preview)
+  ▼ Stage 4 — Adapt (configurable screenplay alias)
   │   Per-scene: prose → observable actions, compressed dialogue (≤35 words/bubble)
   │   Removes interiority; adds SFX annotations
   │
-  ▼ Stage 4 — Plan (configurable text model, default: gemini-3.1-pro-preview)
+  ▼ Stage 5 — Plan (configurable panel alias)
   │   Screenplay → Layout Plan JSON (planned pages + planned panels)
   │   Assigns panel geometry, page layout, generation modes
   │
-  ▼ Stage 5 — Storyboard (gemini-3.1-flash-lite-preview)
+  ▼ Stage 6 — Storyboard (deterministic projection)
   │   Layout plan → legacy PanelBreakdown JSON per panel
   │   Shot type, camera angle, character positions, expressions, dialogue
   │
-  ▼ Stage 6 — Direct (configurable text model, default: gemini-3.1-flash-lite-preview)
-  │   Per-panel: assembles full image prompt from planned panels:
-  │     [Style template] + [Location anchor] + [Character anchor(s)] + [Panel description]
+  ▼ Stage 7 — Direct (deterministic prompt spec assembly)
+  │   Per-panel: assembles image prompt specs from planned panels:
+  │     [Location anchor] + [Character anchor(s)] + [Panel description]
   │   Character visual anchors injected VERBATIM for consistency
   │
-  ▼ Stage 7 — Draw (image gen via LiteLLM gateway)
+  ▼ Stage 8 — Draw (image gen via LiteLLM gateway)
   │   Per-panel: prompt + reference images → panel PNG
   │   ► CHECKPOINT: review generated images before continuing
   │
-  ▼ Stage 8 — Compose (deterministic — Playwright + Pillow)
+  ▼ Stage 9 — Compose (deterministic — Playwright + Pillow)
       Panel images + bubble/SFX → HTML → PNG pages → PDF/CBZ export
       Speech bubbles, thought bubbles, narration captions, SFX composited in post
 ```
@@ -56,11 +61,11 @@ Novel (EPUB / TXT / PDF)
 | Principle | Implementation |
 |-----------|---------------|
 | **Character anchors are sacred** | 60–80 word physical description injected verbatim into every image prompt. Never paraphrased. |
-| **Text in post** | Speech bubbles composited in Stage 8 — never generated inside images. |
-| **Layout plan as planner** | Stage 4 owns page/panel structure; downstream stages project from it. |
+| **Text in post** | Speech bubbles composited in Stage 9 — never generated inside images. |
+| **Layout plan as planner** | Stage 5 owns page/panel structure; downstream stages project from it. |
 | **Decompose relentlessly** | Each LLM call does exactly one thing. No end-to-end generation. |
-| **Human checkpoints at boundaries** | Pipeline pauses after `extract`, `cast`, `direct`, and `draw`. |
-| **Style gate enforced** | Backend blocks post-extract stages until a style is selected. Frontend reads `style_selected` from status API (sourced from `config.yaml`, never stale). |
+| **Human checkpoints at boundaries** | Pipeline pauses after `extract`, `style`, `cast`, `direct`, and `draw`. |
+| **Style gate enforced** | Backend blocks post-style stages until a style is selected. Frontend reads `style_selected` from status API (sourced from `config.yaml`, never stale). |
 | **Resume from failure** | `state.json` tracks every item. Interrupted stages resume where they left off. |
 
 ---
@@ -77,9 +82,9 @@ Provider routes live in `litellm/config.yaml`.
 | Stage | Default alias (balanced) | Config field |
 |-------|--------------------------|-------------|
 | Extract (1) | `extract-balanced` | `extraction_model` |
-| Adapt (3) | `screenplay-balanced` | `screenplay_model` |
-| Plan (4) | `panel-balanced` | `panel_model` |
-| Direct (6) | `prompt-balanced` | `prompt_model` |
+| Adapt (4) | `screenplay-balanced` | `screenplay_model` |
+| Plan (5) | `panel-balanced` | `panel_model` |
+| Prompt/style/instruction tasks | `prompt-balanced` | `prompt_model` |
 
 Aliases are intent + preset (e.g. `extract-fast`, `screenplay-quality`).
 Set `quality_preset: fast | balanced | quality` to switch all five intents at once.
@@ -112,7 +117,7 @@ source .venv/bin/activate      # Windows: .venv\Scripts\activate
 
 pip install -e .
 
-# One-time: install Playwright Chromium browser (required for Stage 8 — HTML → PNG rendering)
+# One-time: install Playwright Chromium browser (required for Stage 9 — HTML → PNG rendering)
 playwright install chromium
 ```
 
@@ -186,19 +191,20 @@ pipeline serve --projects-dir /path/to/projects [--host 0.0.0.0 --port 8000]
 
 Then open `http://localhost:8000` in your browser. The web UI provides:
 - Project library with status and cost tracking
-- 8 rooms (one per pipeline stage) with per-artifact viewers and editors
+- 9 backend stages mapped into 8 user-facing rooms with per-artifact viewers
+  and editors
 - Pipeline run/approve/reset controls
 - Live SSE streaming of stage progress
-- Stage 8 page editor with bubble/SFX editing, theme switching, and export
+- Stage 9 page editor with bubble/SFX editing, theme switching, and export
 
 ### Run stages via API
 
 ```bash
-# Run all stages from current state
-curl -X POST "http://localhost:8000/api/projects/my-novel/run"
-
-# Run a specific stage (clears downstream outputs)
+# Run a specific stage
 curl -X POST "http://localhost:8000/api/projects/my-novel/run?stage=draw"
+
+# Rerun a stage from scratch and clear downstream outputs
+curl -X POST "http://localhost:8000/api/projects/my-novel/run?stage=draw&rerun=true"
 
 # Approve a checkpoint stage
 curl -X POST "http://localhost:8000/api/projects/my-novel/approve/extract"
@@ -232,14 +238,16 @@ projects/my-novel/
 ├── input/
 │   └── novel.epub
 ├── scenes/                  # Extracted scene text files (scene_001.txt …)
+├── samples/                 # Style suggestions and generated samples
+│   ├── style_suggestions.json
+│   └── style_N.png
 ├── refs/                    # Character reference sheets
 │   └── char_NNN/
-│       ├── front.png
-│       ├── three_quarter.png
-│       ├── side.png
-│       └── action.png
+│       ├── sheet.png
+│       ├── sheet.png.meta.json
+│       └── instructions.jsonl
 ├── plates/                  # Location background plates (loc_NNN.png …)
-├── adapt/                   # Per-scene screenplay JSON
+├── screenplays/             # Per-scene screenplay JSON
 │   └── scene_NNN.json
 ├── plan/
 │   └── layout_plan.json     # Planner-owned page/panel structure
@@ -252,7 +260,7 @@ projects/my-novel/
 ├── draw/                    # Generated panel images
 │   └── scene_NNN/
 │       └── panel_NNN.png
-├── compose/                 # Stage 8 output
+├── compose/                 # Stage 9 output
 │   ├── theme.css           # Editable CSS — re-export to apply changes
 │   ├── pages/
 │   │   ├── page_NNN.json   # Canonical editing surface (ComicPage model)
@@ -266,9 +274,9 @@ projects/my-novel/
 
 ---
 
-## Stage 8 Editing (compose)
+## Stage 9 Editing (compose)
 
-Stage 8 produces `compose/pages/page_NNN.json` — the **editing surface** for every
+Stage 9 produces `compose/pages/page_NNN.json` — the **editing surface** for every
 comic page. Edit these files directly (or via the web UI) and re-export to
 re-render without re-running earlier stages.
 
@@ -400,31 +408,29 @@ wet, dirty, shivering, injured, or covered in blood.
 Costs are tracked automatically. Each API call returns an `ApiResult` with a
 `UsageRecord`; the pipeline accumulates real costs into `state.json` via
 `usage_log` and `cost_usd`. Before a stage runs, an estimate is saved to
-`estimated_cost_usd`. Pricing lives in `pricing.yaml` — edit that file for
-price changes, no code deploy needed.
+`estimated_cost_usd`. Pricing comes from `litellm_model_prices.cached.json`
+plus `litellm_pricing_overrides.yaml`; `audit_pricing()` validates configured
+gateway aliases at startup.
 
-### Per-component costs (approximate)
+### Per-component cost drivers
 
-| Component | Model | Cost |
-|-----------|-------|------|
-| Global extraction (1 novel) | Gemini 3.1 Pro | ~$0.46 |
-| Screenplay adapt (18 scenes) | Gemini 3.1 Pro | ~$0.72 |
-| Panel breakdown (18 scenes) | Gemini Flash-Lite | ~$0.09 |
-| Image prompts (89 panels) | Gemini Flash-Lite | ~$0.09 |
-| **LLM subtotal** | | **~$1.37** |
-| Character refs (4 chars × 4 angles) | Gemini image | varies |
-| Location plates (3 locations) | Gemini image | varies |
-| Panel images (89 panels) | Gemini image | varies |
-| **Image subtotal** | | **~$3–10** |
-| **Total (short story PoC)** | | **~$5–12** |
+| Component | Model/alias | What drives cost |
+|-----------|-------------|------------------|
+| Global extraction | `extract-balanced` | novel length and output Story Bible size |
+| Style suggestions | `prompt-balanced` | Story Bible size and suggestion count |
+| Style samples | `image-balanced` | sample count and image-model route |
+| Character refs | `image-balanced` | character count and reference conditioning |
+| Location plates | `image-balanced` | location count |
+| Screenplay adapt | `screenplay-balanced` | scene count and prose length |
+| Layout planning | `panel-balanced` | scene count and beat count |
+| Prompt specs | deterministic | no model cost |
+| Panel images | `image-balanced` | panel count, reference image count, image dimensions, and provider pricing |
 
 ### Scale estimates
 
-| Novel size | Panels | LLM cost | Image cost | Total |
-|-----------|--------|----------|-----------|-------|
-| Short story (10 pages) | ~20 | ~$0.50 | ~$0.60 | ~$1–2 |
-| Novella (100 pages) | ~200 | ~$1.50 | ~$6 | ~$8–10 |
-| Novel (300 pages) | ~600 | ~$3.00 | ~$18 | ~$21–25 |
+Use the stage estimate endpoints and credits UI for current numbers. The old
+fixed dollar tables were removed because gateway aliases can route to different
+providers per deployment.
 
 ---
 
@@ -435,9 +441,9 @@ Reduce `parallel_batch_size` and `max_concurrent_requests` in `config.yaml`.
 The pipeline resumes from where it left off.
 
 **Character drift across panels**  
-Ensure reference images were approved after Stage 2. If drift persists,
+Ensure reference images were approved after Stage 3 (`cast`). If drift persists,
 regenerate character reference sheets with a more detailed `visual_anchor`
-description — edit `story_bible.json` directly and rerun Stage 2.
+description — edit `story_bible.json` directly and rerun Stage 3.
 
 **JSON validation errors from LLM**
 Gemini uses `response_mime_type: "application/json"` to enforce structured

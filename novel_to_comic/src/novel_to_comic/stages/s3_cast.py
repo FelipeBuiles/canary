@@ -17,7 +17,7 @@ from novel_to_comic import artifacts
 from novel_to_comic.clients import flux
 from novel_to_comic.config import Config, is_gpt_image_2
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
-from novel_to_comic.models.story_bible import Character, StoryBible
+from novel_to_comic.models.story_bible import Character, Prop, StoryBible
 from novel_to_comic.text_utils import clean, shorten
 from novel_to_comic.usage import ApiResult
 from novel_to_comic.state import (
@@ -188,6 +188,26 @@ def _location_plate_meta(
     return meta
 
 
+def _prop_ref_meta(
+    config: Config,
+    project_dir: Path,
+    style_ref: Path | None,
+    prop: Prop,
+    prompt: str,
+    addendum: str = "",
+) -> dict:
+    meta = {
+        **_asset_meta_common(config, project_dir, style_ref),
+        "kind": "prop_ref",
+        "prop_id": prop.id,
+        "visual_anchor": prop.visual_anchor,
+        "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+    }
+    if addendum:
+        meta["instruction_addendum"] = addendum
+    return meta
+
+
 
 
 def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
@@ -261,6 +281,24 @@ def _location_plate_prompt(config: Config, loc, addendum: str = "") -> str:
     )
 
 
+def _prop_ref_prompt(config: Config, prop: Prop, addendum: str = "") -> str:
+    addendum_block = f" USER FIX NOTE: {addendum.strip()}." if addendum.strip() else ""
+    return (
+        f"{config.style_template}\n\n"
+        f"PROP REFERENCE - {prop.name}.\n"
+        f"{prop.visual_anchor}{addendum_block}\n\n"
+        f"Single object, isolated on a plain neutral mid-grey background. "
+        f"Three-quarter view, evenly lit, the object centered and fully visible "
+        f"with generous margin on all sides — nothing crops the silhouette. "
+        f"No characters, no hands, no scenery, no other objects. "
+        f"No text, no labels, no captions. "
+        f"Render the object's material, color, condition, and distinctive features "
+        f"clearly so it can be matched in later panels. "
+        f"Clean controlled surfaces; no noisy grain, speckled dappling, "
+        f"repeated texture fields, pattern tiling, or muddy micro-detail."
+    )
+
+
 def _read_character_ref_addendum(project_dir: Path, char_id: str) -> str:
     return artifacts.read_active_addendum(
         artifacts.character_ref_instructions_path(project_dir, char_id)
@@ -270,6 +308,12 @@ def _read_character_ref_addendum(project_dir: Path, char_id: str) -> str:
 def _read_location_plate_addendum(project_dir: Path, loc_id: str) -> str:
     return artifacts.read_active_addendum(
         artifacts.location_plate_instructions_path(project_dir, loc_id)
+    )
+
+
+def _read_prop_ref_addendum(project_dir: Path, prop_id: str) -> str:
+    return artifacts.read_active_addendum(
+        artifacts.prop_ref_instructions_path(project_dir, prop_id)
     )
 
 
@@ -310,6 +354,48 @@ async def regenerate_character_ref(
             )
         tmp_path.replace(output_path)
         await asyncio.to_thread(_crop_sheet_to_poses, output_path)
+        artifacts.write_asset_meta(output_path, meta)
+        return ApiResult(value=output_path, usage=flux_result.usage)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
+async def regenerate_prop_ref(
+    config: Config,
+    project_dir: Path,
+    prop_id: str,
+    semaphore: asyncio.Semaphore | None = None,
+) -> ApiResult[Path]:
+    story_bible = artifacts.read_story_bible(project_dir)
+    prop = next((p for p in story_bible.props if p.id == prop_id), None)
+    if prop is None:
+        raise ValueError(f"Prop not found: {prop_id}")
+
+    sem = semaphore or asyncio.Semaphore(1)
+    output_path = artifacts.prop_ref_path(project_dir, prop.id)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = output_path.with_name(
+        f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
+    )
+    style_ref = _find_style_ref(project_dir, config.style_template)
+    addendum = _read_prop_ref_addendum(project_dir, prop.id)
+    prompt = _prop_ref_prompt(config, prop, addendum)
+    meta = _prop_ref_meta(config, project_dir, style_ref, prop, prompt, addendum)
+
+    try:
+        async with sem:
+            flux_result = await flux.generate_image(
+                config,
+                prompt,
+                tmp_path,
+                width=1024,
+                height=1024,
+                reference_image_path=style_ref,
+                ref_type="style",
+                feature="cast.prop_ref",
+            )
+        tmp_path.replace(output_path)
         artifacts.write_asset_meta(output_path, meta)
         return ApiResult(value=output_path, usage=flux_result.usage)
     finally:
@@ -505,28 +591,99 @@ async def _generate_location_plates(
             progress.advance(task)
 
 
+async def _generate_prop_refs(
+    config: Config, project_dir: Path, story_bible: StoryBible, state: PipelineState,
+    prop_ids: list[str] | None = None,
+    on_event: EventCallback | None = None,
+) -> None:
+    """Generate one neutral-background reference image per story prop.
+
+    Stage 1 already filters props down to those that recur or are plot-central,
+    so every prop in the bible gets a ref sheet. The image is conditioned on
+    the active style sample so prop refs share the panel art style — passing
+    a prop ref alongside character refs at draw time keeps the object visually
+    consistent across panels instead of relying on text descriptions alone.
+    """
+    emit = on_event or _NOOP
+    props_to_gen = [p for p in story_bible.props if not prop_ids or p.id in prop_ids]
+    if not props_to_gen:
+        return
+
+    console.print("[bold]Generating prop reference images...[/bold]")
+    emit({"type": "log", "stage": "cast", "level": "info",
+          "message": "Generating prop reference images..."})
+
+    style_ref = _find_style_ref(project_dir, config.style_template)
+
+    with make_progress(on_event) as progress:
+        task = progress.add_task("Prop refs", total=len(props_to_gen))
+        for prop in props_to_gen:
+            output_path = artifacts.prop_ref_path(project_dir, prop.id)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            addendum = _read_prop_ref_addendum(project_dir, prop.id)
+            prompt = _prop_ref_prompt(config, prop, addendum)
+            meta = _prop_ref_meta(config, project_dir, style_ref, prop, prompt, addendum)
+
+            if artifacts.asset_matches_meta(output_path, meta):
+                record_item_done(state, "cast", cost=0.0)
+                emit({"type": "log", "stage": "cast", "level": "dim",
+                      "message": f"Using existing prop ref for {prop.name}"})
+                emit({"type": "stage_progress", "stage": "cast",
+                      "done": state.stages["cast"].items_done,
+                      "total": state.stages["cast"].items_total})
+                progress.advance(task)
+                continue
+
+            try:
+                emit({"type": "log", "stage": "cast", "level": "info",
+                      "message": f"Generating prop ref for {prop.name}"})
+                flux_result = await flux.generate_image(
+                    config, prompt, output_path,
+                    width=1024, height=1024,
+                    reference_image_path=style_ref,
+                    ref_type="style",
+                    feature="cast.prop_ref",
+                )
+                artifacts.write_asset_meta(output_path, meta)
+                record_item_done(state, "cast", usage=flux_result.usage)
+                emit({"type": "stage_progress", "stage": "cast",
+                      "done": state.stages["cast"].items_done,
+                      "total": state.stages["cast"].items_total})
+            except Exception as e:
+                cause = e.last_attempt.exception() if hasattr(e, "last_attempt") else e
+                console.print(f"[red]Failed prop ref for {prop.name}: {cause}[/red]")
+                record_item_failed(state, "cast", prop.id)
+                emit({"type": "log", "stage": "cast", "level": "error",
+                      "message": f"Failed prop ref for {prop.name}: {cause}"})
+            progress.advance(task)
+
+
 async def run(
     config: Config,
     project_dir: Path,
     state: PipelineState,
     char_ids: list[str] | None = None,
     loc_ids: list[str] | None = None,
+    prop_ids: list[str] | None = None,
     on_event: EventCallback | None = None,
 ) -> None:
-    """Execute Stage 3: generate character reference images and location plates."""
+    """Execute Stage 3: generate character refs, location plates, and prop refs."""
     emit = on_event or _NOOP
 
     story_bible = artifacts.read_story_bible(project_dir)
 
-    is_partial = bool(char_ids or loc_ids)
+    is_partial = bool(char_ids or loc_ids or prop_ids)
     should_generate_refs = not is_partial or char_ids is not None
     should_generate_plates = not is_partial or loc_ids is not None
+    should_generate_prop_refs = not is_partial or prop_ids is not None
 
     total_items = 0
     if should_generate_refs:
         total_items += len([c for c in story_bible.characters if not char_ids or c.id in char_ids])
     if should_generate_plates:
         total_items += len([loc for loc in story_bible.locations if not loc_ids or loc.id in loc_ids])
+    if should_generate_prop_refs:
+        total_items += len([p for p in story_bible.props if not prop_ids or p.id in prop_ids])
 
     begin_stage(state, "cast", total=total_items)
     emit({"type": "stage_begin", "stage": "cast", "total": total_items})
@@ -541,6 +698,9 @@ async def run(
 
         if should_generate_plates:
             await _generate_location_plates(config, project_dir, story_bible, state, loc_ids, on_event)
+
+        if should_generate_prop_refs:
+            await _generate_prop_refs(config, project_dir, story_bible, state, prop_ids, on_event)
 
         complete_stage(state, "cast")
         emit({"type": "stage_complete", "stage": "cast",

@@ -146,6 +146,68 @@ def test_gpt_image_2_reference_resolution_keeps_location_plate_text_only(tmp_pat
     assert fast_style_refs == [style_path, plate_path]
 
 
+def test_gpt_image_continuity_refs_only_use_previous_panel_for_match_cuts(tmp_path):
+    scene_dir = tmp_path / "draw" / "scene_001"
+    scene_dir.mkdir(parents=True)
+    prev_image = scene_dir / "panel_001.png"
+    prev_image.write_bytes(b"previous image")
+
+    prompt_dir = tmp_path / "direct" / "scene_001"
+    prompt_dir.mkdir(parents=True)
+    current_prompt_path = prompt_dir / "panel_002.json"
+    current_prompt_path.write_text(ImagePrompt(
+        scene_id="scene_001",
+        panel_number=2,
+        full_prompt="A panel.",
+        width=768,
+        height=1024,
+        steps=28,
+    ).model_dump_json())
+
+    smooth_prev = ImagePrompt(
+        scene_id="scene_001",
+        panel_number=1,
+        transition_out="smooth_continuation",
+        full_prompt="Previous panel.",
+        width=768,
+        height=1024,
+        steps=28,
+    )
+    (prompt_dir / "panel_001.json").write_text(smooth_prev.model_dump_json())
+    current_prompt = ImagePrompt.model_validate_json(current_prompt_path.read_text())
+
+    _, default_refs = s7_draw.resolve_panel_reference_paths(
+        Config(),
+        tmp_path,
+        current_prompt,
+        prompt_path=current_prompt_path,
+        output_dir=scene_dir,
+    )
+    _, fast_refs = s7_draw.resolve_panel_reference_paths(
+        Config(image_model="image-fast"),
+        tmp_path,
+        current_prompt,
+        prompt_path=current_prompt_path,
+        output_dir=scene_dir,
+    )
+
+    assert default_refs == []
+    assert fast_refs == [prev_image]
+
+    match_prev = smooth_prev.model_copy(update={"transition_out": "match_cut"})
+    (prompt_dir / "panel_001.json").write_text(match_prev.model_dump_json())
+
+    _, match_refs = s7_draw.resolve_panel_reference_paths(
+        Config(),
+        tmp_path,
+        current_prompt,
+        prompt_path=current_prompt_path,
+        output_dir=scene_dir,
+    )
+
+    assert match_refs == [prev_image]
+
+
 def test_list_images_marks_failure_metadata_as_failed_even_with_existing_image(tmp_path):
     scene_dir = tmp_path / "draw" / "scene_001"
     scene_dir.mkdir(parents=True)

@@ -44,6 +44,8 @@ _PROMPT_LABELS: dict[str, dict[str, str]] = {
         "lighting": "Lighting",
         "mood": "Mood",
         "key_props": "Key props",
+        "key_objects": "Key objects",
+        "must_show": "Must show",
         "expression": "expression",
         "position": "position",
         "wardrobe_override": "current wardrobe (overrides any clothing mentioned above)",
@@ -60,6 +62,8 @@ _PROMPT_LABELS: dict[str, dict[str, str]] = {
         "lighting": "Iluminación",
         "mood": "Estado de ánimo",
         "key_props": "Objetos clave",
+        "key_objects": "Objetos visibles",
+        "must_show": "Debe mostrar",
         "expression": "expresión",
         "position": "posición",
         "wardrobe_override": "vestuario actual (sobrescribe cualquier ropa mencionada arriba)",
@@ -76,6 +80,8 @@ _PROMPT_LABELS: dict[str, dict[str, str]] = {
         "lighting": "Éclairage",
         "mood": "Ambiance",
         "key_props": "Accessoires clés",
+        "key_objects": "Objets visibles",
+        "must_show": "À montrer",
         "expression": "expression",
         "position": "position",
         "wardrobe_override": "tenue actuelle (remplace tout vêtement mentionné au-dessus)",
@@ -128,7 +134,7 @@ def _labels(config: Config | None = None) -> dict[str, str]:
 
 _clean = clean
 _shorten = shorten
-IMAGE_PROMPT_VERSION = 13
+IMAGE_PROMPT_VERSION = 14
 _SOFT_CONTINUITY = {"smooth_continuation", "match_cut"}
 _SEQUENTIAL_THEN_RE = re.compile(r"(?<=[,;.!?])\s+then\s+", re.IGNORECASE)
 _LEADING_TRANSITION_ACTION_RE = re.compile(
@@ -224,22 +230,59 @@ def _planned_panel_text_blob(panel: PlannedPanel) -> str:
     ]
     pieces.extend(s.text for s in panel.sfx)
     pieces.extend(panel.character_actions.values())
+    pieces.extend(getattr(panel, "key_objects", []) or [])
+    pieces.extend(getattr(panel, "visual_requirements", []) or [])
     pieces.extend(str(line.get("text", "")) for line in panel.dialogue)
     return " ".join(pieces).lower()
 
 
-def _planned_panel_props(panel: PlannedPanel, story_bible: StoryBible) -> list[str]:
+def _props_present_in_panel(panel: PlannedPanel, story_bible: StoryBible) -> list:
+    """Return the Prop objects whose name or id is referenced in the panel."""
     blob = _planned_panel_text_blob(panel)
-    props: list[str] = []
-    for prop in getattr(story_bible, "props", []):
-        name = prop.name.lower()
+    matched = []
+    seen: set[str] = set()
+    for prop in getattr(story_bible, "props", []) or []:
+        name = (prop.name or "").lower()
         prop_id = (prop.id or "").lower()
-        if name in blob or (prop_id and prop_id in blob):
-            props.append(f"{prop.name}: {_shorten(prop.visual_anchor, 120)}")
-    return props
+        if (name and name in blob) or (prop_id and prop_id in blob):
+            if prop.id and prop.id not in seen:
+                matched.append(prop)
+                seen.add(prop.id)
+    return matched
 
 
-def _planned_panel_state_summary(panel: PlannedPanel) -> str:
+def _prop_reference_paths(project_dir: Path, prop_ids: list[str]) -> list[str]:
+    """Return project-relative paths to prop ref images that exist on disk."""
+    paths: list[str] = []
+    for prop_id in prop_ids:
+        ref = project_dir / "refs" / "props" / prop_id / "ref.png"
+        if ref.exists():
+            paths.append(str(ref.relative_to(project_dir)))
+    return paths
+
+
+def _clean_list(values: list[str] | None, limit: int = 10) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        text = _shorten(_clean(value), 180)
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        cleaned.append(text)
+        seen.add(key)
+        if len(cleaned) >= limit:
+            break
+    return cleaned
+
+
+def _planned_panel_state_summary(
+    panel: PlannedPanel,
+    character_names: dict[str, str] | None = None,
+) -> str:
+    names = character_names or {}
     parts: list[str] = []
     for char_id in panel.characters_present:
         action = _single_instant_direction(panel.character_actions.get(char_id, ""))
@@ -247,13 +290,15 @@ def _planned_panel_state_summary(panel: PlannedPanel) -> str:
         position = panel.character_positions.get(char_id, "")
         state_bits = [bit for bit in (action, expression, position) if bit]
         if state_bits:
-            parts.append(f"{char_id}: {', '.join(state_bits)}")
+            label = names.get(char_id, char_id)
+            parts.append(f"{label}: {', '.join(state_bits)}")
     return "; ".join(parts) if parts else "scene continues"
 
 
 def build_planned_panel_continuity_note(
     current_panel: PlannedPanel,
     prev_panel: PlannedPanel | None,
+    story_bible: StoryBible | None = None,
 ) -> str | None:
     if not prev_panel:
         return None
@@ -262,8 +307,11 @@ def build_planned_panel_continuity_note(
     if transition_type not in _SOFT_CONTINUITY:
         return None
 
-    prev_state_str = _shorten(_planned_panel_state_summary(prev_panel), 120)
-    curr_state_str = _shorten(_planned_panel_state_summary(current_panel), 120)
+    character_names = (
+        {c.id: c.name for c in story_bible.characters} if story_bible else {}
+    )
+    prev_state_str = _shorten(_planned_panel_state_summary(prev_panel, character_names), 120)
+    curr_state_str = _shorten(_planned_panel_state_summary(current_panel, character_names), 120)
 
     if prev_state_str == "scene continues" and curr_state_str == "scene continues":
         return None
@@ -363,7 +411,14 @@ def build_planned_panel_prompt_spec(
     setting = "; ".join(setting_parts)
     lighting = _strip_text_render_sentences(_clean(panel.lighting))
     mood = _clean(panel.mood)
-    props = _planned_panel_props(panel, story_bible)
+    key_objects = _clean_list(getattr(panel, "key_objects", []) or [])
+    visual_requirements = _clean_list(getattr(panel, "visual_requirements", []) or [], limit=12)
+    matched_props = _props_present_in_panel(panel, story_bible)
+    props = [
+        f"{prop.name}: {_shorten(prop.visual_anchor, 120)}"
+        for prop in matched_props
+    ]
+    ref_paths.extend(_prop_reference_paths(project_dir, [p.id for p in matched_props if p.id]))
     character_label = labels["character"] if character_count == 1 else labels["characters"]
     constraints = (
         f"exactly {character_count} {character_label}; "
@@ -384,6 +439,8 @@ def build_planned_panel_prompt_spec(
         setting=setting,
         lighting=lighting,
         mood=mood,
+        key_objects=key_objects,
+        visual_requirements=visual_requirements,
         props=props,
         constraints=constraints,
     )
@@ -407,6 +464,8 @@ def build_planned_panel_prompt_spec(
         setting=setting,
         lighting=lighting,
         mood=mood,
+        key_objects=key_objects,
+        visual_requirements=visual_requirements,
         subjects=subjects,
         props=props,
         constraints=constraints,
@@ -415,7 +474,7 @@ def build_planned_panel_prompt_spec(
         height=height,
         steps=config.effective_image_steps(),
         continuity_note=(
-            build_planned_panel_continuity_note(panel, prev_panel)
+            build_planned_panel_continuity_note(panel, prev_panel, story_bible)
             if getattr(config, "continuity_mode", "hybrid") in {"text_only", "hybrid"}
             else None
         ),
@@ -430,8 +489,10 @@ def _render_panel_prompt_body_parts(
     setting: str | None,
     lighting: str | None,
     mood: str | None,
-    props: list[str],
-    constraints: str | None,
+    key_objects: list[str] | None = None,
+    visual_requirements: list[str] | None = None,
+    props: list[str] | None = None,
+    constraints: str | None = None,
 ) -> str:
     label_set = labels or _PROMPT_LABELS["en"]
     sentences: list[str] = []
@@ -467,6 +528,14 @@ def _render_panel_prompt_body_parts(
     if props:
         sentences.append(f"{label_set['key_props']}: {'; '.join(_clean(prop) for prop in props)}")
 
+    object_text = [_clean(value) for value in (key_objects or []) if _clean(value)]
+    if object_text:
+        sentences.append(f"{label_set['key_objects']}: {'; '.join(object_text)}")
+
+    requirement_text = [_clean(value) for value in (visual_requirements or []) if _clean(value)]
+    if requirement_text:
+        sentences.append(f"{label_set['must_show']}: {'; '.join(requirement_text)}")
+
     if constraints:
         sentences.append(_clean(constraints))
 
@@ -489,6 +558,8 @@ def render_panel_prompt_body(prompt: ImagePrompt) -> str:
         setting=getattr(prompt, "setting", None),
         lighting=getattr(prompt, "lighting", None),
         mood=getattr(prompt, "mood", None),
+        key_objects=getattr(prompt, "key_objects", []) or [],
+        visual_requirements=getattr(prompt, "visual_requirements", []) or [],
         props=getattr(prompt, "props", []) or [],
         constraints=constraints,
     )
@@ -546,6 +617,8 @@ def render_generation_prompt(prompt: ImagePrompt, style_template: str) -> str:
         getattr(prompt, "setting", None),
         getattr(prompt, "lighting", None),
         getattr(prompt, "mood", None),
+        getattr(prompt, "key_objects", None),
+        getattr(prompt, "visual_requirements", None),
         getattr(prompt, "props", None),
         getattr(prompt, "constraints", None),
     ])
@@ -557,6 +630,16 @@ def render_generation_prompt(prompt: ImagePrompt, style_template: str) -> str:
     _append_section(sections, "Setting", getattr(prompt, "setting", None))
     _append_section(sections, "Lighting", getattr(prompt, "lighting", None))
     _append_section(sections, "Mood", getattr(prompt, "mood", None))
+    _append_section(
+        sections,
+        "Key objects",
+        [f"- {_clean(obj)}" for obj in (getattr(prompt, "key_objects", []) or [])],
+    )
+    _append_section(
+        sections,
+        "Must show",
+        [f"- {_clean(req)}" for req in (getattr(prompt, "visual_requirements", []) or [])],
+    )
     _append_section(
         sections,
         "Key props",

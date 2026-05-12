@@ -204,7 +204,7 @@ def _enforce_prompt_invariants(prompt: ImagePrompt) -> None:
         prompt.constraints = f"{constraints}; {no_lettering}" if constraints else no_lettering
 
 
-AssetKind = Literal["character_ref", "location_plate"]
+AssetKind = Literal["character_ref", "location_plate", "prop_ref"]
 
 
 class AssetInstructionPatch(BaseModel):
@@ -237,6 +237,12 @@ def asset_instruction_rewrite_system_prompt(kind: AssetKind) -> str:
             "a single character's reference sheet (a 2x2 grid of four poses on a clean white background). "
             "Edits change the character's appearance — features, outfit, color, accessories, expression — "
             "without renaming the character or changing the sheet layout."
+        )
+    elif kind == "prop_ref":
+        target = (
+            "a single prop reference image (one isolated object, three-quarter view, plain neutral background). "
+            "Edits change the object's appearance — material, color, condition, distinctive features — "
+            "without adding characters, hands, scenery, or text, and without changing the object's identity."
         )
     else:
         target = (

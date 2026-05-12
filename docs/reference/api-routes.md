@@ -8,12 +8,39 @@ Replace `{project}` with the project directory name.
 
 ---
 
+## Meta
+
+| Method | Path | Handler | File |
+|--------|------|---------|------|
+| `GET` | `/api/health` | `health` | `app.py` |
+
+## Credits
+
+| Method | Path | Handler | File |
+|--------|------|---------|------|
+| `GET` | `/api/credits/pricing-reference` | `pricing_reference` | `credits.py` |
+| `GET` | `/api/credits/balance` | `balance` | `credits.py` |
+| `GET` | `/api/credits/history` | `history` | `credits.py` |
+
+## Billing
+
+| Method | Path | Handler | File |
+|--------|------|---------|------|
+| `GET` | `/api/billing/packages` | `list_packages` | `billing.py` |
+| `POST` | `/api/billing/checkout` | `create_checkout` | `billing.py` |
+| `POST` | `/api/billing/webhook` | `stripe_webhook` | `billing.py` |
+
+---
+
 ## Projects
 
 | Method | Path | Handler | File |
 |--------|------|---------|------|
 | `GET` | `/api/projects` | `list_projects` | `projects.py` |
+| `POST` | `/api/projects` | `create_project` | `projects.py` |
 | `GET` | `/api/projects/{project}/status` | `project_status` | `projects.py` |
+| `POST` | `/api/projects/{project}/cover` | `generate_cover` | `projects.py` |
+| `DELETE` | `/api/projects/{project}` | `delete_project` | `projects.py` |
 
 ## Config
 
@@ -26,14 +53,27 @@ Replace `{project}` with the project directory name.
 
 | Method | Path | Handler | File |
 |--------|------|---------|------|
+| `GET` | `/api/projects/{project}/estimate` | `estimate_stage_cost` | `pipeline.py` |
+| `GET` | `/api/projects/{project}/regen-estimate` | `regen_panel_estimate` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/run` | `run_pipeline` | `pipeline.py` |
+| `POST` | `/api/projects/{project}/regen-extract` | `regen_extract` | `pipeline.py` |
+| `POST` | `/api/projects/{project}/regen` | `regen_panel` | `pipeline.py` |
+| `POST` | `/api/projects/{project}/regen-instructed` | `regen_panel_with_instruction` | `pipeline.py` |
+| `POST` | `/api/projects/{project}/regen-ref` | `regen_ref` | `pipeline.py` |
+| `POST` | `/api/projects/{project}/regen-plate` | `regen_plate` | `pipeline.py` |
+| `POST` | `/api/projects/{project}/regen-ref-instructed` | `regen_ref_with_instruction` | `pipeline.py` |
+| `POST` | `/api/projects/{project}/regen-plate-instructed` | `regen_plate_with_instruction` | `pipeline.py` |
+| `GET` | `/api/projects/{project}/generation-jobs` | `get_generation_jobs` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/approve/{stage}` | `approve` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/reset/{stage}` | `reset_stage` | `pipeline.py` |
+| `POST` | `/api/projects/{project}/reset-stale` | `reset_stale` | `pipeline.py` |
 | `GET` | `/api/projects/{project}/events` | `event_stream` | `pipeline.py` |
-| `GET` | `/api/projects/{project}/errors/{stage}` | `get_stage_error` | `pipeline.py` |
+| `GET` | `/api/projects/{project}/stage-error/{stage}` | `get_stage_error` | `pipeline.py` |
 
 **Query parameters for `POST /run`:**
-- `stage` (optional): run from a specific stage onward, clearing downstream outputs. Valid stages: `extract`, `cast`, `adapt`, `plan`, `storyboard`, `direct`, `draw`, `compose`.
+- `stage` (required): stage to run. Valid stages: `extract`, `style`, `cast`, `adapt`, `plan`, `storyboard`, `direct`, `draw`, `compose`.
+- `rerun` (optional bool): when true, resets the selected stage and downstream
+  state and clears their registered output paths before running.
 
 **SSE:** `GET /api/projects/{project}/events` streams stage progress events. Connect before triggering a run to receive all events.
 
@@ -46,6 +86,8 @@ Replace `{project}` with the project directory name.
 | `GET` | `/api/projects/{project}/screenplays` | `list_screenplays` | `stages.py` |
 | `GET` | `/api/projects/{project}/screenplays/{scene_id}` | `get_screenplay` | `stages.py` |
 | `GET` | `/api/projects/{project}/layout-plan` | `get_layout_plan` | `stages.py` |
+| `POST` | `/api/projects/{project}/layout-plan/narration-decisions/{beat_id}/impact` | `estimate_narration_decision_impact` | `stages.py` |
+| `PUT` | `/api/projects/{project}/layout-plan/narration-decisions/{beat_id}` | `update_narration_decision` | `stages.py` |
 | `GET` | `/api/projects/{project}/panels` | `list_panels` | `stages.py` |
 | `GET` | `/api/projects/{project}/panels/{scene_id}` | `get_panels_for_scene` | `stages.py` |
 | `PUT` | `/api/projects/{project}/panels/{scene_id}/{panel_number}` | `update_panel` | `stages.py` |
@@ -53,8 +95,12 @@ Replace `{project}` with the project directory name.
 | `GET` | `/api/projects/{project}/prompts/{scene_id}` | `get_prompts_for_scene` | `stages.py` |
 | `PUT` | `/api/projects/{project}/prompts/{scene_id}/{panel_number}` | `update_prompt` | `stages.py` |
 | `GET` | `/api/projects/{project}/images` | `list_images` | `stages.py` |
+| `POST` | `/api/projects/{project}/images/{scene_id}/{panel_number}/accept` | `accept_image_panel` | `stages.py` |
+| `DELETE` | `/api/projects/{project}/images/{scene_id}/{panel_number}/accept` | `unaccept_image_panel` | `stages.py` |
+| `GET` | `/api/projects/{project}/images/{scene_id}/{panel_number}/versions` | `get_image_panel_versions` | `stages.py` |
+| `POST` | `/api/projects/{project}/images/{scene_id}/{panel_number}/versions/{version}/restore` | `restore_image_panel_version` | `stages.py` |
 
-## Pages (compose / Stage 8)
+## Pages (compose / Stage 9)
 
 | Method | Path | Handler | File |
 |--------|------|---------|------|
@@ -92,6 +138,7 @@ Replace `{project}` with the project directory name.
 | Method | Path | Handler | File |
 |--------|------|---------|------|
 | `GET` | `/api/projects/{project}/styles` | `get_styles` | `styles.py` |
+| `GET` | `/api/projects/{project}/styles/suggest-estimate` | `suggest_estimate` | `styles.py` |
 | `POST` | `/api/projects/{project}/styles/suggest` | `suggest_styles` | `styles.py` |
 | `POST` | `/api/projects/{project}/styles/generate-samples` | `generate_style_samples` | `styles.py` |
 | `PATCH` | `/api/projects/{project}/styles/active` | `set_active_style` | `styles.py` |

@@ -314,6 +314,22 @@ def location_plate_instructions_path(project_dir: Path, loc_id: str) -> Path:
     return project_dir / "plates" / f"{loc_id}.instructions.jsonl"
 
 
+# ---------------------------------------------------------------------------
+# Prop reference images (refs/props)
+# ---------------------------------------------------------------------------
+
+def prop_ref_path(project_dir: Path, prop_id: str) -> Path:
+    return project_dir / "refs" / "props" / prop_id / "ref.png"
+
+
+def prop_ref_meta_path(project_dir: Path, prop_id: str) -> Path:
+    return asset_meta_path(prop_ref_path(project_dir, prop_id))
+
+
+def prop_ref_instructions_path(project_dir: Path, prop_id: str) -> Path:
+    return project_dir / "refs" / "props" / prop_id / "instructions.jsonl"
+
+
 def read_active_addendum(instructions_path: Path) -> str:
     """Return the addendum from the most recent accepted instruction, or ""."""
     if not instructions_path.exists():

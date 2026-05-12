@@ -33,6 +33,10 @@ logger = logging.getLogger("canary.ai")
 _RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
 _MAX_RETRIES = 3
 
+# Anthropic deprecated the `temperature` request param on Claude Opus 4.7;
+# sending it returns 400. Haiku 4.5 / Sonnet 4.6 still accept it.
+_TEMPERATURE_DEPRECATED_ALIASES = frozenset({"screenplay-quality"})
+
 
 async def _post_with_retry(url: str, *, headers: dict[str, str], json: dict[str, Any] | None = None, data: dict[str, Any] | None = None, files: list | None = None) -> httpx.Response:
     """POST with automatic retry on transient HTTP errors and connection failures."""
@@ -676,9 +680,10 @@ async def _chat_completion(
             {"role": "system", "content": effective_system},
             {"role": "user", "content": user_content},
         ],
-        "temperature": temperature,
         "metadata": metadata,
     }
+    if model not in _TEMPERATURE_DEPRECATED_ALIASES:
+        payload["temperature"] = temperature
     if response_format is not None:
         payload["response_format"] = response_format
     if max_output_tokens is not None:
