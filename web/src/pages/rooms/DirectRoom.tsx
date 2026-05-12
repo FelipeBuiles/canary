@@ -462,7 +462,16 @@ export function DirectRoom() {
   }
 
   if (isLoading || (!summaries?.length && stageStatus !== "pending")) {
-    return <RoomShell isLoading loadingText="LOADING IMAGE PROMPTS…" />;
+    return (
+      <RoomShell
+        isLoading
+        loadingText="LOADING IMAGE PROMPTS…"
+        loadingStage="direct"
+        loadingStageStatus={stageStatus}
+        loadingStageItemsDone={stageInfo?.items_done}
+        loadingStageItemsTotal={stageInfo?.items_total}
+      />
+    );
   }
 
   if (!summaries?.length || !id) {

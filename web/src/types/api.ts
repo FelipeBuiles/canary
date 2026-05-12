@@ -624,6 +624,7 @@ export interface ImageStatus {
   version_count?: number;
   failure_classification?: "provider_blocked" | "generation_error" | string | null;
   failure_message?: string | null;
+  failure_detail?: string | null;
 }
 
 export interface ImageGenerationMeta {

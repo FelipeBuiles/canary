@@ -20,8 +20,8 @@ console = Console()
 
 _INIT_IMAGE_MODEL_CHOICES: list[tuple[str, str]] = [
     (GATEWAY_IMAGE_FAST, "Fast image model (Gemini Flash Image)"),
-    (GATEWAY_IMAGE_BALANCED, "Balanced image model (gpt-image-2)"),
-    (GATEWAY_IMAGE_QUALITY, "Quality image model (Gemini Pro Image)"),
+    (GATEWAY_IMAGE_BALANCED, "Balanced image model (Gemini Pro Image)"),
+    (GATEWAY_IMAGE_QUALITY, "Quality image model (gpt-image-2)"),
 ]
 
 

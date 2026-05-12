@@ -255,28 +255,35 @@ def list_images(
     generate_state = state.stages.get("draw")
     failed_items = set(generate_state.items_failed) if generate_state else set()
 
-    def failure_summary(scene_id: str, panel_num: int) -> tuple[str | None, str | None]:
+    def failure_summary(scene_id: str, panel_num: int) -> tuple[str | None, str | None, str | None]:
         failure_path = artifacts.panel_image_failure_path(project_dir, scene_id, panel_num)
         if not failure_path.exists():
-            return None, None
+            return None, None, None
         try:
             data = json.loads(failure_path.read_text())
             classification = data.get("classification")
             user_message = data.get("user_message")
+            error = data.get("error") if isinstance(data.get("error"), dict) else None
+            raw_message = error.get("message") if error else None
+            raw_type = error.get("type") if error else None
             if not isinstance(user_message, str) or not user_message.strip():
-                error = data.get("error")
-                if isinstance(error, dict):
-                    message = error.get("message")
-                    if isinstance(message, str):
-                        user_message = message
+                if isinstance(raw_message, str):
+                    user_message = raw_message
             if isinstance(user_message, str) and len(user_message) > 180:
                 user_message = f"{user_message[:177].rstrip()}..."
+            detail: str | None = None
+            if isinstance(raw_message, str) and raw_message.strip():
+                prefix = f"{raw_type}: " if isinstance(raw_type, str) and raw_type else ""
+                detail = (prefix + raw_message).strip()
+                if len(detail) > 2000:
+                    detail = f"{detail[:1997].rstrip()}..."
             return (
                 classification if isinstance(classification, str) else None,
                 user_message.strip() if isinstance(user_message, str) else None,
+                detail,
             )
         except Exception:
-            return None, None
+            return None, None, None
 
     results = []
     seen: set[tuple[str, int]] = set()
@@ -296,7 +303,7 @@ def list_images(
                     planned_panel_id = ImagePrompt.model_validate_json(prompt_path.read_text()).planned_panel_id
                 except Exception:
                     planned_panel_id = None
-            failure_classification, failure_message = failure_summary(scene_dir.name, panel_num)
+            failure_classification, failure_message, failure_detail = failure_summary(scene_dir.name, panel_num)
             active_job = find_active_generation_job(
                 request.app,
                 pkey,
@@ -320,6 +327,7 @@ def list_images(
                 "version_count": archived_panel_version_count(project_dir, scene_dir.name, panel_num),
                 "failure_classification": failure_classification,
                 "failure_message": failure_message,
+                "failure_detail": failure_detail,
             })
             seen.add((scene_dir.name, panel_num))
 
@@ -337,7 +345,7 @@ def list_images(
                     planned_panel_id = ImagePrompt.model_validate_json(prompt_path.read_text()).planned_panel_id
                 except Exception:
                     planned_panel_id = None
-            failure_classification, failure_message = failure_summary(scene_dir.name, panel_num)
+            failure_classification, failure_message, failure_detail = failure_summary(scene_dir.name, panel_num)
             results.append({
                 "scene_id": scene_dir.name,
                 "panel_number": panel_num,
@@ -348,6 +356,7 @@ def list_images(
                 "version_count": archived_panel_version_count(project_dir, scene_dir.name, panel_num),
                 "failure_classification": failure_classification,
                 "failure_message": failure_message,
+                "failure_detail": failure_detail,
             })
             seen.add((scene_dir.name, panel_num))
 
@@ -370,7 +379,7 @@ def list_images(
                 planned_panel_id = ImagePrompt.model_validate_json(prompt_path.read_text()).planned_panel_id
             except Exception:
                 planned_panel_id = None
-        failure_classification, failure_message = failure_summary(scene_id, panel_num)
+        failure_classification, failure_message, failure_detail = failure_summary(scene_id, panel_num)
         results.append({
             "scene_id": scene_id,
             "panel_number": panel_num,
@@ -381,6 +390,7 @@ def list_images(
             "version_count": archived_panel_version_count(project_dir, scene_id, panel_num),
             "failure_classification": failure_classification,
             "failure_message": failure_message,
+            "failure_detail": failure_detail,
         })
         seen.add((scene_id, panel_num))
 

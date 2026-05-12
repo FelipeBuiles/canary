@@ -321,7 +321,18 @@ export function ComposeRoom() {
   });
 
   // ── Loading / empty states ───────────────────────────────────────────────
+  const composeStageInfo = projectStatus?.stages?.compose;
   if (loadingList || (!pageList?.length && composeStageStatus !== "pending")) {
+    if (composeStageStatus === "running" || composeStageStatus === "pending") {
+      return (
+        <StagePlaceholder
+          stage="compose"
+          status={composeStageStatus}
+          itemsDone={composeStageInfo?.items_done}
+          itemsTotal={composeStageInfo?.items_total}
+        />
+      );
+    }
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">LOADING PAGE EDITOR...</p>
@@ -330,14 +341,13 @@ export function ComposeRoom() {
   }
 
   if (!pageList?.length || !id) {
-    const stageInfo = projectStatus?.stages?.compose;
     return (
       <div className="flex min-h-[40vh] items-center justify-center">
         <StagePlaceholder
           stage="compose"
-          status={stageInfo?.status ?? "pending"}
-          itemsDone={stageInfo?.items_done}
-          itemsTotal={stageInfo?.items_total}
+          status={composeStageInfo?.status ?? "pending"}
+          itemsDone={composeStageInfo?.items_done}
+          itemsTotal={composeStageInfo?.items_total}
         />
       </div>
     );

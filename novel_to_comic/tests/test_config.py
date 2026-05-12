@@ -3,15 +3,19 @@
 import tempfile
 from pathlib import Path
 
+import yaml
+
 from novel_to_comic.config import (
     Config,
     GATEWAY_EXTRACT_BALANCED,
     GATEWAY_IMAGE_BALANCED,
     GATEWAY_IMAGE_FAST,
+    GATEWAY_IMAGE_QUALITY,
     GATEWAY_PANEL_BALANCED,
     GATEWAY_PROMPT_BALANCED,
     GATEWAY_SCREENPLAY_BALANCED,
     LANGUAGE_NAMES,
+    is_gpt_image_2,
     save_config,
     load_config,
 )
@@ -109,6 +113,33 @@ class TestUsesGeminiImageProvider:
     def test_openai_returns_false(self):
         cfg = Config(image_provider="openai")
         assert cfg.uses_gemini_image_provider() is False
+
+
+class TestGptImage2Alias:
+    def test_quality_alias_is_gpt_image_2(self):
+        assert is_gpt_image_2(GATEWAY_IMAGE_QUALITY) is True
+
+    def test_balanced_alias_is_not_gpt_image_2(self):
+        assert is_gpt_image_2(GATEWAY_IMAGE_BALANCED) is False
+
+    def test_direct_provider_model_is_gpt_image_2(self):
+        assert is_gpt_image_2("openai/gpt-image-2") is True
+
+    def test_aliases_match_repository_litellm_config(self):
+        gateway_config = Path(__file__).resolve().parents[2] / "litellm" / "config.yaml"
+        data = yaml.safe_load(gateway_config.read_text())
+        image_models = {
+            item["model_name"]: item["litellm_params"]["model"]
+            for item in data["model_list"]
+            if str(item.get("model_name", "")).startswith("image-")
+        }
+
+        assert is_gpt_image_2("image-quality") is (
+            image_models["image-quality"] == "openai/gpt-image-2"
+        )
+        assert is_gpt_image_2("image-balanced") is (
+            image_models["image-balanced"] == "openai/gpt-image-2"
+        )
 
 
 class TestLanguageHelpers:

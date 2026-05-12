@@ -1,5 +1,7 @@
 import { create } from "zustand";
-import type { PipelineEvent } from "../types/api";
+import { queryClient } from "../api/queryClient";
+import { applyStageEventToProjectStatus } from "../lib/pipelineStatusEvents";
+import type { PipelineEvent, ProjectStatus } from "../types/api";
 import { useInsufficientCreditsStore } from "./insufficientCredits";
 import { STAGE_DISPLAY_NAMES, type StageName } from "../types/api";
 
@@ -30,6 +32,27 @@ function closeCurrentSource(es?: EventSource) {
   reconnectDelay = 1000;
 }
 
+function updateStatusForStageEvent(projectId: string, event: PipelineEvent) {
+  if (!event.stage) return;
+  if (
+    event.type !== "stage_begin" &&
+    event.type !== "stage_progress" &&
+    event.type !== "stage_complete" &&
+    event.type !== "stage_fail"
+  ) {
+    return;
+  }
+
+  const statusKey = ["project", projectId, "status"] as const;
+  queryClient.setQueryData<ProjectStatus>(statusKey, (current) =>
+    applyStageEventToProjectStatus(current, event),
+  );
+
+  if (event.type === "stage_fail") {
+    void queryClient.invalidateQueries({ queryKey: statusKey });
+  }
+}
+
 export const usePipelineStore = create<PipelineStore>((set) => ({
   connected: false,
   events: [],
@@ -43,6 +66,7 @@ export const usePipelineStore = create<PipelineStore>((set) => ({
       try {
         const event: PipelineEvent = JSON.parse(e.data);
         set((state) => ({ events: [...state.events, event] }));
+        updateStatusForStageEvent(projectId, event);
         if (
           event.type === "stage_fail"
           && event.error_code === "insufficient_credits"
@@ -70,6 +94,8 @@ export const usePipelineStore = create<PipelineStore>((set) => ({
           });
         }
         if (event.type === "pipeline_done") {
+          void queryClient.invalidateQueries({ queryKey: ["project", projectId, "status"] });
+          void queryClient.invalidateQueries({ queryKey: ["projects"] });
           closeCurrentSource(es);
           set({ connected: false });
         }

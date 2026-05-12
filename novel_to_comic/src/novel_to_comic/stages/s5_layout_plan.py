@@ -51,6 +51,16 @@ from novel_to_comic.models.layout_plan import (
     PlannedSfx,
 )
 from novel_to_comic.models.panel import DialogueLine, Screenplay, ScreenplayBeat
+from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.state import (
+    PipelineState,
+    begin_stage,
+    complete_stage,
+    fail_stage,
+    record_api_usage,
+    record_item_done,
+    save_state,
+)
 from novel_to_comic.text_utils import clean, shorten
 
 
@@ -63,16 +73,6 @@ def _planned_sfx_from_beat(beat: ScreenplayBeat) -> PlannedSfx | None:
         kind=infer_sfx_kind(text),
         intensity=infer_sfx_intensity(text),
     )
-from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.state import (
-    PipelineState,
-    begin_stage,
-    complete_stage,
-    fail_stage,
-    record_api_usage,
-    record_item_done,
-    save_state,
-)
 
 console = Console()
 logger = logging.getLogger("canary.plan")
@@ -125,6 +125,9 @@ PANEL FIELDS
   for every visible character (e.g. {{"char_001": "eyes narrowed, mouth held still"}}).
 - key_objects: list every plot-relevant visible object in the panel, including story props,
   held/touched/used objects, evidence, weapons, letters, doors, phones, flowers, etc.
+  Do not list a carried/collected story prop just because similar raw material appears
+  in the environment; wild flowers on the bank are not a carried Bundle of Flowers
+  unless a character has actually gathered or is holding that bundle in this panel.
 - visual_requirements: 1-4 concrete physical details from the covered beats that the
   generated image must show. Include action, expression, object, and spatial details.
   Do not include dialogue text, captions, labels, or SFX lettering here.
@@ -1140,8 +1143,10 @@ def _importance_aware_paginate(
                     z_index=idx,
                 )
             )
-            if geom_aspect is not None and abs(geom_aspect - (panel.aspect_preference or 1.0)) > 0.1:
-                panel.aspect_preference = geom_aspect
+            # Keep panel.aspect_preference as the narrative shape requested by
+            # planning. Page-slot geometry belongs on PanelGeometry; feeding it
+            # back into prompt sizing can turn normal panels into skinny image
+            # generations that do not match provider behavior.
 
         is_intro = page_number == start_page_number
         has_climax = any(p.importance in {"hero", "splash"} for p in chunk)

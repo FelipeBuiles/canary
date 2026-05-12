@@ -39,7 +39,16 @@ export function AdaptRoom() {
 
 
   if (loadingList || (!summaries?.length && stageStatus !== "pending")) {
-    return <RoomShell isLoading loadingText="LOADING SCREENPLAYS…" />;
+    return (
+      <RoomShell
+        isLoading
+        loadingText="LOADING SCREENPLAYS…"
+        loadingStage="adapt"
+        loadingStageStatus={stageStatus}
+        loadingStageItemsDone={stageInfo?.items_done}
+        loadingStageItemsTotal={stageInfo?.items_total}
+      />
+    );
   }
 
   if (!summaries?.length || !id) {

@@ -21,7 +21,7 @@ from novel_to_comic.layout_planning import load_layout_plan, prompt_path_for_pan
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.panel_versions import record_current_panel_version
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.prompting import IMAGE_PROMPT_VERSION, _SOFT_CONTINUITY, build_planned_panel_prompt_spec, render_generation_prompt
+from novel_to_comic.prompting import IMAGE_PROMPT_VERSION, build_planned_panel_prompt_spec, render_generation_prompt
 from novel_to_comic.state import (
     PipelineState,
     begin_stage,
@@ -54,16 +54,17 @@ def _should_use_prev_panel_image(config: Config, prev_transition_type: str | Non
     """Return True if the previous panel's image should be used as a style reference.
 
     Hard cuts (smash cut, fade to, cut to, scene change, time jump) can make the
-    previous panel image actively harmful — the model might blend the previous scene
-    into the new one. GPT Image edit requests are especially prone to repeating the
-    source image, so only match cuts get a previous-panel image on that route.
+    previous panel image actively harmful - the model might blend the previous scene
+    into the new one. Smooth continuations should stay text-only: previous-panel
+    image refs are strong edit inputs and can override character identity, scale,
+    and composition. Reserve image continuity for intentional match cuts.
     """
     if not prev_transition_type:
         return False
     transition_type = (prev_transition_type or "").strip().lower()
     if is_gpt_image_2(config.effective_image_model()):
-        return transition_type == "match_cut"
-    if transition_type in _SOFT_CONTINUITY:
+        return False
+    if transition_type == "match_cut":
         return True
     return False
 
@@ -77,6 +78,52 @@ def _use_location_plate_refs(config: Config) -> bool:
     # plates can leak repeated background textures into panels. Keep locations
     # text-driven for the gpt-image-2 route.
     return not is_gpt_image_2(config.effective_image_model())
+
+
+def _use_style_sample_refs(config: Config) -> bool:
+    # GPT Image 2 uses the image edit endpoint whenever any reference image is
+    # supplied. Keep style text-driven to avoid copying sample texture/noise.
+    return not is_gpt_image_2(config.effective_image_model())
+
+
+def _is_prop_ref(path: Path) -> bool:
+    parts = path.parts
+    return len(parts) >= 3 and parts[-3] == "props"
+
+
+def _gpt_image_2_subject_refs(paths: list[Path]) -> list[Path]:
+    """Return a minimal, stable identity ref set for GPT Image 2 panels.
+
+    Multiple pose crops plus prop refs push GPT Image 2 into noisy edit behavior.
+    Prefer one front-facing crop per character. Prop refs stay text-only unless a
+    panel has no character refs at all, in which case one prop ref is allowed.
+    """
+    character_refs = [p for p in paths if not _is_prop_ref(p)]
+    prop_refs = [p for p in paths if _is_prop_ref(p)]
+    selected: list[Path] = []
+    seen_character_dirs: set[Path] = set()
+
+    def sort_key(path: Path) -> tuple[int, str]:
+        preferred = {
+            "front.png": 0,
+            "three_quarter.png": 1,
+            "profile.png": 2,
+            "gesture.png": 3,
+            "sheet.png": 4,
+        }
+        return preferred.get(path.name, 99), str(path)
+
+    for path in sorted(character_refs, key=sort_key):
+        character_dir = path.parent
+        if character_dir in seen_character_dirs:
+            continue
+        selected.append(path)
+        seen_character_dirs.add(character_dir)
+
+    if selected:
+        return selected
+
+    return prop_refs[:1]
 
 
 def _find_style_sample(project_dir: Path, style_template: str) -> Path | None:
@@ -136,6 +183,8 @@ def resolve_panel_reference_paths(
         for p in prompt.reference_image_paths
         if (resolved := (project_dir / p) if not Path(p).is_absolute() else Path(p)).exists()
     ]
+    if is_gpt_image_2(config.effective_image_model()):
+        subject_refs = _gpt_image_2_subject_refs(subject_refs)
 
     style_refs: list[Path] = []
     resolved_output_dir = output_dir or project_dir / "draw" / prompt.scene_id
@@ -156,7 +205,7 @@ def resolve_panel_reference_paths(
             style_refs.append(prev_image)
 
     if not style_refs:
-        if style_sample and style_sample.exists():
+        if style_sample and style_sample.exists() and _use_style_sample_refs(config):
             style_refs.append(style_sample)
         loc_id = (scene_to_location or {}).get(prompt.scene_id)
         if loc_id and _use_location_plate_refs(config):
@@ -195,7 +244,11 @@ def estimate_panel_image_cost_usd(
         style_sample=style_sample,
         scene_to_location=scene_to_location,
     )
-    generation_prompt = render_generation_prompt(prompt, config.style_template)
+    generation_prompt = render_generation_prompt(
+        prompt,
+        config.style_template,
+        config.effective_image_model(),
+    )
     return estimate_image_cost(
         config.effective_image_model(),
         1,
@@ -259,8 +312,14 @@ def _is_provider_blocked_error(exc: BaseException) -> bool:
         "filtered out",
         "safety rating",
         "safety_ratings",
+        "safety filter",
+        "block_reason",
+        "blockreason",
+        "finish_reason=safety",
+        "finish_reason=content_filter",
         "violated google",
         "unable to show the generated image",
+        "silently rejected",
     )
     chain_text = " ".join(
         " ".join([str(node), *(str(arg) for arg in getattr(node, "args", ()) if arg is not None)]).lower()
@@ -317,9 +376,6 @@ async def _generate_panel(
         scene_lock = scene_locks.setdefault(prompt.scene_id, asyncio.Lock())
 
         async with scene_lock:
-            if output_path.exists() and not force:
-                return ApiResult(value=output_path, usage=None)
-
             subject_refs, style_refs = resolve_panel_reference_paths(
                 config,
                 project_dir,
@@ -335,7 +391,11 @@ async def _generate_panel(
                 generation_path = output_path.with_name(
                     f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
                 )
-            generation_prompt = render_generation_prompt(prompt, config.style_template)
+            generation_prompt = render_generation_prompt(
+                prompt,
+                config.style_template,
+                config.effective_image_model(),
+            )
             meta_payload = {
                 "version": 1,
                 "kind": "panel_image",
@@ -355,6 +415,13 @@ async def _generate_panel(
                     "continuity_note": prompt.continuity_note,
                 },
             }
+            if (
+                output_path.exists()
+                and not force
+                and not artifacts.asset_failure_path(output_path).exists()
+                and artifacts.asset_matches_meta(output_path, meta_payload)
+            ):
+                return ApiResult(value=output_path, usage=None)
 
             try:
                 async with semaphore:
@@ -392,10 +459,7 @@ async def _generate_panel(
 
             if result:
                 artifacts.asset_failure_path(output_path).unlink(missing_ok=True)
-                try:
-                    _write_generation_meta(output_path, meta_payload)
-                except Exception:
-                    pass
+                _write_generation_meta(output_path, meta_payload)
             return ApiResult(value=result, usage=flux_result.usage)
     except Exception as exc:
         if "output_path" in locals() and "meta_payload" in locals():
@@ -456,6 +520,29 @@ async def regenerate_panel_image(
     if artifacts.story_bible_path(project_dir).exists():
         story_bible = artifacts.read_story_bible(project_dir)
         scene_to_location = {s.id: s.location_id for s in story_bible.scenes}
+
+    if story_bible is not None and artifacts.layout_plan_path(project_dir).exists():
+        plan = load_layout_plan(project_dir)
+        scene_panels = scene_panel_map(plan).get(scene_id, [])
+        for index, panel in enumerate(scene_panels):
+            if panel.panel_number != panel_number:
+                continue
+            existing = ImagePrompt.model_validate_json(prompt_path.read_text())
+            if (
+                getattr(existing, "planned_panel_id", None) == panel.panel_id
+                and getattr(existing, "prompt_version", 1) >= IMAGE_PROMPT_VERSION
+            ):
+                break
+            prev_panel = scene_panels[index - 1] if index > 0 else None
+            upgraded = build_planned_panel_prompt_spec(
+                config,
+                project_dir,
+                panel,
+                story_bible,
+                prev_panel,
+            )
+            prompt_path.write_text(upgraded.model_dump_json(indent=2))
+            break
 
     scene_locks: dict[str, asyncio.Lock] = {}
 

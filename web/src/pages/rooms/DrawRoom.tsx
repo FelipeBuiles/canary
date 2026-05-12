@@ -206,6 +206,7 @@ export function DrawRoom() {
   });
   const [selectedPanel, setSelectedPanel] = useState<{ sceneId: string; panelNumber: number } | null>(null);
   const [confirmAction, setConfirmAction] = useState<"generate_all" | "retry_failed" | null>(null);
+  const [retryFailedActive, setRetryFailedActive] = useState(false);
 
   const regeningKeys = Object.keys(projectRegens);
   const regenJobIds = Object.values(projectRegens)
@@ -376,21 +377,21 @@ export function DrawRoom() {
     let generated = 0, pending = 0, failed = 0;
     for (const img of allDisplayImages) {
       const key = `${img.scene_id}-${img.panel_number}`;
-      const state = getPanelDisplayState(img, regenModes.get(key) ?? null, isDrawRunning);
+      const state = getPanelDisplayState(img, regenModes.get(key) ?? null, isDrawRunning, retryFailedActive);
       const bucket = getPanelFilterBucket(state);
       if (bucket === "generated") generated++;
       else if (bucket === "pending") pending++;
       else if (bucket === "failed") failed++;
     }
     return { generated, pending, failed, total: allDisplayImages.length };
-  }, [allDisplayImages, regenModes, isDrawRunning]);
+  }, [allDisplayImages, regenModes, isDrawRunning, retryFailedActive]);
 
   const displayImages = useMemo(() => {
     let filtered = allDisplayImages;
     if (statusFilter !== "all") {
       filtered = filtered.filter((img) => {
         const key = `${img.scene_id}-${img.panel_number}`;
-        const state = getPanelDisplayState(img, regenModes.get(key) ?? null, isDrawRunning);
+        const state = getPanelDisplayState(img, regenModes.get(key) ?? null, isDrawRunning, retryFailedActive);
         return getPanelFilterBucket(state) === statusFilter;
       });
     }
@@ -403,7 +404,7 @@ export function DrawRoom() {
       );
     }
     return filtered;
-  }, [allDisplayImages, statusFilter, searchQuery, regenModes, isDrawRunning]);
+  }, [allDisplayImages, statusFilter, searchQuery, regenModes, isDrawRunning, retryFailedActive]);
 
   const scenes = useMemo(
     () => [...new Set([...images?.map((img) => img.scene_id) ?? [], ...(promptSummaries?.map((s) => s.scene_id) ?? [])])],
@@ -411,6 +412,12 @@ export function DrawRoom() {
   );
 
   const drawStageStatus = generateStage?.status ?? "pending";
+
+  useEffect(() => {
+    if (retryFailedActive && drawStageStatus !== "running" && !isPipelineRunning) {
+      setRetryFailedActive(false);
+    }
+  }, [retryFailedActive, drawStageStatus, isPipelineRunning]);
 
   function handleSetViewMode(mode: "grid" | "list") {
     setViewMode(mode);
@@ -434,21 +441,33 @@ export function DrawRoom() {
 
   function handleRetryFailed() {
     if (!id) return;
+    setRetryFailedActive(true);
     runPipeline(
-      { project: id, stage: "draw", rerun: true },
+      { project: id, stage: "draw", retryFailed: true },
       {
-        onError: (err) =>
+        onError: (err) => {
+          setRetryFailedActive(false);
           maybeShowInsufficientCredits(err, {
             actionLabel: "Retry failed panels",
             onRetry: handleRetryFailed,
-          }),
+          });
+        },
       },
     );
     setConfirmAction(null);
   }
 
   if (isLoading || ((!images?.length && !promptSummaries?.length) && drawStageStatus !== "pending")) {
-    return <RoomShell isLoading loadingText="LOADING PANEL GALLERY…" />;
+    return (
+      <RoomShell
+        isLoading
+        loadingText="LOADING PANEL GALLERY…"
+        loadingStage="draw"
+        loadingStageStatus={drawStageStatus}
+        loadingStageItemsDone={generateStage?.items_done}
+        loadingStageItemsTotal={generateStage?.items_total}
+      />
+    );
   }
 
   if ((!images?.length && !promptSummaries?.length && regeningKeys.length === 0) || !id) {
@@ -590,6 +609,7 @@ export function DrawRoom() {
                   regenMode={regenModes.get(key) ?? null}
                   regenError={regenError}
                   isDrawRunning={isDrawRunning}
+                  isRetryFailedRunning={retryFailedActive}
                   title={prompts?.title}
                   description={prompts?.description}
                   onPanelClick={() => setSelectedPanel({ sceneId: img.scene_id, panelNumber: img.panel_number })}
@@ -605,7 +625,7 @@ export function DrawRoom() {
               const baseUrl = `/api/projects/${encodeURIComponent(id!)}/files/draw/${img.scene_id}/panel_${String(img.panel_number).padStart(3, "0")}.png`;
               const imageUrl = bust ? `${baseUrl}?t=${bust}` : baseUrl;
               const regenMode = regenModes.get(key) ?? null;
-              const state = getPanelDisplayState(img, regenMode, isDrawRunning);
+              const state = getPanelDisplayState(img, regenMode, isDrawRunning, retryFailedActive);
               const prompts = promptDescByKey.get(key);
               return (
                 <div
@@ -715,6 +735,7 @@ export function DrawRoom() {
           status={selectedPanelImage.status}
           failureClassification={selectedPanelImage.failure_classification}
           errorMessage={selectedPanelImage.failure_message}
+          errorDetail={selectedPanelImage.failure_detail}
           accepted={!!selectedPanelImage.accepted}
           versionCount={selectedPanelImage.version_count ?? 0}
         />

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from novel_to_comic.config import Config
+from novel_to_comic.config import Config, is_gpt_image_2
 from novel_to_comic.models.layout_plan import PlannedPanel
 from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
 from novel_to_comic.models.story_bible import Character, StoryBible
@@ -102,13 +102,10 @@ def dimensions_for_shot(shot_type: str) -> tuple[int, int]:
 def dimensions_for_panel(panel: PlannedPanel) -> tuple[int, int]:
     shape_intent = getattr(panel, "shape_intent", None)
     generation_mode = getattr(panel, "generation_mode", None)
-    aspect_pref = getattr(panel, "aspect_preference", None)
     if shape_intent in {"wide", "panorama", "bleed"}:
         return (1344, 768) if generation_mode == "exact" else (1536, 1024)
     if shape_intent == "tall":
         return (768, 1536) if generation_mode == "exact" else (1024, 1536)
-    if aspect_pref is not None and aspect_pref <= 0.40:
-        return (512, 1344)
     return dimensions_for_shot(panel.shot_type)
 
 
@@ -134,7 +131,7 @@ def _labels(config: Config | None = None) -> dict[str, str]:
 
 _clean = clean
 _shorten = shorten
-IMAGE_PROMPT_VERSION = 14
+IMAGE_PROMPT_VERSION = 15
 _SOFT_CONTINUITY = {"smooth_continuation", "match_cut"}
 _SEQUENTIAL_THEN_RE = re.compile(r"(?<=[,;.!?])\s+then\s+", re.IGNORECASE)
 _LEADING_TRANSITION_ACTION_RE = re.compile(
@@ -222,7 +219,34 @@ def _reference_paths(project_dir: Path, character_id: str, character_count: int)
     return []
 
 
-def _planned_panel_text_blob(panel: PlannedPanel) -> str:
+_PROP_CONTEXT_CUE_RE = re.compile(
+    r"\b("
+    r"hold|holds|holding|held|carry|carries|carrying|carried|"
+    r"clutch|clutches|clutching|grip|grips|gripping|gripped|"
+    r"cradle|cradles|cradling|gather|gathers|gathering|gathered|"
+    r"collect|collects|collecting|collected|reach|reaches|reaching|"
+    r"touch|touches|touching|touched|set|sets|setting|lay|lays|laying|"
+    r"lower|lowers|lowering|hang|hangs|hanging|wear|wears|wearing|"
+    r"use|uses|using|used|armful|crook|chest|hand|hands|feet"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _story_prop_tokens(value: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", value.lower())
+        if len(token) > 3 and token not in {"with", "from", "that", "this", "they", "their"}
+    }
+
+
+def _planned_panel_text_pieces(
+    panel: PlannedPanel,
+    *,
+    extra_text: list[str] | None = None,
+    include_key_objects: bool = False,
+) -> list[str]:
     pieces: list[str] = [
         panel.background_description,
         panel.lighting,
@@ -230,25 +254,93 @@ def _planned_panel_text_blob(panel: PlannedPanel) -> str:
     ]
     pieces.extend(s.text for s in panel.sfx)
     pieces.extend(panel.character_actions.values())
-    pieces.extend(getattr(panel, "key_objects", []) or [])
+    if include_key_objects:
+        pieces.extend(getattr(panel, "key_objects", []) or [])
     pieces.extend(getattr(panel, "visual_requirements", []) or [])
     pieces.extend(str(line.get("text", "")) for line in panel.dialogue)
-    return " ".join(pieces).lower()
+    pieces.extend(extra_text or [])
+    return [_clean(piece).lower() for piece in pieces if _clean(piece)]
 
 
-def _props_present_in_panel(panel: PlannedPanel, story_bible: StoryBible) -> list:
-    """Return the Prop objects whose name or id is referenced in the panel."""
-    blob = _planned_panel_text_blob(panel)
+def _planned_panel_text_blob(
+    panel: PlannedPanel,
+    *,
+    extra_text: list[str] | None = None,
+    include_key_objects: bool = False,
+) -> str:
+    return " ".join(
+        _planned_panel_text_pieces(
+            panel,
+            extra_text=extra_text,
+            include_key_objects=include_key_objects,
+        )
+    )
+
+
+def _prop_matches_context(prop, blob: str, pieces: list[str]) -> bool:
+    """Return True when a story prop appears as an active panel object."""
+    name = (prop.name or "").lower()
+    prop_id = (prop.id or "").lower()
+    if (name and name in blob) or (prop_id and prop_id in blob):
+        return True
+
+    tokens = _story_prop_tokens(prop.name or "")
+    if not tokens:
+        return False
+    return any(
+        any(token in piece for token in tokens) and _PROP_CONTEXT_CUE_RE.search(piece)
+        for piece in pieces
+    )
+
+
+def _props_present_in_panel(panel: PlannedPanel, story_bible: StoryBible, scene=None) -> list:
+    """Return story props that are actively used, carried, touched, or shown."""
+    scene_appearance_text: list[str] = []
+    if scene is not None:
+        appearances = getattr(scene, "character_appearances", {}) or {}
+        scene_appearance_text = [
+            appearances.get(character_id, "")
+            for character_id in getattr(panel, "characters_present", []) or []
+        ]
+
+    pieces = _planned_panel_text_pieces(panel, extra_text=scene_appearance_text)
+    blob = " ".join(pieces)
     matched = []
     seen: set[str] = set()
     for prop in getattr(story_bible, "props", []) or []:
-        name = (prop.name or "").lower()
-        prop_id = (prop.id or "").lower()
-        if (name and name in blob) or (prop_id and prop_id in blob):
+        if _prop_matches_context(prop, blob, pieces):
             if prop.id and prop.id not in seen:
                 matched.append(prop)
                 seen.add(prop.id)
     return matched
+
+
+def _filtered_key_objects(key_objects: list[str], story_bible: StoryBible, matched_props: list) -> list[str]:
+    """Drop unmatched story-prop names/ids from key objects.
+
+    Layout planning can confuse ambient materials with carried props: for
+    example, wild flowers by a stream are not the carried Bundle of Flowers.
+    Keep literal prop labels only when the surrounding panel context confirms
+    that prop is active.
+    """
+    matched_ids = {(prop.id or "").lower() for prop in matched_props}
+    matched_names = {(prop.name or "").lower() for prop in matched_props}
+    props_by_label: dict[str, str] = {}
+    for prop in getattr(story_bible, "props", []) or []:
+        if prop.id:
+            props_by_label[prop.id.lower()] = prop.id.lower()
+        if prop.name:
+            props_by_label[prop.name.lower()] = (prop.id or prop.name).lower()
+
+    filtered: list[str] = []
+    for item in key_objects:
+        cleaned = _clean(item)
+        label = cleaned.lower()
+        prop_key = props_by_label.get(label)
+        if prop_key and prop_key not in matched_ids and label not in matched_names:
+            continue
+        filtered.append(cleaned)
+    return filtered
 
 
 def _prop_reference_paths(project_dir: Path, prop_ids: list[str]) -> list[str]:
@@ -374,9 +466,6 @@ def build_planned_panel_prompt_spec(
         composition = f"{composition}, wide horizontal framing"
     if panel.shape_intent == "tall" and "vertical" not in composition.lower():
         composition = f"{composition}, tall vertical framing"
-    aspect_pref = getattr(panel, "aspect_preference", None)
-    if aspect_pref is not None and aspect_pref <= 0.40 and "narrow" not in composition.lower():
-        composition = f"{composition}, narrow vertical column — keep subject centered horizontally, avoid wide poses or spread elements"
     if panel.generation_mode == "master":
         composition = f"{composition}, extra environmental margin for flexible crop"
     if panel.has_narration_caption:
@@ -411,9 +500,15 @@ def build_planned_panel_prompt_spec(
     setting = "; ".join(setting_parts)
     lighting = _strip_text_render_sentences(_clean(panel.lighting))
     mood = _clean(panel.mood)
-    key_objects = _clean_list(getattr(panel, "key_objects", []) or [])
     visual_requirements = _clean_list(getattr(panel, "visual_requirements", []) or [], limit=12)
-    matched_props = _props_present_in_panel(panel, story_bible)
+    matched_props = _props_present_in_panel(panel, story_bible, scene=scene)
+    key_objects = _clean_list(
+        _filtered_key_objects(
+            getattr(panel, "key_objects", []) or [],
+            story_bible,
+            matched_props,
+        )
+    )
     props = [
         f"{prop.name}: {_shorten(prop.visual_anchor, 120)}"
         for prop in matched_props
@@ -573,6 +668,16 @@ _GENERATION_RENDERING_CONSTRAINTS = (
     "structure rather than all-over noise."
 )
 
+_GPT_IMAGE_2_RENDERING_DISCIPLINE = (
+    "GPT-image-2 material discipline: simplify repeated physical materials into "
+    "large readable shapes with a few deliberate accents. If the panel mentions "
+    "dirt, soil, leaf mold, fallen leaves, debris, bark, cloth weave, denim, "
+    "corrosion, bone, cracks, rot, gravel, grass, or ferns, do not cover surfaces "
+    "with many similar flecks, holes, chips, threads, dabs, leaf shapes, or tile-like "
+    "marks. Keep quiet planes on bone, fabric, metal, skin, water, shadow, and ground; "
+    "show only the story-critical cracks, tears, stains, and corrosion accents."
+)
+
 _REFERENCE_CONSTRAINTS = (
     "Use reference images only for identity, continuity, palette, and broad style. "
     "Do not copy sample-image artifacts, borders, layout grids, repeated texture "
@@ -608,7 +713,11 @@ def _append_section(sections: list[str], title: str, content: str | list[str] | 
         sections.append(f"{title}:\n{text}")
 
 
-def render_generation_prompt(prompt: ImagePrompt, style_template: str) -> str:
+def render_generation_prompt(
+    prompt: ImagePrompt,
+    style_template: str,
+    image_model: str | None = None,
+) -> str:
     style = _clean(style_template or getattr(prompt, "style", None))
     body = _clean(getattr(prompt, "full_prompt", "")) or render_panel_prompt_body(prompt)
     has_structured_fields = any([
@@ -625,6 +734,8 @@ def render_generation_prompt(prompt: ImagePrompt, style_template: str) -> str:
     sections: list[str] = ["Create one finished comic panel image."]
 
     _append_section(sections, "Style", style)
+    if image_model and is_gpt_image_2(image_model):
+        _append_section(sections, "Rendering discipline", _GPT_IMAGE_2_RENDERING_DISCIPLINE)
     _append_section(sections, "Characters", _render_subject_lines(prompt))
     _append_section(sections, "Composition", getattr(prompt, "composition", None))
     _append_section(sections, "Setting", getattr(prompt, "setting", None))

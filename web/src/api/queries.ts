@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listProjects, getProjectStatus, createProject, deleteProject, generateProjectCover } from "./projects";
 import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate } from "./pipeline";
-import type { ConfigOverrides, StoryBible, CharacterVoice } from "../types/api";
+import type { ConfigOverrides, StoryBible, CharacterVoice, ProjectStatus, StageInfo } from "../types/api";
 import { getBalance, getCreditHistory, getPricingReference } from "./credits";
 import { getPackages, createCheckout } from "./billing";
 import {
@@ -103,12 +103,57 @@ export function useUpdateProjectConfig() {
 
 // ── Pipeline ──────────────────────────────────────────────────────────────────
 
+// Optimistically mark a stage as running in the cached project status so any
+// room the user navigates to next sees `running` on first render — that lets
+// RoomShell render the rich StageRunning placeholder (badge + progress) instead
+// of the basic LoadingBlock spinner during the post-kickoff fetch race.
+function markStageRunningInCache(
+  qc: ReturnType<typeof useQueryClient>,
+  project: string,
+  stage: string,
+): ProjectStatus | undefined {
+  const key = ["project", project, "status"] as const;
+  const previous = qc.getQueryData<ProjectStatus>(key);
+  if (!previous) return previous;
+  const existing: StageInfo | undefined = previous.stages[stage];
+  const next: StageInfo = {
+    status: "running",
+    items_done: existing?.items_done ?? 0,
+    items_total: existing?.items_total ?? 0,
+    items_failed: existing?.items_failed ?? [],
+    cost_credits: existing?.cost_credits ?? 0,
+    estimated_cost_credits: existing?.estimated_cost_credits ?? 0,
+    error: null,
+    started_at: existing?.started_at ?? null,
+    finished_at: null,
+    stale: false,
+  };
+  qc.setQueryData<ProjectStatus>(key, {
+    ...previous,
+    is_running: true,
+    stages: { ...previous.stages, [stage]: next },
+  });
+  return previous;
+}
+
 export function useRunPipeline() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ project, stage, rerun }: { project: string; stage?: string; rerun?: boolean }) =>
-      runPipeline(project, stage, rerun),
-    onSuccess: (_data, { project }) => {
+    mutationFn: ({ project, stage, rerun, retryFailed }: { project: string; stage?: string; rerun?: boolean; retryFailed?: boolean }) =>
+      runPipeline(project, stage, rerun, retryFailed),
+    onMutate: async ({ project, stage }) => {
+      if (!stage) return { previous: undefined };
+      // Cancel in-flight refetches so they can't clobber our optimistic write.
+      await qc.cancelQueries({ queryKey: ["project", project, "status"] });
+      const previous = markStageRunningInCache(qc, project, stage);
+      return { previous };
+    },
+    onError: (_err, { project }, context) => {
+      if (context?.previous) {
+        qc.setQueryData(["project", project, "status"], context.previous);
+      }
+    },
+    onSettled: (_data, _err, { project }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "status"] });
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
