@@ -66,6 +66,21 @@ def test_fast_image_alias_estimates_reference_input_images():
     assert provider_usd_to_credits(estimate_image_cost("image-fast", 1, ref_count=4)) == 7
 
 
+def test_per_megapixel_image_pricing_rounds_output_and_references():
+    # fal-ai/flux-2-pro/edit bills the generated image as first MP + extra MP,
+    # and each reference image by rounded megapixels.
+    # output 1920x1080 = 2MP: $0.03 + $0.015
+    # references 512x512 + 1600x900 = 1MP + 2MP: 3 * $0.015
+    assert estimate_image_cost(
+        "fal-ai/flux-2-pro/edit",
+        1,
+        width=1920,
+        height=1080,
+        ref_count=2,
+        ref_image_sizes=[(512, 512), (1600, 900)],
+    ) == approx(0.09)
+
+
 def test_provider_reported_cost_wins_over_cached_pricing():
     usage = UsageRecord(
         provider="openai",

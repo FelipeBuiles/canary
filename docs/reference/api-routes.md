@@ -61,8 +61,10 @@ Replace `{project}` with the project directory name.
 | `POST` | `/api/projects/{project}/regen-instructed` | `regen_panel_with_instruction` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/regen-ref` | `regen_ref` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/regen-plate` | `regen_plate` | `pipeline.py` |
+| `POST` | `/api/projects/{project}/regen-prop` | `regen_prop` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/regen-ref-instructed` | `regen_ref_with_instruction` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/regen-plate-instructed` | `regen_plate_with_instruction` | `pipeline.py` |
+| `POST` | `/api/projects/{project}/regen-prop-instructed` | `regen_prop_with_instruction` | `pipeline.py` |
 | `GET` | `/api/projects/{project}/generation-jobs` | `get_generation_jobs` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/approve/{stage}` | `approve` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/reset/{stage}` | `reset_stage` | `pipeline.py` |
@@ -74,8 +76,14 @@ Replace `{project}` with the project directory name.
 - `stage` (required): stage to run. Valid stages: `extract`, `style`, `cast`, `adapt`, `plan`, `storyboard`, `direct`, `draw`, `compose`.
 - `rerun` (optional bool): when true, resets the selected stage and downstream
   state and clears their registered output paths before running.
+- `retry_failed` (optional bool): only valid with `stage=draw`; regenerates
+  panels that have failure metadata or failed item state without clearing the
+  whole draw/compose/export downstream path. Mutually exclusive with `rerun`.
 
-**SSE:** `GET /api/projects/{project}/events` streams stage progress events. Connect before triggering a run to receive all events.
+**SSE:** `GET /api/projects/{project}/events` streams stage progress events.
+Connect before triggering a run to receive all events. The frontend applies
+stage events directly to the cached project status, then invalidates status and
+project lists when `pipeline_done` arrives.
 
 ## Stages (Artifacts)
 
@@ -99,6 +107,11 @@ Replace `{project}` with the project directory name.
 | `DELETE` | `/api/projects/{project}/images/{scene_id}/{panel_number}/accept` | `unaccept_image_panel` | `stages.py` |
 | `GET` | `/api/projects/{project}/images/{scene_id}/{panel_number}/versions` | `get_image_panel_versions` | `stages.py` |
 | `POST` | `/api/projects/{project}/images/{scene_id}/{panel_number}/versions/{version}/restore` | `restore_image_panel_version` | `stages.py` |
+
+`GET /images` includes failed placeholders synthesized from
+`draw/scene_NNN/panel_NNN.png.failure.json` and `state.json.items_failed`.
+Each image status can include `failure_classification`, short
+`failure_message`, and longer `failure_detail` for provider diagnostics.
 
 ## Pages (compose / Stage 9)
 
@@ -155,6 +168,11 @@ Connect to `GET /api/projects/{project}/events` before triggering a run.
 {"type": "stage_complete", "stage": str, "done": int, "total": int}
 {"type": "stage_fail",     "stage": str, "message": str}
 {"type": "log",            "stage": str, "level": str, "message": str}
+{"type": "pipeline_done"}
 ```
 
 `level`: `"info"` | `"warn"` | `"error"` | `"dim"` | `"bold"`
+
+`stage_fail` may also include `error_code: "insufficient_credits"` plus
+`balance_credits`, `required_credits`, and `shortfall_credits` when a running
+or chained stage cannot reserve enough credits.

@@ -17,7 +17,7 @@ from novel_to_comic.usage import audit_pricing
 
 from .generation_jobs import generation_worker
 from .logging import request_log_middleware
-from .routers import billing, config, credits, export, pages, pipeline, projects, stages, styles
+from .routers import billing, config, credits, export, labs, pages, pipeline, projects, stages, styles
 
 log = logging.getLogger(__name__)
 
@@ -169,6 +169,7 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         prefix="/api/projects/{project_id}",
         tags=["styles"],
     )
+    app.include_router(labs.router, prefix="/api/labs", tags=["labs"])
 
     # Serve bundled fonts
     app.mount("/static/fonts", StaticFiles(directory=str(FONTS_DIR)), name="fonts")

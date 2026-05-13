@@ -100,7 +100,11 @@ fallback_image_model: "image-fast"
 ```
 
 Available image aliases: `image-fast`, `image-balanced`, `image-quality`.
-The LiteLLM proxy resolves them to provider/model routes.
+The LiteLLM proxy resolves them to provider/model routes. Current defaults route
+`image-balanced` to Gemini Pro Image and `image-quality` to OpenAI
+`gpt-image-2`; only `image-quality` uses the GPT Image 2 reference-image path.
+Draw keeps GPT Image 2 style/location/previous-panel context text-only and
+uploads a minimal subject reference set.
 
 ---
 
@@ -206,6 +210,9 @@ curl -X POST "http://localhost:8000/api/projects/my-novel/run?stage=draw"
 # Rerun a stage from scratch and clear downstream outputs
 curl -X POST "http://localhost:8000/api/projects/my-novel/run?stage=draw&rerun=true"
 
+# Retry only failed draw panels
+curl -X POST "http://localhost:8000/api/projects/my-novel/run?stage=draw&retry_failed=true"
+
 # Approve a checkpoint stage
 curl -X POST "http://localhost:8000/api/projects/my-novel/approve/extract"
 
@@ -241,11 +248,20 @@ projects/my-novel/
 ├── samples/                 # Style suggestions and generated samples
 │   ├── style_suggestions.json
 │   └── style_N.png
-├── refs/                    # Character reference sheets
-│   └── char_NNN/
-│       ├── sheet.png
-│       ├── sheet.png.meta.json
-│       └── instructions.jsonl
+├── refs/                    # Character and prop reference images
+│   ├── char_NNN/
+│   │   ├── sheet.png
+│   │   ├── front.png
+│   │   ├── three_quarter.png
+│   │   ├── profile.png
+│   │   ├── gesture.png
+│   │   ├── sheet.png.meta.json
+│   │   └── instructions.jsonl
+│   └── props/
+│       └── prop_NNN/
+│           ├── ref.png
+│           ├── ref.png.meta.json
+│           └── instructions.jsonl
 ├── plates/                  # Location background plates (loc_NNN.png …)
 ├── screenplays/             # Per-scene screenplay JSON
 │   └── scene_NNN.json
@@ -420,11 +436,12 @@ gateway aliases at startup.
 | Style suggestions | `prompt-balanced` | Story Bible size and suggestion count |
 | Style samples | `image-balanced` | sample count and image-model route |
 | Character refs | `image-balanced` | character count and reference conditioning |
+| Prop refs | `image-balanced` | recurring/plot-central prop count and reference conditioning |
 | Location plates | `image-balanced` | location count |
 | Screenplay adapt | `screenplay-balanced` | scene count and prose length |
 | Layout planning | `panel-balanced` | scene count and beat count |
 | Prompt specs | deterministic | no model cost |
-| Panel images | `image-balanced` | panel count, reference image count, image dimensions, and provider pricing |
+| Panel images | `image-balanced` | panel count, provider-specific reference image count, image dimensions, and provider pricing |
 
 ### Scale estimates
 

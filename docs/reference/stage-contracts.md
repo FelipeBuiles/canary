@@ -68,15 +68,21 @@ is selected.
 **Writes:**
 - `refs/char_NNN/sheet.png` — 2x2 character reference sheet
 - `refs/char_NNN/sheet.png.meta.json` — generation metadata
+- `refs/char_NNN/front.png`, `three_quarter.png`, `profile.png`, `gesture.png`
+  — cropped pose refs derived from the sheet when available
 - `refs/char_NNN/instructions.jsonl` — accepted instruction addenda for targeted regen
+- `refs/props/{prop_id}/ref.png` — neutral-background prop reference image
+- `refs/props/{prop_id}/ref.png.meta.json` — generation metadata
+- `refs/props/{prop_id}/instructions.jsonl` — accepted instruction addenda for targeted regen
 - `plates/loc_NNN.png` — location background plates
 - `plates/loc_NNN.png.meta.json` — generation metadata
 - `plates/loc_NNN.instructions.jsonl` — accepted instruction addenda for targeted regen
 
 **What it does:** Generates character reference images (4 angles) and location
-plates through the configured image alias. Style samples are used as visual
-references where supported. These reference images are injected into draw-stage
-requests.
+plates through the configured image alias, plus one reference image for each
+recurring or plot-central story prop. Style samples are used as visual
+references where supported. Character, prop, and location references feed
+draw-stage requests, with provider-specific filtering in Stage 8.
 
 ---
 
@@ -138,7 +144,8 @@ tools during the migration period.
 **Reads:**
 - `plan/layout_plan.json`
 - `story_bible.json` (for character/location visual anchors)
-- `refs/char_NNN/sheet.png` (reference image paths)
+- `refs/char_NNN/sheet.png` and cropped pose images when present
+- `refs/props/{prop_id}/ref.png` for story props matched to active panel context
 - `plates/loc_NNN.png` (plate paths)
 
 **Writes:**
@@ -150,6 +157,9 @@ current active `style_template` at generation time so style changes do not
 require rebuilding prompt artifacts. Metadata carries `planned_panel_id`,
 caption hints, shape intent, generation mode, crop/framing contract, transition
 hints, and optional `continuity_note`.
+Story props are only carried into `props`/`reference_image_paths` when panel
+context indicates the prop is actively used, held, touched, or shown; ambient
+similar material alone should not trigger a prop ref.
 
 ---
 
@@ -158,6 +168,8 @@ hints, and optional `continuity_note`.
 **Reads:**
 - `direct/scene_NNN/panel_NNN.json`
 - `refs/char_NNN/sheet.png` (loaded as binary subject reference)
+- `refs/char_NNN/{front,three_quarter,profile,gesture}.png` when available
+- `refs/props/{prop_id}/ref.png` for confirmed active story props
 - `plates/loc_NNN.png`
 - `samples/style_N.png` matching the active style when available
 
@@ -170,13 +182,21 @@ hints, and optional `continuity_note`.
 **What it does:** Runs image generation against the planner-owned prompt
 contracts through the LiteLLM gateway image alias. The active style template is
 prepended at generation time. Subject references are loaded from project-relative
-prompt paths, while style/continuity references use the adjacent previous panel
-for smooth transitions or the style sample plus location plate otherwise.
+prompt paths. For Gemini/Together-style routes, draw can add the active style
+sample, a location plate, or the previous panel for an explicit `match_cut`.
+For GPT Image 2 (`image-quality`), draw keeps style/location/previous-panel
+context text-only and uploads a minimal subject ref set: one preferred character
+crop per visible character, or one prop ref only when no character refs exist.
 Generated image metadata records `planned_panel_id`. Pauses for human review
 before compose.
 
 **Notes:**
 - `inter_request_delay` has been removed from the draw stage (it was always 0.0).
+- `POST /run?stage=draw&retry_failed=true` regenerates failed panels without a
+  full draw rerun. It is mutually exclusive with `rerun=true`.
+- Provider failures write `.failure.json` files classified as
+  `provider_blocked` or `generation_error`; the images API exposes a short
+  message and longer `failure_detail` for review.
 - Draw stage reconciliation (`_reconcile_completed_draw_stage` in
   `server/routers/projects.py`) only runs when no generation task is currently
   running, not on every `GET /status` poll. This avoids unnecessary state
@@ -247,6 +267,9 @@ curl -X POST "http://localhost:8000/api/projects/my-novel/run?stage=draw"
 
 # Rerun a stage from scratch and clear its downstream outputs
 curl -X POST "http://localhost:8000/api/projects/my-novel/run?stage=draw&rerun=true"
+
+# Retry only failed draw panels
+curl -X POST "http://localhost:8000/api/projects/my-novel/run?stage=draw&retry_failed=true"
 
 # Approve a checkpoint stage
 curl -X POST "http://localhost:8000/api/projects/my-novel/approve/draw"

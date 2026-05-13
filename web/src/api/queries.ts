@@ -28,6 +28,18 @@ import {
 import { listPages, getPage, updatePage, replacePage, reflowPages, generatePageStyleVars, translatePageBubbles, setTheme, applyBubblePreset, getBubblePresets, translateSinglePageBubbles, getCharacterVoices, putCharacterVoice, deleteCharacterVoice, reflowSinglePage, triggerExport, applyStructuralOperation } from "./pages";
 import { getStyles, suggestStyles, fetchSuggestStylesEstimate, generateStyleSamples, setActiveStyle } from "./styles";
 import { getProjectConfig, updateProjectConfig } from "./config";
+import {
+  listLabsModels,
+  getDefaultFixture,
+  listImportableProjects,
+  listProjectScenes,
+  importProjectScene,
+  createLabsRun,
+  listLabsRuns,
+  getLabsRun,
+  type LabsRunCreatePayload,
+  type LabsRunDetail,
+} from "./labs";
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
@@ -860,6 +872,75 @@ export function useCreateCheckout() {
     mutationFn: ({ packageId }: { packageId: string }) => createCheckout(packageId),
     onSuccess: ({ url }) => {
       window.location.href = url;
+    },
+  });
+}
+
+// ── Labs ──────────────────────────────────────────────────────────────────────
+
+export function useLabsModels() {
+  return useQuery({
+    queryKey: ["labs", "models"],
+    queryFn: listLabsModels,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useLabsFixture() {
+  return useQuery({
+    queryKey: ["labs", "fixtures", "default"],
+    queryFn: getDefaultFixture,
+    staleTime: Infinity,
+  });
+}
+
+export function useLabsImportableProjects() {
+  return useQuery({
+    queryKey: ["labs", "projects"],
+    queryFn: listImportableProjects,
+  });
+}
+
+export function useLabsProjectScenes(projectId: string | undefined) {
+  return useQuery({
+    queryKey: ["labs", "projects", projectId, "scenes"],
+    queryFn: () => listProjectScenes(projectId!),
+    enabled: !!projectId,
+  });
+}
+
+export function useImportLabsScene() {
+  return useMutation({
+    mutationFn: ({ projectId, sceneId, panelLimit }: { projectId: string; sceneId: string; panelLimit?: number }) =>
+      importProjectScene(projectId, { scene_id: sceneId, panel_limit: panelLimit ?? 8 }),
+  });
+}
+
+export function useCreateLabsRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: LabsRunCreatePayload) => createLabsRun(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["labs", "runs"] });
+    },
+  });
+}
+
+export function useLabsRuns() {
+  return useQuery({
+    queryKey: ["labs", "runs"],
+    queryFn: listLabsRuns,
+  });
+}
+
+export function useLabsRun(runId: string | undefined) {
+  return useQuery<LabsRunDetail>({
+    queryKey: ["labs", "runs", runId],
+    queryFn: () => getLabsRun(runId!),
+    enabled: !!runId,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      return data && data.status === "running" ? 1500 : false;
     },
   });
 }

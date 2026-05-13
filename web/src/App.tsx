@@ -11,6 +11,7 @@ const ProjectRooms = lazy(() =>
 const LoginPage = lazy(() => import("./pages/auth/LoginPage").then(({ LoginPage }) => ({ default: LoginPage })));
 const SignupPage = lazy(() => import("./pages/auth/SignupPage").then(({ SignupPage }) => ({ default: SignupPage })));
 const Library = lazy(() => import("./pages/Library").then(({ Library }) => ({ default: Library })));
+const LabsRoom = lazy(() => import("./pages/LabsRoom").then(({ LabsRoom }) => ({ default: LabsRoom })));
 const PrimitiveReference = lazy(() =>
   import("./pages/PrimitiveReference").then(({ PrimitiveReference }) => ({ default: PrimitiveReference })),
 );
@@ -62,6 +63,7 @@ export function App() {
           }
         >
           <Route index element={lazyRoute(Library)} />
+          <Route path="labs" element={lazyRoute(LabsRoom)} />
           <Route
             path="dev/primitives"
             element={import.meta.env.DEV ? lazyRoute(PrimitiveReference) : <Navigate to="/" replace />}

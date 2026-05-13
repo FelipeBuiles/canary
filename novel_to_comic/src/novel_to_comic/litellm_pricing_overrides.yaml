@@ -134,3 +134,23 @@ model_overrides:
   black-forest-labs/FLUX.1-schnell:
     output_cost_per_image: 0.0027
     mode: image_generation
+
+  # Labs direct-call providers.
+  # sources: fal.ai model pages, verified 2026-05-12.
+  fal-ai/flux-pro/kontext/max/multi:
+    output_cost_per_image: 0.08
+    mode: image_generation
+  fal-ai/bytedance/seedream/v4.5/edit:
+    output_cost_per_image: 0.04
+    mode: image_generation
+  fal-ai/flux-2-pro/edit:
+    input_cost_per_megapixel: 0.015
+    output_cost_first_megapixel: 0.03
+    output_cost_per_extra_megapixel: 0.015
+    mode: image_generation
+  fal-ai/recraft/v4/text-to-image:
+    output_cost_per_image: 0.04
+    mode: image_generation
+  fal-ai/nano-banana-2/edit:
+    output_cost_per_image: 0.08
+    mode: image_generation

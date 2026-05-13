@@ -50,14 +50,26 @@ export function AppTopBar() {
             </span>
           </>
         ) : (
-          <Link to="/" className="flex items-center gap-3">
-            <span className="font-display text-[1.05rem] font-black uppercase leading-none tracking-[-0.03em]">
-              PULP
-            </span>
-            <span className="bg-hero-red px-2.5 py-1 font-meta text-[0.54rem] font-bold tracking-[0.16em] text-bristol">
-              BETA
-            </span>
-          </Link>
+          <>
+            <Link to="/" className="flex items-center gap-3">
+              <span className="font-display text-[1.05rem] font-black uppercase leading-none tracking-[-0.03em]">
+                PULP
+              </span>
+              <span className="bg-hero-red px-2.5 py-1 font-meta text-[0.54rem] font-bold tracking-[0.16em] text-bristol">
+                BETA
+              </span>
+            </Link>
+            <span className="h-5 w-px bg-ink-black/14" />
+            <Link
+              to="/labs"
+              className={cn(
+                "font-meta text-[0.62rem] font-bold uppercase tracking-[0.16em] hover:text-hero-red",
+                location.pathname.startsWith("/labs") ? "text-ink-black" : "text-ink-black/62",
+              )}
+            >
+              Labs
+            </Link>
+          </>
         )}
       </div>
 
