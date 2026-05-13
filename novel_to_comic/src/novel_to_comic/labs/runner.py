@@ -42,6 +42,7 @@ class LabsPanelSpec:
     idx: int
     label: str
     prompt: str
+    prompt_variant_b: str | None = None
     width: int = 1024
     height: int = 1024
 
@@ -54,6 +55,7 @@ class LabsRunSpec:
     model_ids: list[str]
     panels: list[LabsPanelSpec]
     style_template: str = ""
+    prompt_compare_mode: bool = False
     reference_image_paths: list[Path] = field(default_factory=list)
 
 
@@ -89,6 +91,8 @@ async def _run_cell(
     state: LabsRunState,
     entry: LabsModelEntry,
     panel: LabsPanelSpec,
+    variant: str,
+    prompt: str,
     semaphore: asyncio.Semaphore,
 ) -> None:
     provider = _build_provider(entry.provider)
@@ -99,7 +103,7 @@ async def _run_cell(
         refs = refs[:1] if entry.multi_ref or entry.style_refs else []
 
     inp = LabsImageInput(
-        prompt=panel.prompt,
+        prompt=prompt,
         style_template=state.spec.style_template,
         width=panel.width,
         height=panel.height,
@@ -116,10 +120,13 @@ async def _run_cell(
             state.run_id,
             panel.idx,
             entry.id,
+            variant=variant,
             image_bytes=result.image_bytes,
             meta={
                 "model_id": entry.id,
                 "panel_idx": panel.idx,
+                "variant": variant,
+                "prompt": prompt,
                 "status": "ok",
                 "latency_ms": result.latency_ms,
                 "cost_usd": cost.cost_usd,
@@ -138,10 +145,13 @@ async def _run_cell(
             state.run_id,
             panel.idx,
             entry.id,
+            variant=variant,
             image_bytes=None,
             meta={
                 "model_id": entry.id,
                 "panel_idx": panel.idx,
+                "variant": variant,
+                "prompt": prompt,
                 "status": "failed",
                 "error": str(exc),
                 "started_at": started.isoformat(),
@@ -164,7 +174,8 @@ async def _run_all(projects_dir: Path, state: LabsRunState) -> None:
                 continue
             sem = semaphores.setdefault(entry.provider, asyncio.Semaphore(_PER_PROVIDER_CONCURRENCY))
             for panel in state.spec.panels:
-                tasks.append(asyncio.create_task(_run_cell(projects_dir, state, entry, panel, sem)))
+                for variant, prompt in _panel_variants(state.spec, panel):
+                    tasks.append(asyncio.create_task(_run_cell(projects_dir, state, entry, panel, variant, prompt, sem)))
         if not tasks:
             state.status = "failed"
             state.error = "No valid models in run spec"
@@ -207,9 +218,10 @@ def start_run(
         model_ids=spec.model_ids,
         panels=spec.panels,
         style_template=spec.style_template,
+        prompt_compare_mode=spec.prompt_compare_mode,
         reference_image_paths=staged_refs,
     )
-    cells_total = len(spec.model_ids) * len(spec.panels)
+    cells_total = len(spec.model_ids) * sum(len(_panel_variants(spec, p)) for p in spec.panels)
     started_at = datetime.now(UTC)
     state = LabsRunState(
         run_id=run_id,
@@ -223,12 +235,14 @@ def start_run(
         "created_at": started_at.isoformat(),
         "model_ids": list(spec.model_ids),
         "style_template": spec.style_template,
+        "prompt_compare_mode": spec.prompt_compare_mode,
         "reference_image_names": [p.name for p in staged_refs],
         "panels": [
             {
                 "idx": p.idx,
                 "label": p.label,
                 "prompt": p.prompt,
+                "prompt_variant_b": p.prompt_variant_b,
                 "width": p.width,
                 "height": p.height,
             }
@@ -242,3 +256,9 @@ def start_run(
     runs_state[run_id] = state
     state.task = asyncio.create_task(_run_all(projects_dir, state))
     return state
+
+
+def _panel_variants(spec: LabsRunSpec, panel: LabsPanelSpec) -> list[tuple[str, str]]:
+    if spec.prompt_compare_mode and panel.prompt_variant_b:
+        return [("A", panel.prompt), ("B", panel.prompt_variant_b)]
+    return [("A", panel.prompt)]

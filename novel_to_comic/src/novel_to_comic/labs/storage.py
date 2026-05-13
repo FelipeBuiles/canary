@@ -10,8 +10,9 @@ Layout (relative to projects_dir):
             {n}.png            # copies of reference images used by this run
           panels/
             {panel_idx}/
-              {model_id}.png   # generated image
-              {model_id}.json  # per-cell metadata (latency, cost, errors)
+              {variant}/
+                {model_id}.png   # generated image
+                {model_id}.json  # per-cell metadata (latency, cost, errors)
 
 The manifest is the source of truth for what was attempted; per-cell JSON files
 record the outcome and surface in the UI.
@@ -38,16 +39,16 @@ def manifest_path(projects_dir: Path, run_id: str) -> Path:
     return run_dir(projects_dir, run_id) / "manifest.json"
 
 
-def panel_dir(projects_dir: Path, run_id: str, panel_idx: int) -> Path:
-    return run_dir(projects_dir, run_id) / "panels" / str(panel_idx)
+def panel_dir(projects_dir: Path, run_id: str, panel_idx: int, variant: str = "A") -> Path:
+    return run_dir(projects_dir, run_id) / "panels" / str(panel_idx) / variant
 
 
-def cell_image_path(projects_dir: Path, run_id: str, panel_idx: int, model_id: str) -> Path:
-    return panel_dir(projects_dir, run_id, panel_idx) / f"{model_id}.png"
+def cell_image_path(projects_dir: Path, run_id: str, panel_idx: int, model_id: str, variant: str = "A") -> Path:
+    return panel_dir(projects_dir, run_id, panel_idx, variant) / f"{model_id}.png"
 
 
-def cell_meta_path(projects_dir: Path, run_id: str, panel_idx: int, model_id: str) -> Path:
-    return panel_dir(projects_dir, run_id, panel_idx) / f"{model_id}.json"
+def cell_meta_path(projects_dir: Path, run_id: str, panel_idx: int, model_id: str, variant: str = "A") -> Path:
+    return panel_dir(projects_dir, run_id, panel_idx, variant) / f"{model_id}.json"
 
 
 def ref_dir(projects_dir: Path, run_id: str) -> Path:
@@ -73,24 +74,31 @@ def write_cell(
     panel_idx: int,
     model_id: str,
     *,
+    variant: str = "A",
     image_bytes: bytes | None,
     meta: dict[str, Any],
 ) -> None:
-    pdir = panel_dir(projects_dir, run_id, panel_idx)
+    pdir = panel_dir(projects_dir, run_id, panel_idx, variant)
     pdir.mkdir(parents=True, exist_ok=True)
     if image_bytes is not None:
-        cell_image_path(projects_dir, run_id, panel_idx, model_id).write_bytes(image_bytes)
-    meta = {**meta, "updated_at": datetime.now(UTC).isoformat()}
-    cell_meta_path(projects_dir, run_id, panel_idx, model_id).write_text(
+        cell_image_path(projects_dir, run_id, panel_idx, model_id, variant).write_bytes(image_bytes)
+    meta = {**meta, "variant": variant, "updated_at": datetime.now(UTC).isoformat()}
+    cell_meta_path(projects_dir, run_id, panel_idx, model_id, variant).write_text(
         json.dumps(meta, indent=2, sort_keys=True)
     )
 
 
-def read_cell_meta(projects_dir: Path, run_id: str, panel_idx: int, model_id: str) -> dict[str, Any] | None:
-    path = cell_meta_path(projects_dir, run_id, panel_idx, model_id)
+def read_cell_meta(projects_dir: Path, run_id: str, panel_idx: int, model_id: str, variant: str = "A") -> dict[str, Any] | None:
+    path = cell_meta_path(projects_dir, run_id, panel_idx, model_id, variant)
     if not path.exists():
         return None
     return json.loads(path.read_text())
+
+
+def panel_variants(panel: dict[str, Any], prompt_compare_mode: bool) -> list[str]:
+    if prompt_compare_mode and panel.get("prompt_variant_b"):
+        return ["A", "B"]
+    return ["A"]
 
 
 def sum_run_cost(projects_dir: Path, run_id: str) -> float:
@@ -98,22 +106,24 @@ def sum_run_cost(projects_dir: Path, run_id: str) -> float:
     if not manifest:
         return 0.0
     total = 0.0
+    prompt_compare_mode = bool(manifest.get("prompt_compare_mode"))
     for panel in manifest.get("panels") or []:
         try:
             panel_idx = int(panel.get("idx") or 0)
         except (TypeError, ValueError):
             continue
-        for model_id in manifest.get("model_ids") or []:
-            meta = read_cell_meta(projects_dir, run_id, panel_idx, str(model_id))
-            if not meta:
-                continue
-            value = meta.get("cost_usd")
-            if value is None:
-                continue
-            try:
-                total += float(value)
-            except (TypeError, ValueError):
-                continue
+        for variant in panel_variants(panel, prompt_compare_mode):
+            for model_id in manifest.get("model_ids") or []:
+                meta = read_cell_meta(projects_dir, run_id, panel_idx, str(model_id), variant)
+                if not meta:
+                    continue
+                value = meta.get("cost_usd")
+                if value is None:
+                    continue
+                try:
+                    total += float(value)
+                except (TypeError, ValueError):
+                    continue
     return total
 
 

@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 
 from novel_to_comic.ai import generate_image as ai_generate_image
+from novel_to_comic.ai.providers.base import RefImage
 from novel_to_comic.config import _ENV_KEYS, Config
 from novel_to_comic.usage import calculate_cost_breakdown
 
@@ -68,8 +69,7 @@ class LitellmProvider:
                 width=inp.width,
                 height=inp.height,
                 steps=None,
-                reference_paths=list(inp.reference_image_paths) or None,
-                style_refs=None,
+                refs=[RefImage(path=p, role="subject") for p in inp.reference_image_paths],
                 feature="labs.generate",
             )
         except httpx.HTTPStatusError as exc:

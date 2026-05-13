@@ -242,12 +242,15 @@ def import_project_scene(
 def _parse_run_body(body: dict) -> tuple[LabsRunSpec, list[str]]:
     """Validate & coerce a POST /runs body. Returns (spec, extra_ref_path_hints)."""
     label = (body.get("label") or "Untitled run").strip()[:MAX_LABEL_LEN]
+    prompt_compare_mode = bool(body.get("prompt_compare_mode"))
 
     model_ids = body.get("model_ids") or []
     if not isinstance(model_ids, list) or not model_ids:
         raise HTTPException(400, "model_ids must be a non-empty list")
     if len(model_ids) > MAX_MODELS:
         raise HTTPException(400, f"At most {MAX_MODELS} models per run")
+    if prompt_compare_mode and len(model_ids) != 1:
+        raise HTTPException(400, "Prompt comparison mode requires exactly one model")
     for mid in model_ids:
         try:
             get_entry(str(mid))
@@ -269,10 +272,16 @@ def _parse_run_body(body: dict) -> tuple[LabsRunSpec, list[str]]:
         prompt = (raw.get("prompt") or "").strip()[:MAX_PROMPT_LEN]
         if not prompt:
             raise HTTPException(400, f"Panel {idx} has empty prompt")
+        prompt_variant_b = None
+        if prompt_compare_mode:
+            prompt_variant_b = (raw.get("prompt_variant_b") or "").strip()[:MAX_PROMPT_LEN]
+            if not prompt_variant_b:
+                raise HTTPException(400, f"Panel {idx} has empty prompt variant B")
         panels.append(LabsPanelSpec(
             idx=idx,
             label=str(raw.get("label") or f"Panel {idx}")[:MAX_LABEL_LEN],
             prompt=prompt,
+            prompt_variant_b=prompt_variant_b,
             width=int(raw.get("width") or 1024),
             height=int(raw.get("height") or 1024),
         ))
@@ -287,6 +296,7 @@ def _parse_run_body(body: dict) -> tuple[LabsRunSpec, list[str]]:
         model_ids=[str(m) for m in model_ids],
         panels=panels,
         style_template=style_template,
+        prompt_compare_mode=prompt_compare_mode,
     )
     return spec, [str(p) for p in extra_refs] if ref_source == "imported" else (
         [] if ref_source == "none" else ["__fixture__"]
@@ -364,33 +374,37 @@ def get_run_endpoint(
     # Stitch per-cell results into a panels × models matrix.
     model_ids: list[str] = list(manifest.get("model_ids") or [])
     panels_meta = manifest.get("panels") or []
+    prompt_compare_mode = bool(manifest.get("prompt_compare_mode"))
     panels_out: list[dict[str, Any]] = []
     total_cost_usd = 0.0
     for panel in panels_meta:
         idx = int(panel.get("idx") or 0)
-        cells: dict[str, Any] = {}
-        for mid in model_ids:
-            meta = labs_storage.read_cell_meta(user_root, run_id, idx, mid)
-            if meta:
-                if meta.get("cost_usd") is not None:
-                    try:
-                        total_cost_usd += float(meta["cost_usd"])
-                    except (TypeError, ValueError):
-                        pass
-                if meta.get("status") == "ok":
-                    meta = {
-                        **meta,
-                        "image_url": f"/api/labs/runs/{run_id}/cells/{idx}/{mid}/image",
-                    }
-                cells[mid] = meta
-            else:
-                cells[mid] = {"status": "pending"}
-        panels_out.append({
-            "idx": idx,
-            "label": panel.get("label"),
-            "prompt": panel.get("prompt"),
-            "cells": cells,
-        })
+        for variant in labs_storage.panel_variants(panel, prompt_compare_mode):
+            prompt = panel.get("prompt_variant_b") if variant == "B" else panel.get("prompt")
+            cells: dict[str, Any] = {}
+            for mid in model_ids:
+                meta = labs_storage.read_cell_meta(user_root, run_id, idx, mid, variant)
+                if meta:
+                    if meta.get("cost_usd") is not None:
+                        try:
+                            total_cost_usd += float(meta["cost_usd"])
+                        except (TypeError, ValueError):
+                            pass
+                    if meta.get("status") == "ok":
+                        meta = {
+                            **meta,
+                            "image_url": f"/api/labs/runs/{run_id}/cells/{idx}/{variant}/{mid}/image",
+                        }
+                    cells[mid] = meta
+                else:
+                    cells[mid] = {"status": "pending", "variant": variant}
+            panels_out.append({
+                "idx": idx,
+                "variant": variant,
+                "label": panel.get("label"),
+                "prompt": prompt,
+                "cells": cells,
+            })
 
     payload = {
         "run_id": run_id,
@@ -403,6 +417,7 @@ def get_run_endpoint(
         "total_cost_usd": total_cost_usd,
         "model_ids": model_ids,
         "style_template": manifest.get("style_template"),
+        "prompt_compare_mode": prompt_compare_mode,
         "reference_image_names": manifest.get("reference_image_names", []),
         "error": (in_memory.error if in_memory else manifest.get("error")),
         "panels": panels_out,
@@ -410,19 +425,20 @@ def get_run_endpoint(
     return JSONResponse(payload)
 
 
-@router.get("/runs/{run_id}/cells/{panel_idx}/{model_id}/image")
+@router.get("/runs/{run_id}/cells/{panel_idx}/{variant}/{model_id}/image")
 def get_cell_image(
     run_id: str,
     panel_idx: int,
+    variant: str,
     model_id: str,
     request: Request,
     user_id: str = Depends(get_current_user),
 ) -> FileResponse:
-    if "/" in run_id or ".." in run_id or "/" in model_id:
+    if "/" in run_id or ".." in run_id or "/" in model_id or variant not in {"A", "B"}:
         raise HTTPException(400, "Invalid path component")
     projects_dir = get_projects_dir(request)
     user_root = _user_labs_dir(projects_dir, user_id)
-    path = labs_storage.cell_image_path(user_root, run_id, panel_idx, model_id)
+    path = labs_storage.cell_image_path(user_root, run_id, panel_idx, model_id, variant)
     if not path.exists():
         raise HTTPException(404, "Cell image not found")
     return FileResponse(path, media_type="image/png")

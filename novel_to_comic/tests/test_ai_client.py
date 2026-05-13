@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from novel_to_comic.ai import client
+from novel_to_comic.ai.providers.base import RefImage
 from novel_to_comic.config import Config
 
 
@@ -212,7 +213,7 @@ def test_generate_image_with_references_uses_image_edits(monkeypatch, tmp_path: 
             width=1024,
             height=1536,
             steps=28,
-            reference_paths=[reference_path],
+            refs=[RefImage(path=reference_path, role="subject")],
         )
     )
 

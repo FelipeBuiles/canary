@@ -21,7 +21,7 @@ from novel_to_comic.models.panel import PanelBreakdown, Screenplay
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.panel_versions import archived_panel_version_count, list_panel_versions, restore_panel_version
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.prompting import render_panel_prompt_body
+from novel_to_comic.prompting import generate_prose_prompt, render_panel_prompt_body
 from novel_to_comic.state import load_state
 
 from ..auth import get_current_user
@@ -222,7 +222,7 @@ def get_prompts_for_scene(scene_id: str, project=Depends(get_project)):
 
 
 @router.put("/prompts/{scene_id}/{panel_number}")
-def update_prompt(scene_id: str, panel_number: int, body: dict, project=Depends(get_project)):
+async def update_prompt(scene_id: str, panel_number: int, body: dict, project=Depends(get_project)):
     project_dir, config, state = project
     path = artifacts.panel_prompt_path(project_dir, scene_id, panel_number)
     if not path.exists():
@@ -232,6 +232,7 @@ def update_prompt(scene_id: str, panel_number: int, body: dict, project=Depends(
     except Exception as e:
         raise HTTPException(400, f"Invalid prompt data: {e}")
     updated.full_prompt = render_panel_prompt_body(updated)
+    updated.prose_prompt = await generate_prose_prompt(config, updated)
     artifacts.write_panel_prompt(project_dir, scene_id, panel_number, updated)
     return updated.model_dump()
 

@@ -462,6 +462,7 @@ export interface ImagePrompt {
   narration_mode?: string | null;
   preferred_caption_zone?: string | null;
   full_prompt: string;
+  prose_prompt?: string | null;
   style?: string | null;
   composition?: string | null;
   setting?: string | null;

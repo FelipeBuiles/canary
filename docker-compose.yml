@@ -43,14 +43,17 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
+      FAL_KEY: ${FAL_KEY:-}
       VERTEXAI_PROJECT: ${VERTEXAI_PROJECT:-}
       VERTEXAI_LOCATION: ${VERTEXAI_LOCATION:-global}
       GOOGLE_APPLICATION_CREDENTIALS: /app/gcp-credentials.json
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse-web:3000}
+      PYTHONPATH: /app:/app/litellm_handlers
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
+      - ./litellm_handlers:/app/litellm_handlers:ro
       - ${GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH:-./litellm/gcp-credentials.json}:/app/gcp-credentials.json:ro
     depends_on:
       langfuse-web:

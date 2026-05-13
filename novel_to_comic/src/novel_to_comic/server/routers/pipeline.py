@@ -27,6 +27,7 @@ from novel_to_comic.prompt_instructions import (
     parse_instruction_patch,
     validate_user_instruction,
 )
+from novel_to_comic.prompting import generate_prose_prompt
 from novel_to_comic.state import (
     STAGE_NAMES,
     StageState,
@@ -719,6 +720,7 @@ async def regen_panel_with_instruction(
             )
         patch = parse_instruction_patch(rewrite.value)
         updated_prompt = apply_instruction_patch(prompt, patch)
+        updated_prompt.prose_prompt = await generate_prose_prompt(config, updated_prompt)
     except PromptInstructionError as exc:
         logger.warning(
             "Panel instruction rewrite could not be applied project=%s scene=%s panel=%s reason=%s rewrite=%s",
