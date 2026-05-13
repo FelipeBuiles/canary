@@ -150,7 +150,7 @@ def apply_instruction_patch(prompt: ImagePrompt, patch: PromptInstructionPatch) 
 
     _enforce_prompt_invariants(updated)
     updated.full_prompt = render_panel_prompt_body(updated)
-    updated.prose_prompt = None
+    updated.distilled_prompt = None
     return updated
 
 

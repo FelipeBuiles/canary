@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   useCreateLabsRun,
+  useDeleteLabsRun,
   useImportLabsScene,
   useLabsFixture,
   useLabsImportableProjects,
@@ -13,6 +14,7 @@ import {
 import type {
   LabsCell,
   LabsFixtureScene,
+  LabsImportedReference,
   LabsModel,
   LabsPanel,
   LabsReferenceSource,
@@ -268,6 +270,7 @@ interface ResultsGridProps {
   panels: { idx: number; variant: "A" | "B"; label: string; prompt: string; cells: Record<string, LabsCell> }[];
   models: LabsModel[];
   modelIds: string[];
+  promptCompareMode?: boolean;
 }
 
 interface LightboxTarget {
@@ -276,22 +279,79 @@ interface LightboxTarget {
   modelId: string;
 }
 
+interface ResultColumn {
+  key: string;
+  modelId: string;
+  variant?: "A" | "B";
+}
+
+interface ResultRow {
+  key: string;
+  idx: number;
+  variant?: "A" | "B";
+  label: string;
+  prompt: string;
+  variants: Partial<Record<"A" | "B", ResultsGridProps["panels"][number]>>;
+}
+
 const CELL_SIZE_PX = 240;
 const PANEL_COL_PX = 240;
 
-function ResultsGrid({ panels, models, modelIds }: ResultsGridProps) {
+function ResultsGrid({ panels, models, modelIds, promptCompareMode }: ResultsGridProps) {
   const modelMap = useMemo(() => new Map(models.map((m) => [m.id, m])), [models]);
   const [lightbox, setLightbox] = useState<LightboxTarget | null>(null);
-  const modelSummaries = useMemo(() => {
+  const columns = useMemo<ResultColumn[]>(
+    () => promptCompareMode
+      ? modelIds.flatMap((modelId) => [
+          { key: `${modelId}:A`, modelId, variant: "A" as const },
+          { key: `${modelId}:B`, modelId, variant: "B" as const },
+        ])
+      : modelIds.map((modelId) => ({ key: modelId, modelId })),
+    [modelIds, promptCompareMode],
+  );
+  const rows = useMemo<ResultRow[]>(() => {
+    if (!promptCompareMode) {
+      return panels.map((panel) => ({
+        key: `${panel.idx}:${panel.variant}`,
+        idx: panel.idx,
+        variant: panel.variant,
+        label: panel.label,
+        prompt: panel.prompt,
+        variants: { [panel.variant]: panel },
+      }));
+    }
+    const grouped = new Map<number, ResultRow>();
+    for (const panel of panels) {
+      const existing = grouped.get(panel.idx);
+      if (existing) {
+        existing.variants[panel.variant] = panel;
+        if (panel.variant === "A") {
+          existing.label = panel.label;
+          existing.prompt = panel.prompt;
+        }
+      } else {
+        grouped.set(panel.idx, {
+          key: String(panel.idx),
+          idx: panel.idx,
+          label: panel.label,
+          prompt: panel.prompt,
+          variants: { [panel.variant]: panel },
+        });
+      }
+    }
+    return [...grouped.values()].sort((a, b) => a.idx - b.idx);
+  }, [panels, promptCompareMode]);
+  const columnSummaries = useMemo(() => {
     const summaries = new Map<string, { cost: number; costCount: number; latencyMs: number; latencyCount: number }>();
-    for (const mid of modelIds) {
-      summaries.set(mid, { cost: 0, costCount: 0, latencyMs: 0, latencyCount: 0 });
+    for (const col of columns) {
+      summaries.set(col.key, { cost: 0, costCount: 0, latencyMs: 0, latencyCount: 0 });
     }
     for (const panel of panels) {
-      for (const mid of modelIds) {
-        const cell = panel.cells[mid];
+      for (const col of columns) {
+        if (col.variant && panel.variant !== col.variant) continue;
+        const cell = panel.cells[col.modelId];
         if (!cell || cell.status !== "ok") continue;
-        const summary = summaries.get(mid);
+        const summary = summaries.get(col.key);
         if (!summary) continue;
         if (typeof cell.cost_usd === "number") {
           summary.cost += cell.cost_usd;
@@ -304,7 +364,7 @@ function ResultsGrid({ panels, models, modelIds }: ResultsGridProps) {
       }
     }
     return summaries;
-  }, [modelIds, panels]);
+  }, [columns, panels]);
 
   if (!modelIds.length || !panels.length) {
     return (
@@ -324,8 +384,8 @@ function ResultsGrid({ panels, models, modelIds }: ResultsGridProps) {
         <table className="border-separate border-spacing-0" style={{ tableLayout: "fixed" }}>
           <colgroup>
             <col style={{ width: PANEL_COL_PX }} />
-            {modelIds.map((mid) => (
-              <col key={mid} style={{ width: CELL_SIZE_PX + 24 }} />
+            {columns.map((col) => (
+              <col key={col.key} style={{ width: CELL_SIZE_PX + 24 }} />
             ))}
           </colgroup>
           <thead>
@@ -335,17 +395,22 @@ function ResultsGrid({ panels, models, modelIds }: ResultsGridProps) {
                   PANEL
                 </span>
               </th>
-              {modelIds.map((mid) => {
-                const m = modelMap.get(mid);
-                const summary = modelSummaries.get(mid);
+              {columns.map((col) => {
+                const m = modelMap.get(col.modelId);
+                const summary = columnSummaries.get(col.key);
                 const avgLatency =
                   summary && summary.latencyCount > 0
                     ? Math.round(summary.latencyMs / summary.latencyCount)
                     : null;
                 return (
-                  <th key={mid} className="border-b-[2px] border-ink-black p-3 text-left align-bottom">
+                  <th key={col.key} className="border-b-[2px] border-ink-black p-3 text-left align-bottom">
+                    {col.variant && (
+                      <div className="mb-1 inline-flex bg-narrator-gold/45 px-2 py-0.5 font-meta text-[0.48rem] font-bold tracking-[0.16em] text-ink-black/65">
+                        PROMPT {col.variant}
+                      </div>
+                    )}
                     <div className="line-clamp-2 font-display text-[0.92rem] font-bold leading-tight">
-                      {m?.label ?? mid}
+                      {m?.label ?? col.modelId}
                     </div>
                     <div className="mt-1 font-meta text-[0.5rem] tracking-[0.16em] text-ink-black/45">
                       {m ? PROVIDER_LABEL[m.provider] : "unknown"}
@@ -361,26 +426,45 @@ function ResultsGrid({ panels, models, modelIds }: ResultsGridProps) {
             </tr>
           </thead>
           <tbody>
-            {panels.map((p) => (
-              <tr key={`${p.idx}:${p.variant}`} className="align-top">
+            {rows.map((row) => (
+              <tr key={row.key} className="align-top">
                 <td className="sticky left-0 z-10 border-b border-ink-black/10 bg-pulp-paper p-3">
                   <div className="font-meta text-[0.56rem] font-bold tracking-[0.16em] text-ink-black/55">
-                    PANEL {p.idx}{p.variant !== "A" ? ` / ${p.variant}` : ""}
+                    PANEL {row.idx}{!promptCompareMode && row.variant !== "A" ? ` / ${row.variant}` : ""}
                   </div>
                   <div className="mt-1 font-display text-[0.84rem] font-bold leading-tight">
-                    {p.label}
+                    {row.label}
                   </div>
-                  <p className="mt-2 line-clamp-6 font-body text-[0.72rem] leading-snug text-ink-black/52">
-                    {p.prompt}
-                  </p>
+                  {promptCompareMode ? (
+                    <div className="mt-2 space-y-1.5">
+                      {(["A", "B"] as const).map((variant) => {
+                        const panel = row.variants[variant];
+                        if (!panel) return null;
+                        return (
+                          <p key={variant} className="line-clamp-3 font-body text-[0.72rem] leading-snug text-ink-black/52">
+                            <span className="font-meta text-[0.56rem] font-bold tracking-[0.12em] text-ink-black/45">
+                              {variant}
+                            </span>{" "}
+                            {panel.prompt}
+                          </p>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="mt-2 line-clamp-6 font-body text-[0.72rem] leading-snug text-ink-black/52">
+                      {row.prompt}
+                    </p>
+                  )}
                 </td>
-                {modelIds.map((mid) => {
-                  const cell = p.cells[mid] ?? { status: "pending" as const };
+                {columns.map((col) => {
+                  const variant = col.variant ?? row.variant ?? "A";
+                  const panel = row.variants[variant];
+                  const cell = panel?.cells[col.modelId] ?? { status: "pending" as const };
                   return (
-                    <td key={mid} className="border-b border-ink-black/10 p-3">
+                    <td key={col.key} className="border-b border-ink-black/10 p-3">
                       <CellView
                         cell={cell}
-                        onOpen={() => openLightbox(p.idx, p.variant, mid)}
+                        onOpen={() => openLightbox(row.idx, variant, col.modelId)}
                       />
                     </td>
                   );
@@ -395,7 +479,11 @@ function ResultsGrid({ panels, models, modelIds }: ResultsGridProps) {
         <Lightbox
           target={lightbox}
           panels={panels}
-          modelIds={modelIds}
+          columns={columns}
+          rowKeys={promptCompareMode
+            ? rows.map((row) => ({ idx: row.idx }))
+            : rows.map((row) => ({ idx: row.idx, variant: row.variant ?? "A" }))
+          }
           modelMap={modelMap}
           onClose={() => setLightbox(null)}
           onNavigate={setLightbox}
@@ -501,25 +589,29 @@ function firstErrorLine(error: string | undefined): string {
 interface LightboxProps {
   target: LightboxTarget;
   panels: { idx: number; variant: "A" | "B"; label: string; prompt: string; cells: Record<string, LabsCell> }[];
-  modelIds: string[];
+  columns: ResultColumn[];
+  rowKeys: { idx: number; variant?: "A" | "B" }[];
   modelMap: Map<string, LabsModel>;
   onClose: () => void;
   onNavigate: (target: LightboxTarget) => void;
 }
 
-function Lightbox({ target, panels, modelIds, modelMap, onClose, onNavigate }: LightboxProps) {
+function Lightbox({ target, panels, columns, rowKeys, modelMap, onClose, onNavigate }: LightboxProps) {
   const panel = panels.find((p) => p.idx === target.panelIdx && p.variant === target.variant);
   const cell = panel?.cells[target.modelId];
   const model = modelMap.get(target.modelId);
 
-  const modelIdx = modelIds.indexOf(target.modelId);
-  const prevModelId = modelIdx > 0 ? modelIds[modelIdx - 1] : null;
-  const nextModelId = modelIdx >= 0 && modelIdx < modelIds.length - 1 ? modelIds[modelIdx + 1] : null;
+  const colIdx = columns.findIndex(
+    (col) => col.modelId === target.modelId && (col.variant ?? target.variant) === target.variant,
+  );
+  const prevCol = colIdx > 0 ? columns[colIdx - 1] : null;
+  const nextCol = colIdx >= 0 && colIdx < columns.length - 1 ? columns[colIdx + 1] : null;
 
-  const rowKeys = panels.map((p) => `${p.idx}:${p.variant}`);
-  const rowPos = rowKeys.indexOf(`${target.panelIdx}:${target.variant}`);
-  const prevRow = rowPos > 0 ? panels[rowPos - 1] : null;
-  const nextRow = rowPos >= 0 && rowPos < panels.length - 1 ? panels[rowPos + 1] : null;
+  const rowPos = rowKeys.findIndex(
+    (row) => row.idx === target.panelIdx && (row.variant ?? target.variant) === target.variant,
+  );
+  const prevRow = rowPos > 0 ? rowKeys[rowPos - 1] : null;
+  const nextRow = rowPos >= 0 && rowPos < rowKeys.length - 1 ? rowKeys[rowPos + 1] : null;
 
   const navigate = useCallback(
     (next: LightboxTarget | null) => {
@@ -534,19 +626,27 @@ function Lightbox({ target, panels, modelIds, modelMap, onClose, onNavigate }: L
         onClose();
         return;
       }
-      if (event.key === "ArrowLeft" && prevModelId) {
-        navigate({ panelIdx: target.panelIdx, variant: target.variant, modelId: prevModelId });
-      } else if (event.key === "ArrowRight" && nextModelId) {
-        navigate({ panelIdx: target.panelIdx, variant: target.variant, modelId: nextModelId });
+      if (event.key === "ArrowLeft" && prevCol) {
+        navigate({
+          panelIdx: target.panelIdx,
+          variant: prevCol.variant ?? target.variant,
+          modelId: prevCol.modelId,
+        });
+      } else if (event.key === "ArrowRight" && nextCol) {
+        navigate({
+          panelIdx: target.panelIdx,
+          variant: nextCol.variant ?? target.variant,
+          modelId: nextCol.modelId,
+        });
       } else if (event.key === "ArrowUp" && prevRow) {
-        navigate({ panelIdx: prevRow.idx, variant: prevRow.variant, modelId: target.modelId });
+        navigate({ panelIdx: prevRow.idx, variant: prevRow.variant ?? target.variant, modelId: target.modelId });
       } else if (event.key === "ArrowDown" && nextRow) {
-        navigate({ panelIdx: nextRow.idx, variant: nextRow.variant, modelId: target.modelId });
+        navigate({ panelIdx: nextRow.idx, variant: nextRow.variant ?? target.variant, modelId: target.modelId });
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [target, prevModelId, nextModelId, prevRow, nextRow, navigate, onClose]);
+  }, [target, prevCol, nextCol, prevRow, nextRow, navigate, onClose]);
 
   if (!panel || !cell) return null;
 
@@ -673,24 +773,32 @@ function Lightbox({ target, panels, modelIds, modelMap, onClose, onNavigate }: L
           <div className="mt-auto grid grid-cols-2 gap-2 border-t border-ink-black/10 pt-3">
             <button
               type="button"
-              disabled={!prevModelId}
-              onClick={() => prevModelId && navigate({ panelIdx: target.panelIdx, variant: target.variant, modelId: prevModelId })}
+              disabled={!prevCol}
+              onClick={() => prevCol && navigate({
+                panelIdx: target.panelIdx,
+                variant: prevCol.variant ?? target.variant,
+                modelId: prevCol.modelId,
+              })}
               className="border-[2px] border-ink-black/15 bg-pulp-paper px-2 py-2 font-meta text-[0.56rem] tracking-[0.12em] hover:border-ink-black disabled:cursor-not-allowed disabled:opacity-40"
             >
-              ← MODEL
+              ← COLUMN
             </button>
             <button
               type="button"
-              disabled={!nextModelId}
-              onClick={() => nextModelId && navigate({ panelIdx: target.panelIdx, variant: target.variant, modelId: nextModelId })}
+              disabled={!nextCol}
+              onClick={() => nextCol && navigate({
+                panelIdx: target.panelIdx,
+                variant: nextCol.variant ?? target.variant,
+                modelId: nextCol.modelId,
+              })}
               className="border-[2px] border-ink-black/15 bg-pulp-paper px-2 py-2 font-meta text-[0.56rem] tracking-[0.12em] hover:border-ink-black disabled:cursor-not-allowed disabled:opacity-40"
             >
-              MODEL →
+              COLUMN →
             </button>
             <button
               type="button"
               disabled={!prevRow}
-              onClick={() => prevRow && navigate({ panelIdx: prevRow.idx, variant: prevRow.variant, modelId: target.modelId })}
+              onClick={() => prevRow && navigate({ panelIdx: prevRow.idx, variant: prevRow.variant ?? target.variant, modelId: target.modelId })}
               className="border-[2px] border-ink-black/15 bg-pulp-paper px-2 py-2 font-meta text-[0.56rem] tracking-[0.12em] hover:border-ink-black disabled:cursor-not-allowed disabled:opacity-40"
             >
               ↑ PANEL
@@ -698,14 +806,14 @@ function Lightbox({ target, panels, modelIds, modelMap, onClose, onNavigate }: L
             <button
               type="button"
               disabled={!nextRow}
-              onClick={() => nextRow && navigate({ panelIdx: nextRow.idx, variant: nextRow.variant, modelId: target.modelId })}
+              onClick={() => nextRow && navigate({ panelIdx: nextRow.idx, variant: nextRow.variant ?? target.variant, modelId: target.modelId })}
               className="border-[2px] border-ink-black/15 bg-pulp-paper px-2 py-2 font-meta text-[0.56rem] tracking-[0.12em] hover:border-ink-black disabled:cursor-not-allowed disabled:opacity-40"
             >
               PANEL ↓
             </button>
           </div>
           <p className="font-meta text-[0.5rem] tracking-[0.14em] text-ink-black/40">
-            ← → for models · ↑ ↓ for panels · Esc to close
+            ← → for columns · ↑ ↓ for panels · Esc to close
           </p>
         </div>
       </div>
@@ -746,6 +854,7 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
 
   const [styleTemplate, setStyleTemplate] = useState(fixture.default_style_template);
   const [panels, setPanels] = useState<LabsPanel[]>(fixture.panels);
+  const [importedRefs, setImportedRefs] = useState<LabsImportedReference[]>([]);
   const [importedRefPaths, setImportedRefPaths] = useState<string[]>([]);
   const [selectedModels, setSelectedModels] = useState<Set<string>>(
     () => new Set(DEFAULT_MODEL_PICKS.filter((id) => models.some((m) => m.id === id))),
@@ -754,6 +863,7 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
   const [promptCompareMode, setPromptCompareMode] = useState(false);
 
   const createRun = useCreateLabsRun();
+  const deleteRun = useDeleteLabsRun();
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const { data: activeRun } = useLabsRun(activeRunId ?? undefined);
   const { data: runsList } = useLabsRuns();
@@ -767,10 +877,12 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
         prompt_variant_b: promptCompareMode ? panel.prompt : panel.prompt_variant_b,
       })));
       setImportedRefPaths([]);
+      setImportedRefs([]);
       setRunLabel(fixture.label);
     } else {
       setPanels([]);
       setImportedRefPaths([]);
+      setImportedRefs([]);
       setRunLabel("");
     }
   }
@@ -835,9 +947,13 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
       setStyleTemplate(result.style_template);
       setPanels(result.panels.map((panel) => ({
         ...panel,
-        prompt_variant_b: promptCompareMode ? panel.prompt : panel.prompt_variant_b,
+        prompt_variant_b: promptCompareMode ? (panel.prompt_variant_b ?? panel.prompt) : panel.prompt_variant_b,
       })));
-      setImportedRefPaths(result.imported_reference_paths);
+      const refs = result.imported_references ?? [];
+      setImportedRefs(refs);
+      setImportedRefPaths(
+        refs.length ? refs.map((ref) => ref.path) : result.imported_reference_paths,
+      );
       setRunLabel(result.label);
     } catch (err) {
       console.error("import failed", err);
@@ -865,6 +981,19 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
     }
   }
 
+  async function handleDeleteRun(runId: string, label?: string) {
+    const ok = window.confirm(`Delete experiment "${label || runId}"? This removes its images and metadata.`);
+    if (!ok) return;
+    try {
+      await deleteRun.mutateAsync(runId);
+      if (activeRunId === runId) {
+        setActiveRunId(null);
+      }
+    } catch (err) {
+      console.error("delete run failed", err);
+    }
+  }
+
   const selectedCount = selectedModels.size;
   const hasPrompts = panels.every((panel) => panel.prompt.trim().length > 0);
   const hasComparePrompts = panels.every((panel) => (panel.prompt_variant_b || "").trim().length > 0);
@@ -873,6 +1002,10 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
   const fixtureRefThumbs =
     sceneSource === "fixture"
       ? fixture.reference_images.map((r) => ({ url: r.url, label: r.label }))
+      : [];
+  const importedRefThumbs =
+    sceneSource === "imported"
+      ? importedRefs.map((r) => ({ url: r.url, label: r.label }))
       : [];
 
   return (
@@ -942,6 +1075,8 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
                     onChange={(e) => {
                       setImportProjectId(e.target.value);
                       setImportSceneId("");
+                      setImportedRefs([]);
+                      setImportedRefPaths([]);
                     }}
                     className="border-[2px] border-ink-black/15 bg-pulp-paper px-3 py-2 font-meta text-[0.7rem] tracking-[0.06em]"
                   >
@@ -954,7 +1089,11 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
                   </select>
                   <select
                     value={importSceneId}
-                    onChange={(e) => setImportSceneId(e.target.value)}
+                    onChange={(e) => {
+                      setImportSceneId(e.target.value);
+                      setImportedRefs([]);
+                      setImportedRefPaths([]);
+                    }}
                     disabled={!importProjectId}
                     className="border-[2px] border-ink-black/15 bg-pulp-paper px-3 py-2 font-meta text-[0.7rem] tracking-[0.06em] disabled:opacity-50"
                   >
@@ -989,6 +1128,15 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
               <div className="ui-kicker">REFERENCE IMAGES</div>
               <div className="mt-3">
                 <ReferencePreview urls={fixtureRefThumbs} />
+              </div>
+            </div>
+          )}
+
+          {sceneSource === "imported" && (
+            <div>
+              <div className="ui-kicker">REFERENCE IMAGES</div>
+              <div className="mt-3">
+                <ReferencePreview urls={importedRefThumbs} />
               </div>
             </div>
           )}
@@ -1093,12 +1241,12 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
             ) : (
               <ul className="space-y-1.5">
                 {runsList.runs.slice(0, 10).map((r) => (
-                  <li key={r.run_id}>
+                  <li key={r.run_id} className="flex items-stretch gap-1">
                     <button
                       type="button"
                       onClick={() => setActiveRunId(r.run_id)}
                       className={cn(
-                        "flex w-full items-center justify-between gap-3 border-l-[3px] px-3 py-2 text-left transition-colors",
+                        "flex min-w-0 flex-1 items-center justify-between gap-3 border-l-[3px] px-3 py-2 text-left transition-colors",
                         activeRunId === r.run_id
                           ? "border-narrator-gold bg-bristol"
                           : "border-transparent hover:bg-bristol/40",
@@ -1126,6 +1274,16 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
                         {r.status.toUpperCase()}
                       </span>
                     </button>
+                    <button
+                      type="button"
+                      disabled={deleteRun.isPending}
+                      onClick={() => handleDeleteRun(r.run_id, r.label)}
+                      className="shrink-0 border-l border-ink-black/10 px-2 font-meta text-[0.54rem] font-bold tracking-[0.14em] text-ink-black/35 transition-colors hover:bg-chip-red/30 hover:text-hero-red disabled:cursor-not-allowed disabled:opacity-40"
+                      aria-label={`Delete ${r.label || r.run_id}`}
+                      title="Delete experiment"
+                    >
+                      DELETE
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -1143,18 +1301,28 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
             </h2>
           </div>
           {activeRun && (
-            <div className="font-meta text-[0.62rem] tracking-[0.14em] text-ink-black/55">
-              {activeRun.cells_done}/{activeRun.cells_total} cells ·{" "}
-              {formatCost(activeRun.total_cost_usd)} ·{" "}
-              <span
-                className={cn(
-                  activeRun.status === "complete" && "text-archive-sage",
-                  activeRun.status === "running" && "text-narrator-gold",
-                  activeRun.status === "failed" && "text-hero-red",
-                )}
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="font-meta text-[0.62rem] tracking-[0.14em] text-ink-black/55">
+                {activeRun.cells_done}/{activeRun.cells_total} cells ·{" "}
+                {formatCost(activeRun.total_cost_usd)} ·{" "}
+                <span
+                  className={cn(
+                    activeRun.status === "complete" && "text-archive-sage",
+                    activeRun.status === "running" && "text-narrator-gold",
+                    activeRun.status === "failed" && "text-hero-red",
+                  )}
+                >
+                  {activeRun.status.toUpperCase()}
+                </span>
+              </div>
+              <button
+                type="button"
+                disabled={deleteRun.isPending}
+                onClick={() => handleDeleteRun(activeRun.run_id, activeRun.label)}
+                className="border-[2px] border-hero-red/35 px-2 py-1 font-meta text-[0.56rem] font-bold tracking-[0.14em] text-hero-red hover:bg-chip-red/30 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {activeRun.status.toUpperCase()}
-              </span>
+                DELETE
+              </button>
             </div>
           )}
         </div>
@@ -1164,6 +1332,7 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
             panels={activeRun.panels}
             models={models}
             modelIds={activeRun.model_ids}
+            promptCompareMode={activeRun.prompt_compare_mode}
           />
         ) : (
           <div className="border-[2px] border-dashed border-ink-black/20 p-10 text-center font-meta text-[0.72rem] tracking-[0.16em] text-ink-black/40">

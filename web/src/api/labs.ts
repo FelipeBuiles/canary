@@ -56,7 +56,16 @@ export interface LabsImportedScene {
   label: string;
   style_template: string;
   panels: LabsPanel[];
+  imported_references?: LabsImportedReference[];
   imported_reference_paths: string[];
+}
+
+export interface LabsImportedReference {
+  path: string;
+  relative_path: string;
+  label: string;
+  role: string;
+  url: string;
 }
 
 export type LabsCellStatus = "pending" | "ok" | "failed";
@@ -159,6 +168,12 @@ export function createLabsRun(payload: LabsRunCreatePayload): Promise<{ run_id: 
   return apiFetch("/labs/runs", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export function deleteLabsRun(runId: string): Promise<{ run_id: string; status: string }> {
+  return apiFetch(`/labs/runs/${encodeURIComponent(runId)}`, {
+    method: "DELETE",
   });
 }
 

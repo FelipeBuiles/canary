@@ -107,8 +107,8 @@ class PlannedSfx(BaseModel):
 
     ``text`` is bare onomatopoeia (no markup; cleaned via
     :func:`normalize_sfx_text`). ``kind`` and ``intensity`` are populated
-    by the planner — either from explicit LLM hints or via heuristic
-    inference at projection time.
+    by the planner — either from explicit LLM hints or via inference at
+    projection time.
     """
 
     text: str
@@ -198,7 +198,7 @@ class PlannedPage(BaseModel):
 
 class LayoutPlanMetadata(BaseModel):
     planner_version: int = 1
-    planning_mode: str = "heuristic_v1"
+    planning_mode: str = "llm_v1"
     source_screenplay_hash: str
     source_scene_ids: list[str] = Field(default_factory=list)
     max_panels_per_page: int

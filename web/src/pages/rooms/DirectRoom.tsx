@@ -164,14 +164,14 @@ function DirectPromptDetail({
 
       {/* Assembled prompt — collapsed by default */}
       <div className="mt-7">
-        {prompt.prose_prompt && (
+        {prompt.distilled_prompt && (
           <CollapsibleSection
-            title="PROSE PROMPT"
-            storageKey="direct.prosePrompt"
+            title="DISTILLED PROMPT"
+            storageKey="direct.distilledPrompt"
             defaultExpanded
           >
             <p className="whitespace-pre-wrap bg-bristol px-5 py-5 font-body text-[0.92rem] leading-7 text-ink-black">
-              {prompt.prose_prompt}
+              {prompt.distilled_prompt}
             </p>
           </CollapsibleSection>
         )}

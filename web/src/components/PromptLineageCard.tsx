@@ -465,10 +465,10 @@ export function PromptLineageCard({
         </button>
       )}
 
-      {prompt.prose_prompt && (
-        <CollapsibleSection title="PROSE PROMPT" defaultExpanded>
+      {prompt.distilled_prompt && (
+        <CollapsibleSection title="DISTILLED PROMPT" defaultExpanded>
           <p className="text-[0.82rem] leading-6 text-ink-black/75 whitespace-pre-wrap">
-            {prompt.prose_prompt}
+            {prompt.distilled_prompt}
           </p>
         </CollapsibleSection>
       )}

@@ -35,6 +35,7 @@ import {
   listProjectScenes,
   importProjectScene,
   createLabsRun,
+  deleteLabsRun,
   listLabsRuns,
   getLabsRun,
   type LabsRunCreatePayload,
@@ -921,6 +922,17 @@ export function useCreateLabsRun() {
   return useMutation({
     mutationFn: (payload: LabsRunCreatePayload) => createLabsRun(payload),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["labs", "runs"] });
+    },
+  });
+}
+
+export function useDeleteLabsRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: string) => deleteLabsRun(runId),
+    onSuccess: (_data, runId) => {
+      qc.removeQueries({ queryKey: ["labs", "runs", runId] });
       qc.invalidateQueries({ queryKey: ["labs", "runs"] });
     },
   });

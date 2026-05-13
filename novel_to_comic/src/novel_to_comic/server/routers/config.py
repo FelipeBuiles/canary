@@ -24,7 +24,6 @@ _SETTABLE_FIELDS = {
     "image_quality",
     "image_steps",
     "continuity_mode",
-    "plan_mode",
     "comic_theme",
     "negative_prompt",
     "max_panels_per_scene",

@@ -1,12 +1,9 @@
 """Stage 5: Screenplay -> LayoutPlan JSON.
 
-Two planning modes are supported, controlled by ``config.plan_mode``:
-
-* ``"llm"``  -- calls Gemini Pro once per scene to merge beats intelligently,
-               vary shot types, set lighting/mood, and flag page breaks.
-               Falls back to heuristic for any scene where the LLM call fails.
-
-* ``"heuristic"`` -- deterministic one-beat-per-panel mapper (original behaviour).
+Calls the panel model once per scene to merge beats intelligently, vary shot
+types, set lighting/mood, and flag page breaks. On validator rejection the
+call is retried with the violation fed back to the model; persistent failures
+raise.
 
 After scene planning, a cross-scene transition post-processing pass sets
 ``transition_in`` / ``transition_out`` at scene boundaries based on whether
@@ -21,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import math
 from pathlib import Path
@@ -77,11 +75,20 @@ def _planned_sfx_from_beat(beat: ScreenplayBeat) -> PlannedSfx | None:
 console = Console()
 logger = logging.getLogger("canary.plan")
 
-# Maximum dialogue lines carried into a single PlannedPanel (safety cap on aggregation).
-_MAX_DIALOGUE_PER_PANEL = 3
+# Safety caps on panel aggregation. These are upper bounds the LLM must respect;
+# the prompt asks for restraint well below these values. Violations trigger a
+# retry with the error fed back to the model, then deterministic auto-split as
+# a last resort.
+_MAX_VISUAL_PER_PANEL = 7
+_MAX_DIALOGUE_PER_PANEL = 4
 
 # Average beats per panel used to derive a concrete target panel count.
 _BEATS_PER_PANEL_AVG = 3.0
+
+# How many times to re-call the LLM with a corrective message before giving up.
+# Each retry uses a higher temperature to escape repeated-answer loops.
+_PLAN_RETRY_ATTEMPTS = 2
+_PLAN_RETRY_TEMPERATURES = (0.4, 0.6, 0.8)
 
 # ---------------------------------------------------------------------------
 # System prompt for the LLM scene planner
@@ -93,26 +100,28 @@ PRIMARY DIRECTIVE
 -----------------
 Produce approximately {target_panels} panels for this {visual_beat_count}-visual-beat scene.
 The scene also has {narration_beat_count} narration candidate beat(s).
-That means averaging {avg_per_panel} visual beats per panel -- you MUST merge consecutive visual beats.
-One panel per beat is wrong. One panel per dialogue line is wrong.
+Aim for roughly {avg_per_panel} visual beats per panel: merge consecutive beats
+when they share a moment, location, or exchange, and let a single beat stand
+alone when it deserves emphasis. Use restraint -- the goal is a readable comic,
+not a transcript.
 Narration beats are adapted caption candidates with exact source provenance.
 They should not inflate the panel target unless a caption_panel is genuinely needed.
 Every non-narration beat must appear in exactly one panel's beat_indices. Do not skip beats.
-If preserving all visual beats requires more panels than the target, exceed the target.
+If preserving the visual beats well requires more panels than the target, exceed the target.
 
-HOW TO MERGE
-------------
-- 2-3 consecutive beats sharing the same moment, location, or exchange = one panel.
-- A short back-and-forth dialogue (2-3 lines between the same characters) = one panel.
-- An action beat immediately followed by a reaction or short line = one panel.
+WHEN TO MERGE
+-------------
+- 2-3 consecutive beats sharing the same moment, location, or exchange = often one panel.
+- A short back-and-forth (2-3 short lines between the same characters) = often one panel.
+- An action beat immediately followed by a brief reaction or short line = often one panel.
 - LONG ANNOUNCEMENTS / MONOLOGUES (5+ consecutive lines from the same off-screen source):
   Group 2-3 announcement lines together with one character reaction per group.
-  Show the character REACTING while the text plays. Every dialogue beat still needs
-  to appear in exactly one panel's beat_indices.
+  Show the character REACTING while the text plays.
 
-HARD CEILINGS (absolute maximums, only hit in genuinely extreme beats):
-- 4 beats per panel
-- 3 dialogue lines per panel
+HARD CEILINGS (absolute maximums -- panels exceeding these will be rejected):
+- 7 visual beats per panel (action, dialogue, sfx, transition)
+- 4 dialogue lines per panel
+Hitting either ceiling means the panel is overloaded; split it.
 
 PANEL FIELDS
 ------------
@@ -390,9 +399,10 @@ def _validate_llm_specs(specs: list[LLMPanelSpec], beats: list[ScreenplayBeat]) 
             idx for idx in spec.beat_indices
             if idx in visual_indices
         ]
-        if len(covered_visual) > 4:
+        if len(covered_visual) > _MAX_VISUAL_PER_PANEL:
             raise ValueError(
-                f"panel {panel_number} covers {len(covered_visual)} visual beats; maximum is 4"
+                f"panel {panel_number} covers {len(covered_visual)} visual beats; "
+                f"maximum is {_MAX_VISUAL_PER_PANEL}"
             )
 
         dialogue_count = sum(
@@ -461,140 +471,6 @@ def _target_panel_count(config_max: int, beat_count: int) -> int:
 
 def _visual_beat_count(beats: list[ScreenplayBeat]) -> int:
     return sum(1 for beat in beats if beat.type != "narration")
-
-
-# ---------------------------------------------------------------------------
-# Heuristic planner (original one-beat-per-panel logic, kept as fallback)
-# ---------------------------------------------------------------------------
-
-def _shot_type_for_beat(beat: ScreenplayBeat) -> str:
-    if beat.type == "transition":
-        return "wide"
-    if beat.type == "dialogue":
-        return "medium"
-    content = beat.content.lower()
-    if any(w in content for w in ("close", "whisper", "tear", "blink")):
-        return "close-up"
-    if any(w in content for w in ("crowd", "city", "landscape", "room")):
-        return "wide"
-    return "medium"
-
-
-def _camera_angle_for_beat(beat: ScreenplayBeat) -> str:
-    direction = (beat.direction or "").lower()
-    if "low" in direction:
-        return "low-angle"
-    if "high" in direction or "overhead" in direction:
-        return "high-angle"
-    if "dutch" in direction:
-        return "dutch-angle"
-    return "eye-level"
-
-
-def _shape_intent_for_beat(beat: ScreenplayBeat) -> str:
-    if beat.type == "transition":
-        return "wide"
-    content = beat.content.lower()
-    if any(w in content for w in ("tower", "stairs", "fall", "drop")):
-        return "tall"
-    if any(w in content for w in ("horizon", "street", "field", "landscape")):
-        return "wide"
-    return "rect"
-
-
-def _importance_for_beat(beat: ScreenplayBeat) -> str:
-    if beat.type == "transition":
-        return "hero"
-    if beat.type == "sfx":
-        return "accent"
-    return "standard"
-
-
-def _panel_from_beat(
-    scene_id: str,
-    beat_index: int,
-    beat: ScreenplayBeat,
-    scene_location_name: str,
-    story_bible: StoryBible,
-) -> PlannedPanel:
-    shape_intent = _shape_intent_for_beat(beat)
-    importance = _importance_for_beat(beat)
-    shot_type = _shot_type_for_beat(beat)
-    camera_angle = _camera_angle_for_beat(beat)
-    characters_present = [beat.character_id] if beat.character_id else []
-    character_actions = {beat.character_id: beat.content} if beat.character_id and beat.type == "action" else {}
-    character_expressions: dict[str, str] = {}
-    if beat.character_id and beat.type == "dialogue":
-        character_expressions[beat.character_id] = "speaking"
-    character_positions = {beat.character_id: "center"} if beat.character_id else {}
-    fake_spec = LLMPanelSpec(beat_indices=[beat_index])
-    covered_pairs = [(beat_index, beat)]
-    dialogue_load = 1 if beat.type == "dialogue" else 0
-    caption_load = 1 if beat.type == "narration" else (1 if beat.type == "action" and not beat.character_id else 0)
-    aspect_preference, aspect_range = _aspect_for_shape(shape_intent)
-    return PlannedPanel(
-        panel_id=_panel_id(scene_id, beat_index),
-        scene_id=scene_id,
-        panel_number=beat_index,
-        beat_ids=[_beat_id(scene_id, beat_index)],
-        importance=importance,
-        shape_intent=shape_intent,
-        aspect_preference=aspect_preference,
-        aspect_range=aspect_range,
-        crop_policy="flexible" if shape_intent == "rect" else "preserve_subject",
-        dialogue_load=dialogue_load,
-        caption_load=caption_load,
-        transition_in=beat.transition_type if beat.type == "transition" else None,
-        transition_out=beat.transition_type if beat.type == "transition" else None,
-        generation_mode=_generation_mode_for_shape(shape_intent, importance),
-        shot_type=shot_type,
-        camera_angle=camera_angle,
-        characters_present=characters_present,
-        character_actions=character_actions,
-        character_expressions=character_expressions,
-        character_positions=character_positions,
-        key_objects=_key_objects_for_panel(fake_spec, covered_pairs, story_bible),
-        visual_requirements=_visual_requirements_for_panel(fake_spec, covered_pairs, story_bible),
-        background_description=scene_location_name,
-        camera_note=beat.direction or "",
-        lighting="",
-        mood="tense" if beat.type == "transition" else "neutral",
-        dialogue=_dialogue_line(beat),
-        sfx=([s] if beat.type == "sfx" and (s := _planned_sfx_from_beat(beat)) else []),
-        has_narration_caption=beat.type == "narration",
-        narration_mode="attached_caption" if beat.type == "narration" else None,
-        preferred_caption_zone="top" if beat.type == "narration" else None,
-    )
-
-
-def _plan_scene_heuristic(
-    screenplay: Screenplay,
-    scene_location_name: str,
-    story_bible: StoryBible,
-) -> tuple[list[PlannedPanel], list[NarrationDecision]]:
-    panels = [
-        _panel_from_beat(screenplay.scene_id, beat_index, beat, scene_location_name, story_bible)
-        for beat_index, beat in enumerate(screenplay.beats, start=1)
-    ]
-    decisions = [
-        NarrationDecision(
-            beat_id=_beat_id(screenplay.scene_id, beat_index),
-            scene_id=screenplay.scene_id,
-            beat_index=beat_index,
-            source_text=_narration_source_text(beat),
-            caption_text=_narration_caption_text(beat),
-            candidate_reason=beat.narration_reason,
-            decision="rendered",
-            mode="attached_caption",
-            panel_id=_panel_id(screenplay.scene_id, beat_index),
-            preferred_zone="top",
-            decision_reason="Heuristic planner renders Stage 3 narration as an attached caption.",
-            fallback_decision=True,
-        )
-        for beat_index, beat in enumerate(screenplay.beats, start=1)
-        if beat.type == "narration"
-    ]
-    return _sync_rendered_narration(panels, decisions), decisions
 
 
 # ---------------------------------------------------------------------------
@@ -681,13 +557,126 @@ def _apply_lighting_fallback(
             panel.lighting = location_lighting_hint
 
 
+def _correction_user_content(
+    base_user: str,
+    previous_response: dict,
+    error_message: str,
+) -> str:
+    """Build a follow-up user message that asks the model to fix its previous output."""
+    try:
+        prior = json.dumps(previous_response, ensure_ascii=False, indent=2)
+    except (TypeError, ValueError):
+        prior = repr(previous_response)
+    return (
+        f"{base_user}\n\n"
+        f"=== YOUR PREVIOUS RESPONSE WAS REJECTED ===\n"
+        f"Validation error: {error_message}\n\n"
+        f"Previous response:\n{prior}\n\n"
+        f"Return a corrected JSON object with the same schema. Fix only what the "
+        f"error describes; keep everything else consistent with the screenplay above."
+    )
+
+
+def _split_panel_to_caps(
+    spec: LLMPanelSpec,
+    beats: list[ScreenplayBeat],
+) -> list[LLMPanelSpec]:
+    """Split one over-cap LLMPanelSpec into chunks that each respect the caps.
+
+    Greedy left-to-right walk through beat_indices: start a new chunk when
+    adding the next beat would exceed either the visual or dialogue cap.
+    Visual metadata (characters, mood, shot, etc.) is replicated to every
+    chunk; only ``beat_indices`` differ.
+    """
+    chunks: list[list[int]] = [[]]
+    visual_in_chunk = 0
+    dialogue_in_chunk = 0
+    for idx in spec.beat_indices:
+        if 1 <= idx <= len(beats):
+            beat = beats[idx - 1]
+            adds_visual = 1 if beat.type != "narration" else 0
+            adds_dialogue = 1 if beat.type == "dialogue" else 0
+        else:
+            adds_visual = 0
+            adds_dialogue = 0
+        if chunks[-1] and (
+            visual_in_chunk + adds_visual > _MAX_VISUAL_PER_PANEL
+            or dialogue_in_chunk + adds_dialogue > _MAX_DIALOGUE_PER_PANEL
+        ):
+            chunks.append([])
+            visual_in_chunk = 0
+            dialogue_in_chunk = 0
+        chunks[-1].append(idx)
+        visual_in_chunk += adds_visual
+        dialogue_in_chunk += adds_dialogue
+    return [spec.model_copy(update={"beat_indices": chunk}) for chunk in chunks]
+
+
+def _autosplit_overflow_panels(
+    specs: list[LLMPanelSpec],
+    narration_specs: list[LLMNarrationDecisionSpec],
+    beats: list[ScreenplayBeat],
+) -> tuple[list[LLMPanelSpec], list[LLMNarrationDecisionSpec], int]:
+    """Split any cap-violating panels and remap narration panel_index to follow.
+
+    Returns ``(new_panel_specs, new_narration_specs, num_panels_split)``.
+    Non-violating panels pass through unchanged. Narration decisions whose
+    ``panel_index`` referenced a split panel are remapped to the new panel
+    that actually contains their narration beat.
+    """
+    new_specs: list[LLMPanelSpec] = []
+    new_panel_beat_sets: list[set[int]] = []
+    panels_split = 0
+    for spec in specs:
+        visual_count = sum(
+            1 for idx in spec.beat_indices
+            if 1 <= idx <= len(beats) and beats[idx - 1].type != "narration"
+        )
+        dialogue_count = sum(
+            1 for idx in spec.beat_indices
+            if 1 <= idx <= len(beats) and beats[idx - 1].type == "dialogue"
+        )
+        if (
+            visual_count > _MAX_VISUAL_PER_PANEL
+            or dialogue_count > _MAX_DIALOGUE_PER_PANEL
+        ):
+            chunks = _split_panel_to_caps(spec, beats)
+            new_specs.extend(chunks)
+            for chunk in chunks:
+                new_panel_beat_sets.append(set(chunk.beat_indices))
+            panels_split += 1
+        else:
+            new_specs.append(spec)
+            new_panel_beat_sets.append(set(spec.beat_indices))
+
+    remapped_narration: list[LLMNarrationDecisionSpec] = []
+    for nspec in narration_specs:
+        new_panel_index = nspec.panel_index
+        for i, beat_set in enumerate(new_panel_beat_sets, start=1):
+            if nspec.beat_index in beat_set:
+                new_panel_index = i
+                break
+        remapped_narration.append(nspec.model_copy(update={"panel_index": new_panel_index}))
+
+    return new_specs, remapped_narration, panels_split
+
+
 async def _plan_scene_llm(
     config: Config,
     screenplay: Screenplay,
     story_bible: StoryBible,
+    warnings: list[str],
     usage_records: list[UsageRecord] | None = None,
 ) -> tuple[list[LLMPanelSpec], list[LLMNarrationDecisionSpec]]:
-    """Call the panel model to produce panel specs for a single scene."""
+    """Call the panel model and validate its output, retrying on validation errors.
+
+    The retry feeds the validation error back to the model along with its prior
+    response so it can correct the specific violation. Each retry escalates the
+    temperature to escape repeated-answer loops. If every retry still fails on
+    cap violations and the last response parsed cleanly, the offending panels
+    are auto-split deterministically and a warning is recorded. Only non-cap
+    failures (parse errors, schema violations) raise after retries.
+    """
     visual_beat_count = max(1, _visual_beat_count(screenplay.beats))
     narration_beat_count = sum(1 for beat in screenplay.beats if beat.type == "narration")
     target_panels = _target_panel_count(config.max_panels_per_scene, visual_beat_count)
@@ -699,19 +688,76 @@ async def _plan_scene_llm(
         narration_beat_count=narration_beat_count,
         avg_per_panel=avg_per_panel,
     )
-    user = _scene_planning_user_content(screenplay, story_bible, target_panels)
-    api_result = await generate_json(
-        config,
-        model=config.effective_panel_model(),
-        system_prompt=system,
-        user_content=user,
-        temperature=0.4,
-        max_output_tokens=16384,
-        feature="plan.scene_layout",
-    )
-    if usage_records is not None and api_result.usage is not None:
-        usage_records.append(api_result.usage)
-    return _parse_llm_scene_plan(api_result.value)
+    base_user = _scene_planning_user_content(screenplay, story_bible, target_panels)
+
+    user_content = base_user
+    last_error: Exception | None = None
+    last_parsed: tuple[list[LLMPanelSpec], list[LLMNarrationDecisionSpec]] | None = None
+    total_attempts = _PLAN_RETRY_ATTEMPTS + 1
+    for attempt in range(total_attempts):
+        temperature = _PLAN_RETRY_TEMPERATURES[
+            min(attempt, len(_PLAN_RETRY_TEMPERATURES) - 1)
+        ]
+        api_result = await generate_json(
+            config,
+            model=config.effective_panel_model(),
+            system_prompt=system,
+            user_content=user_content,
+            temperature=temperature,
+            max_output_tokens=16384,
+            feature="plan.scene_layout",
+        )
+        if usage_records is not None and api_result.usage is not None:
+            usage_records.append(api_result.usage)
+        try:
+            parsed = _parse_llm_scene_plan(api_result.value)
+            last_parsed = parsed
+            specs, narration_specs = parsed
+            if not specs:
+                raise ValueError("LLM returned empty panel list")
+            _validate_llm_specs(specs, screenplay.beats)
+            if attempt > 0:
+                logger.info(
+                    "LLM plan for %s recovered on retry %d",
+                    screenplay.scene_id, attempt,
+                )
+            return specs, narration_specs
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "LLM plan for %s rejected on attempt %d/%d: %s",
+                screenplay.scene_id, attempt + 1, total_attempts, exc,
+            )
+            user_content = _correction_user_content(base_user, api_result.value, str(exc))
+
+    if last_parsed is not None:
+        specs, narration_specs = last_parsed
+        try:
+            split_specs, split_narration, panels_split = _autosplit_overflow_panels(
+                specs, narration_specs, screenplay.beats,
+            )
+            _validate_llm_specs(split_specs, screenplay.beats)
+        except Exception as split_exc:
+            logger.warning(
+                "Auto-split for %s failed: %s",
+                screenplay.scene_id, split_exc,
+            )
+        else:
+            if panels_split > 0:
+                msg = (
+                    f"{screenplay.scene_id}: LLM exceeded panel caps after "
+                    f"{total_attempts} attempts; auto-split {panels_split} panel(s) "
+                    f"to recover."
+                )
+                warnings.append(msg)
+                logger.warning(msg)
+                return split_specs, split_narration
+
+    assert last_error is not None
+    raise ValueError(
+        f"LLM planning for {screenplay.scene_id} failed after "
+        f"{total_attempts} attempts: {last_error}"
+    ) from last_error
 
 
 # ---------------------------------------------------------------------------
@@ -1006,52 +1052,37 @@ async def _plan_scene(
     config: Config,
     screenplay: Screenplay,
     story_bible: StoryBible,
-    scene_location_name: str,
     warnings: list[str],
     usage_records: list[UsageRecord] | None = None,
 ) -> tuple[list[PlannedPanel], list[NarrationDecision]]:
-    """Plan one scene, using the LLM if plan_mode='llm', else heuristic.
-
-    Falls back to heuristic automatically on LLM error.
-    """
+    """Plan one scene with the LLM, retrying on validation errors before raising."""
     location = next(
         (loc for loc in story_bible.locations if loc.id == screenplay.location_id),
         None,
     )
     loc_lighting = _location_lighting_hint(location.visual_anchor if location else "")
 
-    if config.plan_mode == "heuristic":
-        return _plan_scene_heuristic(screenplay, scene_location_name, story_bible)
-
-    try:
-        specs, narration_specs = await _plan_scene_llm(config, screenplay, story_bible, usage_records=usage_records)
-        if not specs:
-            raise ValueError("LLM returned empty panel list")
-        _validate_llm_specs(specs, screenplay.beats)
-        panels = [
-            _llm_spec_to_planned_panel(screenplay.scene_id, idx, spec, screenplay.beats, story_bible)
-            for idx, spec in enumerate(specs, start=1)
-        ]
-        decisions = _build_narration_decisions(
-            screenplay.scene_id,
-            narration_specs,
-            panels,
-            screenplay.beats,
-            warnings,
-        )
-        panels = _sync_rendered_narration(panels, decisions)
-        _apply_lighting_fallback(panels, loc_lighting)
-        logger.info(
-            "LLM planned %s: %d beats -> %d panels",
-            screenplay.scene_id, len(screenplay.beats), len(panels),
-        )
-        return panels, decisions
-    except Exception as exc:
-        warnings.append(
-            f"{screenplay.scene_id}: LLM planning failed ({exc!s}), falling back to heuristic"
-        )
-        logger.warning("LLM planning failed for %s: %s", screenplay.scene_id, exc)
-        return _plan_scene_heuristic(screenplay, scene_location_name, story_bible)
+    specs, narration_specs = await _plan_scene_llm(
+        config, screenplay, story_bible, warnings, usage_records=usage_records,
+    )
+    panels = [
+        _llm_spec_to_planned_panel(screenplay.scene_id, idx, spec, screenplay.beats, story_bible)
+        for idx, spec in enumerate(specs, start=1)
+    ]
+    decisions = _build_narration_decisions(
+        screenplay.scene_id,
+        narration_specs,
+        panels,
+        screenplay.beats,
+        warnings,
+    )
+    panels = _sync_rendered_narration(panels, decisions)
+    _apply_lighting_fallback(panels, loc_lighting)
+    logger.info(
+        "LLM planned %s: %d beats -> %d panels",
+        screenplay.scene_id, len(screenplay.beats), len(panels),
+    )
+    return panels, decisions
 
 
 # ---------------------------------------------------------------------------
@@ -1181,18 +1212,16 @@ async def _build_layout_plan(
     usage_records: list[UsageRecord] | None = None,
 ) -> LayoutPlan:
     screenplays = [_load_screenplay(project_dir, scene_id) for scene_id in scene_ids]
-    location_name_by_id = {loc.id: loc.name for loc in story_bible.locations}
     scene_location_map = {sp.scene_id: sp.location_id for sp in screenplays}
 
     warnings: list[str] = []
 
-    # -- Step 1: Plan each scene (LLM or heuristic) in parallel ---------------
+    # -- Step 1: Plan each scene with the LLM in parallel ---------------------
     async def _plan_one(sp: Screenplay) -> tuple[str, list[PlannedPanel], list[NarrationDecision], list[LayoutPlanBeatRef]]:
-        loc_name = location_name_by_id.get(sp.location_id, sp.location_id)
         if not sp.beats:
             warnings.append(f"{sp.scene_id}: screenplay has no beats to plan")
             return sp.scene_id, [], [], []
-        panels, narration_decisions = await _plan_scene(config, sp, story_bible, loc_name, warnings, usage_records=usage_records)
+        panels, narration_decisions = await _plan_scene(config, sp, story_bible, warnings, usage_records=usage_records)
         beat_refs = [
             _beat_ref(sp.scene_id, idx, beat)
             for idx, beat in enumerate(sp.beats, start=1)
@@ -1233,7 +1262,7 @@ async def _build_layout_plan(
 
     return LayoutPlan(
         metadata=LayoutPlanMetadata(
-            planning_mode=f"{config.plan_mode}_v1",
+            planning_mode="llm_v1",
             source_screenplay_hash=_screenplay_hash(screenplays),
             source_scene_ids=scene_ids,
             max_panels_per_page=config.max_panels_per_page,

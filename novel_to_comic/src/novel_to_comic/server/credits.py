@@ -294,47 +294,9 @@ def _estimate_plan_cost(config: Config, project_dir: Path) -> float:
 
 
 def _estimate_direct_cost(config: Config, project_dir: Path) -> float:
-    from novel_to_comic.models.prompt import ImagePrompt
-    from novel_to_comic.prompting import IMAGE_PROMPT_VERSION
-    from novel_to_comic.layout_planning import load_layout_plan, scene_panel_map
-
-    plan_path = project_dir / "plan" / "layout_plan.json"
-    if not plan_path.exists():
-        return 0.0
-    try:
-        panels = [
-            panel
-            for scene_panels in scene_panel_map(load_layout_plan(project_dir)).values()
-            for panel in scene_panels
-        ]
-    except Exception:
-        return 0.0
-
-    missing = 0
-    for panel in panels:
-        prompt_path = project_dir / "direct" / panel.scene_id / f"panel_{panel.panel_number:03d}.json"
-        if not prompt_path.exists():
-            missing += 1
-            continue
-        try:
-            prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
-        except Exception:
-            missing += 1
-            continue
-        if (
-            getattr(prompt, "prompt_version", 1) < IMAGE_PROMPT_VERSION
-            or getattr(prompt, "planned_panel_id", None) != panel.panel_id
-            or not getattr(prompt, "prose_prompt", None)
-        ):
-            missing += 1
-
-    if missing <= 0:
-        return 0.0
-    return missing * estimate_text_cost(
-        config.effective_prompt_model(),
-        "x" * 2400,
-        output_chars=1200,
-    )
+    # Direct-stage prompt assembly is deterministic; no model call is needed.
+    _ = (config, project_dir)
+    return 0.0
 
 
 def _estimate_draw_cost(config: Config, project_dir: Path) -> float:

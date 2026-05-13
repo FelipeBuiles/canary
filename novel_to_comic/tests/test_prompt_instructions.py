@@ -14,6 +14,7 @@ def _prompt() -> ImagePrompt:
         scene_id="scene_001",
         panel_number=1,
         full_prompt="",
+        distilled_prompt="Ada stands in the old distilled prompt.",
         composition="medium panel",
         setting="library",
         lighting="warm lamp light",
@@ -63,6 +64,7 @@ def test_apply_instruction_patch_updates_allowlisted_subject_field_and_renders_b
     assert "angry expression" in updated.full_prompt
     assert updated.subjects[0].identity == "short black bob haircut, blue jacket"
     assert updated.reference_image_paths == ["refs/ada/front.png"]
+    assert updated.distilled_prompt is None
 
 
 def test_parse_instruction_patch_rejects_forbidden_fields():

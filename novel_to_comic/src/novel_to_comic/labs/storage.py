@@ -68,6 +68,15 @@ def read_manifest(projects_dir: Path, run_id: str) -> dict[str, Any] | None:
     return json.loads(path.read_text())
 
 
+def delete_run(projects_dir: Path, run_id: str) -> bool:
+    """Delete one Labs run directory. Returns False when it did not exist."""
+    path = run_dir(projects_dir, run_id)
+    if not path.exists():
+        return False
+    shutil.rmtree(path)
+    return True
+
+
 def write_cell(
     projects_dir: Path,
     run_id: str,
