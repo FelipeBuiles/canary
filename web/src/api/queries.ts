@@ -882,7 +882,7 @@ export function useLabsModels() {
   return useQuery({
     queryKey: ["labs", "models"],
     queryFn: listLabsModels,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 0,
   });
 }
 

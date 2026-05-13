@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import json
 from pathlib import Path
 
 from novel_to_comic.config import Config, is_gpt_image_2
@@ -131,7 +132,7 @@ def _labels(config: Config | None = None) -> dict[str, str]:
 
 _clean = clean
 _shorten = shorten
-IMAGE_PROMPT_VERSION = 15
+IMAGE_PROMPT_VERSION = 16
 _SOFT_CONTINUITY = {"smooth_continuation", "match_cut"}
 _SEQUENTIAL_THEN_RE = re.compile(r"(?<=[,;.!?])\s+then\s+", re.IGNORECASE)
 _LEADING_TRANSITION_ACTION_RE = re.compile(
@@ -660,6 +661,105 @@ def render_panel_prompt_body(prompt: ImagePrompt) -> str:
     )
 
 
+_PROSE_PROMPT_SYSTEM = (
+    "Rewrite a structured comic image prompt as a single paragraph in the style "
+    "of a comic panel direction. Preserve all character names exactly. Preserve "
+    "every visual_anchor value exactly as written, character for character; do "
+    "not translate, paraphrase, reorder, or omit words inside visual_anchor "
+    "values. Preserve every constraint. Do not add dialogue, captions, speech "
+    "bubbles, signs, labels, or readable text. Return only the paragraph."
+)
+
+
+def _required_prose_fragments(prompt: ImagePrompt) -> list[str]:
+    fragments: list[str] = []
+    for subject in getattr(prompt, "subjects", []) or []:
+        identity = _clean(getattr(subject, "identity", ""))
+        if identity:
+            fragments.append(identity)
+    return fragments
+
+
+def _missing_prose_fragments(prompt: ImagePrompt, prose: str) -> list[str]:
+    return [fragment for fragment in _required_prose_fragments(prompt) if fragment not in prose]
+
+
+def _structured_prompt_fallback(prompt: ImagePrompt) -> str:
+    return _clean(getattr(prompt, "full_prompt", "")) or render_panel_prompt_body(prompt)
+
+
+def _prose_prompt_user_content(prompt: ImagePrompt) -> str:
+    payload = {
+        "panel": {
+            "scene_id": prompt.scene_id,
+            "panel_number": prompt.panel_number,
+            "composition": prompt.composition,
+            "setting": prompt.setting,
+            "lighting": prompt.lighting,
+            "mood": prompt.mood,
+            "key_objects": prompt.key_objects,
+            "visual_requirements": prompt.visual_requirements,
+            "props": prompt.props,
+            "constraints": prompt.constraints,
+            "continuity_note": prompt.continuity_note,
+            "has_narration_caption": prompt.has_narration_caption,
+            "preferred_caption_zone": prompt.preferred_caption_zone,
+        },
+        "characters": [
+            {
+                "name": subject.name,
+                "visual_anchor": subject.identity,
+                "action": subject.action,
+                "expression": subject.expression,
+                "position": subject.position,
+            }
+            for subject in (prompt.subjects or [])
+        ],
+        "required_exact_fragments": _required_prose_fragments(prompt),
+        "fallback_structured_prompt": _structured_prompt_fallback(prompt),
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _normalize_prose_prompt(raw: str) -> str:
+    text = _clean(raw)
+    text = re.sub(r"^panel direction:\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\n+", " ", text)
+    return text.strip().strip('"').strip("'").strip()
+
+
+async def generate_prose_prompt(config: Config, prompt: ImagePrompt) -> str:
+    """Generate and validate a prose panel direction for image generation.
+
+    If the rewrite omits a required character identity anchor, return the
+    structured prompt instead. That keeps draw correctness ahead of prose style.
+    """
+    from novel_to_comic.clients import text
+
+    result = await text.generate_text(
+        config=config,
+        model=config.effective_prompt_model(),
+        system_prompt=_PROSE_PROMPT_SYSTEM,
+        user_content=_prose_prompt_user_content(prompt),
+        temperature=0.2,
+        max_output_tokens=900,
+        feature="direct.prose_prompt",
+    )
+    prose = _normalize_prose_prompt(result.value)
+    if not prose or _missing_prose_fragments(prompt, prose):
+        return _structured_prompt_fallback(prompt)
+    return prose
+
+
+async def ensure_prose_prompt(config: Config, prompt: ImagePrompt) -> ImagePrompt:
+    """Return a copy of prompt with prose_prompt populated."""
+    if _clean(getattr(prompt, "prose_prompt", None)):
+        return prompt
+    updated = prompt.model_copy(deep=True)
+    updated.prose_prompt = await generate_prose_prompt(config, updated)
+    return updated
+
+
 _GENERATION_RENDERING_CONSTRAINTS = (
     "Render clean, coherent surfaces with readable forms. Avoid stochastic grain, "
     "speckled dappling, repeated brush dabs, tiled patterns, JPEG artifacts, noisy "
@@ -719,7 +819,8 @@ def render_generation_prompt(
     image_model: str | None = None,
 ) -> str:
     style = _clean(style_template or getattr(prompt, "style", None))
-    body = _clean(getattr(prompt, "full_prompt", "")) or render_panel_prompt_body(prompt)
+    prose = _clean(getattr(prompt, "prose_prompt", None))
+    body = prose or _clean(getattr(prompt, "full_prompt", "")) or render_panel_prompt_body(prompt)
     has_structured_fields = any([
         getattr(prompt, "subjects", None),
         getattr(prompt, "composition", None),
@@ -736,26 +837,29 @@ def render_generation_prompt(
     _append_section(sections, "Style", style)
     if image_model and is_gpt_image_2(image_model):
         _append_section(sections, "Rendering discipline", _GPT_IMAGE_2_RENDERING_DISCIPLINE)
-    _append_section(sections, "Characters", _render_subject_lines(prompt))
-    _append_section(sections, "Composition", getattr(prompt, "composition", None))
-    _append_section(sections, "Setting", getattr(prompt, "setting", None))
-    _append_section(sections, "Lighting", getattr(prompt, "lighting", None))
-    _append_section(sections, "Mood", getattr(prompt, "mood", None))
-    _append_section(
-        sections,
-        "Key objects",
-        [f"- {_clean(obj)}" for obj in (getattr(prompt, "key_objects", []) or [])],
-    )
-    _append_section(
-        sections,
-        "Must show",
-        [f"- {_clean(req)}" for req in (getattr(prompt, "visual_requirements", []) or [])],
-    )
-    _append_section(
-        sections,
-        "Key props",
-        [f"- {_clean(prop)}" for prop in (getattr(prompt, "props", []) or [])],
-    )
+    if prose:
+        _append_section(sections, "Panel direction", body)
+    else:
+        _append_section(sections, "Characters", _render_subject_lines(prompt))
+        _append_section(sections, "Composition", getattr(prompt, "composition", None))
+        _append_section(sections, "Setting", getattr(prompt, "setting", None))
+        _append_section(sections, "Lighting", getattr(prompt, "lighting", None))
+        _append_section(sections, "Mood", getattr(prompt, "mood", None))
+        _append_section(
+            sections,
+            "Key objects",
+            [f"- {_clean(obj)}" for obj in (getattr(prompt, "key_objects", []) or [])],
+        )
+        _append_section(
+            sections,
+            "Must show",
+            [f"- {_clean(req)}" for req in (getattr(prompt, "visual_requirements", []) or [])],
+        )
+        _append_section(
+            sections,
+            "Key props",
+            [f"- {_clean(prop)}" for prop in (getattr(prompt, "props", []) or [])],
+        )
 
     constraints = _clean(getattr(prompt, "constraints", None))
     if getattr(prompt, "has_narration_caption", False):
@@ -775,7 +879,7 @@ def render_generation_prompt(
     ])
     _append_section(sections, "Constraints", constraint_lines)
 
-    if body and not has_structured_fields:
+    if body and not prose and not has_structured_fields:
         _append_section(sections, "Panel brief", body)
 
     output = "\n\n".join(sections)

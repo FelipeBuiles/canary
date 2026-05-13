@@ -17,12 +17,20 @@ from typing import Any
 import httpx
 
 from novel_to_comic.ai.context import current_ai_request_context
-from novel_to_comic.config import Config, is_gpt_image_2
+from novel_to_comic.ai.errors import AIRefusalError
+from novel_to_comic.ai.finalisation import (
+    begin_image_call,
+    finalise_image_cancelled,
+    finalise_image_failure,
+    finalise_image_refusal,
+    finalise_image_success,
+)
+from novel_to_comic.ai.providers.base import RefImage
+from novel_to_comic.config import Config
 from novel_to_comic.usage import (
     ApiResult,
     UsageRecord,
     calculate_cost_breakdown,
-    estimate_image_cost,
     estimate_text_cost,
     estimate_text_usage,
     usage_has_billable_activity,
@@ -67,10 +75,6 @@ _http = httpx.AsyncClient(
     timeout=httpx.Timeout(connect=30, read=600, write=300, pool=5),
     limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
 )
-
-
-class AIRefusalError(RuntimeError):
-    """Raised when LiteLLM/provider reports a safety or policy refusal."""
 
 
 def _base_url(config: Config) -> str:
@@ -824,15 +828,15 @@ async def generate_image(
     width: int,
     height: int,
     steps: int | None = None,
-    reference_paths: list[Path] | None = None,
-    style_refs: list[Path] | None = None,
+    refs: list[RefImage] | None = None,
     feature: str = "image.generate",
 ) -> ApiResult[Path]:
-    event_id = str(uuid.uuid4())
-    operation = "image"
-    ref_paths = [path for path in [*(reference_paths or []), *(style_refs or [])] if path]
+    from novel_to_comic.ai.providers import selector
 
-    # Read reference files once — bytes are reused for the audit summary and upload.
+    image_refs = refs or []
+    ref_paths = [ref.path for ref in image_refs if ref.path]
+
+    # Read reference files for audit and cost summaries before the provider call.
     ref_reads: list[tuple[Path, bytes | None]] = []
     for ref in ref_paths:
         try:
@@ -840,204 +844,75 @@ async def generate_image(
             ref_reads.append((ref, data))
         except OSError:
             ref_reads.append((ref, None))
-    ref_data = [(p, d) for p, d in ref_reads if d is not None]
 
-    metadata = _metadata(feature, operation, model, event_id)
-    # Keep this payload to the OpenAI-compatible image API surface. Provider-
-    # specific controls such as diffusion steps belong in LiteLLM config; passing
-    # them through aliases can make the proxy fail before the provider responds.
-    params = {
-        "model": model,
-        "size": _image_size(model, width, height),
-        "n": 1,
-    }
-    # if steps is not None:
-    #     params["steps"] = steps
-    if config.image_quality:
-        params["quality"] = config.image_quality
-    estimated_cost_usd = estimate_image_cost(
-        model,
-        1,
-        quality=config.image_quality,
-        ref_count=len(ref_data),
-        prompt_text=prompt,
-    ) or None
-    _insert_event(
-        event_id=event_id,
+    provider = selector.pick(model, config)
+    # Provider-specific controls such as diffusion steps belong in LiteLLM
+    # config; passing them through gateway aliases can make the proxy fail
+    # before the provider responds.
+    params = provider.request_params(
         model_alias=model,
-        feature=feature,
-        operation=operation,
-        params_json=_redacted_params(params),
-        request_summary_json={
-            "prompt_sha256": _hash_payload(prompt),
-            "prompt_bytes": _payload_size(prompt),
-            "references": _image_summary(ref_reads),
-        },
-        metadata_json=metadata,
-        estimated_cost_usd=estimated_cost_usd,
+        width=width,
+        height=height,
+        config=config,
     )
-    started = time.perf_counter()
-    started_at = datetime.datetime.now(datetime.UTC)
-    langfuse_input: dict[str, Any] = {
-        "prompt": _truncate_for_log(prompt),
-        "size": params.get("size"),
-        "quality": params.get("quality"),
-        "ref_count": len(ref_data),
-        "references": _image_summary(ref_reads),
-    }
-    response: httpx.Response | None = None
+    ctx = begin_image_call(
+        config=config,
+        model=model,
+        feature=feature,
+        prompt=prompt,
+        params=params,
+        ref_reads=ref_reads,
+    )
     try:
-        endpoint = "/v1/images/edits" if ref_data else "/v1/images/generations"
-        if ref_data:
-            files = [("image", (p.name, d, _mime_type(p))) for p, d in ref_data]
-            form_params = {k: str(v) for k, v in params.items() if v is not None}
-            response = await _post_with_retry(
-                f"{_base_url(config)}{endpoint}",
-                headers=_headers(config, event_id),
-                data={"prompt": prompt, "metadata": _json_dumps(metadata), **form_params},
-                files=files,
-            )
-        else:
-            response = await _post_with_retry(
-                f"{_base_url(config)}{endpoint}",
-                headers=_headers(config, event_id),
-                json={"prompt": prompt, "metadata": metadata, **{k: v for k, v in params.items() if v is not None}},
-            )
-        response.raise_for_status()
-        data = response.json()
-        if _is_refusal(data):
-            raise AIRefusalError("AI image request was refused by gateway/provider")
-        image_bytes = await _decode_image_response(data)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        await asyncio.to_thread(output_path.write_bytes, image_bytes)
-        usage = _extract_usage(data, event_id, model, operation, response.headers)
-        langfuse_output = {
-            "output_path": str(output_path),
-            "image_bytes": len(image_bytes),
-            "image_sha256": hashlib.sha256(image_bytes).hexdigest(),
-            "size": params.get("size"),
-        }
-        _finalize_event(
-            event_id=event_id,
-            status="succeeded",
-            feature=feature,
+        raw = await provider.generate(
             model_alias=model,
-            latency_ms=int((time.perf_counter() - started) * 1000),
-            usage=usage,
-            response_data=data,
+            prompt=prompt,
+            refs=image_refs,
+            width=width,
+            height=height,
+            params=params,
             config=config,
-            operation=operation,
-            metadata=metadata,
-            estimated_cost_usd=estimated_cost_usd,
-            langfuse_input=langfuse_input,
-            langfuse_output=langfuse_output,
-            started_at=started_at,
+            event_id=ctx.event_id,
+            metadata=ctx.metadata,
         )
-        return ApiResult(value=output_path, usage=usage)
-    except asyncio.CancelledError as exc:
-        _finalize_event(
-            event_id=event_id,
-            status="cancelled",
-            feature=feature,
-            model_alias=model,
-            latency_ms=int((time.perf_counter() - started) * 1000),
-            error=exc,
-            error_response=response,
+        return await finalise_image_success(
+            ctx=ctx,
             config=config,
-            operation=operation,
-            metadata=metadata,
-            estimated_cost_usd=estimated_cost_usd,
-            langfuse_input=langfuse_input,
-            started_at=started_at,
+            model=model,
+            feature=feature,
+            output_path=output_path,
+            raw=raw,
+        )
+    except asyncio.CancelledError as exc:
+        finalise_image_cancelled(
+            ctx=ctx,
+            config=config,
+            model=model,
+            feature=feature,
+            error=exc,
+            error_response=getattr(exc, "response", None),
         )
         raise
     except AIRefusalError as exc:
-        data = response.json() if response is not None and response.content else {}
-        usage = _extract_usage(data, event_id, model, operation, response.headers if response is not None else None) if data else None
-        _finalize_event(
-            event_id=event_id,
-            status="refused",
-            feature=feature,
-            model_alias=model,
-            latency_ms=int((time.perf_counter() - started) * 1000),
-            usage=usage,
-            response_data=data,
-            error=exc,
-            error_response=response,
+        finalise_image_refusal(
+            ctx=ctx,
             config=config,
-            operation=operation,
-            metadata=metadata,
-            estimated_cost_usd=estimated_cost_usd,
-            langfuse_input=langfuse_input,
-            started_at=started_at,
+            model=model,
+            feature=feature,
+            error=exc,
         )
         raise
     except Exception as exc:
-        usage = None
-        if config.ai_bill_failed_requests == "estimate_all" and response is not None:
-            usage = UsageRecord(
-                call_id=event_id,
-                provider="litellm",
-                model=model,
-                operation="image",
-                image_count=1,
-            )
-        _finalize_event(
-            event_id=event_id,
-            status="failed",
-            feature=feature,
-            model_alias=model,
-            latency_ms=int((time.perf_counter() - started) * 1000),
-            usage=usage,
-            error=exc,
-            error_response=response,
+        error_response = getattr(exc, "response", None)
+        finalise_image_failure(
+            ctx=ctx,
             config=config,
-            operation=operation,
-            metadata=metadata,
-            estimated_cost_usd=estimated_cost_usd,
-            langfuse_input=langfuse_input,
-            started_at=started_at,
+            model=model,
+            feature=feature,
+            error=exc,
+            error_response=error_response,
         )
         raise
-
-
-def _valid_gpt_image_2_size(width: int, height: int) -> bool:
-    if width <= 0 or height <= 0:
-        return False
-    if width % 16 != 0 or height % 16 != 0:
-        return False
-    if max(width, height) > 3840:
-        return False
-    if max(width, height) / min(width, height) > 3:
-        return False
-    pixels = width * height
-    return 655_360 <= pixels <= 8_294_400
-
-
-def _image_size(model: str, width: int, height: int) -> str:
-    if is_gpt_image_2(model) and _valid_gpt_image_2_size(width, height):
-        return f"{width}x{height}"
-
-    # Thresholds map to the three OpenAI-supported sizes: portrait (1024×1536,
-    # ratio≈0.67), square (1024×1024, ratio=1.0), landscape (1536×1024, ratio≈1.5).
-    # 0.87 and 1.15 are the midpoints between those ratios.
-    if height <= 0:
-        return "1024x1024"
-    ratio = width / height
-    if ratio < 0.87:
-        return "1024x1536"
-    if ratio > 1.15:
-        return "1536x1024"
-    return "1024x1024"
-
-
-def _mime_type(path: Path) -> str:
-    suffix = path.suffix.lower()
-    if suffix in {".jpg", ".jpeg"}:
-        return "image/jpeg"
-    if suffix == ".webp":
-        return "image/webp"
-    return "image/png"
 
 
 def _diagnose_empty_image_response(data: dict[str, Any]) -> str:

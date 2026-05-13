@@ -14,6 +14,7 @@ from pathlib import Path
 from rich.console import Console
 
 from novel_to_comic import artifacts
+from novel_to_comic.ai.providers.base import RefImage
 from novel_to_comic.clients import flux
 from novel_to_comic.config import Config, is_gpt_image_2
 from novel_to_comic.events import EventCallback, _NOOP, make_progress
@@ -21,7 +22,12 @@ from novel_to_comic.layout_planning import load_layout_plan, prompt_path_for_pan
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.panel_versions import record_current_panel_version
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.prompting import IMAGE_PROMPT_VERSION, build_planned_panel_prompt_spec, render_generation_prompt
+from novel_to_comic.prompting import (
+    IMAGE_PROMPT_VERSION,
+    build_planned_panel_prompt_spec,
+    ensure_prose_prompt,
+    render_generation_prompt,
+)
 from novel_to_comic.state import (
     PipelineState,
     begin_stage,
@@ -126,6 +132,22 @@ def _gpt_image_2_subject_refs(paths: list[Path]) -> list[Path]:
     return prop_refs[:1]
 
 
+def _is_seedream_model(model: str) -> bool:
+    normalized = (model or "").strip().lower()
+    return "seedream" in normalized
+
+
+def _ordered_refs(refs: list[RefImage]) -> list[RefImage]:
+    priority = {
+        "subject": 0,
+        "prop": 1,
+        "continuity": 2,
+        "style": 3,
+        "location_plate": 4,
+    }
+    return sorted(refs, key=lambda ref: priority.get(ref.role, 99))
+
+
 def _find_style_sample(project_dir: Path, style_template: str) -> Path | None:
     """Return the sample image matching the active style template."""
     suggestions_path = artifacts.style_suggestions_path(project_dir)
@@ -167,7 +189,7 @@ def _load_or_upgrade_prompt(
     return upgraded
 
 
-def resolve_panel_reference_paths(
+def resolve_panel_references(
     config: Config,
     project_dir: Path,
     prompt: ImagePrompt,
@@ -176,17 +198,19 @@ def resolve_panel_reference_paths(
     style_sample: Path | None = None,
     scene_to_location: dict[str, str] | None = None,
     output_dir: Path | None = None,
-) -> tuple[list[Path], list[Path]]:
-    """Return the subject and style refs that a panel image request will upload."""
-    subject_refs = [
-        resolved
-        for p in prompt.reference_image_paths
-        if (resolved := (project_dir / p) if not Path(p).is_absolute() else Path(p)).exists()
-    ]
-    if is_gpt_image_2(config.effective_image_model()):
-        subject_refs = _gpt_image_2_subject_refs(subject_refs)
+) -> list[RefImage]:
+    """Return ordered, role-aware refs that a panel image request will upload."""
+    subject_refs: list[RefImage] = []
+    for p in prompt.reference_image_paths:
+        resolved = (project_dir / p) if not Path(p).is_absolute() else Path(p)
+        if not resolved.exists():
+            continue
+        subject_refs.append(RefImage(
+            path=resolved,
+            role="prop" if _is_prop_ref(resolved) else "subject",
+        ))
 
-    style_refs: list[Path] = []
+    contextual_refs: list[RefImage] = []
     resolved_output_dir = output_dir or project_dir / "draw" / prompt.scene_id
     if _use_continuity_refs(config) and prompt.panel_number > 1:
         prev_image = resolved_output_dir / f"panel_{prompt.panel_number - 1:03d}.png"
@@ -202,18 +226,25 @@ def resolve_panel_reference_paths(
             except Exception:
                 prev_prompt = None
         if prev_image.exists() and _should_use_prev_panel_image(config, getattr(prev_prompt, "transition_out", None)):
-            style_refs.append(prev_image)
+            contextual_refs.append(RefImage(path=prev_image, role="continuity"))
 
-    if not style_refs:
+    if not contextual_refs:
         if style_sample and style_sample.exists() and _use_style_sample_refs(config):
-            style_refs.append(style_sample)
+            contextual_refs.append(RefImage(path=style_sample, role="style"))
         loc_id = (scene_to_location or {}).get(prompt.scene_id)
         if loc_id and _use_location_plate_refs(config):
             plate = project_dir / "plates" / f"{loc_id}.png"
             if plate.exists():
-                style_refs.append(plate)
+                contextual_refs.append(RefImage(path=plate, role="location_plate"))
 
-    return subject_refs, style_refs
+    refs = _ordered_refs([*subject_refs, *contextual_refs])
+    model = config.effective_image_model()
+    if is_gpt_image_2(model):
+        selected_paths = set(_gpt_image_2_subject_refs([ref.path for ref in refs if ref.role in {"subject", "prop"}]))
+        return [ref for ref in refs if ref.path in selected_paths]
+    if _is_seedream_model(model):
+        return refs[:10]
+    return refs
 
 
 def estimate_panel_image_cost_usd(
@@ -236,7 +267,7 @@ def estimate_panel_image_cost_usd(
                 scene_to_location = {s.id: s.location_id for s in story_bible.scenes}
             except Exception:
                 scene_to_location = {}
-    subject_refs, style_refs = resolve_panel_reference_paths(
+    refs = resolve_panel_references(
         config,
         project_dir,
         prompt,
@@ -253,7 +284,7 @@ def estimate_panel_image_cost_usd(
         config.effective_image_model(),
         1,
         quality=getattr(config, "image_quality", None),
-        ref_count=len(subject_refs) + len(style_refs),
+        ref_count=len(refs),
         prompt_text=generation_prompt,
     )
 
@@ -370,13 +401,17 @@ async def _generate_panel(
             await prev_event.wait()
 
         prompt = _load_or_upgrade_prompt(config, project_dir, prompt_path, story_bible)
+        prose_prompt = await ensure_prose_prompt(config, prompt)
+        if prose_prompt is not prompt:
+            prompt = prose_prompt
+            prompt_path.write_text(prompt.model_dump_json(indent=2))
 
         output_dir = project_dir / "draw" / prompt.scene_id
         output_path = output_dir / f"panel_{prompt.panel_number:03d}.png"
         scene_lock = scene_locks.setdefault(prompt.scene_id, asyncio.Lock())
 
         async with scene_lock:
-            subject_refs, style_refs = resolve_panel_reference_paths(
+            refs = resolve_panel_references(
                 config,
                 project_dir,
                 prompt,
@@ -410,8 +445,13 @@ async def _generate_panel(
                     "height": prompt.height,
                     "steps": prompt.steps,
                     "style_template": config.style_template,
-                    "subject_refs": [_relative_to_project(p, project_dir) for p in subject_refs],
-                    "style_refs": [_relative_to_project(p, project_dir) for p in style_refs],
+                    "refs": [
+                        {
+                            "path": _relative_to_project(ref.path, project_dir),
+                            "role": ref.role,
+                        }
+                        for ref in refs
+                    ],
                     "continuity_note": prompt.continuity_note,
                 },
             }
@@ -429,8 +469,7 @@ async def _generate_panel(
                         config=config,
                         prompt=generation_prompt,
                         output_path=generation_path,
-                        reference_paths=subject_refs,
-                        style_refs=style_refs or None,
+                        refs=refs,
                         width=prompt.width,
                         height=prompt.height,
                         steps=prompt.steps,

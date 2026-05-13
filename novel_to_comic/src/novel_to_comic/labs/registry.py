@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -63,7 +62,6 @@ def _coerce(entry: dict[str, Any]) -> LabsModelEntry:
         raise ValueError(f"labs_models.yaml entry missing required field: {exc}") from exc
 
 
-@lru_cache(maxsize=1)
 def load_registry(path: Path | None = None) -> list[LabsModelEntry]:
     target = path or REGISTRY_PATH
     raw = yaml.safe_load(target.read_text()) or {}

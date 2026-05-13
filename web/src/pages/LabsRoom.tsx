@@ -69,9 +69,10 @@ interface ModelPickerProps {
   selected: Set<string>;
   onToggle: (id: string) => void;
   disabled?: boolean;
+  singleSelect?: boolean;
 }
 
-function ModelPicker({ models, selected, onToggle, disabled }: ModelPickerProps) {
+function ModelPicker({ models, selected, onToggle, disabled, singleSelect }: ModelPickerProps) {
   const grouped = useMemo(() => {
     const g: Record<LabsTier, LabsModel[]> = { fast: [], balanced: [], premium: [] };
     for (const m of models) g[m.tier]?.push(m);
@@ -103,7 +104,8 @@ function ModelPicker({ models, selected, onToggle, disabled }: ModelPickerProps)
                     )}
                   >
                     <input
-                      type="checkbox"
+                      type={singleSelect ? "radio" : "checkbox"}
+                      name={singleSelect ? "labs-model" : undefined}
                       checked={checked}
                       disabled={disabled}
                       onChange={() => onToggle(m.id)}
@@ -151,9 +153,12 @@ interface ScenePanelEditorProps {
   panels: LabsPanel[];
   onChange: (panels: LabsPanel[]) => void;
   disabled?: boolean;
+  compareMode?: boolean;
+  onAdd: () => void;
+  onRemove: (idx: number) => void;
 }
 
-function ScenePanelEditor({ panels, onChange, disabled }: ScenePanelEditorProps) {
+function ScenePanelEditor({ panels, onChange, disabled, compareMode, onAdd, onRemove }: ScenePanelEditorProps) {
   function setPanel(idx: number, next: Partial<LabsPanel>) {
     onChange(panels.map((p) => (p.idx === idx ? { ...p, ...next } : p)));
   }
@@ -169,20 +174,62 @@ function ScenePanelEditor({ panels, onChange, disabled }: ScenePanelEditorProps)
               className="min-w-0 flex-1 bg-transparent font-meta text-[0.66rem] font-bold uppercase tracking-[0.14em] text-ink-black/72 outline-none focus:text-ink-black"
               placeholder={`Panel ${p.idx}`}
             />
-            <span className="shrink-0 font-meta text-[0.5rem] tracking-[0.16em] text-ink-black/35">
-              {p.width}×{p.height}
-            </span>
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="font-meta text-[0.5rem] tracking-[0.16em] text-ink-black/35">
+                {p.width}×{p.height}
+              </span>
+              <button
+                type="button"
+                disabled={disabled || panels.length <= 1}
+                onClick={() => onRemove(p.idx)}
+                className="font-meta text-[0.5rem] font-bold tracking-[0.14em] text-hero-red/70 hover:text-hero-red disabled:cursor-not-allowed disabled:opacity-30"
+              >
+                REMOVE
+              </button>
+            </div>
           </div>
-          <textarea
-            value={p.prompt}
-            disabled={disabled}
-            onChange={(e) => setPanel(p.idx, { prompt: e.target.value })}
-            rows={3}
-            className="mt-1 w-full resize-y border-[1.5px] border-ink-black/15 bg-pulp-paper px-2.5 py-2 font-body text-[0.84rem] leading-snug text-ink-black focus:border-ink-black focus:outline-none"
-            placeholder="Prompt for this panel"
-          />
+          <div className={cn("mt-1 grid gap-2", compareMode && "md:grid-cols-2")}>
+            <label className="block">
+              {compareMode && (
+                <span className="font-meta text-[0.5rem] tracking-[0.14em] text-ink-black/45">
+                  PROMPT A
+                </span>
+              )}
+              <textarea
+                value={p.prompt}
+                disabled={disabled}
+                onChange={(e) => setPanel(p.idx, { prompt: e.target.value })}
+                rows={3}
+                className="mt-1 w-full resize-y border-[1.5px] border-ink-black/15 bg-pulp-paper px-2.5 py-2 font-body text-[0.84rem] leading-snug text-ink-black focus:border-ink-black focus:outline-none"
+                placeholder="Prompt for this panel"
+              />
+            </label>
+            {compareMode && (
+              <label className="block">
+                <span className="font-meta text-[0.5rem] tracking-[0.14em] text-ink-black/45">
+                  PROMPT B
+                </span>
+                <textarea
+                  value={p.prompt_variant_b ?? ""}
+                  disabled={disabled}
+                  onChange={(e) => setPanel(p.idx, { prompt_variant_b: e.target.value })}
+                  rows={3}
+                  className="mt-1 w-full resize-y border-[1.5px] border-ink-black/15 bg-pulp-paper px-2.5 py-2 font-body text-[0.84rem] leading-snug text-ink-black focus:border-ink-black focus:outline-none"
+                  placeholder="Prompt B for this panel"
+                />
+              </label>
+            )}
+          </div>
         </div>
       ))}
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={onAdd}
+        className="w-full border-[2px] border-dashed border-ink-black/20 bg-pulp-paper px-3 py-2 font-meta text-[0.62rem] font-bold tracking-[0.14em] text-ink-black/55 hover:border-ink-black hover:text-ink-black disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        ADD PANEL
+      </button>
     </div>
   );
 }
@@ -218,13 +265,14 @@ function ReferencePreview({ urls }: ReferencePreviewProps) {
 }
 
 interface ResultsGridProps {
-  panels: { idx: number; label: string; prompt: string; cells: Record<string, LabsCell> }[];
+  panels: { idx: number; variant: "A" | "B"; label: string; prompt: string; cells: Record<string, LabsCell> }[];
   models: LabsModel[];
   modelIds: string[];
 }
 
 interface LightboxTarget {
   panelIdx: number;
+  variant: "A" | "B";
   modelId: string;
 }
 
@@ -266,8 +314,8 @@ function ResultsGrid({ panels, models, modelIds }: ResultsGridProps) {
     );
   }
 
-  function openLightbox(panelIdx: number, modelId: string) {
-    setLightbox({ panelIdx, modelId });
+  function openLightbox(panelIdx: number, variant: "A" | "B", modelId: string) {
+    setLightbox({ panelIdx, variant, modelId });
   }
 
   return (
@@ -314,10 +362,10 @@ function ResultsGrid({ panels, models, modelIds }: ResultsGridProps) {
           </thead>
           <tbody>
             {panels.map((p) => (
-              <tr key={p.idx} className="align-top">
+              <tr key={`${p.idx}:${p.variant}`} className="align-top">
                 <td className="sticky left-0 z-10 border-b border-ink-black/10 bg-pulp-paper p-3">
                   <div className="font-meta text-[0.56rem] font-bold tracking-[0.16em] text-ink-black/55">
-                    PANEL {p.idx}
+                    PANEL {p.idx}{p.variant !== "A" ? ` / ${p.variant}` : ""}
                   </div>
                   <div className="mt-1 font-display text-[0.84rem] font-bold leading-tight">
                     {p.label}
@@ -332,7 +380,7 @@ function ResultsGrid({ panels, models, modelIds }: ResultsGridProps) {
                     <td key={mid} className="border-b border-ink-black/10 p-3">
                       <CellView
                         cell={cell}
-                        onOpen={() => openLightbox(p.idx, mid)}
+                        onOpen={() => openLightbox(p.idx, p.variant, mid)}
                       />
                     </td>
                   );
@@ -452,7 +500,7 @@ function firstErrorLine(error: string | undefined): string {
 
 interface LightboxProps {
   target: LightboxTarget;
-  panels: { idx: number; label: string; prompt: string; cells: Record<string, LabsCell> }[];
+  panels: { idx: number; variant: "A" | "B"; label: string; prompt: string; cells: Record<string, LabsCell> }[];
   modelIds: string[];
   modelMap: Map<string, LabsModel>;
   onClose: () => void;
@@ -460,7 +508,7 @@ interface LightboxProps {
 }
 
 function Lightbox({ target, panels, modelIds, modelMap, onClose, onNavigate }: LightboxProps) {
-  const panel = panels.find((p) => p.idx === target.panelIdx);
+  const panel = panels.find((p) => p.idx === target.panelIdx && p.variant === target.variant);
   const cell = panel?.cells[target.modelId];
   const model = modelMap.get(target.modelId);
 
@@ -468,10 +516,10 @@ function Lightbox({ target, panels, modelIds, modelMap, onClose, onNavigate }: L
   const prevModelId = modelIdx > 0 ? modelIds[modelIdx - 1] : null;
   const nextModelId = modelIdx >= 0 && modelIdx < modelIds.length - 1 ? modelIds[modelIdx + 1] : null;
 
-  const panelIdxs = panels.map((p) => p.idx);
-  const panelPos = panelIdxs.indexOf(target.panelIdx);
-  const prevPanelIdx = panelPos > 0 ? panelIdxs[panelPos - 1] : null;
-  const nextPanelIdx = panelPos >= 0 && panelPos < panelIdxs.length - 1 ? panelIdxs[panelPos + 1] : null;
+  const rowKeys = panels.map((p) => `${p.idx}:${p.variant}`);
+  const rowPos = rowKeys.indexOf(`${target.panelIdx}:${target.variant}`);
+  const prevRow = rowPos > 0 ? panels[rowPos - 1] : null;
+  const nextRow = rowPos >= 0 && rowPos < panels.length - 1 ? panels[rowPos + 1] : null;
 
   const navigate = useCallback(
     (next: LightboxTarget | null) => {
@@ -487,18 +535,18 @@ function Lightbox({ target, panels, modelIds, modelMap, onClose, onNavigate }: L
         return;
       }
       if (event.key === "ArrowLeft" && prevModelId) {
-        navigate({ panelIdx: target.panelIdx, modelId: prevModelId });
+        navigate({ panelIdx: target.panelIdx, variant: target.variant, modelId: prevModelId });
       } else if (event.key === "ArrowRight" && nextModelId) {
-        navigate({ panelIdx: target.panelIdx, modelId: nextModelId });
-      } else if (event.key === "ArrowUp" && prevPanelIdx != null) {
-        navigate({ panelIdx: prevPanelIdx, modelId: target.modelId });
-      } else if (event.key === "ArrowDown" && nextPanelIdx != null) {
-        navigate({ panelIdx: nextPanelIdx, modelId: target.modelId });
+        navigate({ panelIdx: target.panelIdx, variant: target.variant, modelId: nextModelId });
+      } else if (event.key === "ArrowUp" && prevRow) {
+        navigate({ panelIdx: prevRow.idx, variant: prevRow.variant, modelId: target.modelId });
+      } else if (event.key === "ArrowDown" && nextRow) {
+        navigate({ panelIdx: nextRow.idx, variant: nextRow.variant, modelId: target.modelId });
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [target, prevModelId, nextModelId, prevPanelIdx, nextPanelIdx, navigate, onClose]);
+  }, [target, prevModelId, nextModelId, prevRow, nextRow, navigate, onClose]);
 
   if (!panel || !cell) return null;
 
@@ -543,6 +591,7 @@ function Lightbox({ target, panels, modelIds, modelMap, onClose, onNavigate }: L
             <div className="min-w-0">
               <div className="font-meta text-[0.54rem] tracking-[0.18em] text-ink-black/45">
                 PANEL {panel.idx}
+                {panel.variant !== "A" ? ` / ${panel.variant}` : ""}
               </div>
               <div className="font-display text-[1.05rem] font-bold leading-tight">
                 {panel.label}
@@ -625,7 +674,7 @@ function Lightbox({ target, panels, modelIds, modelMap, onClose, onNavigate }: L
             <button
               type="button"
               disabled={!prevModelId}
-              onClick={() => prevModelId && navigate({ panelIdx: target.panelIdx, modelId: prevModelId })}
+              onClick={() => prevModelId && navigate({ panelIdx: target.panelIdx, variant: target.variant, modelId: prevModelId })}
               className="border-[2px] border-ink-black/15 bg-pulp-paper px-2 py-2 font-meta text-[0.56rem] tracking-[0.12em] hover:border-ink-black disabled:cursor-not-allowed disabled:opacity-40"
             >
               ← MODEL
@@ -633,23 +682,23 @@ function Lightbox({ target, panels, modelIds, modelMap, onClose, onNavigate }: L
             <button
               type="button"
               disabled={!nextModelId}
-              onClick={() => nextModelId && navigate({ panelIdx: target.panelIdx, modelId: nextModelId })}
+              onClick={() => nextModelId && navigate({ panelIdx: target.panelIdx, variant: target.variant, modelId: nextModelId })}
               className="border-[2px] border-ink-black/15 bg-pulp-paper px-2 py-2 font-meta text-[0.56rem] tracking-[0.12em] hover:border-ink-black disabled:cursor-not-allowed disabled:opacity-40"
             >
               MODEL →
             </button>
             <button
               type="button"
-              disabled={prevPanelIdx == null}
-              onClick={() => prevPanelIdx != null && navigate({ panelIdx: prevPanelIdx, modelId: target.modelId })}
+              disabled={!prevRow}
+              onClick={() => prevRow && navigate({ panelIdx: prevRow.idx, variant: prevRow.variant, modelId: target.modelId })}
               className="border-[2px] border-ink-black/15 bg-pulp-paper px-2 py-2 font-meta text-[0.56rem] tracking-[0.12em] hover:border-ink-black disabled:cursor-not-allowed disabled:opacity-40"
             >
               ↑ PANEL
             </button>
             <button
               type="button"
-              disabled={nextPanelIdx == null}
-              onClick={() => nextPanelIdx != null && navigate({ panelIdx: nextPanelIdx, modelId: target.modelId })}
+              disabled={!nextRow}
+              onClick={() => nextRow && navigate({ panelIdx: nextRow.idx, variant: nextRow.variant, modelId: target.modelId })}
               className="border-[2px] border-ink-black/15 bg-pulp-paper px-2 py-2 font-meta text-[0.56rem] tracking-[0.12em] hover:border-ink-black disabled:cursor-not-allowed disabled:opacity-40"
             >
               PANEL ↓
@@ -702,6 +751,7 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
     () => new Set(DEFAULT_MODEL_PICKS.filter((id) => models.some((m) => m.id === id))),
   );
   const [runLabel, setRunLabel] = useState(fixture.label);
+  const [promptCompareMode, setPromptCompareMode] = useState(false);
 
   const createRun = useCreateLabsRun();
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -712,7 +762,10 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
     setSceneSource(next);
     if (next === "fixture") {
       setStyleTemplate(fixture.default_style_template);
-      setPanels(fixture.panels);
+      setPanels(fixture.panels.map((panel) => ({
+        ...panel,
+        prompt_variant_b: promptCompareMode ? panel.prompt : panel.prompt_variant_b,
+      })));
       setImportedRefPaths([]);
       setRunLabel(fixture.label);
     } else {
@@ -724,11 +777,51 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
 
   function toggleModel(id: string) {
     setSelectedModels((current) => {
+      if (promptCompareMode) {
+        return new Set([id]);
+      }
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
+  }
+
+  function handlePromptCompareMode(next: boolean) {
+    setPromptCompareMode(next);
+    if (next) {
+      setSelectedModels((current) => {
+        const first = [...current][0] ?? models[0]?.id;
+        return first ? new Set([first]) : new Set();
+      });
+      setPanels((current) => current.map((panel) => ({
+        ...panel,
+        prompt_variant_b: panel.prompt_variant_b || panel.prompt,
+      })));
+    }
+  }
+
+  function nextPanelIdx(): number {
+    return Math.max(0, ...panels.map((panel) => panel.idx)) + 1;
+  }
+
+  function handleAddPanel() {
+    const idx = nextPanelIdx();
+    setPanels((current) => [
+      ...current,
+      {
+        idx,
+        label: `Panel ${idx}`,
+        prompt: "",
+        prompt_variant_b: promptCompareMode ? "" : null,
+        width: 1024,
+        height: 1024,
+      },
+    ]);
+  }
+
+  function handleRemovePanel(idx: number) {
+    setPanels((current) => current.length <= 1 ? current : current.filter((panel) => panel.idx !== idx));
   }
 
   async function handleImport() {
@@ -740,7 +833,10 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
         panelLimit: 8,
       });
       setStyleTemplate(result.style_template);
-      setPanels(result.panels);
+      setPanels(result.panels.map((panel) => ({
+        ...panel,
+        prompt_variant_b: promptCompareMode ? panel.prompt : panel.prompt_variant_b,
+      })));
       setImportedRefPaths(result.imported_reference_paths);
       setRunLabel(result.label);
     } catch (err) {
@@ -756,6 +852,7 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
       label: runLabel.trim() || "Untitled run",
       model_ids: [...selectedModels],
       style_template: styleTemplate,
+      prompt_compare_mode: promptCompareMode,
       panels,
       reference_source: referenceSource,
       reference_image_paths: referenceSource === "imported" ? importedRefPaths : undefined,
@@ -769,7 +866,9 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
   }
 
   const selectedCount = selectedModels.size;
-  const runDisabled = !selectedCount || !panels.length || createRun.isPending;
+  const hasPrompts = panels.every((panel) => panel.prompt.trim().length > 0);
+  const hasComparePrompts = panels.every((panel) => (panel.prompt_variant_b || "").trim().length > 0);
+  const runDisabled = !selectedCount || !panels.length || !hasPrompts || (promptCompareMode && !hasComparePrompts) || createRun.isPending;
 
   const fixtureRefThumbs =
     sceneSource === "fixture"
@@ -917,6 +1016,9 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
                   panels={panels}
                   onChange={setPanels}
                   disabled={createRun.isPending}
+                  compareMode={promptCompareMode}
+                  onAdd={handleAddPanel}
+                  onRemove={handleRemovePanel}
                 />
               )}
             </div>
@@ -940,6 +1042,19 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
               />
             </label>
 
+            <label className="flex items-center justify-between gap-3 border-[2px] border-ink-black/15 bg-pulp-paper px-3 py-2">
+              <span className="font-meta text-[0.62rem] tracking-[0.14em] text-ink-black/70">
+                Compare two prompts
+              </span>
+              <input
+                type="checkbox"
+                checked={promptCompareMode}
+                disabled={createRun.isPending}
+                onChange={(e) => handlePromptCompareMode(e.target.checked)}
+                className="h-4 w-4 accent-hero-red"
+              />
+            </label>
+
             <div>
               <div className="ui-kicker mb-2">MODELS ({selectedCount} SELECTED)</div>
               <ModelPicker
@@ -947,6 +1062,7 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
                 selected={selectedModels}
                 onToggle={toggleModel}
                 disabled={createRun.isPending}
+                singleSelect={promptCompareMode}
               />
             </div>
 
@@ -959,7 +1075,7 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
             >
               {createRun.isPending
                 ? "STARTING…"
-                : `RUN EXPERIMENT → ${selectedCount * panels.length} CELLS`}
+                : `RUN EXPERIMENT → ${selectedCount * panels.length * (promptCompareMode ? 2 : 1)} CELLS`}
             </Button>
             {createRun.isError && (
               <div className="font-meta text-[0.62rem] tracking-[0.12em] text-hero-red">

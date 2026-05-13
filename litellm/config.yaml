@@ -76,6 +76,10 @@ model_list:
       model: vertex_ai/gemini-3-pro-image-preview
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
+  - model_name: image-balanced-seedream-test
+    litellm_params:
+      model: fal-queue/bytedance/seedream/v4.5/edit
+      api_key: os.environ/FAL_KEY
   - model_name: image-quality
     litellm_params:
       model: openai/gpt-image-2
@@ -91,6 +95,8 @@ litellm_settings:
   num_retries: 3
   retry_after: 2
   drop_params: true
+  custom_provider_map:
+    - {"provider": "fal-queue", "custom_handler": "litellm_handlers.fal_provider.fal_queue_llm"}
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

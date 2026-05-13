@@ -195,14 +195,14 @@ def test_gpt_image_2_reference_resolution_keeps_location_plate_text_only(tmp_pat
         steps=28,
     )
 
-    _, gpt_style_refs = s7_draw.resolve_panel_reference_paths(
+    gpt_refs = s7_draw.resolve_panel_references(
         Config(image_model="image-quality"),
         tmp_path,
         prompt,
         style_sample=style_path,
         scene_to_location={"scene_001": "loc_001"},
     )
-    _, gemini_style_refs = s7_draw.resolve_panel_reference_paths(
+    gemini_refs = s7_draw.resolve_panel_references(
         Config(image_model="image-balanced"),
         tmp_path,
         prompt,
@@ -210,8 +210,11 @@ def test_gpt_image_2_reference_resolution_keeps_location_plate_text_only(tmp_pat
         scene_to_location={"scene_001": "loc_001"},
     )
 
-    assert gpt_style_refs == []
-    assert gemini_style_refs == [style_path, plate_path]
+    assert gpt_refs == []
+    assert [(ref.path, ref.role) for ref in gemini_refs] == [
+        (style_path, "style"),
+        (plate_path, "location_plate"),
+    ]
 
 
 def test_gpt_image_2_reference_resolution_uses_minimal_subject_refs(tmp_path):
@@ -243,19 +246,20 @@ def test_gpt_image_2_reference_resolution_uses_minimal_subject_refs(tmp_path):
         steps=28,
     )
 
-    gpt_subject_refs, _ = s7_draw.resolve_panel_reference_paths(
+    gpt_refs = s7_draw.resolve_panel_references(
         Config(image_model="image-quality"),
         tmp_path,
         prompt,
     )
-    gemini_subject_refs, _ = s7_draw.resolve_panel_reference_paths(
+    gemini_refs = s7_draw.resolve_panel_references(
         Config(image_model="image-balanced"),
         tmp_path,
         prompt,
     )
 
-    assert gpt_subject_refs == [front]
-    assert gemini_subject_refs == [front, three_quarter, gesture, prop_ref]
+    assert [ref.path for ref in gpt_refs] == [front]
+    assert [ref.path for ref in gemini_refs] == [front, three_quarter, gesture, prop_ref]
+    assert [ref.role for ref in gemini_refs] == ["subject", "subject", "subject", "prop"]
 
 
 def test_gpt_image_2_cast_assets_skip_style_sample(tmp_path):
@@ -440,14 +444,14 @@ def test_gpt_image_continuity_refs_are_text_only(tmp_path):
     (prompt_dir / "panel_001.json").write_text(smooth_prev.model_dump_json())
     current_prompt = ImagePrompt.model_validate_json(current_prompt_path.read_text())
 
-    _, gpt_refs = s7_draw.resolve_panel_reference_paths(
+    gpt_refs = s7_draw.resolve_panel_references(
         Config(image_model="image-quality"),
         tmp_path,
         current_prompt,
         prompt_path=current_prompt_path,
         output_dir=scene_dir,
     )
-    _, gemini_smooth_refs = s7_draw.resolve_panel_reference_paths(
+    gemini_smooth_refs = s7_draw.resolve_panel_references(
         Config(image_model="image-balanced"),
         tmp_path,
         current_prompt,
@@ -461,7 +465,7 @@ def test_gpt_image_continuity_refs_are_text_only(tmp_path):
     match_prev = smooth_prev.model_copy(update={"transition_out": "match_cut"})
     (prompt_dir / "panel_001.json").write_text(match_prev.model_dump_json())
 
-    _, match_refs = s7_draw.resolve_panel_reference_paths(
+    match_refs = s7_draw.resolve_panel_references(
         Config(image_model="image-quality"),
         tmp_path,
         current_prompt,
@@ -471,7 +475,7 @@ def test_gpt_image_continuity_refs_are_text_only(tmp_path):
 
     assert match_refs == []
 
-    _, gemini_match_refs = s7_draw.resolve_panel_reference_paths(
+    gemini_match_refs = s7_draw.resolve_panel_references(
         Config(image_model="image-balanced"),
         tmp_path,
         current_prompt,
@@ -479,7 +483,7 @@ def test_gpt_image_continuity_refs_are_text_only(tmp_path):
         output_dir=scene_dir,
     )
 
-    assert gemini_match_refs == [prev_image]
+    assert [(ref.path, ref.role) for ref in gemini_match_refs] == [(prev_image, "continuity")]
 
 
 def test_list_images_marks_failure_metadata_as_failed_even_with_existing_image(tmp_path):

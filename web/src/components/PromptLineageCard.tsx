@@ -465,6 +465,14 @@ export function PromptLineageCard({
         </button>
       )}
 
+      {prompt.prose_prompt && (
+        <CollapsibleSection title="PROSE PROMPT" defaultExpanded>
+          <p className="text-[0.82rem] leading-6 text-ink-black/75 whitespace-pre-wrap">
+            {prompt.prose_prompt}
+          </p>
+        </CollapsibleSection>
+      )}
+
       <CollapsibleSection title="ASSEMBLED PROMPT" defaultExpanded>
         {editable ? (
           <EditableText

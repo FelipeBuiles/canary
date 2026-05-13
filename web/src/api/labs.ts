@@ -26,6 +26,7 @@ export interface LabsPanel {
   idx: number;
   label: string;
   prompt: string;
+  prompt_variant_b?: string | null;
   width: number;
   height: number;
 }
@@ -62,6 +63,7 @@ export type LabsCellStatus = "pending" | "ok" | "failed";
 
 export interface LabsCell {
   status: LabsCellStatus;
+  variant?: "A" | "B";
   image_url?: string;
   latency_ms?: number;
   cost_usd?: number | null;
@@ -75,6 +77,7 @@ export interface LabsCell {
 
 export interface LabsRunPanelResult {
   idx: number;
+  variant: "A" | "B";
   label: string;
   prompt: string;
   cells: Record<string, LabsCell>;
@@ -91,6 +94,7 @@ export interface LabsRunDetail {
   total_cost_usd: number;
   model_ids: string[];
   style_template: string;
+  prompt_compare_mode: boolean;
   reference_image_names: string[];
   error: string | null;
   panels: LabsRunPanelResult[];
@@ -112,7 +116,15 @@ export interface LabsRunCreatePayload {
   label: string;
   model_ids: string[];
   style_template: string;
-  panels: { idx: number; label: string; prompt: string; width: number; height: number }[];
+  prompt_compare_mode?: boolean;
+  panels: {
+    idx: number;
+    label: string;
+    prompt: string;
+    prompt_variant_b?: string | null;
+    width: number;
+    height: number;
+  }[];
   reference_source: LabsReferenceSource;
   reference_image_paths?: string[];
 }

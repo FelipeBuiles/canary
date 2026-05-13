@@ -111,6 +111,19 @@ models:
     approx_cost: 0.12
     notes: "Existing production balanced tier — for baseline comparison."
 
+  - id: seedream-v4-5-litellm-proxy
+    label: "Seedream V4.5 (LiteLLM proxy)"
+    provider: litellm
+    endpoint: image-balanced-seedream-test
+    tier: balanced
+    multi_ref: true
+    max_refs: 10
+    approx_cost: 0.04
+    notes: >-
+      Seedream routed through the local LiteLLM proxy test alias. Use this to
+      verify built-in fal_ai routing preserves multi-reference conditioning
+      before promoting image-balanced.
+
   - id: gpt-image-2-current
     label: "GPT Image 2 (current)"
     provider: litellm

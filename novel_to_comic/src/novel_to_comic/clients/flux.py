@@ -6,6 +6,7 @@ import asyncio
 from pathlib import Path
 
 from novel_to_comic.ai import generate_image as ai_generate_image
+from novel_to_comic.ai.providers.base import RefImage
 from novel_to_comic.config import Config
 from novel_to_comic.usage import ApiResult
 
@@ -63,9 +64,9 @@ async def generate_image(
     config = _generation_config(config)
     width, height = _effective_dimensions(config, width, height)
     steps = config.effective_image_steps(steps)
-    is_style = ref_type == "style"
-    refs = None if is_style else ([reference_image_path] if reference_image_path else None)
-    style_refs = [reference_image_path] if (is_style and reference_image_path) else None
+    refs: list[RefImage] = []
+    if reference_image_path:
+        refs.append(RefImage(path=reference_image_path, role="style" if ref_type == "style" else "subject"))
     result = await ai_generate_image(
         config=config,
         model=config.effective_image_model(),
@@ -74,8 +75,7 @@ async def generate_image(
         width=width,
         height=height,
         steps=steps,
-        reference_paths=refs,
-        style_refs=style_refs,
+        refs=refs,
         feature=feature,
     )
     final = await _downscale_dev_output(config, result.value, width, height)
@@ -86,20 +86,16 @@ async def generate_image_multi_ref(
     config: Config,
     prompt: str,
     output_path: Path,
-    reference_paths: list[Path],
+    refs: list[RefImage],
     width: int | None = None,
     height: int | None = None,
     steps: int | None = None,
-    ref_type: str = "subject",
-    style_refs: list[Path] | None = None,
     feature: str = "image.generate_multi_ref",
 ) -> ApiResult[Path]:
     """Generate an image conditioned on subject and style references."""
     config = _generation_config(config)
     width, height = _effective_dimensions(config, width, height)
     steps = config.effective_image_steps(steps)
-    subject_refs = reference_paths if ref_type != "style" else []
-    merged_style_refs = [*([] if ref_type != "style" else reference_paths), *(style_refs or [])]
     result = await ai_generate_image(
         config=config,
         model=config.effective_image_model(),
@@ -108,8 +104,7 @@ async def generate_image_multi_ref(
         width=width,
         height=height,
         steps=steps,
-        reference_paths=subject_refs,
-        style_refs=merged_style_refs or None,
+        refs=refs,
         feature=feature,
     )
     final = await _downscale_dev_output(config, result.value, width, height)
