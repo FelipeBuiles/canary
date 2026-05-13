@@ -15,9 +15,9 @@ The site is no longer just a dashboard concept. It has a working React shell, pr
 
 - **App shell and navigation:** React Router routes for library, new project, settings, dev primitives, and eight user-facing project rooms: Extract, Look & Feel, Cast & Places, Script, Shot Plan, Prompt Review, Generate Panels, and Letter & Compose. These map to nine backend stages because Shot Plan combines `plan` and `storyboard`.
 - **Project library:** Lists project directories from the backend, shows project status/cost/furthest stage, tracks running projects, and can request generated project covers once a story bible exists.
-- **Pipeline orchestration:** Backend runs one requested stage at a time through `POST /run?stage=...`, can rerun a stage while clearing downstream outputs, approve checkpoints, reset stale stages, expose stage errors, estimate credit reservations, and stream events over SSE. The pipeline no longer has a stage-less "run all" API path.
+- **Pipeline orchestration:** Backend runs one requested stage at a time through `POST /run?stage=...`, can rerun a stage while clearing downstream outputs, retry only failed draw panels, approve checkpoints, reset stale stages, expose stage errors, estimate credit reservations, and stream events over SSE. The pipeline no longer has a stage-less "run all" API path.
 - **Story bible room:** Shows title/author/scenes plus editable character and location cards. Saves story bible changes back to `story_bible.json`.
-- **Cast room:** Shows character reference sheets and location plates from disk, opens images in a modal, and supports queued regeneration of one character ref or one location plate.
+- **Cast room:** Shows character reference sheets, prop refs, and location plates from disk, opens images in a modal, and supports queued regeneration of one character ref, prop ref, or location plate.
 - **Style room:** Suggests visual styles, generates sample images, tracks queued/running sample jobs, shows generation metadata, and writes the active style into project config.
 - **Adapt room:** Shows screenplay scene summaries and a scene-by-scene screenplay viewer.
 - **Storyboard room:** Shows panel breakdowns by scene and supports inline editing for core panel fields such as shot type, camera angle, background description, lighting, mood, and SFX text.
@@ -25,16 +25,16 @@ The site is no longer just a dashboard concept. It has a working React shell, pr
 - **Draw room:** Shows generated panel images by scene/all scenes, synthesizes pending/failed placeholders from prompt and stage state, supports single-panel regeneration, instruction-based regeneration, panel acceptance, version history/restore, polls generation jobs, and opens panel details in a modal.
 - **Compose room:** Provides a real page editor over canonical `compose/pages/page_NNN.json`: page navigation, zoom, bubble/SFX selection, drag repositioning, add/delete bubble or SFX, undo/redo, panel image offset edits, page theme/layout/style-var edits, reflow by panels-per-page, generated lettering styles, bubble translation, character voice presets, structural operations, and PDF/CBZ export.
 - **Settings:** Supports UI language locally and project-level config edits for output language, dev/demo mode, comic theme, image model, and pipeline tuning. Active `style_template` is selected through the Look & Feel workflow, not generic settings.
-- **Backend APIs:** REST endpoints exist for projects, covers, project config, pipeline estimates/run/approve/events/regeneration, story bible, screenplays, layout-plan narration decisions, panels, prompts, images with acceptance/versioning, styles, page JSON, previews/files, translations, reflow, credits, billing, and export.
+- **Backend APIs:** REST endpoints exist for projects, covers, project config, pipeline estimates/run/approve/events/regeneration, story bible, screenplays, layout-plan narration decisions, panels, prompts, images with acceptance/versioning/failure detail, styles, page JSON, previews/files, translations, reflow, credits, billing, and export.
 - **Build health:** frontend tests pass, build passes.
 
 ### What is partially done
 
 - **Rooms mental model:** The eight-room structure exists in routing and UI, but invalidation/downstream recovery is mostly handled through rerun buttons and backend output clearing rather than a polished dependency UI.
 - **Editing:** Several JSON artifacts are editable, but edits do not yet present impact analysis, dirty-state review, or explicit downstream invalidation guidance in the UI.
-- **Live progress:** SSE is wired for active runs and the wizard consumes it. Existing project rooms mostly rely on status polling, rerun buttons, and job polling rather than a unified live activity drawer.
+- **Live progress:** SSE is wired for active runs and stage events now update cached project status immediately across rooms. The app still relies on generation-job polling for queued single-asset work and does not yet have a unified live activity drawer.
 - **Cost tracking:** Backend state, project cards, stage estimates, regeneration estimates, credit reservations, and billing pages exist. The UX still needs a clearer end-to-end ledger for estimate/reserved/actual/returned credits.
-- **Failure handling:** Failed stages/items are visible in status and Draw placeholders, and stale stages can be reset through the API. The UX is not yet comprehensive for all failure modes.
+- **Failure handling:** Failed stages/items are visible in status and Draw placeholders, failed panel diagnostics surface provider-blocked/generation-error detail, and stale stages can be reset through the API. The UX is not yet comprehensive for all failure modes.
 - **Localization:** UI language and output language controls exist, and existing page bubbles can be translated to English/Spanish/French. Full multi-language export workflows are still limited.
 - **Style system:** Style suggestions/samples/active style work. Style selection is backend-enforced — the pipeline blocks post-style stages until a style is selected (`is_style_selected` gate in `styles.py`). The broader preset gallery/theme variant studio described below is only partly represented.
 
@@ -47,7 +47,7 @@ The site is no longer just a dashboard concept. It has a working React shell, pr
 - Pause/cancel controls for active pipeline runs.
 - Source prose side-by-side with screenplay/panel outputs.
 - Add/remove/reorder panels within a scene from the Storyboard room.
-- Bulk panel regeneration from the Draw room.
+- Arbitrary bulk panel regeneration from the Draw room. Retrying failed draw panels exists, but broader batch selection is still roadmap.
 - Full drag-and-drop page layout for panels across pages.
 - Persistent version history beyond local undo/redo.
 - Print-preview tooling with bleed marks.
@@ -93,7 +93,7 @@ Canary is the end-to-end studio for turning prose fiction into a finished comic 
 - Local React/Vite app backed by FastAPI.
 - Library, upload/create flow, settings, style selection, eight user-facing project rooms, and Stage 9 compose editor.
 - Reads/writes real pipeline artifacts from the project directory rather than mock data.
-- Streams active pipeline events over SSE and polls generation jobs for image/style/reference regeneration.
+- Streams active pipeline events over SSE, applies stage events to cached project status, and polls generation jobs for image/style/reference regeneration.
 
 **Future role:**
 - The default surface for everyone who isn't a developer.

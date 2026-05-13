@@ -133,17 +133,19 @@ API when provided, allowing per-request control of diffusion steps.
 
 ### Quality presets
 
-`quality_preset: "fast" | "balanced" | "quality" | null` overrides all four text
-model fields at once. `dev_mode` forces `"fast"` regardless. When set, individual
-model fields are ignored (with a warning if they were explicitly changed from defaults).
+`quality_preset: "fast" | "balanced" | "quality" | null` overrides all five
+intent fields (`extract`, `adapt`, `plan`, `prompt`, and `image`) at once.
+`dev_mode` forces `"fast"` regardless. When set, individual model fields are
+ignored (with a warning if they were explicitly changed from defaults).
 
-**Note:** All three presets currently resolve to the same gateway aliases. This is
-transitional during the LiteLLM migration — the actual model routing is controlled
-by the LiteLLM `config.yaml` per deployment.
+Aliases follow the `<intent>-<preset>` convention. Provider/model routing is
+controlled by `litellm/config.yaml`; prompt aliases currently resolve to the
+same lightweight model across presets, while text planning/extraction and image
+aliases may route to different providers per preset.
 
 Config exposes `effective_extraction_model()`, `effective_screenplay_model()`,
-`effective_panel_model()`, `effective_prompt_model()` — always use these instead
-of reading the raw fields.
+`effective_panel_model()`, `effective_prompt_model()`, and
+`effective_image_model()` — always use these instead of reading raw fields.
 
 ### Usage tracking (`usage.py`)
 
@@ -192,6 +194,12 @@ Every stage `run()` accepts `on_event: EventCallback | None`. The web server
 injects a callback that streams events to the browser over SSE. See `events.py`
 for the event schema. Always add `emit()` calls alongside `console.print()`
 calls in stage code.
+
+Frontend status is updated from SSE as events arrive:
+`web/src/lib/pipelineStatusEvents.ts` applies `stage_begin`,
+`stage_progress`, `stage_complete`, and `stage_fail` to the React Query
+`["project", project, "status"]` cache. `pipeline_done` then invalidates the
+status and project-list queries for a server refresh.
 
 ### Style gate (backend-enforced)
 
@@ -330,6 +338,18 @@ Defaults:
 
 `dev_mode: true` substitutes `fallback_image_model` when `image_model` is at its default.
 
+Current image aliases:
+- `image-fast`: Gemini Flash Image route, also used by dev mode.
+- `image-balanced`: Gemini Pro Image route and the normal default.
+- `image-quality`: OpenAI `gpt-image-2`; the only gateway alias treated as
+  GPT Image 2 by `is_gpt_image_2()`.
+
+Draw-stage reference behavior is provider-aware. GPT Image 2 uploads a minimal
+subject reference set and keeps style samples, location plates, and
+previous-panel continuity text-only to avoid edit-reference leakage. Non-GPT
+image routes can use style samples, location plates, and a previous-panel image
+for explicit `match_cut` transitions.
+
 ---
 
 ## Event Schema
@@ -340,10 +360,14 @@ Defaults:
 {"type": "stage_complete", "stage": str, "done": int, "total": int}
 {"type": "stage_fail",     "stage": str, "message": str}
 {"type": "log",            "stage": str, "level": str, "message": str}
+{"type": "pipeline_done"}
 # level: "info" | "warn" | "error" | "dim" | "bold"
 ```
 
 SSE endpoint: `GET /api/projects/{project}/events`
+
+`stage_fail` can include structured credit-shortfall fields when reservation
+fails during a chained or active run.
 
 ---
 
@@ -407,7 +431,9 @@ Canonical editing surface for Stage 9. Contains page-level data plus per-panel
 
 Produced by Stage 7 (`direct`). Contains `full_prompt` (assembled string),
 project-relative `reference_image_paths`, transition hints, `continuity_note`,
-and generation dimensions.
+and generation dimensions. Reference paths can include cropped character poses
+and active story prop refs; prompt-building filters story props so ambient
+materials do not accidentally pull in carried prop references.
 
 ---
 
@@ -424,11 +450,20 @@ projects/my-novel/
 ├── samples/                 # Style suggestions and sample images
 │   ├── style_suggestions.json
 │   └── style_N.png
-├── refs/                    # Character reference sheets
-│   └── char_NNN/
-│       ├── sheet.png
-│       ├── sheet.png.meta.json
-│       └── instructions.jsonl
+├── refs/                    # Character and prop reference images
+│   ├── char_NNN/
+│   │   ├── sheet.png
+│   │   ├── front.png
+│   │   ├── three_quarter.png
+│   │   ├── profile.png
+│   │   ├── gesture.png
+│   │   ├── sheet.png.meta.json
+│   │   └── instructions.jsonl
+│   └── props/
+│       └── prop_NNN/
+│           ├── ref.png
+│           ├── ref.png.meta.json
+│           └── instructions.jsonl
 ├── plates/                  # Location background plates (loc_NNN.png …)
 ├── screenplays/             # Per-scene screenplay JSON
 │   └── scene_NNN.json
@@ -470,11 +505,11 @@ projects/my-novel/
 
 ## Current Focus
 
-1. **Style and generation coherence:** active style samples feed cast and draw;
-   post-style stages are gated by `style_selected`.
+1. **Style and generation coherence:** active style samples feed cast and
+   non-GPT draw routes; post-style stages are gated by `style_selected`.
 2. **Draw review loop:** per-panel acceptance, version history, targeted
-   regeneration, instruction-based prompt rewrites, and failed/missing image
-   blockers before compose.
+   regeneration, instruction-based prompt rewrites, failed-panel retry, and
+   failed/missing image blockers before compose.
 3. **Compose editor/export:** canonical `compose/pages/page_NNN.json`, page
    reflow, structural operations, SVG bubble tails, character voice presets,
    translation, previews, and PDF/CBZ export.

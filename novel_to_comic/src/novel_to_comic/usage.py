@@ -137,6 +137,9 @@ def estimate_image_cost(
     quality: str | None = None,
     ref_count: int = 0,
     prompt_text: str | int | None = None,
+    width: int | None = None,
+    height: int | None = None,
+    ref_image_sizes: list[tuple[int, int]] | None = None,
 ) -> float:
     """Pre-call cost estimate for count images.
 
@@ -154,6 +157,9 @@ def estimate_image_cost(
         quality=quality,
         ref_count=ref_count,
         prompt_tokens=prompt_tokens,
+        width=width,
+        height=height,
+        ref_image_sizes=ref_image_sizes,
     )
     if breakdown.source == "unknown_pricing":
         _warn_unknown_model(model)

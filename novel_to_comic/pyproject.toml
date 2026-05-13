@@ -47,6 +47,9 @@ where = ["src"]
 "novel_to_comic" = [
     "prompts/*.txt",
     "fonts/*.ttf",
+    "labs/*.yaml",
+    "labs/fixtures/*.json",
+    "labs/fixtures/reference_images/*.png",
     "litellm_pricing_overrides.yaml",
     "litellm_model_prices.cached.json",
 ]

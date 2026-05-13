@@ -1,0 +1,122 @@
+# Curated list of image models exposed in the Labs experimentation page.
+# Adding a new entry here makes it appear in the labs UI.
+#
+# Fields:
+#   id            Stable identifier referenced from the frontend and saved runs.
+#   label         Human-readable name shown in the UI.
+#   provider      One of: fal, together, litellm.
+#   endpoint      Provider-specific endpoint or model alias.
+#   tier          fast | balanced | premium  (used for grouping in the picker)
+#   multi_ref     True if the endpoint accepts multiple reference images.
+#   max_refs      Cap on number of reference images sent to the provider.
+#   style_refs    True if it accepts style references (separate from subject refs).
+#   approx_cost   Indicative USD per 1024px image (display only — actual cost
+#                 comes from the provider response when available).
+#   notes         Free-form note shown as a tooltip in the picker.
+#   enabled       Set to false to hide without removing the entry.
+#   params        Optional dict of provider-specific defaults merged into each call.
+
+models:
+  # ── New candidates (fal.ai) ───────────────────────────────────────────────
+  - id: flux-kontext-max-multi
+    label: "FLUX Kontext Max (multi-ref)"
+    provider: fal
+    endpoint: fal-ai/flux-pro/kontext/max/multi
+    tier: premium
+    multi_ref: true
+    max_refs: 4
+    approx_cost: 0.08
+    notes: >-
+      Best-in-class character consistency across panels. Experimental on fal —
+      schema may change. Falls back to seedream/v4.5/edit if unavailable.
+
+  - id: seedream-v4-5-edit
+    label: "Seedream V4.5 Edit"
+    provider: fal
+    endpoint: fal-ai/bytedance/seedream/v4.5/edit
+    tier: balanced
+    multi_ref: true
+    max_refs: 10
+    approx_cost: 0.04
+    notes: >-
+      Production-stable multi-reference editor. Strong subject-from-image-1 +
+      style-from-image-2 composition. ~60s latency per image.
+
+  - id: flux-2-pro-edit
+    label: "FLUX.2 Pro Edit"
+    provider: fal
+    endpoint: fal-ai/flux-2-pro/edit
+    tier: premium
+    multi_ref: true
+    max_refs: 9
+    approx_cost: 0.03
+    notes: >-
+      Clean replacement for gpt-image-2 — no dappled-texture bug. Pricing is
+      per megapixel, so 4MP outputs cost ~$0.075.
+
+  - id: recraft-v4
+    label: "Recraft V4"
+    provider: fal
+    endpoint: fal-ai/recraft/v4/text-to-image
+    tier: balanced
+    multi_ref: false
+    style_refs: true
+    approx_cost: 0.04
+    notes: >-
+      Best illustrative aesthetic and palette lock out of the box. No
+      multi-image character ref endpoint on fal as of 2026-05 — use style-only.
+
+  - id: nano-banana-2-edit
+    label: "Nano Banana 2 (edit)"
+    provider: fal
+    endpoint: fal-ai/nano-banana-2/edit
+    tier: fast
+    multi_ref: true
+    max_refs: 14
+    approx_cost: 0.08
+    notes: >-
+      Fast with 14-image conditioning. Useful baseline against the
+      gemini-3-flash-image you currently use (same family, more refs).
+
+  # ── New candidates (together.ai) ──────────────────────────────────────────
+  - id: flux-1-schnell-together
+    label: "FLUX.1 Schnell"
+    provider: together
+    endpoint: black-forest-labs/FLUX.1-schnell
+    tier: fast
+    multi_ref: false
+    approx_cost: 0.003
+    notes: >-
+      Bargain draft tier. 1-4 step model. No reference support — text-to-image
+      only.
+
+  # ── Production baseline (current pipeline models) ─────────────────────────
+  - id: gemini-3-flash-current
+    label: "Gemini 3 Flash (current)"
+    provider: litellm
+    endpoint: image-fast
+    tier: fast
+    multi_ref: true
+    max_refs: 8
+    approx_cost: 0.04
+    notes: "Existing production fast tier — for baseline comparison."
+
+  - id: gemini-3-pro-current
+    label: "Gemini 3 Pro (current)"
+    provider: litellm
+    endpoint: image-balanced
+    tier: balanced
+    multi_ref: true
+    max_refs: 8
+    approx_cost: 0.12
+    notes: "Existing production balanced tier — for baseline comparison."
+
+  - id: gpt-image-2-current
+    label: "GPT Image 2 (current)"
+    provider: litellm
+    endpoint: image-quality
+    tier: premium
+    multi_ref: true
+    max_refs: 4
+    approx_cost: 0.19
+    notes: "Existing production premium tier — for baseline comparison."

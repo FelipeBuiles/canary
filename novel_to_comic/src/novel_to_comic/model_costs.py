@@ -6,6 +6,7 @@ import datetime
 import hashlib
 import json
 import logging
+import math
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -187,6 +188,9 @@ class PricingResolver:
         quality: str | None = None,
         ref_count: int = 0,
         prompt_tokens: int = 0,
+        width: int | None = None,
+        height: int | None = None,
+        ref_image_sizes: list[tuple[int, int]] | None = None,
     ) -> CostBreakdown:
         """Project the USD cost of `count` image requests.
 
@@ -238,6 +242,23 @@ class PricingResolver:
                 pricing_snapshot=self.pricing_snapshot,
             )
 
+        per_megapixel = self._estimate_megapixel_image_cost(
+            pricing,
+            count=count,
+            width=width,
+            height=height,
+            ref_count=ref_count,
+            ref_image_sizes=ref_image_sizes,
+        )
+        if per_megapixel is not None:
+            return CostBreakdown(
+                cost_usd=per_megapixel,
+                source=source,
+                model_alias=model,
+                provider_model=resolved,
+                pricing_snapshot=self.pricing_snapshot,
+            )
+
         per_image = float(
             pricing.get("output_cost_per_image")
             or pricing.get("input_cost_per_image")
@@ -262,6 +283,55 @@ class PricingResolver:
             provider_model=resolved,
             pricing_snapshot=self.pricing_snapshot,
         )
+
+    @staticmethod
+    def _rounded_megapixels(width: int | None, height: int | None) -> int:
+        if not width or not height or width <= 0 or height <= 0:
+            return 1
+        return max(1, math.ceil((width * height) / float(1024 * 1024)))
+
+    def _estimate_megapixel_image_cost(
+        self,
+        pricing: dict[str, Any],
+        *,
+        count: int,
+        width: int | None,
+        height: int | None,
+        ref_count: int,
+        ref_image_sizes: list[tuple[int, int]] | None,
+    ) -> float | None:
+        output_first_mp = pricing.get("output_cost_first_megapixel")
+        output_extra_mp = pricing.get("output_cost_per_extra_megapixel")
+        output_per_mp = pricing.get("output_cost_per_megapixel")
+        input_per_mp = pricing.get("input_cost_per_megapixel")
+
+        if (
+            output_first_mp is None
+            and output_per_mp is None
+            and input_per_mp is None
+        ):
+            return None
+
+        output_mps = self._rounded_megapixels(width, height)
+        total = 0.0
+        if output_first_mp is not None:
+            first = float(output_first_mp)
+            extra = float(output_extra_mp if output_extra_mp is not None else output_per_mp or first)
+            output_cost = first + max(0, output_mps - 1) * extra
+        elif output_per_mp is not None:
+            output_cost = output_mps * float(output_per_mp)
+        else:
+            output_cost = 0.0
+        total += count * output_cost
+
+        if input_per_mp is not None:
+            if ref_image_sizes:
+                input_mps = sum(self._rounded_megapixels(w, h) for w, h in ref_image_sizes)
+            else:
+                input_mps = ref_count
+            total += input_mps * float(input_per_mp)
+
+        return total
 
     def _image_token_meta(self, model: str) -> dict[str, Any]:
         """Return image_input_tokens_per_ref / image_output_tokens_by_quality if set."""
