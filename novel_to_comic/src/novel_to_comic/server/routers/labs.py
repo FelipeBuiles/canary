@@ -6,6 +6,7 @@ a standalone tool. Runs are stored per-user under `{projects_dir}/{user_id}/_lab
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -168,10 +169,13 @@ def list_project_scenes(
         prompts = artifacts.list_panel_prompts(d, scene_dir.name)
         if not prompts:
             continue
+        from novel_to_comic.prompting import generate_distilled_prompt
+
+        preview = prompts[0].distilled_prompt or generate_distilled_prompt(prompts[0])
         scenes.append({
             "scene_id": scene_dir.name,
             "panel_count": len(prompts),
-            "first_prompt_preview": (prompts[0].full_prompt or "")[:200],
+            "first_prompt_preview": preview[:200],
         })
     return {"scenes": scenes}
 
@@ -208,22 +212,24 @@ def import_project_scene(
     project_config, _ = load_config(d)
     style_template = project_config.style_template or prompts[0].style or ""
 
-    # Resolve absolute paths to any reference images already attached to the prompts.
-    seen_refs: list[Path] = []
-    for p in prompts[:panel_limit]:
-        for rel in p.reference_image_paths or []:
-            abs_path = (d / rel).resolve() if not Path(rel).is_absolute() else Path(rel)
-            if abs_path.exists() and abs_path not in seen_refs:
-                seen_refs.append(abs_path)
-            if len(seen_refs) >= 8:
-                break
+    selected_prompts = prompts[:panel_limit]
+    imported_references = _project_scene_reference_payload(
+        project_id,
+        d,
+        project_config,
+        selected_prompts,
+    )
 
     panels = []
-    for i, p in enumerate(prompts[:panel_limit], start=1):
+    from novel_to_comic.prompting import generate_distilled_prompt
+
+    for i, p in enumerate(selected_prompts, start=1):
+        distilled_prompt = p.distilled_prompt or generate_distilled_prompt(p)
         panels.append({
             "idx": i,
             "label": f"Panel {p.panel_number}" + (f" — {p.scene_id}" if p.scene_id else ""),
-            "prompt": p.full_prompt or "",
+            "prompt": distilled_prompt,
+            "prompt_variant_b": p.full_prompt or "",
             "width": p.width or 1024,
             "height": p.height or 1024,
         })
@@ -232,8 +238,59 @@ def import_project_scene(
         "label": f"Project {d.name} · scene {scene_id}",
         "style_template": style_template,
         "panels": panels,
-        "imported_reference_paths": [str(p) for p in seen_refs],
+        "imported_references": imported_references,
+        "imported_reference_paths": [str(ref["path"]) for ref in imported_references],
     }
+
+
+def _project_scene_reference_payload(
+    project_id: str,
+    project_dir: Path,
+    config,
+    prompts: list[Any],
+) -> list[dict[str, str]]:
+    """Return draw-stage-equivalent reference images for imported Labs scenes."""
+    from novel_to_comic.stages.s7_draw import _find_style_sample, resolve_panel_references
+
+    scene_to_location: dict[str, str] = {}
+    if artifacts.story_bible_path(project_dir).exists():
+        try:
+            story_bible = artifacts.read_story_bible(project_dir)
+            scene_to_location = {scene.id: scene.location_id for scene in story_bible.scenes}
+        except Exception:
+            scene_to_location = {}
+
+    style_sample = _find_style_sample(project_dir, config.style_template)
+    seen: set[Path] = set()
+    refs: list[dict[str, str]] = []
+    for prompt in prompts:
+        prompt_path = artifacts.panel_prompt_path(project_dir, prompt.scene_id, prompt.panel_number)
+        output_dir = project_dir / "draw" / prompt.scene_id
+        for ref in resolve_panel_references(
+            config,
+            project_dir,
+            prompt,
+            prompt_path=prompt_path if prompt_path.exists() else None,
+            style_sample=style_sample,
+            scene_to_location=scene_to_location,
+            output_dir=output_dir,
+        ):
+            path = ref.path.resolve()
+            if path in seen or not path.is_file():
+                continue
+            try:
+                rel = path.relative_to(project_dir.resolve())
+            except ValueError:
+                continue
+            seen.add(path)
+            refs.append({
+                "path": str(path),
+                "relative_path": rel.as_posix(),
+                "label": f"{ref.role.replace('_', ' ')} · {rel.as_posix()}",
+                "role": ref.role,
+                "url": f"/api/projects/{project_id}/files/{rel.as_posix()}",
+            })
+    return refs
 
 
 # ── Runs ───────────────────────────────────────────────────────────────────────
@@ -423,6 +480,28 @@ def get_run_endpoint(
         "panels": panels_out,
     }
     return JSONResponse(payload)
+
+
+@router.delete("/runs/{run_id}")
+async def delete_run_endpoint(
+    run_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+) -> dict[str, str]:
+    if "/" in run_id or ".." in run_id:
+        raise HTTPException(400, "Invalid run id")
+    projects_dir = get_projects_dir(request)
+    user_root = _user_labs_dir(projects_dir, user_id)
+
+    in_memory = _runs_state(request).pop(run_id, None)
+    task = in_memory.task if in_memory else None
+    if task and not task.done():
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    if not labs_storage.delete_run(user_root, run_id):
+        raise HTTPException(404, "Run not found")
+    return {"status": "deleted", "run_id": run_id}
 
 
 @router.get("/runs/{run_id}/cells/{panel_idx}/{variant}/{model_id}/image")

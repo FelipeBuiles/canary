@@ -27,7 +27,7 @@ class ImagePrompt(BaseModel):
     narration_mode: str | None = None
     preferred_caption_zone: str | None = None
     full_prompt: str = ""
-    prose_prompt: str | None = None
+    distilled_prompt: str | None = None
     style: str | None = None
     composition: str | None = None
     setting: str | None = None

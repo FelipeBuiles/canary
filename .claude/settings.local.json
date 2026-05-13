@@ -104,7 +104,8 @@
       "WebFetch(domain:fal.ai)",
       "WebFetch(domain:www.together.ai)",
       "WebFetch(domain:docs.together.ai)",
-      "WebFetch(domain:pricepertoken.com)"
+      "WebFetch(domain:pricepertoken.com)",
+      "Bash(awk '/class LLMPanelSpec/,/^class /' /Users/jbuiles/Code/canary/novel_to_comic/src/novel_to_comic/models/layout_plan.py)"
     ]
   },
   "hooks": {

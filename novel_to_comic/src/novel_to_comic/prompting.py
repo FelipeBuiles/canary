@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import json
 from pathlib import Path
 
 from novel_to_comic.config import Config, is_gpt_image_2
@@ -661,102 +660,149 @@ def render_panel_prompt_body(prompt: ImagePrompt) -> str:
     )
 
 
-_PROSE_PROMPT_SYSTEM = (
-    "Rewrite a structured comic image prompt as a single paragraph in the style "
-    "of a comic panel direction. Preserve all character names exactly. Preserve "
-    "every visual_anchor value exactly as written, character for character; do "
-    "not translate, paraphrase, reorder, or omit words inside visual_anchor "
-    "values. Preserve every constraint. Do not add dialogue, captions, speech "
-    "bubbles, signs, labels, or readable text. Return only the paragraph."
+def _sentence(text: str) -> str:
+    text = _clean(text).strip(" .")
+    return f"{text}." if text else ""
+
+
+_DANGLING_DISTILLED_END_RE = re.compile(
+    r"\b(?:a|an|and|at|for|from|in|near|of|on|or|the|to|with|without)$",
+    re.IGNORECASE,
+)
+
+_CAPTION_SPACE_RE = re.compile(
+    r"(?:,\s*)?leave quiet negative space near the\b[^.]*"
+    r"(?:for a narration caption added later)?",
+    re.IGNORECASE,
 )
 
 
-def _required_prose_fragments(prompt: ImagePrompt) -> list[str]:
-    fragments: list[str] = []
-    for subject in getattr(prompt, "subjects", []) or []:
-        identity = _clean(getattr(subject, "identity", ""))
-        if identity:
-            fragments.append(identity)
-    return fragments
+def _readable_prompt_text(value: str | None) -> str:
+    return _clean(value).replace("_", " ")
 
 
-def _missing_prose_fragments(prompt: ImagePrompt, prose: str) -> list[str]:
-    return [fragment for fragment in _required_prose_fragments(prompt) if fragment not in prose]
+def _strip_distilled_composition_noise(value: str | None) -> str:
+    text = _readable_prompt_text(value)
+    text = _CAPTION_SPACE_RE.sub("", text)
+    text = _clean(text).strip(" ,.;")
+    parts = [part.strip(" ,.;") for part in text.split(",")]
+    if parts and _DANGLING_DISTILLED_END_RE.search(parts[-1]):
+        parts = parts[:-1]
+    return _clean(", ".join(part for part in parts if part)).strip(" ,.;")
 
 
-def _structured_prompt_fallback(prompt: ImagePrompt) -> str:
-    return _clean(getattr(prompt, "full_prompt", "")) or render_panel_prompt_body(prompt)
+def _shorten_distilled(value: str | None, limit: int) -> str:
+    """Shorten prompt text without leaving half-finished instructions."""
+    text = _readable_prompt_text(value)
+    if len(text) <= limit:
+        prefix = text
+        while _DANGLING_DISTILLED_END_RE.search(prefix):
+            prefix = prefix.rsplit(" ", 1)[0].rstrip(" ,.;:")
+        return prefix
+    prefix = text[:limit].rstrip()
+    for separator in (".", ";", ","):
+        idx = prefix.rfind(separator)
+        if idx >= max(32, limit // 3):
+            prefix = prefix[:idx]
+            break
+    else:
+        prefix = prefix.rsplit(" ", 1)[0]
+    prefix = prefix.rstrip(" ,.;:")
+    while _DANGLING_DISTILLED_END_RE.search(prefix):
+        prefix = prefix.rsplit(" ", 1)[0].rstrip(" ,.;:")
+    return prefix
 
 
-def _prose_prompt_user_content(prompt: ImagePrompt) -> str:
-    payload = {
-        "panel": {
-            "scene_id": prompt.scene_id,
-            "panel_number": prompt.panel_number,
-            "composition": prompt.composition,
-            "setting": prompt.setting,
-            "lighting": prompt.lighting,
-            "mood": prompt.mood,
-            "key_objects": prompt.key_objects,
-            "visual_requirements": prompt.visual_requirements,
-            "props": prompt.props,
-            "constraints": prompt.constraints,
-            "continuity_note": prompt.continuity_note,
-            "has_narration_caption": prompt.has_narration_caption,
-            "preferred_caption_zone": prompt.preferred_caption_zone,
-        },
-        "characters": [
-            {
-                "name": subject.name,
-                "visual_anchor": subject.identity,
-                "action": subject.action,
-                "expression": subject.expression,
-                "position": subject.position,
-            }
-            for subject in (prompt.subjects or [])
-        ],
-        "required_exact_fragments": _required_prose_fragments(prompt),
-        "fallback_structured_prompt": _structured_prompt_fallback(prompt),
-    }
-    return json.dumps(payload, ensure_ascii=False, indent=2)
+def _join_phrase(parts: list[str]) -> str:
+    cleaned = [_readable_prompt_text(part).strip(" ,;.") for part in parts if _readable_prompt_text(part)]
+    if not cleaned:
+        return ""
+    if len(cleaned) == 1:
+        return cleaned[0]
+    return ", ".join(cleaned[:-1]) + f", {cleaned[-1]}"
 
 
-def _normalize_prose_prompt(raw: str) -> str:
-    text = _clean(raw)
-    text = re.sub(r"^panel direction:\s*", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\n+", " ", text)
-    return text.strip().strip('"').strip("'").strip()
+def _distilled_subject_clause(subject: PromptSubject, *, identity_limit: int) -> str:
+    action = _readable_prompt_text(subject.action)
+    expression = _readable_prompt_text(subject.expression)
+    position = _readable_prompt_text(subject.position)
+    identity = _shorten_distilled(subject.identity, identity_limit)
+    details = [subject.name, action, expression, position, identity]
+    return _join_phrase(details)
 
 
-async def generate_prose_prompt(config: Config, prompt: ImagePrompt) -> str:
-    """Generate and validate a prose panel direction for image generation.
+def _distilled_subject_sentence(prompt: ImagePrompt) -> str:
+    subjects = getattr(prompt, "subjects", []) or []
+    composition = _strip_distilled_composition_noise(getattr(prompt, "composition", None))
+    shot = _shorten_distilled(composition, 100) if composition else "comic panel"
+    if subjects:
+        identity_limit = 140 if len(subjects) <= 2 else 90
+        clauses = [
+            _distilled_subject_clause(subject, identity_limit=identity_limit)
+            for subject in subjects[:3]
+        ]
+        subject_text = "; ".join(clause for clause in clauses if clause)
+        if len(subjects) > 3:
+            subject_text = f"{subject_text}; additional figures remain secondary"
+        return _sentence(f"{shot} of {subject_text}")
 
-    If the rewrite omits a required character identity anchor, return the
-    structured prompt instead. That keeps draw correctness ahead of prose style.
-    """
-    from novel_to_comic.clients import text
+    object_text = [_readable_prompt_text(value) for value in _clean_list(getattr(prompt, "key_objects", []) or [], limit=2)]
+    if object_text:
+        return _sentence(f"{shot} of {' and '.join(object_text)}")
 
-    result = await text.generate_text(
-        config=config,
-        model=config.effective_prompt_model(),
-        system_prompt=_PROSE_PROMPT_SYSTEM,
-        user_content=_prose_prompt_user_content(prompt),
-        temperature=0.2,
-        max_output_tokens=900,
-        feature="direct.prose_prompt",
-    )
-    prose = _normalize_prose_prompt(result.value)
-    if not prose or _missing_prose_fragments(prompt, prose):
-        return _structured_prompt_fallback(prompt)
-    return prose
+    props = [_readable_prompt_text(value) for value in _clean_list(getattr(prompt, "props", []) or [], limit=1)]
+    if props:
+        return _sentence(f"{shot} of {props[0]}")
+
+    setting = _readable_prompt_text(getattr(prompt, "setting", None))
+    if setting:
+        return _sentence(shot)
+    return _sentence(shot)
 
 
-async def ensure_prose_prompt(config: Config, prompt: ImagePrompt) -> ImagePrompt:
-    """Return a copy of prompt with prose_prompt populated."""
-    if _clean(getattr(prompt, "prose_prompt", None)):
+def _distilled_setting_sentence(prompt: ImagePrompt) -> str:
+    setting = _readable_prompt_text(getattr(prompt, "setting", None))
+    if not setting:
+        return ""
+    return _sentence(_shorten_distilled(setting, 220))
+
+
+def _distilled_light_mood_sentence(prompt: ImagePrompt) -> str:
+    lighting = _readable_prompt_text(getattr(prompt, "lighting", None))
+    mood = _readable_prompt_text(getattr(prompt, "mood", None))
+    if lighting and mood:
+        return _sentence(f"{_shorten_distilled(lighting, 120)}, {mood} mood")
+    return _sentence(_shorten_distilled(lighting or mood, 140))
+
+
+def _distilled_must_show_sentence(prompt: ImagePrompt) -> str:
+    requirements = [
+        _readable_prompt_text(req).strip(" .")
+        for req in _clean_list(getattr(prompt, "visual_requirements", []) or [], limit=2)
+    ]
+    if not requirements:
+        return ""
+    return _sentence(f"Must show {' and '.join(req.strip(' .') for req in requirements)}")
+
+
+def generate_distilled_prompt(prompt: ImagePrompt) -> str:
+    """Compile a short, deterministic visual brief from structured prompt fields."""
+    sentences = [
+        _distilled_subject_sentence(prompt),
+        _distilled_setting_sentence(prompt),
+        _distilled_light_mood_sentence(prompt),
+        _distilled_must_show_sentence(prompt),
+    ]
+    text = " ".join(sentence for sentence in sentences if sentence).strip()
+    return text or _clean(getattr(prompt, "full_prompt", "")) or render_panel_prompt_body(prompt)
+
+
+def ensure_distilled_prompt(config: Config, prompt: ImagePrompt) -> ImagePrompt:  # noqa: ARG001
+    """Return a copy of prompt with distilled_prompt populated."""
+    if _clean(getattr(prompt, "distilled_prompt", None)):
         return prompt
     updated = prompt.model_copy(deep=True)
-    updated.prose_prompt = await generate_prose_prompt(config, updated)
+    updated.distilled_prompt = generate_distilled_prompt(updated)
     return updated
 
 
@@ -819,47 +865,13 @@ def render_generation_prompt(
     image_model: str | None = None,
 ) -> str:
     style = _clean(style_template or getattr(prompt, "style", None))
-    prose = _clean(getattr(prompt, "prose_prompt", None))
-    body = prose or _clean(getattr(prompt, "full_prompt", "")) or render_panel_prompt_body(prompt)
-    has_structured_fields = any([
-        getattr(prompt, "subjects", None),
-        getattr(prompt, "composition", None),
-        getattr(prompt, "setting", None),
-        getattr(prompt, "lighting", None),
-        getattr(prompt, "mood", None),
-        getattr(prompt, "key_objects", None),
-        getattr(prompt, "visual_requirements", None),
-        getattr(prompt, "props", None),
-        getattr(prompt, "constraints", None),
-    ])
+    body = _clean(getattr(prompt, "distilled_prompt", None)) or generate_distilled_prompt(prompt)
     sections: list[str] = ["Create one finished comic panel image."]
 
     _append_section(sections, "Style", style)
     if image_model and is_gpt_image_2(image_model):
         _append_section(sections, "Rendering discipline", _GPT_IMAGE_2_RENDERING_DISCIPLINE)
-    if prose:
-        _append_section(sections, "Panel direction", body)
-    else:
-        _append_section(sections, "Characters", _render_subject_lines(prompt))
-        _append_section(sections, "Composition", getattr(prompt, "composition", None))
-        _append_section(sections, "Setting", getattr(prompt, "setting", None))
-        _append_section(sections, "Lighting", getattr(prompt, "lighting", None))
-        _append_section(sections, "Mood", getattr(prompt, "mood", None))
-        _append_section(
-            sections,
-            "Key objects",
-            [f"- {_clean(obj)}" for obj in (getattr(prompt, "key_objects", []) or [])],
-        )
-        _append_section(
-            sections,
-            "Must show",
-            [f"- {_clean(req)}" for req in (getattr(prompt, "visual_requirements", []) or [])],
-        )
-        _append_section(
-            sections,
-            "Key props",
-            [f"- {_clean(prop)}" for prop in (getattr(prompt, "props", []) or [])],
-        )
+    _append_section(sections, "Visual brief", body)
 
     constraints = _clean(getattr(prompt, "constraints", None))
     if getattr(prompt, "has_narration_caption", False):
@@ -871,16 +883,19 @@ def render_generation_prompt(
     constraint_lines = [
         f"- {part.strip()}"
         for part in constraints.split(";")
-        if part.strip()
+        if part.strip() and (
+            "exactly " in part.lower()
+            or "no text" in part.lower()
+            or "caption" in part.lower()
+            or "lettering" in part.lower()
+            or "speech" in part.lower()
+        )
     ]
     constraint_lines.extend([
         f"- {_GENERATION_RENDERING_CONSTRAINTS}",
         f"- {_REFERENCE_CONSTRAINTS}",
     ])
     _append_section(sections, "Constraints", constraint_lines)
-
-    if body and not prose and not has_structured_fields:
-        _append_section(sections, "Panel brief", body)
 
     output = "\n\n".join(sections)
 

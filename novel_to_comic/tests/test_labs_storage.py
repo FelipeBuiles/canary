@@ -68,3 +68,20 @@ def test_labs_storage_normal_mode_uses_variant_a(tmp_path: Path):
 
     assert storage.read_cell_meta(tmp_path, run_id, 1, "model-a")["variant"] == "A"
     assert storage.panel_variants({"idx": 1, "prompt": "Prompt A"}, False) == ["A"]
+
+
+def test_labs_storage_deletes_run_directory(tmp_path: Path):
+    run_id = "run_1"
+    storage.write_manifest(tmp_path, run_id, {"run_id": run_id})
+    storage.write_cell(
+        tmp_path,
+        run_id,
+        1,
+        "model-a",
+        image_bytes=b"image",
+        meta={"status": "ok"},
+    )
+
+    assert storage.delete_run(tmp_path, run_id) is True
+    assert storage.read_manifest(tmp_path, run_id) is None
+    assert storage.delete_run(tmp_path, run_id) is False

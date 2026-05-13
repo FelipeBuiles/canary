@@ -470,7 +470,7 @@ function PromptTabContent({
   const [showRaw, setShowRaw] = useState(false);
   const [showDevContent] = useShowDevContent();
 
-  const rawPrompt = (prompt.full_prompt || "").trim();
+  const rawPrompt = (prompt.distilled_prompt || prompt.full_prompt || "").trim();
   const style = (projectConfig?.style_template ?? prompt.style ?? "").trim();
   const fullPromptWithStyle = (prompt.prompt_version ?? 1) >= 2
     ? (style ? `${style}\n\n${rawPrompt}` : rawPrompt)
@@ -486,6 +486,14 @@ function PromptTabContent({
       )}
 
       <div className="space-y-3">
+        {prompt.distilled_prompt && (
+          <div>
+            <div className="font-meta text-[0.54rem] tracking-[0.18em] text-ink-black/40 mb-1">DISTILLED PROMPT</div>
+            <p className="text-[0.82rem] leading-6 text-ink-black">
+              {prompt.distilled_prompt}
+            </p>
+          </div>
+        )}
         {(prompt.composition || (lastRewrittenPrompt?.composition)) && (
           <div>
             <div className="font-meta text-[0.54rem] tracking-[0.18em] text-ink-black/40 mb-1">COMPOSITION</div>

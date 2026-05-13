@@ -165,10 +165,6 @@ class Config(BaseModel):
         "All facial expressions understated and restrained; emotion conveyed through the eyes and posture alone."
     )
 
-    # Plan stage mode: "llm" uses Gemini Flash for intelligent beat merging / shot variety;
-    # "heuristic" falls back to the deterministic one-beat-per-panel mapper.
-    plan_mode: Literal["llm", "heuristic"] = "llm"
-
     # Pipeline settings
     max_panels_per_scene: int = 8
     max_panels_per_page: int = 6    # how many panels appear on each assembled page
@@ -356,9 +352,6 @@ extraction_model: "{config.extraction_model}"
 
 # Stage 3 – screenplay adaptation (creative writing quality matters here)
 screenplay_model: "{config.screenplay_model}"
-
-# Stage 4 – layout planning: "llm" for intelligent beat merging (default), "heuristic" for deterministic fallback
-plan_mode: "{config.plan_mode}"
 
 # Stage 4 – layout planning model (also used for panel breakdown in storyboard stage)
 panel_model: "{config.panel_model}"

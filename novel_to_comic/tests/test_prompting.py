@@ -2,11 +2,12 @@
 
 from novel_to_comic.config import Config
 from novel_to_comic.models.layout_plan import PlannedPanel
-from novel_to_comic.models.prompt import ImagePrompt
+from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
 from novel_to_comic.models.story_bible import Character, Location, Prop, Scene, StoryBible
 from novel_to_comic.prompting import (
     build_planned_panel_prompt_spec,
     dimensions_for_panel,
+    generate_distilled_prompt,
     render_generation_prompt,
 )
 
@@ -205,12 +206,123 @@ def test_generation_prompt_uses_structured_brief_and_noise_guardrails(tmp_path):
     )
 
     assert "Style:\nOil painting with broad expressive brushwork." in generation_prompt
-    assert "Characters:\n- Myop, 1girl, child, black girl" in generation_prompt
-    assert "Composition:\nwide vertical panel" in generation_prompt
+    assert "Visual brief:\nwide vertical panel" in generation_prompt
+    assert "Myop, walks through the woods" in generation_prompt
+    assert "Characters:\n" not in generation_prompt
+    assert "Composition:\n" not in generation_prompt
     assert "Constraints:\n- exactly 1 character" in generation_prompt
     assert "Avoid stochastic grain" in generation_prompt
     assert "interpret it as broad intentional structure rather than all-over noise" in generation_prompt
     assert "Do not copy sample-image artifacts" in generation_prompt
+
+
+def test_generation_prompt_prefers_distilled_prompt():
+    prompt = ImagePrompt(
+        scene_id="scene_004",
+        panel_number=4,
+        full_prompt="Composition: medium shot. Setting: library.",
+        distilled_prompt="Medium shot inside the library, Ada crossing the lamplight.",
+        composition="medium shot",
+        setting="library",
+        constraints="exactly 1 character; no text",
+        width=768,
+        height=1024,
+        steps=28,
+    )
+
+    generation_prompt = render_generation_prompt(prompt, "Ink and watercolor.")
+
+    assert "Visual brief:\nMedium shot inside the library" in generation_prompt
+    assert "Composition:\nmedium shot" not in generation_prompt
+    assert "Constraints:\n- exactly 1 character" in generation_prompt
+
+
+def test_generate_distilled_prompt_keeps_visual_task_before_identity_anchor():
+    prompt = ImagePrompt(
+        scene_id="scene_001",
+        panel_number=1,
+        full_prompt="Ada, short black bob haircut, blue jacket. Composition: medium panel.",
+        subjects=[
+            PromptSubject(
+                character_id="ada",
+                name="Ada",
+                identity="short black bob haircut, blue jacket",
+                action="standing",
+                expression="neutral",
+                position="center frame",
+            )
+        ],
+        composition="medium panel",
+        setting="library",
+        constraints="exactly 1 character; no text",
+        width=768,
+        height=1344,
+        steps=8,
+    )
+
+    distilled = generate_distilled_prompt(prompt)
+
+    assert distilled.startswith("medium panel of Ada, standing")
+    assert "short black bob haircut, blue jacket" in distilled
+    assert "library" in distilled
+
+
+def test_generate_distilled_prompt_removes_caption_space_fragments():
+    prompt = ImagePrompt(
+        scene_id="scene_001",
+        panel_number=1,
+        composition=(
+            "wide vertical panel, environment dominant, high angle camera, "
+            "leave quiet negative space near the top for a narration caption added later"
+        ),
+        key_objects=["streetlamp", "apartment_building"],
+        setting=(
+            "night, outdoors, freezing, snow, ice, tree, sidewalk, streetlamp, "
+            "7-story apartment building, winter storm, dark, cold lighting, urban, "
+            "city street, residential, overcast; snowdrifts along the curb, wind-driven flakes"
+        ),
+        lighting="cold blue night with a single sodium streetlamp and faint warm window glow",
+        mood="ominous",
+        visual_requirements=[
+            "Dark city street buried in snow at 2:23 AM",
+            "Seven-story apartment building looming behind a bare tree",
+        ],
+        constraints="exactly 0 characters; no text",
+        width=768,
+        height=1344,
+        steps=8,
+    )
+
+    distilled = generate_distilled_prompt(prompt)
+
+    assert "leave quiet negative space" not in distilled
+    assert "near the." not in distilled
+    assert "apartment building" in distilled
+    assert "apartment_building" not in distilled
+    assert distilled.startswith(
+        "wide vertical panel, environment dominant, high angle camera of streetlamp and apartment building."
+    )
+
+
+def test_generate_distilled_prompt_does_not_leave_dangling_shortened_clause():
+    prompt = ImagePrompt(
+        scene_id="scene_001",
+        panel_number=1,
+        composition=(
+            "wide vertical panel, environment dominant, high angle camera, "
+            "foreground framed with"
+        ),
+        setting="frozen residential street",
+        constraints="exactly 0 characters; no text",
+        width=768,
+        height=1344,
+        steps=8,
+    )
+
+    distilled = generate_distilled_prompt(prompt)
+
+    assert "with." not in distilled
+    assert distilled.startswith("wide vertical panel, environment dominant, high angle camera.")
 
 
 def test_gpt_image_2_generation_prompt_adds_material_discipline():
@@ -277,9 +389,11 @@ def test_prompt_carries_key_objects_and_must_show_requirements(tmp_path):
     assert "Key objects: Blue flowers" in prompt.full_prompt
     assert "Must show: show the blue flowers pressed between her fingers" in prompt.full_prompt
     assert "Blue flowers: small vivid blue flowers with velvety petals" in prompt.full_prompt
-    assert "Key objects:\n- Blue flowers" in generation_prompt
-    assert "Must show:\n- show the blue flowers pressed between her fingers" in generation_prompt
-    assert "Key props:\n- Blue flowers: small vivid blue flowers with velvety petals" in generation_prompt
+    assert "Visual brief:\nclose-up portrait" in generation_prompt
+    assert "Blue flowers" in generation_prompt
+    assert "show the blue flowers pressed between her fingers" in generation_prompt
+    assert "Key objects:\n" not in generation_prompt
+    assert "Key props:\n" not in generation_prompt
 
 
 def test_rect_master_prompt_ignores_page_slot_aspect_for_image_shape(tmp_path):
@@ -341,7 +455,8 @@ def test_prompt_does_not_promote_ambient_flowers_to_carried_bundle_prop(tmp_path
     assert "Bundle of Flowers" not in prompt.key_objects
     assert "refs/props/prop_001/ref.png" in prompt.reference_image_paths
     assert "refs/props/prop_002/ref.png" not in prompt.reference_image_paths
-    assert "Key props:\n- Knobby Stick:" in generation_prompt
+    assert "Knobby Stick" in generation_prompt
+    assert "Key props:\n" not in generation_prompt
     assert "Bundle of Flowers:" not in generation_prompt
 
 

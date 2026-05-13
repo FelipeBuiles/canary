@@ -19,7 +19,7 @@ from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.prompting import (
     IMAGE_PROMPT_VERSION,
     build_planned_panel_prompt_spec,
-    ensure_prose_prompt,
+    ensure_distilled_prompt,
 )
 from novel_to_comic.state import (
     PipelineState,
@@ -48,11 +48,12 @@ async def _process_panel(
         if (
             existing.prompt_version >= IMAGE_PROMPT_VERSION
             and existing.planned_panel_id == panel.panel_id
+            and existing.distilled_prompt
         ):
             return existing
 
     prompt = build_planned_panel_prompt_spec(config, project_dir, panel, story_bible, prev_panel)
-    prompt = await ensure_prose_prompt(config, prompt)
+    prompt = ensure_distilled_prompt(config, prompt)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(prompt.model_dump_json(indent=2))
     return prompt

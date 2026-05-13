@@ -25,7 +25,7 @@ from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.prompting import (
     IMAGE_PROMPT_VERSION,
     build_planned_panel_prompt_spec,
-    ensure_prose_prompt,
+    ensure_distilled_prompt,
     render_generation_prompt,
 )
 from novel_to_comic.state import (
@@ -401,10 +401,11 @@ async def _generate_panel(
             await prev_event.wait()
 
         prompt = _load_or_upgrade_prompt(config, project_dir, prompt_path, story_bible)
-        prose_prompt = await ensure_prose_prompt(config, prompt)
-        if prose_prompt is not prompt:
-            prompt = prose_prompt
-            prompt_path.write_text(prompt.model_dump_json(indent=2))
+        if story_bible is not None:
+            distilled_prompt = ensure_distilled_prompt(config, prompt)
+            if distilled_prompt is not prompt:
+                prompt = distilled_prompt
+                prompt_path.write_text(prompt.model_dump_json(indent=2))
 
         output_dir = project_dir / "draw" / prompt.scene_id
         output_path = output_dir / f"panel_{prompt.panel_number:03d}.png"
