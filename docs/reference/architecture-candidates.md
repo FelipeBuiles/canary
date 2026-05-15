@@ -1,5 +1,10 @@
 # Architecture Deepening Candidates
 
+> **Historical document.** All April 2026 candidates are complete. The May 2026
+> round (see `architecture-candidates-2026-05.md`) extended this work and has
+> also been fully implemented. Refer to `CONTEXT.md` and
+> `docs/reference/agent-context.md` for current architecture.
+
 Outcome of the April 2026 architecture review. Candidate 1 (Artifact Path
 Module) and Candidate 2 (Stage Protocol + Registry) are complete — see
 `novel_to_comic/artifacts.py` and `novel_to_comic/stages/__init__.py`. This
