@@ -150,3 +150,46 @@ class TestUsageRecording:
         ctx.begin(total=5)
         ctx.set_estimated_cost(1.23)
         assert state.stages["draw"].estimated_cost_usd == pytest.approx(1.23)
+
+
+class TestPanelEvents:
+    def test_emit_panel_start_includes_scene_panel_and_iso_timestamp(self, tmp_path):
+        events = []
+        state = _state(tmp_path)
+        ctx = StageRuntime("draw", state, tmp_path, on_event=events.append)
+        ctx.emit_panel_start("scene_03", 7)
+        evt = next(e for e in events if e["type"] == "panel_start")
+        assert evt["stage"] == "draw"
+        assert evt["scene_id"] == "scene_03"
+        assert evt["panel_number"] == 7
+        # ISO-8601 with timezone
+        assert "T" in evt["started_at"]
+        assert evt["started_at"].endswith("+00:00") or evt["started_at"].endswith("Z")
+
+    def test_emit_panel_done_ok(self, tmp_path):
+        events = []
+        state = _state(tmp_path)
+        ctx = StageRuntime("draw", state, tmp_path, on_event=events.append)
+        ctx.emit_panel_done("scene_03", 7, status="ok", duration_ms=14320)
+        evt = next(e for e in events if e["type"] == "panel_done")
+        assert evt["status"] == "ok"
+        assert evt["duration_ms"] == 14320
+        assert evt["error"] is None
+
+    def test_emit_panel_done_failed_carries_error(self, tmp_path):
+        events = []
+        state = _state(tmp_path)
+        ctx = StageRuntime("draw", state, tmp_path, on_event=events.append)
+        ctx.emit_panel_done(
+            "scene_01", 2, status="failed", duration_ms=812, error="provider blocked"
+        )
+        evt = next(e for e in events if e["type"] == "panel_done")
+        assert evt["status"] == "failed"
+        assert evt["error"] == "provider blocked"
+
+    def test_panel_helpers_are_noop_without_callback(self, tmp_path):
+        # Should not raise when no on_event is wired (CLI mode).
+        state = _state(tmp_path)
+        ctx = StageRuntime("draw", state, tmp_path)
+        ctx.emit_panel_start("scene_01", 1)
+        ctx.emit_panel_done("scene_01", 1, status="ok", duration_ms=100)

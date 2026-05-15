@@ -105,7 +105,14 @@ def _assemble_artifact_error(project_dir: Path) -> str | None:
     return "Missing editable page JSON in assembly/pages. Re-run the assemble stage."
 
 
-def _stage_payload(project_dir: Path, name: str, state) -> dict:
+def _stage_payload(
+    project_dir: Path,
+    name: str,
+    state,
+    *,
+    is_task_alive: bool = False,
+    in_flight: list[dict] | None = None,
+) -> dict:
     s = state.stages[name]
     status = s.status.value
     error = s.error
@@ -115,6 +122,12 @@ def _stage_payload(project_dir: Path, name: str, state) -> dict:
         if artifact_error:
             status = "failed"
             error = artifact_error
+
+    # Ground truth for liveness: if the asyncio task is alive, the stage
+    # cannot be stale regardless of how long it's been since the last
+    # state.json save. The wall-clock heuristic in is_stale() only fires
+    # when the task is gone (server restart, crash).
+    stale = is_stale(s) and not is_task_alive
 
     return {
         "status": status,
@@ -126,7 +139,9 @@ def _stage_payload(project_dir: Path, name: str, state) -> dict:
         "error": error,
         "started_at": s.started_at.isoformat() if s.started_at else None,
         "finished_at": s.finished_at.isoformat() if s.finished_at else None,
-        "stale": is_stale(s),
+        "last_progress_at": s.last_progress_at.isoformat() if s.last_progress_at else None,
+        "stale": stale,
+        "in_flight": in_flight or [],
     }
 
 
@@ -393,9 +408,15 @@ def project_status(
         if _reconcile_completed_draw_stage(project_dir, config, state, is_running=False):
             save_state(state, project_dir)
 
+    pkey = project_key(user_id, project_id)
+    draw_in_flight = list(getattr(request.app.state, "draw_in_flight", {}).get(pkey, []))
+
     stages = {}
     for name in STAGE_NAMES:
-        stages[name] = _stage_payload(project_dir, name, state)
+        in_flight = draw_in_flight if name == "draw" else None
+        stages[name] = _stage_payload(
+            project_dir, name, state, is_task_alive=running, in_flight=in_flight
+        )
     total_estimated = sum(state.stages[n].estimated_cost_usd for n in STAGE_NAMES)
     db_row = (
         get_db()

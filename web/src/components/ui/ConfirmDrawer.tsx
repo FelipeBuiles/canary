@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import { Button } from "./Button";
 import { CostBreakdown } from "../cost/CostBreakdown";
@@ -9,6 +9,8 @@ export interface ConfirmDrawerProps {
   title: string;
   body: string;
   cost?: CostEstimate;
+  /** Optional content rendered between the body and the cost breakdown. */
+  extraBody?: ReactNode;
   confirmLabel?: string;
   onConfirm: () => void;
   onClose: () => void;
@@ -20,6 +22,7 @@ export function ConfirmDrawer({
   title,
   body,
   cost,
+  extraBody,
   confirmLabel = "Confirm",
   onConfirm,
   onClose,
@@ -111,6 +114,8 @@ export function ConfirmDrawer({
           >
             {body}
           </p>
+
+          {extraBody && <div className="mt-4">{extraBody}</div>}
 
           {cost != null && <CostBreakdown cost={cost} />}
 

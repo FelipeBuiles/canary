@@ -159,7 +159,9 @@ function markStageRunningInCache(
     error: null,
     started_at: existing?.started_at ?? null,
     finished_at: null,
+    last_progress_at: existing?.last_progress_at ?? null,
     stale: false,
+    in_flight: existing?.in_flight ?? [],
   };
   qc.setQueryData<ProjectStatus>(key, {
     ...previous,

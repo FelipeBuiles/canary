@@ -4,6 +4,7 @@ import { applyStageEventToProjectStatus } from "../lib/pipelineStatusEvents";
 import type { PipelineEvent, ProjectStatus } from "../types/api";
 import { useInsufficientCreditsStore } from "./insufficientCredits";
 import { STAGE_DISPLAY_NAMES, type StageName } from "../types/api";
+import { useDrawProgressStore } from "./drawProgress";
 
 interface PipelineStore {
   connected: boolean;
@@ -53,6 +54,37 @@ function updateStatusForStageEvent(projectId: string, event: PipelineEvent) {
   }
 }
 
+function updateDrawProgressForEvent(projectId: string, event: PipelineEvent) {
+  if (event.stage !== "draw") return;
+  const drawProgress = useDrawProgressStore.getState();
+
+  if (event.type === "panel_start"
+      && event.scene_id != null
+      && event.panel_number != null
+      && event.started_at) {
+    drawProgress.applyPanelStart(projectId, event.scene_id, event.panel_number, event.started_at);
+    return;
+  }
+  if (event.type === "panel_done"
+      && event.scene_id != null
+      && event.panel_number != null
+      && event.status
+      && event.duration_ms != null) {
+    drawProgress.applyPanelDone(
+      projectId,
+      event.scene_id,
+      event.panel_number,
+      event.status,
+      event.duration_ms,
+      event.error ?? null,
+    );
+    return;
+  }
+  if (event.type === "stage_complete" || event.type === "stage_fail") {
+    drawProgress.clear(projectId);
+  }
+}
+
 export const usePipelineStore = create<PipelineStore>((set) => ({
   connected: false,
   events: [],
@@ -67,6 +99,7 @@ export const usePipelineStore = create<PipelineStore>((set) => ({
         const event: PipelineEvent = JSON.parse(e.data);
         set((state) => ({ events: [...state.events, event] }));
         updateStatusForStageEvent(projectId, event);
+        updateDrawProgressForEvent(projectId, event);
         if (
           event.type === "stage_fail"
           && event.error_code === "insufficient_credits"
