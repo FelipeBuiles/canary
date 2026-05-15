@@ -152,8 +152,15 @@ PANEL FIELDS
 - shot_type: vary for visual rhythm -- never repeat the same type more than twice in a row.
   Use: close-up, medium, wide, over-shoulder, extreme-wide.
 - importance:
-    "splash"   -- scene-opening establishing shot (at most 1 per scene)
-    "hero"     -- single most climactic image in the scene (at most 1 per scene)
+    "splash"   -- RARE full-page reveal reserved for the comic's biggest moments
+                  (e.g. the inciting incident, a major reveal, the climax, the
+                  final shot). Aim for 0-1 splashes per ACT, NOT per scene.
+                  A typical comic has 3-4 splash panels total across the whole
+                  book. A splash forces a single-panel page, so over-use
+                  produces a comic where every other page is a single reveal.
+    "hero"     -- the most prominent image in a scene; shares a page with
+                  smaller follow-up panels via hero_top_N templates. Default
+                  choice for scene-opening establishing shots (NOT splash).
     "accent"   -- emotional reaction or close-up
     "standard" -- everything else
 - shape_intent: "wide"/"panorama" for vistas, "tall" for vertical action, "rect" otherwise.
@@ -498,6 +505,18 @@ def _scene_planning_user_content(
     else:
         loc_text = screenplay.location_id
 
+    # Surface location states so panel specs can carry the correct
+    # location_state_id when a single scene spans interior/exterior or
+    # before/after states.
+    state_lines: list[str] = []
+    if location and location.states:
+        state_lines.append("Location states (use these ids in panel.location_state_id):")
+        for state in location.states:
+            description = f" — {state.description}" if state.description else ""
+            state_lines.append(
+                f"  {state.id}: {(state.visual_anchor or '')[:160]}{description}"
+            )
+
     beat_lines: list[str] = []
     for i, beat in enumerate(screenplay.beats, start=1):
         parts = [f"[{i}] ({beat.type})"]
@@ -514,12 +533,15 @@ def _scene_planning_user_content(
             parts.append(f"transition:{beat.transition_type}")
         if beat.narration_reason:
             parts.append(f"narration_reason:{beat.narration_reason!r}")
+        if beat.location_state_id:
+            parts.append(f"loc_state:{beat.location_state_id}")
         beat_lines.append(" ".join(parts))
 
     beat_count = len(screenplay.beats)
+    state_block = "\n" + "\n".join(state_lines) + "\n" if state_lines else ""
     return (
         f"Scene: {screenplay.scene_id}\n"
-        f"Location: {loc_text}\n"
+        f"Location: {loc_text}{state_block}"
         f"Characters:\n{chars_lines}\n"
         f"Story props:\n{prop_lines}\n"
         f"Target: {target_panels} panels for {beat_count} beats "
@@ -865,7 +887,29 @@ def _llm_spec_to_planned_panel(
         dialogue=dialogue,
         sfx=sfx_list,
         page_break_after=spec.page_break_after,
+        location_state_id=_resolve_panel_location_state(spec, covered_beats),
     )
+
+
+def _resolve_panel_location_state(
+    spec: LLMPanelSpec,
+    covered_beats: list[ScreenplayBeat],
+) -> str | None:
+    """Pick the active location_state_id for a planned panel.
+
+    Priority:
+      1. LLM-supplied panel-level hint (spec.location_state_id).
+      2. First non-empty location_state_id among the covered screenplay beats
+         — this carries the beat-level state through to the panel without
+         requiring the planner to re-derive it.
+      3. None — caller falls back to the scene's default.
+    """
+    if spec.location_state_id:
+        return spec.location_state_id
+    for beat in covered_beats:
+        if beat.location_state_id:
+            return beat.location_state_id
+    return None
 
 
 def _caption_text(decision: NarrationDecision) -> str:
@@ -1086,6 +1130,199 @@ async def _plan_scene(
 
 
 # ---------------------------------------------------------------------------
+# Quality post-processing: adjacent-panel dedup + scene overflow warning
+# ---------------------------------------------------------------------------
+
+# Upper bound for panels-per-scene. The extraction prompt asks for 3-8 panels
+# per scene; doubling that gives generous headroom for action-heavy scenes
+# while still flagging cases where a single scene has swallowed material from
+# adjacent scenes.
+_SCENE_PANEL_OVERFLOW_THRESHOLD = 16
+
+
+def _panels_are_visually_duplicate(a: PlannedPanel, b: PlannedPanel) -> bool:
+    """Return True when two consecutive panels would render to indistinguishable
+    images. Same scene, same framing, same cast, same actions, same background.
+
+    Used to collapse the LLM planner's occasional habit of emitting two
+    near-identical panels back-to-back for related narration beats.
+    """
+    if a.scene_id != b.scene_id:
+        return False
+    if a.shot_type != b.shot_type:
+        return False
+    if a.characters_present != b.characters_present:
+        return False
+    if a.character_actions != b.character_actions:
+        return False
+    bg_a = (a.background_description or "").strip().lower()
+    bg_b = (b.background_description or "").strip().lower()
+    if bg_a != bg_b:
+        return False
+    return True
+
+
+def _dedupe_adjacent_panels(
+    panels: list[PlannedPanel],
+    narration_decisions: list[NarrationDecision],
+    warnings: list[str],
+) -> tuple[list[PlannedPanel], list[NarrationDecision]]:
+    """Merge consecutive duplicate panels and remap narration references.
+
+    Duplicate panels are merged into the earlier one, picking up the dropped
+    panel's beat_ids, dialogue, and sfx so no narration content is lost.
+    Any narration_decision whose panel_id pointed at the dropped panel is
+    rewritten to point at the surviving merged panel.
+    """
+    if len(panels) < 2:
+        return panels, narration_decisions
+
+    panel_id_remap: dict[str, str] = {}
+    kept: list[PlannedPanel] = [panels[0]]
+
+    for current in panels[1:]:
+        prev = kept[-1]
+        if _panels_are_visually_duplicate(prev, current):
+            for beat_id in current.beat_ids:
+                if beat_id not in prev.beat_ids:
+                    prev.beat_ids.append(beat_id)
+            prev.dialogue = list(prev.dialogue) + list(current.dialogue)
+            prev.sfx = list(prev.sfx) + list(current.sfx)
+            if current.page_break_after:
+                prev.page_break_after = True
+            if current.transition_out:
+                prev.transition_out = current.transition_out
+            panel_id_remap[current.panel_id] = prev.panel_id
+            warnings.append(
+                f"{current.scene_id}: merged duplicate panel {current.panel_id} "
+                f"into {prev.panel_id} (same shot, cast, action, background)"
+            )
+        else:
+            kept.append(current)
+
+    if not panel_id_remap:
+        return kept, narration_decisions
+
+    updated_decisions = [
+        nd.model_copy(update={"panel_id": panel_id_remap[nd.panel_id]})
+        if nd.panel_id in panel_id_remap
+        else nd
+        for nd in narration_decisions
+    ]
+    return kept, updated_decisions
+
+
+# Narrative beats that justify keeping a splash. Each act's splash should be
+# anchored on a scene whose narrative_beat is one of these, when possible.
+_SPLASH_ELIGIBLE_BEATS: frozenset[str] = frozenset({
+    "inciting_incident",
+    "midpoint",
+    "climax",
+    "resolution",
+})
+_MAX_SPLASHES_PER_ACT = 1
+
+
+def _demote_excess_splashes(
+    panels: list[PlannedPanel],
+    story_bible: StoryBible,
+    warnings: list[str],
+) -> list[PlannedPanel]:
+    """Cap splash importance to at most one per narrative act.
+
+    The planner is happy to mark every scene-opening shot as 'splash', but
+    splashes force full-page layouts in the paginator. With many scenes that
+    produces a comic where a third of the pages are single-panel openers.
+    Demote the excess to 'hero' — which shares its page with follow-up
+    panels via hero_top_N / splash+4 templates — and keep 'splash' only
+    where the narrative beat genuinely warrants a full-page reveal.
+
+    Selection rule per act:
+      1. Prefer keeping splashes on scenes whose narrative_beat is one of
+         {inciting_incident, midpoint, climax, resolution}.
+      2. Break ties by scene order (the earlier one wins).
+      3. Demote any extras to 'hero'; preserve their shape_intent (or
+         upgrade rect -> wide so they remain the prominent slot on a
+         hero_top_N page).
+
+    Skipped silently when the bible has no narrative_arcs.
+    """
+    arcs = story_bible.narrative_arcs or []
+    if not arcs:
+        return panels
+
+    scene_to_act: dict[str, int] = {}
+    for arc in arcs:
+        for scene_id in arc.scenes:
+            scene_to_act[scene_id] = arc.act
+    scene_to_beat: dict[str, str] = {
+        s.id: (s.narrative_beat or "") for s in story_bible.scenes
+    }
+
+    splash_by_act: dict[int, list[PlannedPanel]] = {}
+    for panel in panels:
+        if panel.importance != "splash":
+            continue
+        act = scene_to_act.get(panel.scene_id)
+        if act is None:
+            continue
+        splash_by_act.setdefault(act, []).append(panel)
+
+    demote_ids: set[str] = set()
+    for act, splash_panels in splash_by_act.items():
+        if len(splash_panels) <= _MAX_SPLASHES_PER_ACT:
+            continue
+        def _rank(panel: PlannedPanel) -> tuple[int, int]:
+            beat = scene_to_beat.get(panel.scene_id, "")
+            eligible = 0 if beat in _SPLASH_ELIGIBLE_BEATS else 1
+            return (eligible, panel.panel_number)
+        ordered = sorted(splash_panels, key=_rank)
+        for panel in ordered[_MAX_SPLASHES_PER_ACT:]:
+            demote_ids.add(panel.panel_id)
+
+    if not demote_ids:
+        return panels
+
+    out: list[PlannedPanel] = []
+    for panel in panels:
+        if panel.panel_id not in demote_ids:
+            out.append(panel)
+            continue
+        new_shape = panel.shape_intent if panel.shape_intent != "rect" else "wide"
+        out.append(panel.model_copy(update={
+            "importance": "hero",
+            "shape_intent": new_shape,
+        }))
+        warnings.append(
+            f"{panel.scene_id}: demoted splash {panel.panel_id} to hero "
+            "(act already has its allotted splash)."
+        )
+    return out
+
+
+def _warn_scene_panel_overflow(
+    panels: list[PlannedPanel],
+    warnings: list[str],
+) -> None:
+    """Flag any scene whose panel count drastically exceeds the extraction
+    prompt's 3-8 per-scene budget. A scene with >16 panels usually indicates
+    that the adapt/screenplay stage extended the scene past its bible-defined
+    boundary (e.g. swallowing the next scene's material).
+    """
+    from collections import Counter
+    counts = Counter(p.scene_id for p in panels)
+    for scene_id, count in counts.items():
+        if count > _SCENE_PANEL_OVERFLOW_THRESHOLD:
+            warnings.append(
+                f"{scene_id}: planned {count} panels (>{_SCENE_PANEL_OVERFLOW_THRESHOLD}). "
+                "This usually means the screenplay (adapt stage) overflowed the "
+                "bible scene boundary. Check whether scene material that belongs "
+                "to a later scene was bundled here, which causes downstream "
+                "panels to inherit the wrong location anchor."
+            )
+
+
+# ---------------------------------------------------------------------------
 # Cross-scene transition post-processing pass
 # ---------------------------------------------------------------------------
 
@@ -1240,6 +1477,24 @@ async def _build_layout_plan(
         all_panels.extend(panels)
         all_narration_decisions.extend(narration_decisions)
         panels_by_scene[_scene_id] = panels
+
+    # -- Step 1.5: Dedup adjacent visually-identical panels + overflow warning --
+    all_panels, all_narration_decisions = _dedupe_adjacent_panels(
+        all_panels, all_narration_decisions, warnings
+    )
+    panels_by_scene = {sid: [] for sid in panels_by_scene}
+    for panel in all_panels:
+        panels_by_scene.setdefault(panel.scene_id, []).append(panel)
+    _warn_scene_panel_overflow(all_panels, warnings)
+
+    # -- Step 1.6: Cap splashes to one per narrative act ----------------------
+    # The planner often marks every scene-opening shot as 'splash', which
+    # forces a single-panel page per scene in the paginator. Demote excess
+    # splashes to 'hero' so they share a page with follow-up panels.
+    all_panels = _demote_excess_splashes(all_panels, story_bible, warnings)
+    panels_by_scene = {sid: [] for sid in panels_by_scene}
+    for panel in all_panels:
+        panels_by_scene.setdefault(panel.scene_id, []).append(panel)
 
     # -- Step 2: Cross-scene transition pass -----------------------------------
     all_panels = _cross_scene_transition_pass(all_panels, scene_location_map)

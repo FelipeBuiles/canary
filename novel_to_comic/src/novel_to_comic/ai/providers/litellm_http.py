@@ -57,7 +57,7 @@ class LitellmHttpProvider:
         endpoint = "/v1/images/edits" if loaded_refs else "/v1/images/generations"
         response = None
         if loaded_refs:
-            files = [("image", (ref.path.name, data, _mime_type(ref.path))) for ref, data in loaded_refs]
+            files = [("image", (_ref_filename(ref), data, _mime_type(ref.path))) for ref, data in loaded_refs]
             form_params = {k: str(v) for k, v in request_params.items() if v is not None}
             response = await ai_client._post_with_retry(
                 f"{ai_client._base_url(config)}{endpoint}",
@@ -108,6 +108,21 @@ def _load_refs(refs: list[RefImage]) -> list[tuple[RefImage, bytes]]:
         except OSError:
             continue
     return loaded
+
+
+def _ref_filename(ref: RefImage) -> str:
+    """Encode role into the multipart filename so custom handlers (e.g. vertex_multimodal) can reconstruct it.
+
+    For subject refs, we also prepend the parent directory name when it starts
+    with a character-dir prefix (char_*, character_*, chara_*) so the handler
+    can extract a meaningful character name from e.g. char_carl_front.png.
+    """
+    if ref.role == "subject":
+        parent = ref.path.parent.name
+        if parent.lower().startswith(("char_", "character_", "chara_")):
+            bare = f"{parent}_{ref.path.name}"
+            return f"__role_{ref.role}__{bare}"
+    return f"__role_{ref.role}__{ref.path.name}"
 
 
 def _flatten_refs(refs: list[RefImage]) -> list[RefImage]:

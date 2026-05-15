@@ -17,13 +17,27 @@ from typing import Any
 import httpx
 
 from novel_to_comic.ai import generate_image as ai_generate_image
-from novel_to_comic.ai.providers.base import RefImage
+from novel_to_comic.ai.providers.base import RefImage, RefRole
 from novel_to_comic.config import _ENV_KEYS, Config
 from novel_to_comic.usage import calculate_cost_breakdown
 
 from .base import LabsImageInput, LabsImageResult, ProviderError
 
 log = logging.getLogger(__name__)
+
+
+def _infer_ref_role(path: Path) -> RefRole:
+    """Infer a reference image's role from its filename when no explicit role is available."""
+    stem = path.stem.lower()
+    if any(stem.startswith(p) for p in ("loc_", "location_", "setting_", "plate_")):
+        return "location_plate"
+    if any(stem.startswith(p) for p in ("style_", "art_style_", "art_")):
+        return "style"
+    if stem.startswith("prop_"):
+        return "prop"
+    if stem.startswith("panel_") and stem[len("panel_"):].isdigit():
+        return "continuity"
+    return "subject"
 
 
 def _config_for_model(endpoint: str) -> Config:
@@ -69,7 +83,7 @@ class LitellmProvider:
                 width=inp.width,
                 height=inp.height,
                 steps=None,
-                refs=[RefImage(path=p, role="subject") for p in inp.reference_image_paths],
+                refs=[RefImage(path=p, role=_infer_ref_role(p)) for p in inp.reference_image_paths],
                 feature="labs.generate",
             )
         except httpx.HTTPStatusError as exc:

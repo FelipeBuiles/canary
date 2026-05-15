@@ -40,6 +40,11 @@ logger = logging.getLogger("canary.ai")
 
 _RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
 _MAX_RETRIES = 3
+# How many extra times to re-issue a structured-object call when the model
+# returns malformed JSON. Set to 2 → up to 3 total attempts. Most JSON parse
+# failures are one-off sampling artifacts (unescaped quote, truncated tail)
+# that clear on a fresh draw at the same temperature.
+_JSON_PARSE_MAX_RETRIES = 2
 
 # Anthropic deprecated the `temperature` request param on Claude Opus 4.7;
 # sending it returns 400. Haiku 4.5 / Sonnet 4.6 still accept it.
@@ -177,14 +182,6 @@ def _extract_response_cost(
     data: dict[str, Any],
     headers: httpx.Headers | None = None,
 ) -> tuple[float | None, str | None]:
-    # LiteLLM proxy returns cost in a response header — most reliable for HTTP calls.
-    if headers is not None:
-        raw = headers.get("x-litellm-response-cost")
-        if raw is not None:
-            try:
-                return float(raw), "litellm_response_header"
-            except (ValueError, TypeError):
-                pass
     hidden = data.get("_hidden_params")
     if isinstance(hidden, dict):
         value = hidden.get("response_cost")
@@ -198,6 +195,14 @@ def _extract_response_cost(
     value = data.get("response_cost") or data.get("cost")
     if value is not None:
         return float(value), "litellm_response_cost"
+    # LiteLLM proxy returns cost in a response header — most reliable for HTTP calls.
+    if headers is not None:
+        raw = headers.get("x-litellm-response-cost")
+        if raw is not None:
+            try:
+                return float(raw), "litellm_response_header"
+            except (ValueError, TypeError):
+                pass
     return None, None
 
 
@@ -619,6 +624,33 @@ async def generate_text(
     return ApiResult(value=data["text"], usage=data["usage"])
 
 
+def _strip_code_fence(text: str) -> str:
+    if not text.strip().startswith("```"):
+        return text
+    lines = text.strip().split("\n")
+    return "\n".join(lines[1:-1])
+
+
+def _format_json_parse_failure(
+    exc: json.JSONDecodeError,
+    raw_text: str,
+    model: str,
+    feature: str,
+    attempts: int,
+) -> ValueError:
+    pos = exc.pos
+    start = max(0, pos - 120)
+    end = min(len(raw_text), pos + 120)
+    prefix = "..." if start > 0 else ""
+    suffix = "..." if end < len(raw_text) else ""
+    snippet = raw_text[start:end].replace("\n", "\\n")
+    return ValueError(
+        f"LiteLLM ({model}) returned malformed JSON after {attempts} attempt(s) "
+        f"for {feature}: {exc.msg} at line {exc.lineno} column {exc.colno} "
+        f"(char {pos}). Context: {prefix}{snippet}{suffix}"
+    )
+
+
 async def generate_structured_object(
     *,
     config: Config,
@@ -635,22 +667,39 @@ async def generate_structured_object(
             "Image-based PDFs are not supported by the LiteLLM gateway path. "
             "Extract text locally or add OCR preprocessing before Stage 1."
         )
-    data = await _chat_completion(
-        config=config,
-        model=model,
-        system_prompt=system_prompt,
-        user_content=user_content,
-        temperature=temperature,
-        max_output_tokens=max_output_tokens,
-        json_mode=True,
-        json_schema=json_schema,
-        feature=feature,
-    )
-    text = data["text"]
-    if text.strip().startswith("```"):
-        lines = text.strip().split("\n")
-        text = "\n".join(lines[1:-1])
-    return ApiResult(value=json.loads(text), usage=data["usage"])
+    last_exc: json.JSONDecodeError | None = None
+    last_text: str = ""
+    for attempt in range(_JSON_PARSE_MAX_RETRIES + 1):
+        data = await _chat_completion(
+            config=config,
+            model=model,
+            system_prompt=system_prompt,
+            user_content=user_content,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            json_mode=True,
+            json_schema=json_schema,
+            feature=feature,
+        )
+        text = _strip_code_fence(data["text"])
+        try:
+            return ApiResult(value=json.loads(text), usage=data["usage"])
+        except json.JSONDecodeError as exc:
+            last_exc = exc
+            last_text = text
+            logger.warning(
+                "JSON parse failed for %s (model=%s) on attempt %d/%d: %s at char %d",
+                feature,
+                model,
+                attempt + 1,
+                _JSON_PARSE_MAX_RETRIES + 1,
+                exc.msg,
+                exc.pos,
+            )
+    assert last_exc is not None  # loop runs at least once
+    raise _format_json_parse_failure(
+        last_exc, last_text, model, feature, _JSON_PARSE_MAX_RETRIES + 1
+    ) from last_exc
 
 
 async def _chat_completion(

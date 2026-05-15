@@ -757,6 +757,13 @@ async def run(
             await _generate_prop_refs(config, project_dir, story_bible, state, prop_ids, on_event)
 
         complete_stage(state, "cast")
+        # Pin the style template hash so downstream stages (draw, especially)
+        # can detect if the style was edited after cast plates were generated.
+        # Skip pinning on partial re-runs unless plates were regenerated, since
+        # a refs-only re-run doesn't replace the plates that anchor visual style.
+        if not is_partial or should_generate_plates:
+            from novel_to_comic.state import hash_style_template
+            state.style_template_hash = hash_style_template(config.style_template)
         emit({"type": "stage_complete", "stage": "cast",
               "done": state.stages["cast"].items_done,
               "total": state.stages["cast"].items_total})

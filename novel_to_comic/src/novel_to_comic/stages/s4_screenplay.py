@@ -77,18 +77,97 @@ def _build_user_content(scene_text: str, story_bible: StoryBible, scene_id: str)
     loc = next((loc for loc in story_bible.locations if loc.id == scene.location_id), None)
     loc_desc = f"Location: {loc.name} — {loc.visual_anchor}" if loc else ""
 
+    # Surface location states so the LLM can stamp each beat with the active state.
+    state_lines: list[str] = []
+    if loc and loc.states:
+        default_id = scene.location_state_id or (loc.states[0].id if loc.states else None)
+        state_lines.append("Location states (tag beats with these ids when the state changes):")
+        for state in loc.states:
+            marker = " [default]" if state.id == default_id else ""
+            description = f" — {state.description}" if state.description else ""
+            state_lines.append(
+                f"- {state.id}{marker}: {state.visual_anchor}{description}"
+            )
+
+    # Boundary cue: tell the LLM where the NEXT scene begins so it stops in time.
+    boundary_lines: list[str] = []
+    scenes_list = story_bible.scenes
+    try:
+        idx = next(i for i, s in enumerate(scenes_list) if s.id == scene_id)
+    except StopIteration:
+        idx = -1
+    if 0 <= idx < len(scenes_list) - 1:
+        next_scene = scenes_list[idx + 1]
+        if next_scene.source_start_quote:
+            boundary_lines.extend([
+                "",
+                "SCENE BOUNDARY:",
+                f"The NEXT scene ({next_scene.id} — \"{next_scene.title}\") begins with: "
+                f"\"{next_scene.source_start_quote}\"",
+                "STOP adapting the moment you reach (or approach) this line. Do not include it.",
+            ])
+
     parts = [
         f"SCENE: {scene.id} — {scene.title}",
         f"Type: {scene.scene_type} | Beat: {scene.narrative_beat}",
         loc_desc,
+        *state_lines,
         "",
         "CHARACTERS IN SCENE:",
         *char_info,
+        *boundary_lines,
         "",
         "SCENE TEXT:",
         scene_text,
     ]
     return "\n".join(parts)
+
+
+def _enforce_scene_boundary(
+    screenplay: Screenplay,
+    story_bible: StoryBible,
+) -> tuple[Screenplay, str | None]:
+    """Drop beats that adapt content from the NEXT scene.
+
+    The screenplay LLM occasionally overflows its assigned scene and starts
+    adapting the next scene's prose, which causes every downstream stage to
+    treat the bleed-over panels as belonging to the wrong location_id /
+    location_state_id. We use the next scene's source_start_quote as a
+    boundary marker: any beat whose source_text contains that marker (or any
+    beat after such a beat in the same screenplay) is dropped.
+
+    Returns (possibly-truncated screenplay, warning message or None).
+    """
+    scenes = story_bible.scenes
+    try:
+        idx = next(i for i, s in enumerate(scenes) if s.id == screenplay.scene_id)
+    except StopIteration:
+        return screenplay, None
+    if idx >= len(scenes) - 1:
+        return screenplay, None
+    marker = (scenes[idx + 1].source_start_quote or "").strip()
+    if len(marker) < 16:
+        return screenplay, None
+    marker_lower = marker.lower()
+    boundary_idx: int | None = None
+    for i, beat in enumerate(screenplay.beats):
+        haystack = " ".join(
+            part.lower()
+            for part in (beat.source_text, beat.content, beat.direction)
+            if part
+        )
+        if marker_lower in haystack:
+            boundary_idx = i
+            break
+    if boundary_idx is None:
+        return screenplay, None
+    kept_beats = screenplay.beats[:boundary_idx]
+    dropped = len(screenplay.beats) - boundary_idx
+    warning = (
+        f"{screenplay.scene_id}: trimmed {dropped} beat(s) that drifted into the next "
+        f"scene's content (matched next-scene start quote)."
+    )
+    return screenplay.model_copy(update={"beats": kept_beats}), warning
 
 
 def _normalize_screenplay(screenplay: Screenplay, story_bible: StoryBible) -> Screenplay:
@@ -180,6 +259,9 @@ async def _process_scene(
         result = result[0]
     screenplay = _normalize_screenplay(Screenplay.model_validate(result), story_bible)
     screenplay = _annotate_transition_beats(screenplay)
+    screenplay, boundary_warning = _enforce_scene_boundary(screenplay, story_bible)
+    if boundary_warning:
+        console.print(f"[yellow]{boundary_warning}[/yellow]")
     artifacts.write_screenplay(project_dir, scene_id, screenplay)
     return ApiResult(value=screenplay, usage=api_result.usage)
 

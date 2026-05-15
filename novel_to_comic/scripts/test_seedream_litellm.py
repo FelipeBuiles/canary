@@ -10,11 +10,17 @@ from __future__ import annotations
 
 import argparse
 import base64
+import json
 import os
 from pathlib import Path
 from typing import Any
 
 import httpx
+from dotenv import load_dotenv
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
 
 
 def _mime_type(path: Path) -> str:
@@ -41,6 +47,7 @@ def _decode_image(data: dict[str, Any]) -> bytes:
 
 
 def main() -> None:
+    load_dotenv(_repo_root() / ".env")
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default=os.environ.get("LITELLM_BASE_URL", "http://localhost:4000"))
     parser.add_argument("--api-key", default=os.environ.get("LITELLM_API_KEY", "sk-local-canary"))
@@ -48,6 +55,7 @@ def main() -> None:
     parser.add_argument("--prompt", default="A painterly comic panel with the referenced characters grounded in the referenced setting.")
     parser.add_argument("--size", default="1024x1024")
     parser.add_argument("--output", type=Path, default=Path("/tmp/seedream-litellm.png"))
+    parser.add_argument("--response-json", type=Path, default=None)
     parser.add_argument("--ref", dest="refs", action="append", type=Path, required=True)
     args = parser.parse_args()
 
@@ -70,8 +78,19 @@ def main() -> None:
             files=files,
             timeout=300.0,
         )
+        if response.status_code >= 400:
+            print(response.text[:1200])
         response.raise_for_status()
         data = response.json()
+        if args.response_json:
+            redacted = dict(data)
+            redacted["data"] = [
+                {k: (f"<b64:{len(v)} chars>" if k == "b64_json" and isinstance(v, str) else v) for k, v in item.items()}
+                for item in data.get("data", [])
+                if isinstance(item, dict)
+            ]
+            args.response_json.parent.mkdir(parents=True, exist_ok=True)
+            args.response_json.write_text(json.dumps(redacted, indent=2) + "\n")
         image_bytes = _decode_image(data)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_bytes(image_bytes)

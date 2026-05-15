@@ -30,9 +30,17 @@ Given the complete text of a novel, output a single JSON object matching the sch
     {
       "id": "loc_001",
       "name": "Short Location Name",
-      "visual_anchor": "STRICT DANBOORU-STYLE TAGS (comma-separated). Minimum 15 tags of physical environment — e.g. 'night, indoors, dim lighting, wooden table'.",
+      "visual_anchor": "STRICT DANBOORU-STYLE TAGS (comma-separated). Default-state tags only — used when no state resolves. Minimum 15 tags of physical environment — e.g. 'night, indoors, dim lighting, wooden table'.",
       "time_of_day": "night",
-      "mood": "tense"
+      "mood": "tense",
+      "states": [
+        {
+          "id": "loc_001_pre",
+          "name": "Pre-collapse",
+          "visual_anchor": "STRICT TAGS for this state only. NEVER mix pre/post or before/after details in one anchor.",
+          "description": "Optional one-line description of when this state applies."
+        }
+      ]
     }
   ],
 
@@ -42,12 +50,21 @@ Given the complete text of a novel, output a single JSON object matching the sch
       "chapter": 1,
       "title": "Brief Scene Title",
       "location_id": "loc_001",
+      "location_state_id": "loc_001_pre",
       "character_ids": ["char_001", "char_002"],
       "summary": "2-3 sentence summary of what happens.",
       "scene_type": "action",
       "narrative_beat": "inciting_incident",
       "source_start_quote": "Copy verbatim the first 60-80 characters of this scene, exactly as they appear in the original text — including punctuation and capitalisation.",
-      "character_appearances": {}
+      "character_appearances": {},
+      "transient_objects": [
+        {
+          "id": "trans_001",
+          "name": "Short Object Name",
+          "visual_anchor": "1-2 sentences describing the object's physical appearance.",
+          "appears_in_beats": []
+        }
+      ]
     }
   ],
 
@@ -82,12 +99,6 @@ Given the complete text of a novel, output a single JSON object matching the sch
   ]
 }
 
-PROPS
-- Include any physical object that: (a) appears in 3+ scenes, OR (b) is central to the plot (a magic item, a weapon, a letter, a key)
-- visual_anchor must describe what the object LOOKS LIKE in detail — size, shape, material, color, condition
-- If the object is commonly misrepresented by image AI (e.g., a severed paw mistaken for a prosthetic), add an explicit "NOT" clause
-- Leave props as an empty array [] if there are no recurring significant objects
-
 === TYPE CONSTRAINTS ===
 
 - narrative_arcs[].act: INTEGER only — use 1, 2, 3. NOT "Act 1", NOT "act_1".
@@ -95,6 +106,9 @@ PROPS
 - narrative_arcs[].title: SHORT string — e.g. "Setup", "Confrontation", "Resolution".
 - characters[].distinguishing_features: ARRAY of strings — e.g. ["long red hair", "scar on chin"]. NOT a single string.
 - scenes[].source_start_quote: VERBATIM string — copy the first 60-80 characters of that scene exactly as they appear in the text. Do NOT paraphrase or summarise. Do NOT count characters.
+- locations[].states: ARRAY of state objects (may be empty). See LOCATION STATES rules below.
+- scenes[].location_state_id: string id of one of the parent location's states, or null. MUST resolve to an existing state.id under the scene's location_id.
+- scenes[].transient_objects: ARRAY (may be empty). See TRANSIENT OBJECTS rules below.
 
 === EXTRACTION RULES ===
 
@@ -120,14 +134,52 @@ CHARACTERS
   - Child female characters use "1girl, child".
 - distinguishing_features: specific visual details a storyboard artist needs (scars, hair, marks).
 
+LOCATIONS
+- One Location entry per distinct PHYSICAL PLACE. The bunker, the apartment, the alley — each gets its own entry.
+- visual_anchor = the DEFAULT state's tags. If the place only ever appears in one state, this is the only anchor needed and `states` may be left empty.
+- An anchor MUST describe ONE coherent visible state. NEVER fuse mutually exclusive details into one bag of tags.
+  WRONG: "street lamp, parked cars, stop sign, ruins, rubble, dirt, bicycle rack, moped, debris"
+         (mixes pre-collapse furniture with post-collapse aftermath in one anchor — every panel will be polluted with both)
+  RIGHT: default → "night, outdoors, street, sidewalk, snow, brick apartment facade, streetlamp, parked cars, stop sign"
+         state "loc_001_post" → "night, outdoors, flattened dirt, rubble, distant fire, bicycle rack, moped, debris, empty space"
+
+LOCATION STATES (locations[].states)
+- Use states when ONE physical place visibly changes mid-story:
+  - before/after a destructive event (apartment block standing → flattened rubble)
+  - day → night within the same set
+  - intact → on-fire, clean → blood-soaked, etc.
+- Each state has its OWN clean visual_anchor (15+ tags). Tags must describe THAT state's visible details only; do not bleed in details from sibling states.
+- State id MUST extend the parent location id, e.g. "loc_001_pre", "loc_001_post", "loc_001_burning".
+- If the place is visually stable across the whole story, leave `states` empty and rely on the location's default visual_anchor.
+- Scenes (and panels) reference the active state via location_state_id; downstream stages route the correct tags into each panel.
+
+INTERIOR vs EXTERIOR
+- An interior (apartment bedroom, dungeon corridor) and the exterior visible from it (street outside, sky above) are NOT the same location. A character standing in a bedroom looking out a window at the street is INSIDE — the location is the bedroom; the window-frame view is a background detail of the bedroom scene.
+- If a character moves from interior to exterior within a chapter, split the events into separate scenes with separate location_ids — even if the temporal gap is small. This prevents indoor/outdoor location anchors from contaminating each other's panels.
+- A flashback or cold-open that depicts a different physical location (or a clearly different time) is ALSO a separate scene. Do NOT bundle a remembered interior into the "now" exterior scene.
+
 SCENES
-- A new scene starts when: location changes, significant time passes (hours+), or POV character changes.
+- A new scene starts when ANY of the following changes: location, location_state, POV character, OR a significant time jump (>30 min, "later that day", flashback to earlier).
 - source_start_quote: copy the first 60-80 characters of the scene VERBATIM from the text — exact words, punctuation, capitalisation. This is used to locate the scene in the source file. Do NOT invent or paraphrase this field.
+- location_state_id: REQUIRED when the scene's location has any states defined. Pick the state that's active at scene start. If the location has no states, set to null.
 - character_appearances: a dict mapping character_id → appearance description for characters whose look DIFFERS from their default in this scene. Only include entries where a character's appearance is noticeably different from their visual_anchor + default_outfit. Examples: character is undressed/injured/wet/dirty/covered in blood/wearing borrowed clothes. If they look normal, omit them from this dict. Leave as {} when no characters have altered appearances.
 - Target 5-15 scenes for a short story, 30-60 for a full novel. Be exhaustive — cover the ENTIRE novel from first page to last.
-- Each scene should yield 3-8 comic panels. If a scene is too long, split it.
+- Each scene should yield 3-8 comic panels. If a scene is too long OR spans an in/out transition OR jumps locations, SPLIT it.
 - scene_type: one of action / dialogue / emotional / transition
 - narrative_beat: one of inciting_incident / rising_action / midpoint / climax / falling_action / resolution
+
+PROPS (recurring, multi-scene)
+- Include any physical object that: (a) appears in 3+ scenes, OR (b) is central to the plot (a magic item, a weapon, a letter, a key)
+- visual_anchor must describe what the object LOOKS LIKE in detail — size, shape, material, color, condition
+- If the object is commonly misrepresented by image AI (e.g., a severed paw mistaken for a prosthetic), add an explicit "NOT" clause
+- Leave props as an empty array [] if there are no recurring significant objects
+
+TRANSIENT OBJECTS (scene-scoped, one-time)
+- A transient object is a story-critical visual element that appears in ONE scene only and is too narrow in scope to qualify as a Prop. Examples: a severed head visible for one beat, a floating alien text overlay during one announcement, a glowing portal that closes by scene's end.
+- Include them under the scene's transient_objects list — not in the top-level props list.
+- visual_anchor: 1-2 sentences describing the object's appearance. If it has a peculiar form the image model might misread, add a "NOT" clause.
+- appears_in_beats: an optional list of 1-indexed beat numbers within the scene where the object is visible. Leave empty if it's visible throughout the scene.
+- Do NOT promote a transient object to a Prop just because it's vivid — Props require multi-scene recurrence.
 
 COMPLETENESS — CRITICAL
 - You MUST extract EVERY named character who appears in 2+ scenes. Do not skip minor but recurring characters.
