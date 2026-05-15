@@ -54,8 +54,9 @@ regeneration, compose editor/export, and credits/billing accuracy.
 - Text belongs in Stage 9 (`compose`) post-processing, never inside generated
   panel images.
 - `compose/pages/page_NNN.json` is the canonical Stage 9 editing surface.
-- Every stage `run()` accepts `on_event`; add `emit()` calls beside new
-  `console.print()` calls.
+- Every stage `run()` receives a `StageRuntime` as `ctx`. Use `ctx.log()`,
+  `ctx.progress()`, `ctx.record_item_done()`, etc. — do not thread `on_event`
+  manually. Pass `ctx.on_event` to `make_progress()` for Rich progress bars.
 - The compose visual editor and pinned SVG bubble tails exist. Preserve the
   `tail_x`/`tail_y` panel-relative target-point contract when editing lettering
   or renderer code.
@@ -77,16 +78,26 @@ All paths are repo-relative.
 - CLI (`init` + `serve` only): `novel_to_comic/src/novel_to_comic/cli.py`
 - Config loading/defaults: `novel_to_comic/src/novel_to_comic/config.py`
 - Pipeline state machine: `novel_to_comic/src/novel_to_comic/state.py`
-- Stage definitions (all 8): `novel_to_comic/src/novel_to_comic/stages/`
+- Stage definitions (all 9): `novel_to_comic/src/novel_to_comic/stages/`
+- Stage lifecycle (events, state transitions, cost): `novel_to_comic/src/novel_to_comic/stage_runtime.py`
+- Artifact paths + typed read/write: `novel_to_comic/src/novel_to_comic/artifacts.py`
 - Event schema/SSE: `novel_to_comic/src/novel_to_comic/events.py`
-- Image routing: `novel_to_comic/src/novel_to_comic/clients/flux.py`
+- Image generation: `novel_to_comic/src/novel_to_comic/clients/flux.py` + `novel_to_comic/src/novel_to_comic/ai/finalisation.py`
+- Prompt build + re-render: `novel_to_comic/src/novel_to_comic/prompt_assembly.py`
+- Panel record CRUD (s5→s9): `novel_to_comic/src/novel_to_comic/panel_store.py`
 - Layout planning models + helpers: `novel_to_comic/src/novel_to_comic/layout_planning.py`
+- Narration decision editing: `novel_to_comic/src/novel_to_comic/server/narration_editor.py`
 - Assembly renderer: `novel_to_comic/src/novel_to_comic/assembly/html_renderer.py`
 - Comic editing models: `novel_to_comic/src/novel_to_comic/models/comic_page.py`
-- Auth (Supabase JWT, `get_current_user`): `novel_to_comic/src/novel_to_comic/server/auth.py`
+- Panel acceptance state: `novel_to_comic/src/novel_to_comic/server/panel_acceptance.py`
+- Shared FastAPI deps (project resolution): `novel_to_comic/src/novel_to_comic/server/deps.py`
+- Credit-guaranteed generation jobs: `novel_to_comic/src/novel_to_comic/server/credited_job.py`
 - Credit reservation/debit: `novel_to_comic/src/novel_to_comic/server/credits.py`
+- Auth (Supabase JWT, `get_current_user`): `novel_to_comic/src/novel_to_comic/server/auth.py`
 - Supabase client singleton: `novel_to_comic/src/novel_to_comic/server/db.py`
 - Stripe billing + webhooks: `novel_to_comic/src/novel_to_comic/server/routers/billing.py`
+- Labs experimentation: `novel_to_comic/src/novel_to_comic/labs/` + `novel_to_comic/src/novel_to_comic/server/routers/labs.py`
+- R2 export upload: `novel_to_comic/src/novel_to_comic/storage.py`
 
 ## Context Hygiene
 

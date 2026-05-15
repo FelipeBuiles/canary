@@ -1,5 +1,12 @@
 # Architecture Deepening Candidates — May 2026 Round
 
+> **Historical document.** All candidates in this round have been implemented.
+> The shipped modules are: `stage_runtime.py` (C1), `panel_store.py` (C2/C4 partial),
+> `server/credited_job.py` (C4), `prompt_assembly.py` (C5),
+> `server/narration_editor.py` (C6). C3 (image provider seam) was resolved by
+> keeping the existing structure. Refer to `CONTEXT.md` and
+> `docs/reference/agent-context.md` for current architecture.
+
 Second-pass architecture survey. Read alongside
 [`architecture-candidates.md`](architecture-candidates.md), which tracks the
 April 2026 round.

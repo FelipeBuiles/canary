@@ -23,50 +23,88 @@ No local GPU execution.
 
 ```
 novel_to_comic/src/novel_to_comic/
-├── cli.py                  # Click CLI — init, serve (run/approve/status via API)
+├── artifacts.py            # Canonical artifact paths + typed read/write helpers; raises ArtifactMissing on miss
+├── cli.py                  # Click CLI — init, serve (pipeline ops are HTTP only, not CLI)
 ├── config.py               # Pydantic Config loaded from config.yaml + .env
-├── state.py                # Pipeline state machine — state.json, stage status, cost, usage_log
-├── events.py               # Event callback system for SSE streaming
-├── layout_planning.py      # LayoutPlan model + helpers for plan→pages projection
-├── prompting.py            # Prompt-building for PlannedPanel + style samples
+├── events.py               # EventCallback type + _NOOP sentinel; used internally by StageRuntime
+├── layout_planning.py      # LayoutPlan helpers — plan→pages projection, narration decision apply/classify
+├── model_costs.py          # PricingResolver — LiteLLM pricing cache (TTL-refreshed) + override YAML
+├── panel_store.py          # Panel record CRUD across lifecycle (s5→s9): load/save breakdown + prompt
+├── panel_versions.py       # Draw panel version history — rotate, restore panel image versions
+├── prompt_assembly.py      # Single owner of panel prompt build + re-render; used by direct stage and edit route
+├── prompt_instructions.py  # Per-character/location instruction addenda for targeted regen
+├── prompting.py            # Low-level prompt-building helpers (subject clauses, shot dimensions, etc.)
+├── stage_runtime.py        # StageRuntime — owns stage lifecycle: state transitions, event emission, cost recording
+├── state.py                # Pipeline state machine — state.json, STAGE_NAMES, CHECKPOINT_STAGES
+├── storage.py              # Cloudflare R2 upload helper for PDF/CBZ exports (optional; falls back to disk)
+├── text_utils.py           # clean(), shorten() — shared text normalization helpers
+├── usage.py                # UsageRecord, ApiResult, estimate_text_cost, estimate_image_cost
 ├── ai/
-│   ├── client.py           # LiteLLM-backed AI client + ai_usage_events ledger
-│   ├── context.py          # request-scoped user/project/stage metadata
+│   ├── client.py           # LiteLLM-backed AI client — text + image generation, usage ledger
+│   ├── context.py          # ai_request_context — request-scoped user/project/stage metadata
+│   ├── errors.py           # AIRefusalError
+│   ├── finalisation.py     # ImageCallContext — image call accounting, output download, failure classification
+│   └── providers/
+│       ├── base.py         # ImageProvider Protocol + ProviderRawResult
+│       ├── litellm_http.py # Sole production adapter (LiteLLM HTTP)
+│       └── selector.py     # Provider selector (currently always returns LitellmHttpProvider)
 ├── clients/
-│   ├── text.py             # Text compatibility wrapper → ai.client
-│   ├── flux.py             # Image compatibility wrapper → ai.client
-├── usage.py                    # UsageRecord, ApiResult, pricing, cost calculation
+│   ├── api_logging.py      # HTTP client request/response logging
+│   ├── flux.py             # Image generation wrapper → ai.client / ai.finalisation
+│   └── text.py             # Text generation wrapper → ai.client
+├── labs/                   # Image-model experimentation subsystem — standalone, not pipeline-coupled
+│   ├── costs.py            # Labs-specific cost calculation
+│   ├── fixtures/           # Sample panel fixtures for labs runs
+│   ├── providers/
+│   │   ├── base.py         # LabsProvider Protocol, LabsImageInput, LabsImageResult
+│   │   ├── fal.py          # Fal.ai provider (async submit/poll/fetch)
+│   │   ├── litellm.py      # LiteLLM provider for labs
+│   │   └── together.py     # Together AI provider for labs
+│   ├── registry.py         # LabsModelEntry + load_registry (reads labs-models.yaml)
+│   ├── runner.py           # LabsRunSpec, LabsRunState — orchestrates multi-model panel comparison runs
+│   └── storage.py          # Labs run artifact paths (stored under {user}/_labs/)
+├── models/
+│   ├── comic_page.py       # ComicPage, PagePanel, Bubble, Sfx, BubbleTail
+│   ├── layout_plan.py      # LayoutPlan, PlannedPanel, PlannedPage, PanelGeometry, NarrationDecision
+│   ├── panel.py            # PanelBreakdown, DialogueLine, Screenplay, ScreenplayBeat
+│   ├── prompt.py           # ImagePrompt
+│   └── story_bible.py      # Character, Location, Scene, NarrativeArc, Prop
 ├── stages/
-│   ├── s1_extract.py       # Novel → Story Bible JSON
-│   ├── s2_style.py         # Story Bible → style suggestions + sample images
+│   ├── s1_extract.py       # Novel → Story Bible JSON (extract)
+│   ├── s2_style.py         # Story Bible → style suggestions + sample images (style)
 │   ├── s3_cast.py          # Character refs + location plates (cast)
 │   ├── s4_screenplay.py    # Scene prose → screenplay (adapt)
 │   ├── s5_layout_plan.py   # Screenplay → page/panel layout plan (plan)
-│   ├── s5_panels.py        # Layout plan → legacy PanelBreakdown (storyboard)
+│   ├── s5_panels.py        # Layout plan → legacy PanelBreakdown JSON (storyboard)
 │   ├── s6_storyboard.py    # Planned panels → image prompts (direct)
 │   ├── s7_draw.py          # Image generation (draw)
 │   └── s8_compose.py       # ComicPage JSON → HTML → PNG → PDF/CBZ (compose)
-├── models/
-│   ├── story_bible.py      # Character, Location, Scene, NarrativeArc, Prop
-│   ├── panel.py            # PanelBreakdown, DialogueLine, Screenplay, ScreenplayBeat
-│   ├── prompt.py           # ImagePrompt
-│   ├── layout_plan.py      # LayoutPlan, PlannedPanel, PlannedPage, PanelGeometry
-│   └── comic_page.py       # ComicPage, PagePanel, Bubble, Sfx, BubbleTail
 ├── assembly/
 │   └── html_renderer.py    # build_page_html(), browser_context(), render_html_to_png()
 └── server/
-    ├── app.py              # FastAPI app factory (create_app)
-    ├── env.py              # Shared environment variable helpers (bool_env)
-    ├── routers/
-    │   ├── pipeline.py     # run, approve, reset, events (SSE), stage errors
-    │   ├── projects.py     # list, status, create
-    │   ├── stages.py       # story-bible, screenplays, panels, prompts, images
-    │   ├── pages.py        # page JSON read/write, preview PNG, static files
-    │   ├── config.py       # config read/patch
-    │   ├── export.py       # PDF/CBZ export trigger + download
-    │   └── styles.py       # style suggestions, sample generation, active style, is_style_selected gate
-    ├── generation_jobs.py  # Job queue for async image/style generation
-    └── telemetry.py        # OpenTelemetry span emission (uses shared bool_env from env.py)
+    ├── app.py              # FastAPI app factory (create_app) + lifespan handler
+    ├── auth.py             # Supabase JWT validation, get_current_user
+    ├── credited_job.py     # enqueue_credited_job — credit check + job lifecycle in one call
+    ├── credits.py          # assert_sufficient_credits, debit_model_usage, CreditEstimate helpers
+    ├── db.py               # Supabase client singleton
+    ├── deps.py             # Shared FastAPI deps — get_project resolves UUID→slug, loads config+state
+    ├── env.py              # bool_env and other environment variable helpers
+    ├── generation_jobs.py  # In-memory async job queue for image/style generation
+    ├── logging.py          # configure_logging(), request_log_middleware
+    ├── narration_editor.py # estimate_patch_impact, apply_patch — narration decision editing
+    ├── panel_acceptance.py # Persistent draw-panel acceptance state (draw/panel_acceptance.json)
+    ├── telemetry.py        # OpenTelemetry span emission
+    └── routers/
+        ├── billing.py      # Stripe billing + webhook handling
+        ├── config.py       # Config read/patch
+        ├── credits.py      # Credits balance + purchase endpoints
+        ├── export.py       # PDF/CBZ export trigger + download
+        ├── labs.py         # Labs endpoints (/api/labs/...) — model registry, runs, cell images
+        ├── pages.py        # Page JSON read/write, preview PNG, static files
+        ├── pipeline.py     # run, approve, reset, events (SSE), stage errors
+        ├── projects.py     # List, status, create, covers
+        ├── stages.py       # Story-bible, screenplays, panels, prompts, images
+        └── styles.py       # Style suggestions, sample generation, active style, is_style_selected gate
 ```
 
 ---
@@ -147,19 +185,31 @@ Config exposes `effective_extraction_model()`, `effective_screenplay_model()`,
 `effective_panel_model()`, `effective_prompt_model()`, and
 `effective_image_model()` — always use these instead of reading raw fields.
 
-### Usage tracking (`usage.py`)
+### Stage lifecycle (`stage_runtime.py`)
+
+Every stage `run()` receives a `StageRuntime` as `ctx`. The runtime owns state
+transitions, event emission, and cost recording so stages don't thread `on_event`
+or call state functions directly. Stage signatures are:
+
+```python
+async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> T
+```
+
+Use `ctx.log()`, `ctx.progress()`, `ctx.record_item_done()`, `ctx.set_estimated_cost()`.
+Pass `ctx.on_event` to `make_progress()` for Rich progress bars.
+
+### Usage tracking
 
 Every API call returns an `ApiResult[T]` pairing the value with a `UsageRecord`.
-State accumulates real costs via `record_item_done(usage=...)` and
-`record_api_usage(...)`. Before a stage runs, `estimate_text_cost()` /
-`estimate_image_cost()` set `estimated_cost_usd` on the stage state.
+`usage.py` owns `UsageRecord`, `ApiResult`, `estimate_text_cost()`, and
+`estimate_image_cost()`. The `StageRuntime` accumulates costs via
+`ctx.record_item_done(usage=...)`.
 
-`pricing.yaml` has been removed. Pricing now uses
-`litellm_model_prices.cached.json` (LiteLLM model pricing cache, refreshed on
-startup by TTL) plus `litellm_pricing_overrides.yaml` (project-specific
-overrides). `audit_pricing()` checks for missing entries on startup; missing
-pricing raises in production and logs a warning in development. Unknown models
-log a warning (once per model) and return $0.00.
+Pricing is owned by `model_costs.py` (`PricingResolver`): it loads the
+LiteLLM model pricing cache (`litellm_model_prices.cached.json`, TTL-refreshed
+on startup) and applies `litellm_pricing_overrides.yaml` on top. Missing pricing
+raises in production and logs a warning in development; unknown models log a
+warning once per model and return $0.00.
 
 ### Text composited in post
 
@@ -190,10 +240,10 @@ first or add OCR preprocessing.
 
 ### Event system for web dashboard
 
-Every stage `run()` accepts `on_event: EventCallback | None`. The web server
-injects a callback that streams events to the browser over SSE. See `events.py`
-for the event schema. Always add `emit()` calls alongside `console.print()`
-calls in stage code.
+The web server passes an `EventCallback` into `StageRuntime` which streams
+events to the browser over SSE. Stages call `ctx.log()` and `ctx.progress()`
+instead of emitting events directly. See `events.py` for the event schema and
+`stage_runtime.py` for how events are emitted.
 
 Frontend status is updated from SSE as events arrive:
 `web/src/lib/pipelineStatusEvents.ts` applies `stage_begin`,
@@ -229,6 +279,40 @@ deterministic fallback behavior.
 `compose/pages/page_NNN.json` is the canonical artifact for Stage 9. It is
 read, edited manually or via the web editor, and re-rendered by the export API.
 Never write rendering logic that bypasses this JSON.
+
+### Labs subsystem (`labs/`)
+
+Labs is an independent image-model experimentation tool, not part of the
+pipeline. It lives at `/api/labs/...` and stores runs under
+`{projects_dir}/{user_id}/_labs/`. A run takes a set of panels (a `LabsRunSpec`)
+and generates each panel across one or more model/variant combinations
+(`LabsPanelSpec`), writing results as a grid of cell images.
+
+Key components:
+- `labs/registry.py` — `LabsModelEntry` records loaded from `labs-models.yaml`
+- `labs/runner.py` — `start_run()` orchestrates async multi-model generation
+- `labs/providers/` — `LitellmProvider`, `FalProvider`, `TogetherProvider` each implement `LabsProvider`
+- `labs/storage.py` — canonical artifact paths for labs runs
+- `server/routers/labs.py` — REST endpoints: list models, import project scene, create/list/get/delete runs, serve cell images
+
+Labs panels can import reference images and prompts from existing pipeline
+projects. It does not share state with the pipeline — it is a standalone
+experimentation tool.
+
+### Prompt assembly (`prompt_assembly.py`)
+
+`assemble_panel_prompt(planned_panel, story_bible, config) → ImagePrompt` is the
+single path for building a new prompt. `rerender_prompt_body(prompt) → str`
+re-derives `full_prompt` from an existing `ImagePrompt` after an edit. Both
+paths apply the same narration-caption constraint normalisation. Use these
+instead of calling helpers in `prompting.py` directly from routes or stages.
+
+### Panel store (`panel_store.py`)
+
+`load_breakdown / save_breakdown` and `load_prompt / save_prompt` own the
+read/validate/write cycle for panel artifacts so routes cannot forget steps like
+re-deriving `full_prompt` after editing prompt fields. Routes and stages should
+go through these instead of reaching into `artifacts` directly for panel JSON.
 
 ---
 
