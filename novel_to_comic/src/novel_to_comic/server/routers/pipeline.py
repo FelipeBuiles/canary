@@ -39,6 +39,7 @@ from novel_to_comic.state import (
     save_state,
 )
 from novel_to_comic.ai import ai_request_context
+from novel_to_comic.stage_runtime import StageRuntime
 
 from ..auth import get_current_user
 from ..credits import (
@@ -54,6 +55,7 @@ from ..credits import (
 )
 from ..db import get_db
 from ..deps import get_project, project_key
+from ..credited_job import enqueue_credited_job
 from ..generation_jobs import (
     enqueue_generation_job,
     find_active_generation_job,
@@ -111,13 +113,8 @@ async def _run_stage(
         extra_kwargs: dict = {}
         if retry_failed and stage == "draw":
             extra_kwargs["retry_failed"] = True
-        await stage_obj.run(
-            config,
-            project_dir,
-            state,
-            on_event=lambda e: queue.put_nowait(e),
-            **extra_kwargs,
-        )
+        ctx = StageRuntime(stage, state, project_dir, on_event=lambda e: queue.put_nowait(e))
+        await stage_obj.run(config, project_dir, ctx, **extra_kwargs)
         elapsed = time.perf_counter() - started
         status = state.stages[stage].status.value
         status_color = "green" if status in {"complete", "awaiting_review"} else "yellow"
@@ -132,9 +129,12 @@ async def _run_stage(
         )
     except Exception as exc:
         message = str(exc)
-        fail_stage(state, stage, message)
-        save_state(state, project_dir)
-        queue.put_nowait({"type": "stage_fail", "stage": stage, "message": message})
+        # StageRuntime.execute() already called fail_stage + save_state + emitted stage_fail.
+        # This catch handles the case where a stage raises before entering execute().
+        if state.stages[stage].status.value not in ("failed",):
+            fail_stage(state, stage, message)
+            save_state(state, project_dir)
+            queue.put_nowait({"type": "stage_fail", "stage": stage, "message": message})
         elapsed = time.perf_counter() - started
         logger.exception(
             "[bold red]Stage failed[/] project=[white]%s[/] stage=[bold]%s[/] "
@@ -563,12 +563,15 @@ async def regen_panel(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
+    from novel_to_comic.stages import s7_draw
+    from novel_to_comic.stages.s7_draw import estimate_panel_image_cost_usd
+
     project_dir, config, state = project
     pkey = project_key(user_id, project_id)
 
     running = request.app.state.running_tasks
-    existing = running.get(pkey)
-    if existing and not existing.done():
+    existing_stage = running.get(pkey)
+    if existing_stage and not existing_stage.done():
         raise HTTPException(409, "A stage is already running for this project")
 
     prompt_path = artifacts.panel_prompt_path(project_dir, scene_id, panel_number)
@@ -580,70 +583,32 @@ async def regen_panel(
     except Exception:
         planned_panel_id = None
 
-    # Pre-check credits (panel regen has no upfront reservation, so we have to
-    # gate on the estimate ourselves to surface a buy-credits prompt cleanly).
-    from novel_to_comic.stages.s7_draw import estimate_panel_image_cost_usd
-
     panel_cost_usd = estimate_panel_image_cost_usd(config, project_dir, prompt_path)
     panel_estimate_credits = max(1, provider_usd_to_credits(panel_cost_usd)) if panel_cost_usd > 0 else 1
-    assert_sufficient_credits(get_db(), user_id, panel_estimate_credits, action="panel_regen")
 
-    regen_job_id = str(uuid_lib.uuid4())
-
-    async def _runner() -> None:
-        from novel_to_comic.stages import s7_draw
+    async def _work():
         clear_panel_acceptance(project_dir, scene_id, panel_number)
-        with ai_request_context(
-            user_id=user_id,
-            project_id=project_id,
-            project_name=project_dir.name,
-            workspace_id=str(project_dir.parent),
-            stage="draw",
-            job_id=regen_job_id,
-        ):
-            result = await s7_draw.regenerate_panel_image(
-                config,
-                project_dir,
-                scene_id,
-                panel_number,
-            )
-        if result.usage:
-            debit_model_usage(
-                get_db(),
-                user_id,
-                project_id,
-                result.usage,
-                stage="draw",
-                description=f"Model call: regenerate panel {scene_id}/{panel_number:03d}",
-                job_id=regen_job_id,
-            )
+        return await s7_draw.regenerate_panel_image(config, project_dir, scene_id, panel_number)
 
-    existing = find_active_generation_job(
+    job, created = enqueue_credited_job(
         request.app,
         project_name=pkey,
-        kind="panel_regen",
-        payload={"scene_id": scene_id, "panel_number": panel_number},
-    )
-    if existing:
-        return {
-            "status": "queued",
-            "job": generation_job_payload(request.app, existing),
-            "scene_id": scene_id,
-            "panel_number": panel_number,
-            "planned_panel_id": planned_panel_id,
-        }
-
-    prune_finished_generation_jobs(request.app)
-    clear_panel_acceptance(project_dir, scene_id, panel_number)
-    job = enqueue_generation_job(
-        request.app,
-        project_name=pkey,
+        user_id=user_id,
+        project_id=project_id,
+        project_dir=project_dir,
+        stage="draw",
         kind="panel_regen",
         label=f"{scene_id} / panel {panel_number:03d}",
         payload={"scene_id": scene_id, "panel_number": panel_number},
-        runner=_runner,
+        work=_work,
+        debit_description=f"Model call: regenerate panel {scene_id}/{panel_number:03d}",
         semaphore=generation_semaphore_for_config(request.app, config),
+        estimate_credits=panel_estimate_credits,
     )
+    if created:
+        # Immediately clear acceptance so the UI shows the panel as pending
+        # before the job starts running (the runner clears it again for safety).
+        clear_panel_acceptance(project_dir, scene_id, panel_number)
     return {
         "status": "queued",
         "job": generation_job_payload(request.app, job),
@@ -821,58 +786,23 @@ async def regen_ref(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
+    from novel_to_comic.stages import s3_cast
+
     project_dir, config, state = project
     pkey = project_key(user_id, project_id)
 
-    char_ref_job_id = str(uuid_lib.uuid4())
-
-    async def _runner() -> None:
-        from novel_to_comic.stages import s3_cast
-        with ai_request_context(
-            user_id=user_id,
-            project_id=project_id,
-            project_name=project_dir.name,
-            workspace_id=str(project_dir.parent),
-            stage="cast",
-            job_id=char_ref_job_id,
-        ):
-            result = await s3_cast.regenerate_character_ref(
-                config,
-                project_dir,
-                char_id,
-            )
-        if result.usage:
-            debit_model_usage(
-                get_db(),
-                user_id,
-                project_id,
-                result.usage,
-                stage="cast",
-                description=f"Model call: regenerate character ref {char_id}",
-                job_id=char_ref_job_id,
-            )
-
-    existing = find_active_generation_job(
+    job, _ = enqueue_credited_job(
         request.app,
         project_name=pkey,
-        kind="character_ref_regen",
-        payload={"char_id": char_id},
-    )
-    if existing:
-        return {
-            "status": "queued",
-            "job": generation_job_payload(request.app, existing),
-            "char_id": char_id,
-        }
-
-    prune_finished_generation_jobs(request.app)
-    job = enqueue_generation_job(
-        request.app,
-        project_name=pkey,
+        user_id=user_id,
+        project_id=project_id,
+        project_dir=project_dir,
+        stage="cast",
         kind="character_ref_regen",
         label=f"Character ref / {char_id}",
         payload={"char_id": char_id},
-        runner=_runner,
+        work=lambda: s3_cast.regenerate_character_ref(config, project_dir, char_id),
+        debit_description=f"Model call: regenerate character ref {char_id}",
         semaphore=generation_semaphore_for_config(request.app, config),
     )
     return {
@@ -890,57 +820,23 @@ async def regen_plate(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
+    from novel_to_comic.stages import s3_cast
+
     project_dir, config, state = project
     pkey = project_key(user_id, project_id)
-    plate_job_id = str(uuid_lib.uuid4())
 
-    async def _runner() -> None:
-        from novel_to_comic.stages import s3_cast
-        with ai_request_context(
-            user_id=user_id,
-            project_id=project_id,
-            project_name=project_dir.name,
-            workspace_id=str(project_dir.parent),
-            stage="cast",
-            job_id=plate_job_id,
-        ):
-            result = await s3_cast.regenerate_location_plate(
-                config,
-                project_dir,
-                loc_id,
-            )
-        if result.usage:
-            debit_model_usage(
-                get_db(),
-                user_id,
-                project_id,
-                result.usage,
-                stage="cast",
-                description=f"Model call: regenerate location plate {loc_id}",
-                job_id=plate_job_id,
-            )
-
-    existing = find_active_generation_job(
+    job, _ = enqueue_credited_job(
         request.app,
         project_name=pkey,
-        kind="location_plate_regen",
-        payload={"loc_id": loc_id},
-    )
-    if existing:
-        return {
-            "status": "queued",
-            "job": generation_job_payload(request.app, existing),
-            "loc_id": loc_id,
-        }
-
-    prune_finished_generation_jobs(request.app)
-    job = enqueue_generation_job(
-        request.app,
-        project_name=pkey,
+        user_id=user_id,
+        project_id=project_id,
+        project_dir=project_dir,
+        stage="cast",
         kind="location_plate_regen",
         label=f"Location plate / {loc_id}",
         payload={"loc_id": loc_id},
-        runner=_runner,
+        work=lambda: s3_cast.regenerate_location_plate(config, project_dir, loc_id),
+        debit_description=f"Model call: regenerate location plate {loc_id}",
         semaphore=generation_semaphore_for_config(request.app, config),
     )
     return {
@@ -1250,57 +1146,23 @@ async def regen_prop(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
+    from novel_to_comic.stages import s3_cast
+
     project_dir, config, state = project
     pkey = project_key(user_id, project_id)
-    prop_job_id = str(uuid_lib.uuid4())
 
-    async def _runner() -> None:
-        from novel_to_comic.stages import s3_cast
-        with ai_request_context(
-            user_id=user_id,
-            project_id=project_id,
-            project_name=project_dir.name,
-            workspace_id=str(project_dir.parent),
-            stage="cast",
-            job_id=prop_job_id,
-        ):
-            result = await s3_cast.regenerate_prop_ref(
-                config,
-                project_dir,
-                prop_id,
-            )
-        if result.usage:
-            debit_model_usage(
-                get_db(),
-                user_id,
-                project_id,
-                result.usage,
-                stage="cast",
-                description=f"Model call: regenerate prop ref {prop_id}",
-                job_id=prop_job_id,
-            )
-
-    existing = find_active_generation_job(
+    job, _ = enqueue_credited_job(
         request.app,
         project_name=pkey,
-        kind="prop_ref_regen",
-        payload={"prop_id": prop_id},
-    )
-    if existing:
-        return {
-            "status": "queued",
-            "job": generation_job_payload(request.app, existing),
-            "prop_id": prop_id,
-        }
-
-    prune_finished_generation_jobs(request.app)
-    job = enqueue_generation_job(
-        request.app,
-        project_name=pkey,
+        user_id=user_id,
+        project_id=project_id,
+        project_dir=project_dir,
+        stage="cast",
         kind="prop_ref_regen",
         label=f"Prop ref / {prop_id}",
         payload={"prop_id": prop_id},
-        runner=_runner,
+        work=lambda: s3_cast.regenerate_prop_ref(config, project_dir, prop_id),
+        debit_description=f"Model call: regenerate prop ref {prop_id}",
         semaphore=generation_semaphore_for_config(request.app, config),
     )
     return {

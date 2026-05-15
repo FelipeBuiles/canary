@@ -37,7 +37,7 @@ from novel_to_comic.assembly.html_renderer import (
     write_theme_css,
 )
 from novel_to_comic.config import Config
-from novel_to_comic.events import EventCallback, _NOOP, make_progress
+from novel_to_comic.events import make_progress
 from novel_to_comic.layout_planning import (
     image_path_for_panel,
     load_layout_plan,
@@ -56,14 +56,7 @@ from novel_to_comic.models.comic_page import (
 )
 from novel_to_comic.models.panel import PanelBreakdown
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.state import (
-    PipelineState,
-    begin_stage,
-    complete_stage,
-    fail_stage,
-    record_item_done,
-    save_state,
-)
+from novel_to_comic.stage_runtime import StageRuntime
 
 console = Console()
 
@@ -277,13 +270,11 @@ def _do_exports(page_paths: list[Path], exports_dir: Path, formats: list[str]) -
 async def run(
     config: Config,
     project_dir: Path,
-    state: PipelineState,
+    ctx: StageRuntime,
     formats: list[str] | None = None,
     rebuild: bool = True,
-    on_event: EventCallback | None = None,
 ) -> None:
     """Stage 7: build ComicPage JSON (if rebuild=True), then render to PNG/PDF/CBZ."""
-    emit = on_event or _NOOP
     export_formats = formats or ["pdf", "cbz"]
     max_per_page   = getattr(config, "max_panels_per_page", 6)
 
@@ -291,8 +282,7 @@ async def run(
     images_dir = project_dir / "draw"
     if not images_dir.exists() or not any(images_dir.iterdir()):
         console.print("[red]No images found. Run stage 6 (generate) first.[/red]")
-        emit({"type": "log", "stage": "compose", "level": "error",
-              "message": "No images found. Run stage 6 (generate) first."})
+        ctx.log("No images found. Run stage 6 (generate) first.", level="error")
         return
 
     story_bible = artifacts.read_story_bible(project_dir)
@@ -315,8 +305,7 @@ async def run(
         f"[dim]Edit [bold]{css_path.relative_to(project_dir)}[/bold] "
         f"then run [bold]pipeline export[/bold] to apply changes.[/dim]"
     )
-    emit({"type": "log", "stage": "compose", "level": "info",
-          "message": f"Theme: {theme_name}"})
+    ctx.log(f"Theme: {theme_name}")
 
     # ── Build phase (panel data → ComicPage JSON) ─────────────────────────────
     if rebuild:
@@ -324,8 +313,7 @@ async def run(
         panel_data = _collect_panel_data(project_dir, use_layout_plan=plan_path.exists())
         if not panel_data:
             console.print("[red]No valid panel images found.[/red]")
-            emit({"type": "log", "stage": "compose", "level": "error",
-                  "message": "No valid panel images found."})
+            ctx.log("No valid panel images found.", level="error")
             return
 
         if plan_path.exists():
@@ -338,87 +326,96 @@ async def run(
         else:
             page_groups = _group_into_pages(panel_data, max_per_page)
             json_paths = []
-        begin_stage(state, "compose", total=len(page_groups))
-        emit({"type": "stage_begin", "stage": "compose", "total": len(page_groups)})
-        save_state(state, project_dir)
-        console.print(
-            f"[bold]Building {len(panel_data)} panels → "
-            f"{len(page_groups)} pages{' from layout plan' if plan_path.exists() else f' ({max_per_page}/page)'}...[/bold]"
-        )
-        emit({"type": "log", "stage": "compose", "level": "bold",
-              "message": f"Building {len(panel_data)} panels → {len(page_groups)} pages"})
-        if not plan_path.exists():
-            for i, group in enumerate(page_groups):
-                comic_page = _build_comic_page(group, i + 1, project_dir, story_bible, theme_name)
-                artifacts.write_compose_page(project_dir, i + 1, comic_page)
-                json_paths.append(artifacts.compose_page_path(project_dir, i + 1))
-        save_state(state, project_dir)
-        console.print(f"[dim]Page JSON files in:[/dim] [bold]{json_dir.relative_to(project_dir)}[/bold]")
-        emit({"type": "log", "stage": "compose", "level": "dim",
-              "message": f"Page JSON files in: {json_dir.relative_to(project_dir)}"})
+
+        with ctx.execute(total=len(page_groups)):
+            console.print(
+                f"[bold]Building {len(panel_data)} panels → "
+                f"{len(page_groups)} pages{' from layout plan' if plan_path.exists() else f' ({max_per_page}/page)'}...[/bold]"
+            )
+            ctx.log(f"Building {len(panel_data)} panels → {len(page_groups)} pages", level="bold")
+            if not plan_path.exists():
+                for i, group in enumerate(page_groups):
+                    comic_page = _build_comic_page(group, i + 1, project_dir, story_bible, theme_name)
+                    artifacts.write_compose_page(project_dir, i + 1, comic_page)
+                    json_paths.append(artifacts.compose_page_path(project_dir, i + 1))
+            ctx.save()
+            console.print(f"[dim]Page JSON files in:[/dim] [bold]{json_dir.relative_to(project_dir)}[/bold]")
+            ctx.log(f"Page JSON files in: {json_dir.relative_to(project_dir)}", level="dim")
+
+            # ── Render phase (ComicPage JSON → HTML → PNG) ───────────────────
+            async with browser_context() as browser:
+                with make_progress(ctx.on_event) as progress:
+                    task = progress.add_task("Rendering pages", total=len(json_paths))
+                    png_paths: list[Path] = []
+                    for json_path in json_paths:
+                        comic_page   = ComicPage.model_validate_json(json_path.read_text())
+                        html_content = build_page_html(comic_page, project_dir, custom_css)
+
+                        html_path = html_dir / f"page_{comic_page.page_number:03d}.html"
+                        html_path.write_text(html_content, encoding="utf-8")
+
+                        png_path = png_dir / f"page_{comic_page.page_number:03d}.png"
+                        await render_html_to_png(
+                            html_content, png_path,
+                            browser=browser, source_path=html_path,
+                        )
+                        png_paths.append(png_path)
+                        ctx.record_item_done()
+                        ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+                        if task is not None:
+                            progress.advance(task)
+
+            console.print(
+                f"[dim]HTML previews in:[/dim] [bold]{html_dir.relative_to(project_dir)}[/bold]  "
+                f"(open in browser to preview, edit theme.css, hard-refresh)"
+            )
+            ctx.log(f"HTML previews in: {html_dir.relative_to(project_dir)}", level="dim")
+
+            _do_exports(png_paths, exports_dir, export_formats)
+            for fmt in export_formats:
+                out = exports_dir / f"comic.{fmt}"
+                ctx.log(f"{fmt.upper()}: {out}")
+
+            console.print("[green]Stage 8 complete.[/green]")
     else:
         # Render-only: load existing JSON
         json_paths = sorted(json_dir.glob("page_*.json"))
         if not json_paths:
             console.print("[red]No page JSON files found. Run without --from-json first.[/red]")
-            emit({"type": "log", "stage": "compose", "level": "error",
-                  "message": "No page JSON files found."})
+            ctx.log("No page JSON files found.", level="error")
             return
-        begin_stage(state, "compose", total=len(json_paths))
-        emit({"type": "stage_begin", "stage": "compose", "total": len(json_paths)})
-        save_state(state, project_dir)
-        console.print(f"[bold]Re-rendering {len(json_paths)} existing page(s)...[/bold]")
 
-    # ── Render phase (ComicPage JSON → HTML → PNG) ────────────────────────────
-    try:
-        async with browser_context() as browser:
-            with make_progress(on_event) as progress:
-                task = progress.add_task("Rendering pages", total=len(json_paths))
-                png_paths: list[Path] = []
-                for json_path in json_paths:
-                    comic_page   = ComicPage.model_validate_json(json_path.read_text())
-                    html_content = build_page_html(comic_page, project_dir, custom_css)
+        with ctx.execute(total=len(json_paths)):
+            console.print(f"[bold]Re-rendering {len(json_paths)} existing page(s)...[/bold]")
 
-                    html_path = html_dir / f"page_{comic_page.page_number:03d}.html"
-                    html_path.write_text(html_content, encoding="utf-8")
+            async with browser_context() as browser:
+                with make_progress(ctx.on_event) as progress:
+                    task = progress.add_task("Rendering pages", total=len(json_paths))
+                    png_paths = []
+                    for json_path in json_paths:
+                        comic_page   = ComicPage.model_validate_json(json_path.read_text())
+                        html_content = build_page_html(comic_page, project_dir, custom_css)
 
-                    png_path = png_dir / f"page_{comic_page.page_number:03d}.png"
-                    await render_html_to_png(
-                        html_content, png_path,
-                        browser=browser, source_path=html_path,
-                    )
-                    png_paths.append(png_path)
-                    record_item_done(state, "compose")
-                    emit({"type": "stage_progress", "stage": "compose",
-                          "done": state.stages["compose"].items_done,
-                          "total": state.stages["compose"].items_total})
-                    progress.advance(task)
+                        html_path = html_dir / f"page_{comic_page.page_number:03d}.html"
+                        html_path.write_text(html_content, encoding="utf-8")
 
-        console.print(
-            f"[dim]HTML previews in:[/dim] [bold]{html_dir.relative_to(project_dir)}[/bold]  "
-            f"(open in browser to preview, edit theme.css, hard-refresh)"
-        )
-        emit({"type": "log", "stage": "compose", "level": "dim",
-              "message": f"HTML previews in: {html_dir.relative_to(project_dir)}"})
+                        png_path = png_dir / f"page_{comic_page.page_number:03d}.png"
+                        await render_html_to_png(
+                            html_content, png_path,
+                            browser=browser, source_path=html_path,
+                        )
+                        png_paths.append(png_path)
+                        ctx.record_item_done()
+                        ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+                        if task is not None:
+                            progress.advance(task)
 
-        _do_exports(png_paths, exports_dir, export_formats)
-        for fmt in export_formats:
-            out = exports_dir / f"comic.{fmt}"
-            emit({"type": "log", "stage": "compose", "level": "info",
-                  "message": f"{fmt.upper()}: {out}"})
+            _do_exports(png_paths, exports_dir, export_formats)
+            for fmt in export_formats:
+                out = exports_dir / f"comic.{fmt}"
+                ctx.log(f"{fmt.upper()}: {out}")
 
-        complete_stage(state, "compose")
-        emit({"type": "stage_complete", "stage": "compose",
-              "done": state.stages["compose"].items_done,
-              "total": state.stages["compose"].items_total})
-        save_state(state, project_dir)
-        console.print("[green]Stage 8 complete.[/green]")
-
-    except Exception as e:
-        fail_stage(state, "compose", str(e))
-        emit({"type": "stage_fail", "stage": "compose", "message": str(e)})
-        save_state(state, project_dir)
-        raise
+            console.print("[green]Stage 8 complete.[/green]")
 
 
 from novel_to_comic.stages import Stage  # noqa: E402

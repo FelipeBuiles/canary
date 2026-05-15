@@ -12,24 +12,16 @@ from rich.console import Console
 
 from novel_to_comic import artifacts
 from novel_to_comic.config import Config
-from novel_to_comic.events import EventCallback, _NOOP, make_progress
+from novel_to_comic.events import make_progress
 from novel_to_comic.layout_planning import load_layout_plan, prompt_path_for_panel, scene_panel_map
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.prompting import (
+from novel_to_comic.prompt_assembly import (
     IMAGE_PROMPT_VERSION,
-    build_planned_panel_prompt_spec,
+    assemble_panel_prompt,
     ensure_distilled_prompt,
 )
-from novel_to_comic.state import (
-    PipelineState,
-    begin_stage,
-    complete_stage,
-    fail_stage,
-    record_item_done,
-    record_item_failed,
-    save_state,
-)
+from novel_to_comic.stage_runtime import StageRuntime
 
 console = Console()
 
@@ -52,7 +44,7 @@ async def _process_panel(
         ):
             return existing
 
-    prompt = build_planned_panel_prompt_spec(config, project_dir, panel, story_bible, prev_panel)
+    prompt = assemble_panel_prompt(config, project_dir, panel, story_bible, prev_panel)
     prompt = ensure_distilled_prompt(config, prompt)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(prompt.model_dump_json(indent=2))
@@ -62,20 +54,16 @@ async def _process_panel(
 async def run(
     config: Config,
     project_dir: Path,
-    state: PipelineState,
+    ctx: StageRuntime,
     scene_ids: list[str] | None = None,
-    on_event: EventCallback | None = None,
 ) -> None:
     """Execute Stage 5: Generate image prompts for all panels."""
-    emit = on_event or _NOOP
-
     story_bible = artifacts.read_story_bible(project_dir)
 
     plan_path = artifacts.layout_plan_path(project_dir)
     if not plan_path.exists():
         console.print("[red]No layout plan found. Run stage 4 (layout-plan) first.[/red]")
-        emit({"type": "log", "stage": "direct", "level": "error",
-              "message": "No layout plan found. Run stage 4 (layout-plan) first."})
+        ctx.log("No layout plan found. Run stage 4 (layout-plan) first.", level="error")
         return
     plan = load_layout_plan(project_dir)
     panels_by_scene = scene_panel_map(plan)
@@ -93,12 +81,8 @@ async def run(
             prev_panel = scene_panels[index - 1] if index > 0 else None
             planned_panels.append((panel, prev_panel))
 
-    begin_stage(state, "direct", total=len(planned_panels))
-    emit({"type": "stage_begin", "stage": "direct", "total": len(planned_panels)})
-    save_state(state, project_dir)
-
-    try:
-        with make_progress(on_event) as progress:
+    with ctx.execute(total=len(planned_panels)):
+        with make_progress(ctx.on_event) as progress:
             task = progress.add_task("Image prompts", total=len(planned_panels))
             for batch_start in range(0, len(planned_panels), config.parallel_batch_size):
                 batch = planned_panels[batch_start:batch_start + config.parallel_batch_size]
@@ -110,29 +94,16 @@ async def run(
                 for (panel, _prev_panel), result in zip(batch, results):
                     if isinstance(result, Exception):
                         console.print(f"[red]Failed {panel.panel_id}: {result}[/red]")
-                        emit({"type": "log", "stage": "direct", "level": "error",
-                              "message": f"Failed {panel.panel_id}: {result}"})
-                        record_item_failed(state, "direct", panel.panel_id)
+                        ctx.log(f"Failed {panel.panel_id}: {result}", level="error")
+                        ctx.record_item_failed(panel.panel_id)
                     else:
-                        record_item_done(state, "direct")
-                        emit({"type": "stage_progress", "stage": "direct",
-                              "done": state.stages["direct"].items_done,
-                              "total": state.stages["direct"].items_total})
-                    progress.advance(task)
-                save_state(state, project_dir)
+                        ctx.record_item_done()
+                        ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+                    if task is not None:
+                        progress.advance(task)
+                ctx.save()
 
-        complete_stage(state, "direct")
-        emit({"type": "stage_complete", "stage": "direct",
-              "done": state.stages["direct"].items_done,
-              "total": state.stages["direct"].items_total})
-        save_state(state, project_dir)
         console.print("[green]Stage 6 complete.[/green]")
-
-    except Exception as e:
-        fail_stage(state, "direct", str(e))
-        emit({"type": "stage_fail", "stage": "direct", "message": str(e)})
-        save_state(state, project_dir)
-        raise
 
 
 from novel_to_comic.stages import Stage  # noqa: E402

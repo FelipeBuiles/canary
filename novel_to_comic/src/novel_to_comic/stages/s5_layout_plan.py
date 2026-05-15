@@ -29,7 +29,7 @@ from novel_to_comic import artifacts
 from novel_to_comic.clients.text import generate_json
 from novel_to_comic.usage import UsageRecord, estimate_text_cost
 from novel_to_comic.config import Config
-from novel_to_comic.events import EventCallback, _NOOP, make_progress
+from novel_to_comic.events import make_progress
 from novel_to_comic.layout_planning import LAYOUT_PRESET_GEOMETRIES, select_layout_template
 from novel_to_comic.models.comic_page import (
     infer_sfx_intensity,
@@ -50,15 +50,7 @@ from novel_to_comic.models.layout_plan import (
 )
 from novel_to_comic.models.panel import DialogueLine, Screenplay, ScreenplayBeat
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.state import (
-    PipelineState,
-    begin_stage,
-    complete_stage,
-    fail_stage,
-    record_api_usage,
-    record_item_done,
-    save_state,
-)
+from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.text_utils import clean, shorten
 
 
@@ -1537,12 +1529,10 @@ async def _build_layout_plan(
 async def run(
     config: Config,
     project_dir: Path,
-    state: PipelineState,
+    ctx: StageRuntime,
     scene_ids: list[str] | None = None,
-    on_event: EventCallback | None = None,
 ) -> None:
     """Execute layout planning from screenplay artifacts."""
-    emit = on_event or _NOOP
     story_bible = artifacts.read_story_bible(project_dir)
     ids = scene_ids or [scene.id for scene in story_bible.scenes]
     if config.dev_mode and not scene_ids:
@@ -1564,66 +1554,34 @@ async def run(
             config.effective_panel_model(),
             _PLAN_SCENE_SYSTEM + "\n" + sp_text,
         )
-    begin_stage(state, "plan", total=len(ids), estimated_cost_usd=estimated)
-    emit({"type": "stage_begin", "stage": "plan", "total": len(ids)})
-    save_state(state, project_dir)
 
-    try:
-        with make_progress(on_event) as progress:
+    with ctx.execute(total=len(ids), estimated_cost_usd=estimated):
+        with make_progress(ctx.on_event) as progress:
             task = progress.add_task("Layout planning", total=len(ids))
             usage_records: list[UsageRecord] = []
             plan = await _build_layout_plan(config, project_dir, story_bible, ids, usage_records=usage_records)
             artifacts.write_layout_plan(project_dir, plan)
             for usage in usage_records:
-                record_api_usage(state, "plan", usage)
+                ctx.record_api_usage(usage)
             for _scene_id in ids:
-                record_item_done(state, "plan")
-                emit(
-                    {
-                        "type": "stage_progress",
-                        "stage": "plan",
-                        "done": state.stages["plan"].items_done,
-                        "total": state.stages["plan"].items_total,
-                    }
-                )
-                progress.advance(task)
+                ctx.record_item_done()
+                ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+                if task is not None:
+                    progress.advance(task)
 
-        complete_stage(state, "plan")
-        emit(
-            {
-                "type": "stage_complete",
-                "stage": "plan",
-                "done": state.stages["plan"].items_done,
-                "total": state.stages["plan"].items_total,
-            }
-        )
-        save_state(state, project_dir)
         console.print(
             f"[green]Stage 4 complete.[/green] Wrote "
             f"{artifacts.layout_plan_path(project_dir).relative_to(project_dir)} "
             f"with {len(plan.planned_panels)} planned panels across {len(plan.planned_pages)} pages."
             + (f" [yellow]({len(plan.warnings)} warning(s))[/yellow]" if plan.warnings else "")
         )
-        emit(
-            {
-                "type": "log",
-                "stage": "plan",
-                "level": "info",
-                "message": (
-                    f"Wrote {artifacts.layout_plan_path(project_dir).relative_to(project_dir)} "
-                    f"with {len(plan.planned_panels)} planned panels across {len(plan.planned_pages)} pages."
-                ),
-            }
+        ctx.log(
+            f"Wrote {artifacts.layout_plan_path(project_dir).relative_to(project_dir)} "
+            f"with {len(plan.planned_panels)} planned panels across {len(plan.planned_pages)} pages."
         )
         if plan.warnings:
             for warning in plan.warnings:
-                emit({"type": "log", "stage": "plan", "level": "warning", "message": warning})
-
-    except Exception as exc:
-        fail_stage(state, "plan", str(exc))
-        emit({"type": "stage_fail", "stage": "plan", "message": str(exc)})
-        save_state(state, project_dir)
-        raise
+                ctx.log(warning, level="warning")
 
 
 from novel_to_comic.stages import Stage  # noqa: E402
