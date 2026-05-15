@@ -52,9 +52,29 @@ export function useProjects() {
 }
 
 export function useProjectStatus(name: string | undefined) {
+  const qc = useQueryClient();
   const query = useQuery({
     queryKey: ["project", name, "status"],
-    queryFn: () => getProjectStatus(name!),
+    queryFn: async () => {
+      const fresh = await getProjectStatus(name!);
+      // Prevent REST poll from regressing in-progress stage counters that SSE
+      // already advanced — progress should never go backward while running.
+      const cached = qc.getQueryData<ProjectStatus>(["project", name, "status"]);
+      if (!cached) return fresh;
+      const mergedStages = { ...fresh.stages };
+      for (const stage of Object.keys(fresh.stages)) {
+        const freshInfo = fresh.stages[stage];
+        const cachedInfo = cached.stages[stage];
+        if (cachedInfo && freshInfo.status === "running" && cachedInfo.items_done > freshInfo.items_done) {
+          mergedStages[stage] = {
+            ...freshInfo,
+            items_done: cachedInfo.items_done,
+            items_total: Math.max(cachedInfo.items_total, freshInfo.items_total),
+          };
+        }
+      }
+      return { ...fresh, stages: mergedStages };
+    },
     enabled: !!name,
     refetchInterval: (query) => {
       const data = query.state.data;

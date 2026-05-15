@@ -106,6 +106,219 @@ def test_validate_llm_specs_rejects_duplicate_visual_beats():
         )
 
 
+def _make_panel(panel_num: int, **overrides):
+    from novel_to_comic.models.layout_plan import PlannedPanel
+
+    base = {
+        "panel_id": f"scene_001:panel_{panel_num:03d}",
+        "scene_id": "scene_001",
+        "panel_number": panel_num,
+        "beat_ids": [f"scene_001:beat_{panel_num:03d}"],
+        "shot_type": "wide",
+        "characters_present": ["char_001"],
+        "character_actions": {"char_001": "stands numb"},
+        "background_description": "featureless flattened ground, fire on the far horizon",
+    }
+    base.update(overrides)
+    return PlannedPanel(**base)
+
+
+def test_dedupe_adjacent_panels_merges_visual_duplicates():
+    from novel_to_comic.stages.s5_layout_plan import _dedupe_adjacent_panels
+
+    panels = [_make_panel(10), _make_panel(11), _make_panel(12, shot_type="medium")]
+    warnings: list[str] = []
+
+    kept, _ = _dedupe_adjacent_panels(panels, [], warnings)
+
+    # p10 and p11 are visually identical -> merged. p12 differs by shot -> kept.
+    assert [p.panel_id for p in kept] == [
+        "scene_001:panel_010",
+        "scene_001:panel_012",
+    ]
+    # Beat ids from p11 carried into p10.
+    assert "scene_001:beat_011" in kept[0].beat_ids
+    assert any("merged duplicate" in w for w in warnings)
+
+
+def test_dedupe_remaps_narration_decisions_for_dropped_panels():
+    from novel_to_comic.models.layout_plan import NarrationDecision
+    from novel_to_comic.stages.s5_layout_plan import _dedupe_adjacent_panels
+
+    panels = [_make_panel(10), _make_panel(11)]
+    decisions = [
+        NarrationDecision(
+            beat_id="scene_001:beat_011",
+            scene_id="scene_001",
+            beat_index=11,
+            source_text="The voice droned on.",
+            decision="rendered",
+            panel_id="scene_001:panel_011",
+            decision_reason="caption",
+        )
+    ]
+    warnings: list[str] = []
+
+    _, updated_decisions = _dedupe_adjacent_panels(panels, decisions, warnings)
+
+    assert updated_decisions[0].panel_id == "scene_001:panel_010"
+
+
+def test_dedupe_preserves_panels_when_action_differs():
+    from novel_to_comic.stages.s5_layout_plan import _dedupe_adjacent_panels
+
+    p1 = _make_panel(10)
+    p2 = _make_panel(
+        11,
+        character_actions={"char_001": "turns toward the light"},
+    )
+    warnings: list[str] = []
+    kept, _ = _dedupe_adjacent_panels([p1, p2], [], warnings)
+    assert len(kept) == 2
+    assert not warnings
+
+
+def test_warn_scene_overflow_flags_overlong_scenes():
+    from novel_to_comic.stages.s5_layout_plan import _warn_scene_panel_overflow
+
+    panels = [_make_panel(i) for i in range(1, 20)]  # 19 panels, all scene_001
+    warnings: list[str] = []
+    _warn_scene_panel_overflow(panels, warnings)
+    assert any("planned 19 panels" in w for w in warnings)
+
+
+def test_warn_scene_overflow_silent_on_normal_scene_sizes():
+    from novel_to_comic.stages.s5_layout_plan import _warn_scene_panel_overflow
+
+    panels = [_make_panel(i) for i in range(1, 10)]  # 9 panels — fine
+    warnings: list[str] = []
+    _warn_scene_panel_overflow(panels, warnings)
+    assert warnings == []
+
+
+def _bible_for_splash_demote() -> "StoryBible":
+    from novel_to_comic.models.story_bible import (
+        Character,
+        Location,
+        NarrativeArc,
+        Scene,
+        StoryBible,
+    )
+    return StoryBible(
+        title="Test",
+        author="A",
+        total_scenes=4,
+        characters=[
+            Character(
+                id="char_001", name="X",
+                visual_anchor="tag", age_range="20s", gender="any",
+                distinguishing_features=[], default_outfit="",
+                relationships=[], first_appearance_scene="scene_001",
+            )
+        ],
+        locations=[Location(id="loc_001", name="L", visual_anchor="x", mood="m")],
+        scenes=[
+            Scene(id="scene_001", chapter=1, title="A",
+                  location_id="loc_001", character_ids=[],
+                  summary="...", scene_type="action",
+                  narrative_beat="inciting_incident",
+                  source_start_quote="..."),
+            Scene(id="scene_002", chapter=1, title="B",
+                  location_id="loc_001", character_ids=[],
+                  summary="...", scene_type="action",
+                  narrative_beat="rising_action",
+                  source_start_quote="..."),
+            Scene(id="scene_003", chapter=1, title="C",
+                  location_id="loc_001", character_ids=[],
+                  summary="...", scene_type="action",
+                  narrative_beat="rising_action",
+                  source_start_quote="..."),
+            Scene(id="scene_004", chapter=1, title="D",
+                  location_id="loc_001", character_ids=[],
+                  summary="...", scene_type="action",
+                  narrative_beat="climax",
+                  source_start_quote="..."),
+        ],
+        narrative_arcs=[
+            NarrativeArc(act=1, title="Setup",
+                         scenes=["scene_001", "scene_002"], turning_point=None),
+            NarrativeArc(act=2, title="Confrontation",
+                         scenes=["scene_003", "scene_004"], turning_point=None),
+        ],
+        props=[],
+    )
+
+
+def _splash_panel(scene_id: str, panel_num: int):
+    from novel_to_comic.models.layout_plan import PlannedPanel
+    return PlannedPanel(
+        panel_id=f"{scene_id}:panel_{panel_num:03d}",
+        scene_id=scene_id,
+        panel_number=panel_num,
+        importance="splash",
+        shape_intent="wide",
+        shot_type="wide",
+        characters_present=[],
+        background_description=f"bg for {scene_id}",
+    )
+
+
+def test_demote_excess_splashes_caps_one_per_act():
+    from novel_to_comic.stages.s5_layout_plan import _demote_excess_splashes
+
+    bible = _bible_for_splash_demote()
+    # Each scene gets one splash + a regular follow-up panel.
+    panels = []
+    for sid, pn in [("scene_001", 1), ("scene_002", 1), ("scene_003", 1), ("scene_004", 1)]:
+        panels.append(_splash_panel(sid, pn))
+
+    warnings: list[str] = []
+    out = _demote_excess_splashes(panels, bible, warnings)
+
+    importances = {p.panel_id: p.importance for p in out}
+    # Act 1: scene_001 (inciting_incident) keeps splash, scene_002 demoted.
+    assert importances["scene_001:panel_001"] == "splash"
+    assert importances["scene_002:panel_001"] == "hero"
+    # Act 2: scene_004 (climax) keeps splash, scene_003 (rising_action) demoted.
+    assert importances["scene_003:panel_001"] == "hero"
+    assert importances["scene_004:panel_001"] == "splash"
+    # Demoted panels keep shape prominence
+    demoted = next(p for p in out if p.panel_id == "scene_002:panel_001")
+    assert demoted.shape_intent in {"wide", "panorama", "bleed"}
+    # Warnings emitted for each demotion
+    assert any("scene_002" in w for w in warnings)
+    assert any("scene_003" in w for w in warnings)
+
+
+def test_demote_excess_splashes_keeps_lone_splashes():
+    from novel_to_comic.stages.s5_layout_plan import _demote_excess_splashes
+
+    bible = _bible_for_splash_demote()
+    # Only one splash per act — nothing should be demoted.
+    panels = [
+        _splash_panel("scene_001", 1),  # act 1
+        _splash_panel("scene_004", 1),  # act 2
+    ]
+    warnings: list[str] = []
+    out = _demote_excess_splashes(panels, bible, warnings)
+    assert all(p.importance == "splash" for p in out)
+    assert warnings == []
+
+
+def test_demote_excess_splashes_skipped_when_no_arcs():
+    from novel_to_comic.stages.s5_layout_plan import _demote_excess_splashes
+    from novel_to_comic.models.story_bible import StoryBible
+
+    bible = StoryBible(
+        title="t", author="a", total_scenes=0,
+        characters=[], locations=[], scenes=[], narrative_arcs=[], props=[],
+    )
+    panels = [_splash_panel("scene_001", 1), _splash_panel("scene_001", 2)]
+    warnings: list[str] = []
+    out = _demote_excess_splashes(panels, bible, warnings)
+    assert all(p.importance == "splash" for p in out)
+
+
 def test_scene_planning_prompt_includes_story_props():
     from novel_to_comic.models.panel import Screenplay
 

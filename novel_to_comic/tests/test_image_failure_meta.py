@@ -65,7 +65,7 @@ def test_generate_panel_writes_failure_metadata(tmp_path, monkeypatch):
     assert payload["recoverable"] is True
     assert "recovery" not in payload
     assert payload["parameters"]["planned_panel_id"] == "scene_001:panel_001"
-    assert payload["prompt"].endswith("A panel with difficult content.")
+    assert "Visual brief:\nA panel with difficult content." in payload["prompt"]
     assert payload["error"]["type"] == "ValueError"
     assert "IMAGE_PROHIBITED_CONTENT" in payload["error"]["message"]
 

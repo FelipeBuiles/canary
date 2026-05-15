@@ -131,8 +131,48 @@ def _labels(config: Config | None = None) -> dict[str, str]:
 
 _clean = clean
 _shorten = shorten
-IMAGE_PROMPT_VERSION = 16
+IMAGE_PROMPT_VERSION = 17
 _SOFT_CONTINUITY = {"smooth_continuation", "match_cut"}
+
+# Tokens whose presence in panel.background_description signals the panel
+# depicts an INTERIOR setting — used to filter the scene-level location
+# anchor so its outdoor-specific objects (bike rack, moped, street lamp,
+# rubble, etc.) don't leak into a flashback or transitional interior panel.
+_INTERIOR_BG_HINTS = (
+    "indoor", "interior", "bedroom", "bed,", "bed ", " bed.", "room,", "room ",
+    "hallway", "corridor", "tunnel", "ceiling", "doorframe", "doorway",
+    "staircase", "stairwell", "stairs end", "marble floor", "marble wall",
+    "torchlit", "torch-lit", "dungeon", "guild ", "tutorial guild",
+    "rumpled", "blanket", "bedside", "bedspread", "bedsheets",
+    "wallpaper", "indoor lighting",
+)
+
+# Tokens whose presence in panel.background_description signals the panel
+# depicts an EXTERIOR setting.
+_EXTERIOR_BG_HINTS = (
+    "outdoor", "outside", "sky", "street", "sidewalk", "snowy", "tree branch",
+    "rooftop", "facade", "city block", "ruined city", "open dark",
+    "flattened ", "rubble", "city receding", "horizon", "open sky",
+)
+
+# Concrete-object tokens from a location anchor that should be DROPPED when
+# the panel's background_description indicates an interior. These reference
+# things visible only when the camera is outdoors at that location.
+_OUTDOOR_ANCHOR_TOKENS = (
+    "outdoors", "outside", "street", "sidewalk", "sky", "rooftop", "block",
+    "facade", "bicycle rack", "bike rack", "moped", "stop sign",
+    "street lamp", "streetlamp", "parked car", "rubble", "debris", "ruins",
+    "dirt", "empty space", "snow", "snowdrift", "tree", "tree branch",
+)
+
+# Concrete-object tokens from a location anchor that should be DROPPED when
+# the panel's background_description indicates an exterior.
+_INTERIOR_ANCHOR_TOKENS = (
+    "indoors", "indoor", "interior", "bedroom", "bed", "rumpled bed",
+    "hallway", "corridor", "tunnel", "marble floor", "marble wall",
+    "torchlit", "torch-lit", "torches", "ceiling", "walls", "wallpaper",
+    "double doors", "wooden door", "bedside lamp", "stairs",
+)
 _SEQUENTIAL_THEN_RE = re.compile(r"(?<=[,;.!?])\s+then\s+", re.IGNORECASE)
 _LEADING_TRANSITION_ACTION_RE = re.compile(
     r"^(?:rises?|stands?|turns?|moves?|steps?|walks?|bends?|leans?)"
@@ -158,6 +198,42 @@ def _strip_text_render_sentences(text: str) -> str:
         if not any(tok in s.lower() for tok in _TEXT_RENDER_TOKENS)
     ]
     return " ".join(kept).strip()
+
+
+def _detect_bg_context(background: str) -> str:
+    """Return 'interior', 'exterior', or 'ambiguous' for a panel background."""
+    if not background:
+        return "ambiguous"
+    bg_lower = background.lower()
+    interior_hit = any(tok in bg_lower for tok in _INTERIOR_BG_HINTS)
+    exterior_hit = any(tok in bg_lower for tok in _EXTERIOR_BG_HINTS)
+    if interior_hit and not exterior_hit:
+        return "interior"
+    if exterior_hit and not interior_hit:
+        return "exterior"
+    return "ambiguous"
+
+
+def _filter_location_anchor_for_panel(anchor: str, background: str) -> str:
+    """Drop concrete-object tokens from a location anchor that contradict
+    the panel's background_description.
+
+    The location anchor carries two kinds of signal: atmospheric/style tags
+    (night, winter, cold, dark, overcast — useful in every panel of the
+    scene) and concrete-object tags (bike rack, moped, parked cars,
+    rumpled bed — only valid when the camera is actually at that location
+    state). The latter pollute flashback/transition panels with persistent
+    scene-wide objects. Drop them when the background says otherwise.
+    """
+    if not anchor or not background:
+        return anchor
+    context = _detect_bg_context(background)
+    if context == "ambiguous":
+        return anchor
+    blocklist = _OUTDOOR_ANCHOR_TOKENS if context == "interior" else _INTERIOR_ANCHOR_TOKENS
+    tags = [t.strip() for t in anchor.split(",") if t.strip()]
+    kept = [t for t in tags if not any(blocked in t.lower() for blocked in blocklist)]
+    return ", ".join(kept)
 
 
 def _character_identity(
@@ -453,6 +529,21 @@ def build_planned_panel_prompt_spec(
     if scene:
         location = next((loc for loc in story_bible.locations if loc.id == scene.location_id), None)
 
+    # Resolve the active location state for this panel. Panel-level override
+    # wins, then scene-level, else the location's default visual_anchor.
+    active_state_anchor = None
+    active_state_mood = None
+    state_id = getattr(panel, "location_state_id", None) or (
+        scene.location_state_id if scene else None
+    )
+    if location and state_id:
+        active_state = next(
+            (st for st in (location.states or []) if st.id == state_id),
+            None,
+        )
+        if active_state:
+            active_state_anchor = active_state.visual_anchor
+
     shot_key = panel.shot_type.lower().replace(" ", "-")
     composition_map = _SHOT_COMPOSITION_EMPTY if character_count == 0 else _SHOT_COMPOSITION
     composition = composition_map.get(
@@ -491,10 +582,18 @@ def build_planned_panel_prompt_spec(
         composition = f"{composition}. {camera_note}"
 
     setting_parts = []
-    if location and location.visual_anchor:
-        setting_parts.append(_shorten(location.visual_anchor, 180).rstrip(" .,;"))
-    if panel.background_description:
-        setting_parts.append(_shorten(panel.background_description, 160).rstrip(" .,;"))
+    bg_description = _clean(panel.background_description)
+    # Prefer the location's active state anchor (clean per-state tags) when
+    # the bible defines location states; fall back to the location's default
+    # visual_anchor when no state resolves.
+    anchor_source = active_state_anchor or (location.visual_anchor if location else None)
+    if anchor_source:
+        anchor = _shorten(anchor_source, 180).rstrip(" .,;")
+        anchor = _filter_location_anchor_for_panel(anchor, bg_description)
+        if anchor:
+            setting_parts.append(anchor)
+    if bg_description:
+        setting_parts.append(_shorten(bg_description, 160).rstrip(" .,;"))
 
     width, height = dimensions_for_panel(panel)
     setting = "; ".join(setting_parts)
@@ -775,6 +874,24 @@ def _distilled_light_mood_sentence(prompt: ImagePrompt) -> str:
     return _sentence(_shorten_distilled(lighting or mood, 140))
 
 
+def _distilled_props_sentence(prompt: ImagePrompt) -> str:
+    """Emit a compact 'with' clause naming the props in the panel.
+
+    Props (story-bible-defined recurring objects) carry their own
+    visual_anchor identity and must reach the image model. Key_objects
+    are now folded into the subject/setting clauses, so this clause
+    surfaces props only.
+    """
+    props = [
+        _shorten_distilled(value, 120)
+        for value in _clean_list(getattr(prompt, "props", []) or [], limit=2)
+    ]
+    props = [p for p in props if p]
+    if not props:
+        return ""
+    return _sentence(f"With {'; '.join(props)}")
+
+
 def _distilled_must_show_sentence(prompt: ImagePrompt) -> str:
     requirements = [
         _readable_prompt_text(req).strip(" .")
@@ -785,14 +902,136 @@ def _distilled_must_show_sentence(prompt: ImagePrompt) -> str:
     return _sentence(f"Must show {' and '.join(req.strip(' .') for req in requirements)}")
 
 
+_DISTILLED_STOPWORDS = frozenset({
+    "a", "an", "the", "and", "or", "of", "in", "on", "at", "to", "for", "from",
+    "with", "without", "near", "by", "as", "is", "are", "was", "were", "be",
+    "been", "being", "this", "that", "these", "those", "it", "its", "her",
+    "his", "their", "them", "they", "he", "she", "we", "us", "you", "your",
+    "panel", "vertical", "horizontal", "shot", "of", "camera",
+    "wide", "medium", "close-up", "close", "establishing", "low", "high",
+    "angle", "long", "extreme", "over-shoulder", "portrait", "full", "body",
+    "visible", "frame", "scene", "mood", "lighting", "show", "must",
+    "key", "objects", "visible", "background", "foreground",
+})
+
+
+def _distilled_significant_tokens(text: str) -> set[str]:
+    if not text:
+        return set()
+    normalized = text.lower().replace("_", " ")
+    raw = re.split(r"[^a-z0-9]+", normalized)
+    return {
+        tok for tok in raw
+        if tok and len(tok) > 2 and tok not in _DISTILLED_STOPWORDS
+    }
+
+
+_DISTILLED_PHRASE_SPLIT_RE = re.compile(r",| and ", re.IGNORECASE)
+
+
+def _distilled_strip_known_tokens(text: str, known: set[str]) -> str:
+    """Drop phrases whose meaningful tokens are already in `known`.
+
+    Splits on commas and "and" so the must-show clause ("Must show X and Y")
+    can shed Y when Y's significant tokens were already surfaced upstream.
+    A phrase survives only if it contributes at least one new significant
+    token.
+    """
+    if not text or not known:
+        return text
+    parts = [p.strip() for p in _DISTILLED_PHRASE_SPLIT_RE.split(text) if p.strip()]
+    if len(parts) <= 1:
+        # Single-phrase clause — keep as-is rather than nuking entire sentences.
+        return text
+    kept: list[str] = []
+    for part in parts:
+        tokens = _distilled_significant_tokens(part)
+        if not tokens or (tokens - known):
+            kept.append(part)
+    return ", ".join(kept)
+
+
+def _distilled_continuity_sentence(prompt: ImagePrompt) -> str:
+    """Surface one short transition / continuity directive when available.
+
+    The image model otherwise sees each panel in isolation. A one-line cue
+    like "Match-cut from prior panel: Carl smoking on bed" anchors pose and
+    framing decisions across adjacent panels.
+    """
+    note = _clean(getattr(prompt, "continuity_note", None))
+    transition_in = _clean(getattr(prompt, "transition_in", None))
+    transition_out = _clean(getattr(prompt, "transition_out", None))
+    if note:
+        return _sentence(_shorten_distilled(note, 200))
+    if transition_in and transition_in.lower() not in {"none", "scene_change"}:
+        return _sentence(f"Transition in: {transition_in.replace('_', ' ')}")
+    if transition_out and transition_out.lower() not in {"none", "scene_change"}:
+        return _sentence(f"Transition out: {transition_out.replace('_', ' ')}")
+    return ""
+
+
 def generate_distilled_prompt(prompt: ImagePrompt) -> str:
-    """Compile a short, deterministic visual brief from structured prompt fields."""
-    sentences = [
-        _distilled_subject_sentence(prompt),
-        _distilled_setting_sentence(prompt),
-        _distilled_light_mood_sentence(prompt),
-        _distilled_must_show_sentence(prompt),
-    ]
+    """Compile a short, deterministic visual brief from structured prompt fields.
+
+    Sentence order is fixed and each later sentence is filtered against the
+    union of significant tokens already emitted, so a noun mentioned in the
+    subject clause does not get repeated in the setting clause or in the
+    must-show clause. The standalone "Key visible objects" sentence has been
+    folded into the subject/setting clauses to eliminate triple-duplication.
+    """
+    has_structured_visual_fields = any([
+        getattr(prompt, "subjects", None),
+        getattr(prompt, "composition", None),
+        getattr(prompt, "setting", None),
+        getattr(prompt, "lighting", None),
+        getattr(prompt, "mood", None),
+        getattr(prompt, "key_objects", None),
+        getattr(prompt, "visual_requirements", None),
+        getattr(prompt, "props", None),
+    ])
+    if not has_structured_visual_fields:
+        return _clean(getattr(prompt, "full_prompt", "")) or render_panel_prompt_body(prompt)
+
+    sentences: list[str] = []
+    seen: set[str] = set()
+
+    subject = _distilled_subject_sentence(prompt)
+    if subject:
+        sentences.append(subject)
+        seen |= _distilled_significant_tokens(subject)
+
+    setting = _distilled_setting_sentence(prompt)
+    if setting:
+        deduped = _distilled_strip_known_tokens(setting, seen)
+        # _distilled_strip_known_tokens may have removed the trailing period.
+        deduped = _sentence(deduped) if deduped else ""
+        if deduped:
+            sentences.append(deduped)
+            seen |= _distilled_significant_tokens(deduped)
+
+    light_mood = _distilled_light_mood_sentence(prompt)
+    if light_mood:
+        light_mood = _sentence(_distilled_strip_known_tokens(light_mood, seen))
+        if light_mood and (_distilled_significant_tokens(light_mood) - seen):
+            sentences.append(light_mood)
+            seen |= _distilled_significant_tokens(light_mood)
+
+    props_clause = _distilled_props_sentence(prompt)
+    if props_clause:
+        sentences.append(props_clause)
+        seen |= _distilled_significant_tokens(props_clause)
+
+    must_show = _distilled_must_show_sentence(prompt)
+    if must_show:
+        must_show = _sentence(_distilled_strip_known_tokens(must_show, seen))
+        if must_show and (_distilled_significant_tokens(must_show) - seen):
+            sentences.append(must_show)
+            seen |= _distilled_significant_tokens(must_show)
+
+    continuity = _distilled_continuity_sentence(prompt)
+    if continuity:
+        sentences.append(continuity)
+
     text = " ".join(sentence for sentence in sentences if sentence).strip()
     return text or _clean(getattr(prompt, "full_prompt", "")) or render_panel_prompt_body(prompt)
 
@@ -827,7 +1066,14 @@ _GPT_IMAGE_2_RENDERING_DISCIPLINE = (
 _REFERENCE_CONSTRAINTS = (
     "Use reference images only for identity, continuity, palette, and broad style. "
     "Do not copy sample-image artifacts, borders, layout grids, repeated texture "
-    "fields, background patterns, or incidental noise."
+    "fields, background patterns, incidental noise, or decorative colored border effects "
+    "surrounding character reference images."
+)
+
+_LAYOUT_CONSTRAINTS = (
+    "Single panel image: render the entire canvas as one unified scene. "
+    "Do not divide the image into sub-panels, columns, rows, gutters, or internal "
+    "panel borders. No comic-page layout, strip layout, or split-screen compositions."
 )
 
 
@@ -894,6 +1140,7 @@ def render_generation_prompt(
     constraint_lines.extend([
         f"- {_GENERATION_RENDERING_CONSTRAINTS}",
         f"- {_REFERENCE_CONSTRAINTS}",
+        f"- {_LAYOUT_CONSTRAINTS}",
     ])
     _append_section(sections, "Constraints", constraint_lines)
 

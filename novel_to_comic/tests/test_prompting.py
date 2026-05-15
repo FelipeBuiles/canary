@@ -3,7 +3,14 @@
 from novel_to_comic.config import Config
 from novel_to_comic.models.layout_plan import PlannedPanel
 from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
-from novel_to_comic.models.story_bible import Character, Location, Prop, Scene, StoryBible
+from novel_to_comic.models.story_bible import (
+    Character,
+    Location,
+    LocationState,
+    Prop,
+    Scene,
+    StoryBible,
+)
 from novel_to_comic.prompting import (
     build_planned_panel_prompt_spec,
     dimensions_for_panel,
@@ -458,6 +465,340 @@ def test_prompt_does_not_promote_ambient_flowers_to_carried_bundle_prop(tmp_path
     assert "Knobby Stick" in generation_prompt
     assert "Key props:\n" not in generation_prompt
     assert "Bundle of Flowers:" not in generation_prompt
+
+
+def test_interior_panel_drops_outdoor_tokens_from_location_anchor(tmp_path):
+    """A bedroom-flashback panel must not inherit 'bike rack, moped, snow' from
+    the scene's outdoor location anchor."""
+    story_bible = StoryBible(
+        title="DCC",
+        author="Matt Dinniman",
+        total_scenes=1,
+        characters=[
+            Character(
+                id="char_001",
+                name="Carl",
+                visual_anchor="1man, adult male, short brown hair, leather jacket, boxers",
+                age_range="late 20s",
+                gender="male",
+                distinguishing_features=["muscular build"],
+                default_outfit="boxers, leather jacket, pink crocs",
+                relationships=[],
+                first_appearance_scene="scene_001",
+            )
+        ],
+        locations=[
+            Location(
+                id="loc_001",
+                name="Seattle Street",
+                visual_anchor=(
+                    "night, outdoors, snow, winter, cold, ruins, rubble, dark, "
+                    "overcast, empty space, dirt, bicycle rack, moped, street lamp, "
+                    "stop sign, debris"
+                ),
+                mood="apocalyptic",
+            )
+        ],
+        scenes=[
+            Scene(
+                id="scene_001",
+                chapter=1,
+                title="The Transformation",
+                location_id="loc_001",
+                character_ids=["char_001"],
+                summary="Carl outside in the cold.",
+                scene_type="transition",
+                narrative_beat="inciting_incident",
+                source_start_quote="The transformation occurred",
+            )
+        ],
+        narrative_arcs=[],
+        props=[],
+    )
+
+    interior_panel = PlannedPanel(
+        panel_id="scene_001:panel_003",
+        scene_id="scene_001",
+        panel_number=3,
+        shot_type="close-up",
+        camera_angle="over-shoulder",
+        characters_present=["char_001"],
+        character_actions={"char_001": "sits on the bed smoking"},
+        character_positions={"char_001": "left"},
+        background_description=(
+            "rumpled bed, bedside lamp, winter darkness pressing in through the cracked window"
+        ),
+        lighting="warm bedside lamp",
+        mood="tense",
+    )
+
+    prompt = build_planned_panel_prompt_spec(
+        Config(), tmp_path, interior_panel, story_bible
+    )
+
+    # Outdoor-only concrete objects must not appear in the indoor panel.
+    setting_lower = (prompt.setting or "").lower()
+    assert "bicycle rack" not in setting_lower
+    assert "moped" not in setting_lower
+    assert "rubble" not in setting_lower
+    assert "debris" not in setting_lower
+    assert "stop sign" not in setting_lower
+    # Background description still carries the actual interior cues.
+    assert "rumpled bed" in setting_lower
+    assert "bedside lamp" in setting_lower
+    # Atmospheric tokens (night, winter, cold, dark, overcast) are retained.
+    assert "night" in setting_lower
+    assert "cold" in setting_lower
+
+
+def test_exterior_panel_keeps_outdoor_location_anchor(tmp_path):
+    story_bible = StoryBible(
+        title="DCC",
+        author="Matt Dinniman",
+        total_scenes=1,
+        characters=[],
+        locations=[
+            Location(
+                id="loc_001",
+                name="Seattle Street",
+                visual_anchor=(
+                    "night, outdoors, snow, winter, cold, dark, overcast, "
+                    "bicycle rack, moped, street lamp"
+                ),
+                mood="apocalyptic",
+            )
+        ],
+        scenes=[
+            Scene(
+                id="scene_001",
+                chapter=1,
+                title="Aftermath",
+                location_id="loc_001",
+                character_ids=[],
+                summary="Empty street.",
+                scene_type="transition",
+                narrative_beat="rising_action",
+                source_start_quote="Everything was gone",
+            )
+        ],
+        narrative_arcs=[],
+        props=[],
+    )
+    outdoor_panel = PlannedPanel(
+        panel_id="scene_001:panel_006",
+        scene_id="scene_001",
+        panel_number=6,
+        shot_type="wide",
+        camera_angle="eye-level",
+        characters_present=[],
+        character_actions={},
+        background_description=(
+            "entire city block flattened, rubble where the apartment stood, distant fire on the horizon"
+        ),
+        lighting="cold blue night",
+        mood="catastrophic",
+    )
+    prompt = build_planned_panel_prompt_spec(
+        Config(), tmp_path, outdoor_panel, story_bible
+    )
+    # When background is clearly exterior, the outdoor anchor stays intact.
+    setting_lower = (prompt.setting or "").lower()
+    assert "bicycle rack" in setting_lower
+    assert "moped" in setting_lower
+
+
+def test_distilled_prompt_does_not_repeat_subject_tokens_in_setting():
+    """Tokens already named in the subject clause should not be re-listed in
+    the setting clause — a streetlamp should not appear four times in one
+    distilled prompt."""
+    prompt = ImagePrompt(
+        scene_id="scene_001",
+        panel_number=1,
+        composition="wide vertical panel, environment dominant, eye-level camera",
+        key_objects=["streetlamp", "snow"],
+        setting=(
+            "night, outdoors, snow, winter, cold, ruins, rubble, dark, overcast, "
+            "empty space, dirt, bicycle rack, moped, street lamp, stop sign, debris; "
+            "ruined city block, snow dusting the street, distant apartment facades still standing"
+        ),
+        lighting="cold blue night with one sodium streetlamp",
+        mood="ominous",
+        visual_requirements=[
+            "Dark Seattle street at 2:23 AM with thin snow and frost on the pavement.",
+            "A single streetlamp burning in an otherwise quiet, ruined block.",
+        ],
+        constraints="exactly 0 characters; no text",
+        width=768,
+        height=1344,
+        steps=8,
+    )
+
+    distilled = generate_distilled_prompt(prompt)
+
+    # streetlamp appeared 4x and snow 4x in the old format. Phrase-level dedup
+    # cuts both substantially. "streetlamp" survives in the subject + one
+    # natural-language phrase (lighting or must-show); "snow" is stripped from
+    # the setting clause entirely.
+    assert distilled.lower().count("streetlamp") <= 3
+    assert distilled.lower().count(" snow") <= 2
+    # The standalone "Key visible objects:" sentence is gone.
+    assert "Key visible objects" not in distilled
+    # Setting clause no longer redundantly lists "snow" (already in subject).
+    setting_segment = distilled.split(".")[1] if "." in distilled else ""
+    assert " snow," not in setting_segment.lower()
+
+
+def test_distilled_prompt_surfaces_continuity_note():
+    prompt = ImagePrompt(
+        scene_id="scene_001",
+        panel_number=2,
+        subjects=[
+            PromptSubject(
+                character_id="char_001",
+                name="Carl",
+                identity="leather jacket, boxers, pink crocs",
+                action="bursts out the front door",
+                position="center",
+            )
+        ],
+        composition="medium panel",
+        setting="snowy sidewalk in front of seven-story apartment",
+        lighting="cold blue night",
+        mood="urgent",
+        transition_in="smooth_continuation",
+        transition_out="smooth_continuation",
+        continuity_note=(
+            "CONTINUING FROM: Carl shoves feet into pink Crocs in entryway. "
+            "TRANSITION TYPE: smooth_continuation."
+        ),
+        constraints="exactly 1 character; no text",
+        width=768,
+        height=1344,
+        steps=8,
+    )
+
+    distilled = generate_distilled_prompt(prompt)
+
+    assert "CONTINUING FROM" in distilled or "smooth continuation" in distilled.lower()
+
+
+def test_panel_location_state_id_overrides_default_anchor(tmp_path):
+    """When a panel sets location_state_id, the prompt uses that state's
+    visual_anchor instead of the location's default anchor."""
+    story_bible = StoryBible(
+        title="DCC",
+        author="Matt Dinniman",
+        total_scenes=1,
+        characters=[],
+        locations=[
+            Location(
+                id="loc_001",
+                name="Seattle Street",
+                visual_anchor="default tags do not appear",
+                mood="apocalyptic",
+                states=[
+                    LocationState(
+                        id="loc_001_pre",
+                        name="Pre-collapse",
+                        visual_anchor=(
+                            "night, outdoors, snow, brick apartment facade, "
+                            "streetlamp, parked cars, sidewalk"
+                        ),
+                    ),
+                    LocationState(
+                        id="loc_001_post",
+                        name="Post-collapse aftermath",
+                        visual_anchor=(
+                            "night, flattened dirt, rubble, distant fire, "
+                            "bicycle rack, moped, stop sign"
+                        ),
+                    ),
+                ],
+            )
+        ],
+        scenes=[
+            Scene(
+                id="scene_001",
+                chapter=1,
+                title="The Transformation",
+                location_id="loc_001",
+                location_state_id="loc_001_pre",
+                character_ids=[],
+                summary="Pre-collapse street",
+                scene_type="transition",
+                narrative_beat="inciting_incident",
+                source_start_quote="The transformation occurred",
+            )
+        ],
+        narrative_arcs=[],
+        props=[],
+    )
+
+    panel_pre = PlannedPanel(
+        panel_id="scene_001:panel_001",
+        scene_id="scene_001",
+        panel_number=1,
+        shot_type="wide",
+        camera_angle="eye-level",
+        characters_present=[],
+        background_description="dark Seattle street, snow on the pavement, parked cars",
+        lighting="cold blue night",
+        mood="ominous",
+    )
+    panel_post = PlannedPanel(
+        panel_id="scene_001:panel_006",
+        scene_id="scene_001",
+        panel_number=6,
+        shot_type="wide",
+        camera_angle="eye-level",
+        characters_present=[],
+        background_description="entire block flattened, rubble where the apartment stood",
+        lighting="dark, distant fire glow",
+        mood="catastrophic",
+        location_state_id="loc_001_post",
+    )
+
+    pre_prompt = build_planned_panel_prompt_spec(Config(), tmp_path, panel_pre, story_bible)
+    post_prompt = build_planned_panel_prompt_spec(Config(), tmp_path, panel_post, story_bible)
+
+    pre_setting = (pre_prompt.setting or "").lower()
+    post_setting = (post_prompt.setting or "").lower()
+
+    # Pre-collapse panel picks up the pre state's anchor, NOT the post tags.
+    assert "brick apartment facade" in pre_setting or "streetlamp" in pre_setting
+    assert "rubble" not in pre_setting
+    assert "bicycle rack" not in pre_setting
+
+    # Post-collapse panel picks up the post state's anchor.
+    assert "rubble" in post_setting or "flattened dirt" in post_setting
+    assert "bicycle rack" in post_setting
+
+
+def test_distilled_prompt_keeps_props_with_visual_anchor():
+    """Removing the redundant key-objects sentence should not also drop props
+    — props carry their own visual_anchor identity that must reach the model."""
+    prompt = ImagePrompt(
+        scene_id="scene_002",
+        panel_number=1,
+        subjects=[
+            PromptSubject(
+                character_id="char_001",
+                name="Myop",
+                identity="1girl, child, barefoot",
+                action="cradles wildflowers",
+                position="center",
+            )
+        ],
+        composition="medium panel",
+        setting="forest floor",
+        props=["Bundle of Flowers: messy armful of wild forest flora"],
+        constraints="exactly 1 character; no text",
+        width=768,
+        height=1344,
+        steps=8,
+    )
+    distilled = generate_distilled_prompt(prompt)
+    assert "Bundle of Flowers" in distilled
 
 
 def test_prompt_keeps_bundle_prop_when_character_carries_flowers(tmp_path):

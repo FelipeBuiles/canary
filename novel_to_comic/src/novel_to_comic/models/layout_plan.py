@@ -82,6 +82,7 @@ class LLMPanelSpec(BaseModel):
     shape_intent: ShapeIntent = "rect"
     transition_out: str | None = None
     page_break_after: bool = False
+    location_state_id: str | None = None  # Active location state for this panel
 
 
 class LLMNarrationDecisionSpec(BaseModel):
@@ -161,6 +162,10 @@ class PlannedPanel(BaseModel):
     narration_mode: NarrationMode | None = None
     preferred_caption_zone: CaptionZone | None = None
     page_break_after: bool = False
+    location_state_id: str | None = None
+    # Identifies which LocationState applies to this panel (when the scene's
+    # location has multiple states). Falls back to the scene's
+    # location_state_id, then to the location's default visual_anchor.
 
     @field_validator("sfx", mode="before")
     @classmethod

@@ -27,7 +27,6 @@ from pathlib import Path
 
 import img2pdf
 from rich.console import Console
-from rich.progress import Progress
 
 from novel_to_comic import artifacts
 from novel_to_comic.assembly.html_renderer import (
@@ -329,10 +328,6 @@ async def run(
                   "message": "No valid panel images found."})
             return
 
-        begin_stage(state, "compose", total=len(panel_data))
-        emit({"type": "stage_begin", "stage": "compose", "total": len(panel_data)})
-        save_state(state, project_dir)
-
         if plan_path.exists():
             projected_pages = persist_projected_pages(project_dir, story_bible, theme_name)
             page_groups = _collect_page_groups_from_layout_plan(project_dir)
@@ -343,6 +338,9 @@ async def run(
         else:
             page_groups = _group_into_pages(panel_data, max_per_page)
             json_paths = []
+        begin_stage(state, "compose", total=len(page_groups))
+        emit({"type": "stage_begin", "stage": "compose", "total": len(page_groups)})
+        save_state(state, project_dir)
         console.print(
             f"[bold]Building {len(panel_data)} panels → "
             f"{len(page_groups)} pages{' from layout plan' if plan_path.exists() else f' ({max_per_page}/page)'}...[/bold]"
@@ -354,12 +352,6 @@ async def run(
                 comic_page = _build_comic_page(group, i + 1, project_dir, story_bible, theme_name)
                 artifacts.write_compose_page(project_dir, i + 1, comic_page)
                 json_paths.append(artifacts.compose_page_path(project_dir, i + 1))
-        for group in page_groups:
-            for _ in group:
-                record_item_done(state, "compose")
-                emit({"type": "stage_progress", "stage": "compose",
-                      "done": state.stages["compose"].items_done,
-                      "total": state.stages["compose"].items_total})
         save_state(state, project_dir)
         console.print(f"[dim]Page JSON files in:[/dim] [bold]{json_dir.relative_to(project_dir)}[/bold]")
         emit({"type": "log", "stage": "compose", "level": "dim",
@@ -396,6 +388,10 @@ async def run(
                         browser=browser, source_path=html_path,
                     )
                     png_paths.append(png_path)
+                    record_item_done(state, "compose")
+                    emit({"type": "stage_progress", "stage": "compose",
+                          "done": state.stages["compose"].items_done,
+                          "total": state.stages["compose"].items_total})
                     progress.advance(task)
 
         console.print(

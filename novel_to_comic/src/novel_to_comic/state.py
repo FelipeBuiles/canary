@@ -16,6 +16,26 @@ if TYPE_CHECKING:
 STALE_RUNNING_THRESHOLD = timedelta(minutes=5)
 
 
+def hash_style_template(style_template: str) -> str:
+    """Stable SHA-256 hex digest of a style template string.
+
+    Whitespace-normalised so trivial editing changes (indentation, trailing
+    newline) don't invalidate the pinned hash.
+    """
+    import hashlib
+    normalised = " ".join((style_template or "").split())
+    return hashlib.sha256(normalised.encode("utf-8")).hexdigest()
+
+
+def style_template_drifted(state: "PipelineState", current_template: str) -> bool:
+    """Return True when the pinned style hash exists and disagrees with the
+    current template — i.e. the cast plates were rendered under a different
+    style than the one downstream stages are about to use."""
+    if not state.style_template_hash:
+        return False
+    return state.style_template_hash != hash_style_template(current_template)
+
+
 class StageStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
@@ -53,6 +73,12 @@ class PipelineState(BaseModel):
     stages: dict[str, StageState] = Field(default_factory=dict)
     total_cost_usd: float = 0.0
     misc_cost_usd: float = 0.0
+    style_template_hash: Optional[str] = None
+    # SHA-256 hash of the style_template string at the moment the cast stage
+    # generated character/location reference plates. Downstream stages check
+    # this hash against the current config to detect style-drift: if the
+    # template changed after cast ran, plates will not match new panel output
+    # and a re-run of cast is recommended.
 
     def model_post_init(self, __context: object) -> None:
         for name in STAGE_NAMES:

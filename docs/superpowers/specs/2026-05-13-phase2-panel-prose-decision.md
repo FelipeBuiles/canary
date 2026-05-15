@@ -29,8 +29,9 @@ distilled compiler is good enough to become the default.
 - Add `ImagePrompt.distilled_prompt`.
 - Compile distilled prompts deterministically in the `direct` stage and whenever
   a panel prompt is edited or instruction-regenerated.
-- Make draw use `distilled_prompt` when present, otherwise use the existing
-  structured prompt rendering.
+- Make draw render a distilled visual brief by default. If an older prompt JSON
+  lacks `distilled_prompt`, compile it on the fly from the structured fields
+  before falling back to `full_prompt`.
 - Keep only essential constraints in distilled generation prompts.
 - Strip caption-space instructions and dangling truncated clauses from
   distilled output.

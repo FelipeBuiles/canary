@@ -410,7 +410,7 @@ async def run(
     """Execute Stage 1: Extract Story Bible from the novel."""
     emit = on_event or _NOOP
 
-    begin_stage(state, "extract", total=1)
+    begin_stage(state, "extract", total=4)
     emit({"type": "stage_begin", "stage": "extract", "total": 4})
     save_state(state, project_dir)
 
@@ -457,6 +457,8 @@ async def run(
               "message": (f"Extracted: {len(story_bible.characters)} characters, "
                           f"{len(story_bible.locations)} locations, "
                           f"{len(story_bible.scenes)} scenes")})
+        state.stages["extract"].items_done = 3
+        save_state(state, project_dir)
         emit({"type": "stage_progress", "stage": "extract", "done": 3, "total": 4})
 
         artifacts.write_story_bible(project_dir, story_bible)

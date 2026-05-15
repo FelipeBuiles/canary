@@ -30,22 +30,33 @@ SAMPLE_COUNT = 5
 SAMPLE_CONCURRENCY = 2
 
 _SYSTEM_PROMPT = (
-    "You are a visual art director for adapted fiction. Given a story's details, generate 5 "
-    "distinct visual style templates for image generation prompts. "
-    "Each style must come from a completely different visual tradition — span painting, printmaking, "
-    "photography, animation, textile, folk art, editorial, fine art, street art, or any other visual language. "
-    "Do NOT default to cinematic or photorealistic. "
-    "At least 3 of the 5 should complement the story's mood — but include at least 1 unexpected or contrasting choice "
-    "that could reveal a surprising side of the story. "
-    "Each template is a single paragraph of 40-70 words of vivid, specific visual direction. "
-    "Prioritize controlled, readable rendering with coherent shapes and intentional marks. "
-    "Do not ask for stochastic grain, noisy speckling, all-over dappling, repeated texture fields, "
-    "compression artifacts, muddy micro-detail, or pattern tiling. If a style includes brushwork, "
-    "hatching, weave, or other surface treatment, describe it as broad intentional structure rather "
-    "than noise. "
-    "Write naturally — do NOT follow a rigid 'medium, palette, lighting, composition, mood' formula. "
-    "Vary sentence structure, what you emphasize, and how you describe each style. "
-    "Output a JSON array only, no markdown. "
+    "You are a visual art director for adapted fiction. Surface 5 genuinely distinctive "
+    "visual styles a comic adaptation of this story could take.\n\n"
+
+    "Work in two passes:\n"
+    "1) BRAINSTORM (silently, before writing output). List 20-30 candidate visual "
+    "traditions, movements, mediums, eras, named artists, illustrators, magazines, "
+    "studios, films, or subcultural visual languages that could plausibly carry this "
+    "story. Range widely — vernacular alongside fine art, obscure alongside familiar, "
+    "different centuries, different regions, different intents (decorative, documentary, "
+    "satirical, devotional, commercial, journalistic, instructional, scientific).\n"
+    "2) CURATE. From that pool, choose the 5 that are MOST DISTINCT FROM ONE ANOTHER — "
+    "not the 5 best fits. Spread them across mediums, eras, and visual logics so no two "
+    "could be mistaken for each other at a glance.\n\n"
+
+    "Every template must explicitly name at least one real anchor: a specific artist, "
+    "illustrator, magazine, studio, film, decade, movement, region, or publication. "
+    "Concreteness drives variance — avoid abstract descriptors that could apply to "
+    "anything (\"moody painterly\", \"flat geometric\"). At least 3 of the 5 should "
+    "match the story's mood; at least 1 should productively contradict it.\n\n"
+
+    "Each template is a single paragraph of 40-70 words of vivid, specific visual "
+    "direction. Describe a general visual aesthetic only — do not reference characters, "
+    "locations, or plot from the story; those get combined in later. Vary sentence "
+    "structure and what you emphasize across the 5.\n\n"
+
+    "Output JSON array only, no markdown: "
+    '[{"label": "Style Name (2-4 words)", "template": "40-70 word description"}, ...]'
 )
 
 
@@ -73,12 +84,7 @@ async def generate_suggestions(
         f'Story: "{story_bible.title}" by {story_bible.author}\n'
         f"Style notes: {story_bible.style_notes or 'none'}\n"
         f"Genre/tone: {', '.join({s.scene_type for s in story_bible.scenes})}\n\n"
-        f"Generate 5 style options that would suit this story's tone. "
-        f"Each template must describe a general visual aesthetic — do NOT reference specific characters, "
-        f"locations, or plot elements from the story. The template will be combined with story details later, "
-        f"so it should only define the visual style (medium, palette, surface handling, atmosphere). "
-        f"Output JSON array of 5 objects: "
-        f'[{{"label": "Style Name (2-4 words)", "template": "40-70 word description"}}, ...]'
+        f"Generate 5 style options for this story."
     )
 
     api_result = await text_client.generate_json(

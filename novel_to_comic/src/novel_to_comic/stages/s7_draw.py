@@ -687,6 +687,19 @@ async def run(
             continue
         panel_events[(pf.parent.name, panel_num)] = asyncio.Event()
 
+    # Detect style-template drift relative to the cast plates. When the
+    # template was edited after cast ran, plates no longer match the panel
+    # output. Surface a warning so the user can decide whether to re-run cast.
+    from novel_to_comic.state import style_template_drifted
+    if style_template_drifted(state, config.style_template):
+        drift_msg = (
+            "Style template changed since cast plates were generated. Panel images "
+            "may not match the character/location references. Consider re-running "
+            "the cast stage."
+        )
+        console.print(f"[yellow]{drift_msg}[/yellow]")
+        emit({"type": "log", "stage": "draw", "level": "warning", "message": drift_msg})
+
     estimated = estimate_image_cost(config.effective_image_model(), len(prompt_files), quality=getattr(config, "image_quality", None))
     begin_stage(state, "draw", total=len(prompt_files), estimated_cost_usd=estimated)
     emit({"type": "stage_begin", "stage": "draw", "total": len(prompt_files)})

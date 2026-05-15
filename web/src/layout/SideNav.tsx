@@ -209,9 +209,11 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
       details.direct = plural(promptCount, "prompt");
     }
 
-    if (images?.length) {
-      const acceptedCount = images.filter((image) => image.status === "done").length;
-      details.draw = `${acceptedCount}/${images.length} generated`;
+    const drawItemsTotal = status?.stages.draw?.items_total ?? 0;
+    const drawAccepted = images?.filter((image) => image.status === "done").length ?? 0;
+    const drawDenominator = Math.max(drawItemsTotal, images?.length ?? 0);
+    if (drawDenominator > 0) {
+      details.draw = `${drawAccepted}/${drawDenominator} generated`;
     }
 
     if (pages?.length) {
@@ -230,6 +232,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     panelSummaries,
     promptSummaries,
     screenplays,
+    status,
     storyBible,
     styleItemsDone,
     styleItemsTotal,

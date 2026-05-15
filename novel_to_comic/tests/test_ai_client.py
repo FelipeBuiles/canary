@@ -2,6 +2,7 @@ import asyncio
 import base64
 from pathlib import Path
 
+import httpx
 import pytest
 
 from novel_to_comic.ai import client
@@ -93,6 +94,75 @@ def test_generate_structured_object_returns_dict_and_usage(monkeypatch, _patch_e
     assert _patch_events[-1][1]["status"] == "succeeded"
 
 
+def test_generate_structured_object_retries_then_succeeds_on_malformed_json(monkeypatch, _patch_events):
+    payloads = [
+        {
+            "id": "resp_1",
+            "model": "openai/gpt-5.4-mini",
+            "choices": [{"message": {"content": '{"ok": tru'}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
+        },
+        {
+            "id": "resp_2",
+            "model": "openai/gpt-5.4-mini",
+            "choices": [{"message": {"content": '{"ok": true}'}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
+        },
+    ]
+    calls = {"n": 0}
+
+    class _SeqClient:
+        async def post(self, url, **kwargs):
+            i = calls["n"]
+            calls["n"] += 1
+            return _FakeResponse(payloads[i])
+
+        async def get(self, url, **kwargs):
+            return _FakeResponse({})
+
+    monkeypatch.setattr(client, "_http", _SeqClient())
+
+    result = asyncio.run(
+        client.generate_structured_object(
+            config=Config(),
+            model="panel-balanced",
+            system_prompt="Return JSON.",
+            user_content="{}",
+            feature="test.json",
+        )
+    )
+
+    assert result.value == {"ok": True}
+    assert calls["n"] == 2
+
+
+def test_generate_structured_object_raises_with_context_after_exhausting_retries(monkeypatch, _patch_events):
+    bad_content = '{"ok": tru'
+    _patch_http(monkeypatch, {
+        "id": "resp_1",
+        "model": "openai/gpt-5.4-mini",
+        "choices": [{"message": {"content": bad_content}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
+    })
+
+    with pytest.raises(ValueError) as exc_info:
+        asyncio.run(
+            client.generate_structured_object(
+                config=Config(),
+                model="panel-balanced",
+                system_prompt="Return JSON.",
+                user_content="{}",
+                feature="test.json",
+            )
+        )
+
+    msg = str(exc_info.value)
+    assert "malformed JSON" in msg
+    assert "panel-balanced" in msg
+    assert "tru" in msg
+    assert isinstance(exc_info.value.__cause__, __import__("json").JSONDecodeError)
+
+
 def test_generate_text_does_not_store_prompt_in_params(monkeypatch, _patch_events):
     _patch_http(monkeypatch, {
         "id": "resp_1",
@@ -169,6 +239,26 @@ def test_extract_usage_preserves_litellm_response_cost():
     assert usage.cost_source == "litellm_response_cost"
 
 
+def test_extract_usage_prefers_body_cost_over_litellm_header():
+    usage = client._extract_usage(
+        {
+            "model": "image-fast",
+            "usage": {
+                "input_tokens": 3403,
+                "output_tokens": 1120,
+                "response_cost": 0.06868,
+            },
+        },
+        "event_1",
+        "image-fast",
+        "image",
+        httpx.Headers({"x-litellm-response-cost": "0.00056"}),
+    )
+
+    assert usage.cost_usd == 0.06868
+    assert usage.cost_source == "litellm_usage_cost"
+
+
 def test_pricing_estimate_drift_pct_only_for_provider_reported_image_cost():
     usage = client.UsageRecord(
         provider="openai",
@@ -225,7 +315,7 @@ def test_generate_image_with_references_uses_image_edits(monkeypatch, tmp_path: 
     # assert request["data"]["steps"] == "28"
     assert "response_format" not in request["data"]
     assert request["files"][0][0] == "image"
-    assert request["files"][0][1][0] == "character.png"
+    assert request["files"][0][1][0] == "__role_subject__character.png"
 
 
 def test_gpt_image_2_alias_uses_exact_valid_panel_size(monkeypatch, tmp_path: Path):

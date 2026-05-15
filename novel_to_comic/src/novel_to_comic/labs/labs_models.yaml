@@ -90,26 +90,32 @@ models:
       Bargain draft tier. 1-4 step model. No reference support — text-to-image
       only.
 
-  # ── Production baseline (current pipeline models) ─────────────────────────
-  - id: gemini-3-flash-current
-    label: "Gemini 3 Flash (current)"
+  # ── Production Gemini models (native Vertex multimodal path) ─────────────────
+  - id: gemini-3-flash-vertex-native-proxy
+    label: "Gemini 3 Flash (production fast)"
     provider: litellm
     endpoint: image-fast
     tier: fast
     multi_ref: true
     max_refs: 8
-    approx_cost: 0.04
-    notes: "Existing production fast tier — for baseline comparison."
+    approx_cost: 0.067
+    notes: >-
+      Production image-fast tier. Gemini 3.1 Flash routed through the
+      vertex-multimodal custom provider — native Vertex multimodal shape,
+      role-labeled reference images.
 
-  - id: gemini-3-pro-current
-    label: "Gemini 3 Pro (current)"
+  - id: gemini-3-pro-vertex-native-proxy
+    label: "Gemini 3 Pro (production balanced)"
     provider: litellm
     endpoint: image-balanced
     tier: balanced
     multi_ref: true
     max_refs: 8
-    approx_cost: 0.12
-    notes: "Existing production balanced tier — for baseline comparison."
+    approx_cost: 0.134
+    notes: >-
+      Production image-balanced tier. Gemini 3 Pro routed through the
+      vertex-multimodal custom provider — native Vertex multimodal shape,
+      role-labeled reference images.
 
   - id: seedream-v4-5-litellm-proxy
     label: "Seedream V4.5 (LiteLLM proxy)"

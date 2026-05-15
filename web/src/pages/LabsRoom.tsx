@@ -823,7 +823,7 @@ function Lightbox({ target, panels, columns, rowKeys, modelMap, onClose, onNavig
 
 type SceneSource = "fixture" | "imported";
 
-const DEFAULT_MODEL_PICKS = ["flux-2-pro-edit", "seedream-v4-5-edit", "gemini-3-pro-current"];
+const DEFAULT_MODEL_PICKS = ["flux-2-pro-edit", "seedream-v4-5-edit", "gemini-3-pro-vertex-native-proxy"];
 
 export function LabsRoom() {
   const { data: modelsData, isLoading: modelsLoading } = useLabsModels();
