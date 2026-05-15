@@ -13,18 +13,9 @@ from pathlib import Path
 from novel_to_comic import artifacts
 from novel_to_comic.clients import flux, text as text_client
 from novel_to_comic.config import Config
-from novel_to_comic.events import EventCallback, _NOOP
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.prompting import build_style_sample_prompt
-from novel_to_comic.state import (
-    PipelineState,
-    begin_stage,
-    complete_stage,
-    fail_stage,
-    record_api_usage,
-    record_item_done,
-    save_state,
-)
+from novel_to_comic.stage_runtime import StageRuntime
 
 SAMPLE_COUNT = 5
 SAMPLE_CONCURRENCY = 2
@@ -204,15 +195,8 @@ async def generate_samples_for_indices(
     await asyncio.gather(*[_one(i) for i in indices])
 
 
-async def run(
-    config: Config,
-    project_dir: Path,
-    state: PipelineState,
-    on_event: EventCallback | None = None,
-) -> None:
+async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> None:
     """Execute Stage 2: 5 style suggestions + 5 sample images."""
-    emit = on_event or _NOOP
-
     bible = artifacts.read_story_bible(project_dir)
     existing_suggestions = load_suggestions(project_dir)
     needs_suggestions = not existing_suggestions
@@ -223,46 +207,28 @@ async def run(
     )
     total = (1 if needs_suggestions else 0) + len(pending_sample_indices)
 
-    begin_stage(state, "style", total=total)
-    emit({"type": "stage_begin", "stage": "style", "total": total})
-    save_state(state, project_dir)
-
-    try:
+    with ctx.execute(total=total):
         if needs_suggestions:
             suggestions, usage = await generate_suggestions(config, bible)
             if usage:
-                record_api_usage(state, "style", usage)
+                ctx.record_api_usage(usage)
             save_suggestions(project_dir, suggestions, bible.title)
-            record_item_done(state, "style")
-            emit({
-                "type": "log", "stage": "style", "level": "info",
-                "message": f"Generated {len(suggestions)} style suggestions.",
-            })
-            emit({
-                "type": "stage_progress", "stage": "style",
-                "done": state.stages["style"].items_done,
-                "total": state.stages["style"].items_total,
-            })
-            save_state(state, project_dir)
+            ctx.record_item_done()
+            ctx.log(f"Generated {len(suggestions)} style suggestions.")
+            ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+            ctx.save()
             pending_sample_indices = list(range(1, len(suggestions) + 1))
         else:
             suggestions = existing_suggestions
-            emit({
-                "type": "log", "stage": "style", "level": "dim",
-                "message": "Style suggestions already exist — generating missing samples.",
-            })
+            ctx.log("Style suggestions already exist — generating missing samples.", level="dim")
 
         async def _record(_idx: int, result) -> None:
             if result.usage:
-                record_item_done(state, "style", usage=result.usage)
+                ctx.record_item_done(usage=result.usage)
             else:
-                record_item_done(state, "style")
-            save_state(state, project_dir)
-            emit({
-                "type": "stage_progress", "stage": "style",
-                "done": state.stages["style"].items_done,
-                "total": state.stages["style"].items_total,
-            })
+                ctx.record_item_done()
+            ctx.save()
+            ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
 
         if pending_sample_indices:
             await generate_samples_for_indices(
@@ -273,20 +239,6 @@ async def run(
                 pending_sample_indices,
                 on_sample_done=_record,
             )
-
-        complete_stage(state, "style")
-        emit({
-            "type": "stage_complete", "stage": "style",
-            "done": state.stages["style"].items_done,
-            "total": state.stages["style"].items_total,
-        })
-        save_state(state, project_dir)
-
-    except Exception as e:
-        fail_stage(state, "style", str(e))
-        emit({"type": "stage_fail", "stage": "style", "message": str(e)})
-        save_state(state, project_dir)
-        raise
 
 
 from novel_to_comic.stages import Stage  # noqa: E402

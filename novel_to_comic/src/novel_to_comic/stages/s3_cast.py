@@ -16,19 +16,11 @@ from rich.console import Console
 from novel_to_comic import artifacts
 from novel_to_comic.clients import flux
 from novel_to_comic.config import Config, is_gpt_image_2
-from novel_to_comic.events import EventCallback, _NOOP, make_progress
+from novel_to_comic.events import make_progress
 from novel_to_comic.models.story_bible import Character, Prop, StoryBible
+from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.text_utils import clean, shorten
 from novel_to_comic.usage import ApiResult
-from novel_to_comic.state import (
-    PipelineState,
-    begin_stage,
-    complete_stage,
-    fail_stage,
-    record_item_done,
-    record_item_failed,
-    save_state,
-)
 
 console = Console()
 
@@ -484,9 +476,8 @@ async def regenerate_location_plate(
 
 
 async def _generate_character_refs(
-    config: Config, project_dir: Path, story_bible: StoryBible, state: PipelineState,
+    config: Config, project_dir: Path, story_bible: StoryBible, ctx: StageRuntime,
     char_ids: list[str] | None = None,
-    on_event: EventCallback | None = None,
 ) -> None:
     """Part B: Generate character reference sheets.
 
@@ -495,10 +486,8 @@ async def _generate_character_refs(
     reliable way to ensure style consistency — separate calls produce separate
     style interpretations regardless of reference conditioning.
     """
-    emit = on_event or _NOOP
     console.print("[bold]Generating character reference images...[/bold]")
-    emit({"type": "log", "stage": "cast", "level": "info",
-          "message": "Generating character reference sheets..."})
+    ctx.log("Generating character reference sheets...")
     refs_dir = project_dir / "refs"
 
     # A visual style reference image is far stronger than text for locking style.
@@ -521,7 +510,7 @@ async def _generate_character_refs(
 
     chars_to_gen = [c for c in story_bible.characters if not char_ids or c.id in char_ids]
 
-    with make_progress(on_event) as progress:
+    with make_progress(ctx.on_event) as progress:
         task = progress.add_task("Character refs", total=len(chars_to_gen))
         for char in chars_to_gen:
             char_dir = refs_dir / char.id
@@ -538,18 +527,15 @@ async def _generate_character_refs(
                         await asyncio.to_thread(_crop_sheet_to_poses, output_path)
                     except Exception:
                         pass
-                record_item_done(state, "cast", cost=0.0)
-                emit({"type": "log", "stage": "cast", "level": "dim",
-                      "message": f"Using existing ref sheet for {char.name}"})
-                emit({"type": "stage_progress", "stage": "cast",
-                      "done": state.stages["cast"].items_done,
-                      "total": state.stages["cast"].items_total})
-                progress.advance(task)
+                ctx.record_item_done(cost=0.0)
+                ctx.log(f"Using existing ref sheet for {char.name}", level="dim")
+                ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+                if task is not None:
+                    progress.advance(task)
                 continue
 
             try:
-                emit({"type": "log", "stage": "cast", "level": "info",
-                      "message": f"Generating ref sheet for {char.name}"})
+                ctx.log(f"Generating ref sheet for {char.name}")
                 # Square 2x2 grid — each quadrant gives a full-body figure
                 # ~512x512px of space, enough to avoid edge clipping.
                 # Pass the style sample when the active image model handles
@@ -563,35 +549,30 @@ async def _generate_character_refs(
                 )
                 await asyncio.to_thread(_crop_sheet_to_poses, output_path)
                 artifacts.write_asset_meta(output_path, meta)
-                record_item_done(state, "cast", usage=flux_result.usage)
-                emit({"type": "stage_progress", "stage": "cast",
-                      "done": state.stages["cast"].items_done,
-                      "total": state.stages["cast"].items_total})
+                ctx.record_item_done(usage=flux_result.usage)
+                ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
             except Exception as e:
                 cause = e.last_attempt.exception() if hasattr(e, "last_attempt") else e
                 console.print(f"[red]Failed ref sheet for {char.name}: {cause}[/red]")
-                record_item_failed(state, "cast", char.id)
-                emit({"type": "log", "stage": "cast", "level": "error",
-                      "message": f"Failed ref sheet for {char.name}: {cause}"})
-            progress.advance(task)
+                ctx.record_item_failed(char.id)
+                ctx.log(f"Failed ref sheet for {char.name}: {cause}", level="error")
+            if task is not None:
+                progress.advance(task)
 
 
 async def _generate_location_plates(
-    config: Config, project_dir: Path, story_bible: StoryBible, state: PipelineState,
+    config: Config, project_dir: Path, story_bible: StoryBible, ctx: StageRuntime,
     loc_ids: list[str] | None = None,
-    on_event: EventCallback | None = None,
 ) -> None:
     """Part C: Generate location background plates."""
-    emit = on_event or _NOOP
     console.print("[bold]Generating location plates...[/bold]")
-    emit({"type": "log", "stage": "cast", "level": "info",
-          "message": "Generating location plates..."})
+    ctx.log("Generating location plates...")
     plates_dir = project_dir / "plates"
     plates_dir.mkdir(parents=True, exist_ok=True)
 
     locs_to_gen = [loc for loc in story_bible.locations if not loc_ids or loc.id in loc_ids]
 
-    with make_progress(on_event) as progress:
+    with make_progress(ctx.on_event) as progress:
         task = progress.add_task("Location plates", total=len(locs_to_gen))
         for loc in locs_to_gen:
             output_path = plates_dir / f"{loc.id}.png"
@@ -613,17 +594,14 @@ async def _generate_location_plates(
                 addendum,
             )
             if artifacts.asset_matches_meta(output_path, meta):
-                record_item_done(state, "cast", cost=0.0)
-                emit({"type": "log", "stage": "cast", "level": "dim",
-                      "message": f"Using existing location plate for {loc.name}"})
-                emit({"type": "stage_progress", "stage": "cast",
-                      "done": state.stages["cast"].items_done,
-                      "total": state.stages["cast"].items_total})
-                progress.advance(task)
+                ctx.record_item_done(cost=0.0)
+                ctx.log(f"Using existing location plate for {loc.name}", level="dim")
+                ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+                if task is not None:
+                    progress.advance(task)
                 continue
             try:
-                emit({"type": "log", "stage": "cast", "level": "info",
-                      "message": f"Generating location plate for {loc.name}"})
+                ctx.log(f"Generating location plate for {loc.name}")
                 flux_result = await flux.generate_image(
                     config,
                     prompt,
@@ -635,20 +613,18 @@ async def _generate_location_plates(
                     feature="cast.location_plate",
                 )
                 artifacts.write_asset_meta(output_path, meta)
-                record_item_done(state, "cast", usage=flux_result.usage)
-                emit({"type": "stage_progress", "stage": "cast",
-                      "done": state.stages["cast"].items_done,
-                      "total": state.stages["cast"].items_total})
+                ctx.record_item_done(usage=flux_result.usage)
+                ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
             except Exception as e:
                 cause = e.last_attempt.exception() if hasattr(e, "last_attempt") else e
                 console.print(f"[red]Failed plate for {loc.name}: {cause}[/red]")
-            progress.advance(task)
+            if task is not None:
+                progress.advance(task)
 
 
 async def _generate_prop_refs(
-    config: Config, project_dir: Path, story_bible: StoryBible, state: PipelineState,
+    config: Config, project_dir: Path, story_bible: StoryBible, ctx: StageRuntime,
     prop_ids: list[str] | None = None,
-    on_event: EventCallback | None = None,
 ) -> None:
     """Generate one neutral-background reference image per story prop.
 
@@ -658,18 +634,16 @@ async def _generate_prop_refs(
     prop refs share the panel art style. For gpt-image-2, style stays text-only
     to avoid edit-reference texture artifacts.
     """
-    emit = on_event or _NOOP
     props_to_gen = [p for p in story_bible.props if not prop_ids or p.id in prop_ids]
     if not props_to_gen:
         return
 
     console.print("[bold]Generating prop reference images...[/bold]")
-    emit({"type": "log", "stage": "cast", "level": "info",
-          "message": "Generating prop reference images..."})
+    ctx.log("Generating prop reference images...")
 
     style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
 
-    with make_progress(on_event) as progress:
+    with make_progress(ctx.on_event) as progress:
         task = progress.add_task("Prop refs", total=len(props_to_gen))
         for prop in props_to_gen:
             output_path = artifacts.prop_ref_path(project_dir, prop.id)
@@ -679,18 +653,15 @@ async def _generate_prop_refs(
             meta = _prop_ref_meta(config, project_dir, style_ref, prop, prompt, addendum)
 
             if artifacts.asset_matches_meta(output_path, meta):
-                record_item_done(state, "cast", cost=0.0)
-                emit({"type": "log", "stage": "cast", "level": "dim",
-                      "message": f"Using existing prop ref for {prop.name}"})
-                emit({"type": "stage_progress", "stage": "cast",
-                      "done": state.stages["cast"].items_done,
-                      "total": state.stages["cast"].items_total})
-                progress.advance(task)
+                ctx.record_item_done(cost=0.0)
+                ctx.log(f"Using existing prop ref for {prop.name}", level="dim")
+                ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+                if task is not None:
+                    progress.advance(task)
                 continue
 
             try:
-                emit({"type": "log", "stage": "cast", "level": "info",
-                      "message": f"Generating prop ref for {prop.name}"})
+                ctx.log(f"Generating prop ref for {prop.name}")
                 flux_result = await flux.generate_image(
                     config, prompt, output_path,
                     width=1024, height=1024,
@@ -699,31 +670,26 @@ async def _generate_prop_refs(
                     feature="cast.prop_ref",
                 )
                 artifacts.write_asset_meta(output_path, meta)
-                record_item_done(state, "cast", usage=flux_result.usage)
-                emit({"type": "stage_progress", "stage": "cast",
-                      "done": state.stages["cast"].items_done,
-                      "total": state.stages["cast"].items_total})
+                ctx.record_item_done(usage=flux_result.usage)
+                ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
             except Exception as e:
                 cause = e.last_attempt.exception() if hasattr(e, "last_attempt") else e
                 console.print(f"[red]Failed prop ref for {prop.name}: {cause}[/red]")
-                record_item_failed(state, "cast", prop.id)
-                emit({"type": "log", "stage": "cast", "level": "error",
-                      "message": f"Failed prop ref for {prop.name}: {cause}"})
-            progress.advance(task)
+                ctx.record_item_failed(prop.id)
+                ctx.log(f"Failed prop ref for {prop.name}: {cause}", level="error")
+            if task is not None:
+                progress.advance(task)
 
 
 async def run(
     config: Config,
     project_dir: Path,
-    state: PipelineState,
+    ctx: StageRuntime,
     char_ids: list[str] | None = None,
     loc_ids: list[str] | None = None,
     prop_ids: list[str] | None = None,
-    on_event: EventCallback | None = None,
 ) -> None:
     """Execute Stage 3: generate character refs, location plates, and prop refs."""
-    emit = on_event or _NOOP
-
     story_bible = artifacts.read_story_bible(project_dir)
 
     is_partial = bool(char_ids or loc_ids or prop_ids)
@@ -739,46 +705,29 @@ async def run(
     if should_generate_prop_refs:
         total_items += len([p for p in story_bible.props if not prop_ids or p.id in prop_ids])
 
-    begin_stage(state, "cast", total=total_items)
-    emit({"type": "stage_begin", "stage": "cast", "total": total_items})
-    save_state(state, project_dir)
-
-    try:
+    with ctx.execute(total=total_items):
         if should_generate_refs:
-            await _generate_character_refs(config, project_dir, story_bible, state, char_ids, on_event)
-            emit({"type": "stage_progress", "stage": "cast",
-                  "done": state.stages["cast"].items_done,
-                  "total": state.stages["cast"].items_total})
+            await _generate_character_refs(config, project_dir, story_bible, ctx, char_ids)
+            ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
 
         if should_generate_plates:
-            await _generate_location_plates(config, project_dir, story_bible, state, loc_ids, on_event)
+            await _generate_location_plates(config, project_dir, story_bible, ctx, loc_ids)
 
         if should_generate_prop_refs:
-            await _generate_prop_refs(config, project_dir, story_bible, state, prop_ids, on_event)
+            await _generate_prop_refs(config, project_dir, story_bible, ctx, prop_ids)
 
-        complete_stage(state, "cast")
         # Pin the style template hash so downstream stages (draw, especially)
         # can detect if the style was edited after cast plates were generated.
         # Skip pinning on partial re-runs unless plates were regenerated, since
         # a refs-only re-run doesn't replace the plates that anchor visual style.
         if not is_partial or should_generate_plates:
             from novel_to_comic.state import hash_style_template
-            state.style_template_hash = hash_style_template(config.style_template)
-        emit({"type": "stage_complete", "stage": "cast",
-              "done": state.stages["cast"].items_done,
-              "total": state.stages["cast"].items_total})
-        save_state(state, project_dir)
+            ctx.set_style_template_hash(hash_style_template(config.style_template))
 
         if not is_partial:
             console.print("[yellow]Stage 3 complete — awaiting review.[/yellow]")
             console.print("Review character refs in: refs/")
             console.print("Run [bold]pipeline approve --project . --stage cast[/bold] to continue.")
-
-    except Exception as e:
-        fail_stage(state, "cast", str(e))
-        emit({"type": "stage_fail", "stage": "cast", "message": str(e)})
-        save_state(state, project_dir)
-        raise
 
 
 from novel_to_comic.stages import Stage  # noqa: E402

@@ -12,18 +12,10 @@ from rich.console import Console
 from novel_to_comic import artifacts
 from novel_to_comic.clients import text
 from novel_to_comic.config import Config
-from novel_to_comic.events import EventCallback, _NOOP, make_progress
+from novel_to_comic.events import make_progress
 from novel_to_comic.models.panel import Screenplay
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.state import (
-    PipelineState,
-    begin_stage,
-    complete_stage,
-    fail_stage,
-    record_item_done,
-    record_item_failed,
-    save_state,
-)
+from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.usage import ApiResult, estimate_text_cost
 
 console = Console()
@@ -269,13 +261,10 @@ async def _process_scene(
 async def run(
     config: Config,
     project_dir: Path,
-    state: PipelineState,
+    ctx: StageRuntime,
     scene_ids: list[str] | None = None,
-    on_event: EventCallback | None = None,
 ) -> None:
     """Execute Stage 4: Convert scenes to screenplays."""
-    emit = on_event or _NOOP
-
     story_bible = artifacts.read_story_bible(project_dir)
     system_prompt = PROMPT_PATH.read_text()
 
@@ -293,14 +282,11 @@ async def run(
             config.effective_screenplay_model(),
             system_prompt + "\n" + scene_text,
         )
-    begin_stage(state, "adapt", total=len(ids), estimated_cost_usd=estimated)
-    emit({"type": "stage_begin", "stage": "adapt", "total": len(ids)})
-    save_state(state, project_dir)
 
     semaphore = asyncio.Semaphore(config.parallel_batch_size)
 
-    try:
-        with make_progress(on_event) as progress:
+    with ctx.execute(total=len(ids), estimated_cost_usd=estimated):
+        with make_progress(ctx.on_event) as progress:
             task = progress.add_task("Screenplays", total=len(ids))
             for batch_start in range(0, len(ids), config.parallel_batch_size):
                 batch = ids[batch_start:batch_start + config.parallel_batch_size]
@@ -312,37 +298,23 @@ async def run(
                 for sid, result in zip(batch, results):
                     if isinstance(result, Exception):
                         console.print(f"[red]Failed {sid}: {result}[/red]")
-                        emit({"type": "log", "stage": "adapt", "level": "error",
-                              "message": f"Failed {sid}: {result}"})
-                        record_item_failed(state, "adapt", sid)
+                        ctx.log(f"Failed {sid}: {result}", level="error")
+                        ctx.record_item_failed(sid)
                     else:
-                        record_item_done(
-                            state, "adapt",
+                        ctx.record_item_done(
                             usage=result.usage if result is not None else None,
                         )
-                        emit({"type": "stage_progress", "stage": "adapt",
-                              "done": state.stages["adapt"].items_done,
-                              "total": state.stages["adapt"].items_total})
-                    progress.advance(task)
-                save_state(state, project_dir)
+                        ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+                    if task is not None:
+                        progress.advance(task)
+                ctx.save()
 
-        if len(state.stages["adapt"].items_failed) > 0 and state.stages["adapt"].items_done == 0:
+        if len(ctx.stage_state.items_failed) > 0 and ctx.stage_state.items_done == 0:
             raise RuntimeError(
-                f"All {len(state.stages['adapt'].items_failed)} scenes failed during adapt stage"
+                f"All {len(ctx.stage_state.items_failed)} scenes failed during adapt stage"
             )
 
-        complete_stage(state, "adapt")
-        emit({"type": "stage_complete", "stage": "adapt",
-              "done": state.stages["adapt"].items_done,
-              "total": state.stages["adapt"].items_total})
-        save_state(state, project_dir)
         console.print("[green]Stage 4 complete.[/green]")
-
-    except Exception as e:
-        fail_stage(state, "adapt", str(e))
-        emit({"type": "stage_fail", "stage": "adapt", "message": str(e)})
-        save_state(state, project_dir)
-        raise
 
 
 from novel_to_comic.stages import Stage  # noqa: E402

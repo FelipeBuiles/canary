@@ -17,7 +17,7 @@ from novel_to_comic import artifacts
 from novel_to_comic.ai.providers.base import RefImage
 from novel_to_comic.clients import flux
 from novel_to_comic.config import Config, is_gpt_image_2
-from novel_to_comic.events import EventCallback, _NOOP, make_progress
+from novel_to_comic.events import make_progress
 from novel_to_comic.layout_planning import load_layout_plan, prompt_path_for_panel, scene_panel_map
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.panel_versions import record_current_panel_version
@@ -28,15 +28,7 @@ from novel_to_comic.prompting import (
     ensure_distilled_prompt,
     render_generation_prompt,
 )
-from novel_to_comic.state import (
-    PipelineState,
-    begin_stage,
-    complete_stage,
-    fail_stage,
-    record_item_done,
-    record_item_failed,
-    save_state,
-)
+from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.usage import ApiResult, estimate_image_cost
 
 console = Console()
@@ -604,14 +596,12 @@ async def regenerate_panel_image(
 async def run(
     config: Config,
     project_dir: Path,
-    state: PipelineState,
+    ctx: StageRuntime,
     scene_ids: list[str] | None = None,
     panel_numbers: list[int] | None = None,
     retry_failed: bool = False,
-    on_event: EventCallback | None = None,
 ) -> None:
     """Execute Stage 6: Generate panel images."""
-    emit = on_event or _NOOP
     prompts_dir = project_dir / "direct"
     prompt_files: list[Path] = []
     story_bible: StoryBible | None = None
@@ -691,40 +681,33 @@ async def run(
     # template was edited after cast ran, plates no longer match the panel
     # output. Surface a warning so the user can decide whether to re-run cast.
     from novel_to_comic.state import style_template_drifted
-    if style_template_drifted(state, config.style_template):
+    if style_template_drifted(ctx.state, config.style_template):
         drift_msg = (
             "Style template changed since cast plates were generated. Panel images "
             "may not match the character/location references. Consider re-running "
             "the cast stage."
         )
         console.print(f"[yellow]{drift_msg}[/yellow]")
-        emit({"type": "log", "stage": "draw", "level": "warning", "message": drift_msg})
+        ctx.log(drift_msg, level="warning")
 
     estimated = estimate_image_cost(config.effective_image_model(), len(prompt_files), quality=getattr(config, "image_quality", None))
-    begin_stage(state, "draw", total=len(prompt_files), estimated_cost_usd=estimated)
-    emit({"type": "stage_begin", "stage": "draw", "total": len(prompt_files)})
-    emit({"type": "log", "stage": "draw", "level": "info",
-          "message": f"Preparing {len(prompt_files)} panel image jobs..."})
-    save_state(state, project_dir)
-
     batch_size = config.effective_image_concurrency(google_model=False)
-
     semaphore = asyncio.Semaphore(batch_size)
 
-    try:
-        with make_progress(on_event) as progress:
+    with ctx.execute(total=len(prompt_files), estimated_cost_usd=estimated):
+        ctx.log(f"Preparing {len(prompt_files)} panel image jobs...")
+        with make_progress(ctx.on_event) as progress:
             task = progress.add_task("Generating panels", total=len(prompt_files))
             for batch_start in range(0, len(prompt_files), batch_size):
                 # Check cost limit
-                if config.cost_limit_usd and state.total_cost_usd >= config.cost_limit_usd:
+                if config.cost_limit_usd and ctx.state.total_cost_usd >= config.cost_limit_usd:
                     console.print(f"[yellow]Cost limit (${config.cost_limit_usd}) reached. Pausing.[/yellow]")
                     break
 
                 batch = prompt_files[batch_start:batch_start + batch_size]
                 first = batch_start + 1
                 last = batch_start + len(batch)
-                emit({"type": "log", "stage": "draw", "level": "info",
-                      "message": f"Drawing panel batch {first}-{last} of {len(prompt_files)}"})
+                ctx.log(f"Drawing panel batch {first}-{last} of {len(prompt_files)}")
                 coros = [
                     _generate_panel(config, project_dir, pf, semaphore, scene_locks,
                                     style_sample, scene_to_location, panel_events, story_bible)
@@ -737,33 +720,19 @@ async def run(
                         cause = getattr(result, "__cause__", None) or result
                         msg = f"Failed {pf.name}: {_fmt_error(cause)}"
                         console.print(f"[red]{msg}[/red]")
-                        emit({"type": "log", "stage": "draw", "level": "error",
-                              "message": msg})
-                        record_item_failed(state, "draw", f"{pf.parent.name}/{pf.stem}")
+                        ctx.log(msg, level="error")
+                        ctx.record_item_failed(f"{pf.parent.name}/{pf.stem}")
                     else:
-                        record_item_done(state, "draw", usage=result.usage)
-                        emit({"type": "log", "stage": "draw", "level": "dim",
-                              "message": f"Finished {pf.parent.name} / {pf.stem.replace('_', ' ')}"})
-                        emit({"type": "stage_progress", "stage": "draw",
-                              "done": state.stages["draw"].items_done,
-                              "total": state.stages["draw"].items_total})
-                    progress.advance(task)
-                save_state(state, project_dir)
+                        ctx.record_item_done(usage=result.usage)
+                        ctx.log(f"Finished {pf.parent.name} / {pf.stem.replace('_', ' ')}", level="dim")
+                        ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+                    if task is not None:
+                        progress.advance(task)
+                ctx.save()
 
-        complete_stage(state, "draw")
-        emit({"type": "stage_complete", "stage": "draw",
-              "done": state.stages["draw"].items_done,
-              "total": state.stages["draw"].items_total})
-        save_state(state, project_dir)
         console.print("[yellow]Stage 7 complete — awaiting review.[/yellow]")
         console.print("Review generated panels in: images/")
         console.print("Run [bold]pipeline approve --project . --stage generate[/bold] to continue.")
-
-    except Exception as e:
-        fail_stage(state, "draw", str(e))
-        emit({"type": "stage_fail", "stage": "draw", "message": str(e)})
-        save_state(state, project_dir)
-        raise
 
 
 from novel_to_comic.stages import Stage  # noqa: E402

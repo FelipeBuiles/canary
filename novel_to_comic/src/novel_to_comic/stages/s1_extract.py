@@ -14,16 +14,8 @@ from rich.console import Console
 from novel_to_comic import artifacts
 from novel_to_comic.clients import text
 from novel_to_comic.config import Config
-from novel_to_comic.events import EventCallback, _NOOP
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.state import (
-    PipelineState,
-    begin_stage,
-    complete_stage,
-    fail_stage,
-    record_item_done,
-    save_state,
-)
+from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.usage import ApiResult, estimate_text_cost, estimate_token_count
 
 console = Console()
@@ -401,26 +393,14 @@ def _write_scene_files(story_bible: StoryBible, novel_text: str, scenes_dir: Pat
         (scenes_dir / f"{scene.id}.txt").write_text(fallback)
 
 
-async def run(
-    config: Config,
-    project_dir: Path,
-    state: PipelineState,
-    on_event: EventCallback | None = None,
-) -> StoryBible:
+async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBible:
     """Execute Stage 1: Extract Story Bible from the novel."""
-    emit = on_event or _NOOP
-
-    begin_stage(state, "extract", total=4)
-    emit({"type": "stage_begin", "stage": "extract", "total": 4})
-    save_state(state, project_dir)
-
-    try:
-        novel_path = Path(state.novel_path)
+    with ctx.execute(total=4):
+        novel_path = Path(ctx.state.novel_path)
         if not novel_path.is_absolute():
             novel_path = project_dir / novel_path
         console.print(f"[bold]Reading novel:[/bold] {novel_path}")
-        emit({"type": "log", "stage": "extract", "level": "info",
-              "message": f"Reading novel: {novel_path}"})
+        ctx.log(f"Reading novel: {novel_path}")
         novel_text = _read_novel(novel_path)
         if isinstance(novel_text, bytes):
             raise ValueError(
@@ -430,9 +410,8 @@ async def run(
             )
         else:
             console.print(f"Novel length: {len(novel_text):,} characters (~{len(novel_text) // 4:,} tokens)")
-            emit({"type": "log", "stage": "extract", "level": "dim",
-                  "message": f"Novel length: {len(novel_text):,} characters"})
-        emit({"type": "stage_progress", "stage": "extract", "done": 1, "total": 4})
+            ctx.log(f"Novel length: {len(novel_text):,} characters", level="dim")
+        ctx.progress(1, 4)
 
         system_prompt = PROMPT_PATH.read_text()
         content_for_cost = novel_text if isinstance(novel_text, str) else ""
@@ -441,50 +420,37 @@ async def run(
             system_prompt + "\n" + content_for_cost,
             output_chars=estimate_story_bible_output_chars(content_for_cost),
         )
-        state.stages["extract"].estimated_cost_usd = estimated
-        emit({"type": "stage_progress", "stage": "extract", "done": 2, "total": 4})
+        ctx.set_estimated_cost(estimated)
+        ctx.progress(2, 4)
 
         console.print(f"[bold]Calling {config.effective_extraction_model()}...[/bold]")
-        emit({"type": "log", "stage": "extract", "level": "info",
-              "message": f"Calling {config.effective_extraction_model()}..."})
+        ctx.log(f"Calling {config.effective_extraction_model()}...")
         extract_result = await _extract_with_retry(config, system_prompt, novel_text)
         story_bible = extract_result.value
         console.print(
             f"[green]Extracted:[/green] {len(story_bible.characters)} characters, "
             f"{len(story_bible.locations)} locations, {len(story_bible.scenes)} scenes"
         )
-        emit({"type": "log", "stage": "extract", "level": "info",
-              "message": (f"Extracted: {len(story_bible.characters)} characters, "
-                          f"{len(story_bible.locations)} locations, "
-                          f"{len(story_bible.scenes)} scenes")})
-        state.stages["extract"].items_done = 3
-        save_state(state, project_dir)
-        emit({"type": "stage_progress", "stage": "extract", "done": 3, "total": 4})
+        ctx.log(
+            f"Extracted: {len(story_bible.characters)} characters, "
+            f"{len(story_bible.locations)} locations, "
+            f"{len(story_bible.scenes)} scenes"
+        )
+        ctx.stage_state.items_done = 3
+        ctx.save()
+        ctx.progress(3, 4)
 
         artifacts.write_story_bible(project_dir, story_bible)
         _write_scene_files(story_bible, novel_text, project_dir / "scenes")
 
-        record_item_done(state, "extract", usage=extract_result.usage)
-        emit({"type": "stage_progress", "stage": "extract",
-              "done": 4,
-              "total": 4})
-        complete_stage(state, "extract")
-        emit({"type": "stage_complete", "stage": "extract",
-              "done": state.stages["extract"].items_done,
-              "total": state.stages["extract"].items_total})
-        save_state(state, project_dir)
+        ctx.record_item_done(usage=extract_result.usage)
+        ctx.progress(4, 4)
 
         console.print("[yellow]Stage 1 complete — awaiting review.[/yellow]")
         console.print(f"Review the Story Bible at: {artifacts.story_bible_path(project_dir)}")
         console.print("Run [bold]pipeline approve --project . --stage extract[/bold] to continue.")
 
-        return story_bible
-
-    except Exception as e:
-        fail_stage(state, "extract", str(e))
-        emit({"type": "stage_fail", "stage": "extract", "message": str(e)})
-        save_state(state, project_dir)
-        raise
+    return story_bible
 
 
 from novel_to_comic.stages import Stage  # noqa: E402
