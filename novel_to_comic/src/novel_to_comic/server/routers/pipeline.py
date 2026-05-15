@@ -90,12 +90,51 @@ class InstructedPropRegenRequest(BaseModel):
     instruction: str = Field(min_length=1, max_length=500)
 
 
+def _wrap_on_event(queue: asyncio.Queue, app_state, pkey: str):
+    """Build an event handler that pushes to the SSE queue and also
+    maintains ``app_state.draw_in_flight[pkey]`` for panel-level events.
+
+    Stage code stays framework-agnostic — it only emits dict events. The
+    in-flight map is the server's view of which panels are mid-generation
+    right now, surfaced in the /status payload so a fresh page load shows
+    the live cockpit immediately.
+    """
+    in_flight_map: dict[str, list[dict]] = app_state.draw_in_flight
+
+    def handler(event: dict) -> None:
+        queue.put_nowait(event)
+        if event.get("stage") != "draw":
+            return
+        evt_type = event.get("type")
+        if evt_type == "panel_start":
+            in_flight_map.setdefault(pkey, []).append({
+                "scene_id": event["scene_id"],
+                "panel_number": event["panel_number"],
+                "started_at": event["started_at"],
+            })
+        elif evt_type == "panel_done":
+            existing = in_flight_map.get(pkey, [])
+            in_flight_map[pkey] = [
+                e for e in existing
+                if not (
+                    e["scene_id"] == event["scene_id"]
+                    and e["panel_number"] == event["panel_number"]
+                )
+            ]
+        elif evt_type in ("stage_complete", "stage_fail"):
+            in_flight_map.pop(pkey, None)
+
+    return handler
+
+
 async def _run_stage(
     stage: str,
     config,
     project_dir,
     state,
     queue: asyncio.Queue,
+    app_state,
+    pkey: str,
     *,
     retry_failed: bool = False,
 ):
@@ -113,7 +152,10 @@ async def _run_stage(
         extra_kwargs: dict = {}
         if retry_failed and stage == "draw":
             extra_kwargs["retry_failed"] = True
-        ctx = StageRuntime(stage, state, project_dir, on_event=lambda e: queue.put_nowait(e))
+        ctx = StageRuntime(
+            stage, state, project_dir,
+            on_event=_wrap_on_event(queue, app_state, pkey),
+        )
         await stage_obj.run(config, project_dir, ctx, **extra_kwargs)
         elapsed = time.perf_counter() - started
         status = state.stages[stage].status.value
@@ -164,6 +206,8 @@ async def _run_stage_with_credits(
     queue: asyncio.Queue,
     user_id: str,
     project_id: str | None,
+    app_state,
+    pkey: str,
     *,
     retry_failed: bool = False,
 ):
@@ -201,7 +245,10 @@ async def _run_stage_with_credits(
             stage=stage,
             job_id=job_id,
         ):
-            await _run_stage(stage, config, project_dir, state, queue, retry_failed=retry_failed)
+            await _run_stage(
+                stage, config, project_dir, state, queue, app_state, pkey,
+                retry_failed=retry_failed,
+            )
 
         s = state.stages[stage]
     finally:
@@ -218,7 +265,10 @@ async def _run_stage_with_credits(
             next_s = state.stages[next_stage]
             if next_s.status != StageStatus.PENDING:
                 continue
-            await _run_stage_with_credits(next_stage, config, project_dir, state, queue, user_id, project_id)
+            await _run_stage_with_credits(
+                next_stage, config, project_dir, state, queue,
+                user_id, project_id, app_state, pkey,
+            )
             # Stop if the chained stage failed or hit a review checkpoint
             if state.stages[next_stage].status in (StageStatus.FAILED, StageStatus.AWAITING_REVIEW):
                 break
@@ -458,7 +508,8 @@ async def run_pipeline(
     request.app.state.event_queues[pkey] = queue
 
     job = _run_stage_with_credits(
-        stage, config, project_dir, state, queue, user_id, project_id, retry_failed=retry_failed
+        stage, config, project_dir, state, queue, user_id, project_id,
+        request.app.state, pkey, retry_failed=retry_failed,
     )
 
     task = asyncio.create_task(_run_job(pkey, request, job))
@@ -504,7 +555,10 @@ async def regen_extract(
     # Run extract stage via SSE pipeline (same pattern as POST /run?stage=extract)
     queue: asyncio.Queue = asyncio.Queue()
     request.app.state.event_queues[pkey] = queue
-    job = _run_stage_with_credits("extract", config, project_dir, state, queue, user_id, project_id)
+    job = _run_stage_with_credits(
+        "extract", config, project_dir, state, queue, user_id, project_id,
+        request.app.state, pkey,
+    )
     task = asyncio.create_task(_run_job(pkey, request, job))
     running[pkey] = task
     logger.info(

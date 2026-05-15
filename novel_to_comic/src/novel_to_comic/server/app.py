@@ -108,6 +108,10 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app.state.projects_dir = projects_dir
     app.state.event_queues: dict[str, asyncio.Queue] = {}
     app.state.running_tasks: dict[str, asyncio.Task] = {}
+    # Per-project in-flight panel map for the draw stage. Maintained from
+    # panel_start / panel_done events (see _wrap_on_event in pipeline.py).
+    # Not persisted — if the server restarts, nothing is in flight.
+    app.state.draw_in_flight: dict[str, list[dict]] = {}
     app.state.style_tasks: dict[str, asyncio.Task] = {}
     app.state.generation_semaphore = asyncio.Semaphore(1)
     app.state.light_generation_semaphore = asyncio.Semaphore(5)

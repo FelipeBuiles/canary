@@ -7,10 +7,10 @@ import {
   usePromptSummaries,
   usePromptsForScene,
   useStageEstimate,
-  useCreditBalance,
   useProjectConfig,
   useUpdateProjectConfig,
   useRunPipeline,
+  useResetStale,
 } from "../../api/queries";
 import { RoomHeader } from "../../components/ui/RoomHeader";
 import { useHeaderMode } from "../../hooks/useHeaderMode";
@@ -23,158 +23,48 @@ import { ConfirmDrawer } from "../../components/ui/ConfirmDrawer";
 import { useActiveRegens, useRegenStore } from "../../store/regen";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { getPanelDisplayState, getPanelFilterBucket, type PanelFilterBucket } from "../../lib/panelState";
+import {
+  useDrawProgressStore,
+  useInFlightSet,
+  useRecentFinishes,
+} from "../../store/drawProgress";
+import {
+  PanelProgressDonut,
+  StaleStripe,
+  LiveProgressStrip,
+  InFlightCard,
+  RecentFinishesCard,
+  BySceneCard,
+  type SceneProgress,
+} from "../../components/draw/LiveCockpit";
 import type { ImageStatus, StageCostEstimate } from "../../types/api";
 
-// ── Donut chart ───────────────────────────────────────────────────────────────
+// ── Quality preset (rendered inside ConfirmDrawer) ────────────────────────────
 
-function PanelProgressDonut({
-  generated,
-  pending,
-  failed,
-  total,
-}: {
-  generated: number;
-  pending: number;
-  failed: number;
-  total: number;
-}) {
-  const R = 36;
-  const C = 2 * Math.PI * R;
-  const genPct = total > 0 ? generated / total : 0;
-  const failPct = total > 0 ? failed / total : 0;
-  const pendPct = total > 0 ? pending / total : 0;
-  const genLen = genPct * C;
-  const failLen = failPct * C;
-  const pendLen = pendPct * C;
-
-  return (
-    <div className="flex items-center gap-5">
-      <svg width={90} height={90} viewBox="0 0 90 90" className="shrink-0 -rotate-90">
-        <circle cx={45} cy={45} r={R} fill="none" stroke="currentColor" strokeWidth={10} className="text-ink-black/8" />
-        {pendLen > 0 && (
-          <circle cx={45} cy={45} r={R} fill="none" stroke="currentColor" strokeWidth={10}
-            strokeDasharray={`${pendLen} ${C - pendLen}`}
-            strokeDashoffset={0}
-            className="text-narrator-gold/70" />
-        )}
-        {failLen > 0 && (
-          <circle cx={45} cy={45} r={R} fill="none" stroke="currentColor" strokeWidth={10}
-            strokeDasharray={`${failLen} ${C - failLen}`}
-            strokeDashoffset={-(pendLen)}
-            className="text-hero-red" />
-        )}
-        {genLen > 0 && (
-          <circle cx={45} cy={45} r={R} fill="none" stroke="currentColor" strokeWidth={10}
-            strokeDasharray={`${genLen} ${C - genLen}`}
-            strokeDashoffset={-(pendLen + failLen)}
-            className="text-archive-sage" />
-        )}
-      </svg>
-      <div className="space-y-1.5 text-[0.7rem]">
-        <div className="flex items-center gap-2">
-          <span className="h-2.5 w-2.5 rounded-full bg-archive-sage" />
-          <span className="text-ink-black/60">Generated</span>
-          <span className="ml-auto font-bold text-ink-black">{generated}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="h-2.5 w-2.5 rounded-full bg-narrator-gold/70" />
-          <span className="text-ink-black/60">Pending</span>
-          <span className="ml-auto font-bold text-ink-black">{pending}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="h-2.5 w-2.5 rounded-full bg-hero-red" />
-          <span className="text-ink-black/60">Failed</span>
-          <span className="ml-auto font-bold text-ink-black">{failed}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Credits estimate ──────────────────────────────────────────────────────────
-
-function DrawCreditsEstimate({
-  project,
-}: {
-  project: string;
-}) {
-  const { data: estimate } = useStageEstimate(project, "draw");
-  const { data: balance } = useCreditBalance();
-  const estimateCredits = estimate?.estimate_credits ?? null;
-  const balanceCredits = balance?.balance_credits ?? null;
-  const afterCredits = estimateCredits != null && balanceCredits != null
-    ? balanceCredits - estimateCredits
-    : null;
-
-  const statusColor =
-    afterCredits == null ? "text-ink-black/50"
-    : afterCredits >= 0 ? "text-archive-sage"
-    : "text-hero-red";
-
-  const statusMsg =
-    afterCredits == null ? null
-    : afterCredits >= 0 ? "Sufficient credits"
-    : "Insufficient credits";
-
-  return (
-    <div className="space-y-2 text-[0.75rem]">
-      <div className="flex justify-between text-ink-black/60">
-        <span>Generation cost (est.)</span>
-        <span className="font-bold text-ink-black">
-          {estimateCredits != null ? `${estimateCredits.toLocaleString()} cr` : "—"}
-        </span>
-      </div>
-      <div className="flex justify-between text-ink-black/60">
-        <span>Available credits</span>
-        <span className="font-bold text-ink-black">
-          {balanceCredits != null ? balanceCredits.toLocaleString() : "—"}
-        </span>
-      </div>
-      {afterCredits != null && (
-        <div className="flex justify-between text-ink-black/60">
-          <span>After generation</span>
-          <span className={`font-bold ${statusColor}`}>{afterCredits.toLocaleString()}</span>
-        </div>
-      )}
-      {statusMsg && (
-        <div className={`font-meta text-[0.58rem] tracking-[0.12em] ${statusColor}`}>{statusMsg}</div>
-      )}
-    </div>
-  );
-}
-
-// ── Generation options ────────────────────────────────────────────────────────
-
-const QUALITY_OPTIONS: Array<{ value: string; label: string }> = [
+const QUALITY_OPTIONS: Array<{ value: "fast" | "balanced" | "quality"; label: string }> = [
   { value: "quality", label: "Quality" },
   { value: "balanced", label: "Balanced" },
   { value: "fast", label: "Fast" },
 ];
 
-function GenerationOptionsPanel({ project }: { project: string }) {
+function QualityPresetField({ project }: { project: string }) {
   const { data: config } = useProjectConfig(project);
   const { mutate: updateConfig } = useUpdateProjectConfig();
-
-  if (!config) return null;
-
+  if (!config || config.quality_preset === undefined) return null;
   return (
-    <div className="space-y-3">
-      {config.quality_preset !== undefined && (
-        <div>
-          <label className="mb-1 block font-meta text-[0.56rem] tracking-[0.18em] text-ink-black/45">
-            GENERATION QUALITY
-          </label>
-          <select
-            value={config.quality_preset ?? "balanced"}
-            onChange={(e) => updateConfig({ project, data: { quality_preset: e.target.value as "fast" | "balanced" | "quality" } })}
-            className="w-full border-[2px] border-ink-black/20 bg-bristol px-3 py-2 font-body text-[0.8rem] text-ink-black focus:border-ink-black focus:outline-none"
-          >
-            {QUALITY_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-        </div>
-      )}
+    <div>
+      <label className="mb-1 block font-meta text-[0.56rem] tracking-[0.18em] text-ink-black/45">
+        GENERATION QUALITY
+      </label>
+      <select
+        value={config.quality_preset ?? "balanced"}
+        onChange={(e) => updateConfig({ project, data: { quality_preset: e.target.value as "fast" | "balanced" | "quality" } })}
+        className="w-full border-[2px] border-ink-black/20 bg-bristol px-3 py-2 font-body text-[0.85rem] text-ink-black focus:border-ink-black focus:outline-none"
+      >
+        {QUALITY_OPTIONS.map((opt) => (
+          <option key={opt.value} value={opt.value}>{opt.label}</option>
+        ))}
+      </select>
     </div>
   );
 }
@@ -230,6 +120,29 @@ export function DrawRoom() {
   const activeSceneId = sceneFilter !== "all" ? sceneFilter : null;
   const { data: scenePrompts } = usePromptsForScene(id, activeSceneId);
 
+  // Hydrate drawProgress in-flight from /status whenever it changes.
+  // SSE owns updates after this; hydration covers fresh page loads.
+  const drawStage = status?.stages?.draw;
+  const hydrateDrawProgress = useDrawProgressStore((s) => s.hydrate);
+  useEffect(() => {
+    if (!id) return;
+    hydrateDrawProgress(id, drawStage);
+  }, [id, drawStage, hydrateDrawProgress]);
+
+  // Subscriptions to drawProgress for live-cockpit + per-panel state.
+  const inFlightSet = useInFlightSet(id ?? "");
+  const recentFinishes = useRecentFinishes(id ?? "");
+
+  // Per-panel finishFlash: derive {key → most recent finish at} from store.
+  const finishFlashByKey = useMemo(() => {
+    const m = new Map<string, { at: number; status: "ok" | "failed" }>();
+    for (const f of recentFinishes) {
+      const k = `${f.sceneId}-${f.panelNumber}`;
+      if (!m.has(k)) m.set(k, { at: f.finishedAt, status: f.status });
+    }
+    return m;
+  }, [recentFinishes]);
+
   const promptDescByKey = useMemo(() => {
     if (!scenePrompts) return new Map<string, { title: string; description: string }>();
     const map = new Map<string, { title: string; description: string }>();
@@ -250,11 +163,14 @@ export function DrawRoom() {
   }, [scenePrompts]);
 
   const { mutate: runPipeline, isPending: isPipelineRunning } = useRunPipeline();
+  const { mutate: resetStale, isPending: isResetting } = useResetStale();
   const { data: drawEstimate } = useStageEstimate(id, "draw");
 
-  const generateStage = status?.stages?.draw;
+  const generateStage = drawStage;
   const failedItems = generateStage?.items_failed ?? [];
-  const isGenerateStale = generateStage?.status === "running" && generateStage.stale;
+  const isStageStuck = !!generateStage?.stale;
+  const lastProgressAt = generateStage?.last_progress_at ?? null;
+
   const imageByKey = useMemo(
     () => new Map<string, ImageStatus>(
       (images ?? []).map((img) => [`${img.scene_id}-${img.panel_number}`, img] as const),
@@ -292,19 +208,6 @@ export function DrawRoom() {
     }
   }
 
-  const synthesizedStatus = (sceneId: string, panelNumber: number): ImageStatus["status"] => {
-    const key = `${sceneId}-${panelNumber}`;
-    const regenMode = regenModes.get(key);
-    if (regenMode === "queued" || regenMode === "running") return "pending";
-    const panelStem = `panel_${String(panelNumber).padStart(3, "0")}`;
-    const failedKey = `${sceneId}/${panelStem}`;
-    if (failedItems.some((f) => f === failedKey || f.endsWith(`/${sceneId}/${panelStem}.json`))) return "failed";
-    if (isGenerateStale) return "stale";
-    const ds = generateStage?.status;
-    if (ds === "awaiting_review" || ds === "complete" || ds === "failed") return "failed";
-    return "pending";
-  };
-
   for (const summary of promptSummaries ?? []) {
     if (sceneFilter !== "all" && sceneFilter !== summary.scene_id) continue;
     for (let panelNum = 1; panelNum <= summary.prompt_count; panelNum++) {
@@ -317,7 +220,7 @@ export function DrawRoom() {
         );
         const synth: ImageStatus = {
           scene_id: summary.scene_id, panel_number: panelNum,
-          status: synthesizedStatus(summary.scene_id, panelNum), image_available: false, accepted: false,
+          status: "pending", image_available: false, accepted: false,
         };
         if (idx === -1) allDisplayImages.push(synth);
         else allDisplayImages.splice(idx, 0, synth);
@@ -335,7 +238,7 @@ export function DrawRoom() {
     if (!alreadyPresent && (sceneFilter === "all" || sceneFilter === regenSceneId)) {
       const synth: ImageStatus = {
         scene_id: regenSceneId, panel_number: regenPanelNum,
-        status: synthesizedStatus(regenSceneId, regenPanelNum), image_available: false, accepted: false,
+        status: "pending", image_available: false, accepted: false,
       };
       const idx = allDisplayImages.findIndex(
         (img) => img.scene_id > regenSceneId || (img.scene_id === regenSceneId && img.panel_number > regenPanelNum),
@@ -373,25 +276,51 @@ export function DrawRoom() {
     }
   }, [generationJobs, imageByKey, projectRegens, id, complete, fail]);
 
+  const panelInputsFor = (img: ImageStatus) => {
+    const key = `${img.scene_id}-${img.panel_number}`;
+    return {
+      inFlight: inFlightSet.has(key),
+      queuedInRun: !!isDrawRunning
+        && img.status === "pending"
+        && !inFlightSet.has(key),
+      regenMode: regenModes.get(key) ?? null,
+      isRetryFailedRunning: retryFailedActive,
+    };
+  };
+
   const panelCounts = useMemo(() => {
     let generated = 0, pending = 0, failed = 0;
     for (const img of allDisplayImages) {
-      const key = `${img.scene_id}-${img.panel_number}`;
-      const state = getPanelDisplayState(img, regenModes.get(key) ?? null, isDrawRunning, retryFailedActive);
+      const state = getPanelDisplayState(img, panelInputsFor(img));
       const bucket = getPanelFilterBucket(state);
       if (bucket === "generated") generated++;
       else if (bucket === "pending") pending++;
       else if (bucket === "failed") failed++;
     }
     return { generated, pending, failed, total: allDisplayImages.length };
-  }, [allDisplayImages, regenModes, isDrawRunning, retryFailedActive]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allDisplayImages, regenModes, isDrawRunning, retryFailedActive, inFlightSet]);
+
+  const sceneProgress: SceneProgress[] = useMemo(() => {
+    const acc = new Map<string, SceneProgress>();
+    for (const img of allDisplayImages) {
+      const sp = acc.get(img.scene_id) ?? { sceneId: img.scene_id, generated: 0, failed: 0, total: 0 };
+      sp.total++;
+      const state = getPanelDisplayState(img, panelInputsFor(img));
+      const bucket = getPanelFilterBucket(state);
+      if (bucket === "generated") sp.generated++;
+      else if (bucket === "failed") sp.failed++;
+      acc.set(img.scene_id, sp);
+    }
+    return Array.from(acc.values()).sort((a, b) => a.sceneId.localeCompare(b.sceneId));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allDisplayImages, regenModes, isDrawRunning, retryFailedActive, inFlightSet]);
 
   const displayImages = useMemo(() => {
     let filtered = allDisplayImages;
     if (statusFilter !== "all") {
       filtered = filtered.filter((img) => {
-        const key = `${img.scene_id}-${img.panel_number}`;
-        const state = getPanelDisplayState(img, regenModes.get(key) ?? null, isDrawRunning, retryFailedActive);
+        const state = getPanelDisplayState(img, panelInputsFor(img));
         return getPanelFilterBucket(state) === statusFilter;
       });
     }
@@ -404,7 +333,8 @@ export function DrawRoom() {
       );
     }
     return filtered;
-  }, [allDisplayImages, statusFilter, searchQuery, regenModes, isDrawRunning, retryFailedActive]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allDisplayImages, statusFilter, searchQuery, regenModes, isDrawRunning, retryFailedActive, inFlightSet]);
 
   const scenes = useMemo(
     () => [...new Set([...images?.map((img) => img.scene_id) ?? [], ...(promptSummaries?.map((s) => s.scene_id) ?? [])])],
@@ -455,6 +385,11 @@ export function DrawRoom() {
       },
     );
     setConfirmAction(null);
+  }
+
+  function handleResetStale() {
+    if (!id) return;
+    resetStale({ project: id });
   }
 
   if (isLoading || ((!images?.length && !promptSummaries?.length) && drawStageStatus !== "pending")) {
@@ -585,7 +520,7 @@ export function DrawRoom() {
         </div>
       </div>
 
-      <section className="grid items-start gap-8 xl:grid-cols-[minmax(0,1fr)_280px]">
+      <section className="grid items-start gap-8 xl:grid-cols-[minmax(0,1fr)_320px]">
         {viewMode === "grid" ? (
           <div className="grid gap-x-5 gap-y-7 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
             {displayImages.map((img) => {
@@ -595,6 +530,8 @@ export function DrawRoom() {
               const imageUrl = bust ? `${baseUrl}?t=${bust}` : baseUrl;
               const regenError = id ? errors[`${id}/${key}`] : undefined;
               const prompts = promptDescByKey.get(key);
+              const flash = finishFlashByKey.get(key) ?? null;
+              const inputs = panelInputsFor(img);
               return (
                 <PanelCard
                   key={key}
@@ -606,10 +543,13 @@ export function DrawRoom() {
                   failureClassification={img.failure_classification}
                   errorMessage={img.failure_message ?? undefined}
                   accepted={!!img.accepted}
-                  regenMode={regenModes.get(key) ?? null}
+                  regenMode={inputs.regenMode}
                   regenError={regenError}
-                  isDrawRunning={isDrawRunning}
+                  inFlight={inputs.inFlight}
+                  queuedInRun={inputs.queuedInRun}
                   isRetryFailedRunning={retryFailedActive}
+                  finishFlashAt={flash?.at ?? null}
+                  finishFlashStatus={flash?.status ?? null}
                   title={prompts?.title}
                   description={prompts?.description}
                   onPanelClick={() => setSelectedPanel({ sceneId: img.scene_id, panelNumber: img.panel_number })}
@@ -624,8 +564,7 @@ export function DrawRoom() {
               const bust = id ? bustTimestamps[`${id}/${key}`] : undefined;
               const baseUrl = `/api/projects/${encodeURIComponent(id!)}/files/draw/${img.scene_id}/panel_${String(img.panel_number).padStart(3, "0")}.png`;
               const imageUrl = bust ? `${baseUrl}?t=${bust}` : baseUrl;
-              const regenMode = regenModes.get(key) ?? null;
-              const state = getPanelDisplayState(img, regenMode, isDrawRunning, retryFailedActive);
+              const state = getPanelDisplayState(img, panelInputsFor(img));
               const prompts = promptDescByKey.get(key);
               return (
                 <div
@@ -651,6 +590,7 @@ export function DrawRoom() {
                     : state === "generated" || state === "regenerated" ? "bg-archive-sage/50 text-ink-black"
                     : state === "failed" ? "bg-hero-red text-bristol"
                     : state === "generating" ? "bg-narrator-gold text-ink-black animate-pulse"
+                    : state === "queued" ? "bg-narrator-gold/30 text-ink-black"
                     : "bg-ink-black/15 text-ink-black"
                   }`}>
                     {state.toUpperCase()}
@@ -662,8 +602,15 @@ export function DrawRoom() {
         )}
 
         <aside className="xl:sticky xl:top-4 xl:self-start space-y-5">
-          {/* Panel progress */}
+          {/* Panel progress card — donut + (when running) progress bar / ETA */}
           <div className="border-[2px] border-ink-black/10 bg-bristol p-5">
+            {isStageStuck && (
+              <StaleStripe
+                lastProgressAt={lastProgressAt}
+                onReset={handleResetStale}
+                resetting={isResetting}
+              />
+            )}
             <div className="mb-4 font-meta text-[0.58rem] tracking-[0.24em] text-ink-black/40">
               PANEL PROGRESS
             </div>
@@ -673,6 +620,13 @@ export function DrawRoom() {
               failed={panelCounts.failed}
               total={panelCounts.total}
             />
+            {isDrawRunning && (
+              <LiveProgressStrip
+                itemsDone={generateStage?.items_done ?? 0}
+                itemsTotal={generateStage?.items_total ?? panelCounts.total}
+                project={id}
+              />
+            )}
             {(runningRegenCount > 0 || queuedRegenCount > 0) && (
               <div className="mt-3 font-meta text-[0.58rem] tracking-[0.12em] text-narrator-gold animate-pulse">
                 {runningRegenCount > 0 && `${runningRegenCount} regenerating`}
@@ -682,41 +636,33 @@ export function DrawRoom() {
             )}
           </div>
 
-          {/* Credits estimate */}
-          <div className="border-[2px] border-ink-black/10 bg-bristol p-5">
-            <div className="mb-4 font-meta text-[0.58rem] tracking-[0.24em] text-ink-black/40">
-              CREDITS ESTIMATE
-            </div>
-            <DrawCreditsEstimate project={id} />
-          </div>
+          {/* Live cockpit cards — only while running */}
+          {isDrawRunning && <InFlightCard project={id} />}
+          {isDrawRunning && <RecentFinishesCard project={id} />}
 
-          {/* Generation options */}
-          <div className="border-[2px] border-ink-black/10 bg-bristol p-5">
-            <div className="mb-4 font-meta text-[0.58rem] tracking-[0.24em] text-ink-black/40">
-              GENERATION OPTIONS
-            </div>
-            <GenerationOptionsPanel project={id} />
-          </div>
+          <BySceneCard scenes={sceneProgress} defaultExpanded={!isDrawRunning} />
 
-          {/* Actions */}
-          <div className="space-y-2">
-            <button
-              type="button"
-              disabled={panelCounts.pending === 0 || isDrawRunning || isPipelineRunning}
-              onClick={() => setConfirmAction("generate_all")}
-              className="w-full border-[2px] border-ink-black bg-ink-black px-4 py-3 font-meta text-[0.62rem] tracking-[0.14em] text-bristol transition-colors hover:bg-ink-black/80 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              GENERATE ALL PENDING ({panelCounts.pending})
-            </button>
-            <button
-              type="button"
-              disabled={panelCounts.failed === 0 || isDrawRunning || isPipelineRunning}
-              onClick={() => setConfirmAction("retry_failed")}
-              className="w-full border-[2px] border-hero-red px-4 py-3 font-meta text-[0.62rem] tracking-[0.14em] text-hero-red transition-colors hover:bg-hero-red hover:text-bristol disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              RETRY FAILED ({panelCounts.failed})
-            </button>
-          </div>
+          {/* Actions — only when at rest */}
+          {!isDrawRunning && (
+            <div className="space-y-2">
+              <button
+                type="button"
+                disabled={panelCounts.pending === 0 || isPipelineRunning}
+                onClick={() => setConfirmAction("generate_all")}
+                className="w-full border-[2px] border-ink-black bg-ink-black px-4 py-3 font-meta text-[0.62rem] tracking-[0.14em] text-bristol transition-colors hover:bg-ink-black/80 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                GENERATE ALL PENDING ({panelCounts.pending})
+              </button>
+              <button
+                type="button"
+                disabled={panelCounts.failed === 0 || isPipelineRunning}
+                onClick={() => setConfirmAction("retry_failed")}
+                className="w-full border-[2px] border-hero-red px-4 py-3 font-meta text-[0.62rem] tracking-[0.14em] text-hero-red transition-colors hover:bg-hero-red hover:text-bristol disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                RETRY FAILED ({panelCounts.failed})
+              </button>
+            </div>
+          )}
         </aside>
       </section>
 
@@ -746,6 +692,7 @@ export function DrawRoom() {
         title="Generate All Pending"
         body={`This will generate ${panelCounts.pending} pending panel${panelCounts.pending === 1 ? "" : "s"}.`}
         cost={costForConfirm}
+        extraBody={<QualityPresetField project={id} />}
         confirmLabel="Generate All Pending"
         onConfirm={handleGenerateAllPending}
         onClose={() => setConfirmAction(null)}
@@ -756,6 +703,7 @@ export function DrawRoom() {
         title="Retry Failed Panels"
         body={`This will retry ${panelCounts.failed} failed panel${panelCounts.failed === 1 ? "" : "s"}.`}
         cost={costForConfirm}
+        extraBody={<QualityPresetField project={id} />}
         confirmLabel="Retry Failed"
         onConfirm={handleRetryFailed}
         onClose={() => setConfirmAction(null)}

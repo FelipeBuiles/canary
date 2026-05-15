@@ -7,9 +7,9 @@ const STATE_BADGE: Record<PanelDisplayState, { label: string; className: string 
   generated: { label: "GENERATED", className: "bg-archive-sage/70 text-ink-black" },
   regenerated: { label: "REGENERATED", className: "bg-teal-600 text-bristol" },
   generating: { label: "GENERATING…", className: "bg-narrator-gold text-ink-black animate-pulse" },
-  pending: { label: "PENDING", className: "bg-narrator-gold/60 text-ink-black" },
+  queued: { label: "QUEUED", className: "bg-narrator-gold/30 text-ink-black" },
+  pending: { label: "PENDING", className: "bg-ink-black/15 text-ink-black/80" },
   failed: { label: "FAILED", className: "bg-hero-red text-bristol" },
-  stale: { label: "STALE", className: "bg-ink-black/30 text-bristol" },
 };
 
 interface PanelCardProps {
@@ -23,8 +23,15 @@ interface PanelCardProps {
   accepted?: boolean;
   regenMode?: "queued" | "running" | null;
   regenError?: string | null;
-  isDrawRunning?: boolean;
+  /** True when the backend reports this exact panel is currently mid-generation. */
+  inFlight?: boolean;
+  /** True when this panel is part of an active run's target set but not yet started. */
+  queuedInRun?: boolean;
   isRetryFailedRunning?: boolean;
+  /** Epoch ms when this panel last finished — triggers a 600ms flash when it changes. */
+  finishFlashAt?: number | null;
+  /** Status of the most recent finish — drives the flash color. */
+  finishFlashStatus?: "ok" | "failed" | null;
   title?: string;
   description?: string;
   onPanelClick?: () => void;
@@ -41,17 +48,18 @@ export function PanelCard({
   accepted = false,
   regenMode = null,
   regenError,
-  isDrawRunning = false,
+  inFlight = false,
+  queuedInRun = false,
   isRetryFailedRunning = false,
+  finishFlashAt = null,
+  finishFlashStatus = null,
   title,
   description,
   onPanelClick,
 }: PanelCardProps) {
   const displayState = getPanelDisplayState(
     { status, accepted, version_count: undefined },
-    regenMode,
-    isDrawRunning,
-    isRetryFailedRunning,
+    { inFlight, queuedInRun, regenMode, isRetryFailedRunning },
   );
   const badge = STATE_BADGE[displayState];
   const panelNum = String(panelNumber).padStart(2, "0");
@@ -59,7 +67,9 @@ export function PanelCard({
   const cardTitle = title ?? `${sceneLabel} · PANEL ${panelNum}`;
   const imageDownloadUrl = imageUrl;
 
-  const isInteractive = displayState !== "pending" && displayState !== "generating";
+  const isInteractive = displayState !== "pending"
+    && displayState !== "queued"
+    && displayState !== "generating";
 
   const failedCopyBody =
     regenError ||
@@ -68,12 +78,38 @@ export function PanelCard({
       ? "Edit the prompt and re-run before composing."
       : "Open the panel detail to edit the prompt, then use Quick Re-Do.");
 
+  const queuedFrame = displayState === "queued"
+    ? "border-dashed border-narrator-gold/70"
+    : "border-transparent";
+
   return (
     <article className="group/panel flex min-w-0 flex-col">
+      <style>{`
+        @keyframes panel-finish-flash {
+          0%   { box-shadow: 0 0 0 0 var(--flash-color); opacity: 1; }
+          100% { box-shadow: 0 0 0 8px transparent;       opacity: 0; }
+        }
+      `}</style>
       <div
-        className={`relative aspect-[4/5] overflow-hidden border-[2px] border-transparent bg-surface-container transition-colors duration-150 ${isInteractive ? "cursor-pointer group-hover/panel:border-ink-black" : ""}`}
+        className={`relative aspect-[4/5] overflow-hidden border-[2px] bg-surface-container transition-all duration-200 ${queuedFrame} ${isInteractive ? "cursor-pointer group-hover/panel:border-ink-black" : ""}`}
         onClick={isInteractive ? onPanelClick : undefined}
       >
+        {finishFlashAt != null && (
+          <span
+            // Re-keying remounts the overlay so the CSS animation replays
+            // for each new finish — no setState-in-effect needed.
+            key={finishFlashAt}
+            aria-hidden
+            className="pointer-events-none absolute inset-0 z-20"
+            style={{
+              ["--flash-color" as string]: finishFlashStatus === "failed"
+                ? "rgba(220, 47, 39, 0.55)"
+                : "rgba(141, 162, 105, 0.55)",
+              animation: "panel-finish-flash 600ms ease-out forwards",
+              boxShadow: "inset 0 0 0 4px var(--flash-color)",
+            }}
+          />
+        )}
         {displayState === "generating" ? (
           <div className="flex h-full flex-col items-center justify-center bg-ink-black/80">
             <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-narrator-gold animate-pulse">
@@ -83,19 +119,19 @@ export function PanelCard({
               {regenMode === "queued" ? "WAITING FOR GENERATOR" : "GENERATING PANEL"}
             </div>
           </div>
+        ) : displayState === "queued" ? (
+          <div className="flex h-full flex-col items-center justify-center bg-ink-black/8">
+            <div className="font-display text-[1.1rem] font-bold leading-none tracking-[-0.05em] text-narrator-gold">
+              QUEUED
+            </div>
+            <div className="mt-2 font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/45">
+              IN THIS RUN
+            </div>
+          </div>
         ) : displayState === "pending" ? (
           <div className="flex h-full flex-col items-center justify-center bg-ink-black/10">
             <div className="font-meta text-[0.62rem] tracking-[0.22em] text-ink-black/35">
               NOT YET GENERATED
-            </div>
-          </div>
-        ) : displayState === "stale" ? (
-          <div className="flex h-full flex-col items-center justify-center bg-hero-red/10 px-3">
-            <div className="font-display text-[1.25rem] font-bold leading-none tracking-[-0.05em] text-hero-red">
-              GENERATION STALE
-            </div>
-            <div className="mt-2 text-center text-[0.72rem] text-hero-red/80">
-              Job tracking was interrupted. Re-run this panel.
             </div>
           </div>
         ) : displayState === "failed" ? (

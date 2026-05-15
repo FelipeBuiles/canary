@@ -162,12 +162,63 @@ class TestIsStale:
         s = StageState(status=StageStatus.RUNNING, started_at=datetime.now(timezone.utc))
         assert is_stale(s) is False
 
-    def test_stale_after_threshold(self):
+    def test_stale_after_threshold_with_no_progress(self):
         s = StageState(
             status=StageStatus.RUNNING,
             started_at=datetime.now(timezone.utc) - timedelta(minutes=6),
         )
         assert is_stale(s) is True
+
+    def test_recent_heartbeat_resets_stale_window(self):
+        # Started 10 minutes ago but progress was reported 30 seconds ago —
+        # this is the long-draw case the old heuristic falsely flagged.
+        s = StageState(
+            status=StageStatus.RUNNING,
+            started_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+            last_progress_at=datetime.now(timezone.utc) - timedelta(seconds=30),
+        )
+        assert is_stale(s) is False
+
+    def test_old_heartbeat_is_stale(self):
+        s = StageState(
+            status=StageStatus.RUNNING,
+            started_at=datetime.now(timezone.utc) - timedelta(minutes=20),
+            last_progress_at=datetime.now(timezone.utc) - timedelta(minutes=6),
+        )
+        assert is_stale(s) is True
+
+    def test_no_heartbeat_falls_back_to_started_at(self):
+        # Stage just began — last_progress_at is None until the first
+        # record_item_done call.
+        s = StageState(
+            status=StageStatus.RUNNING,
+            started_at=datetime.now(timezone.utc) - timedelta(minutes=2),
+            last_progress_at=None,
+        )
+        assert is_stale(s) is False
+
+
+class TestRecordItemDoneHeartbeat:
+    def test_record_item_done_updates_last_progress_at(self):
+        from novel_to_comic.state import record_item_done
+        state = create_initial_state("p", "n.txt")
+        begin_stage(state, "draw", total=3)
+        before = state.stages["draw"].last_progress_at
+        record_item_done(state, "draw")
+        after = state.stages["draw"].last_progress_at
+        assert before is None
+        assert after is not None
+
+    def test_begin_stage_resets_last_progress_at(self):
+        from novel_to_comic.state import record_item_done
+        state = create_initial_state("p", "n.txt")
+        begin_stage(state, "draw", total=3)
+        record_item_done(state, "draw")
+        assert state.stages["draw"].last_progress_at is not None
+        # Re-begin the stage (e.g. rerun) — heartbeat should be cleared so
+        # is_stale falls back to the new started_at.
+        begin_stage(state, "draw", total=3)
+        assert state.stages["draw"].last_progress_at is None
 
 
 class TestGetStaleStages:

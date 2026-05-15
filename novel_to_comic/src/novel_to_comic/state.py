@@ -48,6 +48,7 @@ class StageState(BaseModel):
     status: StageStatus = StageStatus.PENDING
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
+    last_progress_at: Optional[datetime] = None
     items_done: int = 0
     items_total: int = 0
     items_failed: list[str] = Field(default_factory=list)
@@ -148,6 +149,7 @@ def begin_stage(
     s.status = StageStatus.RUNNING
     s.started_at = datetime.now(timezone.utc)
     s.finished_at = None
+    s.last_progress_at = None
     s.items_total = total
     s.items_done = 0
     s.items_failed = []
@@ -201,6 +203,7 @@ def record_item_done(
 
     s = state.stages[stage]
     s.items_done += 1
+    s.last_progress_at = datetime.now(timezone.utc)
     if usage is not None:
         s.usage_log.append(usage.model_dump())
         s.cost_usd += calculate_cost(usage)
@@ -219,15 +222,30 @@ def record_api_usage(state: PipelineState, stage: str, usage: UsageRecord) -> No
 
     s = state.stages[stage]
     s.usage_log.append(usage.model_dump())
+    s.last_progress_at = datetime.now(timezone.utc)
     s.cost_usd += calculate_cost(usage)
 
 
 def is_stale(stage_state: StageState) -> bool:
+    """Heartbeat-based liveness check.
+
+    A stage is stale when it claims RUNNING but no progress has been
+    recorded recently. ``last_progress_at`` is updated on every
+    ``record_item_done`` / ``record_api_usage`` call. We fall back to
+    ``started_at`` for the window between begin and the first progress
+    record.
+
+    Note: callers should also AND with "no live asyncio task" to avoid
+    flagging healthy long stages whose state.json hasn't been written
+    in the threshold window. See ``_stage_payload`` in
+    server/routers/projects.py.
+    """
     if stage_state.status != StageStatus.RUNNING:
         return False
-    if stage_state.started_at is None:
+    last = stage_state.last_progress_at or stage_state.started_at
+    if last is None:
         return False
-    age = datetime.now(timezone.utc) - stage_state.started_at
+    age = datetime.now(timezone.utc) - last
     return age > STALE_RUNNING_THRESHOLD
 
 

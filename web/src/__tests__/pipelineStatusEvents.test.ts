@@ -13,7 +13,9 @@ function stage(status: StageStatus, total = 0): StageInfo {
     error: null,
     started_at: null,
     finished_at: null,
+    last_progress_at: null,
     stale: false,
+    in_flight: [],
   };
 }
 

@@ -41,6 +41,12 @@ export interface ConfigOverrides {
   comic_theme?: string;
 }
 
+export interface InFlightPanel {
+  scene_id: string;
+  panel_number: number;
+  started_at: string;
+}
+
 export interface StageInfo {
   status: StageStatus;
   items_done: number;
@@ -51,7 +57,9 @@ export interface StageInfo {
   error: string | null;
   started_at: string | null;
   finished_at: string | null;
+  last_progress_at: string | null;
   stale: boolean;
+  in_flight: InFlightPanel[];
 }
 
 export interface ProjectSummary {
@@ -145,6 +153,13 @@ export interface PipelineEvent {
   balance_credits?: number;
   required_credits?: number;
   shortfall_credits?: number;
+  // Per-panel events (draw stage)
+  scene_id?: string;
+  panel_number?: number;
+  started_at?: string;
+  status?: "ok" | "failed";
+  duration_ms?: number;
+  error?: string | null;
 }
 
 export type GenerationJobStatus = "queued" | "running" | "complete" | "failed";

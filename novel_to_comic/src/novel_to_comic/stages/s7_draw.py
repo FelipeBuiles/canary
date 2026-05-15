@@ -7,6 +7,7 @@ images for multi-reference consistency.
 import asyncio
 import hashlib
 import json
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -362,6 +363,7 @@ async def _generate_panel(
     panel_events: dict[tuple[str, int], asyncio.Event] | None,
     story_bible: StoryBible | None,
     force: bool = False,
+    ctx: StageRuntime | None = None,
 ) -> ApiResult[Path | None]:
     """Generate a single panel image from its prompt.
 
@@ -378,6 +380,7 @@ async def _generate_panel(
     positional weight in the Gemini contents list.
     """
     panel_key: tuple[str, int] | None = None
+    panel_started_at: float | None = None
     try:
         try:
             panel_key = (prompt_path.parent.name, int(prompt_path.stem.split("_")[1]))
@@ -456,6 +459,10 @@ async def _generate_panel(
             ):
                 return ApiResult(value=output_path, usage=None)
 
+            if ctx is not None:
+                ctx.emit_panel_start(prompt.scene_id, prompt.panel_number)
+                panel_started_at = time.monotonic()
+
             try:
                 async with semaphore:
                     flux_result = await flux.generate_image_multi_ref(
@@ -492,6 +499,12 @@ async def _generate_panel(
             if result:
                 artifacts.asset_failure_path(output_path).unlink(missing_ok=True)
                 _write_generation_meta(output_path, meta_payload)
+            if ctx is not None and panel_started_at is not None:
+                ctx.emit_panel_done(
+                    prompt.scene_id, prompt.panel_number,
+                    status="ok",
+                    duration_ms=int((time.monotonic() - panel_started_at) * 1000),
+                )
             return ApiResult(value=result, usage=flux_result.usage)
     except Exception as exc:
         if "output_path" in locals() and "meta_payload" in locals():
@@ -525,6 +538,13 @@ async def _generate_panel(
                 _write_failure_meta(output_path, failure_payload)
             except Exception:
                 pass
+        if ctx is not None and panel_started_at is not None and panel_key is not None:
+            ctx.emit_panel_done(
+                panel_key[0], panel_key[1],
+                status="failed",
+                duration_ms=int((time.monotonic() - panel_started_at) * 1000),
+                error=_fmt_error(exc),
+            )
         raise
     finally:
         if panel_events and panel_key:
@@ -710,7 +730,8 @@ async def run(
                 ctx.log(f"Drawing panel batch {first}-{last} of {len(prompt_files)}")
                 coros = [
                     _generate_panel(config, project_dir, pf, semaphore, scene_locks,
-                                    style_sample, scene_to_location, panel_events, story_bible)
+                                    style_sample, scene_to_location, panel_events, story_bible,
+                                    ctx=ctx)
                     for pf in batch
                 ]
                 results = await asyncio.gather(*coros, return_exceptions=True)
