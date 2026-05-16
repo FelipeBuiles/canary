@@ -17,7 +17,9 @@ import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { PanelCard } from "../../components/PanelCard";
 import { PanelDetailModal } from "../../components/PanelDetailModal";
 import { RoomShell } from "../../components/ui/RoomShell";
+import { Surface } from "../../components/ui/Surface";
 import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
+import { Toolbar, RoomTabs, type RoomTab } from "../../components/composites";
 import { StyleCallout } from "../../components/wizard/StyleCallout";
 import { ConfirmDrawer } from "../../components/ui/ConfirmDrawer";
 import { useActiveRegens, useRegenStore } from "../../store/regen";
@@ -456,32 +458,21 @@ export function DrawRoom() {
       />
       <StyleCallout project={id} />
 
-      {/* Filter bar */}
-      <div className="flex flex-wrap items-center gap-2 border-b-[2px] border-ink-black/10 pb-4">
-        <div className="flex overflow-x-auto" role="tablist" aria-label="Panel status filter">
-          {FILTER_TABS.map(({ key, label }) => {
-            const count =
+      <Toolbar>
+        <RoomTabs
+          ariaLabel="Panel status filter"
+          tabs={FILTER_TABS.map(({ key, label }): RoomTab => ({
+            key,
+            label,
+            count:
               key === "all" ? panelCounts.total
               : key === "generated" ? panelCounts.generated
               : key === "pending" ? panelCounts.pending
-              : panelCounts.failed;
-            const active = statusFilter === key;
-            return (
-              <button
-                key={key}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => setStatusFilter(key)}
-                className={`shrink-0 border-[2px] border-r-0 px-5 py-2.5 font-meta text-[0.62rem] tracking-[0.16em] transition-colors last:border-r-[2px] ${
-                  active ? "bg-ink-black text-bristol" : "border-ink-black/25 bg-pulp-paper text-ink-black hover:bg-bristol"
-                }`}
-              >
-                {label} {count}
-              </button>
-            );
-          })}
-        </div>
+              : panelCounts.failed,
+            active: statusFilter === key,
+            onClick: () => setStatusFilter(key),
+          }))}
+        />
 
         <div className="flex flex-1 items-center gap-2 min-w-[16rem]">
           {scenes.length > 1 && (
@@ -518,7 +509,7 @@ export function DrawRoom() {
             ))}
           </div>
         </div>
-      </div>
+      </Toolbar>
 
       <section className="grid items-start gap-8 xl:grid-cols-[minmax(0,1fr)_320px]">
         {viewMode === "grid" ? (
@@ -603,7 +594,7 @@ export function DrawRoom() {
 
         <aside className="xl:sticky xl:top-4 xl:self-start space-y-5">
           {/* Panel progress card — donut + (when running) progress bar / ETA */}
-          <div className="border-[2px] border-ink-black/10 bg-bristol p-5">
+          <Surface border="soft" shadow="none" padding="md">
             {isStageStuck && (
               <StaleStripe
                 lastProgressAt={lastProgressAt}
@@ -634,7 +625,7 @@ export function DrawRoom() {
                 {queuedRegenCount > 0 && `${queuedRegenCount} queued`}
               </div>
             )}
-          </div>
+          </Surface>
 
           {/* Live cockpit cards — only while running */}
           {isDrawRunning && <InFlightCard project={id} />}

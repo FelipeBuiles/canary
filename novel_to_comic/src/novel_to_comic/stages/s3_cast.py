@@ -242,6 +242,20 @@ def _cast_asset_style_ref(config: Config, style_ref: Path | None) -> Path | None
     return None
 
 
+def _style_authority_block(asset_kind: str) -> str:
+    return (
+        "STYLE AUTHORITY:\n"
+        f"- The selected style above is mandatory for this {asset_kind}, not decorative.\n"
+        "- Preserve the style's medium, mark-making, palette, lighting language, edge quality, "
+        "shape design, and rendering density.\n"
+        "- Layout or reference-format constraints below describe composition only; do not let "
+        "them flatten the image into generic clean concept art, photorealism, anime, or default "
+        "digital illustration.\n"
+        "- If a style reference image is provided, treat it as the visual authority for how "
+        "surfaces are painted, lit, simplified, and finished."
+    )
+
+
 def _character_ref_prompt(
     config: Config,
     story_bible: StoryBible,
@@ -254,6 +268,7 @@ def _character_ref_prompt(
     addendum_block = f"\nUSER FIX NOTE: {addendum.strip()}\n" if addendum.strip() else ""
     return (
         f"{config.style_template}\n\n"
+        f"{_style_authority_block('character reference sheet')}\n\n"
         f"CHARACTER REFERENCE SHEET - {char.name}, {char.gender}.\n"
         f"{identity_lock}\n"
         f"{char.visual_anchor}\n"
@@ -265,7 +280,8 @@ def _character_ref_prompt(
         f"bottom-right: three-quarter with one hand raised in gesture. "
         f"All four figures are the SAME character - identical face, hair, build, and clothing. "
         f"Each figure is fully contained within its quadrant with white space around it - no figure touches or crosses the edge of the image. "
-        f"Pure white background. Full body head to toe in each quadrant, no cropping. No text, no labels, no grid lines. "
+        f"Plain uncluttered reference background; a subtle style-colored studio wash or cast light is allowed, but no scenery. "
+        f"Full body head to toe in each quadrant, no cropping. No text, no labels, no grid lines. "
         f"Clean controlled surfaces; no noisy grain, speckled dappling, repeated texture fields, or muddy micro-detail.\n\n"
         f"Render every figure in the style described above."
     )
@@ -277,6 +293,7 @@ def _location_plate_prompt(config: Config, loc, addendum: str = "") -> str:
         addendum_block = f"\nUSER FIX NOTE: {addendum_text}\n" if addendum_text else ""
         return (
             f"{config.style_template.strip()}\n\n"
+            f"{_style_authority_block('location design plate')}\n\n"
             f"LOCATION DESIGN PLATE\n"
             f"{loc.visual_anchor}\n"
             f"{addendum_block}\n"
@@ -296,7 +313,9 @@ def _location_plate_prompt(config: Config, loc, addendum: str = "") -> str:
         )
     addendum_block = f" USER FIX NOTE: {addendum_text}." if addendum_text else ""
     return (
-        f"{config.style_template} {loc.visual_anchor}{addendum_block} "
+        f"{config.style_template}\n\n"
+        f"{_style_authority_block('location design plate')}\n\n"
+        f"{loc.visual_anchor}{addendum_block} "
         f"Wide establishing shot, no characters present, clean readable background, "
         f"cinematic composition. No text. No noisy grain, speckled dappling, "
         f"repeated texture fields, pattern tiling, or muddy micro-detail."
@@ -313,6 +332,7 @@ def _prop_ref_prompt(config: Config, prop: Prop, addendum: str = "") -> str:
     addendum_block = f" USER FIX NOTE: {addendum.strip()}." if addendum.strip() else ""
     return (
         f"{config.style_template}\n\n"
+        f"{_style_authority_block('prop reference')}\n\n"
         f"PROP REFERENCE - {prop.name}.\n"
         f"{prop.visual_anchor}{addendum_block}\n\n"
         f"Single object, isolated on a plain neutral mid-grey background. "

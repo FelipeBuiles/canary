@@ -7,6 +7,7 @@ import {
   formatEta,
   formatRelative,
 } from "../../store/drawProgress";
+import { Surface } from "../ui/Surface";
 
 // ── Donut summary (kept from old DrawRoom, adapted) ─────────────────────────
 
@@ -150,7 +151,7 @@ export function InFlightCard({ project }: { project: string }) {
   // Longest-running first — surfaces stuck panels.
   const sorted = [...inFlight].sort((a, b) => a.startedAt - b.startedAt);
   return (
-    <div className="border-[2px] border-ink-black/10 bg-bristol p-4">
+    <Surface border="soft" shadow="none" padding="md">
       <div className="mb-3 flex items-baseline justify-between">
         <div className="font-meta text-[0.58rem] tracking-[0.24em] text-ink-black/40">
           IN FLIGHT
@@ -172,7 +173,7 @@ export function InFlightCard({ project }: { project: string }) {
           </li>
         ))}
       </ul>
-    </div>
+    </Surface>
   );
 }
 
@@ -182,7 +183,7 @@ export function RecentFinishesCard({ project }: { project: string }) {
   const finishes = useRecentFinishes(project);
   if (finishes.length === 0) return null;
   return (
-    <div className="border-[2px] border-ink-black/10 bg-bristol p-4">
+    <Surface border="soft" shadow="none" padding="md">
       <div className="mb-3 font-meta text-[0.58rem] tracking-[0.24em] text-ink-black/40">
         RECENT FINISHES
       </div>
@@ -207,7 +208,7 @@ export function RecentFinishesCard({ project }: { project: string }) {
           </li>
         ))}
       </ul>
-    </div>
+    </Surface>
   );
 }
 
@@ -233,7 +234,7 @@ export function BySceneCard({
   const hasFailure = scenes.some((s) => s.failed > 0);
   const isOpen = expanded || hasFailure;
   return (
-    <div className="border-[2px] border-ink-black/10 bg-bristol p-4">
+    <Surface border="soft" shadow="none" padding="md">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
@@ -274,7 +275,7 @@ export function BySceneCard({
           })}
         </ul>
       )}
-    </div>
+    </Surface>
   );
 }
 

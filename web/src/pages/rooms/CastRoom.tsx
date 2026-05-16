@@ -22,6 +22,7 @@ import { LazyImage } from "../../components/ui/LazyImage";
 import { StatusPill } from "../../components/ui/StatusPill";
 import { RerunStageAction } from "../../components/ui/RerunStageAction";
 import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
+import { SectionHeader, EntityCard } from "../../components/composites";
 import type { Character, GenerationJob, Location, Prop } from "../../types/api";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 
@@ -149,101 +150,105 @@ function CharacterCastCard({
 
   return (
     <>
-      <article className="group/cast-card overflow-hidden border-[3px] border-ink-black/8 bg-bristol transition-colors duration-150 hover:border-ink-black">
-        <div
-          className="relative cursor-pointer bg-surface-container"
-          onClick={() => !imgFailed && setIsModalOpen(true)}
-        >
-          {imgFailed ? (
-            <div className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-2 bg-surface-container">
-              {stageRegenerating && (
-                <img
-                  key={timestamp}
-                  src={`${refUrl}?t=${timestamp}`}
-                  className="hidden"
-                  onLoad={() => setImgFailed(false)}
-                  alt=""
-                  aria-hidden="true"
-                />
-              )}
-              {stageRegenerating ? (
-                <>
-                  <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
-                    REGENERATING…
-                  </div>
-                  <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
-                    REBUILDING CAST REF
-                  </div>
-                </>
-              ) : regenRef.isPending || activeJob ? (
-                <>
-                  <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
-                    {queuedLabel(activeJob)}
-                  </div>
-                  <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
-                    GENERATING NEW REF
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">NO REF IMAGE</div>
-                  <DestructiveButton size="sm" onClick={handleRegen}>GENERATE</DestructiveButton>
-                </>
-              )}
-            </div>
-          ) : (
-            <>
-              <LazyImage
-                src={`${refUrl}?t=${timestamp}`}
-                alt={character.name}
-                loading="lazy"
-                width={320}
-                height={400}
-                aspect="4/5"
-                containerClassName="aspect-[4/5] w-full"
-                className="object-cover transition-opacity group-hover/cast-card:opacity-90"
-                onError={() => setImgFailed(true)}
-              />
-              {activeJob && (
-                <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
-                  {queuedLabel(activeJob)}
-                </StatusPill>
-              )}
-              {stageRegenerating && !activeJob && (
-                <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
-                  CAST STAGE RUNNING
-                </StatusPill>
-              )}
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/42 opacity-0 transition-opacity duration-150 group-hover/cast-card:opacity-100">
-                <span className="border border-bristol bg-transparent px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-bristol">
-                  ↗ Full size
-                </span>
+      <EntityCard
+        interactive
+        padding="tight"
+        className="group/cast-card"
+        media={
+          <div
+            className="relative cursor-pointer bg-surface-container"
+            onClick={() => !imgFailed && setIsModalOpen(true)}
+          >
+            {imgFailed ? (
+              <div className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-2 bg-surface-container">
+                {stageRegenerating && (
+                  <img
+                    key={timestamp}
+                    src={`${refUrl}?t=${timestamp}`}
+                    className="hidden"
+                    onLoad={() => setImgFailed(false)}
+                    alt=""
+                    aria-hidden="true"
+                  />
+                )}
+                {stageRegenerating ? (
+                  <>
+                    <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
+                      REGENERATING…
+                    </div>
+                    <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
+                      REBUILDING CAST REF
+                    </div>
+                  </>
+                ) : regenRef.isPending || activeJob ? (
+                  <>
+                    <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
+                      {queuedLabel(activeJob)}
+                    </div>
+                    <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
+                      GENERATING NEW REF
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">NO REF IMAGE</div>
+                    <DestructiveButton size="sm" onClick={handleRegen}>GENERATE</DestructiveButton>
+                  </>
+                )}
               </div>
-            </>
-          )}
-          <StatusPill tone="red" className="absolute right-4 top-4">
-            REF
-          </StatusPill>
+            ) : (
+              <>
+                <LazyImage
+                  src={`${refUrl}?t=${timestamp}`}
+                  alt={character.name}
+                  loading="lazy"
+                  width={320}
+                  height={400}
+                  aspect="4/5"
+                  containerClassName="aspect-[4/5] w-full"
+                  className="object-cover transition-opacity group-hover/cast-card:opacity-90"
+                  onError={() => setImgFailed(true)}
+                />
+                {activeJob && (
+                  <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
+                    {queuedLabel(activeJob)}
+                  </StatusPill>
+                )}
+                {stageRegenerating && !activeJob && (
+                  <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
+                    CAST STAGE RUNNING
+                  </StatusPill>
+                )}
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/42 opacity-0 transition-opacity duration-150 group-hover/cast-card:opacity-100">
+                  <span className="border border-bristol bg-transparent px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-bristol">
+                    ↗ Full size
+                  </span>
+                </div>
+              </>
+            )}
+            <StatusPill tone="red" className="absolute right-4 top-4">
+              REF
+            </StatusPill>
+          </div>
+        }
+      >
+        <div className="font-display text-[1.35rem] font-bold uppercase leading-none tracking-[-0.04em] text-ink-black">
+          {character.name}
         </div>
-        <div className="bg-bristol p-5">
-          <div className="font-display text-[1.35rem] font-bold uppercase leading-none tracking-[-0.04em] text-ink-black">
-            {character.name}
-          </div>
-          <div className="mt-2 font-body text-[0.92rem] font-semibold text-ink-black/55">
-            {character.age_range} &middot; {character.gender}
-          </div>
-          <div className="mt-4 flex flex-wrap gap-1.5">
-            {character.distinguishing_features.slice(0, 3).map((f) => (
-              <Tag key={f}>{f}</Tag>
-            ))}
-          </div>
-          {regenError && (
-            <div className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-[0.72rem] leading-relaxed text-bristol">
-              {regenError}
-            </div>
-          )}
+        <div className="mt-2 font-body text-[0.92rem] font-semibold text-ink-black/55">
+          {character.age_range} &middot; {character.gender}
         </div>
-      </article>
+        <div className="mt-4 flex flex-wrap gap-1.5">
+          {character.distinguishing_features.slice(0, 3).map((f) => (
+            <Tag key={f}>{f}</Tag>
+          ))}
+        </div>
+        {regenError && (
+          <div className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-[0.72rem] leading-relaxed text-bristol">
+            {regenError}
+          </div>
+        )}
+      </EntityCard>
       <ImageModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -466,96 +471,100 @@ function LocationPlateCard({
 
   return (
     <>
-      <article className="group/cast-card overflow-hidden border-[3px] border-ink-black/8 bg-bristol transition-colors duration-150 hover:border-ink-black">
-        <div 
-          className="relative cursor-pointer bg-surface-container"
-          onClick={() => !imgFailed && setIsModalOpen(true)}
-        >
-          {imgFailed ? (
-            <div className="flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 bg-surface-container">
-              {stageRegenerating && (
-                <img
-                  key={timestamp}
-                  src={`${plateUrl}?t=${timestamp}`}
-                  className="hidden"
-                  onLoad={() => setImgFailed(false)}
-                  alt=""
-                  aria-hidden="true"
-                />
-              )}
-              {stageRegenerating ? (
-                <>
-                  <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
-                    REGENERATING…
-                  </div>
-                  <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
-                    REBUILDING LOCATION PLATE
-                  </div>
-                </>
-              ) : regenPlate.isPending || activeJob ? (
-                <>
-                  <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
-                    {queuedLabel(activeJob)}
-                  </div>
-                  <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
-                    GENERATING NEW PLATE
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">NO PLATE IMAGE</div>
-                  <DestructiveButton size="sm" onClick={handleRegen}>GENERATE</DestructiveButton>
-                </>
-              )}
-            </div>
-          ) : (
-            <>
-              <LazyImage
-                src={`${plateUrl}?t=${timestamp}`}
-                alt={location.name}
-                loading="lazy"
-                width={480}
-                height={270}
-                aspect="16/9"
-                containerClassName="aspect-[16/9] w-full"
-                className="object-cover transition-opacity group-hover/cast-card:opacity-90"
-                onError={() => setImgFailed(true)}
-              />
-              {activeJob && (
-                <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
-                  {queuedLabel(activeJob)}
-                </StatusPill>
-              )}
-              {stageRegenerating && !activeJob && (
-                <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
-                  CAST STAGE RUNNING
-                </StatusPill>
-              )}
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/42 opacity-0 transition-opacity duration-150 group-hover/cast-card:opacity-100">
-                <span className="border border-bristol bg-transparent px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-bristol">
-                  ↗ Full size
-                </span>
+      <EntityCard
+        interactive
+        padding="tight"
+        className="group/cast-card"
+        media={
+          <div
+            className="relative cursor-pointer bg-surface-container"
+            onClick={() => !imgFailed && setIsModalOpen(true)}
+          >
+            {imgFailed ? (
+              <div className="flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 bg-surface-container">
+                {stageRegenerating && (
+                  <img
+                    key={timestamp}
+                    src={`${plateUrl}?t=${timestamp}`}
+                    className="hidden"
+                    onLoad={() => setImgFailed(false)}
+                    alt=""
+                    aria-hidden="true"
+                  />
+                )}
+                {stageRegenerating ? (
+                  <>
+                    <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
+                      REGENERATING…
+                    </div>
+                    <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
+                      REBUILDING LOCATION PLATE
+                    </div>
+                  </>
+                ) : regenPlate.isPending || activeJob ? (
+                  <>
+                    <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
+                      {queuedLabel(activeJob)}
+                    </div>
+                    <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
+                      GENERATING NEW PLATE
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">NO PLATE IMAGE</div>
+                    <DestructiveButton size="sm" onClick={handleRegen}>GENERATE</DestructiveButton>
+                  </>
+                )}
               </div>
-            </>
-          )}
-        </div>
-        <div className="bg-bristol p-5">
-          <div className="font-display text-[1.35rem] font-bold uppercase leading-none tracking-[-0.04em] text-ink-black">
-            {location.name}
-          </div>
-          <div className="mt-4 flex flex-wrap gap-1.5">
-            {location.time_of_day && (
-              <Tag>{location.time_of_day}</Tag>
+            ) : (
+              <>
+                <LazyImage
+                  src={`${plateUrl}?t=${timestamp}`}
+                  alt={location.name}
+                  loading="lazy"
+                  width={480}
+                  height={270}
+                  aspect="16/9"
+                  containerClassName="aspect-[16/9] w-full"
+                  className="object-cover transition-opacity group-hover/cast-card:opacity-90"
+                  onError={() => setImgFailed(true)}
+                />
+                {activeJob && (
+                  <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
+                    {queuedLabel(activeJob)}
+                  </StatusPill>
+                )}
+                {stageRegenerating && !activeJob && (
+                  <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
+                    CAST STAGE RUNNING
+                  </StatusPill>
+                )}
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/42 opacity-0 transition-opacity duration-150 group-hover/cast-card:opacity-100">
+                  <span className="border border-bristol bg-transparent px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-bristol">
+                    ↗ Full size
+                  </span>
+                </div>
+              </>
             )}
-            <Tag>{location.mood}</Tag>
           </div>
-          {regenError && (
-            <div className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-[0.72rem] leading-relaxed text-bristol">
-              {regenError}
-            </div>
-          )}
+        }
+      >
+        <div className="font-display text-[1.35rem] font-bold uppercase leading-none tracking-[-0.04em] text-ink-black">
+          {location.name}
         </div>
-      </article>
+        <div className="mt-4 flex flex-wrap gap-1.5">
+          {location.time_of_day && (
+            <Tag>{location.time_of_day}</Tag>
+          )}
+          <Tag>{location.mood}</Tag>
+        </div>
+        {regenError && (
+          <div className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-[0.72rem] leading-relaxed text-bristol">
+            {regenError}
+          </div>
+        )}
+      </EntityCard>
       <ImageModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -756,98 +765,102 @@ function PropRefCard({
 
   return (
     <>
-      <article className="group/cast-card overflow-hidden border-[3px] border-ink-black/8 bg-bristol transition-colors duration-150 hover:border-ink-black">
-        <div
-          className="relative cursor-pointer bg-surface-container"
-          onClick={() => !imgFailed && setIsModalOpen(true)}
-        >
-          {imgFailed ? (
-            <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 bg-surface-container">
-              {stageRegenerating && (
-                <img
-                  key={timestamp}
-                  src={`${refUrl}?t=${timestamp}`}
-                  className="hidden"
-                  onLoad={() => setImgFailed(false)}
-                  alt=""
-                  aria-hidden="true"
-                />
-              )}
-              {stageRegenerating ? (
-                <>
-                  <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
-                    REGENERATING…
-                  </div>
-                  <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
-                    REBUILDING PROP REF
-                  </div>
-                </>
-              ) : regenProp.isPending || activeJob ? (
-                <>
-                  <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
-                    {queuedLabel(activeJob)}
-                  </div>
-                  <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
-                    GENERATING NEW REF
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">NO REF IMAGE</div>
-                  <DestructiveButton size="sm" onClick={handleRegen}>GENERATE</DestructiveButton>
-                </>
-              )}
-            </div>
-          ) : (
-            <>
-              <LazyImage
-                src={`${refUrl}?t=${timestamp}`}
-                alt={prop.name}
-                loading="lazy"
-                width={400}
-                height={400}
-                aspect="1/1"
-                containerClassName="aspect-square w-full"
-                className="object-cover transition-opacity group-hover/cast-card:opacity-90"
-                onError={() => setImgFailed(true)}
-              />
-              {activeJob && (
-                <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
-                  {queuedLabel(activeJob)}
-                </StatusPill>
-              )}
-              {stageRegenerating && !activeJob && (
-                <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
-                  CAST STAGE RUNNING
-                </StatusPill>
-              )}
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/42 opacity-0 transition-opacity duration-150 group-hover/cast-card:opacity-100">
-                <span className="border border-bristol bg-transparent px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-bristol">
-                  ↗ Full size
-                </span>
+      <EntityCard
+        interactive
+        padding="tight"
+        className="group/cast-card"
+        media={
+          <div
+            className="relative cursor-pointer bg-surface-container"
+            onClick={() => !imgFailed && setIsModalOpen(true)}
+          >
+            {imgFailed ? (
+              <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 bg-surface-container">
+                {stageRegenerating && (
+                  <img
+                    key={timestamp}
+                    src={`${refUrl}?t=${timestamp}`}
+                    className="hidden"
+                    onLoad={() => setImgFailed(false)}
+                    alt=""
+                    aria-hidden="true"
+                  />
+                )}
+                {stageRegenerating ? (
+                  <>
+                    <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
+                      REGENERATING…
+                    </div>
+                    <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
+                      REBUILDING PROP REF
+                    </div>
+                  </>
+                ) : regenProp.isPending || activeJob ? (
+                  <>
+                    <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
+                      {queuedLabel(activeJob)}
+                    </div>
+                    <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
+                      GENERATING NEW REF
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">NO REF IMAGE</div>
+                    <DestructiveButton size="sm" onClick={handleRegen}>GENERATE</DestructiveButton>
+                  </>
+                )}
               </div>
-            </>
-          )}
-          <StatusPill tone="red" className="absolute right-4 top-4">
-            PROP
-          </StatusPill>
-        </div>
-        <div className="bg-bristol p-5">
-          <div className="font-display text-[1.35rem] font-bold uppercase leading-none tracking-[-0.04em] text-ink-black">
-            {prop.name}
+            ) : (
+              <>
+                <LazyImage
+                  src={`${refUrl}?t=${timestamp}`}
+                  alt={prop.name}
+                  loading="lazy"
+                  width={400}
+                  height={400}
+                  aspect="1/1"
+                  containerClassName="aspect-square w-full"
+                  className="object-cover transition-opacity group-hover/cast-card:opacity-90"
+                  onError={() => setImgFailed(true)}
+                />
+                {activeJob && (
+                  <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
+                    {queuedLabel(activeJob)}
+                  </StatusPill>
+                )}
+                {stageRegenerating && !activeJob && (
+                  <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
+                    CAST STAGE RUNNING
+                  </StatusPill>
+                )}
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/42 opacity-0 transition-opacity duration-150 group-hover/cast-card:opacity-100">
+                  <span className="border border-bristol bg-transparent px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-bristol">
+                    ↗ Full size
+                  </span>
+                </div>
+              </>
+            )}
+            <StatusPill tone="red" className="absolute right-4 top-4">
+              PROP
+            </StatusPill>
           </div>
-          {prop.first_appearance_scene && (
-            <div className="mt-2 font-body text-[0.92rem] font-semibold text-ink-black/55">
-              First seen: {prop.first_appearance_scene}
-            </div>
-          )}
-          {regenError && (
-            <div className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-[0.72rem] leading-relaxed text-bristol">
-              {regenError}
-            </div>
-          )}
+        }
+      >
+        <div className="font-display text-[1.35rem] font-bold uppercase leading-none tracking-[-0.04em] text-ink-black">
+          {prop.name}
         </div>
-      </article>
+        {prop.first_appearance_scene && (
+          <div className="mt-2 font-body text-[0.92rem] font-semibold text-ink-black/55">
+            First seen: {prop.first_appearance_scene}
+          </div>
+        )}
+        {regenError && (
+          <div className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-[0.72rem] leading-relaxed text-bristol">
+            {regenError}
+          </div>
+        )}
+      </EntityCard>
       <ImageModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -974,10 +987,8 @@ export function CastRoom() {
       <section className="space-y-10">
         <div className="grid gap-10 xl:grid-cols-2">
           <div>
-            <h2 className="border-b-[2px] border-ink-black pb-3 font-display text-[2.25rem] font-bold uppercase leading-none tracking-[-0.06em] text-ink-black">
-              CHARACTER REFS
-            </h2>
-            <div className="mt-5 grid gap-5 sm:grid-cols-2">
+            <SectionHeader variant="underline" title="CHARACTER REFS" />
+            <div className="grid gap-5 sm:grid-cols-2">
               {bible.characters.map((char) => (
                 <CharacterCastCard
                   key={char.id}
@@ -990,10 +1001,8 @@ export function CastRoom() {
           </div>
 
           <div>
-            <h2 className="border-b-[2px] border-ink-black pb-3 font-display text-[2.25rem] font-bold uppercase leading-none tracking-[-0.06em] text-ink-black">
-              LOCATION PLATES
-            </h2>
-            <div className="mt-5 grid gap-5 sm:grid-cols-2">
+            <SectionHeader variant="underline" title="LOCATION PLATES" />
+            <div className="grid gap-5 sm:grid-cols-2">
               {bible.locations.map((loc) => (
                 <LocationPlateCard
                   key={loc.id}
@@ -1008,10 +1017,8 @@ export function CastRoom() {
 
         {bible.props.length > 0 && (
           <div>
-            <h2 className="border-b-[2px] border-ink-black pb-3 font-display text-[2.25rem] font-bold uppercase leading-none tracking-[-0.06em] text-ink-black">
-              PROP REFS
-            </h2>
-            <div className="mt-5 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <SectionHeader variant="underline" title="PROP REFS" />
+            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {bible.props.map((prop) => (
                 <PropRefCard
                   key={prop.id}

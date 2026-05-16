@@ -6,7 +6,7 @@ import pytest
 
 from novel_to_comic import artifacts
 from novel_to_comic.config import Config
-from novel_to_comic.models.story_bible import Location, StoryBible
+from novel_to_comic.models.story_bible import Character, Location, Prop, StoryBible
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.server.routers.stages import list_images
 from novel_to_comic.state import create_initial_state
@@ -273,6 +273,54 @@ def test_gpt_image_2_cast_assets_skip_style_sample(tmp_path):
         Config(image_model="image-balanced"),
         style_path,
     ) == style_path
+
+
+def test_cast_asset_prompts_enforce_style_authority():
+    config = Config(
+        image_model="image-balanced",
+        style_template="Painterly amber and cyan lighting, loose wet brushwork.",
+    )
+    char = Character(
+        id="char_001",
+        name="Mr. White",
+        visual_anchor="1man, senior, thin grey beard, waistcoat",
+        age_range="senior",
+        gender="male",
+        distinguishing_features=["thin grey beard"],
+        default_outfit="Dark waistcoat over a white shirt.",
+        first_appearance_scene="scene_001",
+    )
+    story_bible = StoryBible(
+        title="The Monkey's Paw",
+        author="W. W. Jacobs",
+        total_scenes=0,
+        characters=[char],
+        locations=[],
+        scenes=[],
+        narrative_arcs=[],
+    )
+    loc = SimpleNamespace(
+        id="loc_001",
+        visual_anchor="indoors, small parlour, fireplace, warm shadows",
+    )
+    prop = Prop(
+        id="prop_001",
+        name="Monkey's Paw",
+        visual_anchor="small mummified paw, dark leathery texture",
+    )
+
+    character_prompt = s3_cast._character_ref_prompt(config, story_bible, char)
+    location_prompt = s3_cast._location_plate_prompt(config, loc)
+    prop_prompt = s3_cast._prop_ref_prompt(config, prop)
+
+    for prompt in (character_prompt, location_prompt, prop_prompt):
+        assert "STYLE AUTHORITY:" in prompt
+        assert "The selected style above is mandatory" in prompt
+        assert "Preserve the style's medium, mark-making, palette, lighting language" in prompt
+        assert "generic clean concept art" in prompt
+
+    assert "Pure white background" not in character_prompt
+    assert "subtle style-colored studio wash or cast light is allowed" in character_prompt
 
 
 def test_gpt_image_2_location_plate_prompt_uses_low_texture_plate_language(tmp_path):
