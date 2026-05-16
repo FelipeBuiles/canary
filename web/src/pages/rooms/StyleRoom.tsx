@@ -21,6 +21,7 @@ import { GenerationDetailsModal } from "../../components/ui/GenerationDetailsMod
 import { LazyImage } from "../../components/ui/LazyImage";
 import { StateBlock } from "../../components/ui/StateBlock";
 import { Surface } from "../../components/ui/Surface";
+import { EntityCard } from "../../components/composites";
 import {
   useStyleGenStore,
   usePendingIndices,
@@ -115,93 +116,87 @@ function StyleCard({
 
   return (
     <>
-      <article
-        className={`flex min-h-[520px] flex-col bg-bristol transition-[box-shadow,border-color] duration-150 ${
-          isActive
-            ? "border-[3px] border-ink-black shadow-ink"
-            : "border-[3px] border-ink-black/8 shadow-none"
-        }`}
-      >
-        <div className="relative bg-surface-container">
-          {imgFailed ? (
-            <div className="flex aspect-[4/5] w-full flex-col items-center justify-center">
-              {isGenerating && (
-                <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 animate-pulse">
-                  {queueState === "queued" ? "QUEUED" : "GENERATING…"}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="group cursor-pointer" onClick={() => setIsDetailsOpen(true)}>
-              <LazyImage
-                src={`${sampleUrl}?t=${timestamp}`}
-                alt={suggestion.label}
-                loading="lazy"
-                width={320}
-                height={400}
-                aspect="4 / 5"
-                containerClassName="w-full"
-                className="object-cover object-center transition-opacity group-hover:opacity-90"
-                onError={() => setImgFailed(true)}
-              />
-              {isGenerating && (
-                <div className="absolute inset-0 flex items-center justify-center bg-ink-black/60">
-                  <div className="font-meta text-[0.5rem] tracking-[0.18em] text-bristol/70 animate-pulse">
+      <EntityCard
+        active={isActive}
+        className="min-h-[520px]"
+        media={
+          <div className="relative bg-surface-container">
+            {imgFailed ? (
+              <div className="flex aspect-[4/5] w-full flex-col items-center justify-center">
+                {isGenerating && (
+                  <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 animate-pulse">
                     {queueState === "queued" ? "QUEUED" : "GENERATING…"}
                   </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ACTIVE badge */}
-          {isActive && (
-            <div className="absolute left-5 top-5 bg-hero-red px-4 py-2 font-meta text-[0.68rem] tracking-[0.18em] text-bristol">
-              ACTIVE
-            </div>
-          )}
-
-          {/* Generate / regenerate icon button */}
-          <button
-            type="button"
-            onClick={handleGenerate}
-            disabled={isGenerating || actionsDisabled}
-            title={suggestion.has_sample ? "Regenerate sample" : "Generate sample"}
-            className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center bg-ink-black/55 text-bristol transition-colors hover:bg-ink-black disabled:opacity-40"
-          >
-            <span className="font-meta text-[0.78rem]">↺</span>
-          </button>
-        </div>
-
-        <div className="flex flex-1 flex-col bg-bristol p-6">
-          <div className="font-display text-[1.35rem] font-bold leading-tight tracking-[-0.04em] text-ink-black">
-            {suggestion.label}
-          </div>
-          <p className="mt-3 flex-1 font-body text-[1rem] font-semibold leading-relaxed text-ink-black/68 line-clamp-4">
-            {suggestion.template}
-          </p>
-          <div className="mt-8">
-            {isActive ? (
-              <button
-                type="button"
-                disabled
-                className="inline-flex min-h-14 w-full items-center justify-center gap-2 bg-hero-red px-5 py-3 font-meta text-[0.9rem] tracking-[0.18em] text-bristol disabled:cursor-default"
-              >
-                ✓ SELECTED
-              </button>
+                )}
+              </div>
             ) : (
-              <button
-                type="button"
-                className="inline-flex min-h-14 w-full items-center justify-center bg-hero-red px-5 py-3 font-meta text-[0.9rem] tracking-[0.18em] text-bristol transition-colors hover:bg-hero-red/90 disabled:cursor-not-allowed disabled:opacity-45"
-                onClick={() => setActive.mutate({ project: projectName, index: suggestion.index })}
-                disabled={isGenerating || actionsDisabled}
-              >
-                SELECT
-              </button>
+              <div className="group cursor-pointer" onClick={() => setIsDetailsOpen(true)}>
+                <LazyImage
+                  src={`${sampleUrl}?t=${timestamp}`}
+                  alt={suggestion.label}
+                  loading="lazy"
+                  width={320}
+                  height={400}
+                  aspect="4 / 5"
+                  containerClassName="w-full"
+                  className="object-cover object-center transition-opacity group-hover:opacity-90"
+                  onError={() => setImgFailed(true)}
+                />
+                {isGenerating && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-ink-black/60">
+                    <div className="font-meta text-[0.5rem] tracking-[0.18em] text-bristol/70 animate-pulse">
+                      {queueState === "queued" ? "QUEUED" : "GENERATING…"}
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
+
+            {isActive && (
+              <div className="absolute left-5 top-5 bg-hero-red px-4 py-2 font-meta text-[0.68rem] tracking-[0.18em] text-bristol">
+                ACTIVE
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleGenerate}
+              disabled={isGenerating || actionsDisabled}
+              title={suggestion.has_sample ? "Regenerate sample" : "Generate sample"}
+              className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center bg-ink-black/55 text-bristol transition-colors hover:bg-ink-black disabled:opacity-40"
+            >
+              <span className="font-meta text-[0.78rem]">↺</span>
+            </button>
           </div>
+        }
+      >
+        <div className="font-display text-[1.35rem] font-bold leading-tight tracking-[-0.04em] text-ink-black">
+          {suggestion.label}
         </div>
-      </article>
+        <p className="mt-3 flex-1 font-body text-[1rem] font-semibold leading-relaxed text-ink-black/68 line-clamp-4">
+          {suggestion.template}
+        </p>
+        <div className="mt-8">
+          {isActive ? (
+            <button
+              type="button"
+              disabled
+              className="inline-flex min-h-14 w-full items-center justify-center gap-2 bg-hero-red px-5 py-3 font-meta text-[0.9rem] tracking-[0.18em] text-bristol disabled:cursor-default"
+            >
+              ✓ SELECTED
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="inline-flex min-h-14 w-full items-center justify-center bg-hero-red px-5 py-3 font-meta text-[0.9rem] tracking-[0.18em] text-bristol transition-colors hover:bg-hero-red/90 disabled:cursor-not-allowed disabled:opacity-45"
+              onClick={() => setActive.mutate({ project: projectName, index: suggestion.index })}
+              disabled={isGenerating || actionsDisabled}
+            >
+              SELECT
+            </button>
+          )}
+        </div>
+      </EntityCard>
       <GenerationDetailsModal
         isOpen={isDetailsOpen}
         onClose={() => setIsDetailsOpen(false)}

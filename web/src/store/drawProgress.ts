@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { create } from "zustand";
 import type { InFlightPanel, StageInfo } from "../types/api";
 
@@ -138,11 +139,11 @@ export const useDrawProgressStore = create<DrawProgressStore>((set) => ({
 // ── Selectors ────────────────────────────────────────────────────────────────
 
 export function useInFlight(project: string): InFlightEntry[] {
-  return useDrawProgressStore((s) => {
-    const proj = s.byProject[project];
-    if (!proj) return EMPTY_IN_FLIGHT;
-    return Object.values(proj.inFlight).sort((a, b) => a.startedAt - b.startedAt);
-  });
+  const inFlight = useDrawProgressStore((s) => s.byProject[project]?.inFlight ?? EMPTY_IN_FLIGHT_RECORD);
+  return useMemo(
+    () => Object.values(inFlight).sort((a, b) => a.startedAt - b.startedAt),
+    [inFlight],
+  );
 }
 
 export function useRecentFinishes(project: string): FinishRecord[] {
@@ -150,16 +151,12 @@ export function useRecentFinishes(project: string): FinishRecord[] {
 }
 
 export function useInFlightSet(project: string): Set<string> {
-  return useDrawProgressStore((s) => {
-    const proj = s.byProject[project];
-    if (!proj) return EMPTY_SET;
-    return new Set(Object.keys(proj.inFlight));
-  });
+  const inFlight = useDrawProgressStore((s) => s.byProject[project]?.inFlight ?? EMPTY_IN_FLIGHT_RECORD);
+  return useMemo(() => new Set(Object.keys(inFlight)), [inFlight]);
 }
 
-const EMPTY_IN_FLIGHT: InFlightEntry[] = [];
+const EMPTY_IN_FLIGHT_RECORD: Record<string, InFlightEntry> = {};
 const EMPTY_FINISHES: FinishRecord[] = [];
-const EMPTY_SET = new Set<string>();
 
 // Throughput from a 60s sliding window of finishes (any status).
 // Returns null when too few samples to be meaningful.

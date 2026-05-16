@@ -4,6 +4,7 @@ import { cn } from "../../lib/cn";
 type Tone = "bristol" | "pulp" | "container" | "ink" | "red" | "gold";
 type Shadow = "none" | "paper" | "paper-sm" | "ink" | "ink-sm" | "red";
 type Padding = "none" | "sm" | "md" | "lg";
+type Border = "hard" | "soft";
 
 const TONE_STYLES: Record<Tone, string> = {
   bristol: "bg-bristol text-ink-black",
@@ -30,10 +31,16 @@ const PADDING_STYLES: Record<Padding, string> = {
   lg: "p-5 md:p-8",
 };
 
+const BORDER_STYLES: Record<Border, string> = {
+  hard: "border-ink-black",
+  soft: "border-ink-black/10",
+};
+
 interface SurfaceProps extends HTMLAttributes<HTMLDivElement> {
   tone?: Tone;
   shadow?: Shadow;
   padding?: Padding;
+  border?: Border;
   benday?: boolean;
 }
 
@@ -41,6 +48,7 @@ export function Surface({
   tone = "bristol",
   shadow = "paper",
   padding = "none",
+  border = "hard",
   benday = false,
   className,
   ...props
@@ -48,7 +56,8 @@ export function Surface({
   return (
     <div
       className={cn(
-        "border-[2px] border-ink-black",
+        "border-[2px]",
+        BORDER_STYLES[border],
         TONE_STYLES[tone],
         SHADOW_STYLES[shadow],
         PADDING_STYLES[padding],

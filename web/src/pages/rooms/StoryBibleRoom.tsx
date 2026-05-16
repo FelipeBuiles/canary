@@ -8,6 +8,7 @@ import { EditableText } from "../../components/ui/EditableText";
 import { RoomShell } from "../../components/ui/RoomShell";
 import { RerunStageAction } from "../../components/ui/RerunStageAction";
 import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
+import { SectionHeader, EntityCard } from "../../components/composites";
 import type { Character, Location } from "../../types/api";
 
 function VisualAnchorEditor({
@@ -60,29 +61,6 @@ function VisualAnchorEditor({
   );
 }
 
-function EntitySectionHeader({
-  number,
-  label,
-  title,
-}: {
-  number: number;
-  label: string;
-  title: string;
-}) {
-  return (
-    <header className="mb-7 border-b-[2px] border-ink-black pb-4">
-      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
-        <div className="font-meta text-[0.82rem] tracking-[0.24em] text-ink-black/52">
-          SECTION {String(number).padStart(2, "0")} // {label}
-        </div>
-        <h2 className="font-display text-[1.9rem] font-black uppercase leading-none tracking-[-0.05em] text-ink-black">
-          {title}
-        </h2>
-      </div>
-    </header>
-  );
-}
-
 export function CharacterCard({
   character,
   onSave,
@@ -94,7 +72,7 @@ export function CharacterCard({
     onSave({ ...character, ...patch });
 
   return (
-    <article className="border-[2px] border-ink-black/8 bg-bristol px-7 py-6 transition-colors duration-150 hover:border-ink-black/24">
+    <EntityCard interactive>
       <div className="flex items-start justify-between gap-4">
         <EditableText
           value={character.name}
@@ -129,7 +107,7 @@ export function CharacterCard({
           </Tag>
         ))}
       </div>
-    </article>
+    </EntityCard>
   );
 }
 
@@ -144,7 +122,7 @@ export function LocationCard({
     onSave({ ...location, ...patch });
 
   return (
-    <article className="border-[2px] border-ink-black/8 bg-bristol px-7 py-6 transition-colors duration-150 hover:border-ink-black/24">
+    <EntityCard interactive>
       <div className="flex items-start justify-between gap-4">
         <EditableText
           value={location.name}
@@ -173,7 +151,7 @@ export function LocationCard({
           className="bg-surface-container px-4 py-1.5 font-meta text-[0.66rem] font-bold tracking-[0.14em] text-ink-black/70"
         />
       </div>
-    </article>
+    </EntityCard>
   );
 }
 
@@ -241,9 +219,12 @@ export function StoryBibleRoom() {
       />
 
       <div className="grid gap-10 xl:grid-cols-2">
-        {/* Characters */}
         <section>
-          <EntitySectionHeader number={1} label="DRAMATIS PERSONAE" title="Character Entities" />
+          <SectionHeader
+            variant="underline"
+            kicker="SECTION 01 // DRAMATIS PERSONAE"
+            title="Character Entities"
+          />
           <div className="grid gap-5">
             {bible.characters.map((char) => (
               <CharacterCard
@@ -255,9 +236,12 @@ export function StoryBibleRoom() {
           </div>
         </section>
 
-        {/* Locations */}
         <section>
-          <EntitySectionHeader number={2} label="THE WORLD STAGE" title="Location Nodes" />
+          <SectionHeader
+            variant="underline"
+            kicker="SECTION 02 // THE WORLD STAGE"
+            title="Location Nodes"
+          />
           <div className="grid gap-5">
             {bible.locations.map((loc) => (
               <LocationCard

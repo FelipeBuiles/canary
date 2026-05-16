@@ -76,3 +76,60 @@ A bespoke component for this system: Use a `tertiary_container` rectangular tag 
 
 ### Accessibility Note:
 Ensure all `primary` red text sits on `surface-container-lowest` or `background` to maintain a 4.5:1 contrast ratio. When using Ben-Day patterns, keep the opacity low enough that it does not interfere with the legibility of `body-md` text.
+
+---
+
+## 7. Composites (Organism Layer)
+
+Between the atoms in `web/src/components/ui/` (Button, Field, Tag, StatusPill, Icon, …) and the room pages, there is a canonical **composite** layer in `web/src/components/composites/`. Rooms compose composites. Composites compose atoms. Rooms do **not** reinvent card surfaces, section headers, toolbars, etc. as one-offs.
+
+### The two-folder rule
+
+| Folder | Purpose | Examples |
+|--------|---------|----------|
+| `components/ui/` | **Atoms.** Leaf components. No knowledge of layout above themselves. | `Button`, `Field`, `Tag`, `StatusPill`, `Icon`, `Skeleton`, `StateBlock` |
+| `components/composites/` | **Organisms.** Compose atoms into recurring layout patterns. | `SectionHeader`, `EntityCard`, `RoomHeader`, `RoomShell`, `Toolbar`, `RoomTabs`, `RegenAction`, `EmptyState`, `SceneSidebar` |
+
+### Canonical composites
+
+| Composite | Use for |
+|-----------|---------|
+| `SectionHeader` | Any in-room section header. Subsumes the old `SectionDivider` and `SectionLabel`. Variants: `rule` (uppercase meta + horizontal line), `underline` (h2 with 2px border-bottom). |
+| `EntityCard` | Any Bristol-paper "panel" card surface — character/location/style/prop/panel cards. Optional `media` slot, optional `footer` slot, `active` + `interactive` boolean states. `padding` variant `"cozy"` (`p-3`, dense grids like panel cards), `"tight"` (`p-5`, ref cards with media), or `"comfortable"` (`px-7 py-6`, text-heavy cards). |
+| `RoomHeader` | Top of every room page. Kicker + title + lead + actions. |
+| `RoomShell` | Outer room wrapper with loading/empty fallbacks. |
+| `Toolbar` | Horizontal toolbar row with optional 2px bottom-rule divider. `children` slot for tabs, search, selects, view-mode toggles. |
+| `RoomTabs` | Joined-button tab strip with `bg-ink-black` active and `bg-pulp-paper` inactive states, optional count badges. Used for filter tabs. Underline tabs (hero-red border-b) and scrolling panel tab strips are *different* visual patterns — they stay as room-local components until a 2nd consumer appears. |
+| `RegenAction` *(to be added)* | The regen-with-cost-estimate-and-confirm pattern. |
+| `EmptyState` *(to be added)* | The stage-blocked / list-empty placeholder. `StagePlaceholder` is the current stage-aware variant; split into a thin primitive when a non-stage consumer appears. |
+
+### API rules
+
+1. **Layout-known composites use strict-prop slots.** Header-shaped components (`SectionHeader`, `RoomHeader`, `SurfaceHeader`, `StateBlock`) accept named slot props (`kicker`, `title`, `actions`, `description`) and forbid `children` for the header content. This keeps the visual layout canonical and prevents drift via slot-stuffing.
+2. **Content containers use `children` + modifier props.** Surface-shaped components (`Surface`, `Card`, `EntityCard` body) accept `children` and modifier props (`tone`, `shadow`, `padding`, `active`, `interactive`).
+3. **Don't pre-invent variants.** Add a variant only when a real consumer needs it. Three is better than seven.
+
+### Card surface rule (the "Bristol Panel")
+
+Every panel-style card surface uses the same physical treatment:
+
+- Border: **`2px solid border-ink-black/8`** (the "ghost border" at 8% opacity). Not 3px. Not 1px.
+- Background: **`bg-bristol`** (pure white).
+- Hover (when `interactive`): border darkens to `border-ink-black/24`. Not full opacity — full opacity reads as a *click* state, not a hover state.
+- Active/selected: border at full opacity + `shadow-ink`.
+
+Outside of `EntityCard`, this combination should not appear in room code. If you find yourself writing `border-[2px] border-ink-black/8 bg-bristol` in a room, you should be reaching for `EntityCard` instead.
+
+### Surface border variant — "hard" vs "soft"
+
+`Surface` accepts a `border` prop: `"hard"` (default, `border-ink-black`, used with `shadow-paper` for the "popping front sheet" effect) or `"soft"` (`border-ink-black/10`, used with `shadow="none"` for recessed info panels — sidebar progress cards, live cockpit). Don't reinvent `border-[2px] border-ink-black/10 bg-bristol` inline; use `<Surface border="soft" shadow="none" padding="md">` instead.
+
+### Components are canonical; CSS-component classes are implementation detail
+
+The `@layer components` block in `web/src/index.css` historically defines classes like `ui-surface`, `ui-field`, `ui-title`, `ui-kicker`, `section-rule`. These now exist **only as the internal implementation of React components**. Application code calls `<Surface>` / `<Field>` / `<SectionHeader>`, never the CSS class directly. CSS-component classes with zero remaining call sites in `.tsx` files should be deleted as part of each room migration.
+
+Design tokens (`@theme` variables: `--color-*`, `--font-*`, `--shadow-*`, `--spacing-*`) are not affected by this rule — those remain in CSS as the canonical token store.
+
+### When the existing composite doesn't fit
+
+Don't fork. Change the composite. If you find yourself reinventing a card or section header in a room, that is a signal that either (a) the composite's API needs a new slot or variant, or (b) you should add a new composite. Discuss before forking.
