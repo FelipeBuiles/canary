@@ -214,8 +214,17 @@ export function useApproveStage() {
 
 export function useRegenPanel() {
   return useMutation({
-    mutationFn: ({ project, sceneId, panelNumber }: { project: string; sceneId: string; panelNumber: number }) =>
-      regenPanel(project, sceneId, panelNumber),
+    mutationFn: ({
+      project,
+      sceneId,
+      panelNumber,
+      imageModelAlias,
+    }: {
+      project: string;
+      sceneId: string;
+      panelNumber: number;
+      imageModelAlias?: string | null;
+    }) => regenPanel(project, sceneId, panelNumber, imageModelAlias),
     // No cache invalidation here — DrawRoom detects completion via images polling
     // and busts the cache itself to avoid the panel disappearing mid-regen.
   });
@@ -229,12 +238,14 @@ export function useRegenPanelWithInstruction() {
       sceneId,
       panelNumber,
       instruction,
+      imageModelAlias,
     }: {
       project: string;
       sceneId: string;
       panelNumber: number;
       instruction: string;
-    }) => regenPanelWithInstruction(project, sceneId, panelNumber, instruction),
+      imageModelAlias?: string | null;
+    }) => regenPanelWithInstruction(project, sceneId, panelNumber, instruction, imageModelAlias),
     onSuccess: (data, { project, sceneId }) => {
       qc.setQueryData<import("../types/api").ImagePrompt[]>(
         ["project", project, "direct", sceneId],
@@ -260,11 +271,12 @@ export function useRegenEstimate(
   project: string | undefined,
   sceneId: string | undefined,
   panelNumber: number | undefined,
+  imageModelAlias?: string | null,
   enabled = true,
 ) {
   return useQuery({
-    queryKey: ["project", project, "regen-estimate", sceneId, panelNumber],
-    queryFn: () => fetchRegenEstimate(project!, sceneId!, panelNumber!),
+    queryKey: ["project", project, "regen-estimate", sceneId, panelNumber, imageModelAlias ?? ""],
+    queryFn: () => fetchRegenEstimate(project!, sceneId!, panelNumber!, imageModelAlias),
     enabled: !!project && !!sceneId && panelNumber != null && enabled,
     staleTime: 60_000,
   });

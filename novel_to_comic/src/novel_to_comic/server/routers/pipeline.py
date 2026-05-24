@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from novel_to_comic import artifacts
+from novel_to_comic.config import Config, config_for_image_model_alias
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.stages import REGISTRY
 from novel_to_comic.prompt_instructions import (
@@ -69,10 +70,18 @@ router = APIRouter()
 logger = logging.getLogger("canary.pipeline")
 
 
+def _panel_regen_config_for_alias(config: Config, image_model_alias: str | None) -> Config:
+    try:
+        return config_for_image_model_alias(config, image_model_alias)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 class InstructedPanelRegenRequest(BaseModel):
     scene_id: str = Field(min_length=1)
     panel_number: int = Field(ge=1)
     instruction: str = Field(min_length=1, max_length=500)
+    image_model_alias: str | None = None
 
 
 class InstructedRefRegenRequest(BaseModel):
@@ -419,6 +428,7 @@ async def regen_panel_estimate(
     project_id: str,
     scene_id: str = Query(...),
     panel_number: int = Query(...),
+    image_model_alias: str | None = Query(None),
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
@@ -426,10 +436,11 @@ async def regen_panel_estimate(
     from novel_to_comic.stages.s7_draw import estimate_panel_image_cost_usd
     from ..credits import reservation_buffer, stage_cost_confidence
     project_dir, config, _state = project
+    regen_config = _panel_regen_config_for_alias(config, image_model_alias)
     prompt_path = artifacts.panel_prompt_path(project_dir, scene_id, panel_number)
     if not prompt_path.exists():
         raise HTTPException(404, f"Prompt not found: {scene_id}/panel_{panel_number:03d}")
-    cost_usd = estimate_panel_image_cost_usd(config, project_dir, prompt_path)
+    cost_usd = estimate_panel_image_cost_usd(regen_config, project_dir, prompt_path)
     estimate_credits = max(1, provider_usd_to_credits(cost_usd)) if cost_usd > 0 else 1
     return {
         "scene_id": scene_id,
@@ -614,6 +625,7 @@ async def regen_panel(
     project_id: str,
     scene_id: str = Query(...),
     panel_number: int = Query(...),
+    image_model_alias: str | None = Query(None),
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
@@ -621,6 +633,7 @@ async def regen_panel(
     from novel_to_comic.stages.s7_draw import estimate_panel_image_cost_usd
 
     project_dir, config, state = project
+    regen_config = _panel_regen_config_for_alias(config, image_model_alias)
     pkey = project_key(user_id, project_id)
 
     running = request.app.state.running_tasks
@@ -637,12 +650,12 @@ async def regen_panel(
     except Exception:
         planned_panel_id = None
 
-    panel_cost_usd = estimate_panel_image_cost_usd(config, project_dir, prompt_path)
+    panel_cost_usd = estimate_panel_image_cost_usd(regen_config, project_dir, prompt_path)
     panel_estimate_credits = max(1, provider_usd_to_credits(panel_cost_usd)) if panel_cost_usd > 0 else 1
 
     async def _work():
         clear_panel_acceptance(project_dir, scene_id, panel_number)
-        return await s7_draw.regenerate_panel_image(config, project_dir, scene_id, panel_number)
+        return await s7_draw.regenerate_panel_image(regen_config, project_dir, scene_id, panel_number)
 
     job, created = enqueue_credited_job(
         request.app,
@@ -656,7 +669,7 @@ async def regen_panel(
         payload={"scene_id": scene_id, "panel_number": panel_number},
         work=_work,
         debit_description=f"Model call: regenerate panel {scene_id}/{panel_number:03d}",
-        semaphore=generation_semaphore_for_config(request.app, config),
+        semaphore=generation_semaphore_for_config(request.app, regen_config),
         estimate_credits=panel_estimate_credits,
     )
     if created:
@@ -681,6 +694,7 @@ async def regen_panel_with_instruction(
     user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
+    regen_config = _panel_regen_config_for_alias(config, body.image_model_alias)
     pkey = project_key(user_id, project_id)
     scene_id = body.scene_id
     panel_number = body.panel_number
@@ -711,7 +725,7 @@ async def regen_panel_with_instruction(
     # Pre-check credits before the prompt-rewrite call and the eventual image regen.
     from novel_to_comic.stages.s7_draw import estimate_panel_image_cost_usd
 
-    panel_cost_usd = estimate_panel_image_cost_usd(config, project_dir, prompt_path)
+    panel_cost_usd = estimate_panel_image_cost_usd(regen_config, project_dir, prompt_path)
     panel_estimate_credits = max(1, provider_usd_to_credits(panel_cost_usd)) if panel_cost_usd > 0 else 1
     assert_sufficient_credits(get_db(), user_id, panel_estimate_credits, action="panel_regen")
 
@@ -794,7 +808,7 @@ async def regen_panel_with_instruction(
             job_id=instructed_job_id,
         ):
             result = await s7_draw.regenerate_panel_image(
-                config,
+                regen_config,
                 project_dir,
                 scene_id,
                 panel_number,
@@ -818,7 +832,7 @@ async def regen_panel_with_instruction(
         label=f"{scene_id} / panel {panel_number:03d}",
         payload={"scene_id": scene_id, "panel_number": panel_number},
         runner=_runner,
-        semaphore=generation_semaphore_for_config(request.app, config),
+        semaphore=generation_semaphore_for_config(request.app, regen_config),
     )
     return {
         "status": "queued",

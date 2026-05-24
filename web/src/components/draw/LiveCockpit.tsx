@@ -78,14 +78,19 @@ function Legend({ dot, label, value }: { dot: string; label: string; value: numb
 
 export function StaleStripe({
   lastProgressAt,
+  onContinue,
   onReset,
+  continuing,
   resetting,
 }: {
   lastProgressAt: string | null;
+  onContinue: () => void;
   onReset: () => void;
+  continuing: boolean;
   resetting: boolean;
 }) {
   const ago = lastProgressAt ? formatRelative(Date.parse(lastProgressAt)) : null;
+  const busy = continuing || resetting;
   return (
     <div className="mb-4 border-[2px] border-hero-red bg-hero-red/8 p-3">
       <div className="font-meta text-[0.55rem] tracking-[0.18em] text-hero-red">
@@ -94,13 +99,24 @@ export function StaleStripe({
       <div className="mt-1 text-[0.78rem] leading-snug text-ink-black">
         {ago ? `Last progress ${ago} ago — server may have stopped.` : "Server may have stopped working on this stage."}
       </div>
+      <div className="mt-1 text-[0.7rem] leading-snug text-ink-black/65">
+        Continue asks the server to resume pending panels and keeps generated art.
+      </div>
+      <button
+        type="button"
+        onClick={onContinue}
+        disabled={busy}
+        className="mt-2 w-full border-[2px] border-ink-black bg-narrator-gold px-3 py-1.5 font-meta text-[0.6rem] tracking-[0.14em] text-ink-black transition-colors hover:bg-bristol disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {continuing ? "CONTINUING..." : "CONTINUE DRAW"}
+      </button>
       <button
         type="button"
         onClick={onReset}
-        disabled={resetting}
+        disabled={busy}
         className="mt-2 w-full border-[2px] border-hero-red bg-bristol px-3 py-1.5 font-meta text-[0.6rem] tracking-[0.14em] text-hero-red transition-colors hover:bg-hero-red hover:text-bristol disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {resetting ? "RESETTING…" : "RESET STAGE"}
+        {resetting ? "RESETTING..." : "RESET STAGE"}
       </button>
     </div>
   );

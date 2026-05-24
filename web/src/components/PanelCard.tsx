@@ -1,4 +1,5 @@
 import type { ImageStatus } from "../types/api";
+import { FlowingDotsPlaceholder } from "./ui/FlowingDotsPlaceholder";
 import { LazyImage } from "./ui/LazyImage";
 import { EntityCard } from "./composites";
 import { getPanelDisplayState, type PanelDisplayState } from "../lib/panelState";
@@ -22,6 +23,7 @@ interface PanelCardProps {
   failureClassification?: string | null;
   errorMessage?: string;
   accepted?: boolean;
+  versionCount?: number;
   regenMode?: "queued" | "running" | null;
   regenError?: string | null;
   /** True when the backend reports this exact panel is currently mid-generation. */
@@ -47,6 +49,7 @@ export function PanelCard({
   failureClassification,
   errorMessage,
   accepted = false,
+  versionCount,
   regenMode = null,
   regenError,
   inFlight = false,
@@ -59,7 +62,7 @@ export function PanelCard({
   onPanelClick,
 }: PanelCardProps) {
   const displayState = getPanelDisplayState(
-    { status, accepted, version_count: undefined },
+    { status, accepted, version_count: versionCount },
     { inFlight, queuedInRun, regenMode, isRetryFailedRunning },
   );
   const badge = STATE_BADGE[displayState];
@@ -107,14 +110,13 @@ export function PanelCard({
         />
       )}
       {displayState === "generating" ? (
-        <div className="flex h-full flex-col items-center justify-center bg-ink-black/80">
-          <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-narrator-gold animate-pulse">
-            {regenMode === "queued" ? "QUEUED" : "GENERATING…"}
-          </div>
-          <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-bristol/55">
-            {regenMode === "queued" ? "WAITING FOR GENERATOR" : "GENERATING PANEL"}
-          </div>
-        </div>
+        <FlowingDotsPlaceholder
+          aspect="4 / 5"
+          className="h-full"
+          label="GENERATING…"
+          caption="GENERATING PANEL"
+          aria-label="Panel generation in progress"
+        />
       ) : displayState === "queued" ? (
         <div className="flex h-full flex-col items-center justify-center bg-ink-black/8">
           <div className="font-display text-[1.1rem] font-bold leading-none tracking-[-0.05em] text-narrator-gold">

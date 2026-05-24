@@ -29,9 +29,15 @@ export function regenPanel(
   project: string,
   sceneId: string,
   panelNumber: number,
+  imageModelAlias?: string | null,
 ): Promise<{ status: string; job: GenerationJob; scene_id: string; panel_number: number; planned_panel_id?: string | null }> {
+  const params = new URLSearchParams({
+    scene_id: sceneId,
+    panel_number: String(panelNumber),
+  });
+  if (imageModelAlias) params.set("image_model_alias", imageModelAlias);
   return apiFetch(
-    `/projects/${encodeURIComponent(project)}/regen?scene_id=${encodeURIComponent(sceneId)}&panel_number=${panelNumber}`,
+    `/projects/${encodeURIComponent(project)}/regen?${params.toString()}`,
     { method: "POST" },
   );
 }
@@ -41,6 +47,7 @@ export function regenPanelWithInstruction(
   sceneId: string,
   panelNumber: number,
   instruction: string,
+  imageModelAlias?: string | null,
 ): Promise<InstructedPanelRegenResponse> {
   return apiFetch(
     `/projects/${encodeURIComponent(project)}/regen-instructed`,
@@ -50,6 +57,7 @@ export function regenPanelWithInstruction(
         scene_id: sceneId,
         panel_number: panelNumber,
         instruction,
+        ...(imageModelAlias ? { image_model_alias: imageModelAlias } : {}),
       }),
     },
   );
@@ -175,8 +183,14 @@ export function fetchRegenEstimate(
   project: string,
   sceneId: string,
   panelNumber: number,
+  imageModelAlias?: string | null,
 ): Promise<RegenCostEstimate> {
+  const params = new URLSearchParams({
+    scene_id: sceneId,
+    panel_number: String(panelNumber),
+  });
+  if (imageModelAlias) params.set("image_model_alias", imageModelAlias);
   return apiFetch(
-    `/projects/${encodeURIComponent(project)}/regen-estimate?scene_id=${encodeURIComponent(sceneId)}&panel_number=${panelNumber}`,
+    `/projects/${encodeURIComponent(project)}/regen-estimate?${params.toString()}`,
   );
 }

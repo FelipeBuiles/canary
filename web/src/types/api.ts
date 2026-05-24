@@ -39,6 +39,7 @@ export interface ConfigOverrides {
   max_panels_per_scene?: number;
   max_panels_per_page?: number;
   comic_theme?: string;
+  image_model_aliases?: string[];
 }
 
 export interface InFlightPanel {
@@ -636,6 +637,7 @@ export interface ImageStatus {
   planned_panel_id?: string | null;
   status: "done" | "failed" | "pending" | "queued" | "running" | "stale";
   image_available?: boolean;
+  image_revision?: string | null;
   accepted?: boolean;
   version_count?: number;
   failure_classification?: "provider_blocked" | "generation_error" | string | null;

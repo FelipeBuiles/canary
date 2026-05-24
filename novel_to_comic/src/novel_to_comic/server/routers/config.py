@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from novel_to_comic.config import LANGUAGE_NAMES, save_config
+from novel_to_comic.config import LANGUAGE_NAMES, image_model_aliases, save_config
 
 from ..deps import get_project
 
@@ -43,6 +43,7 @@ def get_config(project=Depends(get_project)):
     # Mask secrets: show whether they're set, not the values
     for key in _SECRET_FIELDS:
         data[key] = "***" if data.get(key) else ""
+    data["image_model_aliases"] = list(image_model_aliases())
     return data
 
 
