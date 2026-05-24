@@ -14,8 +14,11 @@ from novel_to_comic.config import (
     GATEWAY_PANEL_BALANCED,
     GATEWAY_PROMPT_BALANCED,
     GATEWAY_SCREENPLAY_BALANCED,
+    config_for_image_model_alias,
+    image_model_aliases,
     LANGUAGE_NAMES,
     is_gpt_image_2,
+    validate_image_model_alias,
     save_config,
     load_config,
 )
@@ -103,6 +106,45 @@ class TestEffectiveImageModel:
             fallback_image_model="my-custom-model",
         )
         assert cfg.effective_image_model() == "my-custom-model"
+
+
+class TestImageModelAliases:
+    def test_exposes_production_gateway_aliases(self):
+        assert image_model_aliases() == (
+            GATEWAY_IMAGE_FAST,
+            GATEWAY_IMAGE_BALANCED,
+            GATEWAY_IMAGE_QUALITY,
+        )
+
+    def test_validates_supported_alias(self):
+        assert validate_image_model_alias(" image-quality ") == GATEWAY_IMAGE_QUALITY
+
+    def test_blank_alias_means_project_default(self):
+        assert validate_image_model_alias("") is None
+        assert validate_image_model_alias(None) is None
+
+    def test_rejects_raw_provider_model(self):
+        try:
+            validate_image_model_alias("openai/gpt-image-2")
+        except ValueError as exc:
+            assert "image_model_alias must be one of" in str(exc)
+        else:
+            raise AssertionError("raw provider model should be rejected")
+
+    def test_one_shot_alias_copy_does_not_mutate_original(self):
+        cfg = Config(image_model=GATEWAY_IMAGE_FAST)
+        copied = config_for_image_model_alias(cfg, GATEWAY_IMAGE_QUALITY)
+
+        assert copied is not cfg
+        assert copied.image_model == GATEWAY_IMAGE_QUALITY
+        assert cfg.image_model == GATEWAY_IMAGE_FAST
+
+    def test_explicit_balanced_alias_bypasses_dev_mode_fallback(self):
+        cfg = Config(dev_mode=True, image_model=GATEWAY_IMAGE_BALANCED)
+        copied = config_for_image_model_alias(cfg, GATEWAY_IMAGE_BALANCED)
+
+        assert copied.effective_image_model() == GATEWAY_IMAGE_BALANCED
+        assert cfg.effective_image_model() == GATEWAY_IMAGE_FAST
 
 
 class TestUsesGeminiImageProvider:

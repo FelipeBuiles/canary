@@ -80,6 +80,12 @@ const FILTER_TABS: Array<{ key: PanelFilterBucket | "all"; label: string }> = [
   { key: "failed", label: "FAILED" },
 ];
 
+function panelImageUrl(project: string, img: Pick<ImageStatus, "scene_id" | "panel_number" | "image_revision">, bust?: number) {
+  const baseUrl = `/api/projects/${encodeURIComponent(project)}/files/draw/${img.scene_id}/panel_${String(img.panel_number).padStart(3, "0")}.png`;
+  const revision = bust ?? img.image_revision;
+  return revision ? `${baseUrl}?v=${encodeURIComponent(String(revision))}` : baseUrl;
+}
+
 export function DrawRoom() {
   const { id } = useParams<{ id: string }>();
   const { isCompact, toggle } = useHeaderMode();
@@ -394,6 +400,20 @@ export function DrawRoom() {
     resetStale({ project: id });
   }
 
+  function handleContinueStale() {
+    if (!id) return;
+    runPipeline(
+      { project: id, stage: "draw", rerun: false },
+      {
+        onError: (err) =>
+          maybeShowInsufficientCredits(err, {
+            actionLabel: "Continue DRAW",
+            onRetry: handleContinueStale,
+          }),
+      },
+    );
+  }
+
   if (isLoading || ((!images?.length && !promptSummaries?.length) && drawStageStatus !== "pending")) {
     return (
       <RoomShell
@@ -438,12 +458,9 @@ export function DrawRoom() {
     : null;
   const selectedPanelKey = selectedPanel ? `${selectedPanel.sceneId}-${selectedPanel.panelNumber}` : null;
   const selectedPanelBust = selectedPanelKey && id ? bustTimestamps[`${id}/${selectedPanelKey}`] : undefined;
-  const selectedPanelBaseUrl = selectedPanel
-    ? `/api/projects/${encodeURIComponent(id!)}/files/draw/${selectedPanel.sceneId}/panel_${String(selectedPanel.panelNumber).padStart(3, "0")}.png`
+  const selectedPanelImageUrl = selectedPanelImage
+    ? panelImageUrl(id!, selectedPanelImage, selectedPanelBust)
     : "";
-  const selectedPanelImageUrl = selectedPanelBust
-    ? `${selectedPanelBaseUrl}?t=${selectedPanelBust}`
-    : selectedPanelBaseUrl;
 
   const costForConfirm: StageCostEstimate | undefined = drawEstimate as StageCostEstimate | undefined;
 
@@ -517,8 +534,7 @@ export function DrawRoom() {
             {displayImages.map((img) => {
               const key = `${img.scene_id}-${img.panel_number}`;
               const bust = id ? bustTimestamps[`${id}/${key}`] : undefined;
-              const baseUrl = `/api/projects/${encodeURIComponent(id!)}/files/draw/${img.scene_id}/panel_${String(img.panel_number).padStart(3, "0")}.png`;
-              const imageUrl = bust ? `${baseUrl}?t=${bust}` : baseUrl;
+              const imageUrl = panelImageUrl(id!, img, bust);
               const regenError = id ? errors[`${id}/${key}`] : undefined;
               const prompts = promptDescByKey.get(key);
               const flash = finishFlashByKey.get(key) ?? null;
@@ -534,6 +550,7 @@ export function DrawRoom() {
                   failureClassification={img.failure_classification}
                   errorMessage={img.failure_message ?? undefined}
                   accepted={!!img.accepted}
+                  versionCount={img.version_count}
                   regenMode={inputs.regenMode}
                   regenError={regenError}
                   inFlight={inputs.inFlight}
@@ -553,8 +570,7 @@ export function DrawRoom() {
             {displayImages.map((img) => {
               const key = `${img.scene_id}-${img.panel_number}`;
               const bust = id ? bustTimestamps[`${id}/${key}`] : undefined;
-              const baseUrl = `/api/projects/${encodeURIComponent(id!)}/files/draw/${img.scene_id}/panel_${String(img.panel_number).padStart(3, "0")}.png`;
-              const imageUrl = bust ? `${baseUrl}?t=${bust}` : baseUrl;
+              const imageUrl = panelImageUrl(id!, img, bust);
               const state = getPanelDisplayState(img, panelInputsFor(img));
               const prompts = promptDescByKey.get(key);
               return (
@@ -598,7 +614,9 @@ export function DrawRoom() {
             {isStageStuck && (
               <StaleStripe
                 lastProgressAt={lastProgressAt}
+                onContinue={handleContinueStale}
                 onReset={handleResetStale}
+                continuing={isPipelineRunning}
                 resetting={isResetting}
               />
             )}

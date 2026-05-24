@@ -562,6 +562,7 @@ def test_list_images_marks_failure_metadata_as_failed_even_with_existing_image(t
         project=(tmp_path, Config(), create_initial_state("demo", "novel.txt")),
         user_id="user",
     )
+    image_stat = image_path.stat()
 
     assert result == [{
         "scene_id": "scene_001",
@@ -569,6 +570,7 @@ def test_list_images_marks_failure_metadata_as_failed_even_with_existing_image(t
         "planned_panel_id": None,
         "status": "failed",
         "image_available": True,
+        "image_revision": f"{image_stat.st_mtime_ns}-{image_stat.st_size}",
         "accepted": False,
         "version_count": 0,
         "failure_classification": "generation_error",

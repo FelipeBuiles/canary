@@ -27,6 +27,13 @@ from ..panel_acceptance import accept_panel, clear_panel_acceptance, is_panel_ac
 router = APIRouter()
 
 
+def _image_revision(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    stat = path.stat()
+    return f"{stat.st_mtime_ns}-{stat.st_size}"
+
+
 # ── Story Bible (EXTRACT) ─────────────────────────────────────────────────────
 
 
@@ -274,6 +281,7 @@ def list_images(
                 "planned_panel_id": planned_panel_id,
                 "status": status,
                 "image_available": True,
+                "image_revision": _image_revision(img_file),
                 "accepted": is_panel_accepted(project_dir, scene_dir.name, panel_num),
                 "version_count": archived_panel_version_count(project_dir, scene_dir.name, panel_num),
                 "failure_classification": failure_classification,
@@ -303,6 +311,7 @@ def list_images(
                 "planned_panel_id": planned_panel_id,
                 "status": "failed",
                 "image_available": False,
+                "image_revision": None,
                 "accepted": False,
                 "version_count": archived_panel_version_count(project_dir, scene_dir.name, panel_num),
                 "failure_classification": failure_classification,
@@ -337,6 +346,7 @@ def list_images(
             "planned_panel_id": planned_panel_id,
             "status": "failed",
             "image_available": False,
+            "image_revision": None,
             "accepted": False,
             "version_count": archived_panel_version_count(project_dir, scene_id, panel_num),
             "failure_classification": failure_classification,

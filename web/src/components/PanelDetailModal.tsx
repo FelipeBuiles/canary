@@ -23,6 +23,7 @@ import { maybeShowInsufficientCredits } from "../store/insufficientCredits";
 import { useQueryClient } from "@tanstack/react-query";
 
 type TabId = "review" | "edit" | "prompt";
+const DEFAULT_IMAGE_MODEL_ALIASES = ["image-fast", "image-balanced", "image-quality"];
 
 interface PanelDetailModalProps {
   isOpen: boolean;
@@ -48,6 +49,35 @@ function fileUrl(project: string, relativePath: string) {
     .split("/")
     .map((segment) => encodeURIComponent(segment))
     .join("/")}`;
+}
+
+function ImageModelAliasSelector({
+  aliases,
+  value,
+  onChange,
+}: {
+  aliases: string[] | undefined;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const options = aliases && aliases.length > 0 ? aliases : DEFAULT_IMAGE_MODEL_ALIASES;
+  return (
+    <div className="border-b-[2px] border-ink-black/15 bg-pulp-paper px-4 py-3">
+      <label className="mb-1.5 block font-meta text-[0.54rem] tracking-[0.18em] text-ink-black/45">
+        IMAGE MODEL
+      </label>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full border-[2px] border-ink-black/25 bg-bristol px-3 py-2 font-meta text-[0.62rem] tracking-[0.12em] text-ink-black outline-none focus:border-ink-black"
+      >
+        <option value="">Project default</option>
+        {options.map((alias) => (
+          <option key={alias} value={alias}>{alias}</option>
+        ))}
+      </select>
+    </div>
+  );
 }
 
 // ── Tab: Review ───────────────────────────────────────────────────────────────
@@ -282,6 +312,7 @@ function EditTabContent({
   onGenerateFromDraft,
   starterInstruction,
   onStarterConsumed,
+  imageModelAlias,
 }: {
   project: string;
   sceneId: string;
@@ -296,6 +327,7 @@ function EditTabContent({
   onGenerateFromDraft: () => void;
   starterInstruction: string | null;
   onStarterConsumed: () => void;
+  imageModelAlias: string | null;
 }) {
   const [instruction, setInstruction] = useState("");
   const [instructionError, setInstructionError] = useState<string | null>(null);
@@ -345,7 +377,7 @@ function EditTabContent({
       queryClient.invalidateQueries({ queryKey: ["project", project, "direct", sceneId] });
       begin(project, key);
       startedRegen = true;
-      const data = await regenPanel.mutateAsync({ project, sceneId, panelNumber });
+      const data = await regenPanel.mutateAsync({ project, sceneId, panelNumber, imageModelAlias });
       attachJob(project, key, data.job);
       onGenerateFromDraft();
     } catch (err) {
@@ -580,6 +612,7 @@ export function PanelDetailModal({
   const [draft, setDraft] = useState<ImagePrompt | null>(null);
   const [lastRewrittenPrompt, setLastRewrittenPrompt] = useState<ImagePrompt | null>(null);
   const [activeDisplayUrl, setActiveDisplayUrl] = useState<string>(imageUrl);
+  const [imageModelAlias, setImageModelAlias] = useState("");
 
   useEffect(() => {
     setActiveDisplayUrl(imageUrl);
@@ -592,7 +625,8 @@ export function PanelDetailModal({
   const { data: prompts } = usePromptsForScene(project, sceneId);
   const { data: projectConfig } = useProjectConfig(project);
   const originalPrompt = prompts?.find((p) => p.scene_id === sceneId && p.panel_number === panelNumber);
-  const { data: regenEstimate } = useRegenEstimate(project, sceneId, panelNumber, isOpen);
+  const selectedImageModelAlias = imageModelAlias || null;
+  const { data: regenEstimate } = useRegenEstimate(project, sceneId, panelNumber, selectedImageModelAlias, isOpen);
   const regenCredits: number | null = regenEstimate?.estimate_credits ?? null;
   const creditsLabel = regenCredits !== null ? `Est. ${regenCredits.toLocaleString()} credits` : "…";
   const regenPanel = useRegenPanel();
@@ -605,6 +639,7 @@ export function PanelDetailModal({
   useEffect(() => {
     setLastRewrittenPrompt(null);
     setActiveTab(versionCount > 0 ? "review" : "review");
+    setImageModelAlias("");
   }, [sceneId, panelNumber, versionCount]);
 
   useEffect(() => {
@@ -648,7 +683,12 @@ export function PanelDetailModal({
     const key = `${sceneId}-${panelNumber}`;
     begin(project, key);
     try {
-      const data = await regenPanel.mutateAsync({ project, sceneId, panelNumber });
+      const data = await regenPanel.mutateAsync({
+        project,
+        sceneId,
+        panelNumber,
+        imageModelAlias: selectedImageModelAlias,
+      });
       attachJob(project, key, data.job);
       onClose();
     } catch (err) {
@@ -669,7 +709,13 @@ export function PanelDetailModal({
     const key = `${sceneId}-${panelNumber}`;
     begin(project, key);
     try {
-      const data = await instructedRegen.mutateAsync({ project, sceneId, panelNumber, instruction });
+      const data = await instructedRegen.mutateAsync({
+        project,
+        sceneId,
+        panelNumber,
+        instruction,
+        imageModelAlias: selectedImageModelAlias,
+      });
       attachJob(project, key, data.job);
       setLastRewrittenPrompt(data.prompt);
       queryClient.invalidateQueries({ queryKey: ["project", project, "direct", sceneId] });
@@ -789,6 +835,11 @@ export function PanelDetailModal({
 
           {/* Right: tabs */}
           <div className="flex min-h-0 flex-col">
+            <ImageModelAliasSelector
+              aliases={projectConfig?.image_model_aliases}
+              value={imageModelAlias}
+              onChange={setImageModelAlias}
+            />
             {/* Tab bar */}
             <div className="flex border-b-[2px] border-ink-black/15 overflow-x-auto shrink-0">
               {TABS.map(({ id, label }) => (
@@ -843,6 +894,7 @@ export function PanelDetailModal({
                   onGenerateFromDraft={onClose}
                   starterInstruction={editStarterInstruction}
                   onStarterConsumed={() => setEditStarterInstruction(null)}
+                  imageModelAlias={selectedImageModelAlias}
                 />
               )}
               {activeTab === "prompt" && (

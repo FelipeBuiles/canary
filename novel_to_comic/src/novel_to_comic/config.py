@@ -37,6 +37,11 @@ GATEWAY_PROMPT_QUALITY = "prompt-quality"
 GATEWAY_IMAGE_FAST = "image-fast"
 GATEWAY_IMAGE_BALANCED = "image-balanced"
 GATEWAY_IMAGE_QUALITY = "image-quality"
+IMAGE_MODEL_ALIASES = (
+    GATEWAY_IMAGE_FAST,
+    GATEWAY_IMAGE_BALANCED,
+    GATEWAY_IMAGE_QUALITY,
+)
 
 # image-quality is the only alias that resolves to OpenAI gpt-image-2. Used by
 # stage code that needs to enable the OpenAI image-edit / reference workflow.
@@ -47,6 +52,34 @@ def is_gpt_image_2(model: str) -> bool:
     """True if `model` resolves to OpenAI gpt-image-2 via the gateway or directly."""
     normalized = (model or "").strip().lower()
     return normalized in {"gpt-image-2", "openai/gpt-image-2"} or normalized in GPT_IMAGE_2_ALIASES
+
+
+def image_model_aliases() -> tuple[str, ...]:
+    """Production image model aliases safe to expose outside Labs."""
+    return IMAGE_MODEL_ALIASES
+
+
+def validate_image_model_alias(alias: str | None) -> str | None:
+    """Return a normalized image alias, or raise for an unsupported alias."""
+    normalized = (alias or "").strip()
+    if not normalized:
+        return None
+    if normalized not in IMAGE_MODEL_ALIASES:
+        raise ValueError(
+            f"image_model_alias must be one of: {', '.join(IMAGE_MODEL_ALIASES)}"
+        )
+    return normalized
+
+
+def config_for_image_model_alias(config: "Config", alias: str | None) -> "Config":
+    """Return a one-shot config copy pinned to a validated image model alias."""
+    normalized = validate_image_model_alias(alias)
+    if normalized is None:
+        return config
+    updates = {"image_model": normalized}
+    if config.dev_mode and normalized == Config.model_fields["image_model"].default:
+        updates["fallback_image_model"] = normalized
+    return config.model_copy(update=updates)
 
 
 _QUALITY_PRESETS: dict[QualityPreset, dict[str, str]] = {

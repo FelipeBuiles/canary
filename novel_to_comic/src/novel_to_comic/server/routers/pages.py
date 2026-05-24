@@ -963,4 +963,4 @@ def serve_file(file_path: str, project=Depends(get_project)):
         raise HTTPException(404, "File not found")
 
     media_type = mimetypes.guess_type(str(full))[0] or "application/octet-stream"
-    return FileResponse(full, media_type=media_type)
+    return FileResponse(full, media_type=media_type, headers={"Cache-Control": "no-cache"})
