@@ -362,6 +362,8 @@ def test_gpt_image_2_generation_prompt_adds_material_discipline():
         "image-balanced",
     )
 
+    assert gemini_prompt.startswith("Create one finished scene image using the selected style.")
+    assert "Create one finished comic panel image" not in gemini_prompt
     assert "Rendering discipline:\nGPT-image-2 material discipline" in gpt_prompt
     assert "do not cover surfaces with many similar flecks" in gpt_prompt
     assert "Keep quiet planes on bone, fabric, metal" in gpt_prompt
@@ -427,6 +429,39 @@ def test_rect_master_prompt_ignores_page_slot_aspect_for_image_shape(tmp_path):
     assert prompt.width == 768
     assert prompt.height == 1344
     assert "narrow vertical column" not in prompt.composition
+
+
+def test_generation_aspect_overrides_closeup_vertical_prompt(tmp_path):
+    panel = PlannedPanel(
+        panel_id="scene_002:panel_002",
+        scene_id="scene_002",
+        panel_number=2,
+        shot_type="close-up",
+        shape_intent="rect",
+        generation_mode="master",
+        generation_aspect_ratio=1.5,
+        generation_width=1536,
+        generation_height=1024,
+        generation_shape="landscape",
+        generation_aspect_source="page_geometry",
+        camera_angle="eye-level",
+        characters_present=["char_001"],
+        character_actions={"char_001": "studies the other figure carefully"},
+        character_positions={"char_001": "left"},
+        background_description="White void.",
+        lighting="soft diffuse light",
+        mood="intense",
+    )
+
+    prompt = build_planned_panel_prompt_spec(Config(), tmp_path, panel, _flowers_story_bible())
+
+    assert dimensions_for_panel(panel) == (1536, 1024)
+    assert prompt.width == 1536
+    assert prompt.height == 1024
+    assert prompt.generation_aspect_ratio == 1.5
+    assert prompt.generation_shape == "landscape"
+    assert "vertical panel" not in prompt.composition
+    assert "wide horizontal frame" in prompt.composition
 
 
 def test_prompt_does_not_promote_ambient_flowers_to_carried_bundle_prop(tmp_path):

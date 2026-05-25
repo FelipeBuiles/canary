@@ -253,10 +253,12 @@ def _project_scene_reference_payload(
     from novel_to_comic.stages.s7_draw import _find_style_sample, resolve_panel_references
 
     scene_to_location: dict[str, str] = {}
+    location_labels: dict[str, str] = {}
     if artifacts.story_bible_path(project_dir).exists():
         try:
             story_bible = artifacts.read_story_bible(project_dir)
             scene_to_location = {scene.id: scene.location_id for scene in story_bible.scenes}
+            location_labels = {loc.id: loc.name for loc in story_bible.locations}
         except Exception:
             scene_to_location = {}
 
@@ -273,6 +275,7 @@ def _project_scene_reference_payload(
             prompt_path=prompt_path if prompt_path.exists() else None,
             style_sample=style_sample,
             scene_to_location=scene_to_location,
+            location_labels=location_labels,
             output_dir=output_dir,
         ):
             path = ref.path.resolve()
@@ -286,7 +289,11 @@ def _project_scene_reference_payload(
             refs.append({
                 "path": str(path),
                 "relative_path": rel.as_posix(),
-                "label": f"{ref.role.replace('_', ' ')} · {rel.as_posix()}",
+                "label": (
+                    f"{ref.role.replace('_', ' ')} · {ref.label}"
+                    if ref.label
+                    else f"{ref.role.replace('_', ' ')} · {rel.as_posix()}"
+                ),
                 "role": ref.role,
                 "url": f"/api/projects/{project_id}/files/{rel.as_posix()}",
             })

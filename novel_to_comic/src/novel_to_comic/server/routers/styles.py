@@ -9,6 +9,7 @@ from novel_to_comic import artifacts
 from novel_to_comic.ai import ai_request_context
 from novel_to_comic.config import Config, save_config
 from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.state import StageStatus, save_state
 from novel_to_comic.stages.s2_style import (
     generate_sample_image,
     generate_samples_for_indices,
@@ -46,6 +47,22 @@ def is_style_selected(project_dir, config) -> bool:
         s.get("template", "").strip() == config.style_template.strip()
         for s in load_suggestions(project_dir)
     )
+
+
+def clear_style_failures_after_selection(state) -> bool:
+    """A selected style resolves partial style-sample failures for navigation.
+
+    Failed sample attempts can leave ``items_failed`` on an otherwise completed
+    style stage. Once the user chooses an active style, those failures are no
+    longer blocking for downstream stages.
+    """
+    style_state = state.stages["style"]
+    if style_state.status not in (StageStatus.COMPLETE, StageStatus.AWAITING_REVIEW):
+        return False
+    if not style_state.items_failed:
+        return False
+    style_state.items_failed = []
+    return True
 
 
 def _get_bible(project_dir):
@@ -262,7 +279,7 @@ async def generate_style_samples(
 
 @router.patch("/styles/active")
 def set_active_style(project_id: str, body: dict, project=Depends(get_project)):
-    project_dir, config, _state = project
+    project_dir, config, state = project
 
     index = body.get("index")
     if index is None:
@@ -278,5 +295,7 @@ def set_active_style(project_id: str, body: dict, project=Depends(get_project)):
     template = suggestions[index - 1].get("template", config.style_template)
     config = config.model_copy(update={"style_template": template})
     save_config(config, project_dir)
+    if clear_style_failures_after_selection(state):
+        save_state(state, project_dir)
 
     return {"status": "updated", "index": index, "style_template": template}

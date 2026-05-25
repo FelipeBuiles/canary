@@ -8,16 +8,16 @@
 
 aliases:
   extract-fast: vertex_ai/gemini-3.1-flash-lite-preview
-  extract-balanced: vertex_ai/gemini-3-flash-preview
+  extract-balanced: vertex_ai/gemini-3.5-flash
   extract-quality: vertex_ai/gemini-3.1-pro-preview
   screenplay-fast: anthropic/claude-haiku-4-5
   screenplay-balanced: anthropic/claude-sonnet-4-6
   screenplay-quality: anthropic/claude-opus-4-7
   panel-fast: vertex_ai/gemini-3.1-flash-lite-preview
-  panel-balanced: openai/gpt-5.4-mini
+  panel-balanced: vertex_ai/gemini-3.5-flash
   panel-quality: openai/gpt-5.4
   prompt-fast: vertex_ai/gemini-3.1-flash-lite-preview
-  prompt-balanced: vertex_ai/gemini-3.1-flash-lite-preview
+  prompt-balanced: vertex_ai/gemini-3.5-flash
   prompt-quality: vertex_ai/gemini-3.1-flash-lite-preview
   image-fast: vertex_ai/gemini-3.1-flash-image-preview
   image-balanced: vertex_ai/gemini-3-pro-image-preview
@@ -43,6 +43,13 @@ model_overrides:
   gemini-3.1-pro-preview:
     input_cost_per_token: 0.000002
     output_cost_per_token: 0.000012
+    mode: chat
+  # Gemini 3.5 Flash — stable frontier-speed model for agentic and coding tasks.
+  # source: https://ai.google.dev/gemini-api/docs/pricing,
+  # verified 2026-05-24.
+  gemini-3.5-flash:
+    input_cost_per_token: 0.0000015
+    output_cost_per_token: 0.000009
     mode: chat
   # Gemini 3 Flash Preview — Pro-level intelligence at Flash speed/price.
   # Note the asymmetric naming: the flash text model is in the `3-` family

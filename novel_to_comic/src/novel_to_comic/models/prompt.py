@@ -20,6 +20,11 @@ class ImagePrompt(BaseModel):
     panel_number: int
     generation_mode: str | None = None
     shape_intent: str | None = None
+    generation_aspect_ratio: float | None = None
+    generation_width: int | None = None
+    generation_height: int | None = None
+    generation_shape: str | None = None
+    generation_aspect_source: str | None = None
     crop_policy: str | None = None
     transition_in: str | None = None
     transition_out: str | None = None

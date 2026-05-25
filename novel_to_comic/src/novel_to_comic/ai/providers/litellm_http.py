@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ from typing import Any
 from novel_to_comic.ai.errors import AIRefusalError
 from novel_to_comic.ai.providers.base import ProviderRawResult, RefImage
 from novel_to_comic.config import Config, is_gpt_image_2
+from novel_to_comic.panel_aspect import aspect_for_dimensions, generation_shape_for_aspect
 
 
 class LitellmHttpProvider:
@@ -26,6 +28,10 @@ class LitellmHttpProvider:
             "model": model_alias,
             "size": _image_size(model_alias, width, height),
             "n": 1,
+            "canary_requested_width": width,
+            "canary_requested_height": height,
+            "canary_requested_aspect": aspect_for_dimensions(width, height),
+            "canary_requested_shape": generation_shape_for_aspect(aspect_for_dimensions(width, height)),
         }
         if config.image_quality:
             params["quality"] = config.image_quality
@@ -113,16 +119,38 @@ def _load_refs(refs: list[RefImage]) -> list[tuple[RefImage, bytes]]:
 def _ref_filename(ref: RefImage) -> str:
     """Encode role into the multipart filename so custom handlers (e.g. vertex_multimodal) can reconstruct it.
 
-    For subject refs, we also prepend the parent directory name when it starts
-    with a character-dir prefix (char_*, character_*, chara_*) so the handler
-    can extract a meaningful character name from e.g. char_carl_front.png.
+    When a human-readable label is known, include it in the filename so the
+    custom handler can describe each image to Gemini before the binary part.
+    Otherwise, preserve useful path context such as character/prop directory ids.
     """
+    label_slug = _label_slug(ref.label)
+    if label_slug:
+        if ref.role == "subject":
+            pose = ref.path.stem
+            suffix = f"_{pose}" if pose else ""
+            return f"__role_{ref.role}__character_{label_slug}{suffix}{ref.path.suffix or '.png'}"
+        if ref.role == "location_plate":
+            return f"__role_{ref.role}__location_{label_slug}{ref.path.suffix or '.png'}"
+        if ref.role == "prop":
+            return f"__role_{ref.role}__prop_{label_slug}{ref.path.suffix or '.png'}"
+        if ref.role == "style":
+            return f"__role_{ref.role}__style_{label_slug}{ref.path.suffix or '.png'}"
+
     if ref.role == "subject":
         parent = ref.path.parent.name
         if parent.lower().startswith(("char_", "character_", "chara_")):
             bare = f"{parent}_{ref.path.name}"
             return f"__role_{ref.role}__{bare}"
+    if ref.role == "prop":
+        parent = ref.path.parent.name
+        if parent:
+            return f"__role_{ref.role}__prop_{parent}_{ref.path.name}"
     return f"__role_{ref.role}__{ref.path.name}"
+
+
+def _label_slug(label: str | None) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9]+", "_", (label or "").strip().lower()).strip("_")
+    return cleaned[:80]
 
 
 def _flatten_refs(refs: list[RefImage]) -> list[RefImage]:

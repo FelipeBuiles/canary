@@ -3,11 +3,12 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image as PILImage
 
 from novel_to_comic import artifacts
 from novel_to_comic.config import Config
 from novel_to_comic.models.story_bible import Character, Location, Prop, StoryBible
-from novel_to_comic.models.prompt import ImagePrompt
+from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
 from novel_to_comic.server.routers.stages import list_images
 from novel_to_comic.state import create_initial_state
 from novel_to_comic.stages import s3_cast
@@ -175,6 +176,30 @@ def test_panel_estimate_counts_actual_uploaded_references(tmp_path):
     assert cost == pytest.approx(0.06868)
 
 
+def test_output_aspect_meta_flags_shape_mismatch(tmp_path):
+    image_path = tmp_path / "panel.png"
+    PILImage.new("RGB", (1408, 768), color="white").save(image_path)
+    prompt = ImagePrompt(
+        scene_id="scene_001",
+        panel_number=1,
+        full_prompt="A panel.",
+        generation_aspect_ratio=0.75,
+        generation_shape="portrait",
+        width=768,
+        height=1024,
+        steps=28,
+    )
+
+    meta = s7_draw._meta_with_output_aspect(image_path, {"parameters": {}}, prompt)
+
+    assert meta["parameters"]["actual_width"] == 1408
+    assert meta["parameters"]["actual_height"] == 768
+    assert meta["parameters"]["requested_aspect_ratio"] == 0.75
+    assert meta["parameters"]["aspect_validation_status"] == "shape_mismatch"
+    with pytest.raises(s7_draw.AspectMismatchError):
+        s7_draw._raise_if_aspect_mismatch(meta)
+
+
 def test_gpt_image_2_reference_resolution_keeps_location_plate_text_only(tmp_path):
     sample_dir = tmp_path / "samples"
     sample_dir.mkdir()
@@ -208,12 +233,17 @@ def test_gpt_image_2_reference_resolution_keeps_location_plate_text_only(tmp_pat
         prompt,
         style_sample=style_path,
         scene_to_location={"scene_001": "loc_001"},
+        location_labels={"loc_001": "The White Parlour"},
     )
 
     assert gpt_refs == []
     assert [(ref.path, ref.role) for ref in gemini_refs] == [
         (style_path, "style"),
         (plate_path, "location_plate"),
+    ]
+    assert [(ref.role, ref.label) for ref in gemini_refs] == [
+        ("style", "selected style"),
+        ("location_plate", "The White Parlour"),
     ]
 
 
@@ -235,6 +265,13 @@ def test_gpt_image_2_reference_resolution_uses_minimal_subject_refs(tmp_path):
         scene_id="scene_001",
         panel_number=1,
         full_prompt="A panel.",
+        subjects=[
+            PromptSubject(
+                character_id="char_001",
+                name="Mr. White",
+                identity="elderly man in a waistcoat",
+            )
+        ],
         reference_image_paths=[
             "refs/char_001/front.png",
             "refs/char_001/three_quarter.png",
@@ -260,6 +297,7 @@ def test_gpt_image_2_reference_resolution_uses_minimal_subject_refs(tmp_path):
     assert [ref.path for ref in gpt_refs] == [front]
     assert [ref.path for ref in gemini_refs] == [front, three_quarter, gesture, prop_ref]
     assert [ref.role for ref in gemini_refs] == ["subject", "subject", "subject", "prop"]
+    assert [ref.label for ref in gemini_refs] == ["Mr. White", "Mr. White", "Mr. White", "prop_001"]
 
 
 def test_gpt_image_2_cast_assets_skip_style_sample(tmp_path):

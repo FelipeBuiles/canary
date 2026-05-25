@@ -1,0 +1,87 @@
+<h2>Panel Shape Fix Options</h2>
+<p class="subtitle">The current issue is not one bug; shape intent splits across panel planning, page geometry, prompt text, and provider output.</p>
+
+<div class="mockup">
+  <div class="mockup-header">Current flow for The Egg scene_001 / panel_005</div>
+  <div class="mockup-body">
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;align-items:stretch">
+      <div class="placeholder" style="min-height:110px">
+        <strong>Planned panel</strong><br>
+        rect<br>
+        aspect 1.0<br>
+        close-up
+      </div>
+      <div class="placeholder" style="min-height:110px">
+        <strong>Page slot</strong><br>
+        3x2 grid<br>
+        aspect 1.5<br>
+        landscape
+      </div>
+      <div class="placeholder" style="min-height:110px">
+        <strong>Prompt request</strong><br>
+        768 x 1024<br>
+        vertical panel
+      </div>
+      <div class="placeholder" style="min-height:110px">
+        <strong>Vertex output</strong><br>
+        1408 x 768<br>
+        landscape
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="display:flex;gap:10px;align-items:center;justify-content:center;height:100%">
+        <div style="width:42px;height:70px;border:3px solid #334155;background:#e0f2fe"></div>
+        <div style="font-size:28px">→</div>
+        <div style="width:42px;height:70px;border:3px solid #334155;background:#e0f2fe"></div>
+        <div style="font-size:28px">→</div>
+        <div style="width:42px;height:70px;border:3px solid #334155;background:#e0f2fe"></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. Enforce Draw Shape From Prompt</h3>
+      <p>Make Vertex honor requested aspect and post-validate/regenerate if output dimensions disagree. Fastest surgical fix, but compose may still crop if page geometry differs.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="display:flex;gap:10px;align-items:center;justify-content:center;height:100%">
+        <div style="width:72px;height:48px;border:3px solid #334155;background:#dcfce7"></div>
+        <div style="font-size:28px">→</div>
+        <div style="width:72px;height:48px;border:3px solid #334155;background:#dcfce7"></div>
+        <div style="font-size:28px">→</div>
+        <div style="width:72px;height:48px;border:3px solid #334155;background:#dcfce7"></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. Make Page Geometry The Source</h3>
+      <p>Generate each panel to the actual compose slot aspect. Panel 5 would become landscape because its page slot is landscape. Best for compose fidelity, weaker for narrative shot intent.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="display:flex;gap:10px;align-items:center;justify-content:center;height:100%">
+        <div style="width:58px;height:58px;border:3px solid #334155;background:#fef3c7"></div>
+        <div style="font-size:28px">→</div>
+        <div style="width:72px;height:48px;border:3px solid #334155;background:#dcfce7"></div>
+        <div style="font-size:28px">→</div>
+        <div style="width:72px;height:48px;border:3px solid #334155;background:#dcfce7"></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. Canonical Panel Aspect Contract</h3>
+      <p>Pick one aspect per panel after layout pagination, store it on the panel, use it in prompt text, provider request, output validation, and compose. Most robust fix.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Recommendation</h3>
+  <p>Use C. It fixes the underlying split: layout, draw, and compose all consume the same canonical aspect. Add provider enforcement and validation as part of that contract.</p>
+</div>

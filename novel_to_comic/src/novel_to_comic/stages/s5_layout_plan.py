@@ -50,6 +50,10 @@ from novel_to_comic.models.layout_plan import (
 )
 from novel_to_comic.models.panel import DialogueLine, Screenplay, ScreenplayBeat
 from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.panel_aspect import (
+    dimensions_for_generation_aspect,
+    generation_shape_for_aspect,
+)
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.text_utils import clean, shorten
 
@@ -438,6 +442,19 @@ def _generation_mode_for_shape(shape_intent: str, importance: str) -> str:
     if shape_intent in {"irregular", "bleed", "panorama"} or importance in {"hero", "splash"}:
         return "exact"
     return "master"
+
+
+def _apply_generation_aspect_from_geometry(panel: PlannedPanel, geometry: PanelGeometry) -> None:
+    aspect_ratio = geometry.aspect_ratio
+    if aspect_ratio is None and len(geometry.region) >= 4 and geometry.region[3]:
+        aspect_ratio = geometry.region[2] / geometry.region[3]
+    shape = generation_shape_for_aspect(aspect_ratio)
+    width, height = dimensions_for_generation_aspect(aspect_ratio)
+    panel.generation_aspect_ratio = aspect_ratio
+    panel.generation_width = width
+    panel.generation_height = height
+    panel.generation_shape = shape
+    panel.generation_aspect_source = "page_geometry"
 
 
 _LIGHTING_KEYWORDS = frozenset({
@@ -1393,7 +1410,7 @@ def _importance_aware_paginate(
             region, polygon = template[min(idx, len(template) - 1)]
             geom_aspect = (region[2] / region[3]) if region[3] else None
             geometries.append(
-                PanelGeometry(
+                geometry := PanelGeometry(
                     panel_id=panel.panel_id,
                     shape_intent=panel.shape_intent,
                     region=region,
@@ -1404,9 +1421,9 @@ def _importance_aware_paginate(
                 )
             )
             # Keep panel.aspect_preference as the narrative shape requested by
-            # planning. Page-slot geometry belongs on PanelGeometry; feeding it
-            # back into prompt sizing can turn normal panels into skinny image
-            # generations that do not match provider behavior.
+            # planning, but store a separate canonical generation aspect from
+            # the actual compose slot. Prompting and draw use this contract.
+            _apply_generation_aspect_from_geometry(panel, geometry)
 
         is_intro = page_number == start_page_number
         has_climax = any(p.importance in {"hero", "splash"} for p in chunk)
