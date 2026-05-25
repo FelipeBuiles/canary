@@ -531,7 +531,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           <span
             className={cn(
               "ml-auto font-meta text-[0.5rem] leading-none tracking-[0.12em] 2xl:text-[0.56rem] min-[2200px]:text-[0.82rem]",
-              stage.status === "complete" && stage.failedCount === 0 && "text-archive-sage",
+              stage.status === "complete" && stage.failedCount === 0 && "text-archive-sage animate-comic-pop",
               (stage.status === "running" || stage.status === "awaiting_review") && "text-narrator-gold",
               (stage.status === "failed" || stage.failedCount > 0) && "text-hero-red",
               stage.status === "pending" && stage.failedCount === 0 && "text-bristol/32",

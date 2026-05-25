@@ -8,9 +8,9 @@ const VARIANT_STYLES: Record<Variant, string> = {
   primary:
     "border-[2px] border-ink-black bg-[linear-gradient(135deg,var(--color-hero-red),#d93537)] text-bristol shadow-panel-red hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-paper-sm active:translate-x-[3px] active:translate-y-[3px] active:shadow-none disabled:opacity-55 disabled:shadow-none disabled:hover:translate-x-0 disabled:hover:translate-y-0",
   secondary:
-    "border-[2px] border-ink-black bg-secondary-container text-on-secondary-container hover:bg-bristol active:bg-pulp-paper disabled:opacity-40",
+    "border-[2px] border-ink-black bg-secondary-container text-on-secondary-container shadow-ink-sm hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-paper-sm active:translate-x-[3px] active:translate-y-[3px] active:shadow-none disabled:opacity-40 disabled:shadow-none disabled:hover:translate-x-0 disabled:hover:translate-y-0",
   outline:
-    "border-[2px] border-ink-black bg-pulp-paper text-ink-black hover:bg-bristol active:bg-ghost-shadow disabled:opacity-40",
+    "border-[2px] border-ink-black bg-pulp-paper text-ink-black shadow-paper-sm hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-paper-sm active:translate-x-[3px] active:translate-y-[3px] active:shadow-none disabled:opacity-40 disabled:shadow-none disabled:hover:translate-x-0 disabled:hover:translate-y-0",
 };
 
 const SIZE_STYLES: Record<Size, string> = {

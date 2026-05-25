@@ -24,7 +24,7 @@ function NewProjectCard({ onClick }: { onClick: () => void }) {
       className="group block h-full w-full text-left focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
     >
       <div className="flex h-full min-h-[390px] flex-col items-center justify-center gap-6 border-[3px] border-dashed border-ink-black/10 bg-transparent p-6 transition-colors duration-150 group-hover:border-ink-black/35 group-hover:bg-bristol/35 group-focus-visible:border-ink-black">
-        <div className="flex h-20 w-20 items-center justify-center border-[3px] border-ink-black/38 text-ink-black/55 transition-colors duration-150 group-hover:border-ink-black group-hover:bg-narrator-gold group-hover:text-ink-black">
+        <div className="flex h-20 w-20 items-center justify-center border-[3px] border-ink-black/38 text-ink-black/55 transition-[background-color,border-color,color,transform,box-shadow] duration-300 ease-out group-hover:scale-105 group-hover:rotate-90 group-hover:border-ink-black group-hover:bg-narrator-gold group-hover:text-ink-black group-hover:shadow-paper-sm group-focus-visible:border-ink-black">
           <Icon name="plus" size={30} />
         </div>
         <div className="text-center">

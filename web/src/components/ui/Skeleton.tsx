@@ -17,7 +17,7 @@ export function Skeleton({ width, height, aspect, className }: SkeletonProps) {
   return (
     <div
       aria-hidden="true"
-      className={cn("skeleton-shimmer block w-full", className)}
+      className={cn("skeleton-benday block w-full", className)}
       style={style}
     />
   );

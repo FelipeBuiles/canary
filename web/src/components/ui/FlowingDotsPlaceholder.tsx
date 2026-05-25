@@ -1,13 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef } from "react";
 import { cn } from "../../lib/cn";
-
-type ColorCluster = {
-  x: number;
-  y: number;
-  r: number;
-  color: string;
-};
+import { useI18n } from "../../i18n";
 
 interface FlowingDotsPlaceholderProps {
   aspect?: string;
@@ -17,38 +11,21 @@ interface FlowingDotsPlaceholderProps {
   "aria-label"?: string;
 }
 
-const CLUSTERS: ColorCluster[] = [
-  { x: 0.5, y: 0.28, r: 0.2, color: "#F3C23A" },
-  { x: 0.18, y: 0.72, r: 0.18, color: "#2C56AF" },
-  { x: 0.78, y: 0.74, r: 0.18, color: "#DC4637" },
-];
-
-const BACKGROUND = "#0a0a0c";
-const HIGHLIGHT = "#E8DEC4";
-const LABEL_COLOR = "#F3C23A";
-const DENSITY = 8;
-const SPEED = 2;
-
-function hexToRgb(hex: string): [number, number, number] {
-  const raw = hex.replace("#", "");
-  const normalized = raw.length === 3
-    ? raw.split("").map((char) => char + char).join("")
-    : raw;
-  const value = parseInt(normalized, 16);
-  return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
-}
-
 export function FlowingDotsPlaceholder({
   aspect = "4 / 5",
   className,
-  label = "GENERATING…",
+  label,
   caption,
   "aria-label": ariaLabel = "Image generation in progress",
 }: FlowingDotsPlaceholderProps) {
+  const { t } = useI18n();
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rafRef = useRef<number | null>(null);
   const startRef = useRef<number>(0);
+
+  const displayLabel = label ?? t("GENERATING…");
+  const displayCaption = caption ? t(String(caption)) : undefined;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -69,90 +46,90 @@ export function FlowingDotsPlaceholder({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
 
-    const flow = (x: number, y: number, t: number) =>
-      Math.sin(x * 2.2 + t * 0.34) * 0.55 +
-      Math.cos(y * 2.4 - t * 0.24) * 0.48 +
-      Math.sin((x + y) * 1.55 + t * 0.2) * 0.38;
-
     resize();
     const observer = new ResizeObserver(resize);
     observer.observe(wrap);
 
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const highlightRgb = hexToRgb(HIGHLIGHT);
 
     const draw = (now: number) => {
       if (!startRef.current) startRef.current = now;
-      const motionSpeed = reducedMotion ? 0.12 : SPEED;
-      const t = ((now - startRef.current) / 1000) * motionSpeed;
-      const clusterState = CLUSTERS.map((cluster, index) => ({
-        x: cluster.x + Math.sin(t * 0.32 + index * 1.9) * 0.025,
-        y: cluster.y + Math.cos(t * 0.3 + index * 1.4) * 0.022,
-        r: cluster.r,
-        rgb: hexToRgb(cluster.color),
-      }));
+      const t = reducedMotion ? 0 : ((now - startRef.current) / 1000) * 1.8;
 
-      ctx.fillStyle = BACKGROUND;
+      // 1. Fondo de papel pulpa
+      ctx.fillStyle = "#fcfaed";
       ctx.fillRect(0, 0, width, height);
 
-      const cellSize = width / DENSITY;
-      const cols = Math.max(1, Math.ceil(width / cellSize));
-      const rows = Math.max(1, Math.ceil(height / cellSize));
-      const xStart = (width - cols * cellSize) / 2;
-      const yStart = (height - rows * cellSize) / 2;
-      const baseRadius = cellSize * 0.32;
+      // 2. Líneas de boceto azul cián (Non-photo blue)
+      ctx.strokeStyle = "rgba(44, 150, 219, 0.12)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      // Regla de tercios
+      ctx.moveTo(width / 3, 0); ctx.lineTo(width / 3, height);
+      ctx.moveTo((2 * width) / 3, 0); ctx.lineTo((2 * width) / 3, height);
+      ctx.moveTo(0, height / 3); ctx.lineTo(width, height / 3);
+      ctx.moveTo(0, (2 * height) / 3); ctx.lineTo(width, (2 * height) / 3);
+      // Diagonales de composición
+      ctx.moveTo(0, 0); ctx.lineTo(width, height);
+      ctx.moveTo(width, 0); ctx.lineTo(0, height);
+      ctx.stroke();
+
+      // 3. Onda de escáner dorada (Onda de Revelado) - Muy suave y lenta
+      const sweepCenter = 0.5 + 0.75 * Math.sin(t * 0.22);
+      
+      const grad = ctx.createLinearGradient(0, 0, width, height);
+      const c = Math.max(0, Math.min(1, sweepCenter));
+      
+      grad.addColorStop(Math.max(0, c - 0.4), "rgba(250, 227, 97, 0)");
+      grad.addColorStop(Math.max(0, c - 0.15), "rgba(250, 227, 97, 0.05)");
+      grad.addColorStop(c, "rgba(250, 227, 97, 0.16)");
+      grad.addColorStop(Math.min(1, c + 0.15), "rgba(250, 227, 97, 0.05)");
+      grad.addColorStop(Math.min(1, c + 0.4), "rgba(250, 227, 97, 0)");
+      
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, width, height);
+
+      // 4. Trama de puntos Benday Halftone - Pulsación suave en escala de grises
+      const cellSize = 14;
+      const cols = Math.ceil(width / cellSize);
+      const rows = Math.ceil(height / cellSize);
+      const baseRadius = 1.8;
 
       for (let row = 0; row < rows; row++) {
         for (let col = 0; col < cols; col++) {
-          const px = xStart + col * cellSize + cellSize * 0.5;
-          const baseY = yStart + row * cellSize + cellSize * 0.5;
+          const px = col * cellSize + cellSize * 0.5;
+          const py = row * cellSize + cellSize * 0.5;
           const nx = px / Math.max(width, 1);
-          const ny = baseY / Math.max(height, 1);
-          const py = baseY + flow(nx, ny, t) * cellSize * 0.5;
+          const ny = py / Math.max(height, 1);
+          const cellDiag = (nx + ny) / 2;
 
-          let bestRgb: [number, number, number] | null = null;
-          let bestWeight = 0;
-          let totalWeight = 0;
+          const distToSweep = cellDiag - sweepCenter;
+          const sweepGlow = Math.max(0, 1 - Math.abs(distToSweep) / 0.25);
 
-          for (const cluster of clusterState) {
-            const dx = nx - cluster.x;
-            const dy = ny - cluster.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            const influence = Math.max(0, 1 - distance / (cluster.r * 1.85));
-            const weight = influence * influence;
-            totalWeight += weight;
-            if (weight > bestWeight) {
-              bestWeight = weight;
-              bestRgb = cluster.rgb;
-            }
+          let radius = baseRadius;
+          const rgb = [27, 28, 21]; // Mantener siempre tinta negra
+          let alpha = 0.06;
+
+          if (sweepGlow > 0) {
+            // Crecimiento y oscurecimiento muy suaves y progresivos
+            radius = baseRadius * (1.0 + sweepGlow * 0.35);
+            alpha = 0.06 + sweepGlow * 0.16;
           }
 
-          const riverY = 0.5 + Math.sin(nx * 4.5 + t * 0.28) * 0.06;
-          const river = Math.exp(-Math.pow((ny - riverY) / 0.075, 2));
-
-          let rgb: [number, number, number];
-          let alpha: number;
-          if (river > bestWeight * 1.12) {
-            rgb = highlightRgb;
-            alpha = Math.min(0.95, river);
-          } else if (bestRgb && totalWeight >= 0.035) {
-            rgb = bestRgb;
-            alpha = Math.min(1, bestWeight * 1.55);
-          } else {
-            continue;
-          }
-
-          if (alpha < 0.04) continue;
-
-          const pulse = 0.88 + 0.12 * Math.sin(t * 0.8 + (col + row) * 0.16);
-          const radius = baseRadius * (0.55 + alpha * 0.9) * pulse;
+          // Micro-pulso individual por celda para dar textura orgánica
+          const pulse = 0.9 + 0.1 * Math.sin(t * 1.8 + (col + row) * 0.25);
 
           ctx.beginPath();
           ctx.fillStyle = `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
-          ctx.arc(px, py, radius, 0, Math.PI * 2);
+          ctx.arc(px, py, radius * pulse, 0, Math.PI * 2);
           ctx.fill();
         }
       }
+
+      // 5. Borde grueso táctil neobrutalista
+      ctx.strokeStyle = "#1b1c15";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(0, 0, width, height);
 
       rafRef.current = requestAnimationFrame(draw);
     };
@@ -172,7 +149,7 @@ export function FlowingDotsPlaceholder({
       ref={wrapRef}
       role="img"
       aria-label={ariaLabel}
-      className={cn("relative w-full overflow-hidden bg-ink-black", className)}
+      className={cn("relative w-full overflow-hidden border-[2px] border-ink-black bg-pulp-paper", className)}
       style={style}
     >
       <canvas
@@ -180,25 +157,20 @@ export function FlowingDotsPlaceholder({
         aria-hidden="true"
         className="block h-full w-full"
       />
-      {(label || caption) && (
+      {(displayLabel || displayCaption) && (
         <div
-          className="absolute inset-0 flex flex-col items-center justify-center px-4 text-center"
-          style={{
-            background:
-              "radial-gradient(circle at center, rgba(10, 10, 12, 0.88) 0%, rgba(10, 10, 12, 0.64) 34%, rgba(10, 10, 12, 0.18) 72%)",
-          }}
+          className="absolute inset-0 flex flex-col items-center justify-center px-4 text-center pointer-events-none"
         >
-          {label && (
+          {displayLabel && (
             <div
-              className="border border-bristol/18 px-4 py-2 font-display text-[clamp(1rem,8vw,1.45rem)] font-bold leading-none shadow-ink-sm"
-              style={{ backgroundColor: "rgba(10, 10, 12, 0.76)", color: LABEL_COLOR }}
+              className="border-[3px] border-ink-black px-5 py-2.5 font-display text-[clamp(1rem,8vw,1.38rem)] font-black leading-none shadow-ink bg-bristol text-ink-black uppercase tracking-tight"
             >
-              {label}
+              {displayLabel}
             </div>
           )}
-          {caption && (
-            <div className="mt-2 bg-ink-black/56 px-2 py-1 font-meta text-[0.5rem] tracking-[0.18em] text-bristol/82">
-              {caption}
+          {displayCaption && (
+            <div className="mt-3.5 border-[2px] border-ink-black bg-pulp-paper px-3 py-1 font-meta text-[0.62rem] font-bold tracking-[0.16em] text-ink-black shadow-paper-sm uppercase">
+              {displayCaption}
             </div>
           )}
         </div>

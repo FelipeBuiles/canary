@@ -79,8 +79,8 @@ export function ProjectCard({ project, coverPending = false }: Props) {
       aria-label={`${t("OPEN FILE")}: ${project.project_name}`}
       className="group block h-full focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
     >
-      <article className="h-full overflow-hidden border-[3px] border-ink-black/8 bg-bristol transition-[border-color,box-shadow] duration-150 group-hover:border-ink-black group-hover:shadow-paper-sm group-focus-visible:border-ink-black group-focus-visible:shadow-paper-sm">
-        <div className="relative border-b-[2px] border-ink-black/8 transition-colors duration-150 group-hover:border-ink-black group-focus-visible:border-ink-black">
+      <article className="h-full overflow-hidden border-[3px] border-ink-black/12 bg-bristol shadow-paper-sm transition-[border-color,box-shadow,transform] duration-200 ease-out group-hover:border-ink-black group-hover:-translate-x-[2px] group-hover:-translate-y-[2px] group-hover:shadow-ink group-focus-visible:border-ink-black group-focus-visible:-translate-x-[2px] group-focus-visible:-translate-y-[2px] group-focus-visible:shadow-ink">
+        <div className="relative border-b-[2px] border-ink-black/12 transition-colors duration-200 group-hover:border-ink-black group-focus-visible:border-ink-black">
           {project.has_cover ? (
             <LazyImage
               src={coverUrl}

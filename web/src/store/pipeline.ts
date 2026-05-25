@@ -84,6 +84,7 @@ function updateDrawProgressForEvent(projectId: string, event: PipelineEvent) {
       event.duration_ms,
       event.error ?? null,
     );
+    void queryClient.invalidateQueries({ queryKey: ["project", projectId, "images"] });
     return;
   }
   if (event.type === "stage_complete" || event.type === "stage_fail") {
