@@ -9,6 +9,7 @@ from novel_to_comic.config import Config, is_gpt_image_2
 from novel_to_comic.models.layout_plan import PlannedPanel
 from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
 from novel_to_comic.models.story_bible import Character, StoryBible
+from novel_to_comic.panel_aspect import dimensions_for_generation_shape, frame_phrase
 from novel_to_comic.text_utils import clean, shorten
 
 
@@ -100,6 +101,10 @@ def dimensions_for_shot(shot_type: str) -> tuple[int, int]:
 
 
 def dimensions_for_panel(panel: PlannedPanel) -> tuple[int, int]:
+    if getattr(panel, "generation_width", None) and getattr(panel, "generation_height", None):
+        return int(panel.generation_width or 0), int(panel.generation_height or 0)
+    if getattr(panel, "generation_shape", None):
+        return dimensions_for_generation_shape(panel.generation_shape)
     shape_intent = getattr(panel, "shape_intent", None)
     generation_mode = getattr(panel, "generation_mode", None)
     if shape_intent in {"wide", "panorama", "bleed"}:
@@ -107,6 +112,28 @@ def dimensions_for_panel(panel: PlannedPanel) -> tuple[int, int]:
     if shape_intent == "tall":
         return (768, 1536) if generation_mode == "exact" else (1024, 1536)
     return dimensions_for_shot(panel.shot_type)
+
+
+def _apply_generation_frame_to_composition(composition: str, panel: PlannedPanel) -> str:
+    shape = getattr(panel, "generation_shape", None)
+    if not shape:
+        return composition
+    phrase = frame_phrase(shape)
+    updated = re.sub(
+        r"\b(?:wide\s+)?vertical panel\b",
+        phrase,
+        composition,
+        flags=re.IGNORECASE,
+    )
+    updated = re.sub(
+        r"\bhorizontal framing\b|\btall vertical framing\b",
+        phrase,
+        updated,
+        flags=re.IGNORECASE,
+    )
+    if phrase not in updated:
+        updated = f"{updated}, composed for a {phrase}"
+    return updated
 
 
 def _single_instant_direction(text: str) -> str:
@@ -553,12 +580,25 @@ def build_planned_panel_prompt_spec(
     camera_angle = _single_instant_direction(panel.camera_angle)
     if camera_angle and camera_angle.lower() not in composition.lower():
         composition = f"{composition}, {camera_angle} camera"
-    if panel.shape_intent in {"wide", "panorama"} and "wide" not in composition.lower():
+    composition = _apply_generation_frame_to_composition(composition, panel)
+    if (
+        not getattr(panel, "generation_shape", None)
+        and panel.shape_intent in {"wide", "panorama"}
+        and "wide" not in composition.lower()
+    ):
         composition = f"{composition}, wide horizontal framing"
-    if panel.shape_intent == "tall" and "vertical" not in composition.lower():
+    if (
+        not getattr(panel, "generation_shape", None)
+        and panel.shape_intent == "tall"
+        and "vertical" not in composition.lower()
+    ):
         composition = f"{composition}, tall vertical framing"
     if panel.generation_mode == "master":
-        composition = f"{composition}, extra environmental margin for flexible crop"
+        shape = getattr(panel, "generation_shape", None)
+        if shape:
+            composition = f"{composition}, extra environmental margin for flexible crop within a {frame_phrase(shape)}"
+        else:
+            composition = f"{composition}, extra environmental margin for flexible crop"
     if panel.has_narration_caption:
         zone = panel.preferred_caption_zone or "top"
         if zone != "none":
@@ -646,6 +686,11 @@ def build_planned_panel_prompt_spec(
         panel_number=panel.panel_number,
         generation_mode=panel.generation_mode,
         shape_intent=panel.shape_intent,
+        generation_aspect_ratio=panel.generation_aspect_ratio,
+        generation_width=panel.generation_width,
+        generation_height=panel.generation_height,
+        generation_shape=panel.generation_shape,
+        generation_aspect_source=panel.generation_aspect_source,
         crop_policy=panel.crop_policy,
         transition_in=panel.transition_in,
         transition_out=panel.transition_out,
@@ -833,7 +878,7 @@ def _distilled_subject_clause(subject: PromptSubject, *, identity_limit: int) ->
 def _distilled_subject_sentence(prompt: ImagePrompt) -> str:
     subjects = getattr(prompt, "subjects", []) or []
     composition = _strip_distilled_composition_noise(getattr(prompt, "composition", None))
-    shot = _shorten_distilled(composition, 100) if composition else "comic panel"
+    shot = _shorten_distilled(composition, 100) if composition else "single scene image"
     if subjects:
         identity_limit = 140 if len(subjects) <= 2 else 90
         clauses = [
@@ -1073,7 +1118,7 @@ _REFERENCE_CONSTRAINTS = (
 _LAYOUT_CONSTRAINTS = (
     "Single panel image: render the entire canvas as one unified scene. "
     "Do not divide the image into sub-panels, columns, rows, gutters, or internal "
-    "panel borders. No comic-page layout, strip layout, or split-screen compositions."
+    "panel borders. No page layout, strip layout, or split-screen compositions."
 )
 
 
@@ -1112,7 +1157,7 @@ def render_generation_prompt(
 ) -> str:
     style = _clean(style_template or getattr(prompt, "style", None))
     body = _clean(getattr(prompt, "distilled_prompt", None)) or generate_distilled_prompt(prompt)
-    sections: list[str] = ["Create one finished comic panel image."]
+    sections: list[str] = ["Create one finished scene image using the selected style."]
 
     _append_section(sections, "Style", style)
     if image_model and is_gpt_image_2(image_model):

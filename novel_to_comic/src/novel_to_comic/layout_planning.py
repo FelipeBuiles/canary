@@ -19,6 +19,7 @@ from novel_to_comic.models.comic_page import (
 from novel_to_comic.models.layout_plan import GenerationMode, ImageFitStatus, LayoutPlan, NarrationDecision, PanelGeometry, PanelImportance, PlannedPage, PlannedPanel, RegenerationStatus, ShapeIntent
 from novel_to_comic.models.panel import DialogueLine, PanelBreakdown
 from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.panel_aspect import dimensions_for_generation_aspect, generation_shape_for_aspect
 
 CONTENT_MARGIN = 30.0
 CONTENT_FOOTER = 48.0
@@ -135,7 +136,9 @@ def select_layout_template(panels: "list") -> str:  # list[PlannedPanel]
 
 
 def load_layout_plan(project_dir: Path) -> LayoutPlan:
-    return artifacts.read_layout_plan(project_dir)
+    plan = artifacts.read_layout_plan(project_dir)
+    apply_generation_aspects(plan)
+    return plan
 
 
 def save_layout_plan(project_dir: Path, plan: LayoutPlan) -> None:
@@ -144,6 +147,26 @@ def save_layout_plan(project_dir: Path, plan: LayoutPlan) -> None:
 
 def planned_panel_index(plan: LayoutPlan) -> dict[str, PlannedPanel]:
     return {panel.panel_id: panel for panel in plan.planned_panels}
+
+
+def apply_generation_aspects(plan: LayoutPlan) -> None:
+    """Hydrate planned panels with canonical generation aspect from page slots."""
+    panels = planned_panel_index(plan)
+    for page in plan.planned_pages:
+        for geometry in page.panel_geometries:
+            panel = panels.get(geometry.panel_id)
+            if panel is None:
+                continue
+            aspect_ratio = geometry.aspect_ratio
+            if aspect_ratio is None and len(geometry.region) >= 4 and geometry.region[3]:
+                aspect_ratio = geometry.region[2] / geometry.region[3]
+            shape = generation_shape_for_aspect(aspect_ratio)
+            width, height = dimensions_for_generation_aspect(aspect_ratio)
+            panel.generation_aspect_ratio = aspect_ratio
+            panel.generation_width = width
+            panel.generation_height = height
+            panel.generation_shape = shape
+            panel.generation_aspect_source = "page_geometry"
 
 
 def scene_panel_map(plan: LayoutPlan) -> dict[str, list[PlannedPanel]]:

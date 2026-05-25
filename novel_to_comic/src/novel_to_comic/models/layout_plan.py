@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from novel_to_comic.models.comic_page import SfxKind, normalize_sfx_text
+from novel_to_comic.panel_aspect import GenerationAspectSource, GenerationShape
 
 
 PanelImportance = Literal["standard", "accent", "hero", "splash", "inset"]
@@ -136,6 +137,11 @@ class PlannedPanel(BaseModel):
     shape_intent: ShapeIntent = "rect"
     aspect_preference: float | None = None
     aspect_range: list[float] = Field(default_factory=list)
+    generation_aspect_ratio: float | None = None
+    generation_width: int | None = None
+    generation_height: int | None = None
+    generation_shape: GenerationShape | None = None
+    generation_aspect_source: GenerationAspectSource | None = None
     crop_policy: str = "flexible"
     dialogue_load: int = 0
     caption_load: int = 0

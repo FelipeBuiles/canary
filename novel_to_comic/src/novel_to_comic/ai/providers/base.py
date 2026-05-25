@@ -17,6 +17,7 @@ RefRole = Literal["subject", "style", "continuity", "location_plate", "prop"]
 class RefImage:
     path: Path
     role: RefRole
+    label: str | None = None
 
 
 @dataclass

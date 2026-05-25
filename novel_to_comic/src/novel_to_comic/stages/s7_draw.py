@@ -12,6 +12,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+from PIL import Image as PILImage
 from rich.console import Console
 
 from novel_to_comic import artifacts
@@ -23,6 +24,7 @@ from novel_to_comic.layout_planning import load_layout_plan, prompt_path_for_pan
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.panel_versions import record_current_panel_version
 from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.panel_aspect import aspect_for_dimensions, aspect_within_tolerance, generation_shape_for_aspect
 from novel_to_comic.prompting import (
     IMAGE_PROMPT_VERSION,
     build_planned_panel_prompt_spec,
@@ -33,6 +35,10 @@ from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.usage import ApiResult, estimate_image_cost
 
 console = Console()
+
+
+class AspectMismatchError(ValueError):
+    """Raised when a provider returns an image with the wrong frame aspect."""
 
 def _relative_to_project(path: Path, project_dir: Path) -> str:
     try:
@@ -47,6 +53,51 @@ def _write_generation_meta(image_path: Path, payload: dict) -> None:
 
 def _write_failure_meta(image_path: Path, payload: dict) -> None:
     artifacts.write_asset_failure(image_path, payload)
+
+
+def _image_dimensions(path: Path) -> tuple[int | None, int | None]:
+    try:
+        with PILImage.open(path) as image:
+            return image.width, image.height
+    except Exception:
+        return None, None
+
+
+def _requested_prompt_aspect(prompt: ImagePrompt) -> float | None:
+    return (
+        getattr(prompt, "generation_aspect_ratio", None)
+        or aspect_for_dimensions(getattr(prompt, "width", None), getattr(prompt, "height", None))
+    )
+
+
+def _meta_with_output_aspect(image_path: Path, meta_payload: dict, prompt: ImagePrompt) -> dict:
+    actual_width, actual_height = _image_dimensions(image_path)
+    actual_aspect = aspect_for_dimensions(actual_width, actual_height)
+    requested_aspect = _requested_prompt_aspect(prompt)
+    requested_shape = getattr(prompt, "generation_shape", None) or generation_shape_for_aspect(requested_aspect)
+    aspect_ok = aspect_within_tolerance(actual_aspect, requested_aspect)
+    updated = dict(meta_payload)
+    params = dict(updated.get("parameters", {}))
+    params.update({
+        "requested_aspect_ratio": requested_aspect,
+        "requested_shape": requested_shape,
+        "actual_width": actual_width,
+        "actual_height": actual_height,
+        "actual_aspect_ratio": actual_aspect,
+        "aspect_validation_status": "compatible" if aspect_ok else "shape_mismatch",
+    })
+    updated["parameters"] = params
+    return updated
+
+
+def _raise_if_aspect_mismatch(meta_payload: dict) -> None:
+    params = meta_payload.get("parameters", {})
+    if params.get("aspect_validation_status") == "shape_mismatch":
+        raise AspectMismatchError(
+            "shape_mismatch: generated image aspect "
+            f"{params.get('actual_aspect_ratio')} does not match requested "
+            f"{params.get('requested_aspect_ratio')}"
+        )
 
 
 def _should_use_prev_panel_image(config: Config, prev_transition_type: str | None) -> bool:
@@ -141,6 +192,31 @@ def _ordered_refs(refs: list[RefImage]) -> list[RefImage]:
     return sorted(refs, key=lambda ref: priority.get(ref.role, 99))
 
 
+def _subject_reference_labels(prompt: ImagePrompt) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    for subject in getattr(prompt, "subjects", []) or []:
+        character_id = (getattr(subject, "character_id", None) or "").strip()
+        name = (getattr(subject, "name", "") or "").strip()
+        if character_id and name:
+            labels[character_id] = name
+    return labels
+
+
+def _character_id_from_ref(path: Path) -> str | None:
+    for part in reversed(path.parts):
+        lowered = part.lower()
+        if lowered.startswith(("char_", "character_", "chara_")):
+            return part
+    return None
+
+
+def _prop_label_from_ref(path: Path) -> str | None:
+    parts = path.parts
+    if len(parts) >= 3 and parts[-3] == "props":
+        return parts[-2]
+    return None
+
+
 def _find_style_sample(project_dir: Path, style_template: str) -> Path | None:
     """Return the sample image matching the active style template."""
     suggestions_path = artifacts.style_suggestions_path(project_dir)
@@ -191,16 +267,25 @@ def resolve_panel_references(
     style_sample: Path | None = None,
     scene_to_location: dict[str, str] | None = None,
     output_dir: Path | None = None,
+    location_labels: dict[str, str] | None = None,
 ) -> list[RefImage]:
     """Return ordered, role-aware refs that a panel image request will upload."""
     subject_refs: list[RefImage] = []
+    subject_labels = _subject_reference_labels(prompt)
     for p in prompt.reference_image_paths:
         resolved = (project_dir / p) if not Path(p).is_absolute() else Path(p)
         if not resolved.exists():
             continue
+        role = "prop" if _is_prop_ref(resolved) else "subject"
+        label = (
+            _prop_label_from_ref(resolved)
+            if role == "prop"
+            else subject_labels.get(_character_id_from_ref(resolved) or "")
+        )
         subject_refs.append(RefImage(
             path=resolved,
-            role="prop" if _is_prop_ref(resolved) else "subject",
+            role=role,
+            label=label,
         ))
 
     contextual_refs: list[RefImage] = []
@@ -223,12 +308,16 @@ def resolve_panel_references(
 
     if not contextual_refs:
         if style_sample and style_sample.exists() and _use_style_sample_refs(config):
-            contextual_refs.append(RefImage(path=style_sample, role="style"))
+            contextual_refs.append(RefImage(path=style_sample, role="style", label="selected style"))
         loc_id = (scene_to_location or {}).get(prompt.scene_id)
         if loc_id and _use_location_plate_refs(config):
             plate = project_dir / "plates" / f"{loc_id}.png"
             if plate.exists():
-                contextual_refs.append(RefImage(path=plate, role="location_plate"))
+                contextual_refs.append(RefImage(
+                    path=plate,
+                    role="location_plate",
+                    label=(location_labels or {}).get(loc_id) or loc_id,
+                ))
 
     refs = _ordered_refs([*subject_refs, *contextual_refs])
     model = config.effective_image_model()
@@ -252,14 +341,17 @@ def estimate_panel_image_cost_usd(
     prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
     if style_sample is None:
         style_sample = _find_style_sample(project_dir, config.style_template)
-    if scene_to_location is None:
-        scene_to_location = {}
-        if artifacts.story_bible_path(project_dir).exists():
-            try:
-                story_bible = artifacts.read_story_bible(project_dir)
+    scene_to_location_from_caller = scene_to_location is not None
+    scene_to_location = scene_to_location or {}
+    location_labels: dict[str, str] = {}
+    if artifacts.story_bible_path(project_dir).exists():
+        try:
+            story_bible = artifacts.read_story_bible(project_dir)
+            if not scene_to_location_from_caller:
                 scene_to_location = {s.id: s.location_id for s in story_bible.scenes}
-            except Exception:
-                scene_to_location = {}
+            location_labels = {loc.id: loc.name for loc in story_bible.locations}
+        except Exception:
+            scene_to_location = {}
     refs = resolve_panel_references(
         config,
         project_dir,
@@ -267,6 +359,7 @@ def estimate_panel_image_cost_usd(
         prompt_path=prompt_path,
         style_sample=style_sample,
         scene_to_location=scene_to_location,
+        location_labels=location_labels,
     )
     generation_prompt = render_generation_prompt(
         prompt,
@@ -414,6 +507,11 @@ async def _generate_panel(
                 prompt_path=prompt_path,
                 style_sample=style_sample,
                 scene_to_location=scene_to_location,
+                location_labels=(
+                    {loc.id: loc.name for loc in story_bible.locations}
+                    if story_bible is not None
+                    else {}
+                ),
                 output_dir=output_dir,
             )
 
@@ -439,12 +537,18 @@ async def _generate_panel(
                     "image_model": config.effective_image_model(),
                     "width": prompt.width,
                     "height": prompt.height,
+                    "generation_aspect_ratio": getattr(prompt, "generation_aspect_ratio", None),
+                    "generation_width": getattr(prompt, "generation_width", None),
+                    "generation_height": getattr(prompt, "generation_height", None),
+                    "generation_shape": getattr(prompt, "generation_shape", None),
+                    "generation_aspect_source": getattr(prompt, "generation_aspect_source", None),
                     "steps": prompt.steps,
                     "style_template": config.style_template,
                     "refs": [
                         {
                             "path": _relative_to_project(ref.path, project_dir),
                             "role": ref.role,
+                            "label": ref.label,
                         }
                         for ref in refs
                     ],
@@ -455,7 +559,7 @@ async def _generate_panel(
                 output_path.exists()
                 and not force
                 and not artifacts.asset_failure_path(output_path).exists()
-                and artifacts.asset_matches_meta(output_path, meta_payload)
+                and artifacts.asset_matches_meta(output_path, _meta_with_output_aspect(output_path, meta_payload, prompt))
             ):
                 return ApiResult(value=output_path, usage=None)
 
@@ -476,6 +580,9 @@ async def _generate_panel(
                         feature="draw.panel_image",
                     )
                 result = flux_result.value
+                if result:
+                    meta_payload = _meta_with_output_aspect(result, meta_payload, prompt)
+                    _raise_if_aspect_mismatch(meta_payload)
                 if force and result:
                     output_path.parent.mkdir(parents=True, exist_ok=True)
                     record_current_panel_version(
@@ -514,12 +621,20 @@ async def _generate_panel(
                     **meta_payload,
                     "kind": "panel_image_failure",
                     "failed_at": datetime.now(UTC).isoformat(),
-                    "classification": "provider_blocked" if provider_blocked else "generation_error",
+                    "classification": (
+                        "provider_blocked"
+                        if provider_blocked
+                        else "shape_mismatch"
+                        if isinstance(exc, AspectMismatchError)
+                        else "generation_error"
+                    ),
                     "recoverable": True,
                     "user_message": (
                         "The image provider blocked this panel. Edit the prompt and use Quick Re-Do "
                         "to generate replacement art before composing."
                         if provider_blocked
+                        else "The image provider returned art with the wrong frame shape. Regenerate this panel before composing."
+                        if isinstance(exc, AspectMismatchError)
                         else "Image generation failed. Review the model error, edit the prompt if needed, and use Quick Re-Do."
                     ),
                     "error": {

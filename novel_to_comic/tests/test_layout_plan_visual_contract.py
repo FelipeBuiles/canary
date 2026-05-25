@@ -4,6 +4,7 @@ from novel_to_comic.models.layout_plan import LLMPanelSpec
 from novel_to_comic.models.panel import ScreenplayBeat
 from novel_to_comic.models.story_bible import Prop, StoryBible
 from novel_to_comic.stages.s5_layout_plan import (
+    _importance_aware_paginate,
     _llm_spec_to_planned_panel,
     _scene_planning_user_content,
     _validate_llm_specs,
@@ -121,6 +122,22 @@ def _make_panel(panel_num: int, **overrides):
     }
     base.update(overrides)
     return PlannedPanel(**base)
+
+
+def test_pagination_sets_generation_aspect_from_page_geometry():
+    panels = [_make_panel(i, shot_type="close-up", shape_intent="rect") for i in range(1, 7)]
+    panels[0].importance = "hero"
+
+    pages = _importance_aware_paginate("scene_001", panels, 1, 6)
+
+    assert pages[0].layout_template == "3x2"
+    assert pages[0].panel_geometries[4].panel_id == "scene_001:panel_005"
+    assert pages[0].panel_geometries[4].aspect_ratio == pytest.approx(1.5)
+    assert panels[4].generation_aspect_ratio == pytest.approx(1.5)
+    assert panels[4].generation_width == 1536
+    assert panels[4].generation_height == 1024
+    assert panels[4].generation_shape == "landscape"
+    assert panels[4].generation_aspect_source == "page_geometry"
 
 
 def test_dedupe_adjacent_panels_merges_visual_duplicates():

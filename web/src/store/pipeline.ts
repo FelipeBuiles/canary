@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { queryClient } from "../api/queryClient";
+import { completedStageArtifactQueryKeys } from "../lib/pipelineArtifacts";
 import { applyStageEventToProjectStatus } from "../lib/pipelineStatusEvents";
 import type { PipelineEvent, ProjectStatus } from "../types/api";
 import { useInsufficientCreditsStore } from "./insufficientCredits";
@@ -51,6 +52,11 @@ function updateStatusForStageEvent(projectId: string, event: PipelineEvent) {
 
   if (event.type === "stage_fail") {
     void queryClient.invalidateQueries({ queryKey: statusKey });
+  }
+  if (event.type === "stage_complete") {
+    for (const queryKey of completedStageArtifactQueryKeys(projectId, event.stage)) {
+      void queryClient.invalidateQueries({ queryKey });
+    }
   }
 }
 

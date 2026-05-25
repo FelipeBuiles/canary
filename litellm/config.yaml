@@ -7,7 +7,7 @@ model_list:
       vertex_location: os.environ/VERTEXAI_LOCATION
   - model_name: extract-balanced
     litellm_params:
-      model: vertex_ai/gemini-3-flash-preview
+      model: vertex_ai/gemini-3.5-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
   - model_name: extract-quality
@@ -38,8 +38,9 @@ model_list:
       vertex_location: os.environ/VERTEXAI_LOCATION
   - model_name: panel-balanced
     litellm_params:
-      model: openai/gpt-5.4-mini
-      api_key: os.environ/OPENAI_API_KEY
+      model: vertex_ai/gemini-3.5-flash
+      vertex_project: os.environ/VERTEXAI_PROJECT
+      vertex_location: os.environ/VERTEXAI_LOCATION
   - model_name: panel-quality
     litellm_params:
       model: openai/gpt-5.4
@@ -56,7 +57,7 @@ model_list:
       vertex_location: os.environ/VERTEXAI_LOCATION
   - model_name: prompt-balanced
     litellm_params:
-      model: vertex_ai/gemini-3.1-flash-lite-preview
+      model: vertex_ai/gemini-3.5-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
   - model_name: prompt-quality

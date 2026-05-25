@@ -21,7 +21,7 @@ from ..auth import get_current_user
 from ..credits import debit_model_usage, provider_usd_to_credits
 from ..db import get_db
 from ..deps import get_project, get_projects_dir, project_key
-from .styles import is_style_selected
+from .styles import clear_style_failures_after_selection, is_style_selected
 from ..generation_jobs import (
     enqueue_generation_job,
     generation_job_payload,
@@ -407,6 +407,9 @@ def project_status(
     if not running:
         if _reconcile_completed_draw_stage(project_dir, config, state, is_running=False):
             save_state(state, project_dir)
+    style_selected = is_style_selected(project_dir, config)
+    if style_selected and clear_style_failures_after_selection(state):
+        save_state(state, project_dir)
 
     pkey = project_key(user_id, project_id)
     draw_in_flight = list(getattr(request.app.state, "draw_in_flight", {}).get(pkey, []))
@@ -437,7 +440,7 @@ def project_status(
         "total_estimated_cost_credits": provider_usd_to_credits(total_estimated),
         "is_running": running,
         "has_cover": _cover_path(project_dir).exists(),
-        "style_selected": is_style_selected(project_dir, config),
+        "style_selected": style_selected,
         "is_public": share_info.get("is_public", False),
         "share_token": share_info.get("share_token"),
         "stages": stages,

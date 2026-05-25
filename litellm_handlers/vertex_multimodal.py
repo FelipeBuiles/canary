@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import mimetypes
 import os
 import re
@@ -16,6 +17,9 @@ from google import genai
 from google.genai import types
 from litellm.llms.custom_llm import CustomLLM
 from litellm.types.utils import ImageObject, ImageResponse, ImageUsage, ImageUsageInputTokensDetails
+from PIL import Image as PILImage
+
+_ASPECT_TOLERANCE = 0.12
 
 
 class VertexMultimodalLLM(CustomLLM):
@@ -119,7 +123,12 @@ class VertexMultimodalLLM(CustomLLM):
         vertex_model = _vertex_model(model)
         project = _vertex_project(optional_params)
         location = _vertex_location(optional_params)
-        contents: list[str | types.Part] = [prompt]
+        requested_aspect = _requested_aspect(optional_params)
+        requested_shape = _shape_for_aspect(requested_aspect)
+        contents: list[str | types.Part] = []
+        if requested_shape:
+            contents.append(_aspect_instruction(requested_shape, requested_aspect))
+        contents.append(prompt)
         ref_count = 0
         labeled: list[tuple[str, str, types.Part]] = []  # (role, bare_name, Part)
         for item in image:
@@ -148,6 +157,13 @@ class VertexMultimodalLLM(CustomLLM):
             config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
         )
         image_bytes, mime = _extract_image(response)
+        actual_width, actual_height = _image_dimensions(image_bytes)
+        actual_aspect = (actual_width / actual_height) if actual_width and actual_height else None
+        if not _aspect_matches(actual_aspect, requested_aspect):
+            raise ValueError(
+                "shape_mismatch: Vertex returned image aspect "
+                f"{actual_aspect:.3f} but requested {requested_aspect:.3f}"
+            )
         b64 = base64.b64encode(image_bytes).decode("ascii")
         provider_model = f"vertex_ai/{vertex_model}"
         response_cost = _estimated_image_cost(vertex_model, ref_count)
@@ -159,6 +175,9 @@ class VertexMultimodalLLM(CustomLLM):
         model_response._hidden_params["custom_llm_provider"] = "vertex-multimodal"
         model_response._hidden_params["response_cost"] = response_cost
         model_response._hidden_params["vertex_mime_type"] = mime
+        model_response._hidden_params["actual_width"] = actual_width
+        model_response._hidden_params["actual_height"] = actual_height
+        model_response._hidden_params["requested_aspect"] = requested_aspect
         return model_response
 
 
@@ -286,8 +305,11 @@ def _role_label(role: str, bare: str, *, index: int = 1, total: int = 1) -> str:
             f"(preserve this subject's exact appearance: face, hair, costume, and proportions precisely as shown.{_border_note}):"
         )
     if role == "prop":
-        prop_name = re.sub(r"^prop[_\-]", "", Path(bare).stem, flags=re.IGNORECASE).replace("_", " ").replace("-", " ").strip()
-        prop_name = re.sub(r"\s*\d+$", "", prop_name).strip().title()
+        raw_prop = re.sub(r"^prop[_\-]", "", Path(bare).stem, flags=re.IGNORECASE)
+        raw_prop = re.sub(r"[_\-]?(reference|ref|image|photo)$", "", raw_prop, flags=re.IGNORECASE)
+        prop_candidate = raw_prop.replace("_", " ").replace("-", " ").strip()
+        prop_trimmed = re.sub(r"\s*\d+$", "", prop_candidate).strip()
+        prop_name = (prop_trimmed if prop_trimmed.lower() not in {"", "prop"} else prop_candidate).title()
         if prop_name and prop_name.lower() not in _GENERIC_STEMS:
             return f"Prop reference — {prop_name} (include this prop in the scene exactly as depicted, matching its shape, color, and details):"
         if total > 1:
@@ -343,6 +365,61 @@ def _vertex_location(params: dict[str, Any]) -> str:
         or os.environ.get("GOOGLE_CLOUD_LOCATION")
         or "global"
     ).strip()
+
+
+def _requested_aspect(params: dict[str, Any]) -> float | None:
+    explicit = params.get("canary_requested_aspect")
+    try:
+        if explicit is not None:
+            value = float(explicit)
+            return value if value > 0 else None
+    except (TypeError, ValueError):
+        pass
+
+    size = str(params.get("size") or "").lower().strip()
+    match = re.match(r"^(\d+)x(\d+)$", size)
+    if not match:
+        return None
+    width = int(match.group(1))
+    height = int(match.group(2))
+    if width <= 0 or height <= 0:
+        return None
+    return width / height
+
+
+def _shape_for_aspect(aspect: float | None) -> str | None:
+    if aspect is None or aspect <= 0:
+        return None
+    if aspect < 0.9:
+        return "portrait"
+    if aspect > 1.15:
+        return "landscape"
+    return "square"
+
+
+def _aspect_instruction(shape: str, aspect: float | None) -> str:
+    frame = {
+        "portrait": "vertical portrait frame",
+        "landscape": "wide horizontal frame",
+        "square": "square frame",
+    }.get(shape, "single frame")
+    if aspect and aspect > 0:
+        return f"Output aspect ratio must be {shape} (about {aspect:.2f}:1). Fill one {frame}."
+    return f"Output must fill one {frame}."
+
+
+def _image_dimensions(image_bytes: bytes) -> tuple[int | None, int | None]:
+    try:
+        with PILImage.open(io.BytesIO(image_bytes)) as image:
+            return image.width, image.height
+    except Exception:
+        return None, None
+
+
+def _aspect_matches(actual: float | None, requested: float | None) -> bool:
+    if actual is None or requested is None or requested <= 0:
+        return True
+    return abs((actual / requested) - 1.0) <= _ASPECT_TOLERANCE
 
 
 def _part(item: Any) -> types.Part | None:

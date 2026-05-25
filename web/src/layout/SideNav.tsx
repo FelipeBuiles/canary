@@ -22,6 +22,7 @@ import { useI18n } from "../i18n";
 import { cn } from "../lib/cn";
 import { getShotPlanAction, getShotPlanSubStatus } from "../lib/shotPlan";
 import { getBackendStageUiLabel, UI_STAGES } from "../lib/uiStages";
+import { findPendingStage, findPendingStageAfter } from "../lib/pipelineNav";
 import { usePipelineStore } from "../store/pipeline";
 import { STAGE_ORDER } from "../types/api";
 import type { StageName, StageStatus } from "../types/api";
@@ -250,10 +251,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
       })
     : undefined, [status]);
   const pendingStage = useMemo(() => status
-    ? STAGE_ORDER.find((s) => {
-        const st = status.stages[s]?.status;
-        return !st || st === "pending";
-      })
+    ? findPendingStage(status)
     : undefined, [status]);
   const nextAttentionStage = needsApproval ?? brokenStage ?? pendingStage;
   const styleNeedsSelection =
@@ -277,10 +275,8 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     // show the cost estimate upfront (including extract → style).
     if (needsApproval) {
       const idx = STAGE_ORDER.indexOf(needsApproval);
-      return STAGE_ORDER.slice(idx + 1).find((s) => {
-        const st = status.stages[s]?.status;
-        return !st || st === "pending";
-      });
+      if (idx < 0) return undefined;
+      return findPendingStageAfter(status, needsApproval);
     }
     // Rerun the root broken stage if one exists.
     if (brokenStage) return brokenStage;
@@ -389,15 +385,16 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
         { project: projectId, stage: needsApproval },
         {
           onSuccess: () => {
-            if (!pendingStage) return;
+            const stageToRun = findPendingStageAfter(status, needsApproval);
+            if (!stageToRun) return;
             // After approving extract → style stage, send the user to the
             // style room so they see samples generate live.
-            if (pendingStage === "style") {
+            if (stageToRun === "style") {
               navigate(`/project/${encodeURIComponent(projectId)}/styles`);
             }
             clearEvents();
             runPipeline.mutate(
-              { project: projectId, stage: pendingStage },
+              { project: projectId, stage: stageToRun },
               {
                 onSuccess: () => connect(projectId),
                 onError: (e) => handleRunError(e, "Failed to start pipeline", handleContinue),

@@ -318,6 +318,35 @@ def test_generate_image_with_references_uses_image_edits(monkeypatch, tmp_path: 
     assert request["files"][0][1][0] == "__role_subject__character.png"
 
 
+def test_generate_image_reference_filename_includes_label(monkeypatch, tmp_path: Path):
+    image_bytes = b"fake png"
+    _patch_http(monkeypatch, {
+        "id": "img_1",
+        "model": "openai/gpt-image-1",
+        "data": [{"b64_json": base64.b64encode(image_bytes).decode()}],
+    })
+
+    output_path = tmp_path / "panel.png"
+    reference_path = tmp_path / "front.png"
+    reference_path.write_bytes(b"reference png")
+
+    asyncio.run(
+        client.generate_image(
+            config=Config(),
+            model="image-balanced",
+            prompt="draw this",
+            output_path=output_path,
+            width=1024,
+            height=1536,
+            refs=[RefImage(path=reference_path, role="subject", label="Mr. White")],
+        )
+    )
+
+    request = _FakeAsyncClient.last_request
+    assert request is not None
+    assert request["files"][0][1][0] == "__role_subject__character_mr_white_front.png"
+
+
 def test_gpt_image_2_alias_uses_exact_valid_panel_size(monkeypatch, tmp_path: Path):
     image_bytes = b"fake png"
     _patch_http(monkeypatch, {
