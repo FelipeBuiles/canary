@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { listProjects, getProjectStatus, createProject, deleteProject, generateProjectCover } from "./projects";
+import { listProjects, getProjectStatus, createProject, deleteProject, generateProjectCover, listShortStories, importStory } from "./projects";
 import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate } from "./pipeline";
 import type { ConfigOverrides, StoryBible, CharacterVoice, ProjectStatus, StageInfo } from "../types/api";
 import { getBalance, getCreditHistory, getPricingReference } from "./credits";
@@ -94,6 +94,26 @@ export function useCreateProject() {
     },
   });
 }
+
+export function useShortStories() {
+  return useQuery({
+    queryKey: ["short-stories"],
+    queryFn: listShortStories,
+    staleTime: 60_000 * 5,
+  });
+}
+
+export function useImportStory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, urlOrCode, configOverrides }: { name: string; urlOrCode: string; configOverrides?: Partial<ConfigOverrides> }) =>
+      importStory(name, urlOrCode, configOverrides),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+}
+
 
 export function useGenerateProjectCover() {
   const qc = useQueryClient();

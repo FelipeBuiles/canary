@@ -294,7 +294,12 @@ class Config(BaseModel):
     def effective_image_concurrency(self, *, google_model: bool = False) -> int:
         if self.dev_mode:
             return max(1, self.dev_image_concurrency)
-        if google_model:
+        is_google = google_model
+        if not is_google:
+            model = self.effective_image_model().lower()
+            if self.image_provider == "gemini" or "gemini" in model or "vertex" in model:
+                is_google = True
+        if is_google:
             return 1
         return max(1, self.max_concurrent_requests)
 

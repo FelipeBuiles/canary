@@ -460,7 +460,7 @@ def _clean_list(values: list[str] | None, limit: int = 10) -> list[str]:
     cleaned: list[str] = []
     seen: set[str] = set()
     for value in values or []:
-        text = _shorten(_clean(value), 180)
+        text = _shorten(_clean(value), 300)
         if not text:
             continue
         key = text.lower()
@@ -880,7 +880,7 @@ def _distilled_subject_sentence(prompt: ImagePrompt) -> str:
     composition = _strip_distilled_composition_noise(getattr(prompt, "composition", None))
     shot = _shorten_distilled(composition, 100) if composition else "single scene image"
     if subjects:
-        identity_limit = 140 if len(subjects) <= 2 else 90
+        identity_limit = 450 if len(subjects) <= 2 else 300
         clauses = [
             _distilled_subject_clause(subject, identity_limit=identity_limit)
             for subject in subjects[:3]
@@ -940,7 +940,7 @@ def _distilled_props_sentence(prompt: ImagePrompt) -> str:
 def _distilled_must_show_sentence(prompt: ImagePrompt) -> str:
     requirements = [
         _readable_prompt_text(req).strip(" .")
-        for req in _clean_list(getattr(prompt, "visual_requirements", []) or [], limit=2)
+        for req in _clean_list(getattr(prompt, "visual_requirements", []) or [], limit=6)
     ]
     if not requirements:
         return ""

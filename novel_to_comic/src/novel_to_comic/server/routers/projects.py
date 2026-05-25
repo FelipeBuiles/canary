@@ -32,6 +32,15 @@ from ..generation_jobs import (
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+import httpx
+from pydantic import BaseModel
+
+# Simple cache in-memory for the short story library catalog
+_story_catalog_cache: list[dict] | None = None
+_story_catalog_last_fetch: float = 0.0
+_CACHE_EXPIRY: int = 86400  # 24 hours
+
+
 
 def _draw_prompt_files(project_dir: Path, config: Config) -> list[Path]:
     prompts_dir = project_dir / "direct"
@@ -507,3 +516,117 @@ def delete_project(
     get_db().table("projects").delete().eq("user_id", user_id).eq("id", project_id).execute()
     shutil.rmtree(project_dir)
     return {"status": "deleted", "id": project_id}
+
+
+import time
+import gzip
+
+@router.get("/short-stories")
+async def list_short_stories():
+    global _story_catalog_cache, _story_catalog_last_fetch
+    now = time.time()
+    if _story_catalog_cache is not None and (now - _story_catalog_last_fetch) < _CACHE_EXPIRY:
+        return _story_catalog_cache
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get("https://www.libraryofshortstories.com/storylist-reduced")
+            r.raise_for_status()
+            data = r.json()
+            _story_catalog_cache = data
+            _story_catalog_last_fetch = now
+            return data
+    except Exception as exc:
+        logger.exception("Failed to fetch short story catalog")
+        if _story_catalog_cache is not None:
+            return _story_catalog_cache
+        raise HTTPException(502, f"Failed to retrieve story catalog: {exc}")
+
+
+class ImportStoryRequest(BaseModel):
+    name: str
+    url_or_code: str
+    config_overrides: str | None = None
+
+
+@router.post("/import-story")
+async def import_short_story(
+    request: Request,
+    payload: ImportStoryRequest,
+    projects_dir: Path = Depends(get_projects_dir),
+    user_id: str = Depends(get_current_user),
+):
+    url_or_code = payload.url_or_code.strip()
+    match = re.search(r"onlinereader/([a-zA-Z0-9_\-]+)", url_or_code)
+    if match:
+        story_code = match.group(1)
+    else:
+        if "/" in url_or_code:
+            story_code = url_or_code.split("/")[-1].strip()
+        else:
+            story_code = url_or_code
+
+    if not story_code:
+        raise HTTPException(400, "Could not parse a valid story code from input")
+
+    story_url = f"https://www.libraryofshortstories.com/storiesgzip/{story_code}.txt"
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(story_url)
+            r.raise_for_status()
+            content_bytes = r.content
+            if content_bytes.startswith(b'\x1f\x8b'):
+                story_text = gzip.decompress(content_bytes).decode("utf-8")
+            else:
+                story_text = r.text
+    except Exception as exc:
+        logger.exception("Failed to fetch story text from %s", story_url)
+        raise HTTPException(502, f"Failed to download story text: {exc}")
+
+    if not story_text.strip():
+        raise HTTPException(400, "Story content is empty")
+
+    slug = _slugify(payload.name)
+    project_dir = projects_dir / user_id / slug
+    if project_dir.exists():
+        raise HTTPException(409, f"Project '{slug}' already exists")
+
+    project_dir.mkdir(parents=True)
+    for subdir in ["input", "scenes", "refs", "plates", "adapt", "plan", "storyboard",
+                   "direct", "draw", "compose", "exports", "cover"]:
+        (project_dir / subdir).mkdir()
+
+    dst = project_dir / "input" / f"{story_code}.txt"
+    dst.write_text(story_text, encoding="utf-8")
+
+    overrides = {}
+    if payload.config_overrides:
+        try:
+            overrides = json.loads(payload.config_overrides)
+        except json.JSONDecodeError:
+            raise HTTPException(400, "Invalid JSON in config_overrides")
+    config = Config(**overrides)
+    save_config(config, project_dir)
+
+    state = create_initial_state(payload.name, str(dst))
+    save_state(state, project_dir)
+
+    (project_dir / ".env.example").write_text(
+        "# AI gateway keys — copy to a .env at your repo root (not per-project).\n"
+        "# The pipeline walks up from any project dir to find the nearest .env.\n"
+        "# Never commit the real .env — add it to your root .gitignore.\n\n"
+        "LITELLM_BASE_URL=http://localhost:4000\n"
+        "LITELLM_API_KEY=sk-local-canary\n"
+        "AI_BILL_FAILED_REQUESTS=provider_usage_only\n"
+    )
+
+    try:
+        db_result = get_db().table("projects").insert({"user_id": user_id, "name": slug}).execute()
+        project_id = db_result.data[0]["id"] if db_result.data else None
+    except Exception as exc:
+        shutil.rmtree(project_dir, ignore_errors=True)
+        logger.exception("Failed to register imported project %s for user %s", slug, user_id)
+        raise HTTPException(500, "Failed to register project. Please try again.") from exc
+
+    return {"id": project_id, "name": slug, "project_name": payload.name, "status": "created"}
+

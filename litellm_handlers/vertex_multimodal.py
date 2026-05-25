@@ -16,8 +16,8 @@ import httpx
 from google import genai
 from google.genai import types
 from litellm.llms.custom_llm import CustomLLM
+import struct
 from litellm.types.utils import ImageObject, ImageResponse, ImageUsage, ImageUsageInputTokensDetails
-from PIL import Image as PILImage
 
 _ASPECT_TOLERANCE = 0.12
 
@@ -387,6 +387,24 @@ def _requested_aspect(params: dict[str, Any]) -> float | None:
     return width / height
 
 
+def _map_to_supported_aspect(requested_aspect: float | None) -> str | None:
+    if requested_aspect is None or requested_aspect <= 0:
+        return None
+    supported = {
+        "9:16": 9 / 16,
+        "2:3": 2 / 3,
+        "3:4": 3 / 4,
+        "4:5": 4 / 5,
+        "1:1": 1.0,
+        "5:4": 5 / 4,
+        "4:3": 4 / 3,
+        "3:2": 3 / 2,
+        "16:9": 16 / 9,
+        "21:9": 21 / 9,
+    }
+    return min(supported.keys(), key=lambda k: abs(supported[k] - requested_aspect))
+
+
 def _shape_for_aspect(aspect: float | None) -> str | None:
     if aspect is None or aspect <= 0:
         return None
@@ -410,14 +428,48 @@ def _aspect_instruction(shape: str, aspect: float | None) -> str:
 
 def _image_dimensions(image_bytes: bytes) -> tuple[int | None, int | None]:
     try:
-        with PILImage.open(io.BytesIO(image_bytes)) as image:
-            return image.width, image.height
+        if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+            # PNG: el primer chunk es IHDR. Ancho y alto son enteros de 32 bits (big-endian).
+            # Signature (8B) + Length (4B) + Chunk Type (4B) = 16B de offset.
+            w, h = struct.unpack(">II", image_bytes[16:24])
+            return w, h
+        elif image_bytes.startswith(b"\xff\xd8"):
+            # JPEG: buscar marcadores SOF (Start Of Frame)
+            size = len(image_bytes)
+            idx = 2
+            while idx < size:
+                if image_bytes[idx] != 0xff:
+                    idx += 1
+                    continue
+                while idx < size and image_bytes[idx] == 0xff:
+                    idx += 1
+                if idx >= size:
+                    break
+                marker = image_bytes[idx]
+                idx += 1
+                if (0xc0 <= marker <= 0xcf) and marker not in (0xc4, 0xc8, 0xcc):
+                    if idx + 7 < size:
+                        # Estructura SOF: Length (2B) + Precision (1B) + Height (2B) + Width (2B)
+                        h, w = struct.unpack(">HH", image_bytes[idx+3:idx+7])
+                        return w, h
+                    break
+                else:
+                    if idx + 2 < size:
+                        chunk_len = struct.unpack(">H", image_bytes[idx:idx+2])[0]
+                        idx += chunk_len
+                    else:
+                        break
     except Exception:
-        return None, None
+        pass
+    return None, None
 
 
 def _aspect_matches(actual: float | None, requested: float | None) -> bool:
     if actual is None or requested is None or requested <= 0:
+        return True
+    actual_shape = _shape_for_aspect(actual)
+    requested_shape = _shape_for_aspect(requested)
+    if actual_shape == requested_shape:
         return True
     return abs((actual / requested) - 1.0) <= _ASPECT_TOLERANCE
 

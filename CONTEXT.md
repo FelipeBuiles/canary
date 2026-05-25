@@ -140,3 +140,9 @@ review, translation), Layout (page canvas, drag/drop, undo/redo), Style
 Available themes: `default`, `noir`, `manga`, `vintage`, `painted`. Detected
 automatically from `style_template` keywords; can be overridden per-page or
 per-project.
+
+---
+
+## Integration concepts
+
+**Library of Short Stories** — A public-domain literature archive (`libraryofshortstories.com`) integrated as a text source option for project generation. Stories can be imported using their URL or unique story code.

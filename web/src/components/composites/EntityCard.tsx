@@ -49,7 +49,7 @@ export function EntityCard({
       )}
     >
       {media}
-      <div className={cn("flex flex-1 flex-col", PADDING_CLASS[padding])}>{children}</div>
+      <div className={cn("flex flex-1 flex-col min-h-0", PADDING_CLASS[padding])}>{children}</div>
       {footer}
     </article>
   );

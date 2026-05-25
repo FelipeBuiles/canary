@@ -21,6 +21,8 @@ import { LazyImage } from "../../components/ui/LazyImage";
 import { StatusPill } from "../../components/ui/StatusPill";
 import type { Character, GenerationJob, Location, Prop } from "../../types/api";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
+import { useI18n } from "../../i18n";
+import { FlowingDotsPlaceholder } from "../../components/ui/FlowingDotsPlaceholder";
 
 function queuedLabel(job: GenerationJob | null) {
   if (!job) return "QUEUED";
@@ -144,53 +146,42 @@ function CharacterCastCard({
 
   const isInstructionBusy = regenRefInstructed.isPending;
 
+  const { t } = useI18n();
+  const isGenerating = stageRegenerating || regenRef.isPending || !!activeJob;
+  const isQueued = activeJob?.status === "queued" || (activeJob && activeJob.queue_position);
+
   return (
     <>
       <EntityCard
-        interactive
+        interactive={!isGenerating && !imgFailed}
         padding="tight"
         className="group/cast-card"
         media={
           <div
             className="relative cursor-pointer bg-surface-container"
-            onClick={() => !imgFailed && setIsModalOpen(true)}
+            onClick={() => !imgFailed && !isGenerating && setIsModalOpen(true)}
           >
-            {imgFailed ? (
+            {stageRegenerating && (
+              <img
+                key={timestamp}
+                src={`${refUrl}?t=${timestamp}`}
+                className="hidden"
+                onLoad={() => setImgFailed(false)}
+                alt=""
+                aria-hidden="true"
+              />
+            )}
+            {isGenerating ? (
+              <FlowingDotsPlaceholder
+                aspect="4 / 5"
+                className="h-full"
+                label={isQueued ? t("QUEUED") : t("GENERATING…")}
+                caption={activeJob ? t("GENERATING NEW REF") : t("REBUILDING CAST REF")}
+              />
+            ) : imgFailed ? (
               <div className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-2 bg-surface-container">
-                {stageRegenerating && (
-                  <img
-                    key={timestamp}
-                    src={`${refUrl}?t=${timestamp}`}
-                    className="hidden"
-                    onLoad={() => setImgFailed(false)}
-                    alt=""
-                    aria-hidden="true"
-                  />
-                )}
-                {stageRegenerating ? (
-                  <>
-                    <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
-                      REGENERATING…
-                    </div>
-                    <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
-                      REBUILDING CAST REF
-                    </div>
-                  </>
-                ) : regenRef.isPending || activeJob ? (
-                  <>
-                    <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
-                      {queuedLabel(activeJob)}
-                    </div>
-                    <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
-                      GENERATING NEW REF
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">NO REF IMAGE</div>
-                    <DestructiveButton size="sm" onClick={handleRegen}>GENERATE</DestructiveButton>
-                  </>
-                )}
+                <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">{t("NO REF IMAGE")}</div>
+                <DestructiveButton size="sm" onClick={handleRegen}>{t("GENERATE")}</DestructiveButton>
               </div>
             ) : (
               <>
@@ -205,25 +196,15 @@ function CharacterCastCard({
                   className="object-cover transition-opacity group-hover/cast-card:opacity-90"
                   onError={() => setImgFailed(true)}
                 />
-                {activeJob && (
-                  <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
-                    {queuedLabel(activeJob)}
-                  </StatusPill>
-                )}
-                {stageRegenerating && !activeJob && (
-                  <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
-                    CAST STAGE RUNNING
-                  </StatusPill>
-                )}
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/42 opacity-0 transition-opacity duration-150 group-hover/cast-card:opacity-100">
                   <span className="border border-bristol bg-transparent px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-bristol">
-                    ↗ Full size
+                    ↗ {t("Full size")}
                   </span>
                 </div>
               </>
             )}
             <StatusPill tone="red" className="absolute right-4 top-4">
-              REF
+              {t("REF")}
             </StatusPill>
           </div>
         }
@@ -465,53 +446,42 @@ function LocationPlateCard({
 
   const isInstructionBusy = regenPlateInstructed.isPending;
 
+  const { t } = useI18n();
+  const isGenerating = stageRegenerating || regenPlate.isPending || !!activeJob;
+  const isQueued = activeJob?.status === "queued" || (activeJob && activeJob.queue_position);
+
   return (
     <>
       <EntityCard
-        interactive
+        interactive={!isGenerating && !imgFailed}
         padding="tight"
         className="group/cast-card"
         media={
           <div
             className="relative cursor-pointer bg-surface-container"
-            onClick={() => !imgFailed && setIsModalOpen(true)}
+            onClick={() => !imgFailed && !isGenerating && setIsModalOpen(true)}
           >
-            {imgFailed ? (
+            {stageRegenerating && (
+              <img
+                key={timestamp}
+                src={`${plateUrl}?t=${timestamp}`}
+                className="hidden"
+                onLoad={() => setImgFailed(false)}
+                alt=""
+                aria-hidden="true"
+              />
+            )}
+            {isGenerating ? (
+              <FlowingDotsPlaceholder
+                aspect="16 / 9"
+                className="h-full"
+                label={isQueued ? t("QUEUED") : t("GENERATING…")}
+                caption={activeJob ? t("GENERATING NEW PLATE") : t("REBUILDING LOCATION PLATE")}
+              />
+            ) : imgFailed ? (
               <div className="flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 bg-surface-container">
-                {stageRegenerating && (
-                  <img
-                    key={timestamp}
-                    src={`${plateUrl}?t=${timestamp}`}
-                    className="hidden"
-                    onLoad={() => setImgFailed(false)}
-                    alt=""
-                    aria-hidden="true"
-                  />
-                )}
-                {stageRegenerating ? (
-                  <>
-                    <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
-                      REGENERATING…
-                    </div>
-                    <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
-                      REBUILDING LOCATION PLATE
-                    </div>
-                  </>
-                ) : regenPlate.isPending || activeJob ? (
-                  <>
-                    <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
-                      {queuedLabel(activeJob)}
-                    </div>
-                    <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
-                      GENERATING NEW PLATE
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">NO PLATE IMAGE</div>
-                    <DestructiveButton size="sm" onClick={handleRegen}>GENERATE</DestructiveButton>
-                  </>
-                )}
+                <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">{t("NO PLATE IMAGE")}</div>
+                <DestructiveButton size="sm" onClick={handleRegen}>{t("GENERATE")}</DestructiveButton>
               </div>
             ) : (
               <>
@@ -526,19 +496,9 @@ function LocationPlateCard({
                   className="object-cover transition-opacity group-hover/cast-card:opacity-90"
                   onError={() => setImgFailed(true)}
                 />
-                {activeJob && (
-                  <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
-                    {queuedLabel(activeJob)}
-                  </StatusPill>
-                )}
-                {stageRegenerating && !activeJob && (
-                  <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
-                    CAST STAGE RUNNING
-                  </StatusPill>
-                )}
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/42 opacity-0 transition-opacity duration-150 group-hover/cast-card:opacity-100">
                   <span className="border border-bristol bg-transparent px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-bristol">
-                    ↗ Full size
+                    ↗ {t("Full size")}
                   </span>
                 </div>
               </>
@@ -759,53 +719,42 @@ function PropRefCard({
 
   const isInstructionBusy = regenPropInstructed.isPending;
 
+  const { t } = useI18n();
+  const isGenerating = stageRegenerating || regenProp.isPending || !!activeJob;
+  const isQueued = activeJob?.status === "queued" || (activeJob && activeJob.queue_position);
+
   return (
     <>
       <EntityCard
-        interactive
+        interactive={!isGenerating && !imgFailed}
         padding="tight"
         className="group/cast-card"
         media={
           <div
             className="relative cursor-pointer bg-surface-container"
-            onClick={() => !imgFailed && setIsModalOpen(true)}
+            onClick={() => !imgFailed && !isGenerating && setIsModalOpen(true)}
           >
-            {imgFailed ? (
+            {stageRegenerating && (
+              <img
+                key={timestamp}
+                src={`${refUrl}?t=${timestamp}`}
+                className="hidden"
+                onLoad={() => setImgFailed(false)}
+                alt=""
+                aria-hidden="true"
+              />
+            )}
+            {isGenerating ? (
+              <FlowingDotsPlaceholder
+                aspect="1 / 1"
+                className="h-full"
+                label={isQueued ? t("QUEUED") : t("GENERATING…")}
+                caption={activeJob ? t("GENERATING NEW PROP") : t("REBUILDING PROP REF")}
+              />
+            ) : imgFailed ? (
               <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 bg-surface-container">
-                {stageRegenerating && (
-                  <img
-                    key={timestamp}
-                    src={`${refUrl}?t=${timestamp}`}
-                    className="hidden"
-                    onLoad={() => setImgFailed(false)}
-                    alt=""
-                    aria-hidden="true"
-                  />
-                )}
-                {stageRegenerating ? (
-                  <>
-                    <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
-                      REGENERATING…
-                    </div>
-                    <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
-                      REBUILDING PROP REF
-                    </div>
-                  </>
-                ) : regenProp.isPending || activeJob ? (
-                  <>
-                    <div className="font-display text-[1.45rem] font-bold leading-none tracking-[-0.05em] text-ink-black/50 animate-pulse">
-                      {queuedLabel(activeJob)}
-                    </div>
-                    <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/45">
-                      GENERATING NEW REF
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">NO REF IMAGE</div>
-                    <DestructiveButton size="sm" onClick={handleRegen}>GENERATE</DestructiveButton>
-                  </>
-                )}
+                <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">{t("NO REF IMAGE")}</div>
+                <DestructiveButton size="sm" onClick={handleRegen}>{t("GENERATE")}</DestructiveButton>
               </div>
             ) : (
               <>
@@ -820,25 +769,15 @@ function PropRefCard({
                   className="object-cover transition-opacity group-hover/cast-card:opacity-90"
                   onError={() => setImgFailed(true)}
                 />
-                {activeJob && (
-                  <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
-                    {queuedLabel(activeJob)}
-                  </StatusPill>
-                )}
-                {stageRegenerating && !activeJob && (
-                  <StatusPill tone="gold" className="absolute inset-x-2 bottom-2 justify-center text-center">
-                    CAST STAGE RUNNING
-                  </StatusPill>
-                )}
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/42 opacity-0 transition-opacity duration-150 group-hover/cast-card:opacity-100">
                   <span className="border border-bristol bg-transparent px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-bristol">
-                    ↗ Full size
+                    ↗ {t("Full size")}
                   </span>
                 </div>
               </>
             )}
             <StatusPill tone="red" className="absolute right-4 top-4">
-              PROP
+              {t("PROP")}
             </StatusPill>
           </div>
         }

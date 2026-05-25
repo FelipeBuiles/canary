@@ -6,9 +6,11 @@ import { SectionLabel } from "../SectionLabel";
 import type { ConfigOverrides } from "../../types/api";
 import { LANGUAGES, useI18n } from "../../i18n";
 import type { LanguageCode } from "../../i18n";
+import { useShortStories } from "../../api/queries";
 
 interface UploadStepProps {
   onSubmit: (file: File, name: string, configOverrides?: Partial<ConfigOverrides>) => void;
+  onSubmitImport: (urlOrCode: string, name: string, configOverrides?: Partial<ConfigOverrides>) => void;
   isPending: boolean;
   error: string | null;
   onCancel?: () => void;
@@ -74,7 +76,7 @@ function formatCreditRange(range: CreditRange): string {
   return `~${fmt(range.min)}–${fmt(range.max)}`;
 }
 
-export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepProps) {
+export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCancel }: UploadStepProps) {
   const { language, t } = useI18n();
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -84,6 +86,14 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
   const [renderPreset, setRenderPreset] = useState<RenderPreset>("balanced");
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // New tab and integration state
+  const [tab, setTab] = useState<"file" | "library">("file");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [pastedUrlOrCode, setPastedUrlOrCode] = useState("");
+  const [selectedStory, setSelectedStory] = useState<any | null>(null);
+
+  const { data: shortStories } = useShortStories();
+
   const ext = file ? "." + file.name.split(".").pop()?.toLowerCase() : "";
   const extOk = !file || ACCEPTED.includes(ext);
   const presetPanelsPerScene =
@@ -91,7 +101,13 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!file || !name.trim() || !extOk) return;
+    if (tab === "file") {
+      if (!file || !name.trim() || !extOk) return;
+    } else {
+      if (!selectedStory && !pastedUrlOrCode.trim()) return;
+      if (!name.trim()) return;
+    }
+
     const overrides: Partial<ConfigOverrides> = { target_language: targetLanguage };
 
     // Dev mode: force fast preset and dev overrides.
@@ -123,7 +139,12 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
       }
     }
 
-    onSubmit(file, name.trim(), overrides);
+    if (tab === "file") {
+      onSubmit(file!, name.trim(), overrides);
+    } else {
+      const importSource = selectedStory ? selectedStory.code : pastedUrlOrCode.trim();
+      onSubmitImport(importSource, name.trim(), overrides);
+    }
   }
 
   return (
@@ -134,6 +155,31 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
         <p className="mt-4 lead-pulp max-w-[52ch]">
           {t("Upload your novel file and the pipeline will take it from there — extracting characters, drawing panels, and assembling pages.")}
         </p>
+
+        <div className="mt-6 flex border-b border-ink-black/20">
+          <button
+            type="button"
+            onClick={() => setTab("file")}
+            className={`px-4 py-2 font-display text-xs font-bold uppercase tracking-wider transition-colors ${
+              tab === "file"
+                ? "border-b-[3px] border-hero-red text-ink-black"
+                : "text-ink-black/40 hover:text-ink-black/70"
+            }`}
+          >
+            {t("UPLOAD FILE")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("library")}
+            className={`px-4 py-2 font-display text-xs font-bold uppercase tracking-wider transition-colors ${
+              tab === "library"
+                ? "border-b-[3px] border-hero-red text-ink-black"
+                : "text-ink-black/40 hover:text-ink-black/70"
+            }`}
+          >
+            {t("SHORT STORY LIBRARY")}
+          </button>
+        </div>
 
         <div className="mt-6 space-y-4">
           <div>
@@ -152,71 +198,186 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
             />
           </div>
 
-          <div>
-            <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-              {t("NOVEL FILE")}
-            </label>
-            <button
-              type="button"
-              onClick={() => fileRef.current?.click()}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                const dropped = e.dataTransfer.files[0];
-                if (dropped) setFile(dropped);
-              }}
-              aria-label={t("DROP FILE OR CLICK TO BROWSE")}
-              className={`flex min-h-[120px] w-full cursor-pointer flex-col items-center justify-center border-[2px] border-dashed px-4 py-6 transition-colors ${
-                file && extOk
-                  ? "border-archive-sage bg-chip-sage/40"
-                  : !extOk
-                    ? "border-hero-red bg-chip-red/30"
-                    : "border-ink-black bg-pulp-paper hover:bg-ghost-shadow/30"
-              }`}
-            >
-              {file ? (
-                <>
-                  {extOk && (
-                    <div className="mb-2 inline-flex h-7 w-7 items-center justify-center rounded-full bg-archive-sage text-bristol">
-                      <Icon name="check" size={14} />
+          {tab === "file" ? (
+            <div>
+              <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
+                {t("NOVEL FILE")}
+              </label>
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const dropped = e.dataTransfer.files[0];
+                  if (dropped) setFile(dropped);
+                }}
+                aria-label={t("DROP FILE OR CLICK TO BROWSE")}
+                className={`flex min-h-[120px] w-full cursor-pointer flex-col items-center justify-center border-[2px] border-dashed px-4 py-6 transition-colors ${
+                  file && extOk
+                    ? "border-archive-sage bg-chip-sage/40"
+                    : !extOk
+                      ? "border-hero-red bg-chip-red/30"
+                      : "border-ink-black bg-pulp-paper hover:bg-ghost-shadow/30"
+                }`}
+              >
+                {file ? (
+                  <>
+                    {extOk && (
+                      <div className="mb-2 inline-flex h-7 w-7 items-center justify-center rounded-full bg-archive-sage text-bristol">
+                        <Icon name="check" size={14} />
+                      </div>
+                    )}
+                    <div className="font-display text-[1rem] font-bold tracking-[-0.04em]">
+                      {file.name}
                     </div>
-                  )}
-                  <div className="font-display text-[1rem] font-bold tracking-[-0.04em]">
-                    {file.name}
-                  </div>
-                  <div className="mt-1 font-meta text-[0.5rem] tracking-[0.14em] text-ink-black/50">
-                    {formatBytes(file.size)}
-                  </div>
-                  {!extOk && (
-                    <div className="mt-2 text-[0.78rem] text-hero-red">
-                      {t("Unsupported file type. Accepted:")} {ACCEPTED.join(", ")}
+                    <div className="mt-1 font-meta text-[0.5rem] tracking-[0.14em] text-ink-black/50">
+                      {formatBytes(file.size)}
                     </div>
-                  )}
-                </>
-              ) : (
-                <>
-                  <Icon name="plus" size={22} className="text-ink-black/40" />
-                  <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/50">
-                    {t("DROP FILE OR CLICK TO BROWSE")}
+                    {!extOk && (
+                      <div className="mt-2 text-[0.78rem] text-hero-red">
+                        {t("Unsupported file type. Accepted:")} {ACCEPTED.join(", ")}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <Icon name="plus" size={22} className="text-ink-black/40" />
+                    <div className="mt-2 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/50">
+                      {t("DROP FILE OR CLICK TO BROWSE")}
+                    </div>
+                    <div className="mt-1 text-[0.72rem] text-ink-black/40">
+                      .txt, .epub, .pdf
+                    </div>
+                  </>
+                )}
+              </button>
+              <input
+                ref={fileRef}
+                name="novelFile"
+                type="file"
+                accept=".txt,.epub,.pdf"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) setFile(f);
+                }}
+              />
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div>
+                <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
+                  {t("SHORT STORY LIBRARY")}
+                </label>
+                <p className="text-[0.78rem] leading-relaxed text-ink-black/60 mb-2">
+                  {t("Select a story from the library or paste a URL below to import it.")}
+                </p>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder={t("Search stories by title, author, or genre...")}
+                    className="w-full border-[2px] border-ink-black bg-bristol pl-8 pr-3 py-2 text-sm font-body focus:outline-none focus:ring-2 focus:ring-hero-red"
+                  />
+                  <div className="absolute left-2.5 top-3.5 text-ink-black/40">
+                    <Icon name="sparkles" size={14} />
                   </div>
-                  <div className="mt-1 text-[0.72rem] text-ink-black/40">
-                    .txt, .epub, .pdf
-                  </div>
-                </>
-              )}
-            </button>
-            <input
-              ref={fileRef}
-              name="novelFile"
-              type="file"
-              accept=".txt,.epub,.pdf"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) setFile(f);
-              }}
-            />
-          </div>
+                </div>
+
+                <div className="mt-3 max-h-[180px] overflow-y-auto border-[2px] border-ink-black bg-pulp-paper divide-y divide-ink-black/10">
+                  {(() => {
+                    const query = searchQuery.trim().toLowerCase();
+                    const filtered = (shortStories ?? []).filter((s: any) =>
+                      s.title.toLowerCase().includes(query) ||
+                      s.author.toLowerCase().includes(query) ||
+                      s.genres.some((g: string) => g.toLowerCase().includes(query))
+                    );
+
+                    if (filtered.length === 0) {
+                      return (
+                        <div className="p-4 text-center text-xs text-ink-black/40 font-meta">
+                          NO STORIES FOUND
+                        </div>
+                      );
+                    }
+
+                    return filtered.map((story: any) => {
+                      const isSelected = selectedStory?._id === story._id;
+                      return (
+                        <button
+                          key={story._id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedStory(story);
+                            setPastedUrlOrCode("");
+                            setName(story.title);
+                          }}
+                          className={`w-full text-left p-3 transition-colors text-xs flex justify-between items-center ${
+                            isSelected
+                              ? "bg-chip-gold/30 font-bold"
+                              : "hover:bg-bristol/30"
+                          }`}
+                        >
+                          <div className="flex-1 pr-4">
+                            <div className="font-display font-bold text-sm text-ink-black">
+                              {story.title}
+                            </div>
+                            <div className="text-ink-black/50 mt-0.5">
+                              by {story.author}
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {story.genres.map((g: string) => (
+                                <span key={g} className="px-1.5 py-0.5 bg-ink-black/5 text-ink-black/60 rounded text-[9px] font-meta uppercase">
+                                  {g}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="text-right whitespace-nowrap">
+                            <div className="font-meta text-[10px] text-ink-black/60 uppercase">
+                              {story.words.toLocaleString()} {t("Word count")}
+                            </div>
+                            {story.rating && (
+                              <div className="mt-0.5 text-narrator-gold flex items-center justify-end gap-0.5">
+                                {"★".repeat(story.rating)}
+                              </div>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
+
+              <div>
+                <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
+                  {t("PASTE URL OR CODE")}
+                </label>
+                <input
+                  type="text"
+                  value={pastedUrlOrCode}
+                  onChange={(e) => {
+                    setPastedUrlOrCode(e.target.value);
+                    setSelectedStory(null);
+                    const codeMatch = e.target.value.match(/onlinereader\/([a-zA-Z0-9_\-]+)/);
+                    const code = codeMatch ? codeMatch[1] : e.target.value.split("/").pop() || "";
+                    if (code && code.trim()) {
+                      const nameSug = code
+                        .replace(/[^a-zA-Z0-9]+/g, " ")
+                        .trim()
+                        .replace(/\b\w/g, (c: string) => c.toUpperCase());
+                      if (nameSug) setName(nameSug);
+                    }
+                  }}
+                  placeholder="e.g. https://www.libraryofshortstories.com/onlinereader/2br02b"
+                  className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
+          )}
 
           <div>
             <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
@@ -278,14 +439,25 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
 
         {/* Credit preview strip */}
         {(() => {
-          const estimate = file
+          const estimate = file || (tab === "library" && (selectedStory || pastedUrlOrCode.trim()))
             ? estimateProjectCredits({
-                fileSizeBytes: file.size,
+                fileSizeBytes: file
+                  ? file.size
+                  : selectedStory
+                    ? selectedStory.words * 6 // Average 6 bytes per word
+                    : 15000, // Fallback default size (~15KB)
                 renderPreset: devMode ? "fast_draft" : renderPreset,
                 devMode,
                 maxPanelsPerScene: presetPanelsPerScene,
               })
             : null;
+          
+          const sceneCount = file
+            ? Math.max(1, Math.round(file.size / 10000))
+            : selectedStory
+              ? Math.max(1, Math.round((selectedStory.words * 6) / 10000))
+              : 1;
+
           return (
             <div className="mt-3 flex items-center justify-between gap-3 border-[2px] border-ink-black bg-chip-gold px-4 py-2 shadow-ink-sm">
               <div>
@@ -293,13 +465,13 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
                   {t("ESTIMATED CREDITS")}
                 </div>
                 <div className="mt-0.5 font-display text-[1.05rem] font-bold leading-none tracking-[-0.03em] text-ink-black tabular-nums">
-                  {estimate ? formatCreditRange(estimate) : t("Upload a file to estimate")}
+                  {estimate ? formatCreditRange(estimate) : t("Upload a file or select a story to estimate")}
                 </div>
               </div>
               <div className="text-right font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/55">
                 {estimate ? (
                   <>
-                    {devMode ? "1 scene (dev)" : `~${Math.max(1, Math.round((file?.size ?? 0) / 10_000))} scenes`}
+                    {devMode ? "1 scene (dev)" : `~${sceneCount} scenes`}
                     <br />
                     {presetPanelsPerScene} {t("panels/scene")}
                   </>
@@ -345,7 +517,11 @@ export function UploadStep({ onSubmit, isPending, error, onCancel }: UploadStepP
           <Button
             type="submit"
             size="lg"
-            disabled={!file || !name.trim() || !extOk || isPending}
+            disabled={
+              isPending ||
+              !name.trim() ||
+              (tab === "file" ? (!file || !extOk) : (!selectedStory && !pastedUrlOrCode.trim()))
+            }
           >
             {isPending ? t("CREATING…") : t("CREATE PROJECT")}
           </Button>

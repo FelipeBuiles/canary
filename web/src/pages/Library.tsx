@@ -1,7 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCreateProject, useGenerateProjectCover, useProjects, useRunPipeline } from "../api/queries";
+import { useCreateProject, useGenerateProjectCover, useProjects, useRunPipeline, useImportStory } from "../api/queries";
 import { usePipelineStore } from "../store/pipeline";
 import { ProjectCard } from "../components/ProjectCard";
 import { StatRow } from "../components/ui/StatRow";
@@ -44,6 +44,7 @@ function NewProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const createProject = useCreateProject();
+  const importStory = useImportStory();
   const runPipeline = useRunPipeline();
   const connect = usePipelineStore((s) => s.connect);
   const clearEvents = usePipelineStore((s) => s.clearEvents);
@@ -74,6 +75,33 @@ function NewProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       );
     },
     [createProject, runPipeline, queryClient, clearEvents, connect, onClose, navigate],
+  );
+
+  const handleImport = useCallback(
+    (urlOrCode: string, name: string, configOverrides?: Partial<ConfigOverrides>) => {
+      importStory.mutate(
+        { name, urlOrCode, configOverrides },
+        {
+          onSuccess: (data) => {
+            queryClient.removeQueries({ queryKey: ["project", data.id] });
+            clearEvents();
+            onClose();
+            navigate(`/project/${encodeURIComponent(data.id)}/extract`);
+            runPipeline.mutate(
+              { project: data.id, stage: "extract" },
+              {
+                onSuccess: () => connect(data.id),
+                onError: (err) =>
+                  maybeShowInsufficientCredits(err, {
+                    actionLabel: "Run EXTRACT",
+                  }),
+              },
+            );
+          },
+        },
+      );
+    },
+    [importStory, runPipeline, queryClient, clearEvents, connect, onClose, navigate],
   );
 
   // Close on Escape
@@ -112,8 +140,9 @@ function NewProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       >
         <UploadStep
           onSubmit={handleCreate}
-          isPending={createProject.isPending}
-          error={null}
+          onSubmitImport={handleImport}
+          isPending={createProject.isPending || importStory.isPending}
+          error={createProject.error?.message || importStory.error?.message || null}
           onCancel={onClose}
         />
       </div>
