@@ -305,7 +305,7 @@ def _beat_visual_requirement(
     if beat.type == "narration":
         return None
     content = _compact_text(beat.content, 180)
-    direction = _compact_text(beat.direction, 140)
+    direction = _compact_text(beat.direction, 250)
 
     def _name(char_id: str | None) -> str | None:
         if not char_id:
@@ -314,7 +314,17 @@ def _beat_visual_requirement(
 
     if beat.type == "action":
         actor = _name(beat.character_id)
-        pieces = [f"show {actor} {content}".strip() if actor else f"show {content}"]
+        content_lower = content.lower()
+        starts_with_actor = False
+        if actor:
+            actor_lower = actor.lower()
+            actor_first_word = actor.split()[0].rstrip(",—")
+            if content_lower.startswith(actor_lower):
+                starts_with_actor = True
+            elif actor_first_word and content_lower.startswith(actor_first_word.lower()):
+                starts_with_actor = True
+
+        pieces = [content] if starts_with_actor else [f"show {actor} {content}".strip() if actor else f"show {content}"]
         if direction:
             pieces.append(f"direction: {direction}")
         return "; ".join(piece for piece in pieces if piece)

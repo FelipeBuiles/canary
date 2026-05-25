@@ -84,7 +84,7 @@ export function PanelCard({
 
   const media = (
     <div
-      className={`group/panel-media relative aspect-[4/5] bg-surface-container ${
+      className={`group/panel-media relative shrink-0 aspect-[4/5] bg-surface-container ${
         displayState === "queued" ? "outline outline-2 outline-dashed outline-narrator-gold/70 -outline-offset-2" : ""
       } ${isInteractive ? "cursor-pointer" : ""}`}
       onClick={isInteractive ? onPanelClick : undefined}
@@ -164,7 +164,7 @@ export function PanelCard({
             loading="lazy"
             width={400}
             height={500}
-            containerClassName="h-full w-full"
+            containerClassName="absolute inset-0 h-full w-full"
             className="h-full w-full object-cover transition-transform duration-300 group-hover/panel-media:scale-[1.02]"
           />
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 bg-ink-black/62 opacity-0 transition-opacity duration-150 group-hover/panel-media:opacity-100">
@@ -198,19 +198,17 @@ export function PanelCard({
   );
 
   return (
-    <EntityCard interactive={isInteractive} padding="cozy" media={media}>
-      <div className="mb-1 font-meta text-[0.48rem] tracking-[0.18em] text-ink-black/40">
+    <EntityCard className="h-full" interactive={isInteractive} padding="cozy" media={media}>
+      <div className="mb-1 truncate font-meta text-[0.48rem] tracking-[0.18em] text-ink-black/40">
         SHOT {panelNum} · {sceneLabel}
       </div>
       <div className="truncate font-body text-[0.82rem] font-semibold leading-5 text-ink-black">
         {cardTitle}
       </div>
-      {description && (
-        <div className="mt-0.5 truncate text-[0.72rem] leading-5 text-ink-black/55">
-          {description}
-        </div>
-      )}
-      <div className="mt-2 flex items-center justify-between gap-2">
+      <div className="mt-0.5 truncate text-[0.72rem] leading-5 text-ink-black/55">
+        {description || <span className="opacity-0 select-none">-</span>}
+      </div>
+      <div className="mt-auto pt-2 flex items-center justify-between gap-2">
         <span className={`inline-flex h-5 items-center px-2 font-meta text-[0.52rem] tracking-[0.1em] ${badge.className}`}>
           {badge.label}
         </span>

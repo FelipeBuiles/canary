@@ -54,6 +54,10 @@ def aspect_within_tolerance(
 ) -> bool:
     if actual_aspect is None or requested_aspect is None or requested_aspect <= 0:
         return True
+    actual_shape = generation_shape_for_aspect(actual_aspect)
+    requested_shape = generation_shape_for_aspect(requested_aspect)
+    if actual_shape == requested_shape:
+        return True
     return abs((actual_aspect / requested_aspect) - 1.0) <= tolerance
 
 

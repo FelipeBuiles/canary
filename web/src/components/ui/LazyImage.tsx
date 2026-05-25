@@ -26,7 +26,8 @@ export function LazyImage({
   return (
     <div
       className={cn(
-        "relative overflow-hidden",
+        containerClassName?.includes("absolute") ? "absolute" : "relative",
+        "overflow-hidden",
         preserveAspectBox ? "flex items-center justify-center" : "block",
         containerClassName,
       )}

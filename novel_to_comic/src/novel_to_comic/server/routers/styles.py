@@ -185,16 +185,32 @@ async def suggest_styles(
                 )
                 merged = existing_suggestions + new_suggestions
                 save_suggestions(project_dir, merged, bible.title)
+                
+                total_samples = len(new_suggestions)
+                queue.put_nowait({
+                    "type": "stage_progress", "stage": "style_suggest",
+                    "done": 0, "total": total_samples,
+                })
+                
                 queue.put_nowait({
                     "type": "log", "stage": "style_suggest", "level": "info",
-                    "message": f"Generating {len(new_suggestions)} sample images...",
+                    "message": f"Generating {total_samples} sample images...",
                 })
+                
+                async def _on_sample_done(idx: int, result) -> None:
+                    done_count = idx - existing_count
+                    queue.put_nowait({
+                        "type": "stage_progress", "stage": "style_suggest",
+                        "done": done_count, "total": total_samples,
+                    })
+
                 new_indices = list(range(existing_count + 1, len(merged) + 1))
                 await generate_samples_for_indices(
                     config, bible, project_dir, merged, new_indices,
+                    on_sample_done=_on_sample_done,
                 )
-            queue.put_nowait({"type": "stage_progress", "stage": "style_suggest", "done": 1, "total": 1})
-            queue.put_nowait({"type": "stage_complete", "stage": "style_suggest", "done": 1, "total": 1})
+            queue.put_nowait({"type": "stage_progress", "stage": "style_suggest", "done": total_samples, "total": total_samples})
+            queue.put_nowait({"type": "stage_complete", "stage": "style_suggest", "done": total_samples, "total": total_samples})
         except Exception as exc:
             queue.put_nowait({"type": "stage_fail", "stage": "style_suggest", "message": str(exc)})
         finally:

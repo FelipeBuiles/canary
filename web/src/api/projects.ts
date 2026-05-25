@@ -40,3 +40,23 @@ export function generateProjectCover(
     method: "POST",
   });
 }
+
+export function listShortStories(): Promise<any[]> {
+  return apiFetch<any[]>("/projects/short-stories");
+}
+
+export function importStory(
+  name: string,
+  urlOrCode: string,
+  configOverrides?: Partial<ConfigOverrides>,
+): Promise<{ id: string; name: string; project_name: string; status: string }> {
+  return apiFetch("/projects/import-story", {
+    method: "POST",
+    body: JSON.stringify({
+      name,
+      url_or_code: urlOrCode,
+      config_overrides: configOverrides ? JSON.stringify(configOverrides) : null,
+    }),
+  });
+}
+
