@@ -751,6 +751,35 @@ async def run(
 
 
 from novel_to_comic.stages import Stage  # noqa: E402
+from novel_to_comic.state import PipelineState  # noqa: E402
+
+
+def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
+    from novel_to_comic.models.story_bible import StoryBible
+    from novel_to_comic.usage import estimate_image_cost
+    
+    sb_path = project_dir / "story_bible.json"
+    if not sb_path.exists():
+        return 0.0
+    try:
+        story_bible = StoryBible.model_validate_json(sb_path.read_text())
+    except Exception:
+        return 0.0
+        
+    missing_refs = sum(
+        1 for char in story_bible.characters
+        if not (project_dir / "refs" / char.id / "sheet.png").exists()
+    )
+    missing_plates = sum(
+        1 for loc in story_bible.locations
+        if not (project_dir / "plates" / f"{loc.id}.png").exists()
+    )
+    return estimate_image_cost(
+        config.effective_image_model(),
+        missing_refs + missing_plates,
+        quality=getattr(config, "image_quality", None),
+    )
+
 
 STAGE = Stage(
     name="cast",
@@ -761,4 +790,5 @@ STAGE = Stage(
         d / "adapt", d / "plan", d / "storyboard",
         d / "direct", d / "draw", d / "compose", d / "exports",
     ],
+    estimate_cost=estimate_cost,
 )

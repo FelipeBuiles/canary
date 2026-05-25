@@ -454,6 +454,29 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
 
 
 from novel_to_comic.stages import Stage  # noqa: E402
+from novel_to_comic.state import PipelineState  # noqa: E402
+
+
+def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
+    novel_path = Path(state.novel_path)
+    if not novel_path.is_absolute():
+        novel_path = project_dir / novel_path
+    try:
+        raw = novel_path.read_bytes()
+    except Exception:
+        raw = b""
+    try:
+        novel_text = raw.decode("utf-8")
+        input_payload: str | int = PROMPT_PATH.read_text() + "\n" + novel_text
+    except UnicodeDecodeError:
+        novel_text = ""
+        input_payload = len(raw)
+    return estimate_text_cost(
+        config.effective_extraction_model(),
+        input_payload,
+        output_chars=estimate_story_bible_output_chars(novel_text or len(raw)),
+    )
+
 
 STAGE = Stage(
     name="extract",
@@ -465,4 +488,5 @@ STAGE = Stage(
         d / "adapt", d / "plan", d / "storyboard",
         d / "direct", d / "draw", d / "compose", d / "exports",
     ],
+    estimate_cost=estimate_cost,
 )

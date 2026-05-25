@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { cn } from "../../lib/cn";
-import { Button } from "./Button";
-import { DestructiveButton } from "./DestructiveButton";
+import { Button } from "../ui/Button";
+import { DestructiveButton } from "../ui/DestructiveButton";
 import type { StageName, StageCostEstimate } from "../../types/api";
 import { STAGE_DISPLAY_NAMES } from "../../types/api";
 

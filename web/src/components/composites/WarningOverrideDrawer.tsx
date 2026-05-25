@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { cn } from "../../lib/cn";
-import { Button } from "./Button";
-import { DestructiveButton } from "./DestructiveButton";
+import { Button } from "../ui/Button";
+import { DestructiveButton } from "../ui/DestructiveButton";
 import { CostBreakdown } from "../cost/CostBreakdown";
 import type { CostEstimate, PromptWarning } from "../../types/api";
 

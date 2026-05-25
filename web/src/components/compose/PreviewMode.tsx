@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ComicPage, PageSummary } from "../../types/api";
 import { Button } from "../ui/Button";
-import { ConfirmDrawer } from "../ui/ConfirmDrawer";
+import { ConfirmDrawer } from "../composites";
 import { pagePreviewUrl } from "../../api/pages";
 import { cn } from "../../lib/cn";
 import type { ComposeIssue } from "../../lib/issueEngine";

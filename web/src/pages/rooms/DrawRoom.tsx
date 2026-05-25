@@ -12,16 +12,20 @@ import {
   useRunPipeline,
   useResetStale,
 } from "../../api/queries";
-import { RoomHeader } from "../../components/ui/RoomHeader";
 import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { PanelCard } from "../../components/PanelCard";
 import { PanelDetailModal } from "../../components/PanelDetailModal";
-import { RoomShell } from "../../components/ui/RoomShell";
 import { Surface } from "../../components/ui/Surface";
-import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
-import { Toolbar, RoomTabs, type RoomTab } from "../../components/composites";
+import {
+  Toolbar,
+  RoomTabs,
+  type RoomTab,
+  RoomHeader,
+  RoomShell,
+  StagePlaceholder,
+  ConfirmDrawer,
+} from "../../components/composites";
 import { StyleCallout } from "../../components/wizard/StyleCallout";
-import { ConfirmDrawer } from "../../components/ui/ConfirmDrawer";
 import { useActiveRegens, useRegenStore } from "../../store/regen";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { getPanelDisplayState, getPanelFilterBucket, type PanelFilterBucket } from "../../lib/panelState";

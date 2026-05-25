@@ -16,12 +16,12 @@ from novel_to_comic.stages.s2_style import (
     generate_suggestions,
     load_suggestions,
     save_suggestions,
+    estimate_style_batch_cost_usd,
 )
 
 from ..auth import get_current_user
 from ..credits import (
     assert_sufficient_credits,
-    estimate_style_batch_cost_usd,
     provider_usd_to_credits,
     release_reservation,
     reservation_buffer,

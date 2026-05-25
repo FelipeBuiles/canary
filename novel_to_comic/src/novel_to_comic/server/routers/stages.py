@@ -3,20 +3,16 @@
 import json
 import re
 from pathlib import Path
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from novel_to_comic import artifacts
 
-from novel_to_comic.models.comic_page import ComicPage
-from novel_to_comic.models.layout_plan import LayoutPlan
-from novel_to_comic.models.panel import PanelBreakdown, Screenplay
+from novel_to_comic.models.panel import PanelBreakdown
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.panel_store import save_breakdown, save_prompt
 from novel_to_comic.panel_versions import archived_panel_version_count, list_panel_versions, restore_panel_version
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.state import load_state
 
 from ..auth import get_current_user
 from ..narration_editor import apply_patch as apply_narration_patch, estimate_patch_impact

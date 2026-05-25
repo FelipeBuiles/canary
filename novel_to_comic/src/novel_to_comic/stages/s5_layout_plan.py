@@ -1602,6 +1602,41 @@ async def run(
 
 
 from novel_to_comic.stages import Stage  # noqa: E402
+from novel_to_comic.state import PipelineState  # noqa: E402
+
+
+def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
+    from novel_to_comic.models.story_bible import StoryBible
+    from novel_to_comic.usage import estimate_text_cost
+    
+    sb_path = project_dir / "story_bible.json"
+    if not sb_path.exists():
+        return 0.0
+    try:
+        story_bible = StoryBible.model_validate_json(sb_path.read_text())
+    except Exception:
+        return 0.0
+        
+    total = 0.0
+    for scene in story_bible.scenes:
+        sp_path = project_dir / "screenplays" / f"{scene.id}.json"
+        if not sp_path.exists():
+            continue
+        sp_text = ""
+        try:
+            sp_text = sp_path.read_text()
+        except Exception:
+            pass
+        if not sp_text:
+            sp_text = "x" * 4000
+            
+        total += estimate_text_cost(
+            config.effective_panel_model(),
+            _PLAN_SCENE_SYSTEM + "\n" + sp_text,
+            output_chars=8000,
+        )
+    return total
+
 
 STAGE = Stage(
     name="plan",
@@ -1611,4 +1646,5 @@ STAGE = Stage(
         d / "plan", d / "storyboard",
         d / "direct", d / "draw", d / "compose", d / "exports",
     ],
+    estimate_cost=estimate_cost,
 )

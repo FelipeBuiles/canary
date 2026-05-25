@@ -4,7 +4,7 @@ import { useStageEstimate } from "../../api/queries";
 import { RERUN_IMPACT } from "../../lib/rerunImpact";
 import type { StageName } from "../../types/api";
 import { STAGE_DISPLAY_NAMES } from "../../types/api";
-import { DestructiveButton } from "./DestructiveButton";
+import { DestructiveButton } from "../ui/DestructiveButton";
 import { RerunDrawer } from "./RerunDrawer";
 
 interface RerunStageActionProps {

@@ -6,7 +6,7 @@ import { FieldLabel, SelectField, SwitchField, TextAreaField, TextField } from "
 import { Icon } from "../components/ui/Icon";
 import { IconButton } from "../components/ui/IconButton";
 import { LoadingBlock, StateBlock } from "../components/ui/StateBlock";
-import { RerunDrawer } from "../components/ui/RerunDrawer";
+import { RerunDrawer } from "../components/composites";
 import { ShotDiagram } from "../components/ui/ShotDiagram";
 import { Skeleton } from "../components/ui/Skeleton";
 import { StatusPill } from "../components/ui/StatusPill";

@@ -3,8 +3,8 @@ import type { ImagePrompt } from "../types/api";
 import { PromptLineageCard } from "./PromptLineageCard";
 import { Button } from "./ui/Button";
 import { Icon } from "./ui/Icon";
-import { ConfirmDrawer } from "./ui/ConfirmDrawer";
 import { LazyImage } from "./ui/LazyImage";
+import { ConfirmDrawer } from "./composites";
 import {
   useAcceptPanel,
   usePanelImageVersions,

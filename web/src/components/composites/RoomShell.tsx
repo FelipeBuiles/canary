@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import type { StageName, StageStatus } from "../../types/api";
-import { LoadingBlock, StateBlock } from "./StateBlock";
+import { LoadingBlock, StateBlock } from "../ui/StateBlock";
 import { StagePlaceholder } from "./StagePlaceholder";
 
 interface RoomShellProps {

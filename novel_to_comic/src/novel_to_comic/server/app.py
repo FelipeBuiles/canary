@@ -105,6 +105,13 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app.middleware("http")(request_log_middleware)
 
     # Shared state for SSE streaming and concurrency control
+    from .generation_jobs import (
+        get_global_queue,
+        get_global_semaphore,
+        _global_jobs,
+        _global_light_semaphores,
+    )
+
     app.state.projects_dir = projects_dir
     app.state.event_queues: dict[str, asyncio.Queue] = {}
     app.state.running_tasks: dict[str, asyncio.Task] = {}
@@ -113,14 +120,12 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     # Not persisted — if the server restarts, nothing is in flight.
     app.state.draw_in_flight: dict[str, list[dict]] = {}
     app.state.style_tasks: dict[str, asyncio.Task] = {}
-    app.state.generation_semaphore = asyncio.Semaphore(1)
+    app.state.generation_semaphore = get_global_semaphore()
     app.state.light_generation_semaphore = asyncio.Semaphore(5)
-    app.state.light_generation_semaphores: dict[int, asyncio.Semaphore] = {
-        5: app.state.light_generation_semaphore,
-    }
-    app.state.generation_queue: asyncio.Queue = asyncio.Queue()
-    app.state.generation_jobs = {}
-    app.state.generation_job_sequence = 1
+    app.state.light_generation_semaphores = _global_light_semaphores
+    app.state.light_generation_semaphores[5] = app.state.light_generation_semaphore
+    app.state.generation_queue = get_global_queue()
+    app.state.generation_jobs = _global_jobs
     app.state.generation_job_timeout_seconds = max(
         1,
         int(os.environ.get("CANARY_GENERATION_JOB_TIMEOUT_SECONDS", "900")),

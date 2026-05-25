@@ -16,7 +16,7 @@ from novel_to_comic.models.comic_page import (
     infer_sfx_kind,
     normalize_sfx_text,
 )
-from novel_to_comic.models.layout_plan import GenerationMode, ImageFitStatus, LayoutPlan, NarrationDecision, PanelGeometry, PanelImportance, PlannedPage, PlannedPanel, RegenerationStatus, ShapeIntent
+from novel_to_comic.models.layout_plan import GenerationMode, LayoutPlan, NarrationDecision, PanelGeometry, PanelImportance, PlannedPage, PlannedPanel, ShapeIntent
 from novel_to_comic.models.panel import DialogueLine, PanelBreakdown
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.panel_aspect import dimensions_for_generation_aspect, generation_shape_for_aspect

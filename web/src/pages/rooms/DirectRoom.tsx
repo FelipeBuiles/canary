@@ -12,16 +12,18 @@ import {
   useStyles,
 } from "../../api/queries";
 import { Button } from "../../components/ui/Button";
-import { ConfirmDrawer } from "../../components/ui/ConfirmDrawer";
-import { RoomHeader } from "../../components/ui/RoomHeader";
 import { CollapsibleSection } from "../../components/ui/CollapsibleSection";
 import { EditableText } from "../../components/ui/EditableText";
 import { LoadingBlock, StateBlock } from "../../components/ui/StateBlock";
-import { RerunStageAction } from "../../components/ui/RerunStageAction";
-import { RoomShell } from "../../components/ui/RoomShell";
-import { SceneSidebar } from "../../components/ui/SceneSidebar";
-import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
-import { WarningOverrideDrawer } from "../../components/ui/WarningOverrideDrawer";
+import {
+  ConfirmDrawer,
+  RerunStageAction,
+  RoomHeader,
+  RoomShell,
+  SceneSidebar,
+  StagePlaceholder,
+  WarningOverrideDrawer,
+} from "../../components/composites";
 import { useCharacterName } from "../../hooks/useCharacterName";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { useHeaderMode } from "../../hooks/useHeaderMode";

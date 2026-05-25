@@ -14,12 +14,14 @@ import { Button } from "../../components/ui/Button";
 import { FieldLabel, SelectField, TextAreaField, TextField } from "../../components/ui/Field";
 import { Icon } from "../../components/ui/Icon";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
-import { RoomHeader } from "../../components/ui/RoomHeader";
-import { RoomShell } from "../../components/ui/RoomShell";
-import { SceneSidebar } from "../../components/ui/SceneSidebar";
 import { ShotDiagram } from "../../components/ui/ShotDiagram";
-import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
 import { LoadingBlock, StateBlock } from "../../components/ui/StateBlock";
+import {
+  RoomHeader,
+  RoomShell,
+  SceneSidebar,
+  StagePlaceholder,
+} from "../../components/composites";
 import { cn } from "../../lib/cn";
 import { getShotPlanAction, getShotPlanSubStatus } from "../../lib/shotPlan";
 import { useCharacterName } from "../../hooks/useCharacterName";
