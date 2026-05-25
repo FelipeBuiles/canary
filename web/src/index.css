@@ -278,6 +278,26 @@
     background-size: 200% 100%;
     animation: shimmer 1.5s infinite;
   }
+
+  /* Retro Halftone Benday dot loader for themed image/content placeholders. */
+  .skeleton-benday {
+    background-color: var(--color-surface-container);
+    background-image: 
+      linear-gradient(
+        90deg,
+        transparent,
+        color-mix(in srgb, var(--color-narrator-gold) 12%, transparent),
+        transparent
+      ),
+      radial-gradient(
+        circle at 1px 1px,
+        color-mix(in srgb, var(--color-ink-black) 6%, transparent) 1.5px,
+        transparent 0
+      );
+    background-size: 200% 100%, 12px 12px;
+    background-repeat: no-repeat, repeat;
+    animation: benday-shimmer 2s infinite ease-in-out;
+  }
 }
 
 @keyframes shimmer {
@@ -287,6 +307,31 @@
   100% {
     background-position: -200% 0;
   }
+}
+
+@keyframes benday-shimmer {
+  0% {
+    background-position: 200% 0, 0 0;
+  }
+  100% {
+    background-position: -200% 0, 0 0;
+  }
+}
+
+@keyframes comic-pop {
+  0% {
+    transform: scale(0.85);
+  }
+  50% {
+    transform: scale(1.15);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.animate-comic-pop {
+  animation: comic-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 @keyframes flash-change-inline {

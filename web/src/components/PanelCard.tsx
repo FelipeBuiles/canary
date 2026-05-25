@@ -113,8 +113,6 @@ export function PanelCard({
         <FlowingDotsPlaceholder
           aspect="4 / 5"
           className="h-full"
-          label="GENERATING…"
-          caption="GENERATING PANEL"
           aria-label="Panel generation in progress"
         />
       ) : displayState === "queued" ? (
