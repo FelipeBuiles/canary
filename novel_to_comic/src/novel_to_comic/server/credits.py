@@ -14,7 +14,7 @@ from supabase import Client
 
 from novel_to_comic.config import Config
 from novel_to_comic.state import PipelineState
-from novel_to_comic.usage import UsageRecord, calculate_cost, calculate_cost_breakdown, estimate_image_cost, estimate_text_cost, usage_has_billable_activity
+from novel_to_comic.usage import UsageRecord, calculate_cost, calculate_cost_breakdown, estimate_image_cost, usage_has_billable_activity
 
 CostConfidence = Literal["low_variance", "usually_within_estimate", "variable"]
 
@@ -129,211 +129,71 @@ def estimate_stage_provider_cost_usd(
     state: PipelineState,
     stage: str,
 ) -> float:
-    if stage == "extract":
-        return _estimate_extract_cost(config, project_dir, state)
-    if stage == "style":
-        return _estimate_style_cost(config, project_dir)
-    if stage == "cast":
-        return _estimate_cast_cost(config, project_dir)
-    if stage == "adapt":
-        return _estimate_adapt_cost(config, project_dir)
-    if stage == "plan":
-        return _estimate_plan_cost(config, project_dir)
-    if stage == "direct":
-        return _estimate_direct_cost(config, project_dir)
-    if stage == "draw":
-        return _estimate_draw_cost(config, project_dir)
-    # storyboard, compose: deterministic, no model cost
+    from novel_to_comic.stages import REGISTRY
+    stage_obj = REGISTRY.get(stage)
+    if stage_obj and stage_obj.estimate_cost:
+        return stage_obj.estimate_cost(config, project_dir, state)
     return 0.0
 
 
-def _safe_text(path: Path, default: str = "") -> str:
-    try:
-        return path.read_text()
-    except Exception:
-        return default
+class UnifiedCostResolver:
+    @staticmethod
+    def estimate_stage_cost(
+        config: Config,
+        project_dir: Path,
+        state: PipelineState,
+        stage: str,
+    ) -> CreditEstimate:
+        """Estimate the credits to reserve/debit for a full stage run."""
+        return estimate_stage_credit_breakdown(config, project_dir, state, stage)
 
+    @staticmethod
+    def estimate_panel_regen_cost(
+        config: Config,
+        project_dir: Path,
+        scene_id: str,
+        panel_number: int,
+        image_model_alias: str | None = None,
+    ) -> CreditEstimate:
+        """Estimate the credits needed to regenerate a single panel."""
+        from novel_to_comic import artifacts
+        from novel_to_comic.stages.s7_draw import estimate_panel_image_cost_usd
+        from novel_to_comic.config import config_for_image_model_alias
 
-def _estimate_extract_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
-    from novel_to_comic.stages.s1_extract import PROMPT_PATH, estimate_story_bible_output_chars
+        regen_config = config_for_image_model_alias(config, image_model_alias)
+        prompt_path = artifacts.panel_prompt_path(project_dir, scene_id, panel_number)
+        if not prompt_path.exists():
+            raise HTTPException(404, f"Prompt not found: {scene_id}/panel_{panel_number:03d}")
 
-    novel_path = Path(state.novel_path)
-    if not novel_path.is_absolute():
-        novel_path = project_dir / novel_path
-    try:
-        raw = novel_path.read_bytes()
-    except Exception:
-        raw = b""
-    try:
-        novel_text = raw.decode("utf-8")
-        input_payload: str | int = _safe_text(PROMPT_PATH) + "\n" + novel_text
-    except UnicodeDecodeError:
-        input_payload = len(raw)
-    return estimate_text_cost(
-        config.effective_extraction_model(),
-        input_payload,
-        output_chars=estimate_story_bible_output_chars(novel_text if isinstance(novel_text, str) else len(raw)),
-    )
-
-
-def _load_json_model(path: Path, model):
-    try:
-        return model.model_validate_json(path.read_text())
-    except Exception:
-        return None
-
-
-def _estimate_style_cost(config: Config, project_dir: Path) -> float:
-    from novel_to_comic import artifacts
-    from novel_to_comic.stages.s2_style import (
-        SAMPLE_COUNT,
-        load_suggestions,
-        missing_sample_indices,
-    )
-    from novel_to_comic.usage import estimate_text_cost
-
-    suggestions = load_suggestions(project_dir)
-    needs_suggestions = not suggestions
-    if needs_suggestions:
-        text_cost = estimate_text_cost(
-            config.effective_prompt_model(),
-            _safe_text(artifacts.story_bible_path(project_dir))[:3000],
+        cost_usd = estimate_panel_image_cost_usd(regen_config, project_dir, prompt_path)
+        estimate_credits = max(1, provider_usd_to_credits(cost_usd)) if cost_usd > 0 else 1
+        return CreditEstimate(
+            estimate_credits=estimate_credits,
+            reserved_credits=None,
+            reservation_multiplier=reservation_buffer(),
+            confidence=stage_cost_confidence("draw"),
         )
-        sample_count = SAMPLE_COUNT
-    else:
-        text_cost = 0.0
-        sample_count = len(missing_sample_indices(project_dir, suggestions))
 
-    image_cost = estimate_image_cost(
-        config.effective_image_model(),
-        sample_count,
-        quality=getattr(config, "image_quality", None),
-    )
-    return text_cost + image_cost
-
-
-def estimate_style_batch_cost_usd(config: Config, project_dir: Path) -> float:
-    """Estimate provider cost for one 'Suggest More Styles' batch (text + samples)."""
-    from novel_to_comic import artifacts
-    from novel_to_comic.stages.s2_style import SAMPLE_COUNT
-    from novel_to_comic.usage import estimate_text_cost
-
-    text_cost = estimate_text_cost(
-        config.effective_prompt_model(),
-        _safe_text(artifacts.story_bible_path(project_dir))[:3000],
-    )
-    image_cost = estimate_image_cost(
-        config.effective_image_model(),
-        SAMPLE_COUNT,
-        quality=getattr(config, "image_quality", None),
-    )
-    return text_cost + image_cost
-
-
-def _estimate_cast_cost(config: Config, project_dir: Path) -> float:
-    from novel_to_comic.models.story_bible import StoryBible
-
-    story_bible = _load_json_model(project_dir / "story_bible.json", StoryBible)
-    if story_bible is None:
-        return 0.0
-    missing_refs = sum(
-        1 for char in story_bible.characters
-        if not (project_dir / "refs" / char.id / "sheet.png").exists()
-    )
-    missing_plates = sum(
-        1 for loc in story_bible.locations
-        if not (project_dir / "plates" / f"{loc.id}.png").exists()
-    )
-    return estimate_image_cost(
-        config.effective_image_model(),
-        missing_refs + missing_plates,
-        quality=getattr(config, "image_quality", None),
-    )
-
-
-def _estimate_adapt_cost(config: Config, project_dir: Path) -> float:
-    from novel_to_comic.stages.s4_screenplay import PROMPT_PATH
-    from novel_to_comic.models.story_bible import StoryBible
-
-    story_bible = _load_json_model(project_dir / "story_bible.json", StoryBible)
-    if story_bible is None:
-        return 0.0
-    system_prompt = _safe_text(PROMPT_PATH)
-    total = 0.0
-    for scene in story_bible.scenes:
-        if (project_dir / "screenplays" / f"{scene.id}.json").exists():
-            continue
-        scene_text = _safe_text(project_dir / "scenes" / f"{scene.id}.txt", "x" * 8000)
-        total += estimate_text_cost(
-            config.effective_screenplay_model(),
-            system_prompt + "\n" + scene_text,
-            output_chars=12000,
+    @staticmethod
+    def estimate_asset_regen_cost(
+        config: Config,
+        project_dir: Path,
+        asset_type: str,
+        asset_id: str,
+    ) -> CreditEstimate:
+        """Estimate the credits needed to regenerate a single cast asset (character sheet or plate)."""
+        cost_usd = estimate_image_cost(
+            config.effective_image_model(),
+            1,
+            quality=getattr(config, "image_quality", None),
         )
-    return total
-
-
-def _estimate_plan_cost(config: Config, project_dir: Path) -> float:
-    from novel_to_comic.models.story_bible import StoryBible
-    from novel_to_comic.stages.s5_layout_plan import _PLAN_SCENE_SYSTEM
-
-    story_bible = _load_json_model(project_dir / "story_bible.json", StoryBible)
-    if story_bible is None:
-        return 0.0
-    total = 0.0
-    for scene in story_bible.scenes:
-        sp_path = project_dir / "screenplays" / f"{scene.id}.json"
-        if not sp_path.exists():
-            continue
-        sp_text = _safe_text(sp_path, "x" * 4000)
-        total += estimate_text_cost(
-            config.effective_panel_model(),
-            _PLAN_SCENE_SYSTEM + "\n" + sp_text,
-            output_chars=8000,
+        estimate_credits = max(1, provider_usd_to_credits(cost_usd)) if cost_usd > 0 else 1
+        return CreditEstimate(
+            estimate_credits=estimate_credits,
+            reserved_credits=None,
+            reservation_multiplier=reservation_buffer(),
+            confidence=stage_cost_confidence("cast"),
         )
-    return total
-
-
-def _estimate_direct_cost(config: Config, project_dir: Path) -> float:
-    # Direct-stage prompt assembly is deterministic; no model call is needed.
-    _ = (config, project_dir)
-    return 0.0
-
-
-def _estimate_draw_cost(config: Config, project_dir: Path) -> float:
-    from novel_to_comic.models.story_bible import StoryBible
-    from novel_to_comic.stages.s7_draw import _find_style_sample, estimate_panel_image_cost_usd
-
-    prompts_dir = project_dir / "direct"
-    if not prompts_dir.exists():
-        return 0.0
-    total = 0.0
-    model = config.effective_image_model()
-    quality = getattr(config, "image_quality", None)
-    style_sample = _find_style_sample(project_dir, config.style_template)
-    scene_to_location: dict[str, str] = {}
-    story_bible = _load_json_model(project_dir / "story_bible.json", StoryBible)
-    if story_bible is not None:
-        scene_to_location = {scene.id: scene.location_id for scene in story_bible.scenes}
-    for prompt_path in prompts_dir.glob("*/panel_*.json"):
-        try:
-            scene_id = prompt_path.parent.name
-            panel_number = int(prompt_path.stem.split("_")[1])
-        except (IndexError, ValueError):
-            total += estimate_image_cost(model, 1, quality=quality)
-            continue
-        output_path = project_dir / "draw" / scene_id / f"panel_{panel_number:03d}.png"
-        if not output_path.exists():
-            try:
-                total += estimate_panel_image_cost_usd(
-                    config,
-                    project_dir,
-                    prompt_path,
-                    style_sample=style_sample,
-                    scene_to_location=scene_to_location,
-                )
-            except Exception:
-                total += estimate_image_cost(model, 1, quality=quality)
-    return total
 
 
 def get_balance_credits(db: Client, user_id: str) -> int:

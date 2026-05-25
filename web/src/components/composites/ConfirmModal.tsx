@@ -1,37 +1,39 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "../../lib/cn";
-import { Button } from "./Button";
-import { CostBreakdown } from "../cost/CostBreakdown";
-import type { CostEstimate } from "../../types/api";
+import { Button } from "../ui/Button";
+import { TextField } from "../ui/Field";
 
-export interface ConfirmDrawerProps {
+export interface ConfirmModalProps {
   open: boolean;
   title: string;
   body: string;
-  cost?: CostEstimate;
-  /** Optional content rendered between the body and the cost breakdown. */
-  extraBody?: ReactNode;
+  confirmInput?: string;
   confirmLabel?: string;
+  busy?: boolean;
+  destructive?: boolean;
   onConfirm: () => void;
   onClose: () => void;
-  busy?: boolean;
 }
 
-export function ConfirmDrawer({
+export function ConfirmModal({
   open,
   title,
   body,
-  cost,
-  extraBody,
+  confirmInput,
   confirmLabel = "Confirm",
+  busy = false,
+  destructive = false,
   onConfirm,
   onClose,
-  busy = false,
-}: ConfirmDrawerProps) {
-  const drawerRef = useRef<HTMLDivElement | null>(null);
+}: ConfirmModalProps) {
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  const [input, setInput] = useState("");
+
+  const inputMatches = !confirmInput || input === confirmInput;
 
   useEffect(() => {
     if (!open) return;
+    setInput("");
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
@@ -41,8 +43,8 @@ export function ConfirmDrawer({
         onClose();
         return;
       }
-      if (e.key !== "Tab" || !drawerRef.current) return;
-      const focusable = drawerRef.current.querySelectorAll<HTMLElement>(
+      if (e.key !== "Tab" || !modalRef.current) return;
+      const focusable = modalRef.current.querySelectorAll<HTMLElement>(
         'button, [href], input, [tabindex]:not([tabindex="-1"])',
       );
       if (focusable.length === 0) return;
@@ -67,33 +69,23 @@ export function ConfirmDrawer({
 
   return (
     <div
-      className="fixed inset-0 z-[120] flex items-end justify-center bg-ink-black/55 backdrop-blur-[2px]"
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-ink-black/55 backdrop-blur-[2px]"
       onClick={onClose}
       role="presentation"
     >
       <div
-        ref={drawerRef}
+        ref={modalRef}
         role="alertdialog"
         aria-modal="true"
-        aria-labelledby="confirm-drawer-title"
-        aria-describedby="confirm-drawer-body"
+        aria-labelledby="confirm-modal-title"
+        aria-describedby="confirm-modal-body"
         onClick={(e) => e.stopPropagation()}
-        className={cn(
-          "relative w-full max-w-[700px] border-x-[2px] border-t-[2px] border-ink-black bg-pulp-paper text-ink-black",
-          "animate-[slide-up-drawer_320ms_cubic-bezier(0.2,0.8,0.2,1)]",
-        )}
+        className="w-full max-w-[500px] border-[2px] border-ink-black bg-pulp-paper text-ink-black shadow-ink"
       >
-        <style>{`
-          @keyframes slide-up-drawer {
-            from { transform: translateY(100%); opacity: 0.4; }
-            to   { transform: translateY(0);    opacity: 1; }
-          }
-        `}</style>
-
         <div className="px-6 pt-5 pb-6 sm:px-8">
           <div className="flex items-start justify-between gap-4">
             <h2
-              id="confirm-drawer-title"
+              id="confirm-modal-title"
               className="font-display text-[1.75rem] leading-[0.95] tracking-[-0.02em] uppercase"
             >
               {title}
@@ -109,15 +101,26 @@ export function ConfirmDrawer({
           </div>
 
           <p
-            id="confirm-drawer-body"
+            id="confirm-modal-body"
             className="mt-4 text-[0.9rem] leading-6 text-ink-fade"
           >
             {body}
           </p>
 
-          {extraBody && <div className="mt-4">{extraBody}</div>}
-
-          {cost != null && <CostBreakdown cost={cost} />}
+          {confirmInput && (
+            <div className="mt-4">
+              <label className="block font-meta text-[0.56rem] tracking-[0.18em] text-ink-black/55 mb-2">
+                TYPE <span className="font-bold text-ink-black">{confirmInput}</span> TO CONFIRM
+              </label>
+              <TextField
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={confirmInput}
+                className="w-full max-w-sm bg-bristol"
+                autoFocus
+              />
+            </div>
+          )}
 
           <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
             <Button variant="outline" size="md" onClick={onClose} disabled={busy}>
@@ -126,9 +129,13 @@ export function ConfirmDrawer({
             <Button
               size="md"
               onClick={onConfirm}
-              disabled={busy}
+              disabled={busy || !inputMatches}
+              className={cn(
+                destructive &&
+                  "border-[2px] border-ink-black bg-hero-red text-bristol shadow-panel-red hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-paper-sm",
+              )}
             >
-              {busy ? "Starting…" : confirmLabel}
+              {busy ? "Deleting…" : confirmLabel}
             </Button>
           </div>
         </div>

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -20,6 +19,27 @@ from novel_to_comic.server.env import bool_env
 GenerationJobStatus = Literal["queued", "running", "complete", "failed"]
 GenerationJobRunner = Callable[[], Awaitable[None]]
 logger = logging.getLogger("canary.generation")
+
+
+_global_queue: asyncio.Queue | None = None
+_global_jobs: dict[str, GenerationJob] = {}
+_global_sequence: int = 1
+_global_light_semaphores: dict[int, asyncio.Semaphore] = {}
+_global_semaphore: asyncio.Semaphore | None = None
+
+
+def get_global_queue() -> asyncio.Queue:
+    global _global_queue
+    if _global_queue is None:
+        _global_queue = asyncio.Queue()
+    return _global_queue
+
+
+def get_global_semaphore() -> asyncio.Semaphore:
+    global _global_semaphore
+    if _global_semaphore is None:
+        _global_semaphore = asyncio.Semaphore(1)
+    return _global_semaphore
 
 
 def _now() -> datetime:
@@ -54,7 +74,7 @@ class GenerationJob:
 
 
 def enqueue_generation_job(
-    app: FastAPI,
+    app: FastAPI | None,
     project_name: str,
     kind: str,
     label: str,
@@ -62,8 +82,10 @@ def enqueue_generation_job(
     runner: GenerationJobRunner,
     semaphore: asyncio.Semaphore | None = None,
 ) -> GenerationJob:
-    sequence = app.state.generation_job_sequence
-    app.state.generation_job_sequence += 1
+    global _global_sequence
+    sequence = _global_sequence
+    _global_sequence += 1
+
     job = GenerationJob(
         id=uuid.uuid4().hex,
         project_name=project_name,
@@ -74,10 +96,16 @@ def enqueue_generation_job(
         runner=runner,
         semaphore=semaphore,
     )
-    app.state.generation_jobs[job.id] = job
-    app.state.generation_queue.put_nowait(job)
+
+    if app is not None:
+        app.state.generation_jobs[job.id] = job
+        app.state.generation_queue.put_nowait(job)
+    else:
+        _global_jobs[job.id] = job
+        get_global_queue().put_nowait(job)
+
     logger.info(
-        "[bold blue]Job queued[/] project=[white]%s[/] kind=[cyan]%s[/] label=%s id=[dim]%s[/]",
+        "[bold blue]Job queued[/] project=%s kind=%s label=%s id=[dim]%s[/]",
         project_name,
         kind,
         label,
@@ -86,13 +114,14 @@ def enqueue_generation_job(
     return job
 
 
-def generation_job_payload(app: FastAPI, job: GenerationJob) -> dict[str, Any]:
+def generation_job_payload(app: FastAPI | None, job: GenerationJob) -> dict[str, Any]:
     queue_position: int | None = None
     if job.status == "queued":
+        jobs = app.state.generation_jobs if app is not None else _global_jobs
         queued = sorted(
             (
                 candidate
-                for candidate in app.state.generation_jobs.values()
+                for candidate in jobs.values()
                 if candidate.status == "queued"
                 and candidate.project_name == job.project_name
             ),
@@ -119,12 +148,13 @@ def generation_job_payload(app: FastAPI, job: GenerationJob) -> dict[str, Any]:
 
 
 def find_active_generation_job(
-    app: FastAPI,
+    app: FastAPI | None,
     project_name: str,
     kind: str,
     payload: dict[str, Any] | None = None,
 ) -> GenerationJob | None:
-    for job in app.state.generation_jobs.values():
+    jobs = app.state.generation_jobs if app is not None else _global_jobs
+    for job in jobs.values():
         if (
             job.project_name == project_name
             and job.kind == kind
@@ -217,26 +247,28 @@ async def generation_worker(app: FastAPI) -> None:
             app.state.generation_queue.task_done()
 
 
-def generation_semaphore_for_config(app: FastAPI, config: Config) -> asyncio.Semaphore:
+def generation_semaphore_for_config(app: FastAPI | None, config: Config) -> asyncio.Semaphore:
     if config.dev_mode:
         concurrency = config.effective_image_concurrency()
-        semaphores = app.state.light_generation_semaphores
+        semaphores = app.state.light_generation_semaphores if app is not None else _global_light_semaphores
         semaphore = semaphores.get(concurrency)
         if semaphore is None:
             semaphore = asyncio.Semaphore(concurrency)
             semaphores[concurrency] = semaphore
         return semaphore
-    return app.state.generation_semaphore
+    return app.state.generation_semaphore if app is not None else get_global_semaphore()
 
 
-def prune_finished_generation_jobs(app: FastAPI, max_finished: int = 200) -> None:
+def prune_finished_generation_jobs(app: FastAPI | None, max_finished: int = 200) -> None:
+    jobs = app.state.generation_jobs if app is not None else _global_jobs
     finished = sorted(
         (
             job
-            for job in app.state.generation_jobs.values()
+            for job in jobs.values()
             if job.status in ("complete", "failed")
         ),
         key=lambda job: job.finished_at or job.queued_at,
     )
     for job in finished[:-max_finished]:
-        app.state.generation_jobs.pop(job.id, None)
+        jobs.pop(job.id, None)
+

@@ -11,18 +11,14 @@ import {
   useRegenProp,
   useRegenPropWithInstruction,
 } from "../../api/queries";
-import { RoomHeader } from "../../components/ui/RoomHeader";
+import { RoomHeader, RoomShell, RerunStageAction, StagePlaceholder, SectionHeader, EntityCard } from "../../components/composites";
 import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { Tag } from "../../components/ui/Tag";
 import { Button } from "../../components/ui/Button";
 import { DestructiveButton } from "../../components/ui/DestructiveButton";
-import { RoomShell } from "../../components/ui/RoomShell";
 import { ImageModal } from "../../components/ui/ImageModal";
 import { LazyImage } from "../../components/ui/LazyImage";
 import { StatusPill } from "../../components/ui/StatusPill";
-import { RerunStageAction } from "../../components/ui/RerunStageAction";
-import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
-import { SectionHeader, EntityCard } from "../../components/composites";
 import type { Character, GenerationJob, Location, Prop } from "../../types/api";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 

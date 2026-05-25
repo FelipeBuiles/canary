@@ -242,6 +242,62 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> None:
 
 
 from novel_to_comic.stages import Stage  # noqa: E402
+from novel_to_comic.state import PipelineState  # noqa: E402
+
+
+def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
+    from novel_to_comic.usage import estimate_text_cost, estimate_image_cost
+
+    suggestions = load_suggestions(project_dir)
+    needs_suggestions = not suggestions
+    if needs_suggestions:
+        story_bible_text = ""
+        sb_path = artifacts.story_bible_path(project_dir)
+        if sb_path.exists():
+            try:
+                story_bible_text = sb_path.read_text()[:3000]
+            except Exception:
+                pass
+        text_cost = estimate_text_cost(
+            config.effective_prompt_model(),
+            story_bible_text,
+        )
+        sample_count = SAMPLE_COUNT
+    else:
+        text_cost = 0.0
+        sample_count = len(missing_sample_indices(project_dir, suggestions))
+
+    image_cost = estimate_image_cost(
+        config.effective_image_model(),
+        sample_count,
+        quality=getattr(config, "image_quality", None),
+    )
+    return text_cost + image_cost
+
+
+def estimate_style_batch_cost_usd(config: Config, project_dir: Path) -> float:
+    """Estimate provider cost for one 'Suggest More Styles' batch (text + samples)."""
+    from novel_to_comic.usage import estimate_text_cost, estimate_image_cost
+
+    story_bible_text = ""
+    sb_path = artifacts.story_bible_path(project_dir)
+    if sb_path.exists():
+        try:
+            story_bible_text = sb_path.read_text()[:3000]
+        except Exception:
+            pass
+
+    text_cost = estimate_text_cost(
+        config.effective_prompt_model(),
+        story_bible_text,
+    )
+    image_cost = estimate_image_cost(
+        config.effective_image_model(),
+        SAMPLE_COUNT,
+        quality=getattr(config, "image_quality", None),
+    )
+    return text_cost + image_cost
+
 
 STAGE = Stage(
     name="style",
@@ -252,4 +308,5 @@ STAGE = Stage(
         d / "adapt", d / "plan", d / "storyboard",
         d / "direct", d / "draw", d / "compose", d / "exports",
     ],
+    estimate_cost=estimate_cost,
 )

@@ -12,16 +12,13 @@ import {
   useStoryBible,
   useProjectStatus,
 } from "../../api/queries";
-import { RoomHeader } from "../../components/ui/RoomHeader";
 import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { Button } from "../../components/ui/Button";
-import { ConfirmDrawer } from "../../components/ui/ConfirmDrawer";
-import { RoomShell } from "../../components/ui/RoomShell";
 import { GenerationDetailsModal } from "../../components/ui/GenerationDetailsModal";
 import { LazyImage } from "../../components/ui/LazyImage";
 import { StateBlock } from "../../components/ui/StateBlock";
 import { Surface } from "../../components/ui/Surface";
-import { EntityCard } from "../../components/composites";
+import { EntityCard, RoomHeader, ConfirmDrawer, RoomShell } from "../../components/composites";
 import {
   useStyleGenStore,
   usePendingIndices,

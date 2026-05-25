@@ -1,14 +1,17 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useProjectStatus, useStoryBible, useUpdateStoryBible } from "../../api/queries";
-import { RoomHeader } from "../../components/ui/RoomHeader";
 import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { Tag } from "../../components/ui/Tag";
 import { EditableText } from "../../components/ui/EditableText";
-import { RoomShell } from "../../components/ui/RoomShell";
-import { RerunStageAction } from "../../components/ui/RerunStageAction";
-import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
-import { SectionHeader, EntityCard } from "../../components/composites";
+import {
+  SectionHeader,
+  EntityCard,
+  RoomHeader,
+  RoomShell,
+  RerunStageAction,
+  StagePlaceholder,
+} from "../../components/composites";
 import type { Character, Location } from "../../types/api";
 
 function VisualAnchorEditor({

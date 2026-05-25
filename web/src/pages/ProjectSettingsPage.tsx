@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useProjectConfig, useProjectStatus, useUpdateProjectConfig, useDeleteProject } from "../api/queries";
 import { SettingsLayout } from "../components/ui/SettingsLayout";
-import { ConfirmModal } from "../components/ui/ConfirmModal";
+import { ConfirmModal } from "../components/composites";
 import { Card } from "../components/ui/Card";
 import { SelectField, SwitchField } from "../components/ui/Field";
 import { Button } from "../components/ui/Button";

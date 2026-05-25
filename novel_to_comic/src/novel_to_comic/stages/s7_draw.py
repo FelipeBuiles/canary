@@ -872,10 +872,56 @@ async def run(
 
 
 from novel_to_comic.stages import Stage  # noqa: E402
+from novel_to_comic.state import PipelineState  # noqa: E402
+
+
+def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
+    from novel_to_comic.models.story_bible import StoryBible
+    from novel_to_comic.usage import estimate_image_cost
+
+    prompts_dir = project_dir / "direct"
+    if not prompts_dir.exists():
+        return 0.0
+    total = 0.0
+    model = config.effective_image_model()
+    quality = getattr(config, "image_quality", None)
+    style_sample = _find_style_sample(project_dir, config.style_template)
+    
+    scene_to_location: dict[str, str] = {}
+    sb_path = project_dir / "story_bible.json"
+    if sb_path.exists():
+        try:
+            story_bible = StoryBible.model_validate_json(sb_path.read_text())
+            scene_to_location = {scene.id: scene.location_id for scene in story_bible.scenes}
+        except Exception:
+            pass
+            
+    for prompt_path in prompts_dir.glob("*/panel_*.json"):
+        try:
+            scene_id = prompt_path.parent.name
+            panel_number = int(prompt_path.stem.split("_")[1])
+        except (IndexError, ValueError):
+            total += estimate_image_cost(model, 1, quality=quality)
+            continue
+        output_path = project_dir / "draw" / scene_id / f"panel_{panel_number:03d}.png"
+        if not output_path.exists():
+            try:
+                total += estimate_panel_image_cost_usd(
+                    config,
+                    project_dir,
+                    prompt_path,
+                    style_sample=style_sample,
+                    scene_to_location=scene_to_location,
+                )
+            except Exception:
+                total += estimate_image_cost(model, 1, quality=quality)
+    return total
+
 
 STAGE = Stage(
     name="draw",
     run=run,
     outputs=lambda d: [d / "draw"],
     clean_paths=lambda d: [d / "draw", d / "compose", d / "exports"],
+    estimate_cost=estimate_cost,
 )

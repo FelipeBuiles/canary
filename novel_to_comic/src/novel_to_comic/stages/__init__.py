@@ -3,7 +3,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from novel_to_comic.config import Config
+    from novel_to_comic.state import PipelineState
 
 
 @dataclass
@@ -12,6 +16,7 @@ class Stage:
     run: Callable  # async def run(config, project_dir, state, on_event) -> Any
     outputs: Callable[[Path], list[Path]]
     clean_paths: Callable[[Path], list[Path]]
+    estimate_cost: Callable[[Config, Path, PipelineState], float] | None = None
 
 
 # Deferred to avoid circular import: stage modules import Stage from here,

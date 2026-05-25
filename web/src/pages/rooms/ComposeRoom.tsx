@@ -15,13 +15,12 @@ import {
   useImages,
 } from "../../api/queries";
 import { downloadExportUrl } from "../../api/pages";
-import { RerunStageAction } from "../../components/ui/RerunStageAction";
+import { RerunStageAction, StagePlaceholder } from "../../components/composites";
 import { ComposeHeader } from "../../components/compose/ComposeHeader";
 import { EditSubTabs } from "../../components/compose/ModeSwitcher";
 import { ScriptMode } from "../../components/compose/ScriptMode";
 import { LayoutMode } from "../../components/compose/LayoutMode";
 import { PreviewMode } from "../../components/compose/PreviewMode";
-import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
 import { IssueMode } from "../../components/compose/IssueMode";
 import { useAllPages } from "../../hooks/useAllPages";
 import { useComposeStore } from "../../store/compose";

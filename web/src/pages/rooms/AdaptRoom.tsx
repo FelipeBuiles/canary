@@ -6,12 +6,14 @@ import {
   useScreenplay,
   useStoryBible,
 } from "../../api/queries";
-import { RoomHeader } from "../../components/ui/RoomHeader";
-import { RoomShell } from "../../components/ui/RoomShell";
-import { SceneSidebar } from "../../components/ui/SceneSidebar";
+import {
+  RoomHeader,
+  RoomShell,
+  SceneSidebar,
+  RerunStageAction,
+  StagePlaceholder,
+} from "../../components/composites";
 import { LoadingBlock, StateBlock } from "../../components/ui/StateBlock";
-import { RerunStageAction } from "../../components/ui/RerunStageAction";
-import { StagePlaceholder } from "../../components/ui/StagePlaceholder";
 import { useCharacterName } from "../../hooks/useCharacterName";
 import { useHeaderMode } from "../../hooks/useHeaderMode";
 

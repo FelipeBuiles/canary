@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 import re
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
 from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
 from novel_to_comic.prompting import render_panel_prompt_body
+
+if TYPE_CHECKING:
+    from novel_to_comic.config import Config
+
+logger = logging.getLogger(__name__)
 
 
 MAX_INSTRUCTION_CHARS = 500
@@ -301,3 +308,381 @@ def _resolve_subject(subjects: list[PromptSubject], operation: SubjectPatchOpera
             if subject.name.strip().casefold() == target_name:
                 return subject
     return None
+
+
+async def apply_asset_instruction(
+    config: Config,
+    project_dir: Path,
+    db: Any,
+    user_id: str,
+    project_id: str,
+    asset_type: Literal["panel", "character", "location", "prop"],
+    asset_id: str,
+    instruction: str,
+    app: Any | None = None,
+    image_model_alias: str | None = None,
+) -> dict[str, Any]:
+    """Unified orchestrator to apply user visual editing instructions, rewrite prompts,
+    debit credits, and enqueue regeneration jobs. Supports panels and cast assets.
+    """
+    from datetime import datetime, timezone
+    import uuid as uuid_lib
+    import json
+    from fastapi import HTTPException
+    
+    from novel_to_comic import artifacts
+    from novel_to_comic.ai import ai_request_context
+    from novel_to_comic.clients import text
+    from novel_to_comic.server.credits import assert_sufficient_credits, debit_model_usage
+    from novel_to_comic.server.generation_jobs import (
+        enqueue_generation_job,
+        find_active_generation_job,
+        prune_finished_generation_jobs,
+        generation_semaphore_for_config,
+        generation_job_payload,
+    )
+    from novel_to_comic.server.panel_acceptance import clear_panel_acceptance
+
+    pkey = f"{user_id}:{project_id}"  # aligned with project_key format in pipeline.py
+    instruction = validate_user_instruction(instruction)
+
+    # Bifurcate based on asset_type
+    if asset_type == "panel":
+        # Parse panel scene_id and panel_number from asset_id (format: "scene_id:panel_number")
+        parts = asset_id.split(":")
+        if len(parts) != 2:
+            raise HTTPException(400, "Invalid asset_id format for panel. Expected 'scene_id:panel_number'")
+        scene_id, panel_number_str = parts
+        try:
+            panel_number = int(panel_number_str)
+        except ValueError:
+            raise HTTPException(400, "panel_number must be an integer")
+
+        # Resolve image model configuration for panels
+        regen_config = config
+        if image_model_alias:
+            regen_config = config.model_copy(update={"image_model": image_model_alias})
+
+        existing_regen = find_active_generation_job(
+            app,
+            project_name=pkey,
+            kind="panel_regen",
+            payload={"scene_id": scene_id, "panel_number": panel_number},
+        )
+        if existing_regen:
+            raise HTTPException(409, "A regeneration is already queued or running for this panel")
+
+        prompt_path = artifacts.panel_prompt_path(project_dir, scene_id, panel_number)
+        if not prompt_path.exists():
+            raise HTTPException(404, f"Prompt not found: {scene_id}/panel_{panel_number:03d}")
+
+        from novel_to_comic.server.credits import UnifiedCostResolver
+
+        panel_estimate = UnifiedCostResolver.estimate_panel_regen_cost(
+            config, project_dir, scene_id, panel_number, image_model_alias
+        )
+        assert_sufficient_credits(
+            db,
+            user_id,
+            panel_estimate["estimate_credits"],
+            action="panel_regen",
+        )
+
+        prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
+        instructed_job_id = str(uuid_lib.uuid4())
+        
+        try:
+            with ai_request_context(
+                user_id=user_id,
+                project_id=project_id,
+                project_name=project_dir.name,
+                workspace_id=str(project_dir.parent),
+                stage="draw",
+                job_id=instructed_job_id,
+            ):
+                rewrite = await text.generate_json(
+                    config=config,
+                    model=config.effective_prompt_model(),
+                    system_prompt=instruction_rewrite_system_prompt(),
+                    user_content=instruction_rewrite_user_content(instruction, prompt),
+                    temperature=0.2,
+                    max_output_tokens=1200,
+                    feature="draw.panel_instruction_rewrite",
+                )
+            patch = parse_instruction_patch(rewrite.value)
+            updated_prompt = apply_instruction_patch(prompt, patch)
+            # Re-render distilled prompt if it was present
+            from novel_to_comic.prompting import ensure_distilled_prompt
+            updated_prompt = ensure_distilled_prompt(config, updated_prompt)
+        except PromptInstructionError as exc:
+            logger.warning(
+                "Panel instruction rewrite could not be applied project=%s scene=%s panel=%s reason=%s",
+                project_dir.name, scene_id, panel_number, exc,
+            )
+            raise HTTPException(400, f"Prompt rewrite could not be applied: {exc}") from exc
+        except Exception as exc:
+            logger.exception(
+                "Panel instruction rewrite failed project=%s scene=%s panel=%s",
+                project_dir.name, scene_id, panel_number,
+            )
+            raise HTTPException(502, f"Could not rewrite the panel prompt: {exc}") from exc
+
+        if rewrite.usage:
+            debit_model_usage(
+                db,
+                user_id,
+                project_id,
+                rewrite.usage,
+                stage="draw",
+                description=f"Model call: rewrite panel prompt {scene_id}/{panel_number:03d}",
+                job_id=instructed_job_id,
+            )
+
+        prompt_path.write_text(updated_prompt.model_dump_json(indent=2))
+        clear_panel_acceptance(project_dir, scene_id, panel_number)
+        
+        log_path = project_dir / "draw" / "instruction_log.json"
+        log_data = []
+        if log_path.exists():
+            try:
+                log_data = json.loads(log_path.read_text())
+            except Exception:
+                log_data = []
+        log_data.append({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "scene_id": scene_id,
+            "panel_number": panel_number,
+            "instruction": instruction,
+            "patch": patch.model_dump(),
+            "prompt": updated_prompt.model_dump(),
+        })
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(json.dumps(log_data, indent=2, ensure_ascii=False) + "\n")
+
+        async def _runner() -> None:
+            from novel_to_comic.stages import s7_draw
+            with ai_request_context(
+                user_id=user_id,
+                project_id=project_id,
+                project_name=project_dir.name,
+                workspace_id=str(project_dir.parent),
+                stage="draw",
+                job_id=instructed_job_id,
+            ):
+                result = await s7_draw.regenerate_panel_image(
+                    regen_config,
+                    project_dir,
+                    scene_id,
+                    panel_number,
+                )
+            if result.usage:
+                debit_model_usage(
+                    db,
+                    user_id,
+                    project_id,
+                    result.usage,
+                    stage="draw",
+                    description=f"Model call: regenerate instructed panel {scene_id}/{panel_number:03d}",
+                    job_id=instructed_job_id,
+                )
+
+        prune_finished_generation_jobs(app)
+        job = enqueue_generation_job(
+            app,
+            project_name=pkey,
+            kind="panel_regen",
+            label=f"{scene_id} / panel {panel_number:03d}",
+            payload={"scene_id": scene_id, "panel_number": panel_number},
+            runner=_runner,
+            semaphore=generation_semaphore_for_config(app, regen_config),
+        )
+
+        return {
+            "status": "queued",
+            "instruction_status": "accepted",
+            "patch_summary": patch.message,
+            "job": generation_job_payload(app, job),
+            "scene_id": scene_id,
+            "panel_number": panel_number,
+            "planned_panel_id": updated_prompt.planned_panel_id,
+            "prompt": updated_prompt.model_dump(),
+        }
+
+    else:
+        # Cast assets: character, location, prop
+        asset_id = asset_id.strip()
+        kind_map = {
+            "character": ("character_ref", "character_ref_regen", "char_id", "cast.character_ref_instruction_rewrite"),
+            "location": ("location_plate", "location_plate_regen", "loc_id", "cast.location_plate_instruction_rewrite"),
+            "prop": ("prop_ref", "prop_ref_regen", "prop_id", "cast.prop_ref_instruction_rewrite"),
+        }
+        ref_kind, job_kind, payload_key, feature = kind_map[asset_type]
+
+        existing_regen = find_active_generation_job(
+            app,
+            project_name=pkey,
+            kind=job_kind,
+            payload={payload_key: asset_id},
+        )
+        if existing_regen:
+            raise HTTPException(409, f"A regeneration is already queued or running for this {asset_type}")
+
+        from novel_to_comic.server.credits import UnifiedCostResolver
+
+        asset_estimate = UnifiedCostResolver.estimate_asset_regen_cost(
+            config, project_dir, asset_type, asset_id
+        )
+        assert_sufficient_credits(
+            db,
+            user_id,
+            asset_estimate["estimate_credits"],
+            action=f"{asset_type}_regen",
+        )
+
+        bible = artifacts.read_story_bible(project_dir)
+
+        # Look up the asset first; 404 before building rewrite context.
+        if asset_type == "character":
+            asset_obj = next((c for c in bible.characters if c.id == asset_id), None)
+        elif asset_type == "location":
+            asset_obj = next((loc for loc in bible.locations if loc.id == asset_id), None)
+        elif asset_type == "prop":
+            asset_obj = next((p for p in bible.props if p.id == asset_id), None)
+        else:
+            asset_obj = None
+
+        if asset_obj is None:
+            raise HTTPException(404, f"{asset_type.capitalize()} not found: {asset_id}")
+
+        # Build rewrite context — asset_obj is guaranteed non-None here.
+        if asset_type == "character":
+            instructions_path = artifacts.character_ref_instructions_path(project_dir, asset_id)
+            rewrite_context: dict[str, object] = {
+                "character_name": asset_obj.name,
+                "visual_anchor": asset_obj.visual_anchor,
+                "default_outfit": asset_obj.default_outfit,
+                "distinguishing_features": asset_obj.distinguishing_features,
+            }
+        elif asset_type == "location":
+            instructions_path = artifacts.location_plate_instructions_path(project_dir, asset_id)
+            rewrite_context = {
+                "location_name": asset_obj.name,
+                "visual_anchor": asset_obj.visual_anchor,
+                "time_of_day": asset_obj.time_of_day,
+                "mood": asset_obj.mood,
+            }
+        else:  # prop
+            instructions_path = artifacts.prop_ref_instructions_path(project_dir, asset_id)
+            rewrite_context = {
+                "prop_name": asset_obj.name,
+                "visual_anchor": asset_obj.visual_anchor,
+            }
+
+        prior_addendum = artifacts.read_active_addendum(instructions_path)
+        rewrite_context["prior_addendum"] = prior_addendum
+
+        job_id = str(uuid_lib.uuid4())
+        rewrite = None
+        try:
+            with ai_request_context(
+                user_id=user_id,
+                project_id=project_id,
+                project_name=project_dir.name,
+                workspace_id=str(project_dir.parent),
+                stage="cast",
+                job_id=job_id,
+            ):
+                rewrite = await text.generate_json(
+                    config=config,
+                    model=config.effective_prompt_model(),
+                    system_prompt=asset_instruction_rewrite_system_prompt(ref_kind),
+                    user_content=asset_instruction_rewrite_user_content(
+                        instruction, ref_kind, rewrite_context
+                    ),
+                    temperature=0.2,
+                    max_output_tokens=900,
+                    feature=feature,
+                )
+            patch = parse_asset_instruction_patch(rewrite.value)
+        except PromptInstructionError as exc:
+            logger.warning(
+                "%s instruction rewrite could not be applied project=%s asset=%s reason=%s",
+                asset_type.capitalize(), project_dir.name, asset_id, exc,
+            )
+            raise HTTPException(400, f"Prompt rewrite could not be applied: {exc}") from exc
+        except Exception as exc:
+            logger.exception(
+                "%s instruction rewrite failed project=%s asset=%s",
+                asset_type.capitalize(), project_dir.name, asset_id,
+            )
+            raise HTTPException(502, f"Could not rewrite the prompt: {exc}") from exc
+
+        if rewrite.usage:
+            debit_model_usage(
+                db,
+                user_id,
+                project_id,
+                rewrite.usage,
+                stage="cast",
+                description=f"Model call: rewrite {asset_type} prompt {asset_id}",
+                job_id=job_id,
+            )
+
+        artifacts.append_instruction_log_entry(
+            instructions_path,
+            {
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "instruction": instruction,
+                "patch": patch.model_dump(),
+            },
+        )
+
+        async def _runner() -> None:
+            from novel_to_comic.stages import s3_cast
+            with ai_request_context(
+                user_id=user_id,
+                project_id=project_id,
+                project_name=project_dir.name,
+                workspace_id=str(project_dir.parent),
+                stage="cast",
+                job_id=job_id,
+            ):
+                if asset_type == "character":
+                    result = await s3_cast.regenerate_character_ref(config, project_dir, asset_id)
+                elif asset_type == "location":
+                    result = await s3_cast.regenerate_location_plate(config, project_dir, asset_id)
+                else:  # prop
+                    result = await s3_cast.regenerate_prop_ref(config, project_dir, asset_id)
+
+            if result.usage:
+                debit_model_usage(
+                    db,
+                    user_id,
+                    project_id,
+                    result.usage,
+                    stage="cast",
+                    description=f"Model call: regenerate instructed {asset_type} {asset_id}",
+                    job_id=job_id,
+                )
+
+        prune_finished_generation_jobs(app)
+        job = enqueue_generation_job(
+            app,
+            project_name=pkey,
+            kind=job_kind,
+            label=f"{asset_type.capitalize()} ref / {asset_id}" if asset_type != "location" else f"Location plate / {asset_id}",
+            payload={payload_key: asset_id},
+            runner=_runner,
+            semaphore=generation_semaphore_for_config(app, config),
+        )
+
+        response = {
+            "status": "queued",
+            "instruction_status": "accepted",
+            "patch_summary": patch.message,
+            "addendum": patch.addendum,
+            "job": generation_job_payload(app, job),
+        }
+        response[payload_key] = asset_id
+        return response
+

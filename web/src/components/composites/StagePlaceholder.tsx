@@ -1,5 +1,5 @@
 import { STAGE_ORDER, type StageName, type StageStatus } from "../../types/api";
-import { Icon } from "./Icon";
+import { Icon } from "../ui/Icon";
 
 // ── Stage metadata ────────────────────────────────────────────────────────────
 
