@@ -22,6 +22,7 @@ Web dashboard path (future):
 """
 
 import re
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -241,28 +242,49 @@ def _build_comic_page(
 
 # ── Export helpers ────────────────────────────────────────────────────────────
 
-def _export_pdf(page_paths: list[Path], output_path: Path) -> None:
-    if not page_paths:
+def _get_compressed_images(page_paths: list[Path], tmp_dir: str) -> list[Path]:
+    """Convert page PNGs to compressed JPEGs in a temporary directory."""
+    from PIL import Image
+    compressed_paths = []
+    for idx, png_path in enumerate(page_paths):
+        jpg_path = Path(tmp_dir) / f"page_{idx + 1:03d}.jpg"
+        with Image.open(png_path) as img:
+            rgb_img = img.convert("RGB")
+            rgb_img.save(jpg_path, "JPEG", quality=85, optimize=True)
+        compressed_paths.append(jpg_path)
+    return compressed_paths
+
+
+def _export_pdf(compressed_paths: list[Path], output_path: Path) -> None:
+    if not compressed_paths:
         return
     with open(output_path, "wb") as f:
-        f.write(img2pdf.convert([str(p) for p in page_paths]))
+        f.write(img2pdf.convert([str(p) for p in compressed_paths]))
 
 
-def _export_cbz(page_paths: list[Path], output_path: Path) -> None:
+def _export_cbz(compressed_paths: list[Path], output_path: Path) -> None:
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for i, path in enumerate(page_paths):
-            zf.write(path, f"page_{i + 1:03d}.png")
+        for i, path in enumerate(compressed_paths):
+            zf.write(path, f"page_{i + 1:03d}.jpg")
 
 
 def _do_exports(page_paths: list[Path], exports_dir: Path, formats: list[str]) -> None:
-    if "pdf" in formats:
-        pdf_path = exports_dir / "comic.pdf"
-        _export_pdf(page_paths, pdf_path)
-        console.print(f"[green]PDF:[/green] {pdf_path}")
-    if "cbz" in formats:
-        cbz_path = exports_dir / "comic.cbz"
-        _export_cbz(page_paths, cbz_path)
-        console.print(f"[green]CBZ:[/green] {cbz_path}")
+    if not page_paths:
+        return
+    
+    console.print("[dim]Optimizando tamaño de imágenes para exportación...[/dim]")
+    
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        compressed_paths = _get_compressed_images(page_paths, tmp_dir)
+        
+        if "pdf" in formats:
+            pdf_path = exports_dir / "comic.pdf"
+            _export_pdf(compressed_paths, pdf_path)
+            console.log(f"[green]PDF (Optimizado):[/green] {pdf_path}")
+        if "cbz" in formats:
+            cbz_path = exports_dir / "comic.cbz"
+            _export_cbz(compressed_paths, cbz_path)
+            console.log(f"[green]CBZ (Optimizado):[/green] {cbz_path}")
 
 
 # ── Public stage entry points ─────────────────────────────────────────────────
