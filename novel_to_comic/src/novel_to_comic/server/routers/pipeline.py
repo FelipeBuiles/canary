@@ -161,7 +161,8 @@ async def _run_stage(
             elapsed,
         )
     except Exception as exc:
-        message = str(exc)
+        from novel_to_comic.text_utils import clean_exception_message
+        message = clean_exception_message(exc)
         # StageRuntime.execute() already called fail_stage + save_state + emitted stage_fail.
         # This catch handles the case where a stage raises before entering execute().
         if state.stages[stage].status.value not in ("failed",):

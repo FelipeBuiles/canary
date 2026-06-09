@@ -81,10 +81,14 @@ model_list:
     litellm_params:
       model: fal-queue/bytedance/seedream/v4.5/edit
       api_key: os.environ/FAL_KEY
+  - model_name: image-reve
+    litellm_params:
+      model: reve/create
+      api_key: os.environ/REVE_API_KEY
   - model_name: image-quality
     litellm_params:
-      model: openai/gpt-image-2
-      api_key: os.environ/OPENAI_API_KEY
+      model: reve/create
+      api_key: os.environ/REVE_API_KEY
 
 litellm_settings:
   # Langfuse logging happens directly from the Canary AI client (see
@@ -99,6 +103,7 @@ litellm_settings:
   custom_provider_map:
     - {"provider": "fal-queue", "custom_handler": "litellm_handlers.fal_provider.fal_queue_llm"}
     - {"provider": "vertex-multimodal", "custom_handler": "litellm_handlers.vertex_multimodal.vertex_multimodal_llm"}
+    - {"provider": "reve", "custom_handler": "litellm_handlers.reve_provider.reve_llm"}
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

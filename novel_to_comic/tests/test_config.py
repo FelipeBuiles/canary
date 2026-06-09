@@ -18,6 +18,7 @@ from novel_to_comic.config import (
     image_model_aliases,
     LANGUAGE_NAMES,
     is_gpt_image_2,
+    is_reve_model,
     validate_image_model_alias,
     save_config,
     load_config,
@@ -110,10 +111,12 @@ class TestEffectiveImageModel:
 
 class TestImageModelAliases:
     def test_exposes_production_gateway_aliases(self):
+        from novel_to_comic.config import GATEWAY_IMAGE_REVE
         assert image_model_aliases() == (
             GATEWAY_IMAGE_FAST,
             GATEWAY_IMAGE_BALANCED,
             GATEWAY_IMAGE_QUALITY,
+            GATEWAY_IMAGE_REVE,
         )
 
     def test_validates_supported_alias(self):
@@ -158,8 +161,8 @@ class TestUsesGeminiImageProvider:
 
 
 class TestGptImage2Alias:
-    def test_quality_alias_is_gpt_image_2(self):
-        assert is_gpt_image_2(GATEWAY_IMAGE_QUALITY) is True
+    def test_quality_alias_is_not_gpt_image_2(self):
+        assert is_gpt_image_2(GATEWAY_IMAGE_QUALITY) is False
 
     def test_balanced_alias_is_not_gpt_image_2(self):
         assert is_gpt_image_2(GATEWAY_IMAGE_BALANCED) is False
@@ -182,6 +185,19 @@ class TestGptImage2Alias:
         assert is_gpt_image_2("image-balanced") is (
             image_models["image-balanced"] == "openai/gpt-image-2"
         )
+
+
+class TestReveModelAlias:
+    def test_quality_alias_is_reve_model(self):
+        assert is_reve_model(GATEWAY_IMAGE_QUALITY) is True
+
+    def test_reve_alias_is_reve_model(self):
+        assert is_reve_model("image-reve") is True
+        assert is_reve_model("reve/create") is True
+        assert is_reve_model("reve/remix") is True
+
+    def test_balanced_alias_is_not_reve_model(self):
+        assert is_reve_model(GATEWAY_IMAGE_BALANCED) is False
 
 
 class TestLanguageHelpers:
@@ -245,7 +261,7 @@ class TestEffectiveImageConcurrency:
         assert cfg.effective_image_concurrency(google_model=True) == 1
 
     def test_non_google_returns_max_concurrent_requests(self):
-        cfg = Config(dev_mode=False, max_concurrent_requests=5)
+        cfg = Config(dev_mode=False, max_concurrent_requests=5, image_provider="openai")
         assert cfg.effective_image_concurrency(google_model=False) == 5
 
     def test_minimum_1(self):

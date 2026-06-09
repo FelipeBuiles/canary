@@ -15,7 +15,7 @@ from rich.console import Console
 
 from novel_to_comic import artifacts
 from novel_to_comic.clients import flux
-from novel_to_comic.config import Config, is_gpt_image_2
+from novel_to_comic.config import Config, is_gpt_image_2, is_reve_model
 from novel_to_comic.events import make_progress
 from novel_to_comic.models.story_bible import Character, Prop, StoryBible
 from novel_to_comic.stage_runtime import StageRuntime
@@ -287,6 +287,47 @@ def _character_ref_prompt(
     )
 
 
+
+def _character_ref_clean_text_prompt(
+    config: Config,
+    char: Character,
+    addendum: str = "",
+) -> str:
+    style = config.style_template.strip()
+    name = char.name
+    gender = char.gender
+    anchor = char.visual_anchor.strip()
+    outfit = char.default_outfit.strip()
+
+    # When using Reve with style reference, reduce style text to avoid conflicts
+    # The style reference image will provide stronger visual guidance
+    if is_reve_model(config.effective_image_model()):
+        style = style[:200] if len(style) > 200 else style
+
+    parts = [
+        style,
+        f"CHARACTER REFERENCE SHEET - {name}, {gender}.",
+        anchor,
+    ]
+    if outfit:
+        parts.append(f"Default clothing: {outfit}")
+    if addendum.strip():
+        parts.append(f"USER FIX NOTE: {addendum.strip()}")
+
+    grid_desc = (
+        "One square image divided into a 2x2 grid of four equal panels showing the SAME character: "
+        "top-left: front-facing view; "
+        "top-right: three-quarter turn view; "
+        "bottom-left: side profile view; "
+        "bottom-right: three-quarter view with one hand raised in a gesture. "
+        "Identical face, hair, build, and clothing in all panels. "
+        "Plain neutral background. No text, no labels, no grid lines."
+    )
+    parts.append(grid_desc)
+
+    return "\n\n".join(parts)
+
+
 def _location_plate_prompt(config: Config, loc, addendum: str = "") -> str:
     addendum_text = addendum.strip()
     if is_gpt_image_2(config.effective_image_model()):
@@ -384,7 +425,11 @@ async def regenerate_character_ref(
     )
     style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
     addendum = _read_character_ref_addendum(project_dir, char.id)
-    prompt = _character_ref_prompt(config, story_bible, char, addendum)
+    model = config.effective_image_model()
+    if is_reve_model(model):
+        prompt = _character_ref_clean_text_prompt(config, char, addendum)
+    else:
+        prompt = _character_ref_prompt(config, story_bible, char, addendum)
     meta = _character_ref_meta(config, project_dir, style_ref, char, prompt, addendum)
 
     try:
@@ -537,7 +582,11 @@ async def _generate_character_refs(
             char_dir.mkdir(parents=True, exist_ok=True)
             output_path = char_dir / "sheet.png"
             addendum = _read_character_ref_addendum(project_dir, char.id)
-            prompt = _character_ref_prompt(config, story_bible, char, addendum)
+            model = config.effective_image_model()
+            if is_reve_model(model):
+                prompt = _character_ref_clean_text_prompt(config, char, addendum)
+            else:
+                prompt = _character_ref_prompt(config, story_bible, char, addendum)
             meta = _character_ref_meta(config, project_dir, style_ref, char, prompt, addendum)
 
             if artifacts.asset_matches_meta(output_path, meta):

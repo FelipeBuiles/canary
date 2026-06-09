@@ -1,5 +1,12 @@
 """Tests for image prompt composition."""
 
+import sys
+from pathlib import Path
+
+workspace_root = str(Path(__file__).parent.parent.parent)
+if workspace_root not in sys.path:
+    sys.path.insert(0, workspace_root)
+
 from novel_to_comic.config import Config
 from novel_to_comic.models.layout_plan import PlannedPanel
 from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
@@ -354,7 +361,7 @@ def test_gpt_image_2_generation_prompt_adds_material_discipline():
     gpt_prompt = render_generation_prompt(
         prompt,
         "Matte gouache, broad opaque shapes.",
-        "image-quality",
+        "openai/gpt-image-2",
     )
     gemini_prompt = render_generation_prompt(
         prompt,
@@ -860,3 +867,329 @@ def test_prompt_keeps_bundle_prop_when_character_carries_flowers(tmp_path):
     assert "Bundle of Flowers" in prompt.key_objects
     assert "Bundle of Flowers: A large, messy armful" in prompt.full_prompt
     assert "refs/props/prop_002/ref.png" in prompt.reference_image_paths
+
+
+def test_reve_prompt_injection():
+    prompt = ImagePrompt(
+        scene_id="scene_001",
+        panel_number=1,
+        full_prompt="Composition: medium shot.",
+        composition="medium shot",
+        setting="library",
+        constraints="exactly 1 character; no text",
+        width=768,
+        height=1344,
+        steps=8,
+    )
+    from novel_to_comic.ai.providers.base import RefImage
+    refs = [
+        RefImage(path=Path("refs/char_alice/front.png"), role="subject", label="Alice"),
+        RefImage(path=Path("refs/style.png"), role="style", label="selected style"),
+    ]
+    
+    generation_prompt = render_generation_prompt(prompt, "Ink wash.", "image-reve", refs=refs)
+    
+    assert "Reference images:" in generation_prompt
+    assert "Use <img>0</img> as the character reference for Alice." in generation_prompt
+    assert "Use <img>1</img> as the style reference for selected style." in generation_prompt
+
+
+def test_non_reve_models_do_not_get_img_tags():
+    """Verify that non-Reve models (GPT-Image-2, Gemini) don't receive <img> tags."""
+    prompt = ImagePrompt(
+        scene_id="scene_001",
+        panel_number=1,
+        full_prompt="Composition: medium shot.",
+        composition="medium shot",
+        setting="library",
+        constraints="exactly 1 character; no text",
+        width=768,
+        height=1344,
+        steps=8,
+    )
+    from novel_to_comic.ai.providers.base import RefImage
+    refs = [
+        RefImage(path=Path("refs/char_alice/front.png"), role="subject", label="Alice"),
+        RefImage(path=Path("refs/style.png"), role="style", label="selected style"),
+    ]
+    
+    # Test GPT-Image-2
+    gpt_prompt = render_generation_prompt(prompt, "Ink wash.", "openai/gpt-image-2", refs=refs)
+    assert "<img>" not in gpt_prompt, "GPT-Image-2 should not receive <img> tags"
+    assert "</img>" not in gpt_prompt, "GPT-Image-2 should not receive </img> tags"
+    
+    # Test Gemini (image-balanced)
+    gemini_prompt = render_generation_prompt(prompt, "Ink wash.", "image-balanced", refs=refs)
+    assert "<img>" not in gemini_prompt, "Gemini should not receive <img> tags"
+    assert "</img>" not in gemini_prompt, "Gemini should not receive </img> tags"
+
+
+
+def test_reve_cast_clean_text_prompt():
+    from novel_to_comic.stages.s3_cast import _character_ref_clean_text_prompt
+    from novel_to_comic.models.story_bible import Character
+    from novel_to_comic.config import Config
+    
+    char = Character(
+        id="char_thurston",
+        name="Francis Wayland Thurston",
+        visual_anchor="A tall man with spectacles and a brown coat.",
+        age_range="30",
+        gender="male",
+        distinguishing_features=["spectacles"],
+        default_outfit="brown coat",
+        relationships=[],
+        first_appearance_scene="scene_001",
+    )
+    
+    config = Config(style_template="Dark charcoal sketch style.")
+    prompt_str = _character_ref_clean_text_prompt(config, char, addendum="Make him look studious")
+    
+    assert "Dark charcoal sketch style" in prompt_str
+    assert "CHARACTER REFERENCE SHEET - Francis Wayland Thurston, male." in prompt_str
+    assert "A tall man with spectacles and a brown coat" in prompt_str
+    assert "Default clothing: brown coat" in prompt_str
+    assert "USER FIX NOTE: Make him look studious" in prompt_str
+    assert "divided into a 2x2 grid of four equal panels" in prompt_str
+    assert "STYLE AUTHORITY" not in prompt_str
+    assert "CAST IDENTITY LOCK" not in prompt_str
+
+
+def test_reve_aspect_ratio_mapping():
+    from litellm_handlers.reve_provider import _map_aspect_ratio
+    assert _map_aspect_ratio("1024x1024") == "1:1"
+    assert _map_aspect_ratio("1536x1024") == "3:2"
+    assert _map_aspect_ratio("1024x1536") == "2:3"
+    assert _map_aspect_ratio("1920x1080") == "16:9"
+    assert _map_aspect_ratio("1080x1920") == "9:16"
+
+
+def test_reve_refs_priority_and_capping():
+    from novel_to_comic.stages.s7_draw import _reve_refs
+    from novel_to_comic.ai.providers.base import RefImage
+    
+    refs = [
+        RefImage(path=Path("subj1.png"), role="subject", label="Alice"),
+        RefImage(path=Path("subj2.png"), role="subject", label="Bob"),
+        RefImage(path=Path("subj3.png"), role="subject", label="Charlie"),
+        RefImage(path=Path("style.png"), role="style", label="Style"),
+        RefImage(path=Path("loc.png"), role="location_plate", label="Loc"),
+        RefImage(path=Path("prop.png"), role="prop", label="Prop"),
+        RefImage(path=Path("cont.png"), role="continuity", label="Cont"),
+    ]
+    
+    selected = _reve_refs(refs)
+    
+    assert len(selected) == 4
+    # Style is prioritized first for visual consistency
+    assert selected[0].path.name == "style.png"
+    assert selected[1].path.name == "subj1.png"
+    assert selected[2].path.name == "subj2.png"
+    assert selected[3].path.name == "subj3.png"
+
+
+def test_reve_layout_prompt_handling(monkeypatch):
+    import json
+    from litellm_handlers.reve_provider import reve_llm
+
+    captured_url = None
+    captured_payload = None
+
+    class MockResponse:
+        status_code = 200
+        def json(self):
+            return {"images": [{"b64_json": "data:image/png;base64,iVBORw0KGgo="}]}
+        def raise_for_status(self):
+            pass
+
+    async def mock_post(client, url, **kwargs):
+        nonlocal captured_url, captured_payload
+        captured_url = url
+        captured_payload = kwargs.get("json")
+        return MockResponse()
+
+    monkeypatch.setattr("httpx.AsyncClient.post", mock_post)
+    monkeypatch.setenv("REVE_API_KEY", "test_key")
+
+    from litellm_handlers.reve_provider import ImageResponse
+    model_response = ImageResponse()
+
+    layout_data = {
+        "width": 1024,
+        "height": 1024,
+        "overall_prompt": "A beautiful kitchen flat-lay",
+        "regions": [
+            {
+                "bbox": {"x0": 0.1, "y0": 0.1, "x1": 0.5, "y1": 0.5},
+                "prompt": "a bowl of fruit",
+                "label": "bowl"
+            }
+        ]
+    }
+
+    # Test passing layout prompt as JSON string in prompt
+    import asyncio
+    asyncio.run(
+        reve_llm.aimage_generation(
+            model="reve/layout2image",
+            prompt=json.dumps({"layout": layout_data}),
+            api_key="test_key",
+            api_base=None,
+            model_response=model_response,
+            optional_params={},
+            logging_obj=None,
+        )
+    )
+
+    assert captured_url == "https://api.reve.com/v1/image/layout"
+    assert captured_payload is not None
+    assert captured_payload["model"] == "layout2image"
+    assert captured_payload["layout"] == layout_data
+
+    # Test passing layout in optional_params
+    captured_url = None
+    captured_payload = None
+    asyncio.run(
+        reve_llm.aimage_generation(
+            model="reve/layout",
+            prompt="ignored prompt",
+            api_key="test_key",
+            api_base=None,
+            model_response=model_response,
+            optional_params={"layout": layout_data},
+            logging_obj=None,
+        )
+    )
+
+    assert captured_url == "https://api.reve.com/v1/image/layout"
+    assert captured_payload["model"] == "layout2image"
+    assert captured_payload["layout"] == layout_data
+
+    # Test coordinate normalization from x,y,w,h + description mapping
+    xywh_layout_data = {
+        "width": 1024,
+        "height": 1024,
+        "description": "A beautiful kitchen flat-lay",
+        "regions": [
+            {
+                "x": 0.1,
+                "y": 0.2,
+                "w": 0.4,
+                "h": 0.3,
+                "description": "a bowl of fruit",
+                "label": "bowl"
+            }
+        ]
+    }
+    captured_url = None
+    captured_payload = None
+    asyncio.run(
+        reve_llm.aimage_generation(
+            model="reve/layout",
+            prompt="ignored prompt",
+            api_key="test_key",
+            api_base=None,
+            model_response=model_response,
+            optional_params={"layout": xywh_layout_data},
+            logging_obj=None,
+        )
+    )
+
+    assert captured_url == "https://api.reve.com/v1/image/layout"
+    assert captured_payload["model"] == "layout2image"
+    normalized = captured_payload["layout"]
+    assert normalized["overall_prompt"] == "A beautiful kitchen flat-lay"
+    assert normalized["regions"][0]["prompt"] == "a bowl of fruit"
+    assert normalized["regions"][0]["bbox"] == {"x0": 0.1, "y0": 0.2, "x1": 0.5, "y1": 0.5}
+
+    # Test list bbox normalization [x0, y0, x1, y1]
+    list_bbox_layout = {
+        "width": 1024,
+        "height": 1024,
+        "overall_prompt": "A beautiful kitchen flat-lay",
+        "regions": [
+            {
+                "bbox": [0.1, 0.2, 0.5, 0.5],
+                "prompt": "a bowl of fruit",
+                "label": "bowl"
+            }
+        ]
+    }
+    captured_url = None
+    captured_payload = None
+    asyncio.run(
+        reve_llm.aimage_generation(
+            model="reve/layout",
+            prompt="ignored prompt",
+            api_key="test_key",
+            api_base=None,
+            model_response=model_response,
+            optional_params={"layout": list_bbox_layout},
+            logging_obj=None,
+        )
+    )
+    normalized = captured_payload["layout"]
+    assert normalized["regions"][0]["bbox"] == {"x0": 0.1, "y0": 0.2, "x1": 0.5, "y1": 0.5}
+
+
+def test_build_style_sample_prompt():
+    from novel_to_comic.prompting import build_style_sample_prompt
+    config = Config(style_template="Clinical, desaturated visual language.")
+    story_bible = StoryBible(
+        title="DCC",
+        author="Matt Dinniman",
+        total_scenes=1,
+        characters=[
+            Character(
+                id="char_001",
+                name="Carl",
+                visual_anchor="1man, adult male, leather jacket",
+                age_range="late 20s",
+                gender="male",
+                distinguishing_features=[],
+                default_outfit="",
+                relationships=[],
+                first_appearance_scene="scene_001",
+            )
+        ],
+        locations=[
+            Location(
+                id="loc_001",
+                name="Seattle Street",
+                visual_anchor="outdoors, snow, winter",
+                mood="apocalyptic",
+            )
+        ],
+        scenes=[
+            Scene(
+                id="scene_001",
+                chapter=1,
+                title="The Transformation",
+                location_id="loc_001",
+                character_ids=["char_001"],
+                summary="Carl outside.",
+                scene_type="transition",
+                narrative_beat="inciting_incident",
+                source_start_quote="The transformation occurred",
+            )
+        ],
+        narrative_arcs=[],
+        props=[],
+    )
+
+    prompt = build_style_sample_prompt(config, story_bible)
+
+    # Check for style-neutral, comic-bias-free wording
+    assert "comic's art direction" not in prompt
+    assert "panel" not in prompt
+    assert "project's art direction" in prompt
+    assert "aspect ratio frame" in prompt
+    assert "free of any text, borders, speech bubbles" in prompt
+    assert "Ensure all details support the style authority" in prompt
+    
+    # Check that style authority is present
+    assert "Clinical, desaturated visual language." in prompt
+
+
+
+

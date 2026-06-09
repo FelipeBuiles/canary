@@ -22,9 +22,32 @@ aliases:
   image-fast: vertex_ai/gemini-3.1-flash-image-preview
   image-balanced: vertex_ai/gemini-3-pro-image-preview
   image-balanced-seedream-test: fal-ai/bytedance/seedream/v4.5/edit
-  image-quality: openai/gpt-image-2
+  image-reve: reve/create
+  image-quality: reve/create
 
 model_overrides:
+  reve/create:
+    output_cost_per_image: 0.04
+    mode: image_generation
+  reve/remix:
+    output_cost_per_image: 0.04
+    mode: image_generation
+  reve/layout:
+    output_cost_per_image: 0.04
+    mode: image_generation
+  reve/layout2image:
+    output_cost_per_image: 0.04
+    mode: image_generation
+  reve/text2layout:
+    output_cost_per_image: 0.04
+    mode: image_generation
+  reve/image2layout:
+    output_cost_per_image: 0.04
+    mode: image_generation
+  reve/layout2layout:
+    output_cost_per_image: 0.04
+    mode: image_generation
+
   # Google Gemini text models.
   # source: https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing,
   # verified 2026-05-08.

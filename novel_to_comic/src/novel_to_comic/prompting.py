@@ -5,12 +5,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from novel_to_comic.config import Config, is_gpt_image_2
+from novel_to_comic.config import Config, is_gpt_image_2, is_reve_model
 from novel_to_comic.models.layout_plan import PlannedPanel
 from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
 from novel_to_comic.models.story_bible import Character, StoryBible
 from novel_to_comic.panel_aspect import dimensions_for_generation_shape, frame_phrase
 from novel_to_comic.text_utils import clean, shorten
+from novel_to_comic.ai.providers.base import RefImage
 
 
 _SHOT_DIMENSIONS: dict[str, tuple[int, int]] = {
@@ -559,7 +560,6 @@ def build_planned_panel_prompt_spec(
     # Resolve the active location state for this panel. Panel-level override
     # wins, then scene-level, else the location's default visual_anchor.
     active_state_anchor = None
-    active_state_mood = None
     state_id = getattr(panel, "location_state_id", None) or (
         scene.location_state_id if scene else None
     )
@@ -1154,6 +1154,7 @@ def render_generation_prompt(
     prompt: ImagePrompt,
     style_template: str,
     image_model: str | None = None,
+    refs: list[RefImage] | None = None,
 ) -> str:
     style = _clean(style_template or getattr(prompt, "style", None))
     body = _clean(getattr(prompt, "distilled_prompt", None)) or generate_distilled_prompt(prompt)
@@ -1163,6 +1164,31 @@ def render_generation_prompt(
     if image_model and is_gpt_image_2(image_model):
         _append_section(sections, "Rendering discipline", _GPT_IMAGE_2_RENDERING_DISCIPLINE)
     _append_section(sections, "Visual brief", body)
+
+    if image_model and is_reve_model(image_model) and refs:
+        # Sort refs to match the upload order applied by _flatten_refs in litellm_http.py
+        # so <img>N</img> indices in the prompt correspond to the correct uploaded files.
+        _ref_priority = {"subject": 0, "prop": 1, "continuity": 2, "style": 3, "location_plate": 4}
+        ordered_refs = sorted(refs, key=lambda r: _ref_priority.get(r.role, 99))
+        ref_instructions = []
+        for idx, ref in enumerate(ordered_refs):
+            role = ref.role
+            label = ref.label
+            if role == "subject":
+                instr = f"Use <img>{idx}</img> as the character reference for {label}." if label else f"Use <img>{idx}</img> as the character reference."
+            elif role == "style":
+                instr = f"Use <img>{idx}</img> as the style reference for {label}." if label else f"Use <img>{idx}</img> as the style reference."
+            elif role == "location_plate":
+                instr = f"Use <img>{idx}</img> as the location reference for {label}." if label else f"Use <img>{idx}</img> as the location reference."
+            elif role == "prop":
+                instr = f"Use <img>{idx}</img> as the object reference for {label}." if label else f"Use <img>{idx}</img> as the object reference."
+            elif role == "continuity":
+                instr = f"Use <img>{idx}</img> for visual continuity."
+            else:
+                instr = f"Use <img>{idx}</img> as a reference."
+            ref_instructions.append(instr)
+        if ref_instructions:
+            _append_section(sections, "Reference images", "\n".join(ref_instructions))
 
     constraints = _clean(getattr(prompt, "constraints", None))
     if getattr(prompt, "has_narration_caption", False):
@@ -1210,18 +1236,13 @@ def build_style_sample_prompt(config: Config, story_bible: StoryBible) -> str:
         200,
     ) or "a dramatic atmospheric setting"
     return (
-        "Create one style proof image for evaluating this comic's art direction. "
+        "Create one style proof image for evaluating the project's art direction. "
         f"Subject: {char_desc}. Setting: {loc_desc}. "
-        "Use a single portrait 4:5 panel, filled edge to edge with no letterboxing, "
-        "pillarboxing, border margins, text, speech bubbles, or captions. "
-        "The selected visual medium must be obvious at first glance: emphasize its "
-        "materials, mark-making, color handling, rendering conventions, lighting "
-        "language, and composition choices while keeping surfaces clean and readable.\n\n"
+        "Use a single portrait 4:5 aspect ratio frame, filling the entire canvas from edge to edge. "
+        "Emphasize the specific visual medium, colors, textures, lighting, and composition. "
+        "Keep the image clean, coherent, and free of any text, borders, speech bubbles, or margins.\n\n"
         "STYLE AUTHORITY - demonstrate this exactly:\n"
         f"{config.style_template}\n\n"
-        "Every visible choice should support the style authority above. Do not fall "
-        "back to generic cinematic, comic, or digital illustration defaults unless "
-        "they are explicitly part of that style. Avoid stochastic grain, speckled "
-        "dappling, repeated texture fields, pattern tiling, compression artifacts, "
-        "and muddy micro-detail."
+        "Ensure all details support the style authority above. "
+        "Maintain clean, clear surfaces with sharp focus on the style's distinctive elements."
     )

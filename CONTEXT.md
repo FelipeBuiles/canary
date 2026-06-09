@@ -146,3 +146,21 @@ per-project.
 ## Integration concepts
 
 **Library of Short Stories** — A public-domain literature archive (`libraryofshortstories.com`) integrated as a text source option for project generation. Stories can be imported using their URL or unique story code.
+
+---
+
+## Localization and translation
+
+**Target language (`target_language`)** — The configured project-level language (e.g., English, Spanish, French) that controls generated creative text (dialogue, narration, panel descriptions) down the pipeline. AI models are instructed to translate creative fields while preserving structural keys, IDs, and character/location names verbatim.
+
+**UI localization (i18n)** — The frontend translation system (`web/src/i18n.tsx`) that translates UI labels, buttons, and settings in the browser based on the user's selected preference, separate from the project's target generation language.
+
+---
+
+## Layout and aspect ratios
+
+**GenerationShape** — The target bounding bucket for image generation: `"square"` (1024x1024), `"portrait"` (768x1024), or `"landscape"` (1344x768). All numeric layout aspect ratios are mapped to one of these three shapes for optimal generation quality.
+
+**Aspect tolerance** — The allowable floating-point discrepancy (default 12% or `ASPECT_TOLERANCE = 0.12` in `panel_aspect.py`) between a generated image's aspect ratio and its requested aspect ratio. Crucially, any two ratios that map to the same `GenerationShape` are automatically considered within tolerance.
+
+

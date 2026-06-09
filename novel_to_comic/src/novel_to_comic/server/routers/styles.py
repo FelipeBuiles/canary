@@ -171,7 +171,6 @@ async def suggest_styles(
             })
             existing_suggestions = load_suggestions(project_dir)
             existing_count = len(existing_suggestions)
-            existing_labels = [s.get("label", "") for s in existing_suggestions if isinstance(s, dict)]
             with ai_request_context(
                 user_id=user_id,
                 project_id=project_id,
@@ -181,7 +180,7 @@ async def suggest_styles(
                 job_id=job_id,
             ):
                 new_suggestions, _usage = await generate_suggestions(
-                    config, bible, existing_labels=existing_labels,
+                    config, bible, existing_suggestions=existing_suggestions,
                 )
                 merged = existing_suggestions + new_suggestions
                 save_suggestions(project_dir, merged, bible.title)
