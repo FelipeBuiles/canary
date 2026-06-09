@@ -2,7 +2,7 @@
 
 import pytest
 
-from novel_to_comic.text_utils import clean, shorten
+from novel_to_comic.text_utils import clean, shorten, clean_exception_message
 
 
 class TestClean:
@@ -56,3 +56,40 @@ class TestShorten:
         result = shorten("hello\n\nworld", 50)
         assert "\n" not in result
         assert "hello world" in result
+
+
+class TestCleanExceptionMessage:
+    def test_generic_exception(self):
+        exc = ValueError("Some standard error message")
+        assert clean_exception_message(exc) == "Some standard error message"
+
+    def test_strip_mozilla_url(self):
+        exc = Exception(
+            "Server error '500 Internal Server Error' for url 'http://localhost:4000/v1/images/generations'\n"
+            "For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+        )
+        expected = "Server error '500 Internal Server Error' for url 'http://localhost:4000/v1/images/generations'"
+        assert clean_exception_message(exc) == expected
+
+    def test_httpx_status_error_json_error(self):
+        import httpx
+        request = httpx.Request("POST", "http://localhost:4000/v1/images/generations")
+        response = httpx.Response(
+            status_code=500,
+            request=request,
+            json={"error": {"message": "REVE_API_KEY is not set"}}
+        )
+        exc = httpx.HTTPStatusError("500 Internal Server Error", request=request, response=response)
+        assert clean_exception_message(exc) == "HTTPStatusError: 500 Internal Server Error - REVE_API_KEY is not set"
+
+    def test_httpx_status_error_json_detail(self):
+        import httpx
+        request = httpx.Request("POST", "http://localhost:4000/v1/images/generations")
+        response = httpx.Response(
+            status_code=400,
+            request=request,
+            json={"detail": "Invalid model parameter"}
+        )
+        exc = httpx.HTTPStatusError("400 Bad Request", request=request, response=response)
+        assert clean_exception_message(exc) == "HTTPStatusError: 400 Bad Request - Invalid model parameter"
+

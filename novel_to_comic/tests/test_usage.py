@@ -12,7 +12,7 @@ from novel_to_comic.usage import UsageRecord, audit_pricing, calculate_cost, cal
 def test_image_alias_with_token_usage_uses_resolved_provider_token_pricing():
     usage = UsageRecord(
         provider="openai",
-        model="image-quality",
+        model="gpt-image-2",
         operation="image",
         input_tokens=1000,
         output_tokens=2000,
@@ -38,7 +38,7 @@ def test_token_priced_image_model_uses_token_pricing():
 def test_image_alias_without_token_usage_uses_resolved_per_image_estimate():
     usage = UsageRecord(
         provider="openai",
-        model="image-quality",
+        model="gpt-image-2",
         operation="image",
         image_count=1,
     )
@@ -48,12 +48,12 @@ def test_image_alias_without_token_usage_uses_resolved_per_image_estimate():
 
 
 def test_token_priced_image_alias_estimates_via_quality_token_table():
-    # image-quality → gpt-image-2, which is token-priced. The override yaml
+    # gpt-image-2 is token-priced. The override yaml
     # supplies image_output_tokens_by_quality so estimates scale by quality.
     # 2 images × 1056 (auto/medium) × $0.00003 = $0.06336
-    assert estimate_image_cost("image-quality", 2) == approx(0.06336)
+    assert estimate_image_cost("gpt-image-2", 2) == approx(0.06336)
     # 2 images × 4160 (high) × $0.00003 = $0.2496
-    assert estimate_image_cost("image-quality", 2, quality="high") == approx(0.2496)
+    assert estimate_image_cost("gpt-image-2", 2, quality="high") == approx(0.2496)
 
 
 def test_balanced_image_alias_estimates_gemini_pro_image_cost():

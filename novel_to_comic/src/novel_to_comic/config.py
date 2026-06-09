@@ -37,21 +37,36 @@ GATEWAY_PROMPT_QUALITY = "prompt-quality"
 GATEWAY_IMAGE_FAST = "image-fast"
 GATEWAY_IMAGE_BALANCED = "image-balanced"
 GATEWAY_IMAGE_QUALITY = "image-quality"
+GATEWAY_IMAGE_REVE = "image-reve"
 IMAGE_MODEL_ALIASES = (
     GATEWAY_IMAGE_FAST,
     GATEWAY_IMAGE_BALANCED,
     GATEWAY_IMAGE_QUALITY,
+    GATEWAY_IMAGE_REVE,
 )
 
 # image-quality is the only alias that resolves to OpenAI gpt-image-2. Used by
 # stage code that needs to enable the OpenAI image-edit / reference workflow.
-GPT_IMAGE_2_ALIASES: frozenset[str] = frozenset({GATEWAY_IMAGE_QUALITY})
+GPT_IMAGE_2_ALIASES: frozenset[str] = frozenset()
+
+# Reve aliases pointing to the custom Reve provider.
+REVE_ALIASES: frozenset[str] = frozenset({GATEWAY_IMAGE_REVE, GATEWAY_IMAGE_QUALITY})
 
 
 def is_gpt_image_2(model: str) -> bool:
     """True if `model` resolves to OpenAI gpt-image-2 via the gateway or directly."""
     normalized = (model or "").strip().lower()
     return normalized in {"gpt-image-2", "openai/gpt-image-2"} or normalized in GPT_IMAGE_2_ALIASES
+
+
+def is_reve_model(model: str) -> bool:
+    """True if `model` resolves to Reve via the gateway or directly."""
+    normalized = (model or "").strip().lower()
+    return (
+        normalized in {"image-reve", "reve/create", "reve/remix"}
+        or normalized.startswith("reve/")
+        or normalized in REVE_ALIASES
+    )
 
 
 def image_model_aliases() -> tuple[str, ...]:
@@ -146,7 +161,7 @@ class Config(BaseModel):
     screenplay_model: str = GATEWAY_SCREENPLAY_BALANCED
     panel_model: str = GATEWAY_PANEL_BALANCED
     prompt_model: str = GATEWAY_PROMPT_BALANCED
-    image_provider: Literal["gemini", "openai", "openrouter", "together"] = "gemini"
+    image_provider: Literal["gemini", "openai", "openrouter", "together", "reve"] = "gemini"
     image_model: str = GATEWAY_IMAGE_BALANCED
     fallback_image_model: str = GATEWAY_IMAGE_FAST
 

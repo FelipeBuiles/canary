@@ -113,7 +113,7 @@ def test_generate_panel_regenerates_stale_existing_image(tmp_path, monkeypatch):
     result = asyncio.run(
         s7_draw._generate_panel(
             Config(
-                image_model="image-quality",
+                image_model="openai/gpt-image-2",
                 style_template="Matte gouache, broad opaque shapes.",
             ),
             tmp_path,
@@ -221,7 +221,7 @@ def test_gpt_image_2_reference_resolution_keeps_location_plate_text_only(tmp_pat
     )
 
     gpt_refs = s7_draw.resolve_panel_references(
-        Config(image_model="image-quality"),
+        Config(image_model="openai/gpt-image-2"),
         tmp_path,
         prompt,
         style_sample=style_path,
@@ -284,7 +284,7 @@ def test_gpt_image_2_reference_resolution_uses_minimal_subject_refs(tmp_path):
     )
 
     gpt_refs = s7_draw.resolve_panel_references(
-        Config(image_model="image-quality"),
+        Config(image_model="openai/gpt-image-2"),
         tmp_path,
         prompt,
     )
@@ -304,7 +304,7 @@ def test_gpt_image_2_cast_assets_skip_style_sample(tmp_path):
     style_path = tmp_path / "samples" / "style_1.png"
 
     assert s3_cast._cast_asset_style_ref(
-        Config(image_model="image-quality"),
+        Config(image_model="openai/gpt-image-2"),
         style_path,
     ) is None
     assert s3_cast._cast_asset_style_ref(
@@ -370,7 +370,7 @@ def test_gpt_image_2_location_plate_prompt_uses_low_texture_plate_language(tmp_p
         ),
     )
     config = Config(
-        image_model="image-quality",
+        image_model="openai/gpt-image-2",
         style_template="Matte gouache, broad opaque shapes and clean edges.",
     )
 
@@ -428,7 +428,7 @@ def test_non_gpt_location_plate_prompt_keeps_existing_shape(tmp_path):
 
 def test_regenerate_gpt_location_plate_uses_landscape_text_only(tmp_path, monkeypatch):
     config = Config(
-        image_model="image-quality",
+        image_model="openai/gpt-image-2",
         style_template="Matte gouache, broad opaque shapes and clean edges.",
     )
     story_bible = StoryBible(
@@ -531,7 +531,7 @@ def test_gpt_image_continuity_refs_are_text_only(tmp_path):
     current_prompt = ImagePrompt.model_validate_json(current_prompt_path.read_text())
 
     gpt_refs = s7_draw.resolve_panel_references(
-        Config(image_model="image-quality"),
+        Config(image_model="openai/gpt-image-2"),
         tmp_path,
         current_prompt,
         prompt_path=current_prompt_path,
@@ -552,7 +552,7 @@ def test_gpt_image_continuity_refs_are_text_only(tmp_path):
     (prompt_dir / "panel_001.json").write_text(match_prev.model_dump_json())
 
     match_refs = s7_draw.resolve_panel_references(
-        Config(image_model="image-quality"),
+        Config(image_model="openai/gpt-image-2"),
         tmp_path,
         current_prompt,
         prompt_path=current_prompt_path,

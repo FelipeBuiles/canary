@@ -112,7 +112,9 @@
       "Bash(rtk npm *)",
       "Bash(cat > *)",
       "Bash(ask-ai \"Summarize: \\(1\\) the stage lifecycle calls in state.py \\(begin_stage, record_item_done, record_api_usage, complete_stage, fail_stage, STAGE_NAMES\\), \\(2\\) EventCallback and event emission in events.py, \\(3\\) the STAGE dataclass and REGISTRY in stages/__init__.py. Show the key function signatures.\" novel_to_comic/src/novel_to_comic/state.py novel_to_comic/src/novel_to_comic/events.py novel_to_comic/src/novel_to_comic/stages/__init__.py)",
-      "Bash(ask-ai \"What does this PrimitiveReference page show? List every primitive it documents in sections. Is it linked anywhere from the app router \\(App.tsx\\)?\" web/src/pages/PrimitiveReference.tsx web/src/App.tsx)"
+      "Bash(ask-ai \"What does this PrimitiveReference page show? List every primitive it documents in sections. Is it linked anywhere from the app router \\(App.tsx\\)?\" web/src/pages/PrimitiveReference.tsx web/src/App.tsx)",
+      "Skill(code-review)",
+      "Skill(code-review:*)"
     ]
   },
   "hooks": {

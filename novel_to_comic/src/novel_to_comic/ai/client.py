@@ -166,6 +166,8 @@ def _provider_from_model(model: str | None) -> str:
     if not model:
         return "litellm"
     lower = model.lower()
+    if lower.startswith("reve"):
+        return "reve"
     if "/" in lower:
         return lower.split("/", 1)[0]
     if lower.startswith("gemini"):

@@ -20,9 +20,24 @@ api_logger = logging.getLogger("canary.api")
 
 def configure_logging() -> None:
     """Configure concise terminal logs for `pipeline serve`."""
+    import sys
+    
     level_name = os.environ.get("CANARY_LOG_LEVEL", "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
     show_time = bool_env("CANARY_LOG_SHOW_TIME", default=False)
+    
+    # Suppress verbose traceback frames from third-party libraries and venv
+    suppress_list = [
+        "httpx", "asyncio", "fastapi", "uvicorn", "starlette", "anyio",
+        "click", "jinja2", "sqlalchemy", "pydantic", "http", "litellm",
+    ]
+    try:
+        for path in sys.path:
+            if "site-packages" in path or ".venv" in path:
+                suppress_list.append(path)
+    except Exception:
+        pass
+
     logging.basicConfig(
         level=level,
         format="%(message)s",
@@ -31,6 +46,8 @@ def configure_logging() -> None:
                 console=Console(stderr=True),
                 markup=True,
                 rich_tracebacks=True,
+                tracebacks_extra_lines=1,
+                tracebacks_suppress=suppress_list,
                 show_path=False,
                 show_level=True,
                 show_time=show_time,

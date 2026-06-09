@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -62,12 +64,36 @@ class LitellmHttpProvider:
         started = time.perf_counter()
         endpoint = "/v1/images/edits" if loaded_refs else "/v1/images/generations"
         response = None
+        
+        # Log Canary LiteLLM call parameters
+        url = f"{ai_client._base_url(config)}{endpoint}"
+        headers = ai_client._headers(config, event_id)
+        sys.stderr.write("\n=== [CANARY LITELLM GATEWAY CALL START] ===\n")
+        sys.stderr.write(f"URL: {url}\n")
+        logged_headers = {k: ("***REDACTED***" if k.lower() == "authorization" else v) for k, v in headers.items()}
+        sys.stderr.write(f"Headers: {json.dumps(logged_headers)}\n")
+        if loaded_refs:
+            sys.stderr.write(f"Prompt: {prompt}\n")
+            sys.stderr.write(f"Metadata: {json.dumps(metadata)}\n")
+            form_params = {k: str(v) for k, v in request_params.items() if v is not None}
+            sys.stderr.write(f"Form Params: {json.dumps(form_params)}\n")
+            sys.stderr.write(f"Files count: {len(loaded_refs)} ({[ref.path.name for ref, _ in loaded_refs]})\n")
+        else:
+            payload = {
+                "prompt": prompt,
+                "metadata": metadata,
+                **{k: v for k, v in request_params.items() if v is not None},
+            }
+            sys.stderr.write(f"Payload: {json.dumps(payload, indent=2)}\n")
+        sys.stderr.write("===========================================\n\n")
+        sys.stderr.flush()
+
         if loaded_refs:
             files = [("image", (_ref_filename(ref), data, _mime_type(ref.path))) for ref, data in loaded_refs]
             form_params = {k: str(v) for k, v in request_params.items() if v is not None}
             response = await ai_client._post_with_retry(
-                f"{ai_client._base_url(config)}{endpoint}",
-                headers=ai_client._headers(config, event_id),
+                url,
+                headers=headers,
                 data={
                     "prompt": prompt,
                     "metadata": ai_client._json_dumps(metadata),
@@ -77,16 +103,44 @@ class LitellmHttpProvider:
             )
         else:
             response = await ai_client._post_with_retry(
-                f"{ai_client._base_url(config)}{endpoint}",
-                headers=ai_client._headers(config, event_id),
+                url,
+                headers=headers,
                 json={
                     "prompt": prompt,
                     "metadata": metadata,
                     **{k: v for k, v in request_params.items() if v is not None},
                 },
             )
+            
+        # Log Canary LiteLLM call response
+        sys.stderr.write("=== [CANARY LITELLM GATEWAY RESPONSE] ===\n")
+        sys.stderr.write(f"Status Code: {response.status_code}\n")
+        sys.stderr.write(f"Latency: {int((time.perf_counter() - started) * 1000)}ms\n")
+        resp_data = None
+        try:
+            resp_data = response.json()
+            logged_resp = resp_data.copy() if isinstance(resp_data, dict) else resp_data
+            if isinstance(logged_resp, dict):
+                for key_to_redact in ("images", "data"):
+                    if key_to_redact in logged_resp:
+                        items = logged_resp[key_to_redact]
+                        if isinstance(items, list):
+                            logged_resp[key_to_redact] = [
+                                {k: ("<Base64 Redacted>" if k in ("b64_json", "image") else v) for k, v in item.items()}
+                                if isinstance(item, dict) else item
+                                for item in items
+                            ]
+                for key_to_redact in ("b64_json", "image"):
+                    if key_to_redact in logged_resp:
+                        logged_resp[key_to_redact] = "<Base64 Redacted>"
+            sys.stderr.write(f"JSON Response: {json.dumps(logged_resp, indent=2)}\n")
+        except Exception:
+            sys.stderr.write(f"Raw Response: {response.text[:500]}...\n")
+        sys.stderr.write("==========================================\n\n")
+        sys.stderr.flush()
+
         response.raise_for_status()
-        data = response.json()
+        data = resp_data if resp_data is not None else response.json()
         if ai_client._is_refusal(data):
             raise AIRefusalError(
                 "AI image request was refused by gateway/provider",

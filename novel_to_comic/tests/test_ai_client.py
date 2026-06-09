@@ -359,7 +359,7 @@ def test_gpt_image_2_alias_uses_exact_valid_panel_size(monkeypatch, tmp_path: Pa
     asyncio.run(
         client.generate_image(
             config=Config(),
-            model="image-quality",
+            model="openai/gpt-image-2",
             prompt="draw this",
             output_path=output_path,
             width=768,

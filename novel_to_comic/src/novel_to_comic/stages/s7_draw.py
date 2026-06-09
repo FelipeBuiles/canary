@@ -18,7 +18,7 @@ from rich.console import Console
 from novel_to_comic import artifacts
 from novel_to_comic.ai.providers.base import RefImage
 from novel_to_comic.clients import flux
-from novel_to_comic.config import Config, is_gpt_image_2
+from novel_to_comic.config import Config, is_gpt_image_2, is_reve_model
 from novel_to_comic.events import make_progress
 from novel_to_comic.layout_planning import load_layout_plan, prompt_path_for_panel, scene_panel_map
 from novel_to_comic.models.prompt import ImagePrompt
@@ -176,6 +176,47 @@ def _gpt_image_2_subject_refs(paths: list[Path]) -> list[Path]:
     return prop_refs[:1]
 
 
+def _reve_refs(refs: list[RefImage]) -> list[RefImage]:
+    # Group references by role
+    subjects = [r for r in refs if r.role == "subject"]
+    styles = [r for r in refs if r.role == "style"]
+    locations = [r for r in refs if r.role == "location_plate"]
+    props = [r for r in refs if r.role == "prop"]
+    continuities = [r for r in refs if r.role == "continuity"]
+    
+    selected: list[RefImage] = []
+    
+    # 1. Prioritize style reference first for consistency (up to 1)
+    if styles:
+        selected.extend(styles[:1])
+    
+    # 2. Add subject references (up to 2)
+    selected.extend(subjects[:2])
+    
+    # 3. Add location if no style reference (up to 1)
+    if not styles and locations:
+        selected.extend(locations[:1])
+        
+    # 4. Fill remaining slots with other refs, up to 4 total
+    remaining_candidates = []
+    remaining_candidates.extend(subjects[2:])
+    if styles:
+        remaining_candidates.extend(locations)
+        remaining_candidates.extend(styles[1:])
+    else:
+        remaining_candidates.extend(locations[1:])
+    remaining_candidates.extend(props)
+    remaining_candidates.extend(continuities)
+    
+    for ref in remaining_candidates:
+        if len(selected) >= 4:
+            break
+        if ref not in selected:
+            selected.append(ref)
+            
+    return selected
+
+
 def _is_seedream_model(model: str) -> bool:
     normalized = (model or "").strip().lower()
     return "seedream" in normalized
@@ -321,6 +362,8 @@ def resolve_panel_references(
 
     refs = _ordered_refs([*subject_refs, *contextual_refs])
     model = config.effective_image_model()
+    if is_reve_model(model):
+        return _reve_refs(refs)
     if is_gpt_image_2(model):
         selected_paths = set(_gpt_image_2_subject_refs([ref.path for ref in refs if ref.role in {"subject", "prop"}]))
         return [ref for ref in refs if ref.path in selected_paths]
@@ -365,6 +408,7 @@ def estimate_panel_image_cost_usd(
         prompt,
         config.style_template,
         config.effective_image_model(),
+        refs=refs,
     )
     return estimate_image_cost(
         config.effective_image_model(),
@@ -524,6 +568,7 @@ async def _generate_panel(
                 prompt,
                 config.style_template,
                 config.effective_image_model(),
+                refs=refs,
             )
             meta_payload = {
                 "version": 1,

@@ -32,6 +32,9 @@ def _build_provider(name: str) -> LabsProvider:
         return TogetherProvider()
     if name == "litellm":
         return LitellmProvider()
+    if name == "reve":
+        from .providers.reve import ReveProvider
+        return ReveProvider()
     raise ValueError(f"Unknown provider: {name}")
 
 

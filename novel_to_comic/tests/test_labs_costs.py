@@ -74,7 +74,7 @@ def test_litellm_provider_returns_calculated_usage_cost(monkeypatch):
             value=output_path,
             usage=UsageRecord(
                 provider="openai",
-                model="image-quality",
+                model="openai/gpt-image-2",
                 operation="image",
                 image_count=1,
             ),
@@ -87,7 +87,7 @@ def test_litellm_provider_returns_calculated_usage_cost(monkeypatch):
 
     result = asyncio.run(
         LitellmProvider().generate(
-            endpoint="image-quality",
+            endpoint="openai/gpt-image-2",
             inp=LabsImageInput(prompt="Make a comic panel"),
         )
     )
@@ -95,3 +95,4 @@ def test_litellm_provider_returns_calculated_usage_cost(monkeypatch):
     assert result.cost_usd == approx(0.03168)
     assert result.cost_source == "litellm_cost_map+canary_pricing_override"
     assert result.provider_model == "openai/gpt-image-2"
+

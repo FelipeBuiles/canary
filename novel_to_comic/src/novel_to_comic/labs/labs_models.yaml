@@ -139,3 +139,30 @@ models:
     max_refs: 4
     approx_cost: 0.19
     notes: "Existing production premium tier — for baseline comparison."
+
+  - id: reve-proxy
+    label: "Reve (LiteLLM Proxy)"
+    provider: litellm
+    endpoint: image-reve
+    tier: premium
+    multi_ref: true
+    max_refs: 4
+    style_refs: true
+    approx_cost: 0.04
+    notes: >-
+      Reve model routed through the local LiteLLM proxy gateway.
+      Uses custom handler litellm_handlers.reve_provider.
+
+  - id: reve-direct
+    label: "Reve (Direct API Call)"
+    provider: reve
+    endpoint: reve/create
+    tier: premium
+    multi_ref: true
+    max_refs: 4
+    style_refs: true
+    approx_cost: 0.04
+    notes: >-
+      Reve model calling the api.reve.com endpoints directly from the Canary
+      backend, bypassing the LiteLLM proxy.
+

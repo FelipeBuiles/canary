@@ -119,7 +119,8 @@ class StageRuntime:
             yield self
             self.complete()
         except Exception as exc:
-            self.fail(str(exc))
+            from novel_to_comic.text_utils import clean_exception_message
+            self.fail(clean_exception_message(exc))
             raise
 
     # ------------------------------------------------------------------
