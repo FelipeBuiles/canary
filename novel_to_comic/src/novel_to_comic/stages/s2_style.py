@@ -8,14 +8,19 @@ samples and pick an active style before downstream stages run.
 import asyncio
 import hashlib
 import json
+import logging
+import re
 from pathlib import Path
 
 from novel_to_comic import artifacts
 from novel_to_comic.clients import flux, text as text_client
 from novel_to_comic.config import Config
 from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.prompt_assembly import normalize_prose_brief
 from novel_to_comic.prompting import build_style_sample_prompt
 from novel_to_comic.stage_runtime import StageRuntime
+
+logger = logging.getLogger(__name__)
 
 SAMPLE_COUNT = 5
 LLM_REQUEST_COUNT = 8  # ask for more than we need so dedup still yields >= 5
@@ -68,286 +73,82 @@ _SYSTEM_PROMPT = (
     "visual aesthetic only — do not reference characters, locations, or plot from the "
     "story; those get combined in later.\n\n"
 
+    "For each suggestion also declare its primary medium: the dominant physical or "
+    "digital medium in 1-3 lowercase words (e.g. \"woodblock print\", \"gouache\", "
+    "\"cut-paper collage\", \"35mm photography\"). This is the field your curation "
+    "constraint is checked against, so name the medium honestly and specifically.\n\n"
+
     "Output JSON array only, no markdown: "
-    '[{"label": "Style Name (2-4 words)", "template": "40-70 word description"}, ...]'
+    '[{"label": "Style Name (2-4 words)", "medium": "primary medium, 1-3 words", '
+    '"template": "40-70 word description"}, ...]'
 )
 
 
 # ---------------------------------------------------------------------------
-# Visual-overlap deduplication
+# Suggestion diversity
 # ---------------------------------------------------------------------------
-
-# Visual-technique keywords used to detect sibling suggestions that are
-# visually too similar to existing or other-new suggestions.  The set
-# concentrates on medium, mark-making technique, and colour approach so
-# that "Victorian engraving" and "Tudor etching" are recognised as
-# overlapping even though their labels differ.
-# Printmaking keywords are also listed in _TOKEN_FAMILY and get collapsed
-# into a single "printmaking" token so siblings like "etching", "engraving"
-# and "woodblock" are recognised as the same visual family.
-_TECHNIQUE_KEYWORDS: set[str] = {
-    # ── printmaking (relief / intaglio / planographic) ──────────────────
-    "cross-hatching", "cross-hatched", "hatching", "stippling", "stipple",
-    "woodblock", "woodcut", "copperplate", "etching", "engraving", "engraved",
-    "lithography", "lithograph", "screen print", "silkscreen", "letterpress",
-    "monotype", "linocut", "linoleum", "printmaking",
-    "drypoint", "aquatint", "mezzotint", "relief print",
-    # ── ink-based drawing / illustration ────────────────────────────────
-    "ink", "ink wash", "pen and ink", "fountain pen", "ballpoint",
-    "marker", "felt tip", "fineliner", "dip pen", "brush pen", "sumi-e",
-    # ── dry drawing ──────────────────────────────────────────────────────
-    "pencil", "graphite", "charcoal", "pastel", "chalk", "crayon", "conte",
-    "colored pencil", "carbon", "sanguine", "silverpoint", "carbon pencil",
-    # ── wet paint ────────────────────────────────────────────────────────
-    "oil paint", "oil", "watercolor", "gouache", "acrylic", "tempera",
-    "encaustic", "casein", "poster paint",
-    "brushwork", "brush", "dry brush", "impasto", "glaze", "scumble",
-    # ── collage / assemblage ─────────────────────────────────────────────
-    "collage", "photomontage", "decoupage", "assemblage",
-    "cut paper", "mixed media", "frottage",
-    # ── digital ──────────────────────────────────────────────────────────
-    "digital", "vector", "pixel art", "voxel", "3d render", "cg", "cgi",
-    "ray tracing", "raytraced", "procedural", "generative",
-    "glitch", "glitch art", "databending", "fractal",
-    # ── lens-based ───────────────────────────────────────────────────────
-    "photography", "film still", "cinematography",
-    "daguerreotype", "cyanotype", "tintype", "polaroid",
-    "pinhole", "photomicrography", "ambrotype",
-    # ── airbrush / spray / mural ─────────────────────────────────────────
-    "airbrush", "spray paint", "aerosol",
-    "graffiti", "mural", "fresco", "stencil", "wheatpaste",
-    # ── textile / fibre craft ────────────────────────────────────────────
-    "stained glass", "mosaic", "tapestry", "textile", "embroidery",
-    "needlepoint", "cross-stitch", "weaving", "knitting", "crochet",
-    "lace", "appliqué", "quilting", "patchwork", "batik",
-    # ── 3d / sculptural (photographed) ───────────────────────────────────
-    "bas-relief", "clay", "terracotta", "plaster", "bronze", "marble",
-    "wax", "diorama", "shadow puppet", "stop motion", "claymation",
-    "papier-mâché", "papier mache",
-    # ── paper craft ──────────────────────────────────────────────────────
-    "origami", "kirigami", "paper cut", "silhouette", "pop-up",
-    "scherenschnitte", "papel picado",
-    # ── illuminated / manuscript ─────────────────────────────────────────
-    "illuminated manuscript", "gold leaf", "gilding", "vellum", "parchment",
-    "calligraphy", "book of hours",
-    # ── signage / display graphics ───────────────────────────────────────
-    "neon sign", "billboard", "hand-painted sign", "marquee", "carnival",
-    "fairground", "circus poster", "travel poster",
-    # ── scientific / documentary / technical ─────────────────────────────
-    "blueprint", "x-ray", "infrared", "thermal imaging",
-    "anatomical diagram", "scientific illustration", "botanical plate",
-    "field journal", "topographical", "cartography", "map",
-    "photogram",
-    # ── colour / mood descriptors ────────────────────────────────────────
-    "monochrome", "monochromatic", "limited palette", "grayscale", "greyscale",
-    "black-and-white", "black and white", "chiaroscuro",
-    "neon", "synthetic", "fluorescent", "day-glo", "dayglo",
-    "phosphorescent", "blacklight", "ultraviolet", "uv-reactive",
-    "earth-tones", "earth tones", "ochre", "sepia", "umber",
-    "pastel", "vibrant", "saturated", "desaturated", "muted",
-    "high-key", "low-key", "high contrast",
-    # ── surface / substrate ──────────────────────────────────────────────
-    "canvas", "wood panel", "board", "paper", "rice paper", "washi",
-    "mulberry paper", "handmade paper", "newsprint", "kraft paper",
-    "acetate", "mylar", "glass", "metal", "copper", "aluminium",
-    "scratchboard", "scratch board",
-}
-
-# Maps individual keywords to canonical family names.  Only categories where
-# all members are visually interchangeable are collapsed — e.g. "etching" and
-# "engraving" both → "printmaking".  Wet-media keywords ("oil paint",
-# "watercolor", "gouache") are kept distinct because they produce visually
-# different results.  A keyword that does not appear here is kept as-is.
-_TOKEN_FAMILY: dict[str, str] = {
-    # printmaking — structurally-unique print terms only.
-    # Mark-making keywords like “cross-hatching”, “stippling” are NOT
-    # included here because they appear across media (ink, pencil,
-    # ballpoint, etc.) and would cause false siblings.
-    "woodblock": "printmaking", "woodcut": "printmaking",
-    "copperplate": "printmaking",
-    "etching": "printmaking", "engraving": "printmaking", "engraved": "printmaking",
-    "lithography": "printmaking", "lithograph": "printmaking",
-    "screen print": "printmaking", "silkscreen": "printmaking",
-    "letterpress": "printmaking",
-    "monotype": "printmaking", "linocut": "printmaking", "linoleum": "printmaking",
-    "printmaking": "printmaking",
-    "drypoint": "printmaking", "aquatint": "printmaking",
-    "mezzotint": "printmaking", "relief print": "printmaking",
-    # ink-based drawing — calligraphic / line-art / stipple
-    "ink": "ink", "ink wash": "ink",
-    "pen and ink": "ink", "fountain pen": "ink", "ballpoint": "ink",
-    "marker": "ink", "felt tip": "ink", "fineliner": "ink",
-    "dip pen": "ink", "brush pen": "ink", "sumi-e": "ink",
-    # dry drawing — graphite / charcoal / chalk
-    "pencil": "dry-drawing", "graphite": "dry-drawing", "charcoal": "dry-drawing",
-    "chalk": "dry-drawing", "crayon": "dry-drawing", "conte": "dry-drawing",
-    "colored pencil": "dry-drawing", "carbon": "dry-drawing",
-    "sanguine": "dry-drawing", "silverpoint": "dry-drawing",
-    "carbon pencil": "dry-drawing",
-    # collage / mixed
-    "collage": "collage", "photomontage": "collage", "decoupage": "collage",
-    "assemblage": "collage", "cut paper": "collage",
-    "mixed media": "collage", "frottage": "collage",
-    # digital
-    "digital": "digital", "vector": "digital", "pixel art": "digital",
-    "voxel": "digital", "3d render": "digital", "cg": "digital", "cgi": "digital",
-    "ray tracing": "digital", "raytraced": "digital",
-    "procedural": "digital", "generative": "digital",
-    "glitch": "digital", "glitch art": "digital", "databending": "digital",
-    "fractal": "digital",
-    # lens-based
-    "photography": "lens", "film still": "lens", "cinematography": "lens",
-    "daguerreotype": "lens", "cyanotype": "lens", "tintype": "lens",
-    "polaroid": "lens", "pinhole": "lens", "photomicrography": "lens",
-    "ambrotype": "lens", "photogram": "lens",
-    # airbrush/spray/mural
-    "airbrush": "spray", "spray paint": "spray", "aerosol": "spray",
-    "graffiti": "spray", "mural": "spray", "fresco": "spray",
-    "stencil": "spray", "wheatpaste": "spray",
-    # textile / fibre
-    "stained glass": "craft", "mosaic": "craft", "tapestry": "craft",
-    "textile": "craft", "embroidery": "craft",
-    "needlepoint": "craft", "cross-stitch": "craft",
-    "weaving": "craft", "knitting": "craft", "crochet": "craft",
-    "lace": "craft", "appliqué": "craft", "quilting": "craft",
-    "patchwork": "craft", "batik": "craft",
-    # 3d / sculptural (photographed)
-    "bas-relief": "sculpture", "clay": "sculpture", "terracotta": "sculpture",
-    "plaster": "sculpture", "bronze": "sculpture", "marble": "sculpture",
-    "wax": "sculpture", "diorama": "sculpture",
-    "shadow puppet": "sculpture", "stop motion": "sculpture",
-    "claymation": "sculpture", "papier-mâché": "sculpture",
-    "papier mache": "sculpture",
-    # paper craft
-    "origami": "paper-art", "kirigami": "paper-art", "paper cut": "paper-art",
-    "silhouette": "paper-art", "pop-up": "paper-art",
-    "scherenschnitte": "paper-art", "papel picado": "paper-art",
-    # illuminated / manuscript
-    "illuminated manuscript": "manuscript", "gold leaf": "manuscript",
-    "gilding": "manuscript", "vellum": "manuscript", "parchment": "manuscript",
-    "book of hours": "manuscript",
-    # signage / display
-    "neon sign": "signage", "billboard": "signage",
-    "hand-painted sign": "signage", "marquee": "signage",
-    "carnival": "signage", "fairground": "signage",
-    "circus poster": "signage", "travel poster": "signage",
-    # scientific / technical
-    "blueprint": "technical", "x-ray": "technical", "infrared": "technical",
-    "thermal imaging": "technical",
-    "anatomical diagram": "technical", "scientific illustration": "technical",
-    "botanical plate": "technical", "field journal": "technical",
-    "topographical": "technical", "cartography": "technical", "map": "technical",
-    # colour approaches — limited-palette is NOT monochrome; kept distinct
-    "monochrome": "monochrome", "monochromatic": "monochrome",
-    "black-and-white": "monochrome", "black and white": "monochrome",
-    "grayscale": "monochrome", "greyscale": "monochrome",
-    "chiaroscuro": "monochrome",
-    "neon": "neon", "synthetic": "neon", "fluorescent": "neon",
-    "day-glo": "neon", "dayglo": "neon",
-    "phosphorescent": "neon", "blacklight": "neon",
-    "ultraviolet": "neon", "uv-reactive": "neon",
-    "earth-tones": "earth", "earth tones": "earth", "ochre": "earth",
-    "sepia": "earth", "umber": "earth",
-    # surface / substrate
-    "canvas": "canvas", "wood panel": "board",
-    "paper": "paper", "rice paper": "paper", "washi": "paper",
-    "mulberry paper": "paper", "handmade paper": "paper",
-    "newsprint": "paper", "kraft paper": "paper",
-    "acetate": "transparent", "mylar": "transparent", "glass": "transparent",
-    "metal": "metal", "copper": "metal", "aluminium": "metal",
-    "scratchboard": "scratchboard", "scratch board": "scratchboard",
-}
+#
+# Diversity is enforced upstream in _SYSTEM_PROMPT: the LLM brainstorms across
+# six dimensions, curates maximally-distinct candidates, and declares each
+# suggestion's primary medium in its output. The code below is only a thin
+# safety net that drops suggestions whose declared medium repeats one already
+# in the pool. (This replaced ~280 lines of hand-maintained technique-keyword
+# tables and Jaccard token-overlap scoring — bag-of-words overlap misjudges
+# visual similarity in both directions.)
 
 
-# Families that define the *primary medium* of a suggestion.  If two
-# suggestions share one of these families they are automatically treated
-# as overlapping — no Jaccard threshold is consulted — because "woodblock
-# print" and "copperplate etching" are obviously the same medium.
-_PRIMARY_MEDIUM_FAMILIES: frozenset[str] = frozenset({
-    "printmaking", "digital", "lens", "sculpture", "collage",
-    "spray", "paper-art", "manuscript", "signage", "technical",
-    "craft",   # tapestry, mosaic, stained-glass — all decorative craft
-    "dry-drawing",  # charcoal, pencil, graphite
-    "ink",          # pen-and-ink, ballpoint, sumi-e
-    "scratchboard",
-})
+def _medium_tokens(value: str) -> frozenset[str]:
+    """Normalise a declared medium into a comparable token set."""
+    return frozenset(re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).split())
 
 
-def _share_primary_medium(a: set[str], b: set[str]) -> bool:
-    """True when both token sets contain at least one shared primary-medium family."""
-    shared = a & b
-    return bool(shared & _PRIMARY_MEDIUM_FAMILIES)
-
-
-def _extract_technique_tokens(text: str) -> set[str]:
-    """Return the set of canonical visual-technique families present in *text*."""
-    text_lower = text.lower()
-    raw: set[str] = set()
-    # Multi-word phrases first (longest match wins to avoid double-counting)
-    for kw in sorted(_TECHNIQUE_KEYWORDS, key=len, reverse=True):
-        if kw in text_lower:
-            raw.add(kw)
-    # Also capture single-word hits that may appear hyphenated/dashed
-    words = (
-        text_lower.replace(",", " ")
-        .replace(".", " ")
-        .replace("—", " ")
-        .replace("-", " ")
-        .split()
-    )
-    for w in words:
-        w = w.strip("'\"()[]{}:;!?")
-        if w in _TECHNIQUE_KEYWORDS:
-            raw.add(w)
-    # Normalise to canonical family names
-    return {_TOKEN_FAMILY.get(t, t) for t in raw}
-
-
-def _jaccard_similarity(a: set, b: set) -> float:
+def _mediums_collide(a: frozenset[str], b: frozenset[str]) -> bool:
+    """True when one declared medium equals or refines the other
+    ("etching" vs "copper etching")."""
     if not a or not b:
-        return 0.0
-    return len(a & b) / len(a | b)
+        return False
+    return a <= b or b <= a
 
 
-def _deduplicate_suggestions(
+def _dedupe_suggestions(
     new_suggestions: list[dict],
     existing_suggestions: list[dict] | None = None,
-    overlap_threshold: float = 0.35,
 ) -> list[dict]:
-    """Drop suggestions whose visual-technique tokens overlap heavily with
-    existing suggestions or with already-kept siblings from *new_suggestions*."""
-    if existing_suggestions is None:
-        existing_suggestions = []
-
-    all_existing_tokens = [
-        _extract_technique_tokens(s.get("template", ""))
-        for s in existing_suggestions
-    ]
-
+    """Drop malformed suggestions and ones whose declared primary medium
+    repeats an existing or already-kept suggestion's."""
+    prior = [_medium_tokens(s.get("medium", "")) for s in (existing_suggestions or [])]
     kept: list[dict] = []
-    kept_tokens: list[set[str]] = []
-
     for s in new_suggestions:
-        new_tokens = _extract_technique_tokens(s.get("template", ""))
-
-        # ── hard primary-medium gate ───────────────────────────────────
-        # If this suggestion shares a primary medium family with any
-        # existing or already-kept suggestion, reject it immediately.
-        all_prior_tokens = all_existing_tokens + kept_tokens
-        if any(_share_primary_medium(new_tokens, pt) for pt in all_prior_tokens):
+        if not (s.get("template") or "").strip():
             continue
-
-        # ── Jaccard soft gate ───────────────────────────────────────────
-        if any(
-            _jaccard_similarity(new_tokens, pt) > overlap_threshold
-            for pt in all_prior_tokens
-        ):
+        tokens = _medium_tokens(s.get("medium", ""))
+        if any(_mediums_collide(tokens, p) for p in prior):
             continue
-
         kept.append(s)
-        kept_tokens.append(new_tokens)
-
+        prior.append(tokens)
     return kept
+
+
+def _build_avoid_block(pool: list[dict]) -> str:
+    if not pool:
+        return ""
+    mediums = sorted({m for s in pool if (m := (s.get("medium") or "").strip().lower())})
+    medium_line = (
+        "Primary mediums already used — none of your suggestions may use these or a "
+        "close relative: " + ", ".join(mediums) + ".\n\n"
+        if mediums
+        else ""
+    )
+    summaries = [f'"{s.get("label", "Unknown")}": {s.get("template", "")}' for s in pool]
+    return (
+        f"\n\nCRITICAL: The following {len(pool)} styles have ALREADY been "
+        f"suggested for this story. You MUST explore completely different visual "
+        f"territories.\n\n"
+        + medium_line
+        + "\n\n---\n\n".join(summaries)
+        + "\n\n---\n\n"
+        + "Remember: choose styles that are MAXIMALLY DISTINCT from all of the above."
+    )
 
 
 async def generate_suggestions(
@@ -358,45 +159,23 @@ async def generate_suggestions(
 ):
     """Generate style suggestions via LLM. Returns (suggestions_list, usage).
 
-    When *existing_suggestions* is supplied the LLM prompt is seeded with
-    the full template text of every prior suggestion so it can deliberately
-    avoid overlapping visual territory, and a post-generation Jaccard-based
-    overlap filter drops any remaining near-duplicates.
+    When *existing_suggestions* is supplied the LLM prompt is seeded with the
+    template text and declared primary medium of every prior suggestion so it
+    can deliberately avoid overlapping visual territory; a thin declared-medium
+    filter then drops any remaining repeats.
 
     The LLM is asked for more suggestions than we need (``LLM_REQUEST_COUNT``)
     so that dedup can still yield at least ``SAMPLE_COUNT``.  If the first
     attempt falls short a second attempt is made with the existing-pool
     expanded to steer the LLM further away.
     """
-    total_usage = None
     first_usage = None
-
-    def _build_avoid_block(pool: list[dict]) -> str:
-        if not pool:
-            return ""
-        summaries: list[str] = []
-        for s in pool:
-            label = s.get("label", "Unknown")
-            template = s.get("template", "")
-            summaries.append(f'"{label}": {template}')
-        return (
-            f"\n\nCRITICAL: The following {len(pool)} styles have ALREADY been "
-            f"suggested for this story. You MUST explore completely different visual territories. "
-            f"Read each description carefully and ensure none of your new suggestions could be "
-            f"visually confused with any of these:\n\n"
-            + "\n\n---\n\n".join(summaries)
-            + "\n\n---\n\n"
-            + "Remember: choose styles that are MAXIMALLY DISTINCT from all of the above. "
-            + "If a candidate's visual technique or primary medium overlaps with any above, "
-            + "discard it and pick a different one."
-        )
 
     async def _call_llm(avoid_pool: list[dict]) -> list[dict]:
         nonlocal first_usage
-        avoid = _build_avoid_block(avoid_pool)
         system = (
             _SYSTEM_PROMPT
-            + avoid
+            + _build_avoid_block(avoid_pool)
             + config.generation_language_instruction()
         )
         user = (
@@ -426,24 +205,148 @@ async def generate_suggestions(
 
     # --- first attempt -------------------------------------------------------
     pool = existing_suggestions or []
-    suggestions = _deduplicate_suggestions(await _call_llm(pool), pool)
+    suggestions = _dedupe_suggestions(await _call_llm(pool), pool)
 
     # --- retry if dedup left us with fewer than SAMPLE_COUNT -----------------
-    for attempt in range(1, _GENERATION_MAX_ATTEMPTS):
+    for _attempt in range(1, _GENERATION_MAX_ATTEMPTS):
         if len(suggestions) >= SAMPLE_COUNT:
             break
         # Expand the avoid-pool with the *unused* suggestions from the first
         # pass so the retry gets an even stronger steer.
         retry_pool = pool + suggestions
-        more = _deduplicate_suggestions(await _call_llm(retry_pool), retry_pool)
-        suggestions.extend(more)
+        suggestions.extend(_dedupe_suggestions(await _call_llm(retry_pool), retry_pool))
 
-    # Trim to SAMPLE_COUNT — the first SAMPLE_COUNT survivors are the most
-    # distinct (dedup walks the LLM output in order, keeping the first match
-    # in each family).
-    suggestions = suggestions[:SAMPLE_COUNT]
+    return suggestions[:SAMPLE_COUNT], first_usage
 
-    return suggestions, first_usage
+
+# ---------------------------------------------------------------------------
+# Style-sample brief
+# ---------------------------------------------------------------------------
+#
+# The proof images for every candidate style share one subject/setting brief
+# so styles are compared on identical content. An LLM picks the most
+# style-revealing character/location pairing from the story bible and writes
+# it as flowing prose, cached on disk per project; when the pass is disabled
+# or fails, build_style_sample_prompt falls back to a deterministic body.
+
+STYLE_SAMPLE_BRIEF_SYSTEM_PROMPT = (
+    "You write the subject brief for a style proof image: one image used to judge "
+    "candidate art styles for a comic adaptation of a novel. You receive the story's "
+    "main characters and locations.\n"
+    "\n"
+    "First pick the one character and one location that together reveal the most "
+    "about a visual style: a face and figure that show how people render, an "
+    "environment with depth and material variety, and a lighting situation that "
+    "spans bright accents and deep shadow.\n"
+    "\n"
+    "Then write that moment as a single flowing brief of 60-120 words, the way a "
+    "film director describes one frozen frame:\n"
+    "- Introduce the character with their full physical description (age, build, "
+    "hair, face, wardrobe) before their action.\n"
+    "- Keep the figure the clear focal point at three-quarter or full length, with "
+    "the location giving depth behind them; compose for a portrait frame.\n"
+    "- Give light its own concrete sentence: direction, color, quality, and where "
+    "the shadows fall.\n"
+    "- Exactly one frozen instant and a quiet, characteristic action — no climactic "
+    "story beat.\n"
+    "- Never mention art style, medium, or rendering technique: the same brief is "
+    "rendered in several candidate styles and must not favor any of them.\n"
+    "- Plain declarative prose only: no headings, labels, bullet points, markdown, "
+    "or meta-commentary.\n"
+    "\n"
+    "Output only the brief text."
+)
+
+
+def _style_sample_brief_source(story_bible: StoryBible) -> str:
+    """Compact character/location roster the brief LLM picks its subject from."""
+    lines = [f'Story: "{story_bible.title}" by {story_bible.author}']
+    if story_bible.style_notes:
+        lines.append(f"Story notes: {story_bible.style_notes}")
+    if story_bible.characters:
+        lines.append("Characters:")
+        for char in story_bible.characters[:6]:
+            traits = ", ".join(t for t in (char.age_range, char.gender) if t)
+            suffix = f" ({traits})" if traits else ""
+            lines.append(f"- {char.name}{suffix}: {char.visual_anchor or char.name}")
+    if story_bible.locations:
+        lines.append("Locations:")
+        for loc in story_bible.locations[:6]:
+            mood = f" (mood: {loc.mood})" if loc.mood else ""
+            lines.append(f"- {loc.name}{mood}: {loc.visual_anchor or loc.name}")
+    return "\n".join(lines)
+
+
+async def generate_style_sample_brief(
+    config: Config, story_bible: StoryBible,
+) -> str | None:
+    """One LLM call: story-bible roster → shared prose brief for style samples.
+
+    Returns None (never raises) when the call fails or the output fails
+    validation — callers fall back to the deterministic sample body.
+    """
+    source = _style_sample_brief_source(story_bible)
+    try:
+        result = await text_client.generate_text(
+            config=config,
+            model=config.effective_prompt_model(),
+            system_prompt=STYLE_SAMPLE_BRIEF_SYSTEM_PROMPT,
+            user_content=source,
+            temperature=0.4,
+            max_output_tokens=300,
+            feature="style.sample_brief",
+        )
+    except Exception:
+        logger.warning(
+            "Style sample brief generation failed; falling back to deterministic body",
+            exc_info=True,
+        )
+        return None
+    brief = normalize_prose_brief(result.value)
+    if brief is None:
+        logger.warning(
+            "Style sample brief output rejected (malformed or out of bounds); "
+            "falling back to deterministic body"
+        )
+    return brief
+
+
+async def ensure_style_sample_brief(
+    config: Config, story_bible: StoryBible, project_dir: Path,
+) -> str | None:
+    """Return the project's shared sample brief, generating and caching it on
+    first use so every candidate style renders the identical scene.
+
+    Returns None when the pass is disabled or generation fails.
+    """
+    if not getattr(config, "style_sample_brief_enabled", True):
+        return None
+    source_key = hashlib.sha256(
+        _style_sample_brief_source(story_bible).encode("utf-8")
+    ).hexdigest()
+    path = artifacts.style_sample_brief_path(project_dir)
+    if path.exists():
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            data = {}
+        if data.get("source_sha256") == source_key and (data.get("brief") or "").strip():
+            return data["brief"]
+    brief = await generate_style_sample_brief(config, story_bible)
+    if not brief:
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(
+        {
+            "version": 1,
+            "kind": "style_sample_brief",
+            "source_sha256": source_key,
+            "brief": brief,
+        },
+        indent=2,
+        sort_keys=True,
+    ))
+    return brief
 
 
 def _sample_meta_path(sample_path: Path) -> Path:
@@ -471,9 +374,15 @@ async def generate_sample_image(
     config: Config,
     bible: StoryBible,
     sample_path: Path,
+    *,
+    brief: str | None = None,
 ):
-    """Generate one style sample image at sample_path. Returns ApiResult."""
-    prompt = build_style_sample_prompt(config, bible)
+    """Generate one style sample image at sample_path. Returns ApiResult.
+
+    *brief* is the shared prose body from ``ensure_style_sample_brief``;
+    when None the prompt falls back to its deterministic body.
+    """
+    prompt = build_style_sample_prompt(config, bible, brief=brief)
     meta = _sample_meta(config, prompt)
     sample_path.parent.mkdir(parents=True, exist_ok=True)
     result = await flux.generate_image(
@@ -529,9 +438,12 @@ async def generate_samples_for_indices(
 ) -> None:
     """Generate sample images for the given 1-indexed suggestions in parallel.
 
-    `on_sample_done(idx, ApiResult)` is awaited after each sample finishes —
-    callers use it to record per-item progress and persist incremental state.
+    The shared sample brief is resolved once up front so every sample in the
+    batch renders the identical scene. `on_sample_done(idx, ApiResult)` is
+    awaited after each sample finishes — callers use it to record per-item
+    progress and persist incremental state.
     """
+    brief = await ensure_style_sample_brief(config, bible, project_dir)
     sem = asyncio.Semaphore(concurrency)
 
     async def _one(idx: int) -> None:
@@ -540,7 +452,9 @@ async def generate_samples_for_indices(
         sample_config = config.model_copy(update={"style_template": template})
         sample_path = artifacts.style_sample_path(project_dir, idx)
         async with sem:
-            result = await generate_sample_image(sample_config, bible, sample_path)
+            result = await generate_sample_image(
+                sample_config, bible, sample_path, brief=brief,
+            )
         if on_sample_done is not None:
             await on_sample_done(idx, result)
 
@@ -593,7 +507,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> None:
             )
 
 
-from novel_to_comic.stages import Stage  # noqa: E402
+from novel_to_comic.stages import Stage, clean_cascade  # noqa: E402
 from novel_to_comic.state import PipelineState  # noqa: E402
 
 
@@ -655,10 +569,6 @@ STAGE = Stage(
     name="style",
     run=run,
     outputs=lambda d: [artifacts.style_suggestions_path(d)],
-    clean_paths=lambda d: [
-        d / "samples", d / "refs", d / "plates",
-        d / "adapt", d / "plan", d / "storyboard",
-        d / "direct", d / "draw", d / "compose", d / "exports",
-    ],
+    clean_paths=lambda d: clean_cascade(d, "samples"),
     estimate_cost=estimate_cost,
 )

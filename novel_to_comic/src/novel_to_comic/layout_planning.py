@@ -12,9 +12,6 @@ from novel_to_comic.models.comic_page import (
     ComicPage,
     PagePanel,
     Sfx,
-    infer_sfx_intensity,
-    infer_sfx_kind,
-    normalize_sfx_text,
 )
 from novel_to_comic.models.layout_plan import GenerationMode, LayoutPlan, NarrationDecision, PanelGeometry, PanelImportance, PlannedPage, PlannedPanel, ShapeIntent
 from novel_to_comic.models.panel import DialogueLine, PanelBreakdown
@@ -223,11 +220,25 @@ def _caption_text(decision: NarrationDecision) -> str:
     return decision.caption_text_override or decision.caption_text or decision.source_text
 
 
-def _remove_narration_from_panel(panel: PlannedPanel, beat_id: str) -> PlannedPanel:
+def _matches_narration_decision(line: dict[str, str | None], decision: NarrationDecision) -> bool:
+    if line.get("type") != "narration":
+        return False
+    if line.get("source_beat_id") == decision.beat_id:
+        return True
+    if line.get("source_beat_id"):
+        return False
+    # Untracked line (no provenance): match by caption/source text so duplicate
+    # captions the planner emitted without beat ids are still deduplicated.
+    return line.get("text") in {_caption_text(decision), decision.source_text}
+
+
+def _remove_narration_for_decision(panel: PlannedPanel, decision: NarrationDecision) -> PlannedPanel:
     dialogue = [
         line for line in panel.dialogue
-        if line.get("source_beat_id") != beat_id
+        if not _matches_narration_decision(line, decision)
     ]
+    if len(dialogue) == len(panel.dialogue):
+        return panel
     has_narration = any(line.get("type") == "narration" for line in dialogue)
     return panel.model_copy(
         update={
@@ -240,12 +251,30 @@ def _remove_narration_from_panel(panel: PlannedPanel, beat_id: str) -> PlannedPa
     )
 
 
-def _apply_narration_to_panel(panel: PlannedPanel, decision: NarrationDecision) -> PlannedPanel:
-    dialogue = [
+def _apply_rendered_narration_to_panel(panel: PlannedPanel, decision: NarrationDecision) -> PlannedPanel:
+    if decision.decision != "rendered" or not decision.panel_id:
+        return panel
+    existing = [
         line for line in panel.dialogue
-        if line.get("source_beat_id") != decision.beat_id
+        if _matches_narration_decision(line, decision)
     ]
-    if decision.decision == "rendered":
+    if existing:
+        dialogue = []
+        for line in panel.dialogue:
+            if line in existing:
+                updated = dict(line)
+                updated.update({
+                    "text": _caption_text(decision),
+                    "source_beat_id": decision.beat_id,
+                    "source_text": decision.source_text,
+                    "narration_mode": decision.mode,
+                    "preferred_zone": decision.preferred_zone,
+                })
+                dialogue.append(updated)
+            else:
+                dialogue.append(line)
+    else:
+        dialogue = list(panel.dialogue)
         dialogue.append(
             DialogueLine(
                 character_id=None,
@@ -258,29 +287,46 @@ def _apply_narration_to_panel(panel: PlannedPanel, decision: NarrationDecision) 
             ).model_dump()
         )
     beat_ids = list(panel.beat_ids)
-    if decision.decision == "rendered" and decision.beat_id not in beat_ids:
+    if decision.beat_id not in beat_ids:
         beat_ids.append(decision.beat_id)
-    has_narration = any(line.get("type") == "narration" for line in dialogue)
     return panel.model_copy(
         update={
             "beat_ids": beat_ids,
             "dialogue": dialogue,
-            "caption_load": sum(1 for line in dialogue if line.get("type") == "narration"),
-            "has_narration_caption": has_narration,
-            "narration_mode": decision.mode if decision.decision == "rendered" else None,
-            "preferred_caption_zone": decision.preferred_zone if decision.decision == "rendered" else None,
+            "caption_load": max(panel.caption_load, sum(1 for line in dialogue if line.get("type") == "narration")),
+            "has_narration_caption": True,
+            "narration_mode": decision.mode,
+            "preferred_caption_zone": decision.preferred_zone,
         }
     )
 
 
+def sync_narration_into_panels(
+    panels: list[PlannedPanel],
+    decisions: list[NarrationDecision],
+) -> list[PlannedPanel]:
+    """Make panel dialogue agree with narration decisions.
+
+    Canonical implementation shared by Stage 5 planning and the narration
+    editor: every decision first strips its caption from all panels (including
+    untracked duplicates), then rendered decisions attach it to their target
+    panel.
+    """
+    panel_map = {panel.panel_id: panel for panel in panels}
+    for decision in decisions:
+        for panel_id, panel in list(panel_map.items()):
+            panel_map[panel_id] = _remove_narration_for_decision(panel, decision)
+        if decision.decision != "rendered" or not decision.panel_id:
+            continue
+        panel = panel_map.get(decision.panel_id)
+        if panel is None:
+            continue
+        panel_map[decision.panel_id] = _apply_rendered_narration_to_panel(panel, decision)
+    return [panel_map[panel.panel_id] for panel in panels]
+
+
 def sync_narration_decisions(plan: LayoutPlan) -> LayoutPlan:
-    panels = planned_panel_index(plan)
-    for decision in plan.narration_decisions:
-        for panel_id, panel in list(panels.items()):
-            panels[panel_id] = _remove_narration_from_panel(panel, decision.beat_id)
-        if decision.decision == "rendered" and decision.panel_id in panels:
-            panels[decision.panel_id] = _apply_narration_to_panel(panels[decision.panel_id], decision)
-    plan.planned_panels = [panels[panel.panel_id] for panel in plan.planned_panels]
+    plan.planned_panels = sync_narration_into_panels(plan.planned_panels, plan.narration_decisions)
     return plan
 
 
@@ -503,16 +549,12 @@ def project_layout_plan_to_pages(
                             side=cast(Literal["left", "right", "center"], side or "left"),
                         )
                     )
-                sfx_items = []
-                for raw in breakdown.sfx:
-                    text = normalize_sfx_text(raw)
-                    if not text:
-                        continue
-                    sfx_items.append(Sfx(
-                        text=text,
-                        kind=infer_sfx_kind(text),
-                        intensity=infer_sfx_intensity(text),
-                    ))
+                # Carry the planner's typed SFX (kind/intensity) through to the
+                # page rather than re-inferring from bare text.
+                sfx_items = [
+                    Sfx(text=s.text, kind=s.kind, intensity=s.intensity)
+                    for s in planned_panel.sfx
+                ]
                 image_offset_x = None
                 image_offset_y = None
 
@@ -625,12 +667,14 @@ def repaginate_layout_plan(plan: LayoutPlan, *, panels_per_page: int) -> LayoutP
     scene_panels = scene_panel_map(plan)
     new_pages: list[PlannedPage] = []
     page_number = 1
+    # Largest preset holds 6 panels; chunks beyond that would stack panels
+    # onto the same slot.
+    chunk_size = min(panels_per_page, 6)
     for scene_id in sorted(scene_panels.keys()):
-        for chunk in _repaginate_scene_panels(scene_panels[scene_id], panels_per_page):
+        for chunk in _repaginate_scene_panels(scene_panels[scene_id], chunk_size):
             geometries = []
-            preset = LAYOUT_PRESET_GEOMETRIES.get(f"{min(len(chunk), 3)}x2")
-            if preset is None:
-                preset = LAYOUT_PRESET_GEOMETRIES["2x2"]
+            preset_name = select_layout_template(chunk)
+            preset = LAYOUT_PRESET_GEOMETRIES[preset_name]
             for idx, panel in enumerate(chunk):
                 region, polygon = preset[idx] if idx < len(preset) else ([0.0, 0.0, 1.0, 1.0], None)
                 geometries.append(
@@ -653,6 +697,7 @@ def repaginate_layout_plan(plan: LayoutPlan, *, panels_per_page: int) -> LayoutP
                     scene_ids=[scene_id],
                     scene_boundary_mode="scene_contained",
                     page_rhythm_role="intro" if page_number == 1 else "regular",
+                    layout_template=preset_name,
                 )
             )
             page_number += 1

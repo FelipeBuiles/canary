@@ -37,6 +37,7 @@ Good narration candidates include explicit narrator turns, time/place context th
 For every narration beat, include narration_reason explaining why this source passage may need a caption.
 
 THOUGHT BUBBLES: use sparingly (max 2 per scene) for interior monologue that cannot be shown any other way.
+Emit them as beats with type "thought" and the thinking character's character_id. "content" is the thought text exactly as it should appear in the bubble. Thought beats count toward the same restraint as dialogue — never use one to dump interiority the image or an action beat could carry.
 
 SFX: short, lettered onomatopoeia only — the kind of sound a comic *draws* on the page.
 For sfx beats, "content" is the bare onomatopoeia (e.g. CRACK, BOOM, WHOOSH, KRA-KOOM, TAT-TAT-TAT). All caps preferred.
@@ -87,9 +88,9 @@ Output JSON:
   "characters": ["char_001", "char_002"],
   "beats": [
     {
-      "type": "action" | "dialogue" | "narration" | "sfx" | "transition",
-      "character_id": "..." (null for action/sfx/transition),
-      "content": "exact dialogue text OR observable action description OR adapted narration caption OR bare sfx onomatopoeia (no brackets, no prefix)",
+      "type": "action" | "dialogue" | "thought" | "narration" | "sfx" | "transition",
+      "character_id": "..." (required for dialogue/thought; null for action/sfx/transition),
+      "content": "exact dialogue text OR thought-bubble text OR observable action description OR adapted narration caption OR bare sfx onomatopoeia (no brackets, no prefix)",
       "source_text": "optional exact source wording, required when type is \"narration\"",
       "direction": "optional visual direction note (camera angle, emphasis, etc.)",
       "transition_type": "optional one of \"smooth_continuation\" | \"match_cut\" | \"hard_cut\" (only for transition beats)",

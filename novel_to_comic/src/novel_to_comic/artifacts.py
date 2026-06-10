@@ -49,6 +49,18 @@ def read_story_bible(project_dir: Path) -> "StoryBible":
     return StoryBible.model_validate_json(path.read_text())
 
 
+def read_story_bible_safe(project_dir: Path) -> "StoryBible | None":
+    """Return the story bible, or None when missing/unparseable.
+
+    For best-effort paths (cost estimation, optional context) that must not
+    raise. Hard-requirement paths should use read_story_bible.
+    """
+    try:
+        return read_story_bible(project_dir)
+    except Exception:
+        return None
+
+
 def write_story_bible(project_dir: Path, bible: "StoryBible") -> None:
     path = story_bible_path(project_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -368,6 +380,10 @@ def style_suggestions_path(project_dir: Path) -> Path:
 
 def style_sample_path(project_dir: Path, index: int) -> Path:
     return project_dir / "samples" / f"style_{index}.png"
+
+
+def style_sample_brief_path(project_dir: Path) -> Path:
+    return project_dir / "samples" / "style_sample_brief.json"
 
 
 # ---------------------------------------------------------------------------

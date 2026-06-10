@@ -55,16 +55,14 @@ async def run(
                     progress.advance(task)
                 ctx.save()
 
-        console.print("[green]Stage 5 complete.[/green] Projected layout plan into panels/.")
+        console.print("[green]Storyboard stage complete.[/green] Projected layout plan into storyboard/.")
 
 
-from novel_to_comic.stages import Stage  # noqa: E402
+from novel_to_comic.stages import Stage, clean_cascade  # noqa: E402
 
 STAGE = Stage(
     name="storyboard",
     run=run,
     outputs=lambda d: [d / "storyboard"],
-    clean_paths=lambda d: [
-        d / "storyboard", d / "direct", d / "draw", d / "compose", d / "exports",
-    ],
+    clean_paths=lambda d: clean_cascade(d, "storyboard"),
 )

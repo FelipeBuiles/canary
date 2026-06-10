@@ -3,7 +3,10 @@ from pathlib import Path
 from novel_to_comic.config import Config
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.models.story_bible import Location, Scene, StoryBible
-from novel_to_comic.server.routers.labs import _project_scene_reference_payload
+from novel_to_comic.server.routers.labs import (
+    _project_scene_reference_payload,
+    _resolve_scene_panel_refs,
+)
 
 
 def _touch(path: Path) -> None:
@@ -70,11 +73,15 @@ def test_project_scene_import_collects_draw_stage_reference_images(tmp_path: Pat
         steps=28,
     )
 
-    refs = _project_scene_reference_payload(
-        "project-id",
+    refs_per_panel = _resolve_scene_panel_refs(
         project_dir,
         Config(style_template=style_template),
         [prompt],
+    )
+    refs = _project_scene_reference_payload(
+        "project-id",
+        project_dir,
+        refs_per_panel,
     )
 
     relative_paths = [ref["relative_path"] for ref in refs]

@@ -188,6 +188,18 @@ class Config(BaseModel):
     flux_guidance_scale: float = 3.5
     continuity_mode: str = "hybrid"  # off | text_only | ref_only | hybrid
 
+    # LLM visual-brief pass: rewrite each panel's structured spec into flowing
+    # prose (via prompt_model) before image generation. Falls back to the
+    # deterministic distilled prompt when disabled or when the call fails.
+    visual_brief_enabled: bool = True
+
+    # LLM style-sample brief: compose the shared subject/setting prose for S2
+    # style proof images (via prompt_model), cached per project so every
+    # candidate style renders the identical scene. Falls back to a
+    # deterministic first-character/first-location body when disabled or when
+    # the call fails.
+    style_sample_brief_enabled: bool = True
+
     # Negative prompt — only applied for Together AI / SDXL models (Gemini native ignores it)
     # Keep style-neutral: no photorealistic/cartoon terms here. Put those in config.yaml
     # when you want to push toward or away from a specific look.

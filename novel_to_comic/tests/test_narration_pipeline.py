@@ -2,11 +2,9 @@ from novel_to_comic.config import Config
 from novel_to_comic.models.layout_plan import LLMNarrationDecisionSpec, PlannedPanel
 from novel_to_comic.models.panel import ScreenplayBeat
 from novel_to_comic.models.story_bible import Location, StoryBible
+from novel_to_comic.layout_planning import sync_narration_into_panels
 from novel_to_comic.prompting import build_planned_panel_prompt_spec
-from novel_to_comic.stages.s5_layout_plan import (
-    _build_narration_decisions,
-    _sync_rendered_narration,
-)
+from novel_to_comic.stages.s5_layout_plan import _build_narration_decisions
 
 
 def test_narration_fallback_uses_adapted_caption_and_preserves_source_quote():
@@ -28,7 +26,7 @@ def test_narration_fallback_uses_adapted_caption_and_preserves_source_quote():
     warnings: list[str] = []
 
     decisions = _build_narration_decisions("scene_004", [], [panel], beats, warnings)
-    panels = _sync_rendered_narration([panel], decisions)
+    panels = sync_narration_into_panels([panel], decisions)
 
     assert decisions[0].source_text == "And the summer was over."
     assert decisions[0].caption_text == "Summer ends in that silent moment."
@@ -74,7 +72,7 @@ def test_llm_narration_decision_attaches_caption_to_panel():
         beats,
         [],
     )
-    panels = _sync_rendered_narration([panel], decisions)
+    panels = sync_narration_into_panels([panel], decisions)
 
     assert decisions[0].preferred_zone == "bottom"
     assert panels[0].has_narration_caption is True
@@ -139,7 +137,7 @@ def test_sync_narration_decisions_removes_duplicate_untracked_caption():
         )[0]
     ]
 
-    panels = _sync_rendered_narration([decision_panel, duplicate_panel], decisions)
+    panels = sync_narration_into_panels([decision_panel, duplicate_panel], decisions)
 
     narration_lines = [
         line

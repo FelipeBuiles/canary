@@ -11,7 +11,7 @@ from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
 from novel_to_comic.models.story_bible import Character, StoryBible
 from novel_to_comic.panel_aspect import dimensions_for_generation_shape, frame_phrase
 from novel_to_comic.text_utils import clean, shorten
-from novel_to_comic.ai.providers.base import RefImage
+from novel_to_comic.ai.providers.base import RefImage, order_refs_for_upload
 
 
 _SHOT_DIMENSIONS: dict[str, tuple[int, int]] = {
@@ -159,48 +159,61 @@ def _labels(config: Config | None = None) -> dict[str, str]:
 
 _clean = clean
 _shorten = shorten
-IMAGE_PROMPT_VERSION = 17
+IMAGE_PROMPT_VERSION = 18  # 18: ImagePrompt.location_state_id for per-state plates
 _SOFT_CONTINUITY = {"smooth_continuation", "match_cut"}
 
+# Generic interior/exterior vocabulary for anchor filtering. All matching is
+# WORD-BOUNDARY based (see _compile_token_re) so "bed" never matches
+# "riverbed" and "street" never matches "streetwise". Location *states* are
+# the structural fix for indoor/outdoor anchor contamination; this layer is
+# only a generic safety net and must not accumulate story-specific tokens.
+
 # Tokens whose presence in panel.background_description signals the panel
-# depicts an INTERIOR setting — used to filter the scene-level location
-# anchor so its outdoor-specific objects (bike rack, moped, street lamp,
-# rubble, etc.) don't leak into a flashback or transitional interior panel.
+# depicts an INTERIOR setting.
 _INTERIOR_BG_HINTS = (
-    "indoor", "interior", "bedroom", "bed,", "bed ", " bed.", "room,", "room ",
-    "hallway", "corridor", "tunnel", "ceiling", "doorframe", "doorway",
-    "staircase", "stairwell", "stairs end", "marble floor", "marble wall",
-    "torchlit", "torch-lit", "dungeon", "guild ", "tutorial guild",
-    "rumpled", "blanket", "bedside", "bedspread", "bedsheets",
-    "wallpaper", "indoor lighting",
+    "indoor", "indoors", "interior", "inside", "bedroom", "bedside",
+    "rumpled", "blanket", "room", "kitchen", "hallway", "corridor",
+    "tunnel", "ceiling", "doorframe", "doorway", "staircase", "stairwell",
+    "cellar", "basement", "dungeon", "wallpaper",
 )
 
 # Tokens whose presence in panel.background_description signals the panel
 # depicts an EXTERIOR setting.
 _EXTERIOR_BG_HINTS = (
-    "outdoor", "outside", "sky", "street", "sidewalk", "snowy", "tree branch",
-    "rooftop", "facade", "city block", "ruined city", "open dark",
-    "flattened ", "rubble", "city receding", "horizon", "open sky",
+    "outdoor", "outdoors", "outside", "exterior", "sky", "street",
+    "sidewalk", "rooftop", "facade", "city block", "horizon", "rubble",
+    "field", "forest", "garden", "courtyard", "alley", "road",
 )
 
 # Concrete-object tokens from a location anchor that should be DROPPED when
 # the panel's background_description indicates an interior. These reference
 # things visible only when the camera is outdoors at that location.
 _OUTDOOR_ANCHOR_TOKENS = (
-    "outdoors", "outside", "street", "sidewalk", "sky", "rooftop", "block",
+    "outdoors", "outside", "street", "sidewalk", "sky", "rooftop",
     "facade", "bicycle rack", "bike rack", "moped", "stop sign",
-    "street lamp", "streetlamp", "parked car", "rubble", "debris", "ruins",
-    "dirt", "empty space", "snow", "snowdrift", "tree", "tree branch",
+    "street lamp", "streetlamp", "parked car", "parked cars", "rubble",
+    "debris", "ruins", "traffic", "pavement", "horizon",
 )
 
 # Concrete-object tokens from a location anchor that should be DROPPED when
 # the panel's background_description indicates an exterior.
 _INTERIOR_ANCHOR_TOKENS = (
-    "indoors", "indoor", "interior", "bedroom", "bed", "rumpled bed",
-    "hallway", "corridor", "tunnel", "marble floor", "marble wall",
-    "torchlit", "torch-lit", "torches", "ceiling", "walls", "wallpaper",
-    "double doors", "wooden door", "bedside lamp", "stairs",
+    "indoors", "indoor", "interior", "bedroom", "bedside", "rumpled bed",
+    "hallway", "corridor", "tunnel", "ceiling", "wallpaper", "furniture",
+    "staircase", "stairwell", "marble floor", "marble wall",
+    "double doors", "wooden door", "bedside lamp",
 )
+
+
+def _compile_token_re(tokens: tuple[str, ...]) -> re.Pattern[str]:
+    alternation = "|".join(re.escape(token) for token in tokens)
+    return re.compile(rf"\b(?:{alternation})\b", re.IGNORECASE)
+
+
+_INTERIOR_BG_RE = _compile_token_re(_INTERIOR_BG_HINTS)
+_EXTERIOR_BG_RE = _compile_token_re(_EXTERIOR_BG_HINTS)
+_OUTDOOR_ANCHOR_RE = _compile_token_re(_OUTDOOR_ANCHOR_TOKENS)
+_INTERIOR_ANCHOR_RE = _compile_token_re(_INTERIOR_ANCHOR_TOKENS)
 _SEQUENTIAL_THEN_RE = re.compile(r"(?<=[,;.!?])\s+then\s+", re.IGNORECASE)
 _LEADING_TRANSITION_ACTION_RE = re.compile(
     r"^(?:rises?|stands?|turns?|moves?|steps?|walks?|bends?|leans?)"
@@ -232,9 +245,8 @@ def _detect_bg_context(background: str) -> str:
     """Return 'interior', 'exterior', or 'ambiguous' for a panel background."""
     if not background:
         return "ambiguous"
-    bg_lower = background.lower()
-    interior_hit = any(tok in bg_lower for tok in _INTERIOR_BG_HINTS)
-    exterior_hit = any(tok in bg_lower for tok in _EXTERIOR_BG_HINTS)
+    interior_hit = bool(_INTERIOR_BG_RE.search(background))
+    exterior_hit = bool(_EXTERIOR_BG_RE.search(background))
     if interior_hit and not exterior_hit:
         return "interior"
     if exterior_hit and not interior_hit:
@@ -258,9 +270,9 @@ def _filter_location_anchor_for_panel(anchor: str, background: str) -> str:
     context = _detect_bg_context(background)
     if context == "ambiguous":
         return anchor
-    blocklist = _OUTDOOR_ANCHOR_TOKENS if context == "interior" else _INTERIOR_ANCHOR_TOKENS
+    block_re = _OUTDOOR_ANCHOR_RE if context == "interior" else _INTERIOR_ANCHOR_RE
     tags = [t.strip() for t in anchor.split(",") if t.strip()]
-    kept = [t for t in tags if not any(blocked in t.lower() for blocked in blocklist)]
+    kept = [t for t in tags if not block_re.search(t)]
     return ", ".join(kept)
 
 
@@ -694,6 +706,7 @@ def build_planned_panel_prompt_spec(
         crop_policy=panel.crop_policy,
         transition_in=panel.transition_in,
         transition_out=panel.transition_out,
+        location_state_id=state_id,
         has_narration_caption=panel.has_narration_caption,
         narration_mode=panel.narration_mode,
         preferred_caption_zone=panel.preferred_caption_zone,
@@ -871,14 +884,19 @@ def _distilled_subject_clause(subject: PromptSubject, *, identity_limit: int) ->
     expression = _readable_prompt_text(subject.expression)
     position = _readable_prompt_text(subject.position)
     identity = _shorten_distilled(subject.identity, identity_limit)
-    details = [subject.name, action, expression, position, identity]
+    # Identity (appearance) immediately follows the name so attributes bind to
+    # the right character — trailing identity after action/position weakens the
+    # binding and invites attribute bleed in multi-subject panels.
+    details = [subject.name, identity, action, expression, position]
     return _join_phrase(details)
 
 
 def _distilled_subject_sentence(prompt: ImagePrompt) -> str:
     subjects = getattr(prompt, "subjects", []) or []
     composition = _strip_distilled_composition_noise(getattr(prompt, "composition", None))
-    shot = _shorten_distilled(composition, 100) if composition else "single scene image"
+    # 200 chars keeps the S5 camera_note (appended to composition after the
+    # shot phrase) — the old 100-char cap amputated it on most panels.
+    shot = _shorten_distilled(composition, 200) if composition else "single scene image"
     if subjects:
         identity_limit = 450 if len(subjects) <= 2 else 300
         clauses = [
@@ -996,6 +1014,24 @@ def _distilled_strip_known_tokens(text: str, known: set[str]) -> str:
     return ", ".join(kept)
 
 
+def _distilled_caption_space_sentence(prompt: ImagePrompt) -> str:
+    """Re-surface the narration-caption negative-space directive.
+
+    The caption cue is stripped out of the composition phrase by
+    ``_strip_distilled_composition_noise`` to keep the shot phrase compact, so
+    it must be re-emitted as its own sentence — otherwise panels flagged for
+    narration never ask the model for caption room and S8 letters over busy art.
+    """
+    if not getattr(prompt, "has_narration_caption", False):
+        return ""
+    zone = (getattr(prompt, "preferred_caption_zone", None) or "top").replace("_", " ")
+    if zone == "none":
+        return ""
+    return _sentence(
+        f"Keep quiet, uncluttered negative space near the {zone} for a narration caption added later"
+    )
+
+
 def _distilled_continuity_sentence(prompt: ImagePrompt) -> str:
     """Surface one short transition / continuity directive when available.
 
@@ -1054,12 +1090,14 @@ def generate_distilled_prompt(prompt: ImagePrompt) -> str:
             sentences.append(deduped)
             seen |= _distilled_significant_tokens(deduped)
 
+    # Lighting/mood and must-show sentences are exempt from token dedup:
+    # bag-of-words overlap is not semantic redundancy ("light from a window"
+    # in the setting does not make "low warm light, deep shadows" redundant),
+    # and these two clauses carry the highest visual-quality leverage.
     light_mood = _distilled_light_mood_sentence(prompt)
     if light_mood:
-        light_mood = _sentence(_distilled_strip_known_tokens(light_mood, seen))
-        if light_mood and (_distilled_significant_tokens(light_mood) - seen):
-            sentences.append(light_mood)
-            seen |= _distilled_significant_tokens(light_mood)
+        sentences.append(light_mood)
+        seen |= _distilled_significant_tokens(light_mood)
 
     props_clause = _distilled_props_sentence(prompt)
     if props_clause:
@@ -1068,10 +1106,12 @@ def generate_distilled_prompt(prompt: ImagePrompt) -> str:
 
     must_show = _distilled_must_show_sentence(prompt)
     if must_show:
-        must_show = _sentence(_distilled_strip_known_tokens(must_show, seen))
-        if must_show and (_distilled_significant_tokens(must_show) - seen):
-            sentences.append(must_show)
-            seen |= _distilled_significant_tokens(must_show)
+        sentences.append(must_show)
+        seen |= _distilled_significant_tokens(must_show)
+
+    caption_space = _distilled_caption_space_sentence(prompt)
+    if caption_space:
+        sentences.append(caption_space)
 
     continuity = _distilled_continuity_sentence(prompt)
     if continuity:
@@ -1090,12 +1130,96 @@ def ensure_distilled_prompt(config: Config, prompt: ImagePrompt) -> ImagePrompt:
     return updated
 
 
-_GENERATION_RENDERING_CONSTRAINTS = (
-    "Render clean, coherent surfaces with readable forms. Avoid stochastic grain, "
-    "speckled dappling, repeated brush dabs, tiled patterns, JPEG artifacts, noisy "
-    "micro-detail, and muddy over-texturing. If the selected style mentions "
-    "brushwork, hatching, weave, or texture, interpret it as broad intentional "
-    "structure rather than all-over noise."
+def visual_brief_source_spec(prompt: ImagePrompt) -> str:
+    """Render the structured panel fields as a labeled spec for the LLM
+    visual-brief pass (see prompt_assembly.generate_visual_brief).
+
+    Fields are emitted verbatim and untruncated — the brief writer decides
+    emphasis and phrasing, not string surgery.
+    """
+    lines: list[str] = []
+
+    framing = _strip_distilled_composition_noise(getattr(prompt, "composition", None))
+    if framing:
+        lines.append(f"Framing: {framing}")
+
+    for subject in getattr(prompt, "subjects", []) or []:
+        details: list[str] = []
+        identity = _readable_prompt_text(subject.identity)
+        if identity:
+            details.append(f"appearance: {identity}")
+        action = _readable_prompt_text(subject.action)
+        if action:
+            details.append(f"action: {action}")
+        expression = _readable_prompt_text(subject.expression)
+        if expression:
+            details.append(f"expression: {expression}")
+        position = _readable_prompt_text(subject.position)
+        if position:
+            details.append(f"position: {position}")
+        lines.append(f"Character — {subject.name}: {'; '.join(details) if details else 'present'}")
+
+    setting = _readable_prompt_text(getattr(prompt, "setting", None))
+    if setting:
+        lines.append(f"Setting: {setting}")
+    lighting = _readable_prompt_text(getattr(prompt, "lighting", None))
+    if lighting:
+        lines.append(f"Lighting: {lighting}")
+    mood = _readable_prompt_text(getattr(prompt, "mood", None))
+    if mood:
+        lines.append(f"Mood: {mood}")
+
+    props = [_readable_prompt_text(value) for value in getattr(prompt, "props", []) or []]
+    props = [p for p in props if p]
+    if props:
+        lines.append(f"Props (with their fixed appearance): {'; '.join(props)}")
+    key_objects = [_readable_prompt_text(value) for value in getattr(prompt, "key_objects", []) or []]
+    key_objects = [o for o in key_objects if o]
+    if key_objects:
+        lines.append(f"Other visible objects: {'; '.join(key_objects)}")
+    requirements = [
+        _readable_prompt_text(value)
+        for value in getattr(prompt, "visual_requirements", []) or []
+    ]
+    requirements = [r for r in requirements if r]
+    if requirements:
+        lines.append(f"Must clearly show: {'; '.join(requirements)}")
+
+    if getattr(prompt, "has_narration_caption", False):
+        zone = (getattr(prompt, "preferred_caption_zone", None) or "top").replace("_", " ")
+        if zone != "none":
+            lines.append(
+                f"Caption space: keep quiet, uncluttered negative space near the {zone} "
+                "for a narration caption added later"
+            )
+
+    continuity_note = _clean(getattr(prompt, "continuity_note", None))
+    if continuity_note:
+        lines.append(f"Continuity with previous panel: {continuity_note}")
+
+    constraints = _clean(getattr(prompt, "constraints", None))
+    if constraints:
+        lines.append(f"Hard constraints: {constraints}")
+
+    return "\n".join(lines)
+
+
+# Positive surface-discipline line appended to the Style section (not the
+# constraints) when the style template invokes texture-heavy media. Phrased as
+# direction rather than a list of failure modes: enumerating artifact
+# vocabulary ("grain", "JPEG artifacts", "speckled dappling") in every prompt
+# both dilutes attention on the actual scene and seeds the very concepts we
+# want to avoid.
+_STYLE_SURFACE_DISCIPLINE = (
+    "Render clean, coherent surfaces with readable forms; interpret brushwork, "
+    "hatching, weave, or texture as broad intentional structure applied to large "
+    "shapes, with quiet planes between accents."
+)
+
+_TEXTURE_STYLE_RE = re.compile(
+    r"\b(brush|hatch|stipple|weave|texture|grain|impasto|gouache|watercolou?r|"
+    r"woodcut|linocut|etch|crosshatch|charcoal|pastel|oil paint)\w*",
+    re.IGNORECASE,
 )
 
 _GPT_IMAGE_2_RENDERING_DISCIPLINE = (
@@ -1108,17 +1232,14 @@ _GPT_IMAGE_2_RENDERING_DISCIPLINE = (
     "show only the story-critical cracks, tears, stains, and corrosion accents."
 )
 
-_REFERENCE_CONSTRAINTS = (
-    "Use reference images only for identity, continuity, palette, and broad style. "
-    "Do not copy sample-image artifacts, borders, layout grids, repeated texture "
-    "fields, background patterns, incidental noise, or decorative colored border effects "
-    "surrounding character reference images."
+_REFERENCE_CONSTRAINT_LINE = (
+    "Use reference images for identity, palette, and continuity only — do not "
+    "copy their borders, layout grids, backgrounds, or framing."
 )
 
-_LAYOUT_CONSTRAINTS = (
-    "Single panel image: render the entire canvas as one unified scene. "
-    "Do not divide the image into sub-panels, columns, rows, gutters, or internal "
-    "panel borders. No page layout, strip layout, or split-screen compositions."
+_LAYOUT_CONSTRAINT_LINE = (
+    "One unified scene filling the entire canvas — no sub-panels, gutters, "
+    "internal borders, page layouts, or split-screen compositions."
 )
 
 
@@ -1157,25 +1278,40 @@ def render_generation_prompt(
     refs: list[RefImage] | None = None,
 ) -> str:
     style = _clean(style_template or getattr(prompt, "style", None))
-    body = _clean(getattr(prompt, "distilled_prompt", None)) or generate_distilled_prompt(prompt)
+    # Prefer the LLM-composed prose brief; fall back to the deterministic
+    # distilled brief for prompts generated before the brief existed.
+    body = (
+        _clean(getattr(prompt, "visual_brief", None))
+        or _clean(getattr(prompt, "distilled_prompt", None))
+        or generate_distilled_prompt(prompt)
+    )
     sections: list[str] = ["Create one finished scene image using the selected style."]
 
+    if style and _TEXTURE_STYLE_RE.search(style):
+        style = f"{style}\n{_STYLE_SURFACE_DISCIPLINE}"
     _append_section(sections, "Style", style)
     if image_model and is_gpt_image_2(image_model):
         _append_section(sections, "Rendering discipline", _GPT_IMAGE_2_RENDERING_DISCIPLINE)
     _append_section(sections, "Visual brief", body)
 
+    # Continuity sits with the visual content, not below the constraint
+    # boilerplate — it directly informs pose and framing.
+    if getattr(prompt, "continuity_note", None):
+        _append_section(sections, "Continuity", prompt.continuity_note)
+
     if image_model and is_reve_model(image_model) and refs:
-        # Sort refs to match the upload order applied by _flatten_refs in litellm_http.py
-        # so <img>N</img> indices in the prompt correspond to the correct uploaded files.
-        _ref_priority = {"subject": 0, "prop": 1, "continuity": 2, "style": 3, "location_plate": 4}
-        ordered_refs = sorted(refs, key=lambda r: _ref_priority.get(r.role, 99))
+        # <img>N</img> indices follow the canonical upload order shared with
+        # _flatten_refs in litellm_http.py via order_refs_for_upload.
         ref_instructions = []
-        for idx, ref in enumerate(ordered_refs):
+        for idx, ref in enumerate(order_refs_for_upload(refs)):
             role = ref.role
             label = ref.label
             if role == "subject":
-                instr = f"Use <img>{idx}</img> as the character reference for {label}." if label else f"Use <img>{idx}</img> as the character reference."
+                instr = (
+                    f"Use <img>{idx}</img> as the identity reference for {label} — match face, hair, build, and wardrobe; do not copy its pose or background."
+                    if label
+                    else f"Use <img>{idx}</img> as the character identity reference; do not copy its pose or background."
+                )
             elif role == "style":
                 instr = f"Use <img>{idx}</img> as the style reference for {label}." if label else f"Use <img>{idx}</img> as the style reference."
             elif role == "location_plate":
@@ -1197,34 +1333,21 @@ def render_generation_prompt(
             "do not draw caption boxes, speech bubbles, labels, signs, or readable text"
         )
         constraints = f"{constraints}; {note}" if constraints else note
-    constraint_lines = [
-        f"- {part.strip()}"
-        for part in constraints.split(";")
-        if part.strip() and (
-            "exactly " in part.lower()
-            or "no text" in part.lower()
-            or "caption" in part.lower()
-            or "lettering" in part.lower()
-            or "speech" in part.lower()
-        )
-    ]
-    constraint_lines.extend([
-        f"- {_GENERATION_RENDERING_CONSTRAINTS}",
-        f"- {_REFERENCE_CONSTRAINTS}",
-        f"- {_LAYOUT_CONSTRAINTS}",
-    ])
+    # Emit every per-panel constraint verbatim. (A keyword filter here once
+    # silently dropped "one body per listed character" and "single frozen
+    # instant" — the exact guards against duplicate-figure and multi-moment
+    # artifacts.)
+    constraint_lines = [f"- {part.strip()}" for part in constraints.split(";") if part.strip()]
+    constraint_lines.append(f"- {_LAYOUT_CONSTRAINT_LINE}")
+    if refs:
+        constraint_lines.append(f"- {_REFERENCE_CONSTRAINT_LINE}")
     _append_section(sections, "Constraints", constraint_lines)
 
-    output = "\n\n".join(sections)
-
-    if getattr(prompt, "continuity_note", None):
-        output = f"{output}\n\nContinuity:\n{prompt.continuity_note}"
-
-    return output
+    return "\n\n".join(sections)
 
 
-def build_style_sample_prompt(config: Config, story_bible: StoryBible) -> str:
-    """Render a compact style-evaluation prompt shared by CLI and API routes."""
+def style_sample_fallback_brief(story_bible: StoryBible) -> str:
+    """Deterministic style-sample body used when the LLM brief is unavailable."""
     first_char = story_bible.characters[0] if story_bible.characters else None
     first_loc = story_bible.locations[0] if story_bible.locations else None
     char_desc = _shorten(
@@ -1236,13 +1359,39 @@ def build_style_sample_prompt(config: Config, story_bible: StoryBible) -> str:
         200,
     ) or "a dramatic atmospheric setting"
     return (
-        "Create one style proof image for evaluating the project's art direction. "
-        f"Subject: {char_desc}. Setting: {loc_desc}. "
-        "Use a single portrait 4:5 aspect ratio frame, filling the entire canvas from edge to edge. "
-        "Emphasize the specific visual medium, colors, textures, lighting, and composition. "
-        "Keep the image clean, coherent, and free of any text, borders, speech bubbles, or margins.\n\n"
-        "STYLE AUTHORITY - demonstrate this exactly:\n"
-        f"{config.style_template}\n\n"
-        "Ensure all details support the style authority above. "
-        "Maintain clean, clear surfaces with sharp focus on the style's distinctive elements."
+        f"A three-quarter view of one figure — {char_desc} — in {loc_desc}. "
+        "One frozen instant with the figure as the clear focal point and the setting "
+        "giving depth behind them. Directional light models the face and figure, with "
+        "bright accents and deep shadow both in frame so the style's full range shows."
     )
+
+
+def build_style_sample_prompt(
+    config: Config,
+    story_bible: StoryBible,
+    *,
+    brief: str | None = None,
+) -> str:
+    """Render the style proof-image prompt shared by CLI and API routes.
+
+    *brief* is the LLM-composed subject/setting prose from
+    ``ensure_style_sample_brief``; when absent the deterministic
+    first-character/first-location body is used instead.
+    """
+    style = _clean(config.style_template)
+    if style and _TEXTURE_STYLE_RE.search(style):
+        style = f"{style}\n{_STYLE_SURFACE_DISCIPLINE}"
+    body = _clean(brief or "") or style_sample_fallback_brief(story_bible)
+
+    sections: list[str] = [
+        "Create one style proof image for evaluating the project's art direction — "
+        "demonstrate the selected style at full strength."
+    ]
+    _append_section(sections, "Style", style)
+    _append_section(sections, "Visual brief", body)
+    _append_section(sections, "Constraints", [
+        f"- {_LAYOUT_CONSTRAINT_LINE}",
+        "- Portrait 4:5 frame, filled edge to edge.",
+        "- Wordless artwork: all storytelling through imagery alone, with no lettering or borders.",
+    ])
+    return "\n\n".join(sections)

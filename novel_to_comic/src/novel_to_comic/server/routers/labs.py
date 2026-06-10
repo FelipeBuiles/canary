@@ -213,23 +213,30 @@ def import_project_scene(
     style_template = project_config.style_template or prompts[0].style or ""
 
     selected_prompts = prompts[:panel_limit]
+    refs_per_panel = _resolve_scene_panel_refs(d, project_config, selected_prompts)
     imported_references = _project_scene_reference_payload(
         project_id,
         d,
-        project_config,
-        selected_prompts,
+        refs_per_panel,
     )
 
     panels = []
-    from novel_to_comic.prompting import generate_distilled_prompt
+    from novel_to_comic.prompting import generate_distilled_prompt, render_generation_prompt
 
-    for i, p in enumerate(selected_prompts, start=1):
+    image_model = project_config.effective_image_model()
+    for i, (p, panel_refs) in enumerate(zip(selected_prompts, refs_per_panel), start=1):
         distilled_prompt = p.distilled_prompt or generate_distilled_prompt(p)
         panels.append({
             "idx": i,
             "label": f"Panel {p.panel_number}" + (f" — {p.scene_id}" if p.scene_id else ""),
-            "prompt": distilled_prompt,
+            "prompt": getattr(p, "visual_brief", None) or distilled_prompt,
             "prompt_variant_b": p.full_prompt or "",
+            # Exact replay of what S7 sends for this panel (style + brief +
+            # refs + constraints). Run it with an EMPTY experiment style
+            # template — the style section is already embedded.
+            "production_prompt": render_generation_prompt(
+                p, style_template, image_model, refs=panel_refs
+            ),
             "width": p.width or 1024,
             "height": p.height or 1024,
         })
@@ -243,13 +250,12 @@ def import_project_scene(
     }
 
 
-def _project_scene_reference_payload(
-    project_id: str,
+def _resolve_scene_panel_refs(
     project_dir: Path,
     config,
     prompts: list[Any],
-) -> list[dict[str, str]]:
-    """Return draw-stage-equivalent reference images for imported Labs scenes."""
+) -> list[list[Any]]:
+    """Resolve draw-stage-equivalent refs per panel (parallel to prompts)."""
     from novel_to_comic.stages.s7_draw import _find_style_sample, resolve_panel_references
 
     scene_to_location: dict[str, str] = {}
@@ -263,12 +269,11 @@ def _project_scene_reference_payload(
             scene_to_location = {}
 
     style_sample = _find_style_sample(project_dir, config.style_template)
-    seen: set[Path] = set()
-    refs: list[dict[str, str]] = []
+    refs_per_panel: list[list[Any]] = []
     for prompt in prompts:
         prompt_path = artifacts.panel_prompt_path(project_dir, prompt.scene_id, prompt.panel_number)
         output_dir = project_dir / "draw" / prompt.scene_id
-        for ref in resolve_panel_references(
+        refs_per_panel.append(resolve_panel_references(
             config,
             project_dir,
             prompt,
@@ -277,7 +282,20 @@ def _project_scene_reference_payload(
             scene_to_location=scene_to_location,
             location_labels=location_labels,
             output_dir=output_dir,
-        ):
+        ))
+    return refs_per_panel
+
+
+def _project_scene_reference_payload(
+    project_id: str,
+    project_dir: Path,
+    refs_per_panel: list[list[Any]],
+) -> list[dict[str, str]]:
+    """Return deduplicated reference-image payload entries for imported Labs scenes."""
+    seen: set[Path] = set()
+    refs: list[dict[str, str]] = []
+    for panel_refs in refs_per_panel:
+        for ref in panel_refs:
             path = ref.path.resolve()
             if path in seen or not path.is_file():
                 continue

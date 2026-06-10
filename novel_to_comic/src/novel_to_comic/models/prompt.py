@@ -28,11 +28,17 @@ class ImagePrompt(BaseModel):
     crop_policy: str | None = None
     transition_in: str | None = None
     transition_out: str | None = None
+    # Effective location state for this panel (panel override, else scene
+    # default). Draw uses it to pick the matching per-state location plate.
+    location_state_id: str | None = None
     has_narration_caption: bool = False
     narration_mode: str | None = None
     preferred_caption_zone: str | None = None
     full_prompt: str = ""
     distilled_prompt: str | None = None
+    # LLM-composed prose visual brief — the preferred generation body.
+    # Falls back to distilled_prompt when absent (older prompts, LLM failure).
+    visual_brief: str | None = None
     style: str | None = None
     composition: str | None = None
     setting: str | None = None

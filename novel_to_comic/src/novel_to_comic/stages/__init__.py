@@ -19,6 +19,20 @@ class Stage:
     estimate_cost: Callable[[Config, Path, PipelineState], float] | None = None
 
 
+# Artifact directories in pipeline order. Re-running a stage invalidates its
+# own outputs plus everything downstream, so each stage's clean_paths is just
+# the cascade from its first directory.
+_CLEAN_CASCADE: tuple[str, ...] = (
+    "samples", "refs", "plates", "adapt", "plan", "storyboard",
+    "direct", "draw", "compose", "exports",
+)
+
+
+def clean_cascade(project_dir: Path, start: str) -> list[Path]:
+    """Return the artifact directories from *start* to the end of the pipeline."""
+    return [project_dir / name for name in _CLEAN_CASCADE[_CLEAN_CASCADE.index(start):]]
+
+
 # Deferred to avoid circular import: stage modules import Stage from here,
 # and Stage must be defined before those modules are loaded.
 from novel_to_comic.stages import (  # noqa: E402

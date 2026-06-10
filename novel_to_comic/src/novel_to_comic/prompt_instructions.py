@@ -158,6 +158,7 @@ def apply_instruction_patch(prompt: ImagePrompt, patch: PromptInstructionPatch) 
     _enforce_prompt_invariants(updated)
     updated.full_prompt = render_panel_prompt_body(updated)
     updated.distilled_prompt = None
+    updated.visual_brief = None
     return updated
 
 
@@ -409,11 +410,13 @@ async def apply_asset_instruction(
                     max_output_tokens=1200,
                     feature="draw.panel_instruction_rewrite",
                 )
-            patch = parse_instruction_patch(rewrite.value)
-            updated_prompt = apply_instruction_patch(prompt, patch)
-            # Re-render distilled prompt if it was present
-            from novel_to_comic.prompting import ensure_distilled_prompt
-            updated_prompt = ensure_distilled_prompt(config, updated_prompt)
+                patch = parse_instruction_patch(rewrite.value)
+                updated_prompt = apply_instruction_patch(prompt, patch)
+                # Re-derive both generated bodies — the patch invalidated them.
+                from novel_to_comic.prompt_assembly import ensure_visual_brief
+                from novel_to_comic.prompting import ensure_distilled_prompt
+                updated_prompt = ensure_distilled_prompt(config, updated_prompt)
+                updated_prompt = await ensure_visual_brief(config, updated_prompt)
         except PromptInstructionError as exc:
             logger.warning(
                 "Panel instruction rewrite could not be applied project=%s scene=%s panel=%s reason=%s",

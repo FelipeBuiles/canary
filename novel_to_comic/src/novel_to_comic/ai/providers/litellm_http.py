@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from novel_to_comic.ai.errors import AIRefusalError
-from novel_to_comic.ai.providers.base import ProviderRawResult, RefImage
+from novel_to_comic.ai.providers.base import ProviderRawResult, RefImage, order_refs_for_upload
 from novel_to_comic.config import Config, is_gpt_image_2
 from novel_to_comic.panel_aspect import aspect_for_dimensions, generation_shape_for_aspect
 
@@ -208,14 +208,9 @@ def _label_slug(label: str | None) -> str:
 
 
 def _flatten_refs(refs: list[RefImage]) -> list[RefImage]:
-    priority = {
-        "subject": 0,
-        "prop": 1,
-        "continuity": 2,
-        "style": 3,
-        "location_plate": 4,
-    }
-    return sorted(refs, key=lambda ref: priority.get(ref.role, 99))
+    # Single source of truth shared with prompting.render_generation_prompt,
+    # which renders <img>N</img> indices assuming this exact upload order.
+    return order_refs_for_upload(refs)
 
 
 def _valid_gpt_image_2_size(width: int, height: int) -> bool:
