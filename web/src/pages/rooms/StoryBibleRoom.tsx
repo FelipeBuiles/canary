@@ -172,7 +172,7 @@ export function StoryBibleRoom() {
     return (
       <RoomShell
         isLoading
-        loadingText="LOADING STORY BIBLE…"
+        loadingText="SKETCHING THE STORY BIBLE…"
         loadingStage="extract"
         loadingStageStatus={stageStatus}
         loadingStageItemsDone={stageInfo?.items_done}

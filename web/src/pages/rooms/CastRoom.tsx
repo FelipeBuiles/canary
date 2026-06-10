@@ -175,7 +175,7 @@ function CharacterCastCard({
               <FlowingDotsPlaceholder
                 aspect="4 / 5"
                 className="h-full"
-                label={isQueued ? t("QUEUED") : t("GENERATING…")}
+                label={isQueued ? t("QUEUED") : t("DRAWING…")}
                 caption={activeJob ? t("GENERATING NEW REF") : t("REBUILDING CAST REF")}
               />
             ) : imgFailed ? (
@@ -475,7 +475,7 @@ function LocationPlateCard({
               <FlowingDotsPlaceholder
                 aspect="16 / 9"
                 className="h-full"
-                label={isQueued ? t("QUEUED") : t("GENERATING…")}
+                label={isQueued ? t("QUEUED") : t("DRAWING…")}
                 caption={activeJob ? t("GENERATING NEW PLATE") : t("REBUILDING LOCATION PLATE")}
               />
             ) : imgFailed ? (
@@ -748,7 +748,7 @@ function PropRefCard({
               <FlowingDotsPlaceholder
                 aspect="1 / 1"
                 className="h-full"
-                label={isQueued ? t("QUEUED") : t("GENERATING…")}
+                label={isQueued ? t("QUEUED") : t("DRAWING…")}
                 caption={activeJob ? t("GENERATING NEW PROP") : t("REBUILDING PROP REF")}
               />
             ) : imgFailed ? (

@@ -24,7 +24,7 @@ export function FlowingDotsPlaceholder({
   const rafRef = useRef<number | null>(null);
   const startRef = useRef<number>(0);
 
-  const displayLabel = label ?? t("GENERATING…");
+  const displayLabel = label ?? t("DRAWING…");
   const displayCaption = caption ? t(String(caption)) : undefined;
 
   useEffect(() => {

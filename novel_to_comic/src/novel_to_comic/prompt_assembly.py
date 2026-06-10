@@ -200,7 +200,7 @@ async def generate_visual_brief(config: Config, prompt: ImagePrompt) -> str | No
             system_prompt=VISUAL_BRIEF_SYSTEM_PROMPT,
             user_content=spec,
             temperature=0.4,
-            max_output_tokens=400,
+            max_output_tokens=4096,
             feature="prompt.visual_brief",
         )
     except Exception:

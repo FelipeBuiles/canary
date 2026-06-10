@@ -221,3 +221,89 @@ class TestEnqueueCreditedJob:
             asyncio.run(job.runner())
 
         mock_debit.assert_not_called()
+
+    def test_runner_clears_items_failed_cast_on_success(self, tmp_path: Path):
+        from novel_to_comic.server.credited_job import enqueue_credited_job
+        from novel_to_comic.state import create_initial_state, save_state, load_state
+
+        # Setup initial state with a failed item
+        state = create_initial_state("proj", "novel.txt")
+        state.stages["cast"].items_failed = ["protagonist"]
+        state.stages["cast"].items_done = 8
+        state.stages["cast"].items_total = 10
+        save_state(state, tmp_path)
+
+        app = _make_app()
+
+        async def _work():
+            return ApiResult(value="ok", usage=None)
+
+        with patch("novel_to_comic.server.credited_job.get_db"), \
+             patch("novel_to_comic.server.credited_job.assert_sufficient_credits"), \
+             patch("novel_to_comic.server.credited_job.ai_request_context") as mock_ctx:
+            mock_ctx.return_value.__enter__ = MagicMock(return_value=None)
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+            job, _ = enqueue_credited_job(
+                app,
+                project_name="proj",
+                user_id="u1",
+                project_id="p1",
+                project_dir=tmp_path,
+                stage="cast",
+                kind="character_ref_regen",
+                label="char",
+                payload={"char_id": "protagonist"},
+                work=_work,
+                debit_description="regen",
+            )
+
+            asyncio.run(job.runner())
+
+        # Verify the item has been removed from items_failed in state.json
+        loaded_state = load_state(tmp_path)
+        assert "protagonist" not in loaded_state.stages["cast"].items_failed
+        assert loaded_state.stages["cast"].items_done == 9
+
+    def test_runner_clears_items_failed_draw_on_success(self, tmp_path: Path):
+        from novel_to_comic.server.credited_job import enqueue_credited_job
+        from novel_to_comic.state import create_initial_state, save_state, load_state
+
+        # Setup initial state with a failed item
+        state = create_initial_state("proj", "novel.txt")
+        state.stages["draw"].items_failed = ["scene_001/panel_001"]
+        state.stages["draw"].items_done = 5
+        state.stages["draw"].items_total = 10
+        save_state(state, tmp_path)
+
+        app = _make_app()
+
+        async def _work():
+            return ApiResult(value="ok", usage=None)
+
+        with patch("novel_to_comic.server.credited_job.get_db"), \
+             patch("novel_to_comic.server.credited_job.assert_sufficient_credits"), \
+             patch("novel_to_comic.server.credited_job.ai_request_context") as mock_ctx:
+            mock_ctx.return_value.__enter__ = MagicMock(return_value=None)
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+            job, _ = enqueue_credited_job(
+                app,
+                project_name="proj",
+                user_id="u1",
+                project_id="p1",
+                project_dir=tmp_path,
+                stage="draw",
+                kind="panel_regen",
+                label="panel",
+                payload={"scene_id": "scene_001", "panel_number": 1},
+                work=_work,
+                debit_description="regen",
+            )
+
+            asyncio.run(job.runner())
+
+        # Verify the item has been removed from items_failed in state.json
+        loaded_state = load_state(tmp_path)
+        assert "scene_001/panel_001" not in loaded_state.stages["draw"].items_failed
+        assert loaded_state.stages["draw"].items_done == 6

@@ -3,31 +3,10 @@
     "AI_PROVIDER": "vertex",
     "AI_VERTEX_PROJECT": "project-b6d024d3-3aff-4788-b8a",
     "AI_VERTEX_LOCATION": "global",
-    "AI_MODEL": "google/gemini-3-flash-preview"
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Read",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"DELEGATION CHECK (CLAUDE.md rules):\\n- Reading 1+ file >300 lines to answer a factual question? USE ask-ai\\n- Reading 2+ files just to summarize or understand? USE ask-ai\\n- Grepping across 5+ files for a bulk answer? USE ask-ai\\n- Writing boilerplate, test stubs, fixture files, or docs? USE ai-write\\nOnly read directly if editing, debugging, or doing architectural reasoning.\"}}'",
-            "statusMessage": "Checking delegation rules..."
-          }
-        ]
-      }
-    ]
+    "AI_MODEL": "google/gemini-3.5-flash"
   },
   "permissions": {
     "allow": [
-      "mcp__codegraph__codegraph_search",
-      "mcp__codegraph__codegraph_context",
-      "mcp__codegraph__codegraph_callers",
-      "mcp__codegraph__codegraph_callees",
-      "mcp__codegraph__codegraph_impact",
-      "mcp__codegraph__codegraph_node",
-      "mcp__codegraph__codegraph_status"
     ]
   }
 }

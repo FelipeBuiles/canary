@@ -1,4 +1,6 @@
+import { useMemo } from "react";
 import { STAGE_ORDER, type StageName, type StageStatus } from "../../types/api";
+import { usePipelineStore } from "../../store/pipeline";
 import { Icon } from "../ui/Icon";
 
 // ── Stage metadata ────────────────────────────────────────────────────────────
@@ -165,6 +167,26 @@ export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0 }: StageRunn
   const hasProgress = itemsTotal > 0;
   const pct = hasProgress ? Math.round((itemsDone / itemsTotal) * 100) : 0;
 
+  // Live ticker: the last few human-readable log lines the pipeline emitted
+  // for this stage over SSE. Error lines are excluded — failures have their
+  // own surfacing.
+  const events = usePipelineStore((s) => s.events);
+  const logLines = useMemo(() => {
+    const lines: { key: number; message: string }[] = [];
+    events.forEach((event, index) => {
+      if (
+        event.type === "log" &&
+        event.stage === stage &&
+        typeof event.message === "string" &&
+        event.message.length > 0 &&
+        (event.level == null || event.level === "info" || event.level === "dim" || event.level === "bold")
+      ) {
+        lines.push({ key: index, message: event.message });
+      }
+    });
+    return lines.slice(-3);
+  }, [events, stage]);
+
   return (
     <div className="flex min-h-[50vh] items-center justify-center px-6">
       <div className="w-full max-w-sm">
@@ -200,6 +222,20 @@ export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0 }: StageRunn
               style={{ width: hasProgress ? `${Math.max(4, pct)}%` : "0%" }}
             />
           </div>
+          {logLines.length > 0 && (
+            <div className="mt-3 space-y-1" aria-live="polite">
+              {logLines.map((line, index) => (
+                <div
+                  key={line.key}
+                  className={`animate-ticker-rise truncate font-meta text-[0.6rem] tracking-[0.06em] ${
+                    index === logLines.length - 1 ? "text-ink-black/45" : "text-ink-black/25"
+                  }`}
+                >
+                  {line.message}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Output hints */}

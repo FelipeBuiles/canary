@@ -293,7 +293,7 @@ async def generate_style_sample_brief(
             system_prompt=STYLE_SAMPLE_BRIEF_SYSTEM_PROMPT,
             user_content=source,
             temperature=0.4,
-            max_output_tokens=300,
+            max_output_tokens=4096,
             feature="style.sample_brief",
         )
     except Exception:

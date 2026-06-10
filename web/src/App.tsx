@@ -37,6 +37,7 @@ const DrawRoom = lazy(() => import("./pages/rooms/DrawRoom").then(({ DrawRoom })
 const ComposeRoom = lazy(() =>
   import("./pages/rooms/ComposeRoom").then(({ ComposeRoom }) => ({ default: ComposeRoom })),
 );
+const NotFound = lazy(() => import("./pages/NotFound").then(({ NotFound }) => ({ default: NotFound })));
 
 function lazyRoute(Component: ComponentType): ReactElement {
   return (
@@ -81,7 +82,9 @@ export function App() {
             <Route path="draw" element={lazyRoute(DrawRoom)} />
             <Route path="compose" element={lazyRoute(ComposeRoom)} />
             <Route path="styles" element={lazyRoute(StyleRoom)} />
+            <Route path="*" element={lazyRoute(NavigateToRoom)} />
           </Route>
+          <Route path="*" element={lazyRoute(NotFound)} />
         </Route>
       </Routes>
     </I18nProvider>

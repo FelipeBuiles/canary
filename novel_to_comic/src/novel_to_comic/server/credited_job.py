@@ -71,6 +71,36 @@ def enqueue_credited_job(
             job_id=job_id,
         ):
             result = await work()
+        # Remove successfully regenerated item from items_failed if it exists
+        try:
+            from novel_to_comic.state import load_state, save_state
+            state_obj = load_state(project_dir)
+            stage_state = state_obj.stages.get(stage)
+            if stage_state:
+                item_id = None
+                if stage == "cast":
+                    if kind == "character_ref_regen":
+                        item_id = payload.get("char_id")
+                    elif kind == "location_plate_regen":
+                        item_id = payload.get("loc_id")
+                    elif kind == "prop_ref_regen":
+                        item_id = payload.get("prop_id")
+                elif stage == "draw":
+                    scene_id = payload.get("scene_id")
+                    panel_number = payload.get("panel_number")
+                    if scene_id and panel_number is not None:
+                        item_id = f"{scene_id}/panel_{panel_number:03d}"
+
+                if item_id and item_id in stage_state.items_failed:
+                    stage_state.items_failed.remove(item_id)
+                    stage_state.items_done = min(stage_state.items_total, stage_state.items_done + 1)
+                    save_state(state_obj, project_dir)
+        except Exception:
+            import logging
+            logging.getLogger("canary.credited_job").exception(
+                "Failed to remove regenerated item from items_failed for stage %s",
+                stage
+            )
         if result.usage:
             debit_model_usage(
                 get_db(),

@@ -207,7 +207,7 @@ export function RecentFinishesCard({ project }: { project: string }) {
         {finishes.map((f, i) => (
           <li
             key={`${f.sceneId}-${f.panelNumber}-${f.finishedAt}-${i}`}
-            className="flex items-center gap-2"
+            className="animate-comic-pop flex items-center gap-2"
           >
             <span
               className={`font-bold ${f.status === "ok" ? "text-archive-sage" : "text-hero-red"}`}
@@ -292,6 +292,23 @@ export function BySceneCard({
         </ul>
       )}
     </Surface>
+  );
+}
+
+// ── All-inked milestone ──────────────────────────────────────────────────────
+
+// True only on the transition into a fully-inked, failure-free stage.
+// A null prevGenerated (fresh mount of an already-complete stage) never fires.
+export function isAllInkedTransition(
+  prevGenerated: number | null,
+  counts: { generated: number; failed: number; total: number },
+): boolean {
+  return (
+    prevGenerated != null &&
+    counts.total > 0 &&
+    prevGenerated < counts.total &&
+    counts.generated === counts.total &&
+    counts.failed === 0
   );
 }
 
