@@ -8,7 +8,7 @@ const STATE_BADGE: Record<PanelDisplayState, { label: string; className: string 
   accepted: { label: "ACCEPTED", className: "bg-archive-sage text-bristol" },
   generated: { label: "GENERATED", className: "bg-archive-sage/70 text-ink-black" },
   regenerated: { label: "REGENERATED", className: "bg-teal-600 text-bristol" },
-  generating: { label: "GENERATING…", className: "bg-narrator-gold text-ink-black animate-pulse" },
+  generating: { label: "DRAWING…", className: "bg-narrator-gold text-ink-black animate-pulse" },
   queued: { label: "QUEUED", className: "bg-narrator-gold/30 text-ink-black" },
   pending: { label: "PENDING", className: "bg-ink-black/15 text-ink-black/80" },
   failed: { label: "FAILED", className: "bg-hero-red text-bristol" },

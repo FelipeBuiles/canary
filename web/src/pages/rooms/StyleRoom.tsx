@@ -295,7 +295,7 @@ export function StyleRoom() {
   }, [events, refetchStyles]);
 
   if (isLoading) {
-    return <RoomShell isLoading loadingText="CARGANDO ESTILOS…" />;
+    return <RoomShell isLoading loadingText="MIXING PALETTES…" />;
   }
 
   if (!id) {

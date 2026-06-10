@@ -407,7 +407,7 @@ async def apply_asset_instruction(
                     system_prompt=instruction_rewrite_system_prompt(),
                     user_content=instruction_rewrite_user_content(instruction, prompt),
                     temperature=0.2,
-                    max_output_tokens=1200,
+                    max_output_tokens=4096,
                     feature="draw.panel_instruction_rewrite",
                 )
                 patch = parse_instruction_patch(rewrite.value)
@@ -478,6 +478,19 @@ async def apply_asset_instruction(
                     scene_id,
                     panel_number,
                 )
+            # Remove successfully regenerated item from items_failed if it exists
+            try:
+                from novel_to_comic.state import load_state, save_state
+                state_obj = load_state(project_dir)
+                draw_state = state_obj.stages.get("draw")
+                if draw_state:
+                    item_id = f"{scene_id}/panel_{panel_number:03d}"
+                    if item_id in draw_state.items_failed:
+                        draw_state.items_failed.remove(item_id)
+                        draw_state.items_done = min(draw_state.items_total, draw_state.items_done + 1)
+                        save_state(state_obj, project_dir)
+            except Exception:
+                logger.exception("Failed to remove regenerated panel from items_failed")
             if result.usage:
                 debit_model_usage(
                     db,
@@ -603,7 +616,7 @@ async def apply_asset_instruction(
                         instruction, ref_kind, rewrite_context
                     ),
                     temperature=0.2,
-                    max_output_tokens=900,
+                    max_output_tokens=4096,
                     feature=feature,
                 )
             patch = parse_asset_instruction_patch(rewrite.value)
@@ -656,6 +669,18 @@ async def apply_asset_instruction(
                     result = await s3_cast.regenerate_location_plate(config, project_dir, asset_id)
                 else:  # prop
                     result = await s3_cast.regenerate_prop_ref(config, project_dir, asset_id)
+            # Remove successfully regenerated item from items_failed if it exists
+            try:
+                from novel_to_comic.state import load_state, save_state
+                state_obj = load_state(project_dir)
+                cast_state = state_obj.stages.get("cast")
+                if cast_state:
+                    if asset_id in cast_state.items_failed:
+                        cast_state.items_failed.remove(asset_id)
+                        cast_state.items_done = min(cast_state.items_total, cast_state.items_done + 1)
+                        save_state(state_obj, project_dir)
+            except Exception:
+                logger.exception("Failed to remove regenerated asset from items_failed")
 
             if result.usage:
                 debit_model_usage(

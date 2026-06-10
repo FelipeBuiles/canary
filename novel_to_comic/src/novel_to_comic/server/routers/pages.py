@@ -279,7 +279,7 @@ async def _generate_lettering_style(config: Config) -> tuple[dict[str, str], obj
             system_prompt=system,
             user_content=user,
             temperature=0.45,
-            max_output_tokens=1400,
+            max_output_tokens=4096,
             feature="compose.lettering_style",
         )
         result = api_result.value

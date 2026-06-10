@@ -85,6 +85,25 @@ class LLMPanelSpec(BaseModel):
     page_break_after: bool = False
     location_state_id: str | None = None  # Active location state for this panel
 
+    @field_validator("visual_requirements", "key_objects", "characters_present", mode="before")
+    @classmethod
+    def _coerce_list(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return [v] if v.strip() else []
+        return v
+
+    @field_validator("beat_indices", mode="before")
+    @classmethod
+    def _coerce_beat_indices(cls, v: Any) -> Any:
+        if isinstance(v, int):
+            return [v]
+        if isinstance(v, str):
+            try:
+                return [int(x.strip()) for x in v.split(",") if x.strip()]
+            except ValueError:
+                pass
+        return v
+
 
 class LLMNarrationDecisionSpec(BaseModel):
     """Intermediate LLM narration decision before panel IDs are assigned."""

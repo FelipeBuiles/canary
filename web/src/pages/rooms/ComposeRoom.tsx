@@ -17,6 +17,7 @@ import {
 import { downloadExportUrl } from "../../api/pages";
 import { RerunStageAction, StagePlaceholder } from "../../components/composites";
 import { ComposeHeader } from "../../components/compose/ComposeHeader";
+import { ExportBurst } from "../../components/compose/ExportBurst";
 import { EditSubTabs } from "../../components/compose/ModeSwitcher";
 import { ScriptMode } from "../../components/compose/ScriptMode";
 import { LayoutMode } from "../../components/compose/LayoutMode";
@@ -217,11 +218,14 @@ export function ComposeRoom() {
   }
 
   // ── Export / style / translate ───────────────────────────────────────────
+  const [exportSuccess, setExportSuccess] = useState<{ format: "pdf" | "cbz"; url: string } | null>(null);
+
   function handleExport(format: "pdf" | "cbz") {
     if (!id) return;
+    setExportSuccess(null);
     exportMut.mutate(
       { project: id, format },
-      { onSuccess: (result) => { window.open(result.url ?? downloadExportUrl(id, format), "_blank"); } },
+      { onSuccess: (result) => { setExportSuccess({ format, url: result.url ?? downloadExportUrl(id, format) }); } },
     );
   }
 
@@ -473,6 +477,15 @@ export function ComposeRoom() {
           onAddSfx={handleAddSfx}
         />
       )} */}
+
+      {exportSuccess && (
+        <ExportBurst
+          pageCount={pageList.length}
+          format={exportSuccess.format}
+          downloadUrl={exportSuccess.url}
+          onDismiss={() => setExportSuccess(null)}
+        />
+      )}
 
     </div>
   );

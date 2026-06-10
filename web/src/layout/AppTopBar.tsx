@@ -3,6 +3,7 @@ import { Link, useLocation, useParams } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { useCreditBalance, useProjectStatus } from "../api/queries";
 import { useAuth } from "../hooks/useAuth";
+import { useCountUp } from "../hooks/useCountUp";
 import { cn } from "../lib/cn";
 
 function initials(email?: string | null) {
@@ -21,6 +22,8 @@ export function AppTopBar() {
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   const credits = balance?.balance_credits ?? 0;
+  // Top-ups count up over ~600ms; spends snap instantly (see useCountUp).
+  const displayCredits = useCountUp(credits);
   const isLow = credits < 150;
   const inProject = location.pathname.startsWith("/project/") && !!projectId;
   const projectTitle = status?.project_name ?? projectId;
@@ -85,7 +88,7 @@ export function AppTopBar() {
           aria-label={isLow ? "Credits low — top up" : `Credits: ${credits}`}
         >
           <span>◆</span>
-          <span>{credits.toLocaleString()}</span>
+          <span className="tabular-nums">{displayCredits.toLocaleString()}</span>
           <span className="text-ink-black/42">credits{isLow ? " · top up" : ""}</span>
         </Link>
 

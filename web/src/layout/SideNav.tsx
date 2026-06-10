@@ -646,7 +646,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
               type="button"
               onClick={handleContinueClick}
               disabled={isRunning || approveStage.isPending || runPipeline.isPending}
-              className="flex min-h-13 w-full items-center justify-center gap-2 border-[2px] border-ink-black/80 bg-hero-red px-3 py-3 font-meta text-[0.72rem] tracking-[0.18em] text-bristol shadow-ink-sm transition-colors hover:bg-hero-red/90 disabled:cursor-not-allowed disabled:opacity-45 disabled:shadow-none 2xl:min-h-14 2xl:text-[0.82rem] min-[2200px]:min-h-20 min-[2200px]:text-[1.15rem]"
+              className="flex min-h-13 w-full items-center justify-center gap-2 border-[2px] border-ink-black/80 bg-hero-red px-3 py-3 font-meta text-[0.72rem] tracking-[0.18em] text-bristol shadow-paper-sm transition-[background-color,box-shadow,transform] duration-150 hover:translate-x-[1px] hover:translate-y-[1px] hover:bg-hero-red/90 hover:shadow-paper-sm active:translate-x-[3px] active:translate-y-[3px] active:shadow-none disabled:cursor-not-allowed disabled:opacity-45 disabled:shadow-none disabled:hover:translate-x-0 disabled:hover:translate-y-0 2xl:min-h-14 2xl:text-[0.82rem] min-[2200px]:min-h-20 min-[2200px]:text-[1.15rem]"
             >
               {isRunning && <Icon name="loader" size={14} className="animate-spin" />}
               {continueButtonLabel()} {!isRunning && "→"}

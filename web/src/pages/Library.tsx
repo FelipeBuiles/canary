@@ -6,6 +6,8 @@ import { usePipelineStore } from "../store/pipeline";
 import { ProjectCard } from "../components/ProjectCard";
 import { StatRow } from "../components/ui/StatRow";
 import { Icon } from "../components/ui/Icon";
+import { Button } from "../components/ui/Button";
+import { UI_STAGES } from "../lib/uiStages";
 import { UploadStep } from "../components/wizard/UploadStep";
 import type { ConfigOverrides } from "../types/api";
 import { useI18n } from "../i18n";
@@ -37,6 +39,44 @@ function NewProjectCard({ onClick }: { onClick: () => void }) {
         </div>
       </div>
     </button>
+  );
+}
+
+function FirstIssueInvitation({ onStart }: { onStart: () => void }) {
+  const { t } = useI18n();
+
+  return (
+    <div className="border-[3px] border-ink-black bg-bristol p-9 shadow-paper-sm sm:p-12">
+      <div className="inline-flex bg-hero-red px-3.5 py-1.5 font-meta text-[0.6rem] tracking-[0.24em] text-bristol uppercase">
+        {t("ISSUE #0")}
+      </div>
+      <p className="mt-6 max-w-[36rem] font-display text-[clamp(1.7rem,3.4vw,2.4rem)] font-black uppercase leading-[0.95] tracking-[-0.045em] text-ink-black">
+        {t("Every production starts with a manuscript.")}
+      </p>
+      <div className="mt-10">
+        <div className="font-meta text-[0.56rem] tracking-[0.24em] text-ink-black/45">
+          {t("THE PRODUCTION LINE")}
+        </div>
+        <ol className="mt-4 flex flex-wrap gap-2.5">
+          {UI_STAGES.map((stage, index) => (
+            <li
+              key={stage.key}
+              className="flex items-center gap-2 border-[2px] border-ink-black bg-pulp-paper px-3 py-2"
+            >
+              <span className="font-display text-[0.78rem] font-black leading-none text-ink-black/40">
+                {String(index + 1).padStart(2, "0")}
+              </span>
+              <span className="font-meta text-[0.58rem] uppercase leading-none tracking-[0.14em] text-ink-black">
+                {t(stage.label)}
+              </span>
+            </li>
+          ))}
+        </ol>
+      </div>
+      <div className="mt-10">
+        <Button size="lg" onClick={onStart}>{t("START NEW PROJECT")}</Button>
+      </div>
+    </div>
   );
 }
 
@@ -158,6 +198,7 @@ export function Library() {
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const runningCount = projects?.filter((p) => p.is_running).length ?? 0;
   const totalInkUsage = (projects ?? []).reduce((sum, project) => sum + project.total_cost_credits, 0);
+  const isEmpty = (projects?.length ?? 0) === 0;
 
   useEffect(() => {
     if (!projects?.length) return;
@@ -223,7 +264,7 @@ export function Library() {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-          {t("BUILDING STUDIO INDEX…")}
+          {t("WARMING UP THE DRAWING TABLE…")}
         </p>
       </div>
     );
@@ -266,33 +307,45 @@ export function Library() {
             </div>
             <Icon name="sparkles" size={18} className="text-narrator-gold" />
           </div>
-          <div className="space-y-3">
-            <StatRow label="ARCHIVE FILES">{projects?.length ?? 0}</StatRow>
-            <StatRow label="LIVE BOARDS">{runningCount}</StatRow>
-            <StatRow label="TOTAL INK USAGE">{totalInkUsage.toLocaleString()} credits</StatRow>
-          </div>
-          <p className="mt-3 font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/50">
-            {t("Ink usage = total AI generation credits")}
-          </p>
+          {isEmpty ? (
+            <p className="font-meta text-[0.7rem] tracking-[0.24em] text-ink-black/45">
+              {t("AWAITING FIRST PRODUCTION")}
+            </p>
+          ) : (
+            <>
+              <div className="space-y-3">
+                <StatRow label="ARCHIVE FILES">{projects?.length ?? 0}</StatRow>
+                <StatRow label="LIVE BOARDS">{runningCount}</StatRow>
+                <StatRow label="TOTAL INK USAGE">{totalInkUsage.toLocaleString()} credits</StatRow>
+              </div>
+              <p className="mt-3 font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/50">
+                {t("Ink usage = total AI generation credits")}
+              </p>
+            </>
+          )}
         </aside>
       </section>
 
       <section>
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-7">
-          <NewProjectCard onClick={() => setNewProjectOpen(true)} />
+        {isEmpty ? (
+          <FirstIssueInvitation onStart={() => setNewProjectOpen(true)} />
+        ) : (
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-7">
+            <NewProjectCard onClick={() => setNewProjectOpen(true)} />
 
-          {projects?.map((project) => (
-            <ProjectCard
-              key={project.id}
-              project={project}
-              coverPending={
-                pendingCovers.has(project.id) ||
-                project.cover_job?.status === "queued" ||
-                project.cover_job?.status === "running"
-              }
-            />
-          ))}
-        </div>
+            {projects?.map((project) => (
+              <ProjectCard
+                key={project.id}
+                project={project}
+                coverPending={
+                  pendingCovers.has(project.id) ||
+                  project.cover_job?.status === "queued" ||
+                  project.cover_job?.status === "running"
+                }
+              />
+            ))}
+          </div>
+        )}
       </section>
 
       <NewProjectModal isOpen={newProjectOpen} onClose={() => setNewProjectOpen(false)} />

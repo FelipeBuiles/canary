@@ -334,6 +334,22 @@
   animation: comic-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
+/* New pipeline log lines slide up 4px as they arrive (stage-running ticker). */
+@keyframes ticker-rise {
+  0% {
+    transform: translateY(4px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.animate-ticker-rise {
+  animation: ticker-rise 0.2s ease-out;
+}
+
 @keyframes flash-change-inline {
   0% {
     background: color-mix(in srgb, var(--color-archive-sage) 42%, transparent);

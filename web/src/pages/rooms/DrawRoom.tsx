@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
   useGenerationJobs,
@@ -41,6 +41,7 @@ import {
   InFlightCard,
   RecentFinishesCard,
   BySceneCard,
+  isAllInkedTransition,
   type SceneProgress,
 } from "../../components/draw/LiveCockpit";
 import type { ImageStatus, StageCostEstimate } from "../../types/api";
@@ -312,6 +313,17 @@ export function DrawRoom() {
     return { generated, pending, failed, total: allDisplayImages.length };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allDisplayImages, regenModes, isDrawRunning, retryFailedActive, inFlightSet]);
+
+  // One-shot "all panels inked" milestone — fires only on the transition into
+  // a failure-free completion, never on remount of an already-complete stage.
+  const [allInked, setAllInked] = useState(false);
+  const prevGeneratedRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (isAllInkedTransition(prevGeneratedRef.current, panelCounts)) {
+      setAllInked(true);
+    }
+    prevGeneratedRef.current = panelCounts.generated;
+  }, [panelCounts]);
 
   const sceneProgress: SceneProgress[] = useMemo(() => {
     const acc = new Map<string, SceneProgress>();
@@ -627,12 +639,19 @@ export function DrawRoom() {
             <div className="mb-4 font-meta text-[0.58rem] tracking-[0.24em] text-ink-black/40">
               PANEL PROGRESS
             </div>
-            <PanelProgressDonut
-              generated={panelCounts.generated}
-              pending={panelCounts.pending}
-              failed={panelCounts.failed}
-              total={panelCounts.total}
-            />
+            <div className={allInked ? "animate-comic-pop" : undefined}>
+              <PanelProgressDonut
+                generated={panelCounts.generated}
+                pending={panelCounts.pending}
+                failed={panelCounts.failed}
+                total={panelCounts.total}
+              />
+            </div>
+            {allInked && (
+              <div className="animate-comic-pop mt-4 inline-flex border-[2px] border-ink-black bg-narrator-gold px-3 py-1.5 font-meta text-[0.6rem] tracking-[0.18em] text-ink-black shadow-ink-sm">
+                ALL PANELS INKED
+              </div>
+            )}
             {isDrawRunning && (
               <LiveProgressStrip
                 itemsDone={generateStage?.items_done ?? 0}

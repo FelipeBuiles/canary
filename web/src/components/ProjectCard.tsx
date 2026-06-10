@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { ProjectSummary, StageStatus, StageName } from "../types/api";
 import { STAGE_ORDER } from "../types/api";
@@ -67,6 +68,19 @@ export function ProjectCard({ project, coverPending = false }: Props) {
     : null;
   const coverUrl = `/api/projects/${encodeURIComponent(project.id)}/files/cover/cover.png`;
 
+  // Pop the card once when a cover that was generating lands. Cards that
+  // mount already-covered never fire; LazyImage handles the opacity fade.
+  const [coverArrival, setCoverArrival] = useState<"idle" | "pending" | "revealed">(
+    coverPending && !project.has_cover ? "pending" : "idle",
+  );
+  if (coverArrival === "idle" && coverPending && !project.has_cover) {
+    setCoverArrival("pending");
+  }
+  if (coverArrival === "pending" && project.has_cover) {
+    setCoverArrival("revealed");
+  }
+  const coverRevealed = coverArrival === "revealed";
+
   const stageKey = project.furthest_stage as StageName | null;
   const coverStyle = stageKey ? STAGE_COVER_STYLE[stageKey] : undefined;
   const coverBg = coverStyle?.bg ?? FALLBACK_BG;
@@ -79,7 +93,7 @@ export function ProjectCard({ project, coverPending = false }: Props) {
       aria-label={`${t("OPEN FILE")}: ${project.project_name}`}
       className="group block h-full focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
     >
-      <article className="h-full overflow-hidden border-[3px] border-ink-black/12 bg-bristol shadow-paper-sm transition-[border-color,box-shadow,transform] duration-200 ease-out group-hover:border-ink-black group-hover:-translate-x-[2px] group-hover:-translate-y-[2px] group-hover:shadow-ink group-focus-visible:border-ink-black group-focus-visible:-translate-x-[2px] group-focus-visible:-translate-y-[2px] group-focus-visible:shadow-ink">
+      <article className={`h-full overflow-hidden border-[3px] border-ink-black/12 bg-bristol shadow-paper-sm transition-[border-color,box-shadow,transform] duration-200 ease-out group-hover:border-ink-black group-hover:-translate-x-[2px] group-hover:-translate-y-[2px] group-hover:shadow-ink group-focus-visible:border-ink-black group-focus-visible:-translate-x-[2px] group-focus-visible:-translate-y-[2px] group-focus-visible:shadow-ink${coverRevealed ? " animate-comic-pop" : ""}`}>
         <div className="relative border-b-[2px] border-ink-black/12 transition-colors duration-200 group-hover:border-ink-black group-focus-visible:border-ink-black">
           {project.has_cover ? (
             <LazyImage
