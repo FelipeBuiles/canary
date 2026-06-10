@@ -296,15 +296,15 @@ async def run(
     formats: list[str] | None = None,
     rebuild: bool = True,
 ) -> None:
-    """Stage 7: build ComicPage JSON (if rebuild=True), then render to PNG/PDF/CBZ."""
+    """Compose stage: build ComicPage JSON (if rebuild=True), then render to PNG/PDF/CBZ."""
     export_formats = formats or ["pdf", "cbz"]
     max_per_page   = getattr(config, "max_panels_per_page", 6)
 
     # ── Validate inputs ───────────────────────────────────────────────────────
     images_dir = project_dir / "draw"
     if not images_dir.exists() or not any(images_dir.iterdir()):
-        console.print("[red]No images found. Run stage 6 (generate) first.[/red]")
-        ctx.log("No images found. Run stage 6 (generate) first.", level="error")
+        console.print("[red]No images found. Run the draw stage first.[/red]")
+        ctx.log("No images found. Run the draw stage first.", level="error")
         return
 
     story_bible = artifacts.read_story_bible(project_dir)
@@ -398,7 +398,7 @@ async def run(
                 out = exports_dir / f"comic.{fmt}"
                 ctx.log(f"{fmt.upper()}: {out}")
 
-            console.print("[green]Stage 8 complete.[/green]")
+            console.print("[green]Compose stage complete.[/green]")
     else:
         # Render-only: load existing JSON
         json_paths = sorted(json_dir.glob("page_*.json"))
@@ -437,14 +437,14 @@ async def run(
                 out = exports_dir / f"comic.{fmt}"
                 ctx.log(f"{fmt.upper()}: {out}")
 
-            console.print("[green]Stage 8 complete.[/green]")
+            console.print("[green]Compose stage complete.[/green]")
 
 
-from novel_to_comic.stages import Stage  # noqa: E402
+from novel_to_comic.stages import Stage, clean_cascade  # noqa: E402
 
 STAGE = Stage(
     name="compose",
     run=run,
     outputs=lambda d: [d / "exports"],
-    clean_paths=lambda d: [d / "compose", d / "exports"],
+    clean_paths=lambda d: clean_cascade(d, "compose"),
 )

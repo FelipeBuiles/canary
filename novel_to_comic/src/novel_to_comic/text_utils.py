@@ -5,6 +5,27 @@ from __future__ import annotations
 import httpx
 
 
+OFFSCREEN_MARKERS = (
+    "off-screen",
+    "off screen",
+    "off-panel",
+    "off panel",
+    "unseen speaker",
+    "unseen voice",
+    "voice-only",
+    "voice only",
+    "heard but not seen",
+    "not physically shown",
+    "never physically shown",
+)
+
+
+def has_offscreen_marker(text: str) -> bool:
+    """True when a character description marks a voice-only / never-shown entity."""
+    lowered = text.lower()
+    return any(marker in lowered for marker in OFFSCREEN_MARKERS)
+
+
 def clean(value: str | None) -> str:
     """Collapse whitespace and strip a string."""
     return " ".join((value or "").replace("\n", " ").split())

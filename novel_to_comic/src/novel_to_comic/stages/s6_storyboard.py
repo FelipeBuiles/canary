@@ -17,9 +17,9 @@ from novel_to_comic.layout_planning import load_layout_plan, prompt_path_for_pan
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.prompt_assembly import (
-    IMAGE_PROMPT_VERSION,
-    assemble_panel_prompt,
+    ensure_current_panel_prompt,
     ensure_distilled_prompt,
+    ensure_visual_brief,
 )
 from novel_to_comic.stage_runtime import StageRuntime
 
@@ -35,20 +35,12 @@ async def _process_panel(
 ) -> ImagePrompt | None:
     """Generate an image prompt for a single planned panel."""
     output_path = prompt_path_for_panel(project_dir, panel)
-    if output_path.exists():
-        existing = ImagePrompt.model_validate_json(output_path.read_text())
-        if (
-            existing.prompt_version >= IMAGE_PROMPT_VERSION
-            and existing.planned_panel_id == panel.panel_id
-            and existing.distilled_prompt
-        ):
-            return existing
-
-    prompt = assemble_panel_prompt(config, project_dir, panel, story_bible, prev_panel)
-    prompt = ensure_distilled_prompt(config, prompt)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(prompt.model_dump_json(indent=2))
-    return prompt
+    prompt = ensure_current_panel_prompt(config, project_dir, panel, story_bible, prev_panel)
+    updated = ensure_distilled_prompt(config, prompt)
+    updated = await ensure_visual_brief(config, updated)
+    if updated is not prompt:
+        output_path.write_text(updated.model_dump_json(indent=2))
+    return updated
 
 
 async def run(
@@ -57,7 +49,7 @@ async def run(
     ctx: StageRuntime,
     scene_ids: list[str] | None = None,
 ) -> None:
-    """Execute Stage 5: Generate image prompts for all panels."""
+    """Execute the direct stage: generate image prompts for all panels."""
     story_bible = artifacts.read_story_bible(project_dir)
 
     plan_path = artifacts.layout_plan_path(project_dir)
@@ -103,14 +95,14 @@ async def run(
                         progress.advance(task)
                 ctx.save()
 
-        console.print("[green]Stage 6 complete.[/green]")
+        console.print("[green]Direct stage complete.[/green]")
 
 
-from novel_to_comic.stages import Stage  # noqa: E402
+from novel_to_comic.stages import Stage, clean_cascade  # noqa: E402
 
 STAGE = Stage(
     name="direct",
     run=run,
     outputs=lambda d: [d / "direct"],
-    clean_paths=lambda d: [d / "direct", d / "draw", d / "compose", d / "exports"],
+    clean_paths=lambda d: clean_cascade(d, "direct"),
 )

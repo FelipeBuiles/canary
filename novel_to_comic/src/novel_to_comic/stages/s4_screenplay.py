@@ -16,6 +16,7 @@ from novel_to_comic.events import make_progress
 from novel_to_comic.models.panel import Screenplay
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.stage_runtime import StageRuntime
+from novel_to_comic.text_utils import has_offscreen_marker
 from novel_to_comic.usage import ApiResult, estimate_text_cost
 
 console = Console()
@@ -33,23 +34,8 @@ def _is_offscreen_character(char) -> bool:
             char.gender,
             " ".join(char.distinguishing_features),
         )
-    ).lower()
-    return any(
-        marker in text
-        for marker in (
-            "off-screen",
-            "off screen",
-            "off-panel",
-            "off panel",
-            "unseen speaker",
-            "unseen voice",
-            "voice-only",
-            "voice only",
-            "heard but not seen",
-            "not physically shown",
-            "never physically shown",
-        )
     )
+    return has_offscreen_marker(text)
 
 
 def _build_user_content(scene_text: str, story_bible: StoryBible, scene_id: str) -> str:
@@ -186,26 +172,34 @@ def _normalize_screenplay(screenplay: Screenplay, story_bible: StoryBible) -> Sc
     return screenplay.model_copy(update={"characters": visible_characters, "beats": beats})
 
 
-def _transition_type_for_text(text: str) -> str | None:
+def _transition_type_for_text(text: str) -> str:
+    # Keyword table mirrors the examples in prompts/screenplay.txt: fades and
+    # cuts are deliberate jumps (hard_cut); visual echoes are match cuts;
+    # everything else is a gentle handoff.
     lower = text.lower()
-    hard_markers = ("smash cut", "cut to", "scene change", "time jump", "jump cut")
+    hard_markers = ("smash cut", "cut to", "scene change", "time jump", "jump cut", "fade")
     if any(marker in lower for marker in hard_markers):
         return "hard_cut"
     if any(marker in lower for marker in ("match cut", "parallel", "echo", "mirrors")):
         return "match_cut"
-    if any(marker in lower for marker in ("fade", "soft cut", "continue", "continuing", "then")):
-        return "smooth_continuation"
     return "smooth_continuation"
 
 
 def _annotate_transition_beats(screenplay: Screenplay) -> Screenplay:
+    """Fill in transition_type ONLY where the screenplay model omitted it.
+
+    The model is asked to classify its own transitions; the keyword heuristic
+    is a fallback, not an override.
+    """
     beats = []
     for beat in screenplay.beats:
-        if beat.type == "transition":
+        if beat.type == "transition" and not beat.transition_type:
             beats.append(
                 beat.model_copy(
                     update={
-                        "transition_type": _transition_type_for_text(beat.content),
+                        "transition_type": _transition_type_for_text(
+                            f"{beat.content} {beat.direction or ''}"
+                        ),
                     }
                 )
             )
@@ -314,24 +308,18 @@ async def run(
                 f"All {len(ctx.stage_state.items_failed)} scenes failed during adapt stage"
             )
 
-        console.print("[green]Stage 4 complete.[/green]")
+        console.print("[green]Adapt stage complete.[/green]")
 
 
-from novel_to_comic.stages import Stage  # noqa: E402
+from novel_to_comic.stages import Stage, clean_cascade  # noqa: E402
 from novel_to_comic.state import PipelineState  # noqa: E402
 
 
 def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
-    from novel_to_comic.models.story_bible import StoryBible
-    
-    sb_path = project_dir / "story_bible.json"
-    if not sb_path.exists():
+    story_bible = artifacts.read_story_bible_safe(project_dir)
+    if story_bible is None:
         return 0.0
-    try:
-        story_bible = StoryBible.model_validate_json(sb_path.read_text())
-    except Exception:
-        return 0.0
-        
+
     system_prompt = ""
     if PROMPT_PATH.exists():
         try:
@@ -365,9 +353,6 @@ STAGE = Stage(
     name="adapt",
     run=run,
     outputs=lambda d: [d / "screenplays"],
-    clean_paths=lambda d: [
-        d / "adapt", d / "plan", d / "storyboard",
-        d / "direct", d / "draw", d / "compose", d / "exports",
-    ],
+    clean_paths=lambda d: clean_cascade(d, "adapt"),
     estimate_cost=estimate_cost,
 )

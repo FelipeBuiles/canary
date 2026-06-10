@@ -221,13 +221,22 @@ def test_generation_prompt_uses_structured_brief_and_noise_guardrails(tmp_path):
 
     assert "Style:\nOil painting with broad expressive brushwork." in generation_prompt
     assert "Visual brief:\nwide vertical panel" in generation_prompt
-    assert "Myop, walks through the woods" in generation_prompt
+    # Identity binds immediately after the name, before the action.
+    assert "Myop, " in generation_prompt
+    assert "walks through the woods" in generation_prompt
     assert "Characters:\n" not in generation_prompt
     assert "Composition:\n" not in generation_prompt
     assert "Constraints:\n- exactly 1 character" in generation_prompt
-    assert "Avoid stochastic grain" in generation_prompt
-    assert "interpret it as broad intentional structure rather than all-over noise" in generation_prompt
-    assert "Do not copy sample-image artifacts" in generation_prompt
+    # Per-panel anti-duplication guards are emitted verbatim (no keyword filter).
+    assert "- one body per listed character" in generation_prompt
+    assert "- single frozen instant" in generation_prompt
+    # Surface discipline rides the Style section (style mentions brushwork);
+    # the old negative artifact-vocabulary paragraph is gone.
+    assert "Render clean, coherent surfaces with readable forms" in generation_prompt
+    assert "Avoid stochastic grain" not in generation_prompt
+    # No refs supplied → no reference-image constraint line.
+    assert "reference images" not in generation_prompt.lower()
+    assert "One unified scene filling the entire canvas" in generation_prompt
 
 
 def test_generation_prompt_prefers_distilled_prompt():
@@ -251,7 +260,7 @@ def test_generation_prompt_prefers_distilled_prompt():
     assert "Constraints:\n- exactly 1 character" in generation_prompt
 
 
-def test_generate_distilled_prompt_keeps_visual_task_before_identity_anchor():
+def test_generate_distilled_prompt_binds_identity_to_name():
     prompt = ImagePrompt(
         scene_id="scene_001",
         panel_number=1,
@@ -276,8 +285,9 @@ def test_generate_distilled_prompt_keeps_visual_task_before_identity_anchor():
 
     distilled = generate_distilled_prompt(prompt)
 
-    assert distilled.startswith("medium panel of Ada, standing")
-    assert "short black bob haircut, blue jacket" in distilled
+    # Appearance immediately follows the name so attributes bind to the right
+    # character; action/expression/position come after.
+    assert distilled.startswith("medium panel of Ada, short black bob haircut, blue jacket, standing")
     assert "library" in distilled
 
 
@@ -890,8 +900,13 @@ def test_reve_prompt_injection():
     generation_prompt = render_generation_prompt(prompt, "Ink wash.", "image-reve", refs=refs)
     
     assert "Reference images:" in generation_prompt
-    assert "Use <img>0</img> as the character reference for Alice." in generation_prompt
+    assert (
+        "Use <img>0</img> as the identity reference for Alice — match face, hair, build, "
+        "and wardrobe; do not copy its pose or background." in generation_prompt
+    )
     assert "Use <img>1</img> as the style reference for selected style." in generation_prompt
+    # Refs present → the reference-handling constraint line is emitted.
+    assert "- Use reference images for identity, palette, and continuity only" in generation_prompt
 
 
 def test_non_reve_models_do_not_get_img_tags():
@@ -964,28 +979,47 @@ def test_reve_aspect_ratio_mapping():
     assert _map_aspect_ratio("1080x1920") == "9:16"
 
 
-def test_reve_refs_priority_and_capping():
+def test_reve_refs_one_crop_per_character_and_capping():
     from novel_to_comic.stages.s7_draw import _reve_refs
     from novel_to_comic.ai.providers.base import RefImage
-    
+
     refs = [
-        RefImage(path=Path("subj1.png"), role="subject", label="Alice"),
-        RefImage(path=Path("subj2.png"), role="subject", label="Bob"),
-        RefImage(path=Path("subj3.png"), role="subject", label="Charlie"),
+        RefImage(path=Path("refs/char_alice/front.png"), role="subject", label="Alice"),
+        RefImage(path=Path("refs/char_alice/gesture.png"), role="subject", label="Alice"),
+        RefImage(path=Path("refs/char_bob/three_quarter.png"), role="subject", label="Bob"),
         RefImage(path=Path("style.png"), role="style", label="Style"),
         RefImage(path=Path("loc.png"), role="location_plate", label="Loc"),
         RefImage(path=Path("prop.png"), role="prop", label="Prop"),
         RefImage(path=Path("cont.png"), role="continuity", label="Cont"),
     ]
-    
-    selected = _reve_refs(refs)
-    
+
+    selected = _reve_refs(refs, "wide establishing panel, low angle camera")
+
     assert len(selected) == 4
-    # Style is prioritized first for visual consistency
-    assert selected[0].path.name == "style.png"
-    assert selected[1].path.name == "subj1.png"
-    assert selected[2].path.name == "subj2.png"
-    assert selected[3].path.name == "subj3.png"
+    names = [ref.path.name for ref in selected]
+    # One crop per character, identity first; wide framing prefers the
+    # full-body gesture crop over the front portrait crop.
+    assert names[0] == "gesture.png"
+    assert names[1] == "three_quarter.png"
+    # Remaining slots fill with prop/continuity in canonical upload order.
+    assert names[2] == "prop.png"
+    assert names[3] == "cont.png"
+
+
+def test_reve_refs_close_up_prefers_front_crop():
+    from novel_to_comic.stages.s7_draw import _reve_refs
+    from novel_to_comic.ai.providers.base import RefImage
+
+    refs = [
+        RefImage(path=Path("refs/char_alice/gesture.png"), role="subject", label="Alice"),
+        RefImage(path=Path("refs/char_alice/front.png"), role="subject", label="Alice"),
+        RefImage(path=Path("style.png"), role="style", label="Style"),
+    ]
+
+    selected = _reve_refs(refs, "close-up panel, eye-level camera")
+
+    names = [ref.path.name for ref in selected]
+    assert names == ["front.png", "style.png"]
 
 
 def test_reve_layout_prompt_handling(monkeypatch):
@@ -1132,10 +1166,8 @@ def test_reve_layout_prompt_handling(monkeypatch):
     assert normalized["regions"][0]["bbox"] == {"x0": 0.1, "y0": 0.2, "x1": 0.5, "y1": 0.5}
 
 
-def test_build_style_sample_prompt():
-    from novel_to_comic.prompting import build_style_sample_prompt
-    config = Config(style_template="Clinical, desaturated visual language.")
-    story_bible = StoryBible(
+def _style_sample_bible() -> StoryBible:
+    return StoryBible(
         title="DCC",
         author="Matt Dinniman",
         total_scenes=1,
@@ -1177,18 +1209,56 @@ def test_build_style_sample_prompt():
         props=[],
     )
 
-    prompt = build_style_sample_prompt(config, story_bible)
 
-    # Check for style-neutral, comic-bias-free wording
-    assert "comic's art direction" not in prompt
-    assert "panel" not in prompt
+def test_build_style_sample_prompt_fallback_body():
+    from novel_to_comic.prompting import build_style_sample_prompt
+    config = Config(style_template="Clinical, desaturated visual language.")
+
+    prompt = build_style_sample_prompt(config, _style_sample_bible())
+
+    # House-style sections: style first, prose body, one-liner constraints.
     assert "project's art direction" in prompt
-    assert "aspect ratio frame" in prompt
-    assert "free of any text, borders, speech bubbles" in prompt
-    assert "Ensure all details support the style authority" in prompt
-    
-    # Check that style authority is present
-    assert "Clinical, desaturated visual language." in prompt
+    assert "Style:\nClinical, desaturated visual language." in prompt
+    assert "Visual brief:" in prompt
+    # Deterministic fallback uses first character + first location anchors.
+    assert "1man, adult male, leather jacket" in prompt
+    assert "outdoors, snow, winter" in prompt
+    assert "Constraints:" in prompt
+    assert "One unified scene filling the entire canvas" in prompt
+    assert "Portrait 4:5 frame" in prompt
+    # Old shouty/negative phrasing is gone.
+    assert "STYLE AUTHORITY" not in prompt
+    assert "free of any text" not in prompt
+
+
+def test_build_style_sample_prompt_uses_llm_brief_when_given():
+    from novel_to_comic.prompting import build_style_sample_prompt
+    config = Config(style_template="Clinical, desaturated visual language.")
+    brief = (
+        "Carl, a broad-shouldered man in his late twenties in a worn leather jacket, "
+        "stands ankle-deep in fresh snow on a dark Seattle street."
+    )
+
+    prompt = build_style_sample_prompt(config, _style_sample_bible(), brief=brief)
+
+    assert brief in prompt
+    # The deterministic fallback body is not also emitted.
+    assert "A three-quarter view of one figure" not in prompt
+
+
+def test_build_style_sample_prompt_adds_surface_discipline_for_texture_styles():
+    from novel_to_comic.prompting import build_style_sample_prompt
+    bible = _style_sample_bible()
+
+    textured = build_style_sample_prompt(
+        Config(style_template="Oil painting, visible brushwork, rich colour."), bible
+    )
+    clean = build_style_sample_prompt(
+        Config(style_template="Clinical, desaturated visual language."), bible
+    )
+
+    assert "broad intentional structure" in textured
+    assert "broad intentional structure" not in clean
 
 
 

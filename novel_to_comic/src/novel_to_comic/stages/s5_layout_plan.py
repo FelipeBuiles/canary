@@ -30,7 +30,11 @@ from novel_to_comic.clients.text import generate_json
 from novel_to_comic.usage import UsageRecord, estimate_text_cost
 from novel_to_comic.config import Config
 from novel_to_comic.events import make_progress
-from novel_to_comic.layout_planning import LAYOUT_PRESET_GEOMETRIES, select_layout_template
+from novel_to_comic.layout_planning import (
+    LAYOUT_PRESET_GEOMETRIES,
+    select_layout_template,
+    sync_narration_into_panels,
+)
 from novel_to_comic.models.comic_page import (
     infer_sfx_intensity,
     infer_sfx_kind,
@@ -115,8 +119,8 @@ WHEN TO MERGE
   Show the character REACTING while the text plays.
 
 HARD CEILINGS (absolute maximums -- panels exceeding these will be rejected):
-- 7 visual beats per panel (action, dialogue, sfx, transition)
-- 4 dialogue lines per panel
+- 7 visual beats per panel (action, dialogue, thought, sfx, transition)
+- 4 dialogue/thought lines per panel
 Hitting either ceiling means the panel is overloaded; split it.
 
 PANEL FIELDS
@@ -262,12 +266,17 @@ def _narration_caption_text(beat: ScreenplayBeat) -> str:
     return beat.content
 
 
+def _is_dialogue_beat(beat: ScreenplayBeat) -> bool:
+    """Thought beats occupy bubbles just like speech — count them together."""
+    return beat.type in ("dialogue", "thought")
+
+
 def _dialogue_line(beat: ScreenplayBeat) -> list[dict[str, str | None]]:
-    if beat.type == "dialogue":
+    if _is_dialogue_beat(beat):
         return [DialogueLine(
             character_id=beat.character_id,
             text=beat.content,
-            type="speech",
+            type="thought" if beat.type == "thought" else "speech",
         ).model_dump()]
     return []
 
@@ -336,6 +345,14 @@ def _beat_visual_requirement(
             f"show {speaker}'s dialogue moment through physical "
             "body language or reaction; no lettering"
         )
+    if beat.type == "thought":
+        thinker = _name(beat.character_id) or "the character"
+        if direction:
+            return f"show {thinker}'s silent reflective moment through {direction}; no lettering"
+        return (
+            f"show {thinker}'s silent reflective moment through facial "
+            "expression and posture; no lettering"
+        )
     if beat.type == "sfx":
         return f"show the visible source or result of the {content} sound effect; no lettering"
     if beat.type == "transition":
@@ -355,7 +372,10 @@ def _visual_requirements_for_panel(
         _append_unique(requirements, _beat_visual_requirement(beat, character_names))
     for requirement in spec.visual_requirements:
         _append_unique(requirements, requirement)
-    return requirements[:12]
+    # Beat-derived requirements come first (they carry the story); cap tighter
+    # on beat-heavy panels so the image prompt doesn't drown in must-shows.
+    cap = 8 if len(covered_pairs) >= 5 else 12
+    return requirements[:cap]
 
 
 def _key_objects_for_panel(
@@ -421,7 +441,7 @@ def _validate_llm_specs(specs: list[LLMPanelSpec], beats: list[ScreenplayBeat]) 
         dialogue_count = sum(
             1
             for idx in spec.beat_indices
-            if beats[idx - 1].type == "dialogue"
+            if _is_dialogue_beat(beats[idx - 1])
         )
         if dialogue_count > _MAX_DIALOGUE_PER_PANEL:
             raise ValueError(
@@ -440,10 +460,45 @@ def _validate_llm_specs(specs: list[LLMPanelSpec], beats: list[ScreenplayBeat]) 
         raise ValueError(f"LLM plan duplicated visual beat_indices: {duplicated}")
 
 
+def _normalize_spec_order(
+    specs: list[LLMPanelSpec],
+    narration_specs: list[LLMNarrationDecisionSpec],
+) -> tuple[list[LLMPanelSpec], list[LLMNarrationDecisionSpec]]:
+    """Restore story order the LLM occasionally scrambles.
+
+    Beat indices within a panel are sorted (so dialogue reads in story order)
+    and panels are stably reordered by their first covered beat (so reading
+    order across panels follows the screenplay). Narration ``panel_index``
+    references are remapped to follow their panels.
+    """
+    ordered_specs = [
+        spec.model_copy(update={"beat_indices": sorted(spec.beat_indices)})
+        for spec in specs
+    ]
+    order = sorted(
+        range(len(ordered_specs)),
+        key=lambda i: (
+            min(ordered_specs[i].beat_indices) if ordered_specs[i].beat_indices else 0,
+            i,
+        ),
+    )
+    index_map = {old + 1: new + 1 for new, old in enumerate(order)}
+    new_specs = [ordered_specs[i] for i in order]
+    new_narration = [
+        nspec.model_copy(update={"panel_index": index_map.get(nspec.panel_index, nspec.panel_index)})
+        if nspec.panel_index is not None
+        else nspec
+        for nspec in narration_specs
+    ]
+    return new_specs, new_narration
+
+
 def _aspect_for_shape(shape_intent: str) -> tuple[float, list[float]]:
+    if shape_intent == "panorama":
+        return 2.4, [2.0, 2.8]
     if shape_intent == "wide":
         return 1.8, [1.4, 2.2]
-    if shape_intent in {"tall", "panorama"}:
+    if shape_intent == "tall":
         return 0.75, [0.55, 0.9]
     return 1.0, [0.8, 1.25]
 
@@ -490,9 +545,11 @@ def _target_panel_count(config_max: int, beat_count: int) -> int:
     For short-to-medium scenes the configured max is the ceiling.
     For very long scenes (more beats than config_max * avg) the target
     scales up, capped at 2x the configured max to avoid runaway expansion.
+    The floor is clamped to the beat count: with exactly-once beat coverage
+    a scene can never yield more panels than it has beats.
     """
     natural = math.ceil(beat_count / _BEATS_PER_PANEL_AVG)
-    return max(4, min(natural, config_max * 2))
+    return max(min(4, beat_count), min(natural, config_max * 2))
 
 
 def _visual_beat_count(beats: list[ScreenplayBeat]) -> int:
@@ -636,7 +693,7 @@ def _split_panel_to_caps(
         if 1 <= idx <= len(beats):
             beat = beats[idx - 1]
             adds_visual = 1 if beat.type != "narration" else 0
-            adds_dialogue = 1 if beat.type == "dialogue" else 0
+            adds_dialogue = 1 if _is_dialogue_beat(beat) else 0
         else:
             adds_visual = 0
             adds_dialogue = 0
@@ -675,7 +732,7 @@ def _autosplit_overflow_panels(
         )
         dialogue_count = sum(
             1 for idx in spec.beat_indices
-            if 1 <= idx <= len(beats) and beats[idx - 1].type == "dialogue"
+            if 1 <= idx <= len(beats) and _is_dialogue_beat(beats[idx - 1])
         )
         if (
             visual_count > _MAX_VISUAL_PER_PANEL
@@ -751,9 +808,9 @@ async def _plan_scene_llm(
         if usage_records is not None and api_result.usage is not None:
             usage_records.append(api_result.usage)
         try:
-            parsed = _parse_llm_scene_plan(api_result.value)
-            last_parsed = parsed
-            specs, narration_specs = parsed
+            specs, narration_specs = _parse_llm_scene_plan(api_result.value)
+            specs, narration_specs = _normalize_spec_order(specs, narration_specs)
+            last_parsed = (specs, narration_specs)
             if not specs:
                 raise ValueError("LLM returned empty panel list")
             _validate_llm_specs(specs, screenplay.beats)
@@ -856,20 +913,10 @@ def _llm_spec_to_planned_panel(
             character_actions[cid] = beat.content
         elif beat.type == "dialogue":
             character_expressions.setdefault(cid, "speaking")
+        elif beat.type == "thought":
+            character_expressions.setdefault(cid, "lost in thought")
 
-    # Spread characters left -> center -> right
-    character_positions: dict[str, str] = {}
-    chars = spec.characters_present
-    _pos_map = ["left", "center", "right"]
-    for i, cid in enumerate(chars):
-        if len(chars) == 1:
-            character_positions[cid] = "center"
-        elif len(chars) == 2:
-            character_positions[cid] = "left" if i == 0 else "right"
-        else:
-            character_positions[cid] = _pos_map[min(i, 2)]
-
-    dialogue_load = sum(1 for b in covered_beats if b.type == "dialogue")
+    dialogue_load = sum(1 for b in covered_beats if _is_dialogue_beat(b))
     caption_load = sum(
         1 for b in covered_beats
         if b.type == "action" and not b.character_id
@@ -896,7 +943,8 @@ def _llm_spec_to_planned_panel(
         characters_present=spec.characters_present,
         character_actions=character_actions,
         character_expressions=character_expressions,
-        character_positions=character_positions,
+        character_positions={},  # filled scene-wide by _stabilize_character_positions
+
         key_objects=_key_objects_for_panel(spec, covered_pairs, story_bible),
         visual_requirements=_visual_requirements_for_panel(spec, covered_pairs, story_bible),
         background_description=spec.background_description,
@@ -929,88 +977,6 @@ def _resolve_panel_location_state(
         if beat.location_state_id:
             return beat.location_state_id
     return None
-
-
-def _caption_text(decision: NarrationDecision) -> str:
-    return decision.caption_text_override or decision.caption_text or decision.source_text
-
-
-def _matches_narration_decision(line: dict[str, str | None], decision: NarrationDecision) -> bool:
-    if line.get("type") != "narration":
-        return False
-    if line.get("source_beat_id") == decision.beat_id:
-        return True
-    if line.get("source_beat_id"):
-        return False
-    return line.get("text") in {_caption_text(decision), decision.source_text}
-
-
-def _remove_narration_for_decision(panel: PlannedPanel, decision: NarrationDecision) -> PlannedPanel:
-    dialogue = [
-        line for line in panel.dialogue
-        if not _matches_narration_decision(line, decision)
-    ]
-    if len(dialogue) == len(panel.dialogue):
-        return panel
-    has_narration = any(line.get("type") == "narration" for line in dialogue)
-    return panel.model_copy(
-        update={
-            "dialogue": dialogue,
-            "caption_load": sum(1 for line in dialogue if line.get("type") == "narration"),
-            "has_narration_caption": has_narration,
-            "narration_mode": panel.narration_mode if has_narration else None,
-            "preferred_caption_zone": panel.preferred_caption_zone if has_narration else None,
-        }
-    )
-
-
-def _apply_rendered_narration_to_panel(panel: PlannedPanel, decision: NarrationDecision) -> PlannedPanel:
-    if decision.decision != "rendered" or not decision.panel_id:
-        return panel
-    existing = [
-        line for line in panel.dialogue
-        if _matches_narration_decision(line, decision)
-    ]
-    if existing:
-        dialogue = []
-        for line in panel.dialogue:
-            if line in existing:
-                updated = dict(line)
-                updated.update({
-                    "source_beat_id": decision.beat_id,
-                    "source_text": decision.source_text,
-                    "narration_mode": decision.mode,
-                    "preferred_zone": decision.preferred_zone,
-                })
-                dialogue.append(updated)
-            else:
-                dialogue.append(line)
-    else:
-        dialogue = list(panel.dialogue)
-        dialogue.append(
-            DialogueLine(
-                character_id=None,
-                text=_caption_text(decision),
-                type="narration",
-                source_beat_id=decision.beat_id,
-                source_text=decision.source_text,
-                narration_mode=decision.mode,
-                preferred_zone=decision.preferred_zone,
-            ).model_dump()
-        )
-    beat_ids = list(panel.beat_ids)
-    if decision.beat_id not in beat_ids:
-        beat_ids.append(decision.beat_id)
-    return panel.model_copy(
-        update={
-            "beat_ids": beat_ids,
-            "dialogue": dialogue,
-            "caption_load": max(panel.caption_load, sum(1 for line in dialogue if line.get("type") == "narration")),
-            "has_narration_caption": True,
-            "narration_mode": decision.mode,
-            "preferred_caption_zone": decision.preferred_zone,
-        }
-    )
 
 
 def _build_narration_decisions(
@@ -1094,21 +1060,28 @@ def _build_narration_decisions(
     return decisions
 
 
-def _sync_rendered_narration(
-    panels: list[PlannedPanel],
-    decisions: list[NarrationDecision],
-) -> list[PlannedPanel]:
-    panel_map = {panel.panel_id: panel for panel in panels}
-    for decision in decisions:
-        for panel_id, panel in list(panel_map.items()):
-            panel_map[panel_id] = _remove_narration_for_decision(panel, decision)
-        if decision.decision != "rendered" or not decision.panel_id:
-            continue
-        panel = panel_map.get(decision.panel_id)
-        if panel is None:
-            continue
-        panel_map[decision.panel_id] = _apply_rendered_narration_to_panel(panel, decision)
-    return [panel_map[panel.panel_id] for panel in panels]
+def _stabilize_character_positions(panels: list[PlannedPanel]) -> None:
+    """Assign each character a stable side for the whole scene.
+
+    Per-panel left-to-right assignment from the LLM's arbitrary cast ordering
+    flips characters between sides across consecutive panels (180-degree-rule
+    violations) and drags speech-bubble sides along with it. Instead, each
+    character gets a fixed side at first appearance in the scene; solo panels
+    centre their subject.
+    """
+    side_by_char: dict[str, str] = {}
+    _sides = ["left", "right", "center"]
+    for panel in panels:
+        for cid in panel.characters_present:
+            if cid not in side_by_char:
+                side_by_char[cid] = _sides[min(len(side_by_char), 2)]
+    for panel in panels:
+        if len(panel.characters_present) == 1:
+            panel.character_positions = {panel.characters_present[0]: "center"}
+        else:
+            panel.character_positions = {
+                cid: side_by_char[cid] for cid in panel.characters_present
+            }
 
 
 async def _plan_scene(
@@ -1139,7 +1112,8 @@ async def _plan_scene(
         screenplay.beats,
         warnings,
     )
-    panels = _sync_rendered_narration(panels, decisions)
+    panels = sync_narration_into_panels(panels, decisions)
+    _stabilize_character_positions(panels)
     _apply_lighting_fallback(panels, loc_lighting)
     logger.info(
         "LLM planned %s: %d beats -> %d panels",
@@ -1177,6 +1151,13 @@ def _panels_are_visually_duplicate(a: PlannedPanel, b: PlannedPanel) -> bool:
     bg_a = (a.background_description or "").strip().lower()
     bg_b = (b.background_description or "").strip().lower()
     if bg_a != bg_b:
+        return False
+    # Merging must not recreate the bubble overflow the dialogue cap prevents.
+    spoken = sum(
+        1 for line in list(a.dialogue) + list(b.dialogue)
+        if line.get("type") != "narration"
+    )
+    if spoken > _MAX_DIALOGUE_PER_PANEL:
         return False
     return True
 
@@ -1348,12 +1329,20 @@ def _warn_scene_panel_overflow(
 def _cross_scene_transition_pass(
     panels: list[PlannedPanel],
     scene_location_map: dict[str, str],
+    scene_state_map: dict[str, str | None] | None = None,
 ) -> list[PlannedPanel]:
     """Set transition_in / transition_out at every scene boundary.
 
-    Same location on both sides -> smooth_continuation.
-    Different location -> hard_cut.
+    Same location AND same active location state on both sides ->
+    smooth_continuation. Different location, or the same place in a different
+    state (collapsed, burned, day -> night — i.e. a visible time/event jump)
+    -> hard_cut.
     """
+    scene_state_map = scene_state_map or {}
+
+    def _effective_state(panel: PlannedPanel) -> str | None:
+        return panel.location_state_id or scene_state_map.get(panel.scene_id)
+
     for i in range(len(panels) - 1):
         curr = panels[i]
         nxt = panels[i + 1]
@@ -1361,7 +1350,9 @@ def _cross_scene_transition_pass(
             continue
         curr_loc = scene_location_map.get(curr.scene_id)
         nxt_loc = scene_location_map.get(nxt.scene_id)
-        if curr_loc and nxt_loc and curr_loc == nxt_loc:
+        same_place = bool(curr_loc and nxt_loc and curr_loc == nxt_loc)
+        same_state = _effective_state(curr) == _effective_state(nxt)
+        if same_place and same_state:
             curr.transition_out = "smooth_continuation"
             nxt.transition_in = "smooth_continuation"
         else:
@@ -1375,34 +1366,70 @@ def _cross_scene_transition_pass(
 # Importance-aware paginator
 # ---------------------------------------------------------------------------
 
+# Largest layout preset holds 6 panels; chunks beyond that would stack
+# panels onto the same template slot and render overlapped.
+_MAX_TEMPLATE_CAPACITY = 6
+
+
+def _split_run_evenly(run: list[PlannedPanel], max_per_page: int) -> list[list[PlannedPanel]]:
+    """Split a run into near-equal chunks instead of greedy max-fill.
+
+    Greedy filling turns 7 panels into a 6-panel page plus an orphan
+    single-panel page that reads like an unintended splash; even splitting
+    yields 4 + 3.
+    """
+    if not run:
+        return []
+    n_chunks = math.ceil(len(run) / max_per_page)
+    base, extra = divmod(len(run), n_chunks)
+    sizes = [base + (1 if i < extra else 0) for i in range(n_chunks)]
+    chunks: list[list[PlannedPanel]] = []
+    index = 0
+    for size in sizes:
+        chunks.append(run[index:index + size])
+        index += size
+    return chunks
+
+
 def _importance_aware_paginate(
     scene_id: str,
     panels: list[PlannedPanel],
     start_page_number: int,
     max_per_page: int,
+    scene_beat: str = "",
 ) -> list[PlannedPage]:
     """Group panels into pages using layout presets from LAYOUT_PRESET_GEOMETRIES.
 
     Respects:
-    - Splash panels always start a new page (and occupy it alone).
+    - Splash panels always occupy a page alone.
+    - Hero panels start a new page so they land in the template's prominent
+      first slot (templates assign slots by index).
     - page_break_after=True forces a page break after that panel.
-    - max_per_page caps the chunk size.
+    - max_per_page caps the chunk size (clamped to template capacity); runs
+      longer than one page are split into near-equal chunks to avoid orphan
+      single-panel pages.
     Template is selected by select_layout_template() based on count + importance.
     """
-    chunks: list[list[PlannedPanel]] = []
-    current: list[PlannedPanel] = []
+    max_per_page = min(max_per_page, _MAX_TEMPLATE_CAPACITY)
 
+    # Build runs delimited by forced breaks: BEFORE hero/splash panels (so the
+    # prominent panel leads its page) and AFTER splashes / page_break_after.
+    runs: list[list[PlannedPanel]] = []
+    current: list[PlannedPanel] = []
     for panel in panels:
-        # Splash panels always stand alone
-        if panel.importance == "splash" and current:
-            chunks.append(current)
+        if panel.importance in {"splash", "hero"} and current:
+            runs.append(current)
             current = []
         current.append(panel)
-        if panel.importance == "splash" or panel.page_break_after or len(current) >= max_per_page:
-            chunks.append(current)
+        if panel.importance == "splash" or panel.page_break_after:
+            runs.append(current)
             current = []
     if current:
-        chunks.append(current)
+        runs.append(current)
+
+    chunks: list[list[PlannedPanel]] = []
+    for run in runs:
+        chunks.extend(_split_run_evenly(run, max_per_page))
 
     pages: list[PlannedPage] = []
     page_number = start_page_number
@@ -1435,9 +1462,15 @@ def _importance_aware_paginate(
             # the actual compose slot. Prompting and draw use this contract.
             _apply_generation_aspect_from_geometry(panel, geometry)
 
-        is_intro = page_number == start_page_number
-        has_climax = any(p.importance in {"hero", "splash"} for p in chunk)
-        rhythm = "intro" if is_intro else ("climax" if has_climax else "regular")
+        # Rhythm comes from the narrative, not from hero presence (heroes are
+        # routine scene openers): the book's first page is the intro, splash
+        # pages and climax-beat scenes are climaxes, the rest is regular.
+        if page_number == 1:
+            rhythm = "intro"
+        elif scene_beat == "climax" or any(p.importance == "splash" for p in chunk):
+            rhythm = "climax"
+        else:
+            rhythm = "regular"
 
         pages.append(
             PlannedPage(
@@ -1469,6 +1502,12 @@ async def _build_layout_plan(
 ) -> LayoutPlan:
     screenplays = [_load_screenplay(project_dir, scene_id) for scene_id in scene_ids]
     scene_location_map = {sp.scene_id: sp.location_id for sp in screenplays}
+    scene_state_map: dict[str, str | None] = {
+        scene.id: scene.location_state_id for scene in story_bible.scenes
+    }
+    scene_beat_map: dict[str, str] = {
+        scene.id: scene.narrative_beat or "" for scene in story_bible.scenes
+    }
 
     warnings: list[str] = []
 
@@ -1516,7 +1555,7 @@ async def _build_layout_plan(
         panels_by_scene.setdefault(panel.scene_id, []).append(panel)
 
     # -- Step 2: Cross-scene transition pass -----------------------------------
-    all_panels = _cross_scene_transition_pass(all_panels, scene_location_map)
+    all_panels = _cross_scene_transition_pass(all_panels, scene_location_map, scene_state_map)
 
     # -- Step 3: Importance-aware pagination per scene -------------------------
     planned_pages: list[PlannedPage] = []
@@ -1530,6 +1569,7 @@ async def _build_layout_plan(
             scene_panels,
             start_page_number=next_page_number,
             max_per_page=max(1, config.max_panels_per_page),
+            scene_beat=scene_beat_map.get(sp.scene_id, ""),
         )
         planned_pages.extend(pages)
         next_page_number += len(pages)
@@ -1597,7 +1637,7 @@ async def run(
                     progress.advance(task)
 
         console.print(
-            f"[green]Stage 4 complete.[/green] Wrote "
+            f"[green]Plan stage complete.[/green] Wrote "
             f"{artifacts.layout_plan_path(project_dir).relative_to(project_dir)} "
             f"with {len(plan.planned_panels)} planned panels across {len(plan.planned_pages)} pages."
             + (f" [yellow]({len(plan.warnings)} warning(s))[/yellow]" if plan.warnings else "")
@@ -1611,22 +1651,17 @@ async def run(
                 ctx.log(warning, level="warning")
 
 
-from novel_to_comic.stages import Stage  # noqa: E402
+from novel_to_comic.stages import Stage, clean_cascade  # noqa: E402
 from novel_to_comic.state import PipelineState  # noqa: E402
 
 
 def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
-    from novel_to_comic.models.story_bible import StoryBible
     from novel_to_comic.usage import estimate_text_cost
-    
-    sb_path = project_dir / "story_bible.json"
-    if not sb_path.exists():
+
+    story_bible = artifacts.read_story_bible_safe(project_dir)
+    if story_bible is None:
         return 0.0
-    try:
-        story_bible = StoryBible.model_validate_json(sb_path.read_text())
-    except Exception:
-        return 0.0
-        
+
     total = 0.0
     for scene in story_bible.scenes:
         sp_path = project_dir / "screenplays" / f"{scene.id}.json"
@@ -1652,9 +1687,6 @@ STAGE = Stage(
     name="plan",
     run=run,
     outputs=lambda d: [d / "plan"],
-    clean_paths=lambda d: [
-        d / "plan", d / "storyboard",
-        d / "direct", d / "draw", d / "compose", d / "exports",
-    ],
+    clean_paths=lambda d: clean_cascade(d, "plan"),
     estimate_cost=estimate_cost,
 )

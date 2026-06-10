@@ -9,6 +9,7 @@ from novel_to_comic import artifacts
 from novel_to_comic.config import Config
 from novel_to_comic.models.story_bible import Character, Location, Prop, StoryBible
 from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
+from novel_to_comic.prompting import IMAGE_PROMPT_VERSION
 from novel_to_comic.server.routers.stages import list_images
 from novel_to_comic.state import create_initial_state
 from novel_to_comic.stages import s3_cast
@@ -21,7 +22,7 @@ def test_generate_panel_writes_failure_metadata(tmp_path, monkeypatch):
     prompt_dir.mkdir(parents=True)
     prompt_path = prompt_dir / "panel_001.json"
     prompt = ImagePrompt(
-        prompt_version=s7_draw.IMAGE_PROMPT_VERSION,
+        prompt_version=IMAGE_PROMPT_VERSION,
         planned_panel_id="scene_001:panel_001",
         scene_id="scene_001",
         panel_number=1,
@@ -48,7 +49,6 @@ def test_generate_panel_writes_failure_metadata(tmp_path, monkeypatch):
                 tmp_path,
                 prompt_path,
                 asyncio.Semaphore(1),
-                {},
                 None,
                 {},
                 None,
@@ -76,7 +76,7 @@ def test_generate_panel_regenerates_stale_existing_image(tmp_path, monkeypatch):
     prompt_dir.mkdir(parents=True)
     prompt_path = prompt_dir / "panel_004.json"
     prompt = ImagePrompt(
-        prompt_version=s7_draw.IMAGE_PROMPT_VERSION,
+        prompt_version=IMAGE_PROMPT_VERSION,
         planned_panel_id="scene_004:panel_004",
         scene_id="scene_004",
         panel_number=4,
@@ -119,7 +119,6 @@ def test_generate_panel_regenerates_stale_existing_image(tmp_path, monkeypatch):
             tmp_path,
             prompt_path,
             asyncio.Semaphore(1),
-            {},
             None,
             {},
             None,

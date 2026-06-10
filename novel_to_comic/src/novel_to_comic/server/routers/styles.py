@@ -11,6 +11,7 @@ from novel_to_comic.config import Config, save_config
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.state import StageStatus, save_state
 from novel_to_comic.stages.s2_style import (
+    ensure_style_sample_brief,
     generate_sample_image,
     generate_samples_for_indices,
     generate_suggestions,
@@ -276,7 +277,10 @@ async def generate_style_samples(
                 workspace_id=str(project_dir.parent),
                 stage="style",
             ):
-                await generate_sample_image(sample_config, bible, sample_path)
+                # Disk-cached after the first sample batch, so regens reuse
+                # the same scene the original samples were judged on.
+                brief = await ensure_style_sample_brief(sample_config, bible, project_dir)
+                await generate_sample_image(sample_config, bible, sample_path, brief=brief)
 
         job = enqueue_generation_job(
             request.app,

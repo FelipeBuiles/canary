@@ -172,14 +172,18 @@ def _location_plate_meta(
     width: int | None = None,
     height: int | None = None,
     addendum: str = "",
+    state_id: str | None = None,
+    anchor: str | None = None,
 ) -> dict:
     meta = {
         **_asset_meta_common(config, project_dir, style_ref),
         "kind": "location_plate",
         "location_id": loc.id,
-        "visual_anchor": loc.visual_anchor,
+        "visual_anchor": anchor or loc.visual_anchor,
         "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
     }
+    if state_id:
+        meta["location_state_id"] = state_id
     if is_gpt_image_2(config.effective_image_model()) and width and height:
         meta["width"] = width
         meta["height"] = height
@@ -328,7 +332,8 @@ def _character_ref_clean_text_prompt(
     return "\n\n".join(parts)
 
 
-def _location_plate_prompt(config: Config, loc, addendum: str = "") -> str:
+def _location_plate_prompt(config: Config, loc, addendum: str = "", anchor: str | None = None) -> str:
+    plate_anchor = anchor or loc.visual_anchor
     addendum_text = addendum.strip()
     if is_gpt_image_2(config.effective_image_model()):
         addendum_block = f"\nUSER FIX NOTE: {addendum_text}\n" if addendum_text else ""
@@ -336,7 +341,7 @@ def _location_plate_prompt(config: Config, loc, addendum: str = "") -> str:
             f"{config.style_template.strip()}\n\n"
             f"{_style_authority_block('location design plate')}\n\n"
             f"LOCATION DESIGN PLATE\n"
-            f"{loc.visual_anchor}\n"
+            f"{plate_anchor}\n"
             f"{addendum_block}\n"
             f"Create a clean wide environment design plate, not a texture study. "
             f"No characters present. No text. "
@@ -356,7 +361,7 @@ def _location_plate_prompt(config: Config, loc, addendum: str = "") -> str:
     return (
         f"{config.style_template}\n\n"
         f"{_style_authority_block('location design plate')}\n\n"
-        f"{loc.visual_anchor}{addendum_block} "
+        f"{plate_anchor}{addendum_block} "
         f"Wide establishing shot, no characters present, clean readable background, "
         f"cinematic composition. No text. No noisy grain, speckled dappling, "
         f"repeated texture fields, pattern tiling, or muddy micro-detail."
@@ -367,6 +372,24 @@ def _location_plate_dimensions(config: Config) -> tuple[int | None, int | None]:
     if is_gpt_image_2(config.effective_image_model()):
         return _GPT_LOCATION_PLATE_WIDTH, _GPT_LOCATION_PLATE_HEIGHT
     return None, None
+
+
+def _location_plate_jobs(loc) -> list[tuple[str, str, str | None]]:
+    """(plate_stem, anchor, state_id) tuples: the default plate plus one per state.
+
+    Locations with states (pre/post collapse, day/night) need a plate per
+    state — otherwise panels in a non-default state get an image reference
+    that contradicts their text anchor. State ids extend the parent location
+    id, so plates/{stem}.png never collides.
+    """
+    jobs: list[tuple[str, str, str | None]] = [(loc.id, loc.visual_anchor, None)]
+    for state in loc.states or []:
+        jobs.append((state.id, state.visual_anchor, state.id))
+    return jobs
+
+
+def _cast_semaphore(config: Config) -> asyncio.Semaphore:
+    return asyncio.Semaphore(config.effective_image_concurrency(google_model=False))
 
 
 def _prop_ref_prompt(config: Config, prop: Prop, addendum: str = "") -> str:
@@ -501,23 +524,35 @@ async def regenerate_location_plate(
     project_dir: Path,
     loc_id: str,
     semaphore: asyncio.Semaphore | None = None,
+    state_id: str | None = None,
 ) -> ApiResult[Path]:
     story_bible = artifacts.read_story_bible(project_dir)
     loc = next((candidate for candidate in story_bible.locations if candidate.id == loc_id), None)
     if loc is None:
         raise ValueError(f"Location not found: {loc_id}")
+    anchor = loc.visual_anchor
+    plate_stem = loc.id
+    if state_id:
+        state = next((s for s in loc.states or [] if s.id == state_id), None)
+        if state is None:
+            raise ValueError(f"Location state not found: {state_id}")
+        anchor = state.visual_anchor
+        plate_stem = state.id
 
     sem = semaphore or asyncio.Semaphore(1)
-    output_path = project_dir / "plates" / f"{loc.id}.png"
+    output_path = project_dir / "plates" / f"{plate_stem}.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = output_path.with_name(
         f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
     )
     style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
     addendum = _read_location_plate_addendum(project_dir, loc.id)
-    prompt = _location_plate_prompt(config, loc, addendum)
+    prompt = _location_plate_prompt(config, loc, addendum, anchor=anchor)
     width, height = _location_plate_dimensions(config)
-    meta = _location_plate_meta(config, project_dir, style_ref, loc, prompt, width, height, addendum)
+    meta = _location_plate_meta(
+        config, project_dir, style_ref, loc, prompt, width, height, addendum,
+        state_id=state_id, anchor=anchor,
+    )
 
     try:
         flux_result = None
@@ -574,10 +609,12 @@ async def _generate_character_refs(
         )
 
     chars_to_gen = [c for c in story_bible.characters if not char_ids or c.id in char_ids]
+    semaphore = _cast_semaphore(config)
 
     with make_progress(ctx.on_event) as progress:
         task = progress.add_task("Character refs", total=len(chars_to_gen))
-        for char in chars_to_gen:
+
+        async def _one_character(char: Character) -> None:
             char_dir = refs_dir / char.id
             char_dir.mkdir(parents=True, exist_ok=True)
             output_path = char_dir / "sheet.png"
@@ -598,60 +635,67 @@ async def _generate_character_refs(
                         pass
                 ctx.record_item_done(cost=0.0)
                 ctx.log(f"Using existing ref sheet for {char.name}", level="dim")
-                ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
-                if task is not None:
-                    progress.advance(task)
-                continue
-
-            try:
-                ctx.log(f"Generating ref sheet for {char.name}")
-                # Square 2x2 grid — each quadrant gives a full-body figure
-                # ~512x512px of space, enough to avoid edge clipping.
-                # Pass the style sample when the active image model handles
-                # references reliably; gpt-image-2 cast refs stay text-driven.
-                flux_result = await flux.generate_image(
-                    config, prompt, output_path,
-                    width=1024, height=1024,
-                    reference_image_path=style_ref,
-                    ref_type="style",
-                    feature="cast.character_ref",
-                )
-                await asyncio.to_thread(_crop_sheet_to_poses, output_path)
-                artifacts.write_asset_meta(output_path, meta)
-                ctx.record_item_done(usage=flux_result.usage)
-                ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
-            except Exception as e:
-                cause = e.last_attempt.exception() if hasattr(e, "last_attempt") else e
-                console.print(f"[red]Failed ref sheet for {char.name}: {cause}[/red]")
-                ctx.record_item_failed(char.id)
-                ctx.log(f"Failed ref sheet for {char.name}: {cause}", level="error")
+            else:
+                try:
+                    ctx.log(f"Generating ref sheet for {char.name}")
+                    # Square 2x2 grid — each quadrant gives a full-body figure
+                    # ~512x512px of space, enough to avoid edge clipping.
+                    # Pass the style sample when the active image model handles
+                    # references reliably; gpt-image-2 cast refs stay text-driven.
+                    async with semaphore:
+                        flux_result = await flux.generate_image(
+                            config, prompt, output_path,
+                            width=1024, height=1024,
+                            reference_image_path=style_ref,
+                            ref_type="style",
+                            feature="cast.character_ref",
+                        )
+                    await asyncio.to_thread(_crop_sheet_to_poses, output_path)
+                    artifacts.write_asset_meta(output_path, meta)
+                    ctx.record_item_done(usage=flux_result.usage)
+                except Exception as e:
+                    cause = e.last_attempt.exception() if hasattr(e, "last_attempt") else e
+                    console.print(f"[red]Failed ref sheet for {char.name}: {cause}[/red]")
+                    ctx.record_item_failed(char.id)
+                    ctx.log(f"Failed ref sheet for {char.name}: {cause}", level="error")
+            ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
             if task is not None:
                 progress.advance(task)
+
+        await asyncio.gather(*(_one_character(char) for char in chars_to_gen))
 
 
 async def _generate_location_plates(
     config: Config, project_dir: Path, story_bible: StoryBible, ctx: StageRuntime,
     loc_ids: list[str] | None = None,
 ) -> None:
-    """Part C: Generate location background plates."""
+    """Part C: Generate location background plates — one per location state."""
     console.print("[bold]Generating location plates...[/bold]")
     ctx.log("Generating location plates...")
     plates_dir = project_dir / "plates"
     plates_dir.mkdir(parents=True, exist_ok=True)
 
     locs_to_gen = [loc for loc in story_bible.locations if not loc_ids or loc.id in loc_ids]
+    plate_jobs = [
+        (loc, stem, anchor, state_id)
+        for loc in locs_to_gen
+        for stem, anchor, state_id in _location_plate_jobs(loc)
+    ]
+    style_ref = _cast_asset_style_ref(
+        config,
+        _find_style_ref(project_dir, config.style_template),
+    )
+    width, height = _location_plate_dimensions(config)
+    semaphore = _cast_semaphore(config)
 
     with make_progress(ctx.on_event) as progress:
-        task = progress.add_task("Location plates", total=len(locs_to_gen))
-        for loc in locs_to_gen:
-            output_path = plates_dir / f"{loc.id}.png"
+        task = progress.add_task("Location plates", total=len(plate_jobs))
+
+        async def _one_plate(loc, stem: str, anchor: str, state_id: str | None) -> None:
+            label = f"{loc.name} ({state_id})" if state_id else loc.name
+            output_path = plates_dir / f"{stem}.png"
             addendum = _read_location_plate_addendum(project_dir, loc.id)
-            prompt = _location_plate_prompt(config, loc, addendum)
-            style_ref = _cast_asset_style_ref(
-                config,
-                _find_style_ref(project_dir, config.style_template),
-            )
-            width, height = _location_plate_dimensions(config)
+            prompt = _location_plate_prompt(config, loc, addendum, anchor=anchor)
             meta = _location_plate_meta(
                 config,
                 project_dir,
@@ -661,34 +705,38 @@ async def _generate_location_plates(
                 width,
                 height,
                 addendum,
+                state_id=state_id,
+                anchor=anchor,
             )
             if artifacts.asset_matches_meta(output_path, meta):
                 ctx.record_item_done(cost=0.0)
-                ctx.log(f"Using existing location plate for {loc.name}", level="dim")
-                ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
-                if task is not None:
-                    progress.advance(task)
-                continue
-            try:
-                ctx.log(f"Generating location plate for {loc.name}")
-                flux_result = await flux.generate_image(
-                    config,
-                    prompt,
-                    output_path,
-                    width=width,
-                    height=height,
-                    reference_image_path=style_ref,
-                    ref_type="style",
-                    feature="cast.location_plate",
-                )
-                artifacts.write_asset_meta(output_path, meta)
-                ctx.record_item_done(usage=flux_result.usage)
-                ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
-            except Exception as e:
-                cause = e.last_attempt.exception() if hasattr(e, "last_attempt") else e
-                console.print(f"[red]Failed plate for {loc.name}: {cause}[/red]")
+                ctx.log(f"Using existing location plate for {label}", level="dim")
+            else:
+                try:
+                    ctx.log(f"Generating location plate for {label}")
+                    async with semaphore:
+                        flux_result = await flux.generate_image(
+                            config,
+                            prompt,
+                            output_path,
+                            width=width,
+                            height=height,
+                            reference_image_path=style_ref,
+                            ref_type="style",
+                            feature="cast.location_plate",
+                        )
+                    artifacts.write_asset_meta(output_path, meta)
+                    ctx.record_item_done(usage=flux_result.usage)
+                except Exception as e:
+                    cause = e.last_attempt.exception() if hasattr(e, "last_attempt") else e
+                    console.print(f"[red]Failed plate for {label}: {cause}[/red]")
+                    ctx.record_item_failed(stem)
+                    ctx.log(f"Failed plate for {label}: {cause}", level="error")
+            ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
             if task is not None:
                 progress.advance(task)
+
+        await asyncio.gather(*(_one_plate(*job_args) for job_args in plate_jobs))
 
 
 async def _generate_prop_refs(
@@ -711,10 +759,12 @@ async def _generate_prop_refs(
     ctx.log("Generating prop reference images...")
 
     style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
+    semaphore = _cast_semaphore(config)
 
     with make_progress(ctx.on_event) as progress:
         task = progress.add_task("Prop refs", total=len(props_to_gen))
-        for prop in props_to_gen:
+
+        async def _one_prop(prop: Prop) -> None:
             output_path = artifacts.prop_ref_path(project_dir, prop.id)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             addendum = _read_prop_ref_addendum(project_dir, prop.id)
@@ -724,30 +774,29 @@ async def _generate_prop_refs(
             if artifacts.asset_matches_meta(output_path, meta):
                 ctx.record_item_done(cost=0.0)
                 ctx.log(f"Using existing prop ref for {prop.name}", level="dim")
-                ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
-                if task is not None:
-                    progress.advance(task)
-                continue
-
-            try:
-                ctx.log(f"Generating prop ref for {prop.name}")
-                flux_result = await flux.generate_image(
-                    config, prompt, output_path,
-                    width=1024, height=1024,
-                    reference_image_path=style_ref,
-                    ref_type="style",
-                    feature="cast.prop_ref",
-                )
-                artifacts.write_asset_meta(output_path, meta)
-                ctx.record_item_done(usage=flux_result.usage)
-                ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
-            except Exception as e:
-                cause = e.last_attempt.exception() if hasattr(e, "last_attempt") else e
-                console.print(f"[red]Failed prop ref for {prop.name}: {cause}[/red]")
-                ctx.record_item_failed(prop.id)
-                ctx.log(f"Failed prop ref for {prop.name}: {cause}", level="error")
+            else:
+                try:
+                    ctx.log(f"Generating prop ref for {prop.name}")
+                    async with semaphore:
+                        flux_result = await flux.generate_image(
+                            config, prompt, output_path,
+                            width=1024, height=1024,
+                            reference_image_path=style_ref,
+                            ref_type="style",
+                            feature="cast.prop_ref",
+                        )
+                    artifacts.write_asset_meta(output_path, meta)
+                    ctx.record_item_done(usage=flux_result.usage)
+                except Exception as e:
+                    cause = e.last_attempt.exception() if hasattr(e, "last_attempt") else e
+                    console.print(f"[red]Failed prop ref for {prop.name}: {cause}[/red]")
+                    ctx.record_item_failed(prop.id)
+                    ctx.log(f"Failed prop ref for {prop.name}: {cause}", level="error")
+            ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
             if task is not None:
                 progress.advance(task)
+
+        await asyncio.gather(*(_one_prop(prop) for prop in props_to_gen))
 
 
 async def run(
@@ -770,7 +819,11 @@ async def run(
     if should_generate_refs:
         total_items += len([c for c in story_bible.characters if not char_ids or c.id in char_ids])
     if should_generate_plates:
-        total_items += len([loc for loc in story_bible.locations if not loc_ids or loc.id in loc_ids])
+        total_items += sum(
+            len(_location_plate_jobs(loc))
+            for loc in story_bible.locations
+            if not loc_ids or loc.id in loc_ids
+        )
     if should_generate_prop_refs:
         total_items += len([p for p in story_bible.props if not prop_ids or p.id in prop_ids])
 
@@ -794,38 +847,39 @@ async def run(
             ctx.set_style_template_hash(hash_style_template(config.style_template))
 
         if not is_partial:
-            console.print("[yellow]Stage 3 complete — awaiting review.[/yellow]")
+            console.print("[yellow]Cast stage complete — awaiting review.[/yellow]")
             console.print("Review character refs in: refs/")
             console.print("Run [bold]pipeline approve --project . --stage cast[/bold] to continue.")
 
 
-from novel_to_comic.stages import Stage  # noqa: E402
+from novel_to_comic.stages import Stage, clean_cascade  # noqa: E402
 from novel_to_comic.state import PipelineState  # noqa: E402
 
 
 def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
-    from novel_to_comic.models.story_bible import StoryBible
     from novel_to_comic.usage import estimate_image_cost
-    
-    sb_path = project_dir / "story_bible.json"
-    if not sb_path.exists():
+
+    story_bible = artifacts.read_story_bible_safe(project_dir)
+    if story_bible is None:
         return 0.0
-    try:
-        story_bible = StoryBible.model_validate_json(sb_path.read_text())
-    except Exception:
-        return 0.0
-        
+
     missing_refs = sum(
         1 for char in story_bible.characters
         if not (project_dir / "refs" / char.id / "sheet.png").exists()
     )
     missing_plates = sum(
-        1 for loc in story_bible.locations
-        if not (project_dir / "plates" / f"{loc.id}.png").exists()
+        1
+        for loc in story_bible.locations
+        for stem, _anchor, _state_id in _location_plate_jobs(loc)
+        if not (project_dir / "plates" / f"{stem}.png").exists()
+    )
+    missing_prop_refs = sum(
+        1 for prop in story_bible.props
+        if not artifacts.prop_ref_path(project_dir, prop.id).exists()
     )
     return estimate_image_cost(
         config.effective_image_model(),
-        missing_refs + missing_plates,
+        missing_refs + missing_plates + missing_prop_refs,
         quality=getattr(config, "image_quality", None),
     )
 
@@ -834,10 +888,6 @@ STAGE = Stage(
     name="cast",
     run=run,
     outputs=lambda d: [d / "refs"],
-    clean_paths=lambda d: [
-        d / "refs", d / "plates",
-        d / "adapt", d / "plan", d / "storyboard",
-        d / "direct", d / "draw", d / "compose", d / "exports",
-    ],
+    clean_paths=lambda d: clean_cascade(d, "refs"),
     estimate_cost=estimate_cost,
 )

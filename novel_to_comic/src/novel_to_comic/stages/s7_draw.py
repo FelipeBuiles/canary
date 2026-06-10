@@ -16,7 +16,8 @@ from PIL import Image as PILImage
 from rich.console import Console
 
 from novel_to_comic import artifacts
-from novel_to_comic.ai.providers.base import RefImage
+from novel_to_comic.ai.providers.base import RefImage, order_refs_for_upload
+from novel_to_comic.prompt_assembly import ensure_current_panel_prompt, ensure_visual_brief
 from novel_to_comic.clients import flux
 from novel_to_comic.config import Config, is_gpt_image_2, is_reve_model
 from novel_to_comic.events import make_progress
@@ -26,8 +27,6 @@ from novel_to_comic.panel_versions import record_current_panel_version
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.panel_aspect import aspect_for_dimensions, aspect_within_tolerance, generation_shape_for_aspect
 from novel_to_comic.prompting import (
-    IMAGE_PROMPT_VERSION,
-    build_planned_panel_prompt_spec,
     ensure_distilled_prompt,
     render_generation_prompt,
 )
@@ -176,45 +175,68 @@ def _gpt_image_2_subject_refs(paths: list[Path]) -> list[Path]:
     return prop_refs[:1]
 
 
-def _reve_refs(refs: list[RefImage]) -> list[RefImage]:
-    # Group references by role
-    subjects = [r for r in refs if r.role == "subject"]
+# Pose-crop preference per framing. Close framings want a face-forward crop;
+# wide framings want a full-body/gesture crop so proportions carry over.
+_SHOT_VIEW_PREFERENCES: dict[str, list[str]] = {
+    "close": ["front", "three_quarter", "profile", "gesture", "sheet"],
+    "wide": ["gesture", "three_quarter", "front", "profile", "sheet"],
+    "default": ["three_quarter", "front", "gesture", "profile", "sheet"],
+}
+
+
+def _shot_view_preference(composition: str | None) -> list[str]:
+    text = (composition or "").lower()
+    if "close-up" in text or "close up" in text or "portrait" in text:
+        return _SHOT_VIEW_PREFERENCES["close"]
+    if any(token in text for token in ("wide", "establishing", "panorama", "full body")):
+        return _SHOT_VIEW_PREFERENCES["wide"]
+    return _SHOT_VIEW_PREFERENCES["default"]
+
+
+def _select_subject_crops(subjects: list[RefImage], composition: str | None) -> list[RefImage]:
+    """Pick ONE pose crop per character, matched to the panel's framing.
+
+    Sending several crops of the same character (or a 2x2 sheet grid) makes
+    ref-driven models blend poses and occasionally leak the grid layout into
+    the panel. One clean, framing-appropriate crop per character keeps identity
+    strong without those artifacts.
+    """
+    preference = {stem: i for i, stem in enumerate(_shot_view_preference(composition))}
+    order: list[Path] = []
+    by_character: dict[Path, list[RefImage]] = {}
+    for ref in subjects:
+        character_dir = ref.path.parent
+        if character_dir not in by_character:
+            by_character[character_dir] = []
+            order.append(character_dir)
+        by_character[character_dir].append(ref)
+    return [
+        min(by_character[d], key=lambda r: (preference.get(r.path.stem, 99), str(r.path)))
+        for d in order
+    ]
+
+
+def _reve_refs(refs: list[RefImage], composition: str | None = None) -> list[RefImage]:
+    """Select up to 4 refs for Reve, identity first.
+
+    Character identity is the thing reference images are best at and the
+    hardest to recover via text, so subjects always win slots: one crop per
+    character (up to 3), chosen by the panel's framing. Remaining slots fill
+    with continuity, prop, style, then location refs.
+    """
+    subjects = _select_subject_crops([r for r in refs if r.role == "subject"], composition)[:3]
+    continuities = [r for r in refs if r.role == "continuity"]
+    props = [r for r in refs if r.role == "prop"]
     styles = [r for r in refs if r.role == "style"]
     locations = [r for r in refs if r.role == "location_plate"]
-    props = [r for r in refs if r.role == "prop"]
-    continuities = [r for r in refs if r.role == "continuity"]
-    
-    selected: list[RefImage] = []
-    
-    # 1. Prioritize style reference first for consistency (up to 1)
-    if styles:
-        selected.extend(styles[:1])
-    
-    # 2. Add subject references (up to 2)
-    selected.extend(subjects[:2])
-    
-    # 3. Add location if no style reference (up to 1)
-    if not styles and locations:
-        selected.extend(locations[:1])
-        
-    # 4. Fill remaining slots with other refs, up to 4 total
-    remaining_candidates = []
-    remaining_candidates.extend(subjects[2:])
-    if styles:
-        remaining_candidates.extend(locations)
-        remaining_candidates.extend(styles[1:])
-    else:
-        remaining_candidates.extend(locations[1:])
-    remaining_candidates.extend(props)
-    remaining_candidates.extend(continuities)
-    
-    for ref in remaining_candidates:
+
+    selected: list[RefImage] = list(subjects)
+    for ref in [*continuities[:1], *props, *styles[:1], *locations[:1]]:
         if len(selected) >= 4:
             break
         if ref not in selected:
             selected.append(ref)
-            
-    return selected
+    return order_refs_for_upload(selected)
 
 
 def _is_seedream_model(model: str) -> bool:
@@ -223,14 +245,9 @@ def _is_seedream_model(model: str) -> bool:
 
 
 def _ordered_refs(refs: list[RefImage]) -> list[RefImage]:
-    priority = {
-        "subject": 0,
-        "prop": 1,
-        "continuity": 2,
-        "style": 3,
-        "location_plate": 4,
-    }
-    return sorted(refs, key=lambda ref: priority.get(ref.role, 99))
+    # Canonical upload order shared with litellm_http._flatten_refs and the
+    # <img>N</img> rendering in prompting.render_generation_prompt.
+    return order_refs_for_upload(refs)
 
 
 def _subject_reference_labels(prompt: ImagePrompt) -> dict[str, str]:
@@ -258,6 +275,59 @@ def _prop_label_from_ref(path: Path) -> str | None:
     return None
 
 
+def _plate_ref_path(project_dir: Path, loc_id: str, state_id: str | None) -> Path | None:
+    """Return the location plate matching the panel's active state.
+
+    Prefers the per-state plate (plates/{state_id}.png) so a panel set in a
+    non-default state never gets an image reference that contradicts its text
+    anchor; falls back to the location's default plate.
+    """
+    if state_id:
+        state_plate = project_dir / "plates" / f"{state_id}.png"
+        if state_plate.exists():
+            return state_plate
+    plate = project_dir / "plates" / f"{loc_id}.png"
+    return plate if plate.exists() else None
+
+
+def _prev_transition_out(prompt_path: Path, panel_number: int) -> str | None:
+    """Read the previous panel's transition_out from its stored prompt."""
+    prev_path = prompt_path.parent / f"panel_{panel_number - 1:03d}.json"
+    if not prev_path.exists():
+        return None
+    try:
+        return ImagePrompt.model_validate_json(prev_path.read_text()).transition_out
+    except Exception:
+        return None
+
+
+def _interleave_by_scene(prompt_files: list[Path]) -> list[Path]:
+    """Round-robin prompt files across scenes, preserving panel order per scene.
+
+    Keeps each batch spread over several scenes so panels that DO chain on a
+    predecessor (match_cut continuity) never dominate a batch. A panel's
+    predecessor always sorts earlier, so event waits cannot cross batches
+    backwards.
+    """
+    by_scene: dict[str, list[Path]] = {}
+    scene_order: list[str] = []
+    for pf in prompt_files:
+        scene = pf.parent.name
+        if scene not in by_scene:
+            by_scene[scene] = []
+            scene_order.append(scene)
+        by_scene[scene].append(pf)
+    interleaved: list[Path] = []
+    round_index = 0
+    while len(interleaved) < len(prompt_files):
+        for scene in scene_order:
+            files = by_scene[scene]
+            if round_index < len(files):
+                interleaved.append(files[round_index])
+        round_index += 1
+    return interleaved
+
+
 def _find_style_sample(project_dir: Path, style_template: str) -> Path | None:
     """Return the sample image matching the active style template."""
     suggestions_path = artifacts.style_suggestions_path(project_dir)
@@ -272,31 +342,6 @@ def _find_style_sample(project_dir: Path, style_template: str) -> Path | None:
         except Exception:
             pass
     return None
-
-
-def _load_or_upgrade_prompt(
-    config: Config,
-    project_dir: Path,
-    prompt_path: Path,
-    story_bible: StoryBible | None,
-    planned_panel=None,
-    prev_planned_panel=None,
-) -> ImagePrompt:
-    prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
-    if (
-        getattr(prompt, "prompt_version", 1) >= IMAGE_PROMPT_VERSION
-        and getattr(prompt, "planned_panel_id", None)
-    ) or story_bible is None:
-        return prompt
-
-    if planned_panel is None:
-        return prompt
-
-    upgraded = build_planned_panel_prompt_spec(
-        config, project_dir, planned_panel, story_bible, prev_planned_panel
-    )
-    prompt_path.write_text(upgraded.model_dump_json(indent=2))
-    return upgraded
 
 
 def resolve_panel_references(
@@ -352,18 +397,22 @@ def resolve_panel_references(
             contextual_refs.append(RefImage(path=style_sample, role="style", label="selected style"))
         loc_id = (scene_to_location or {}).get(prompt.scene_id)
         if loc_id and _use_location_plate_refs(config):
-            plate = project_dir / "plates" / f"{loc_id}.png"
-            if plate.exists():
+            plate = _plate_ref_path(
+                project_dir, loc_id, getattr(prompt, "location_state_id", None)
+            )
+            if plate is not None:
                 contextual_refs.append(RefImage(
                     path=plate,
                     role="location_plate",
                     label=(location_labels or {}).get(loc_id) or loc_id,
                 ))
 
+    # Every branch below must return refs in canonical upload order — the
+    # returned list IS the upload order assumed by render_generation_prompt.
     refs = _ordered_refs([*subject_refs, *contextual_refs])
     model = config.effective_image_model()
     if is_reve_model(model):
-        return _reve_refs(refs)
+        return _reve_refs(refs, getattr(prompt, "composition", None))
     if is_gpt_image_2(model):
         selected_paths = set(_gpt_image_2_subject_refs([ref.path for ref in refs if ref.role in {"subject", "prop"}]))
         return [ref for ref in refs if ref.path in selected_paths]
@@ -494,7 +543,6 @@ async def _generate_panel(
     project_dir: Path,
     prompt_path: Path,
     semaphore: asyncio.Semaphore,
-    scene_locks: dict[str, asyncio.Lock],
     style_sample: Path | None,
     scene_to_location: dict[str, str],
     panel_events: dict[tuple[str, int], asyncio.Event] | None,
@@ -512,12 +560,19 @@ async def _generate_panel(
                        GPT Image 2 keeps location context text-only to avoid
                        high-fidelity texture leakage from plates.
 
+    Concurrency: panels run in parallel up to the semaphore limit. A panel
+    waits for its predecessor (via panel_events) ONLY when the predecessor's
+    transition would actually feed it as a continuity image ref (match_cut on
+    a ref-capable model) — everything else proceeds independently.
+
     Subject refs (character sheets / pose crops) are always passed first to
     flux.generate_image_multi_ref so character identity gets the strongest
     positional weight in the Gemini contents list.
     """
     panel_key: tuple[str, int] | None = None
     panel_started_at: float | None = None
+    output_path: Path | None = None
+    meta_payload: dict | None = None
     try:
         try:
             panel_key = (prompt_path.parent.name, int(prompt_path.stem.split("_")[1]))
@@ -529,137 +584,147 @@ async def _generate_panel(
         prev_event: asyncio.Event | None = None
         if panel_events and raw_prompt.panel_number > 1:
             prev_event = panel_events.get((raw_prompt.scene_id, raw_prompt.panel_number - 1))
-        if prev_event:
+        if (
+            prev_event
+            and _use_continuity_refs(config)
+            and _should_use_prev_panel_image(
+                config, _prev_transition_out(prompt_path, raw_prompt.panel_number)
+            )
+        ):
             await prev_event.wait()
 
-        prompt = _load_or_upgrade_prompt(config, project_dir, prompt_path, story_bible)
+        prompt = raw_prompt
         if story_bible is not None:
             distilled_prompt = ensure_distilled_prompt(config, prompt)
             if distilled_prompt is not prompt:
                 prompt = distilled_prompt
                 prompt_path.write_text(prompt.model_dump_json(indent=2))
+        # Backfill the prose visual brief for prompts generated before the
+        # brief existed (or after an edit cleared it).
+        briefed_prompt = await ensure_visual_brief(config, prompt)
+        if briefed_prompt is not prompt:
+            prompt = briefed_prompt
+            prompt_path.write_text(prompt.model_dump_json(indent=2))
 
         output_dir = project_dir / "draw" / prompt.scene_id
         output_path = output_dir / f"panel_{prompt.panel_number:03d}.png"
-        scene_lock = scene_locks.setdefault(prompt.scene_id, asyncio.Lock())
 
-        async with scene_lock:
-            refs = resolve_panel_references(
-                config,
-                project_dir,
-                prompt,
-                prompt_path=prompt_path,
-                style_sample=style_sample,
-                scene_to_location=scene_to_location,
-                location_labels=(
-                    {loc.id: loc.name for loc in story_bible.locations}
-                    if story_bible is not None
-                    else {}
-                ),
-                output_dir=output_dir,
+        refs = resolve_panel_references(
+            config,
+            project_dir,
+            prompt,
+            prompt_path=prompt_path,
+            style_sample=style_sample,
+            scene_to_location=scene_to_location,
+            location_labels=(
+                {loc.id: loc.name for loc in story_bible.locations}
+                if story_bible is not None
+                else {}
+            ),
+            output_dir=output_dir,
+        )
+
+        generation_path = output_path
+        if force:
+            generation_path = output_path.with_name(
+                f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
             )
+        generation_prompt = render_generation_prompt(
+            prompt,
+            config.style_template,
+            config.effective_image_model(),
+            refs=refs,
+        )
+        meta_payload = {
+            "version": 1,
+            "kind": "panel_image",
+            "prompt": generation_prompt,
+            "prompt_sha256": hashlib.sha256(generation_prompt.encode("utf-8")).hexdigest(),
+            "parameters": {
+                "planned_panel_id": prompt.planned_panel_id,
+                "scene_id": prompt.scene_id,
+                "panel_number": prompt.panel_number,
+                "image_model": config.effective_image_model(),
+                "width": prompt.width,
+                "height": prompt.height,
+                "generation_aspect_ratio": getattr(prompt, "generation_aspect_ratio", None),
+                "generation_width": getattr(prompt, "generation_width", None),
+                "generation_height": getattr(prompt, "generation_height", None),
+                "generation_shape": getattr(prompt, "generation_shape", None),
+                "generation_aspect_source": getattr(prompt, "generation_aspect_source", None),
+                "steps": prompt.steps,
+                "style_template": config.style_template,
+                "refs": [
+                    {
+                        "path": _relative_to_project(ref.path, project_dir),
+                        "role": ref.role,
+                        "label": ref.label,
+                    }
+                    for ref in refs
+                ],
+                "continuity_note": prompt.continuity_note,
+            },
+        }
+        if (
+            output_path.exists()
+            and not force
+            and not artifacts.asset_failure_path(output_path).exists()
+            and artifacts.asset_matches_meta(output_path, _meta_with_output_aspect(output_path, meta_payload, prompt))
+        ):
+            return ApiResult(value=output_path, usage=None)
 
-            generation_path = output_path
-            if force:
-                generation_path = output_path.with_name(
-                    f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
+        if ctx is not None:
+            ctx.emit_panel_start(prompt.scene_id, prompt.panel_number)
+            panel_started_at = time.monotonic()
+
+        try:
+            async with semaphore:
+                flux_result = await flux.generate_image_multi_ref(
+                    config=config,
+                    prompt=generation_prompt,
+                    output_path=generation_path,
+                    refs=refs,
+                    width=prompt.width,
+                    height=prompt.height,
+                    steps=prompt.steps,
+                    feature="draw.panel_image",
                 )
-            generation_prompt = render_generation_prompt(
-                prompt,
-                config.style_template,
-                config.effective_image_model(),
-                refs=refs,
-            )
-            meta_payload = {
-                "version": 1,
-                "kind": "panel_image",
-                "prompt": generation_prompt,
-                "prompt_sha256": hashlib.sha256(generation_prompt.encode("utf-8")).hexdigest(),
-                "parameters": {
-                    "planned_panel_id": prompt.planned_panel_id,
-                    "scene_id": prompt.scene_id,
-                    "panel_number": prompt.panel_number,
-                    "image_model": config.effective_image_model(),
-                    "width": prompt.width,
-                    "height": prompt.height,
-                    "generation_aspect_ratio": getattr(prompt, "generation_aspect_ratio", None),
-                    "generation_width": getattr(prompt, "generation_width", None),
-                    "generation_height": getattr(prompt, "generation_height", None),
-                    "generation_shape": getattr(prompt, "generation_shape", None),
-                    "generation_aspect_source": getattr(prompt, "generation_aspect_source", None),
-                    "steps": prompt.steps,
-                    "style_template": config.style_template,
-                    "refs": [
-                        {
-                            "path": _relative_to_project(ref.path, project_dir),
-                            "role": ref.role,
-                            "label": ref.label,
-                        }
-                        for ref in refs
-                    ],
-                    "continuity_note": prompt.continuity_note,
-                },
-            }
-            if (
-                output_path.exists()
-                and not force
-                and not artifacts.asset_failure_path(output_path).exists()
-                and artifacts.asset_matches_meta(output_path, _meta_with_output_aspect(output_path, meta_payload, prompt))
-            ):
-                return ApiResult(value=output_path, usage=None)
-
-            if ctx is not None:
-                ctx.emit_panel_start(prompt.scene_id, prompt.panel_number)
-                panel_started_at = time.monotonic()
-
-            try:
-                async with semaphore:
-                    flux_result = await flux.generate_image_multi_ref(
-                        config=config,
-                        prompt=generation_prompt,
-                        output_path=generation_path,
-                        refs=refs,
-                        width=prompt.width,
-                        height=prompt.height,
-                        steps=prompt.steps,
-                        feature="draw.panel_image",
-                    )
-                result = flux_result.value
-                if result:
-                    meta_payload = _meta_with_output_aspect(result, meta_payload, prompt)
-                    _raise_if_aspect_mismatch(meta_payload)
-                if force and result:
-                    output_path.parent.mkdir(parents=True, exist_ok=True)
-                    record_current_panel_version(
-                        project_dir,
-                        prompt.scene_id,
-                        prompt.panel_number,
-                        reason="before_regenerate",
-                    )
-                    generation_path.replace(output_path)
-                    record_current_panel_version(
-                        project_dir,
-                        prompt.scene_id,
-                        prompt.panel_number,
-                        reason="regenerate",
-                    )
-                    result = output_path
-            finally:
-                if force and generation_path.exists():
-                    generation_path.unlink(missing_ok=True)
-
+            result = flux_result.value
             if result:
-                artifacts.asset_failure_path(output_path).unlink(missing_ok=True)
-                _write_generation_meta(output_path, meta_payload)
-            if ctx is not None and panel_started_at is not None:
-                ctx.emit_panel_done(
-                    prompt.scene_id, prompt.panel_number,
-                    status="ok",
-                    duration_ms=int((time.monotonic() - panel_started_at) * 1000),
+                meta_payload = _meta_with_output_aspect(result, meta_payload, prompt)
+                _raise_if_aspect_mismatch(meta_payload)
+            if force and result:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                record_current_panel_version(
+                    project_dir,
+                    prompt.scene_id,
+                    prompt.panel_number,
+                    reason="before_regenerate",
                 )
-            return ApiResult(value=result, usage=flux_result.usage)
+                generation_path.replace(output_path)
+                record_current_panel_version(
+                    project_dir,
+                    prompt.scene_id,
+                    prompt.panel_number,
+                    reason="regenerate",
+                )
+                result = output_path
+        finally:
+            if force and generation_path.exists():
+                generation_path.unlink(missing_ok=True)
+
+        if result:
+            artifacts.asset_failure_path(output_path).unlink(missing_ok=True)
+            _write_generation_meta(output_path, meta_payload)
+        if ctx is not None and panel_started_at is not None:
+            ctx.emit_panel_done(
+                prompt.scene_id, prompt.panel_number,
+                status="ok",
+                duration_ms=int((time.monotonic() - panel_started_at) * 1000),
+            )
+        return ApiResult(value=result, usage=flux_result.usage)
     except Exception as exc:
-        if "output_path" in locals() and "meta_payload" in locals():
+        if output_path is not None and meta_payload is not None:
             try:
                 provider_blocked = _is_provider_blocked_error(exc)
                 failure_payload = {
@@ -739,31 +804,15 @@ async def regenerate_panel_image(
         for index, panel in enumerate(scene_panels):
             if panel.panel_number != panel_number:
                 continue
-            existing = ImagePrompt.model_validate_json(prompt_path.read_text())
-            if (
-                getattr(existing, "planned_panel_id", None) == panel.panel_id
-                and getattr(existing, "prompt_version", 1) >= IMAGE_PROMPT_VERSION
-            ):
-                break
             prev_panel = scene_panels[index - 1] if index > 0 else None
-            upgraded = build_planned_panel_prompt_spec(
-                config,
-                project_dir,
-                panel,
-                story_bible,
-                prev_panel,
-            )
-            prompt_path.write_text(upgraded.model_dump_json(indent=2))
+            ensure_current_panel_prompt(config, project_dir, panel, story_bible, prev_panel)
             break
-
-    scene_locks: dict[str, asyncio.Lock] = {}
 
     api_result = await _generate_panel(
         config,
         project_dir,
         prompt_path,
         semaphore or asyncio.Semaphore(1),
-        scene_locks,
         style_sample,
         scene_to_location,
         None,
@@ -781,7 +830,7 @@ async def run(
     panel_numbers: list[int] | None = None,
     retry_failed: bool = False,
 ) -> None:
-    """Execute Stage 6: Generate panel images."""
+    """Execute the draw stage: generate panel images."""
     prompts_dir = project_dir / "direct"
     prompt_files: list[Path] = []
     story_bible: StoryBible | None = None
@@ -824,15 +873,10 @@ async def run(
     if story_bible is not None and plan is not None:
         for scene_panels in panels_by_scene.values():
             for index, panel in enumerate(scene_panels):
-                prompt_path = prompt_path_for_panel(project_dir, panel)
-                if not prompt_path.exists():
+                if not prompt_path_for_panel(project_dir, panel).exists():
                     continue
                 prev_panel = scene_panels[index - 1] if index > 0 else None
-                existing = ImagePrompt.model_validate_json(prompt_path.read_text())
-                if getattr(existing, "planned_panel_id", None) == panel.panel_id and getattr(existing, "prompt_version", 1) >= IMAGE_PROMPT_VERSION:
-                    continue
-                upgraded = build_planned_panel_prompt_spec(config, project_dir, panel, story_bible, prev_panel)
-                prompt_path.write_text(upgraded.model_dump_json(indent=2))
+                ensure_current_panel_prompt(config, project_dir, panel, story_bible, prev_panel)
 
     # ── Consistency context ───────────────────────────────────────────────────
     # 1. Global style anchor
@@ -844,11 +888,9 @@ async def run(
 
     # 2. Scene → location mapping (for location plate lookup)
     scene_to_location: dict[str, str] = {}
-    if artifacts.story_bible_path(project_dir).exists():
-        story_bible = artifacts.read_story_bible(project_dir)
+    if story_bible is not None:
         scene_to_location = {s.id: s.location_id for s in story_bible.scenes}
 
-    scene_locks: dict[str, asyncio.Lock] = {}
     panel_events: dict[tuple[str, int], asyncio.Event] = {}
     for pf in prompt_files:
         try:
@@ -856,6 +898,11 @@ async def run(
         except (IndexError, ValueError):
             continue
         panel_events[(pf.parent.name, panel_num)] = asyncio.Event()
+
+    # Interleave scenes round-robin so a batch is not dominated by one scene —
+    # match_cut chains within a scene serialize those panels, and a same-scene
+    # batch would wait on itself.
+    prompt_files = _interleave_by_scene(prompt_files)
 
     # Detect style-template drift relative to the cast plates. When the
     # template was edited after cast ran, plates no longer match the panel
@@ -879,7 +926,8 @@ async def run(
         with make_progress(ctx.on_event) as progress:
             task = progress.add_task("Generating panels", total=len(prompt_files))
             for batch_start in range(0, len(prompt_files), batch_size):
-                # Check cost limit
+                # Cost limit is checked between batches only, so a batch in
+                # flight can overshoot by up to batch_size * per-image cost.
                 if config.cost_limit_usd and ctx.state.total_cost_usd >= config.cost_limit_usd:
                     console.print(f"[yellow]Cost limit (${config.cost_limit_usd}) reached. Pausing.[/yellow]")
                     break
@@ -889,7 +937,7 @@ async def run(
                 last = batch_start + len(batch)
                 ctx.log(f"Drawing panel batch {first}-{last} of {len(prompt_files)}")
                 coros = [
-                    _generate_panel(config, project_dir, pf, semaphore, scene_locks,
+                    _generate_panel(config, project_dir, pf, semaphore,
                                     style_sample, scene_to_location, panel_events, story_bible,
                                     ctx=ctx)
                     for pf in batch
@@ -911,17 +959,16 @@ async def run(
                         progress.advance(task)
                 ctx.save()
 
-        console.print("[yellow]Stage 7 complete — awaiting review.[/yellow]")
-        console.print("Review generated panels in: images/")
-        console.print("Run [bold]pipeline approve --project . --stage generate[/bold] to continue.")
+        console.print("[yellow]Draw stage complete — awaiting review.[/yellow]")
+        console.print("Review generated panels in: draw/")
+        console.print("Run [bold]pipeline approve --project . --stage draw[/bold] to continue.")
 
 
-from novel_to_comic.stages import Stage  # noqa: E402
+from novel_to_comic.stages import Stage, clean_cascade  # noqa: E402
 from novel_to_comic.state import PipelineState  # noqa: E402
 
 
 def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
-    from novel_to_comic.models.story_bible import StoryBible
     from novel_to_comic.usage import estimate_image_cost
 
     prompts_dir = project_dir / "direct"
@@ -931,16 +978,12 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     model = config.effective_image_model()
     quality = getattr(config, "image_quality", None)
     style_sample = _find_style_sample(project_dir, config.style_template)
-    
+
     scene_to_location: dict[str, str] = {}
-    sb_path = project_dir / "story_bible.json"
-    if sb_path.exists():
-        try:
-            story_bible = StoryBible.model_validate_json(sb_path.read_text())
-            scene_to_location = {scene.id: scene.location_id for scene in story_bible.scenes}
-        except Exception:
-            pass
-            
+    story_bible = artifacts.read_story_bible_safe(project_dir)
+    if story_bible is not None:
+        scene_to_location = {scene.id: scene.location_id for scene in story_bible.scenes}
+
     for prompt_path in prompts_dir.glob("*/panel_*.json"):
         try:
             scene_id = prompt_path.parent.name
@@ -967,6 +1010,6 @@ STAGE = Stage(
     name="draw",
     run=run,
     outputs=lambda d: [d / "draw"],
-    clean_paths=lambda d: [d / "draw", d / "compose", d / "exports"],
+    clean_paths=lambda d: clean_cascade(d, "draw"),
     estimate_cost=estimate_cost,
 )

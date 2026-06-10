@@ -62,8 +62,8 @@ class PanelBreakdown(BaseModel):
 
 
 class ScreenplayBeat(BaseModel):
-    type: str  # "action", "dialogue", "narration", "sfx", "transition"
-    character_id: Optional[str] = None
+    type: str  # "action", "dialogue", "thought", "narration", "sfx", "transition"
+    character_id: Optional[str] = None  # required for dialogue/thought beats
     content: str
     source_text: Optional[str] = None  # Exact source prose for adapted narration captions
     direction: Optional[str] = None

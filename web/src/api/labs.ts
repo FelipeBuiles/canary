@@ -27,6 +27,9 @@ export interface LabsPanel {
   label: string;
   prompt: string;
   prompt_variant_b?: string | null;
+  /** Exact S7 production payload (style + brief + refs + constraints embedded).
+   * Only present on imported project panels. Run with an empty style template. */
+  production_prompt?: string | null;
   width: number;
   height: number;
 }

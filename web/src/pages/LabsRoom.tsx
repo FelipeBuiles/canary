@@ -847,6 +847,7 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
   const [sceneSource, setSceneSource] = useState<SceneSource>("fixture");
   const [importProjectId, setImportProjectId] = useState<string>("");
   const [importSceneId, setImportSceneId] = useState<string>("");
+  const [importProductionPayload, setImportProductionPayload] = useState(false);
   const { data: importScenes } = useLabsProjectScenes(
     sceneSource === "imported" ? importProjectId || undefined : undefined,
   );
@@ -944,11 +945,22 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
         sceneId: importSceneId,
         panelLimit: 8,
       });
-      setStyleTemplate(result.style_template);
-      setPanels(result.panels.map((panel) => ({
-        ...panel,
-        prompt_variant_b: promptCompareMode ? (panel.prompt_variant_b ?? panel.prompt) : panel.prompt_variant_b,
-      })));
+      if (importProductionPayload) {
+        // Exact S7 replay: the production prompt embeds the style section,
+        // so the experiment-level style template must stay empty.
+        setStyleTemplate("");
+        setPanels(result.panels.map((panel) => ({
+          ...panel,
+          prompt: panel.production_prompt || panel.prompt,
+          prompt_variant_b: promptCompareMode ? (panel.prompt_variant_b ?? panel.prompt) : panel.prompt_variant_b,
+        })));
+      } else {
+        setStyleTemplate(result.style_template);
+        setPanels(result.panels.map((panel) => ({
+          ...panel,
+          prompt_variant_b: promptCompareMode ? (panel.prompt_variant_b ?? panel.prompt) : panel.prompt_variant_b,
+        })));
+      }
       const refs = result.imported_references ?? [];
       setImportedRefs(refs);
       setImportedRefPaths(
@@ -1113,6 +1125,18 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
                     {importScene.isPending ? "IMPORTING…" : "IMPORT"}
                   </Button>
                 </div>
+                <label className="flex cursor-pointer items-center gap-2 font-meta text-[0.62rem] tracking-[0.12em] text-ink-black/70">
+                  <input
+                    type="checkbox"
+                    checked={importProductionPayload}
+                    onChange={(e) => setImportProductionPayload(e.target.checked)}
+                    className="h-3.5 w-3.5 accent-ink-black"
+                  />
+                  REPLAY PRODUCTION PAYLOAD
+                  <span className="normal-case tracking-normal text-ink-black/45">
+                    exact S7 prompt incl. style &amp; constraints — style template stays empty
+                  </span>
+                </label>
                 {importedRefPaths.length > 0 && (
                   <div className="font-meta text-[0.6rem] tracking-[0.12em] text-ink-black/50">
                     {importedRefPaths.length} reference image
