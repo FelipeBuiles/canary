@@ -102,6 +102,34 @@ def stage_cost_confidence(stage: str) -> CostConfidence:
     return _map.get(stage, "variable")
 
 
+def credit_estimate_for_provider_cost(
+    cost_usd: float,
+    stage: str,
+    *,
+    reserve: bool,
+    zero_cost_estimate: int = 0,
+) -> CreditEstimate:
+    """Build the canonical CreditEstimate for one provider-cost figure.
+
+    ``reserve=False`` is for fire-and-forget Generation jobs (no hold is
+    placed, so reserved_credits is None). ``zero_cost_estimate`` floors the
+    estimate when the provider cost can't be computed — regen estimates floor
+    to 1 so the pre-check still runs.
+    """
+    estimate = max(1, provider_usd_to_credits(cost_usd)) if cost_usd > 0 else zero_cost_estimate
+    multiplier = reservation_buffer()
+    if reserve:
+        reserved: int | None = math.ceil(estimate * multiplier) if estimate > 0 else 0
+    else:
+        reserved = None
+    return CreditEstimate(
+        estimate_credits=estimate,
+        reserved_credits=reserved,
+        reservation_multiplier=multiplier,
+        confidence=stage_cost_confidence(stage),
+    )
+
+
 def estimate_stage_credit_breakdown(
     config: Config,
     project_dir: Path,
@@ -166,12 +194,8 @@ class UnifiedCostResolver:
             raise HTTPException(404, f"Prompt not found: {scene_id}/panel_{panel_number:03d}")
 
         cost_usd = estimate_panel_image_cost_usd(regen_config, project_dir, prompt_path)
-        estimate_credits = max(1, provider_usd_to_credits(cost_usd)) if cost_usd > 0 else 1
-        return CreditEstimate(
-            estimate_credits=estimate_credits,
-            reserved_credits=None,
-            reservation_multiplier=reservation_buffer(),
-            confidence=stage_cost_confidence("draw"),
+        return credit_estimate_for_provider_cost(
+            cost_usd, "draw", reserve=False, zero_cost_estimate=1
         )
 
     @staticmethod
@@ -187,12 +211,8 @@ class UnifiedCostResolver:
             1,
             quality=getattr(config, "image_quality", None),
         )
-        estimate_credits = max(1, provider_usd_to_credits(cost_usd)) if cost_usd > 0 else 1
-        return CreditEstimate(
-            estimate_credits=estimate_credits,
-            reserved_credits=None,
-            reservation_multiplier=reservation_buffer(),
-            confidence=stage_cost_confidence("cast"),
+        return credit_estimate_for_provider_cost(
+            cost_usd, "cast", reserve=False, zero_cost_estimate=1
         )
 
 

@@ -68,6 +68,12 @@ regeneration, compose editor/export, and credits/billing accuracy.
   style is selected (`is_style_selected` in `styles.py`). The status API returns
   `style_selected: bool` sourced from `config.yaml`. Frontend uses this field
   (not `useStyles` data) for gate checks to avoid stale-cache bugs.
+- **Image model routing:** `image-quality` and `image-reve` both route to Reve
+  (`REVE_ALIASES`). `GPT_IMAGE_2_ALIASES` is now empty — `is_gpt_image_2()`
+  only matches literal `gpt-image-2` strings, not gateway aliases.
+- **Panel aspect:** All aspect-ratio → dimension logic lives in `panel_aspect.py`
+  (`GenerationShape`, `dimensions_for_generation_aspect`, `aspect_within_tolerance`).
+  Do not inline dimension math in stage or route code.
 
 ## Where To Look
 
@@ -84,6 +90,7 @@ All paths are repo-relative.
 - Event schema/SSE: `novel_to_comic/src/novel_to_comic/events.py`
 - Image generation: `novel_to_comic/src/novel_to_comic/clients/flux.py` + `novel_to_comic/src/novel_to_comic/ai/finalisation.py`
 - Prompt build + re-render: `novel_to_comic/src/novel_to_comic/prompt_assembly.py`
+- Panel aspect/shape helpers: `novel_to_comic/src/novel_to_comic/panel_aspect.py`
 - Panel record CRUD (s5→s9): `novel_to_comic/src/novel_to_comic/panel_store.py`
 - Layout planning models + helpers: `novel_to_comic/src/novel_to_comic/layout_planning.py`
 - Narration decision editing: `novel_to_comic/src/novel_to_comic/server/narration_editor.py`

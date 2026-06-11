@@ -29,6 +29,7 @@ novel_to_comic/src/novel_to_comic/
 ├── events.py               # EventCallback type + _NOOP sentinel; used internally by StageRuntime
 ├── layout_planning.py      # LayoutPlan helpers — plan→pages projection, narration decision apply/classify
 ├── model_costs.py          # PricingResolver — LiteLLM pricing cache (TTL-refreshed) + override YAML
+├── panel_aspect.py         # GenerationShape helpers — aspect→shape mapping, dimension lookup, tolerance check
 ├── panel_store.py          # Panel record CRUD across lifecycle (s5→s9): load/save breakdown + prompt
 ├── panel_versions.py       # Draw panel version history — rotate, restore panel image versions
 ├── prompt_assembly.py      # Single owner of panel prompt build + re-render; used by direct stage and edit route
@@ -59,6 +60,7 @@ novel_to_comic/src/novel_to_comic/
 │   │   ├── base.py         # LabsProvider Protocol, LabsImageInput, LabsImageResult
 │   │   ├── fal.py          # Fal.ai provider (async submit/poll/fetch)
 │   │   ├── litellm.py      # LiteLLM provider for labs
+│   │   ├── reve.py         # Reve provider for labs (create/remix workflows)
 │   │   └── together.py     # Together AI provider for labs
 │   ├── registry.py         # LabsModelEntry + load_registry (reads labs-models.yaml)
 │   ├── runner.py           # LabsRunSpec, LabsRunState — orchestrates multi-model panel comparison runs
@@ -422,17 +424,23 @@ Defaults:
 
 `dev_mode: true` substitutes `fallback_image_model` when `image_model` is at its default.
 
+Two new config fields control LLM pre-processing passes before image generation:
+- `visual_brief_enabled` (default `True`): rewrites each panel's structured spec into flowing prose via `prompt_model`. Falls back to deterministic distilled prompt on failure.
+- `style_sample_brief_enabled` (default `True`): composes a shared subject/setting prose block for Stage 2 style proof images, cached per project.
+
 Current image aliases:
 - `image-fast`: Gemini Flash Image route, also used by dev mode.
 - `image-balanced`: Gemini Pro Image route and the normal default.
-- `image-quality`: OpenAI `gpt-image-2`; the only gateway alias treated as
-  GPT Image 2 by `is_gpt_image_2()`.
+- `image-quality`: Reve image generation (high-fidelity). `REVE_ALIASES` includes both `image-quality` and `image-reve`.
+- `image-reve`: Reve image generation (same provider as `image-quality`).
 
-Draw-stage reference behavior is provider-aware. GPT Image 2 uploads a minimal
-subject reference set and keeps style samples, location plates, and
-previous-panel continuity text-only to avoid edit-reference leakage. Non-GPT
-image routes can use style samples, location plates, and a previous-panel image
-for explicit `match_cut` transitions.
+`is_reve_model(model)` returns true for `image-reve`, `image-quality`, and any alias in `REVE_ALIASES` or starting with `reve/`.
+`is_gpt_image_2(model)` only matches literal `gpt-image-2` / `openai/gpt-image-2` strings; `GPT_IMAGE_2_ALIASES` is now empty — no gateway alias routes to GPT Image 2 by default.
+
+Draw-stage reference behavior is provider-aware:
+- **Reve** (`is_reve_model`): uploads up to 4 refs — up to 3 subject crops (one per character, framing-selected), then continuity, prop, style, location plate to fill remaining slots. Uses `_reve_refs()`.
+- **GPT Image 2** (`is_gpt_image_2`): uploads a minimal subject reference set (character crops + props only), keeps style samples/location plates/continuity text-only to avoid edit-reference leakage. Only triggered for literal `gpt-image-2` model strings now.
+- **Other routes** (Gemini etc.): can use style samples, location plates, and a previous-panel image for explicit `match_cut` transitions.
 
 ---
 

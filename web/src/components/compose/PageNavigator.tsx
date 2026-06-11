@@ -1,11 +1,21 @@
 import type { PageSummary } from "../../types/api";
-import { pagePreviewUrl } from "../../api/pages";
 
 interface PageNavigatorProps {
   project: string;
   pages: PageSummary[];
   currentPage: number;
   onSelect: (pageNum: number) => void;
+}
+
+/**
+ * Thumbnails use the rendered page PNGs (written by the compose stage /
+ * export), not live preview iframes — a full 2480x3508 document with
+ * full-resolution panel images per thumbnail is far too heavy for a rail.
+ * They can lag behind unexported edits; the canvas is the live view.
+ */
+function pageThumbUrl(project: string, pageNumber: number): string {
+  const name = `page_${String(pageNumber).padStart(3, "0")}.png`;
+  return `/api/projects/${encodeURIComponent(project)}/files/compose/pages/${name}`;
 }
 
 export function PageNavigator({
@@ -24,7 +34,6 @@ export function PageNavigator({
       <div className="flex gap-2 overflow-x-auto p-2 md:min-h-0 md:flex-1 md:flex-col md:overflow-x-hidden md:overflow-y-auto">
         {pages.map((p) => {
           const isActive = p.page_number === currentPage;
-          const src = pagePreviewUrl(project, p.page_number);
 
           return (
             <button
@@ -37,13 +46,19 @@ export function PageNavigator({
                   : "border-ink-black/25 bg-bristol hover:border-ink-black/55 hover:shadow-[2px_2px_0_0_var(--color-ghost-shadow)]"
               }`}
             >
-              <div className="aspect-[2480/3508] w-full overflow-hidden bg-[#f3eedf] p-1">
-                <iframe
-                  src={src}
-                  title={`Page ${p.page_number} preview`}
-                  className="pointer-events-none h-full w-full origin-top-left scale-[0.046] border-0 bg-white md:scale-[0.054]"
-                  style={{ width: 2480, height: 3508 }}
+              <div className="relative aspect-[2480/3508] w-full overflow-hidden bg-[#f3eedf] p-1">
+                <span className="absolute inset-0 flex items-center justify-center font-display text-[1.4rem] font-black text-ink-black/15">
+                  {p.page_number}
+                </span>
+                <img
+                  src={pageThumbUrl(project, p.page_number)}
+                  alt={`Page ${p.page_number} thumbnail`}
+                  className="relative h-full w-full object-contain"
                   loading="lazy"
+                  onError={(e) => {
+                    // No PNG rendered yet — leave the page-number placeholder
+                    e.currentTarget.style.display = "none";
+                  }}
                 />
               </div>
               <div className="flex items-center justify-between border-t border-ink-black/15 px-1.5 py-1.5">
@@ -57,12 +72,6 @@ export function PageNavigator({
             </button>
           );
         })}
-        <button
-          type="button"
-          className="mt-1 flex h-8 items-center justify-center border-[2px] border-ink-black/20 bg-bristol font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/55 transition-colors hover:bg-surface-container"
-        >
-          + ADD PAGE
-        </button>
       </div>
     </div>
   );

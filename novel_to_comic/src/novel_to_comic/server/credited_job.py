@@ -1,9 +1,15 @@
-"""Couples a credit check/debit with a generation-job lifecycle.
+"""Couples credit guarantees with the two shapes of credited work.
 
-Each regen handler was doing the same dance: assert credits, create a job_id,
-wrap the runner in ai_request_context + debit_model_usage, check for an active
-duplicate, prune stale jobs, then enqueue.  This module owns that coupling so
-handlers shrink to payload assembly + response formatting.
+Generation jobs: each regen handler was doing the same dance — assert credits,
+create a job_id, wrap the runner in ai_request_context + debit_model_usage,
+check for an active duplicate, prune stale jobs, then enqueue.
+``enqueue_credited_job`` owns that coupling so handlers shrink to payload
+assembly + response formatting.
+
+Stage runs: ``run_credited_stage`` owns the reserve → run → release dance.
+Per-call debits land in the AI client as each API call returns (see
+ai.client._settle_event_usage); the reservation is only an authorization hold
+and is always released, so a crash mid-stage loses at most the in-flight call.
 """
 
 import asyncio
@@ -15,9 +21,17 @@ from typing import Any
 from fastapi import FastAPI
 
 from novel_to_comic.ai import ai_request_context
+from novel_to_comic.config import Config
+from novel_to_comic.state import PipelineState
 from novel_to_comic.usage import ApiResult
 
-from .credits import assert_sufficient_credits, debit_model_usage
+from .credits import (
+    assert_sufficient_credits,
+    debit_model_usage,
+    estimate_stage_credit_reservation,
+    release_reservation,
+    reserve_credits,
+)
 from .db import get_db
 from .generation_jobs import (
     GenerationJob,
@@ -25,6 +39,65 @@ from .generation_jobs import (
     find_active_generation_job,
     prune_finished_generation_jobs,
 )
+
+
+class CreditReservationDenied(Exception):
+    """A stage's credit reservation could not be placed.
+
+    ``detail`` carries the structured 402 payload (when the cause was
+    insufficient credits) so callers can surface balance/shortfall numbers.
+    """
+
+    def __init__(self, message: str, detail: dict | None = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.detail = detail
+
+
+async def run_credited_stage(
+    *,
+    user_id: str,
+    project_id: str | None,
+    project_dir: Path,
+    config: Config,
+    state: PipelineState,
+    stage: str,
+    run: Callable[[], Awaitable[None]],
+) -> None:
+    """Reserve credits for a stage, run it inside an ai_request_context, release the hold.
+
+    Raises CreditReservationDenied when the reservation cannot be placed
+    (insufficient credits or ledger errors); the stage is not started.
+    """
+    db = get_db()
+    try:
+        reservation_credits = estimate_stage_credit_reservation(config, project_dir, state, stage)
+        reservation_id, job_id = reserve_credits(db, user_id, project_id, stage, reservation_credits)
+    except Exception as exc:
+        detail = getattr(exc, "detail", None)
+        if isinstance(detail, str):
+            message = detail
+        elif isinstance(detail, dict):
+            message = str(detail.get("message") or detail.get("error") or exc)
+        else:
+            message = str(exc)
+        raise CreditReservationDenied(
+            message, detail if isinstance(detail, dict) else None
+        ) from exc
+
+    try:
+        with ai_request_context(
+            user_id=user_id,
+            project_id=project_id,
+            project_name=project_dir.name,
+            workspace_id=str(project_dir.parent),
+            stage=stage,
+            job_id=job_id,
+        ):
+            await run()
+    finally:
+        if reservation_id:
+            release_reservation(db, reservation_id)
 
 
 def enqueue_credited_job(

@@ -5,7 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from novel_to_comic.config import Config, is_gpt_image_2, is_reve_model
+from novel_to_comic.config import Config
+from novel_to_comic.image_ref_strategy import RefStrategy
 from novel_to_comic.models.layout_plan import PlannedPanel
 from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
 from novel_to_comic.models.story_bible import Character, StoryBible
@@ -1290,7 +1291,8 @@ def render_generation_prompt(
     if style and _TEXTURE_STYLE_RE.search(style):
         style = f"{style}\n{_STYLE_SURFACE_DISCIPLINE}"
     _append_section(sections, "Style", style)
-    if image_model and is_gpt_image_2(image_model):
+    strategy = RefStrategy(image_model or "")
+    if strategy.include_rendering_discipline():
         _append_section(sections, "Rendering discipline", _GPT_IMAGE_2_RENDERING_DISCIPLINE)
     _append_section(sections, "Visual brief", body)
 
@@ -1299,7 +1301,7 @@ def render_generation_prompt(
     if getattr(prompt, "continuity_note", None):
         _append_section(sections, "Continuity", prompt.continuity_note)
 
-    if image_model and is_reve_model(image_model) and refs:
+    if strategy.use_indexed_ref_instructions() and refs:
         # <img>N</img> indices follow the canonical upload order shared with
         # _flatten_refs in litellm_http.py via order_refs_for_upload.
         ref_instructions = []

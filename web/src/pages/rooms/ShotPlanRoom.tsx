@@ -5,7 +5,6 @@ import {
   usePanelsForScene,
   usePanelSummaries,
   useProjectStatus,
-  useRunPipeline,
   useStageEstimate,
   useStoryBible,
   useUpdatePanel,
@@ -13,7 +12,6 @@ import {
 import { Button } from "../../components/ui/Button";
 import { FieldLabel, SelectField, TextAreaField, TextField } from "../../components/ui/Field";
 import { Icon } from "../../components/ui/Icon";
-import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { ShotDiagram } from "../../components/ui/ShotDiagram";
 import { LoadingBlock, StateBlock } from "../../components/ui/StateBlock";
 import {
@@ -26,7 +24,7 @@ import { cn } from "../../lib/cn";
 import { getShotPlanAction, getShotPlanSubStatus } from "../../lib/shotPlan";
 import { useCharacterName } from "../../hooks/useCharacterName";
 import { useHeaderMode } from "../../hooks/useHeaderMode";
-import { usePipelineStore } from "../../store/pipeline";
+import { useRunAction } from "../../hooks/useRunAction";
 import type {
   DialogueLine,
   LayoutPlan,
@@ -84,11 +82,9 @@ function ShotPlanActionButton({ project }: { project: string }) {
   const action = getShotPlanAction(status);
   const estimateStage = action.kind === "none" ? undefined : action.estimateStage;
   const { data: estimate } = useStageEstimate(project, estimateStage);
-  const runPipeline = useRunPipeline();
-  const connect = usePipelineStore((state) => state.connect);
-  const clearEvents = usePipelineStore((state) => state.clearEvents);
+  const { handleRun, isPending } = useRunAction();
 
-  const busy = runPipeline.isPending || status?.is_running;
+  const busy = isPending || status?.is_running;
   const estimateCredits = estimate?.estimate_credits;
   const label =
     estimateCredits && estimateCredits > 0
@@ -96,18 +92,10 @@ function ShotPlanActionButton({ project }: { project: string }) {
       : action.label;
 
   function run(stage: "plan" | "storyboard", rerun = false) {
-    clearEvents();
-    runPipeline.mutate(
-      { project, stage, rerun },
-      {
-        onSuccess: () => connect(project),
-        onError: (err) =>
-          maybeShowInsufficientCredits(err, {
-            actionLabel: stage === "plan" ? "Run PLAN" : "Run STORYBOARD",
-            onRetry: () => run(stage, rerun),
-          }),
-      },
-    );
+    handleRun(project, stage, {
+      rerun,
+      actionLabel: stage === "plan" ? "Run PLAN" : "Run STORYBOARD",
+    });
   }
 
   function handleClick() {

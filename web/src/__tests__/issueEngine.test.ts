@@ -180,23 +180,37 @@ describe("empty_bubble_text", () => {
 // ── bubble_outside_safe_area ─────────────────────────────────────────────────
 
 describe("bubble_outside_safe_area", () => {
-  it("flags pinned bubble with x below safe margin", () => {
-    const pages = [makePage({ panels: [makePanel({ bubbles: [makeBubble({ x: 50, y: 500 })] })] })];
+  // Bubble x/y are panel-relative; the check translates them into page space
+  // using the panel's freeform geometry (panel.x/y).
+  const freeformPanel = (bubbles: Bubble[]) =>
+    makePanel({ x: 100, y: 100, width: 1000, height: 1000, bubbles });
+
+  it("flags pinned bubble whose page position is below the safe margin", () => {
+    // page x = 100 + 10 = 110 < SAFE_X (124)
+    const pages = [makePage({ layout_mode: "freeform", panels: [freeformPanel([makeBubble({ x: 10, y: 500 })])] })];
     const images = [makeImageStatus()];
     const issues = detectIssues(pages, images);
     expect(issues.filter((i) => i.type === "bubble_outside_safe_area")).toHaveLength(1);
   });
 
   it("does not flag auto-placed bubble (x=null)", () => {
-    const pages = [makePage({ panels: [makePanel({ bubbles: [makeBubble({ x: null, y: null })] })] })];
+    const pages = [makePage({ layout_mode: "freeform", panels: [freeformPanel([makeBubble({ x: null, y: null })])] })];
     const images = [makeImageStatus()];
     const issues = detectIssues(pages, images);
     expect(issues.filter((i) => i.type === "bubble_outside_safe_area")).toHaveLength(0);
   });
 
   it("does not flag pinned bubble safely inside margins", () => {
-    // x=200, y=200 — well inside safe area
-    const pages = [makePage({ panels: [makePanel({ bubbles: [makeBubble({ x: 200, y: 200 })] })] })];
+    // page x = 100 + 200 = 300, well inside safe area
+    const pages = [makePage({ layout_mode: "freeform", panels: [freeformPanel([makeBubble({ x: 200, y: 200 })])] })];
+    const images = [makeImageStatus()];
+    const issues = detectIssues(pages, images);
+    expect(issues.filter((i) => i.type === "bubble_outside_safe_area")).toHaveLength(0);
+  });
+
+  it("skips the check when panel geometry is unknown (grid mode)", () => {
+    // Panel-relative x=50 would falsely flag if compared against page bounds.
+    const pages = [makePage({ panels: [makePanel({ bubbles: [makeBubble({ x: 50, y: 500 })] })] })];
     const images = [makeImageStatus()];
     const issues = detectIssues(pages, images);
     expect(issues.filter((i) => i.type === "bubble_outside_safe_area")).toHaveLength(0);

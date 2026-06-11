@@ -15,7 +15,8 @@ from rich.console import Console
 
 from novel_to_comic import artifacts
 from novel_to_comic.clients import flux
-from novel_to_comic.config import Config, is_gpt_image_2, is_reve_model
+from novel_to_comic.config import Config
+from novel_to_comic.image_ref_strategy import RefStrategy
 from novel_to_comic.events import make_progress
 from novel_to_comic.models.story_bible import Character, Prop, StoryBible
 from novel_to_comic.stage_runtime import StageRuntime
@@ -27,9 +28,6 @@ console = Console()
 
 _clean = clean
 _shorten = shorten
-
-_GPT_LOCATION_PLATE_WIDTH = 1536
-_GPT_LOCATION_PLATE_HEIGHT = 1024
 
 def _tokens(value: str) -> set[str]:
     return {
@@ -184,7 +182,7 @@ def _location_plate_meta(
     }
     if state_id:
         meta["location_state_id"] = state_id
-    if is_gpt_image_2(config.effective_image_model()) and width and height:
+    if RefStrategy.for_config(config).include_dimensions_in_asset_meta() and width and height:
         meta["width"] = width
         meta["height"] = height
     if addendum:
@@ -238,12 +236,7 @@ def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
 
 
 def _cast_asset_style_ref(config: Config, style_ref: Path | None) -> Path | None:
-    if not is_gpt_image_2(config.effective_image_model()):
-        return style_ref
-    # The gpt-image-2 route treats reference inputs as edit conditioning.
-    # Reusing the selected style sample for cast assets can carry over subject
-    # details or texture artifacts, so keep its cast refs text-driven.
-    return None
+    return RefStrategy.for_config(config).cast_style_ref(style_ref)
 
 
 def _style_authority_block(asset_kind: str) -> str:
@@ -303,10 +296,7 @@ def _character_ref_clean_text_prompt(
     anchor = char.visual_anchor.strip()
     outfit = char.default_outfit.strip()
 
-    # When using Reve with style reference, reduce style text to avoid conflicts
-    # The style reference image will provide stronger visual guidance
-    if is_reve_model(config.effective_image_model()):
-        style = style[:200] if len(style) > 200 else style
+    style = RefStrategy.for_config(config).clamp_style_text(style)
 
     parts = [
         style,
@@ -332,10 +322,21 @@ def _character_ref_clean_text_prompt(
     return "\n\n".join(parts)
 
 
+def _character_sheet_prompt(
+    config: Config,
+    story_bible: StoryBible,
+    char: Character,
+    addendum: str = "",
+) -> str:
+    if RefStrategy.for_config(config).use_clean_text_character_prompt():
+        return _character_ref_clean_text_prompt(config, char, addendum)
+    return _character_ref_prompt(config, story_bible, char, addendum)
+
+
 def _location_plate_prompt(config: Config, loc, addendum: str = "", anchor: str | None = None) -> str:
     plate_anchor = anchor or loc.visual_anchor
     addendum_text = addendum.strip()
-    if is_gpt_image_2(config.effective_image_model()):
+    if RefStrategy.for_config(config).use_structured_location_plate_prompt():
         addendum_block = f"\nUSER FIX NOTE: {addendum_text}\n" if addendum_text else ""
         return (
             f"{config.style_template.strip()}\n\n"
@@ -369,9 +370,7 @@ def _location_plate_prompt(config: Config, loc, addendum: str = "", anchor: str 
 
 
 def _location_plate_dimensions(config: Config) -> tuple[int | None, int | None]:
-    if is_gpt_image_2(config.effective_image_model()):
-        return _GPT_LOCATION_PLATE_WIDTH, _GPT_LOCATION_PLATE_HEIGHT
-    return None, None
+    return RefStrategy.for_config(config).location_plate_dimensions()
 
 
 def _location_plate_jobs(loc) -> list[tuple[str, str, str | None]]:
@@ -389,7 +388,7 @@ def _location_plate_jobs(loc) -> list[tuple[str, str, str | None]]:
 
 
 def _cast_semaphore(config: Config) -> asyncio.Semaphore:
-    return asyncio.Semaphore(config.effective_image_concurrency(google_model=False))
+    return asyncio.Semaphore(config.effective_image_concurrency())
 
 
 def _prop_ref_prompt(config: Config, prop: Prop, addendum: str = "") -> str:
@@ -448,11 +447,7 @@ async def regenerate_character_ref(
     )
     style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
     addendum = _read_character_ref_addendum(project_dir, char.id)
-    model = config.effective_image_model()
-    if is_reve_model(model):
-        prompt = _character_ref_clean_text_prompt(config, char, addendum)
-    else:
-        prompt = _character_ref_prompt(config, story_bible, char, addendum)
+    prompt = _character_sheet_prompt(config, story_bible, char, addendum)
     meta = _character_ref_meta(config, project_dir, style_ref, char, prompt, addendum)
 
     try:
@@ -597,7 +592,7 @@ async def _generate_character_refs(
     style_ref = _cast_asset_style_ref(config, candidate_style_ref)
     if style_ref:
         console.print(f"[dim]Using style reference: {style_ref.name}[/dim]")
-    elif candidate_style_ref and is_gpt_image_2(config.effective_image_model()):
+    elif candidate_style_ref:
         console.print(
             "[dim]Skipping style image reference for gpt-image-2 cast refs "
             "to avoid copied subject details and texture artifacts.[/dim]"
@@ -619,11 +614,7 @@ async def _generate_character_refs(
             char_dir.mkdir(parents=True, exist_ok=True)
             output_path = char_dir / "sheet.png"
             addendum = _read_character_ref_addendum(project_dir, char.id)
-            model = config.effective_image_model()
-            if is_reve_model(model):
-                prompt = _character_ref_clean_text_prompt(config, char, addendum)
-            else:
-                prompt = _character_ref_prompt(config, story_bible, char, addendum)
+            prompt = _character_sheet_prompt(config, story_bible, char, addendum)
             meta = _character_ref_meta(config, project_dir, style_ref, char, prompt, addendum)
 
             if artifacts.asset_matches_meta(output_path, meta):

@@ -184,9 +184,13 @@ contracts through the LiteLLM gateway image alias. The active style template is
 prepended at generation time. Subject references are loaded from project-relative
 prompt paths. For Gemini/Together-style routes, draw can add the active style
 sample, a location plate, or the previous panel for an explicit `match_cut`.
-For GPT Image 2 (`image-quality`), draw keeps style/location/previous-panel
-context text-only and uploads a minimal subject ref set: one preferred character
-crop per visible character, or one prop ref only when no character refs exist.
+For Reve (`image-quality` / `image-reve`), draw selects up to 4 refs via
+`_reve_refs()`: up to 3 subject crops (one per character, framing-selected),
+then continuity, prop, style, and location plate to fill remaining slots.
+For GPT Image 2 (literal `gpt-image-2` — no longer a gateway alias), draw
+keeps style/location/previous-panel context text-only and uploads a minimal
+subject ref set: one preferred character crop per visible character, or one
+prop ref only when no character refs exist.
 Generated image metadata records `planned_panel_id`. Pauses for human review
 before compose.
 

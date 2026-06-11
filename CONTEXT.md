@@ -90,10 +90,24 @@ routes to a concrete provider and model. Aliases follow the `<intent>-<preset>`
 convention (e.g. `extract-fast`, `image-quality`). All inference goes through
 the LiteLLM proxy — there is no direct provider call from application code.
 
-**GPT Image 2** — The `image-quality` alias, the only image alias treated as
-GPT Image 2 by `is_gpt_image_2()`. Has a different reference image strategy
-than Gemini-style routes: uploads a minimal character crop set and keeps style/
-location/continuity context text-only.
+**Reve** — The image provider backing both `image-quality` and `image-reve`
+gateway aliases (`REVE_ALIASES` in `config.py`). Its reference strategy selects
+up to 4 reference images: up to 3 subject crops (one per character,
+framing-selected), then continuity, prop, style, location plate to fill
+remaining slots.
+
+**GPT Image 2** — No longer a default gateway alias. `GPT_IMAGE_2_ALIASES` is
+now empty; `is_gpt_image_2()` only matches the literal strings `gpt-image-2` /
+`openai/gpt-image-2`. Its reference strategy uploads a minimal character crop
+set and keeps style/location/continuity context text-only.
+
+**Reference strategy (`RefStrategy`)** — The per-image-model decision surface
+in `image_ref_strategy.py`. Every behavioural difference between image model
+routes (which reference images to upload, prompt sections, output dimensions)
+is a `RefStrategy` query. Stage and prompt code never test model identity
+(`is_gpt_image_2` etc.) inline; only `config.py` (the predicates),
+`image_ref_strategy.py` (the decisions), and `ai/providers/` (the transport)
+may know provider names.
 
 **Generation job** — An async background task managed by `server/generation_jobs.py`.
 Used for single-asset regeneration (panel, character ref, prop, location plate).
@@ -111,10 +125,18 @@ emission, and cost recording. Stages do not call state functions or thread
 `on_event` directly; they call `ctx.log()`, `ctx.progress()`,
 `ctx.record_item_done()`, etc.
 
-**CreditedJob** — A generation job with a credit guarantee, created via
-`server/credited_job.py`. Asserts sufficient credits before enqueuing, debits
-on success, and releases (does nothing extra) on failure. All regen handlers
-should use this instead of duplicating the assert/enqueue/debit dance.
+**CreditedJob** — The credit-guarantee module, `server/credited_job.py`. Both
+shapes of credited work cross this seam: Generation jobs via
+`enqueue_credited_job` (assert → enqueue → debit on success) and stage runs
+via `run_credited_stage` (reserve → run → release; per-call debits settle in
+the AI client). Routers never reserve, assert, or debit directly.
+
+**Structured model call** — `clients/structured_call.py`. The
+"generate JSON → parse → validate → feed errors back → retry" loop with a
+temperature ladder. Stages that need schema-validated model output call
+`generate_validated_json` instead of hand-rolling retry loops; on exhaustion
+`StructuredCallError` carries the last parsed value for deterministic
+fallbacks (e.g. the plan stage's panel auto-split).
 
 **Labs run** — An experimentation run in the Labs subsystem. Not a pipeline run.
 A `LabsRunSpec` describes a set of panels and models; `start_run()` generates

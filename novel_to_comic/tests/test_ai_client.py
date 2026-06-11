@@ -391,3 +391,100 @@ def test_failed_request_estimate_all_finalizes_billable_usage(monkeypatch, _patc
     assert finalized["status"] == "failed"
     assert finalized["usage"] is not None
     assert finalized["config"].ai_bill_failed_requests == "estimate_all"
+
+
+# ── _post_with_retry: rate-limit-aware backoff ──────────────────────────────
+
+
+def _patch_sleep(monkeypatch) -> list[float]:
+    delays: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        delays.append(seconds)
+
+    monkeypatch.setattr(client.asyncio, "sleep", fake_sleep)
+    return delays
+
+
+def _mock_transport(monkeypatch, handler) -> None:
+    monkeypatch.setattr(
+        client, "_http", httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+
+
+class TestPostWithRetry:
+    def test_recovers_after_rate_limit_and_honors_retry_after(self, monkeypatch):
+        delays = _patch_sleep(monkeypatch)
+        calls = {"n": 0}
+
+        def handler(request):
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                return httpx.Response(429, headers={"retry-after": "7"})
+            return httpx.Response(200, json={"ok": True})
+
+        _mock_transport(monkeypatch, handler)
+        response = asyncio.run(client._post_with_retry("http://gw/v1/x", headers={}, json={}))
+        assert response.status_code == 200
+        assert calls["n"] == 3
+        # Both waits honor the advertised Retry-After (plus up to 1s jitter).
+        assert all(7.0 <= d <= 8.0 for d in delays)
+
+    def test_rate_limit_budget_exhausted_raises(self, monkeypatch):
+        delays = _patch_sleep(monkeypatch)
+        calls = {"n": 0}
+
+        def handler(request):
+            calls["n"] += 1
+            return httpx.Response(429)
+
+        _mock_transport(monkeypatch, handler)
+        with pytest.raises(httpx.HTTPStatusError):
+            asyncio.run(client._post_with_retry("http://gw/v1/x", headers={}, json={}))
+        assert calls["n"] == client._MAX_RATE_LIMIT_RETRIES + 1
+        assert len(delays) == client._MAX_RATE_LIMIT_RETRIES
+        # Without Retry-After the jittered windows grow monotonically and stay
+        # within the configured cap.
+        assert delays == sorted(delays)
+        assert delays[0] >= client._RATE_LIMIT_BASE_DELAY / 2
+        assert delays[-1] <= client._RATE_LIMIT_MAX_DELAY
+
+    def test_transient_errors_keep_smaller_budget(self, monkeypatch):
+        delays = _patch_sleep(monkeypatch)
+        calls = {"n": 0}
+
+        def handler(request):
+            calls["n"] += 1
+            return httpx.Response(503)
+
+        _mock_transport(monkeypatch, handler)
+        with pytest.raises(httpx.HTTPStatusError):
+            asyncio.run(client._post_with_retry("http://gw/v1/x", headers={}, json={}))
+        assert calls["n"] == client._MAX_RETRIES + 1
+        assert len(delays) == client._MAX_RETRIES
+
+
+class TestRetryAfterSeconds:
+    def _response(self, headers: dict[str, str]) -> httpx.Response:
+        return httpx.Response(429, headers=headers)
+
+    def test_delta_seconds(self):
+        assert client._retry_after_seconds(self._response({"retry-after": "7"})) == 7.0
+
+    def test_http_date(self):
+        import email.utils
+        from datetime import UTC, datetime, timedelta
+
+        future = email.utils.format_datetime(datetime.now(UTC) + timedelta(seconds=30), usegmt=True)
+        value = client._retry_after_seconds(self._response({"retry-after": future}))
+        assert value is not None
+        assert 25.0 < value < 31.0
+
+    def test_garbage_returns_none(self):
+        assert client._retry_after_seconds(self._response({"retry-after": "soonish"})) is None
+
+    def test_missing_returns_none(self):
+        assert client._retry_after_seconds(self._response({})) is None
+
+    def test_negative_delta_clamps_to_zero(self):
+        assert client._retry_after_seconds(self._response({"retry-after": "-5"})) == 0.0

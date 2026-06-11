@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 SfxKind = Literal["impact", "mechanical", "voice", "ambient", "environment"]
 SfxAnchor = Literal[
@@ -35,6 +35,34 @@ SfxAnchor = Literal[
 
 _SFX_BRACKETS_RE = re.compile(r"^\s*\[\s*(.*?)\s*\]\s*$", re.DOTALL)
 _SFX_PREFIX_RE = re.compile(r"^\s*sfx\s*[:\-]\s*", re.IGNORECASE)
+
+# Values below end up inside style="..." attributes in rendered HTML, so they
+# are restricted to shapes that cannot break out of the attribute or smuggle
+# CSS functions (url(), expression(), ...).
+_COLOR_RE = re.compile(r"^(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6}|#[0-9a-fA-F]{8}|transparent)$")
+_FONT_FAMILY_RE = re.compile(r"^[\w\s,'\-]+$")
+_CLIP_PATH_RE = re.compile(r"^polygon\([0-9.%\s,\-]+\)$")
+_GRID_PLACEMENT_RE = re.compile(r"^\d+(\s*/\s*\d+)?$")
+
+
+def _validate_css_color(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.strip()
+    if not _COLOR_RE.match(value):
+        raise ValueError(f"invalid color value: {value!r}")
+    return value
+
+
+def _validate_font_family(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if not _FONT_FAMILY_RE.match(value):
+        raise ValueError(f"invalid font-family value: {value!r}")
+    return value
 
 _SFX_KIND_KEYWORDS: dict[str, SfxKind] = {
     # mechanical / electronic
@@ -136,6 +164,8 @@ class Bubble(BaseModel):
     lifetime of the current JSON file.
     """
 
+    model_config = ConfigDict(validate_assignment=True)
+
     id: str                                             # stable within JSON lifetime
     type: Literal["speech", "thought", "narration"] = "speech"
     text: str
@@ -168,6 +198,16 @@ class Bubble(BaseModel):
     border_width: int | None = None
     border_radius: int | None = None
 
+    @field_validator("font_color", "fill_color", "border_color")
+    @classmethod
+    def _check_colors(cls, v: str | None) -> str | None:
+        return _validate_css_color(v)
+
+    @field_validator("font_family")
+    @classmethod
+    def _check_font_family(cls, v: str | None) -> str | None:
+        return _validate_font_family(v)
+
 
 class Sfx(BaseModel):
     """A sound effect overlay on a panel.
@@ -184,6 +224,8 @@ class Sfx(BaseModel):
     ``rotation`` is in degrees. ``font_size`` overrides the per-intensity
     size when set.
     """
+
+    model_config = ConfigDict(validate_assignment=True)
 
     text: str
     kind: SfxKind = "impact"
@@ -207,6 +249,8 @@ class Sfx(BaseModel):
 
 class PagePanel(BaseModel):
     """One panel cell on a comic page."""
+
+    model_config = ConfigDict(validate_assignment=True)
 
     id: str                                     # e.g. "scene_001-003"
     planned_panel_id: str | None = None
@@ -242,13 +286,33 @@ class PagePanel(BaseModel):
             return [v]
         return v
 
+    @field_validator("clip_path")
+    @classmethod
+    def _check_clip_path(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not _CLIP_PATH_RE.match(v.strip()):
+            raise ValueError(f"invalid clip-path value: {v!r}")
+        return v.strip()
+
+    @field_validator("grid_column", "grid_row")
+    @classmethod
+    def _check_grid_placement(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not _GRID_PLACEMENT_RE.match(v.strip()):
+            raise ValueError(f"invalid grid placement: {v!r}")
+        return v.strip()
+
 
 class ComicPage(BaseModel):
     """One assembled comic page.
 
     This is what ``pipeline export --from-json`` reads, and what the web
-    dashboard will load, edit, and save back via a REST API.
+    dashboard loads, edits, and saves back via the pages REST API.
     """
+
+    model_config = ConfigDict(validate_assignment=True)
 
     page_number: int
     source_page_id: str | None = None
@@ -308,3 +372,13 @@ class CharacterVoice(BaseModel):
     border_color: str | None = None
     border_width: int | None = None
     border_radius: int | None = None
+
+    @field_validator("font_color", "fill_color", "border_color")
+    @classmethod
+    def _check_colors(cls, v: str | None) -> str | None:
+        return _validate_css_color(v)
+
+    @field_validator("font_family")
+    @classmethod
+    def _check_font_family(cls, v: str | None) -> str | None:
+        return _validate_font_family(v)

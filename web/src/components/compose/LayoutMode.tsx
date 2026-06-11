@@ -14,8 +14,8 @@ interface LayoutModeProps {
   zoom: number;
   selection: { panelId: string; type: "bubble" | "sfx"; elementId: string } | null;
   panelReframeId: string | null;
-  undoStack: ComicPage[];
-  redoStack: ComicPage[];
+  canUndo: boolean;
+  canRedo: boolean;
   onPageSelect: (pageNum: number) => void;
   onAddBubble: (type: "speech" | "thought" | "narration") => void;
   onAddSfx: () => void;
@@ -44,8 +44,8 @@ export function LayoutMode({
   zoom,
   selection,
   panelReframeId,
-  undoStack,
-  redoStack,
+  canUndo,
+  canRedo,
   onPageSelect,
   onAddBubble,
   onAddSfx,
@@ -88,7 +88,10 @@ export function LayoutMode({
       if (selection?.type === "bubble") {
         selector = `[data-id="${CSS.escape(selection.elementId)}"]`;
       } else if (selection?.type === "sfx") {
-        selector = `[data-sfx="${CSS.escape(selection.panelId)}"]`;
+        // Anchor to the selected SFX, not just the panel's first one.
+        const sfxIndexMatch = selection.elementId.match(/__sfx__(\d+)$/);
+        const sfxIndex = sfxIndexMatch ? sfxIndexMatch[1] : "0";
+        selector = `[data-sfx="${CSS.escape(selection.panelId)}"][data-sfx-index="${sfxIndex}"]`;
       } else if (panelReframeId) {
         selector = `[data-panel-id="${CSS.escape(panelReframeId)}"]`;
       }
@@ -169,8 +172,8 @@ export function LayoutMode({
           onAddSfx={onAddSfx}
           onUndo={onUndo}
           onRedo={onRedo}
-          canUndo={undoStack.length > 0}
-          canRedo={redoStack.length > 0}
+          canUndo={canUndo}
+          canRedo={canRedo}
         />
       </div>
 

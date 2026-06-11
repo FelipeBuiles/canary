@@ -751,7 +751,7 @@ def _bubble_html(bubble: Bubble, character_voices: dict[str, dict] | None = None
         # Add tail direction class for CSS pseudo-element tails
         classes.append(f"tail-{_resolve_tail_direction(bubble)}")
 
-    style_attr = f' style="{"; ".join(inline)}"' if inline else ""
+    style_attr = f' style="{_e("; ".join(inline))}"' if inline else ""
     cls = " ".join(classes)
 
     speaker_html = ""
@@ -801,7 +801,7 @@ def _render_sfx_block(sfx_list: list[Sfx]) -> str:
             inline.append(f"--sfx-rotation: {rot:.1f}deg")
         if sfx.font_size is not None:
             inline.append(f"font-size: {sfx.font_size}px")
-        style_attr = f' style="{"; ".join(inline)}"' if inline else ""
+        style_attr = f' style="{_e("; ".join(inline))}"' if inline else ""
         parts.append(
             f'  <div class="{" ".join(classes)}" data-sfx="true" data-sfx-index="{idx}"{style_attr}>'
             f'{_e(sfx.text.upper())}</div>'
@@ -846,7 +846,7 @@ def _panel_html(
         style_parts.append(f"-webkit-clip-path: {panel.clip_path}")
     if panel.z_index is not None:
         style_parts.append(f"z-index: {panel.z_index}")
-    style_attr = f' style="{"; ".join(style_parts)}"' if style_parts else ""
+    style_attr = f' style="{_e("; ".join(style_parts))}"' if style_parts else ""
 
     # Panel image — resolve src depending on rendering context:
     #   image_url_fn=None  → file:// URI (Playwright server-side export)
@@ -857,7 +857,7 @@ def _panel_html(
             style_parts.append(f"--panel-art-offset-x: {panel.image_offset_x:.0f}px")
         if panel.image_offset_y is not None:
             style_parts.append(f"--panel-art-offset-y: {panel.image_offset_y:.0f}px")
-        art_style_attr = f' style="{"; ".join(style_parts)}"' if style_parts else ""
+        art_style_attr = f' style="{_e("; ".join(style_parts))}"' if style_parts else ""
         art_html = f'  <img class="panel-art" src="{_e(image_url_fn(panel.image_path))}" alt=""{art_style_attr}>'
     else:
         img_path = project_dir / panel.image_path
@@ -866,7 +866,7 @@ def _panel_html(
             style_parts.append(f"--panel-art-offset-x: {panel.image_offset_x:.0f}px")
         if panel.image_offset_y is not None:
             style_parts.append(f"--panel-art-offset-y: {panel.image_offset_y:.0f}px")
-        art_style_attr = f' style="{"; ".join(style_parts)}"' if style_parts else ""
+        art_style_attr = f' style="{_e("; ".join(style_parts))}"' if style_parts else ""
         art_html = (
             f'  <img class="panel-art" src="{img_path.as_uri()}" alt=""{art_style_attr}>'
             if img_path.exists() else ""

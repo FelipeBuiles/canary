@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
+from pydantic import ValidationError
 
 from novel_to_comic import artifacts
 from novel_to_comic.config import Config, LANGUAGE_NAMES, save_config
@@ -331,9 +332,9 @@ async def _translate_text_items(config: Config, items: list[dict]) -> tuple[dict
         if not isinstance(item, dict):
             continue
         item_id = str(item.get("id", ""))
-        text = item.get("text")
-        if item_id and isinstance(text, str):
-            translations[item_id] = text
+        item_text = item.get("text")
+        if item_id and isinstance(item_text, str):
+            translations[item_id] = item_text
     return translations, api_result.usage
 
 
@@ -343,19 +344,9 @@ async def _translate_text_items(config: Config, items: list[dict]) -> tuple[dict
 @router.get("/pages/")
 def list_pages(project=Depends(get_project)):
     project_dir, config, state = project
-    pd = _pages_dir(project_dir)
-    if not pd.exists():
+    if not _pages_dir(project_dir).exists():
         return []
-    pages = []
-    for f in sorted(pd.glob("page_*.json")):
-        cp = ComicPage.model_validate_json(f.read_text())
-        pages.append({
-            "page_number": cp.page_number,
-            "panel_count": len(cp.panels),
-            "layout": cp.layout,
-            "theme": cp.theme,
-        })
-    return pages
+    return _page_summaries(project_dir)
 
 
 def _page_summaries(project_dir: Path) -> list[dict]:
@@ -372,6 +363,82 @@ def _page_summaries(project_dir: Path) -> list[dict]:
     return pages
 
 
+# ── Fixed-path routes ─────────────────────────────────────────────────────────
+# These MUST be registered before the dynamic /pages/{page_num} routes below:
+# FastAPI matches in registration order, and /pages/{page_num} would otherwise
+# swallow them and 422 on the int conversion.
+
+
+@router.get("/pages/bubble-presets")
+def get_bubble_presets(project=Depends(get_project)):
+    """Return the current bubble preset map."""
+    return BUBBLE_PRESETS
+
+
+def _voices_path(project_dir: Path) -> Path:
+    return project_dir / "assembly" / "character_voices.json"
+
+
+def _load_voices(project_dir: Path) -> dict[str, dict]:
+    path = _voices_path(project_dir)
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text())
+
+
+def _save_voices(project_dir: Path, voices: dict[str, dict]) -> None:
+    path = _voices_path(project_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(voices, indent=2))
+
+
+@router.get("/pages/character-voices")
+def get_character_voices(project=Depends(get_project)):
+    """Return all character voice presets."""
+    project_dir, config, state = project
+    return _load_voices(project_dir)
+
+
+@router.put("/pages/character-voices/{character_id}")
+def put_character_voice(character_id: str, body: dict, project=Depends(get_project)):
+    """Upsert a voice style for a character."""
+    project_dir, config, state = project
+    try:
+        voice = CharacterVoice(
+            character_id=character_id,
+            character_name=body.get("character_name", character_id),
+            font_family=body.get("font_family"),
+            font_size=body.get("font_size"),
+            font_color=body.get("font_color"),
+            fill_color=body.get("fill_color"),
+            border_color=body.get("border_color"),
+            border_width=body.get("border_width"),
+            border_radius=body.get("border_radius"),
+        )
+    except ValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    voices = _load_voices(project_dir)
+    voices[character_id] = voice.model_dump(exclude_none=True)
+    voices[character_id]["character_id"] = character_id
+    voices[character_id]["character_name"] = voice.character_name
+    _save_voices(project_dir, voices)
+    return voice.model_dump()
+
+
+@router.delete("/pages/character-voices/{character_id}")
+def delete_character_voice(character_id: str, project=Depends(get_project)):
+    """Remove a character voice preset."""
+    project_dir, config, state = project
+    voices = _load_voices(project_dir)
+    if character_id in voices:
+        del voices[character_id]
+        _save_voices(project_dir, voices)
+    return {"status": "ok"}
+
+
+# ── Per-page routes ───────────────────────────────────────────────────────────
+
+
 @router.get("/pages/{page_num}")
 def get_page(page_num: int, project=Depends(get_project)):
     project_dir, config, state = project
@@ -379,16 +446,50 @@ def get_page(page_num: int, project=Depends(get_project)):
     return cp.model_dump()
 
 
+_VALID_LAYOUTS = {"1", "2", "3", "4", "5", "6", "many"}
+
+
+def _next_bubble_id(panel) -> str:
+    """Generate a bubble ID that cannot collide with existing ones.
+
+    ``len(bubbles) + 1`` collides after deletions (b1,b3 + new "b3"), so scan
+    for the highest existing ``-b<N>`` suffix instead.
+    """
+    max_idx = 0
+    for b in panel.bubbles:
+        m = re.search(r"-b(\d+)$", b.id)
+        if m:
+            max_idx = max(max_idx, int(m.group(1)))
+    return f"{panel.id}-b{max_idx + 1}"
+
+
 @router.patch("/pages/{page_num}")
 def update_page(page_num: int, body: dict, project=Depends(get_project)):
     project_dir, config, state = project
     cp = _load_page(project_dir, page_num)
 
+    try:
+        _apply_page_patch(cp, body)
+    except ValidationError as exc:
+        # Field assignments are validated (validate_assignment) so a bad patch
+        # is rejected here instead of being written to disk, where it would
+        # make the page JSON permanently unloadable.
+        raise HTTPException(422, str(exc)) from exc
+
+    artifacts.write_compose_page(project_dir, page_num, cp)
+    return cp.model_dump()
+
+
+def _apply_page_patch(cp: ComicPage, body: dict) -> None:
     # Apply top-level fields
     if "theme" in body:
+        if body["theme"] not in THEMES:
+            raise HTTPException(400, f"Invalid theme. Must be one of: {', '.join(THEMES.keys())}")
         cp.theme = body["theme"]
     if "layout" in body:
-        cp.layout = body["layout"]
+        if str(body["layout"]) not in _VALID_LAYOUTS:
+            raise HTTPException(400, f"Invalid layout. Must be one of: {', '.join(sorted(_VALID_LAYOUTS))}")
+        cp.layout = str(body["layout"])
     if "style_vars" in body:
         cp.style_vars = _sanitize_style_vars(body["style_vars"])
 
@@ -426,11 +527,10 @@ def update_page(page_num: int, body: dict, project=Depends(get_project)):
                             if field in bp:
                                 setattr(bubble, field, bp[field])
                     else:
-                        # New bubble — generate stable ID
-                        next_idx = len(panel.bubbles) + 1
-                        new_id = bp.get("id", "") or f"{panel.id}-b{next_idx}"
-                        if new_id.startswith("new-"):
-                            new_id = f"{panel.id}-b{next_idx}"
+                        # New bubble — generate a non-colliding stable ID
+                        new_id = bp.get("id", "")
+                        if not new_id or new_id.startswith("new-"):
+                            new_id = _next_bubble_id(panel)
                         panel.bubbles.append(Bubble(
                             id=new_id,
                             type=bp.get("type", "speech"),
@@ -482,12 +582,9 @@ def update_page(page_num: int, body: dict, project=Depends(get_project)):
                                     value = normalize_sfx_text(value) or value
                                 setattr(target_sfx, field, value)
                     else:
-                        text = normalize_sfx_text(sfx_data.get("text")) or "SFX!"
-                        new_sfx = Sfx.model_validate({**sfx_data, "text": text})
+                        sfx_text = normalize_sfx_text(sfx_data.get("text")) or "SFX!"
+                        new_sfx = Sfx.model_validate({**sfx_data, "text": sfx_text})
                         panel.sfx.append(new_sfx)
-
-    artifacts.write_compose_page(project_dir, page_num, cp)
-    return cp.model_dump()
 
 
 @router.post("/pages/style-vars/generate")
@@ -551,12 +648,6 @@ def set_theme(body: dict, project=Depends(get_project)):
         updated += 1
 
     return {"status": "ok", "theme": theme, "updated": updated}
-
-
-@router.get("/pages/bubble-presets")
-def get_bubble_presets(project=Depends(get_project)):
-    """Return the current bubble preset map."""
-    return BUBBLE_PRESETS
 
 
 @router.post("/pages/apply-bubble-preset")
@@ -783,7 +874,10 @@ def reflow_pages(body: dict, project=Depends(get_project)):
 def replace_page(page_num: int, body: dict, project=Depends(get_project)):
     """Full page replacement (used by undo/redo)."""
     project_dir, config, state = project
-    cp = ComicPage.model_validate(body)
+    try:
+        cp = ComicPage.model_validate(body)
+    except ValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
     cp.page_number = page_num
     if not artifacts.compose_page_path(project_dir, page_num).exists():
         raise HTTPException(404, f"Page {page_num} not found")
@@ -803,7 +897,12 @@ def reorder_panels(body: dict, project=Depends(get_project)):
         raise HTTPException(400, "Provide non-empty 'pages' list")
 
     plan = load_layout_plan(project_dir)
-    reorder_planned_pages(plan, pages_spec)
+    try:
+        reorder_planned_pages(plan, pages_spec)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, f"Invalid pages spec: {exc}") from exc
     save_layout_plan(project_dir, plan)
     pages = _project_structural_pages(project_dir, config)
     return dump_structural_response(plan, pages)
@@ -863,67 +962,6 @@ def apply_structural_operation(body: dict, project=Depends(get_project)):
     return response
 
 
-# ── Character Voices ──────────────────────────────────────────────────────────
-
-
-def _voices_path(project_dir: Path) -> Path:
-    return project_dir / "assembly" / "character_voices.json"
-
-
-def _load_voices(project_dir: Path) -> dict[str, dict]:
-    path = _voices_path(project_dir)
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text())
-
-
-def _save_voices(project_dir: Path, voices: dict[str, dict]) -> None:
-    path = _voices_path(project_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(voices, indent=2))
-
-
-@router.get("/pages/character-voices")
-def get_character_voices(project=Depends(get_project)):
-    """Return all character voice presets."""
-    project_dir, config, state = project
-    return _load_voices(project_dir)
-
-
-@router.put("/pages/character-voices/{character_id}")
-def put_character_voice(character_id: str, body: dict, project=Depends(get_project)):
-    """Upsert a voice style for a character."""
-    project_dir, config, state = project
-    voice = CharacterVoice(
-        character_id=character_id,
-        character_name=body.get("character_name", character_id),
-        font_family=body.get("font_family"),
-        font_size=body.get("font_size"),
-        font_color=body.get("font_color"),
-        fill_color=body.get("fill_color"),
-        border_color=body.get("border_color"),
-        border_width=body.get("border_width"),
-        border_radius=body.get("border_radius"),
-    )
-    voices = _load_voices(project_dir)
-    voices[character_id] = voice.model_dump(exclude_none=True)
-    voices[character_id]["character_id"] = character_id
-    voices[character_id]["character_name"] = voice.character_name
-    _save_voices(project_dir, voices)
-    return voice.model_dump()
-
-
-@router.delete("/pages/character-voices/{character_id}")
-def delete_character_voice(character_id: str, project=Depends(get_project)):
-    """Remove a character voice preset."""
-    project_dir, config, state = project
-    voices = _load_voices(project_dir)
-    if character_id in voices:
-        del voices[character_id]
-        _save_voices(project_dir, voices)
-    return {"status": "ok"}
-
-
 # ── HTML preview ─────────────────────────────────────────────────────────────
 
 
@@ -956,8 +994,9 @@ def serve_file(file_path: str, project=Depends(get_project)):
     project_dir, config, state = project
     full = (project_dir / file_path).resolve()
 
-    # Path traversal guard
-    if not str(full).startswith(str(project_dir.resolve())):
+    # Path traversal guard — is_relative_to, not a string prefix check, so a
+    # sibling dir like "demo-private" can't slip past the guard for "demo".
+    if not full.is_relative_to(project_dir.resolve()):
         raise HTTPException(403, "Access denied")
     if not full.is_file():
         raise HTTPException(404, "File not found")

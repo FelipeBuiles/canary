@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, RedirectResponse
 
+from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.stages import s8_compose
 from novel_to_comic.storage import export_url, r2_configured, upload_export
 
@@ -23,7 +24,10 @@ async def trigger_export(
     if fmt not in ("pdf", "cbz"):
         raise HTTPException(400, "Format must be 'pdf' or 'cbz'")
 
-    await s8_compose.run(config, project_dir, state, formats=[fmt], rebuild=False)
+    # The stage expects a StageRuntime, not a raw PipelineState — passing the
+    # state directly crashes on the first ctx.log() call.
+    ctx = StageRuntime("compose", state, project_dir)
+    await s8_compose.run(config, project_dir, ctx, formats=[fmt], rebuild=False)
 
     export_path = project_dir / "exports" / f"comic.{fmt}"
     if not export_path.exists():

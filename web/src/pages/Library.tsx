@@ -1,8 +1,9 @@
 import { useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCreateProject, useGenerateProjectCover, useProjects, useRunPipeline, useImportStory } from "../api/queries";
+import { useCreateProject, useGenerateProjectCover, useProjects, useImportStory } from "../api/queries";
 import { usePipelineStore } from "../store/pipeline";
+import { useRunAction } from "../hooks/useRunAction";
 import { ProjectCard } from "../components/ProjectCard";
 import { StatRow } from "../components/ui/StatRow";
 import { Icon } from "../components/ui/Icon";
@@ -11,7 +12,6 @@ import { UI_STAGES } from "../lib/uiStages";
 import { UploadStep } from "../components/wizard/UploadStep";
 import type { ConfigOverrides } from "../types/api";
 import { useI18n } from "../i18n";
-import { maybeShowInsufficientCredits } from "../store/insufficientCredits";
 
 const coverRequestedProjects = new Set<string>();
 
@@ -85,8 +85,7 @@ function NewProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   const queryClient = useQueryClient();
   const createProject = useCreateProject();
   const importStory = useImportStory();
-  const runPipeline = useRunPipeline();
-  const connect = usePipelineStore((s) => s.connect);
+  const { handleRun } = useRunAction();
   const clearEvents = usePipelineStore((s) => s.clearEvents);
   const { t } = useI18n();
 
@@ -100,21 +99,12 @@ function NewProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
             clearEvents();
             onClose();
             navigate(`/project/${encodeURIComponent(data.id)}/extract`);
-            runPipeline.mutate(
-              { project: data.id, stage: "extract" },
-              {
-                onSuccess: () => connect(data.id),
-                onError: (err) =>
-                  maybeShowInsufficientCredits(err, {
-                    actionLabel: "Run EXTRACT",
-                  }),
-              },
-            );
+            handleRun(data.id, "extract", { actionLabel: "Run EXTRACT" });
           },
         },
       );
     },
-    [createProject, runPipeline, queryClient, clearEvents, connect, onClose, navigate],
+    [createProject, handleRun, queryClient, clearEvents, onClose, navigate],
   );
 
   const handleImport = useCallback(
@@ -127,21 +117,12 @@ function NewProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
             clearEvents();
             onClose();
             navigate(`/project/${encodeURIComponent(data.id)}/extract`);
-            runPipeline.mutate(
-              { project: data.id, stage: "extract" },
-              {
-                onSuccess: () => connect(data.id),
-                onError: (err) =>
-                  maybeShowInsufficientCredits(err, {
-                    actionLabel: "Run EXTRACT",
-                  }),
-              },
-            );
+            handleRun(data.id, "extract", { actionLabel: "Run EXTRACT" });
           },
         },
       );
     },
-    [importStory, runPipeline, queryClient, clearEvents, connect, onClose, navigate],
+    [importStory, handleRun, queryClient, clearEvents, onClose, navigate],
   );
 
   // Close on Escape

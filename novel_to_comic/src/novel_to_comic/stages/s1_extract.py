@@ -8,11 +8,13 @@ import json
 import re
 from pathlib import Path
 
-from pydantic import ValidationError
 from rich.console import Console
 
 from novel_to_comic import artifacts
-from novel_to_comic.clients import text
+from novel_to_comic.clients.structured_call import (
+    StructuredCallError,
+    generate_validated_json,
+)
 from novel_to_comic.config import Config
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.stage_runtime import StageRuntime
@@ -256,6 +258,11 @@ def _normalize_result(result: dict) -> dict:
     return result
 
 
+def _parse_extraction(raw: object) -> StoryBible:
+    result = raw[0] if isinstance(raw, list) else raw
+    return StoryBible.model_validate(_normalize_result(result))
+
+
 async def _extract_with_retry(
     config: Config,
     system_prompt: str,
@@ -263,47 +270,40 @@ async def _extract_with_retry(
     max_retries: int = 2,
 ) -> ApiResult[StoryBible]:
     """Call the extraction model, normalize, validate, and retry on schema errors."""
-    last_error: Exception | None = None
-    user_content: str = novel_text  # type: ignore[assignment]
 
-    last_usage = None
-    for attempt in range(max_retries + 1):
-        api_result = await text.generate_json(
-            config=config,
+    def correction(raw: object, error: Exception) -> str:
+        result = raw[0] if isinstance(raw, list) else raw
+        result = _normalize_result(result)
+        # Feed the errors back so the model can fix just the broken fields
+        return (
+            f"Your previous response had schema validation errors. "
+            f"Here is the original novel text, followed by your previous JSON output "
+            f"and the specific errors. Please output corrected JSON only.\n\n"
+            f"NOVEL TEXT:\n{novel_text}\n\n"
+            f"YOUR PREVIOUS JSON:\n{json.dumps(result, indent=2)}\n\n"
+            f"VALIDATION ERRORS:\n{error}\n\n"
+            f"Output corrected JSON only, no explanation."
+        )
+
+    try:
+        outcome = await generate_validated_json(
+            config,
             model=config.effective_extraction_model(),
             system_prompt=system_prompt,
-            user_content=user_content,
-            temperature=0.4,
-            max_output_tokens=EXTRACT_MAX_OUTPUT_TOKENS,
+            user_content=novel_text,
+            parse=_parse_extraction,
+            correction=correction,
+            label="Story Bible extraction",
             feature="extract.story_bible",
+            max_output_tokens=EXTRACT_MAX_OUTPUT_TOKENS,
+            retries=max_retries,
+            temperatures=(0.4,),
         )
-        last_usage = api_result.usage
-        result = api_result.value
-        if isinstance(result, list):
-            result = result[0]
-        result = _normalize_result(result)
+    except StructuredCallError as exc:
+        raise exc.last_error from exc
 
-        try:
-            return ApiResult(value=StoryBible.model_validate(result), usage=last_usage)
-        except ValidationError as e:
-            last_error = e
-            if attempt < max_retries:
-                console.print(f"[yellow]Validation errors (attempt {attempt + 1}), retrying with corrections...[/yellow]")
-                # Feed the errors back so the model can fix just the broken fields
-                user_content = (
-                    f"Your previous response had schema validation errors. "
-                    f"Here is the original novel text, followed by your previous JSON output "
-                    f"and the specific errors. Please output corrected JSON only.\n\n"
-                    f"NOVEL TEXT:\n{novel_text}\n\n"
-                    f"YOUR PREVIOUS JSON:\n{json.dumps(result, indent=2)}\n\n"
-                    f"VALIDATION ERRORS:\n{e}\n\n"
-                    f"Output corrected JSON only, no explanation."
-                )
-            else:
-                raise
-
-
-    raise last_error  # type: ignore[misc]
+    usage = outcome.usage_records[-1] if outcome.usage_records else None
+    return ApiResult(value=outcome.value, usage=usage)
 
 
 def _norm_quote_text(s: str) -> str:

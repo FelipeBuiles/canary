@@ -23,6 +23,18 @@ function parseSfxIndexFromId(elementId: string): number {
   return m ? Number(m[1]) : 0;
 }
 
+/**
+ * Parse a numeric field into a clamped integer, or null to clear the
+ * override. The backend stores these as ints — fractional or out-of-range
+ * values would be rejected by the PATCH validation.
+ */
+function intInRange(raw: string, min: number, max: number): number | null {
+  if (!raw) return null;
+  const n = Number(raw);
+  if (Number.isNaN(n)) return null;
+  return Math.min(max, Math.max(min, Math.round(n)));
+}
+
 const BUBBLE_TYPES = ["speech", "thought", "narration"] as const;
 const SIDES = ["left", "right", "center"] as const;
 const FONT_OPTIONS = [
@@ -279,7 +291,7 @@ function BubbleInspector({
                     placeholder={String(themeFs)}
                     min={8}
                     max={96}
-                    onChange={(e) => onUpdate({ font_size: e.target.value ? Number(e.target.value) : null })}
+                    onChange={(e) => onUpdate({ font_size: intInRange(e.target.value, 8, 96) })}
                   />
                 </div>
                 <div>
@@ -293,7 +305,7 @@ function BubbleInspector({
                     placeholder={String(themeRadius)}
                     min={0}
                     max={120}
-                    onChange={(e) => onUpdate({ border_radius: e.target.value ? Number(e.target.value) : null })}
+                    onChange={(e) => onUpdate({ border_radius: intInRange(e.target.value, 0, 120) })}
                   />
                 </div>
                 <div>
@@ -307,7 +319,7 @@ function BubbleInspector({
                     placeholder={String(themeBorder)}
                     min={0}
                     max={16}
-                    onChange={(e) => onUpdate({ border_width: e.target.value ? Number(e.target.value) : null })}
+                    onChange={(e) => onUpdate({ border_width: intInRange(e.target.value, 0, 16) })}
                   />
                 </div>
               </div>
@@ -458,7 +470,10 @@ function SfxInspector({
               type="number"
               value={sfx.rotation}
               step={1}
-              onChange={(e) => onUpdate({ rotation: Number(e.target.value) })}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                if (!Number.isNaN(n)) onUpdate({ rotation: n });
+              }}
             />
           </div>
           <div>
@@ -467,7 +482,9 @@ function SfxInspector({
               type="number"
               value={sfx.font_size ?? ""}
               placeholder="Auto"
-              onChange={(e) => onUpdate({ font_size: e.target.value ? Number(e.target.value) : null })}
+              min={8}
+              max={200}
+              onChange={(e) => onUpdate({ font_size: intInRange(e.target.value, 8, 200) })}
             />
           </div>
         </div>

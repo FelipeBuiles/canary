@@ -26,7 +26,10 @@ from pathlib import Path
 from rich.console import Console
 
 from novel_to_comic import artifacts
-from novel_to_comic.clients.text import generate_json
+from novel_to_comic.clients.structured_call import (
+    StructuredCallError,
+    generate_validated_json,
+)
 from novel_to_comic.usage import UsageRecord, estimate_text_cost
 from novel_to_comic.config import Config
 from novel_to_comic.events import make_progress
@@ -788,45 +791,41 @@ async def _plan_scene_llm(
     )
     base_user = _scene_planning_user_content(screenplay, story_bible, target_panels)
 
-    user_content = base_user
-    last_error: Exception | None = None
-    last_parsed: tuple[list[LLMPanelSpec], list[LLMNarrationDecisionSpec]] | None = None
+    def parse(raw: object) -> tuple[list[LLMPanelSpec], list[LLMNarrationDecisionSpec]]:
+        specs, narration_specs = _parse_llm_scene_plan(raw)
+        return _normalize_spec_order(specs, narration_specs)
+
+    def validate(parsed: tuple[list[LLMPanelSpec], list[LLMNarrationDecisionSpec]]) -> None:
+        specs, _ = parsed
+        if not specs:
+            raise ValueError("LLM returned empty panel list")
+        _validate_llm_specs(specs, screenplay.beats)
+
     total_attempts = _PLAN_RETRY_ATTEMPTS + 1
-    for attempt in range(total_attempts):
-        temperature = _PLAN_RETRY_TEMPERATURES[
-            min(attempt, len(_PLAN_RETRY_TEMPERATURES) - 1)
-        ]
-        api_result = await generate_json(
+    try:
+        outcome = await generate_validated_json(
             config,
             model=config.effective_panel_model(),
             system_prompt=system,
-            user_content=user_content,
-            temperature=temperature,
-            max_output_tokens=16384,
+            user_content=base_user,
+            parse=parse,
+            correction=lambda raw, exc: _correction_user_content(base_user, raw, str(exc)),
+            label=f"LLM plan for {screenplay.scene_id}",
             feature="plan.scene_layout",
+            max_output_tokens=16384,
+            retries=_PLAN_RETRY_ATTEMPTS,
+            temperatures=_PLAN_RETRY_TEMPERATURES,
+            validate=validate,
         )
-        if usage_records is not None and api_result.usage is not None:
-            usage_records.append(api_result.usage)
-        try:
-            specs, narration_specs = _parse_llm_scene_plan(api_result.value)
-            specs, narration_specs = _normalize_spec_order(specs, narration_specs)
-            last_parsed = (specs, narration_specs)
-            if not specs:
-                raise ValueError("LLM returned empty panel list")
-            _validate_llm_specs(specs, screenplay.beats)
-            if attempt > 0:
-                logger.info(
-                    "LLM plan for %s recovered on retry %d",
-                    screenplay.scene_id, attempt,
-                )
-            return specs, narration_specs
-        except Exception as exc:
-            last_error = exc
-            logger.warning(
-                "LLM plan for %s rejected on attempt %d/%d: %s",
-                screenplay.scene_id, attempt + 1, total_attempts, exc,
-            )
-            user_content = _correction_user_content(base_user, api_result.value, str(exc))
+    except StructuredCallError as call_error:
+        if usage_records is not None:
+            usage_records.extend(call_error.usage_records)
+        last_error = call_error.last_error
+        last_parsed = call_error.last_parsed
+    else:
+        if usage_records is not None:
+            usage_records.extend(outcome.usage_records)
+        return outcome.value
 
     if last_parsed is not None:
         specs, narration_specs = last_parsed

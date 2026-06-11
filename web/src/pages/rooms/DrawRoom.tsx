@@ -9,10 +9,10 @@ import {
   useStageEstimate,
   useProjectConfig,
   useUpdateProjectConfig,
-  useRunPipeline,
   useResetStale,
 } from "../../api/queries";
 import { useHeaderMode } from "../../hooks/useHeaderMode";
+import { useRunAction } from "../../hooks/useRunAction";
 import { PanelCard } from "../../components/PanelCard";
 import { PanelDetailModal } from "../../components/PanelDetailModal";
 import { Surface } from "../../components/ui/Surface";
@@ -27,7 +27,6 @@ import {
 } from "../../components/composites";
 import { StyleCallout } from "../../components/wizard/StyleCallout";
 import { useActiveRegens, useRegenStore } from "../../store/regen";
-import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { getPanelDisplayState, getPanelFilterBucket, type PanelFilterBucket } from "../../lib/panelState";
 import {
   useDrawProgressStore,
@@ -175,7 +174,7 @@ export function DrawRoom() {
     return map;
   }, [scenePrompts]);
 
-  const { mutate: runPipeline, isPending: isPipelineRunning } = useRunPipeline();
+  const { handleRun, isPending: isPipelineRunning } = useRunAction();
   const { mutate: resetStale, isPending: isResetting } = useResetStale();
   const { data: drawEstimate } = useStageEstimate(id, "draw");
 
@@ -380,34 +379,18 @@ export function DrawRoom() {
 
   function handleGenerateAllPending() {
     if (!id) return;
-    runPipeline(
-      { project: id, stage: "draw", rerun: false },
-      {
-        onError: (err) =>
-          maybeShowInsufficientCredits(err, {
-            actionLabel: "Run DRAW",
-            onRetry: handleGenerateAllPending,
-          }),
-      },
-    );
+    handleRun(id, "draw", { actionLabel: "Run DRAW" });
     setConfirmAction(null);
   }
 
   function handleRetryFailed() {
     if (!id) return;
     setRetryFailedActive(true);
-    runPipeline(
-      { project: id, stage: "draw", retryFailed: true },
-      {
-        onError: (err) => {
-          setRetryFailedActive(false);
-          maybeShowInsufficientCredits(err, {
-            actionLabel: "Retry failed panels",
-            onRetry: handleRetryFailed,
-          });
-        },
-      },
-    );
+    handleRun(id, "draw", {
+      retryFailed: true,
+      actionLabel: "Retry failed panels",
+      onError: () => setRetryFailedActive(false),
+    });
     setConfirmAction(null);
   }
 
@@ -418,16 +401,7 @@ export function DrawRoom() {
 
   function handleContinueStale() {
     if (!id) return;
-    runPipeline(
-      { project: id, stage: "draw", rerun: false },
-      {
-        onError: (err) =>
-          maybeShowInsufficientCredits(err, {
-            actionLabel: "Continue DRAW",
-            onRetry: handleContinueStale,
-          }),
-      },
-    );
+    handleRun(id, "draw", { actionLabel: "Continue DRAW" });
   }
 
   if (isLoading || ((!images?.length && !promptSummaries?.length) && drawStageStatus !== "pending")) {

@@ -45,7 +45,6 @@ export function ComposeRoom() {
   const [tab, setTab] = useState<ComposeTab>("edit");
   const [editSubMode, setEditSubMode] = useState<EditSubMode>("canvas");
   const [panelReframeId, setPanelReframeId] = useState<string | null>(null);
-  const [cmdkOpen, setCmdkOpen] = useState(false);
 
   // ── Page state ────────────────────────────────────────────────────────────
   const [searchParams, setSearchParams] = useSearchParams();
@@ -60,8 +59,10 @@ export function ComposeRoom() {
   const { pages: allPages, isLoading: loadingAllPages } = useAllPages(id, pageList);
 
   const { data: images } = useImages(id);
+  // Wait for the images query before checking — running against an empty map
+  // would flag every panel as a missing-image error while loading.
   const issues = useMemo(
-    () => detectIssues(allPages.filter((p): p is ComicPage => p !== undefined), images ?? []),
+    () => (images ? detectIssues(allPages.filter((p): p is ComicPage => p !== undefined), images) : []),
     [allPages, images],
   );
 
@@ -119,6 +120,15 @@ export function ComposeRoom() {
     );
   }
 
+  // One PATCH per page with all bubble edits batched — firing a request per
+  // bubble races concurrent read-modify-writes on the same page file.
+  function handleBulkUpdateBubbles(
+    pageNum: number,
+    panelPatches: { id: string; bubbles: (Partial<Bubble> & { id: string })[] }[],
+  ) {
+    patchPage({ panels: panelPatches as unknown as ComicPage["panels"] }, pageNum);
+  }
+
   function handleUpdateSfx(panelId: string, sfxIndex: number, sPatch: Partial<Sfx>) {
     patchPage({ panels: [{ id: panelId, sfx: sPatch, sfx_index: sfxIndex }] as unknown as ComicPage["panels"] });
   }
@@ -163,7 +173,7 @@ export function ComposeRoom() {
 
   function handleDeleteElement(panelId: string, type: "bubble" | "sfx", elementId: string) {
     if (!id || !safePage || !page) return;
-    pushUndo(page);
+    // patchPage pushes the undo snapshot — no extra push here.
     if (type === "bubble") {
       patchPage({ panels: [{ id: panelId, remove_bubble_ids: [elementId] }] as unknown as ComicPage["panels"] });
     } else {
@@ -190,7 +200,6 @@ export function ComposeRoom() {
     if (!page || !id || !safePage) return;
     const targetPanel = selection?.panelId ? page.panels.find((p) => p.id === selection.panelId) : page.panels[0];
     if (!targetPanel) return;
-    pushUndo(page);
     patchPage({ panels: [{ id: targetPanel.id, bubbles: [{ id: `new-${Date.now()}`, type: bubbleType, text: bubbleType === "narration" ? "Narration text..." : "Dialogue...", side: "left" as const }] }] as unknown as ComicPage["panels"] });
   }
 
@@ -198,23 +207,39 @@ export function ComposeRoom() {
     if (!page || !id || !safePage) return;
     const targetPanel = selection?.panelId ? page.panels.find((p) => p.id === selection.panelId) : page.panels[0];
     if (!targetPanel) return;
-    pushUndo(page);
     patchPage({ panels: [{ id: targetPanel.id, sfx: { text: "KRAK!" } }] as unknown as ComicPage["panels"] });
   }
 
   // ── Undo / redo ──────────────────────────────────────────────────────────
+  // Snapshots are page-scoped: restore to the page they came from, never to
+  // whichever page is currently visible (ScriptMode can edit other pages).
+  function currentVersionOf(pageNum: number): ComicPage | undefined {
+    if (pageNum === safePage && page) return page;
+    return allPages[pageNum - 1];
+  }
+
   function handleUndo() {
     const prev = popUndo();
-    if (!prev || !id || !safePage || !page) return;
-    useComposeStore.setState((s) => ({ redoStack: [...s.redoStack, structuredClone(page)] }));
-    replacePageMut.mutate({ project: id, pageNum: safePage, data: prev });
+    if (!prev || !id) return;
+    const current = currentVersionOf(prev.pageNum);
+    if (current) {
+      useComposeStore.setState((s) => ({
+        redoStack: [...s.redoStack, { pageNum: prev.pageNum, page: structuredClone(current) }],
+      }));
+    }
+    replacePageMut.mutate({ project: id, pageNum: prev.pageNum, data: prev.page });
   }
 
   function handleRedo() {
     const next = popRedo();
-    if (!next || !id || !safePage || !page) return;
-    useComposeStore.setState((s) => ({ undoStack: [...s.undoStack, structuredClone(page)] }));
-    replacePageMut.mutate({ project: id, pageNum: safePage, data: next });
+    if (!next || !id) return;
+    const current = currentVersionOf(next.pageNum);
+    if (current) {
+      useComposeStore.setState((s) => ({
+        undoStack: [...s.undoStack, { pageNum: next.pageNum, page: structuredClone(current) }],
+      }));
+    }
+    replacePageMut.mutate({ project: id, pageNum: next.pageNum, data: next.page });
   }
 
   // ── Export / style / translate ───────────────────────────────────────────
@@ -288,23 +313,21 @@ export function ComposeRoom() {
   }, [id, composeStageStatus, pageList?.length, refetchPageList]);
 
   // ── Keyboard shortcuts ───────────────────────────────────────────────────
+  // All shortcuts are inert while an input is focused, so typing never
+  // triggers tab switches, edits, or anything billable.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (!isInputFocused() && !cmdkOpen) {
-        if (e.key === "1") { setTab("edit"); setEditSubMode("canvas"); return; }
-        if (e.key === "2") { setTab("edit"); setEditSubMode("script"); return; }
-        if (e.key === "3") { setTab("export"); return; }
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") { e.preventDefault(); setCmdkOpen((o) => !o); return; }
+      if (isInputFocused()) return;
+      if (e.key === "1") { setTab("edit"); setEditSubMode("canvas"); return; }
+      if (e.key === "2") { setTab("edit"); setEditSubMode("script"); return; }
+      if (e.key === "3") { setTab("export"); return; }
       if ((e.metaKey || e.ctrlKey) && e.key === "e") { e.preventDefault(); setTab("export"); return; }
-      if ((e.metaKey || e.ctrlKey) && e.key === "m") { e.preventDefault(); handleGeneratePageStyle(); return; }
       if (e.key === "Escape") {
-        if (cmdkOpen) { setCmdkOpen(false); return; }
         if (panelReframeId) { setPanelReframeId(null); return; }
         deselect();
         return;
       }
-      if (tab === "edit" && editSubMode === "canvas" && !isInputFocused()) {
+      if (tab === "edit" && editSubMode === "canvas") {
         if (e.key === "b" || e.key === "B") { handleAddBubble("speech"); return; }
         if (e.key === "t" && !e.shiftKey) { handleAddBubble("thought"); return; }
         if (e.key === "n" && !e.shiftKey) { handleAddBubble("narration"); return; }
@@ -395,8 +418,8 @@ export function ComposeRoom() {
               zoom={zoom}
               selection={selection}
               panelReframeId={panelReframeId}
-              undoStack={undoStack}
-              redoStack={redoStack}
+              canUndo={undoStack.length > 0}
+              canRedo={redoStack.length > 0}
               onPageSelect={setPageNum}
               onAddBubble={handleAddBubble}
               onAddSfx={handleAddSfx}
@@ -432,6 +455,7 @@ export function ComposeRoom() {
               onUpdateBubble={(pageNum, panelId, bubbleId, patch) =>
                 handleUpdateBubble(panelId, bubbleId, patch, pageNum)
               }
+              onBulkUpdateBubbles={handleBulkUpdateBubbles}
               onSwitchToLayout={handleSwitchToCanvas}
             />
           )}
@@ -459,24 +483,6 @@ export function ComposeRoom() {
           onReviewIssues={handleGoToIssues}
         />
       )}
-
-      {/* Command palette: TO DO//reimplement when it makes sense */}
-      {/* {cmdkOpen && (
-        <CommandPalette
-          onClose={() => setCmdkOpen(false)}
-          onSwitchMode={(m) => {
-            if (m === "script") { setTab("edit"); setEditSubMode("script"); }
-            else if (m === "layout") { setTab("edit"); setEditSubMode("canvas"); }
-            else if (m === "preview") { setTab("export"); }
-            else if (m === "style") { setTab("export"); }
-          }}
-          onExport={handleExport}
-          onMatchStyle={handleGeneratePageStyle}
-          onTranslate={() => handleTranslateBubbles(outputLanguage)}
-          onAddBubble={handleAddBubble}
-          onAddSfx={handleAddSfx}
-        />
-      )} */}
 
       {exportSuccess && (
         <ExportBurst
