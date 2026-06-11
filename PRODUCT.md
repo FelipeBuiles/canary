@@ -17,20 +17,28 @@ not "diffusion model" or "prompt".
 
 PULP turns a novel into a comic book through a 9-stage pipeline (extract →
 style → cast → adapt → plan → storyboard → direct → draw → compose), each stage
-resumable and human-reviewable. The web app is the studio: one room per stage,
-a pipeline sidebar that runs/approves stages, credit metering for AI spend
-(Stripe top-ups), and a compose editor for lettering and final export
-(PDF/CBZ). Success = a user ships an issue they're proud to show, and trusts
-the cost meter enough to run the next one.
+resumable. The web app is the studio, presented as four user-facing stations
+(Story → Look → Panels → Book): the user makes exactly four decisions — which
+story, what it looks like, fix the flagged panels, ship the book. Machine
+artifacts (script, shot plan, prompts) auto-run and stay inspectable but never
+block. Every station ends in one standing approval bar with a plain-language
+next step and `~N credits`; panels are accepted by default and reviewed by
+exception (⚑ flag). Credit metering for AI spend (Stripe top-ups) and a
+flattened Book editor (Pages · Script · Export) handle lettering and final
+export (PDF/CBZ). Success = a user ships an issue they're proud to show, and
+trusts the cost meter enough to run the next one.
 
 ## Brand Personality
 
 "The Living Ink" (see DESIGN.md): a Golden-Age print-shop tribute, not a SaaS
 template and not a comic parody. Three words: **crafted, mechanical, theatrical**.
 The interface behaves like a working pressroom — things stamp, press, and
-register; statuses read like a production floor (CASTING CALL, STUDIO
-TELEMETRY, TOTAL INK USAGE). Voice is a confident studio foreman: warm,
-specific, lightly dramatic at checkpoints, never wacky during errors or billing.
+register; statuses read like a production floor (CASTING CALL, ALL PANELS
+INKED, PAGE BENCH). Voice is a confident studio foreman: warm, specific,
+lightly dramatic at checkpoints, never wacky during errors or billing. The
+flavor lives in type treatment and stagecraft, never in renaming familiar
+concepts — characters are Characters, places are Places, and internal
+vocabulary (entity IDs, telemetry, prompts) stays behind Dev Content.
 
 ## Anti-references
 

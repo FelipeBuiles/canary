@@ -609,6 +609,7 @@ def test_list_images_marks_failure_metadata_as_failed_even_with_existing_image(t
         "image_available": True,
         "image_revision": f"{image_stat.st_mtime_ns}-{image_stat.st_size}",
         "accepted": False,
+        "flagged": False,
         "version_count": 0,
         "failure_classification": "generation_error",
         "failure_message": "Image generation failed during regeneration.",

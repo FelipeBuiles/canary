@@ -107,6 +107,10 @@ project lists when `pipeline_done` arrives.
 | `GET` | `/api/projects/{project}/images` | `list_images` | `stages.py` |
 | `POST` | `/api/projects/{project}/images/{scene_id}/{panel_number}/accept` | `accept_image_panel` | `stages.py` |
 | `DELETE` | `/api/projects/{project}/images/{scene_id}/{panel_number}/accept` | `unaccept_image_panel` | `stages.py` |
+| `POST` | `/api/projects/{project}/images/{scene_id}/{panel_number}/flag` | `flag_image_panel` | `stages.py` |
+| `DELETE` | `/api/projects/{project}/images/{scene_id}/{panel_number}/flag` | `unflag_image_panel` | `stages.py` |
+| `GET` | `/api/projects/{project}/cast/primary-refs` | `get_primary_refs` | `stages.py` |
+| `PUT` | `/api/projects/{project}/cast/{char_id}/primary-ref` | `set_primary_ref` | `stages.py` |
 | `GET` | `/api/projects/{project}/images/{scene_id}/{panel_number}/versions` | `get_image_panel_versions` | `stages.py` |
 | `POST` | `/api/projects/{project}/images/{scene_id}/{panel_number}/versions/{version}/restore` | `restore_image_panel_version` | `stages.py` |
 

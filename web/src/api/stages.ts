@@ -155,6 +155,43 @@ export function unacceptImagePanel(
   );
 }
 
+export function flagImagePanel(
+  project: string,
+  sceneId: string,
+  panelNumber: number,
+): Promise<{ scene_id: string; panel_number: number; flagged: boolean; flagged_at?: string }> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/images/${encodeURIComponent(sceneId)}/${panelNumber}/flag`,
+    { method: "POST" },
+  );
+}
+
+export function unflagImagePanel(
+  project: string,
+  sceneId: string,
+  panelNumber: number,
+): Promise<{ scene_id: string; panel_number: number; flagged: boolean }> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/images/${encodeURIComponent(sceneId)}/${panelNumber}/flag`,
+    { method: "DELETE" },
+  );
+}
+
+export function getPrimaryRefs(project: string): Promise<{ primary_refs: Record<string, string> }> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/cast/primary-refs`);
+}
+
+export function setPrimaryRef(
+  project: string,
+  charId: string,
+  pose: string | null,
+): Promise<{ char_id: string; pose: string | null; primary_refs: Record<string, string> }> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/cast/${encodeURIComponent(charId)}/primary-ref`,
+    { method: "PUT", body: JSON.stringify({ pose }) },
+  );
+}
+
 export async function getImageGenerationMeta(
   project: string,
   relativeImagePath: string,

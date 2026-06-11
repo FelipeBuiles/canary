@@ -15,10 +15,11 @@ function canUseStorage() {
 }
 
 export function readShowDevContent() {
-  if (!canUseStorage()) return true;
+  if (!canUseStorage()) return false;
   const stored = window.localStorage.getItem(SHOW_DEV_CONTENT_KEY);
-  // Default is ON — only explicitly written "0" turns it off.
-  return stored !== "0";
+  // Default is OFF — the machinery (IDs, hashes, paths, model names) is
+  // opt-in via Settings → Dev Content. Hide it from the happy path.
+  return stored === "1";
 }
 
 export function writeShowDevContent(value: boolean) {

@@ -15,7 +15,25 @@ other directly. There are 9 stages: `extract`, `style`, `cast`, `adapt`, `plan`,
 
 **Checkpoint stage** — A stage that pauses at `awaiting_review` after completing,
 requiring explicit approval before the pipeline continues. Checkpoint stages are:
-`extract`, `style`, `cast`, `direct`, `draw`.
+`extract`, `style`, `cast`, `draw`. (`direct` was removed as a checkpoint in the
+4-station redesign: prompts auto-run after cast approval and are inspected — not
+approved — in the UI.)
+
+**Station** — A user-facing grouping of stages in the web UI: `01 Story →
+02 Look → 03 Panels → 04 Book`. Presentation-only — backend stages stay
+discrete. The mapping lives in `web/src/lib/stations.ts`; see
+`docs/proposals/four-station-redesign.md`.
+
+**Auto step** — A stage that runs without user approval (`adapt`, `plan`,
+`storyboard`, `direct`). Surfaces in the sidebar with an `auto · view` badge
+that opens a read-only **inspect drawer** (`web/src/components/InspectDrawer.tsx`);
+shows a placeholder when its artifact doesn't exist yet. Never blocks progression.
+
+**Approval bar** — The one standing way forward
+(`web/src/components/composites/ApprovalBar.tsx`): fixed to the bottom of the
+content area on every station, showing a plain-language "Next: …" sentence,
+`~N credits · you have M`, one primary button, and an optional quiet secondary
+(a re-run verb or "Review N flagged"). The sidebar carries no CTA.
 
 **Story Bible** — The central artifact produced by Stage 1. Contains characters
 (with visual anchors), locations, scenes, narrative arcs, and props. All
@@ -71,10 +89,22 @@ to construct paths — never hardcode them in stage or route code.
 `refs/`, `plates/`, `plan/`, `storyboard/`, `direct/`, `draw/`, `compose/`,
 `exports/`).
 
-**Panel acceptance** — Explicit per-panel approval state stored in
-`draw/panel_acceptance.json`. A panel is accepted when the user has reviewed and
-approved its generated image. Acceptance is keyed by image fingerprint so that
-regeneration clears the acceptance flag automatically.
+**Panel flag** — The review-by-exception mark stored in `draw/panel_flags.json`
+(`server/panel_flags.py`). Generated panels are accepted by default; the user's
+action is flagging a panel for re-work (⚑). Flags never block compose or
+export — they drive the "Review N flagged" secondary action and surface as
+warnings in the Book station's issues drawer. Any regeneration of a panel
+clears its flag.
+
+**Panel acceptance** — Legacy explicit per-panel approval state stored in
+`draw/panel_acceptance.json`. Keyed by image fingerprint so regeneration clears
+it automatically. The endpoints remain, but the UI no longer surfaces per-panel
+accepts — "Accept all — Continue" approves the `draw` checkpoint stage instead.
+
+**Primary ref** — The user-chosen canonical pose crop per character
+(`front`, `three_quarter`, `profile`, `gesture`), stored in
+`refs/primary_refs.json` and set from the cast card's reference sheet. When set,
+it overrides the framing-based pose preference in `RefStrategy` for every panel.
 
 ---
 
@@ -154,14 +184,17 @@ optional `tail_x/tail_y` (panel-relative SVG tail target point).
 **Sfx** — A sound-effect element in a `ComicPage`. Has optional `x/y` and
 `rotation`. Uppercased at render time.
 
-**Compose room modes** — The four web-editor views for Stage 9: Script (text
-review, translation), Layout (page canvas, drag/drop, undo/redo), Style
-(lettering, theme, presets), Preview (spread view, export).
+**Book tabs** — The single tab row of the Stage 9 editor (the Book station):
+Pages (canvas, drag/drop, undo/redo, docked inspector), Script (text review,
+find & replace), Export (PDF/CBZ download, translation). Issues live in a
+triaged drawer ("N need you · M suggestions") reachable from the header chip
+on any tab — never as a tab of their own.
 
 **Theme** — A named CSS variable override set applied to the page renderer.
 Available themes: `default`, `noir`, `manga`, `vintage`, `painted`. Detected
-automatically from `style_template` keywords; can be overridden per-page or
-per-project.
+automatically from `style_template` keywords. Chosen at the Look station (it
+re-renders the book, so it does not live inside Export); the project settings
+page keeps an advanced override.
 
 ---
 

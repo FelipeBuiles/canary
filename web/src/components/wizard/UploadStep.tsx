@@ -86,8 +86,10 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
   const [renderPreset, setRenderPreset] = useState<RenderPreset>("balanced");
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // New tab and integration state
-  const [tab, setTab] = useState<"file" | "library">("file");
+  // Lead with the sample-story library — "try a sample story" is the
+  // zero-friction first success; uploading your own novel is the second
+  // project, not the first.
+  const [tab, setTab] = useState<"file" | "library">("library");
   const [searchQuery, setSearchQuery] = useState("");
   const [pastedUrlOrCode, setPastedUrlOrCode] = useState("");
   const [selectedStory, setSelectedStory] = useState<any | null>(null);
@@ -159,17 +161,6 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
         <div className="mt-6 flex border-b border-ink-black/20">
           <button
             type="button"
-            onClick={() => setTab("file")}
-            className={`px-4 py-2 font-display text-xs font-bold uppercase tracking-wider transition-colors ${
-              tab === "file"
-                ? "border-b-[3px] border-hero-red text-ink-black"
-                : "text-ink-black/40 hover:text-ink-black/70"
-            }`}
-          >
-            {t("UPLOAD FILE")}
-          </button>
-          <button
-            type="button"
             onClick={() => setTab("library")}
             className={`px-4 py-2 font-display text-xs font-bold uppercase tracking-wider transition-colors ${
               tab === "library"
@@ -178,6 +169,17 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
             }`}
           >
             {t("SHORT STORY LIBRARY")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("file")}
+            className={`px-4 py-2 font-display text-xs font-bold uppercase tracking-wider transition-colors ${
+              tab === "file"
+                ? "border-b-[3px] border-hero-red text-ink-black"
+                : "text-ink-black/40 hover:text-ink-black/70"
+            }`}
+          >
+            {t("UPLOAD FILE")}
           </button>
         </div>
 
@@ -339,6 +341,14 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                             <div className="font-meta text-[10px] text-ink-black/60 uppercase">
                               {story.words.toLocaleString()} {t("Word count")}
                             </div>
+                            <div className="mt-0.5 font-meta text-[10px] text-ink-black/45">
+                              {formatCreditRange(estimateProjectCredits({
+                                fileSizeBytes: story.words * 6,
+                                renderPreset: devMode ? "fast_draft" : renderPreset,
+                                devMode,
+                                maxPanelsPerScene: presetPanelsPerScene,
+                              }))} credits
+                            </div>
                             {story.rating && (
                               <div className="mt-0.5 text-narrator-gold flex items-center justify-end gap-0.5">
                                 {"★".repeat(story.rating)}
@@ -398,23 +408,6 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
             </p>
           </div>
 
-          {/* Dev mode toggle */}
-          <label className="flex items-center gap-3 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={devMode}
-              onChange={(e) => setDevMode(e.target.checked)}
-              className="h-4 w-4 accent-hero-red"
-            />
-            <div>
-              <div className="font-display text-[0.9rem] font-bold uppercase leading-none tracking-[-0.02em] text-ink-black">
-                Dev mode
-              </div>
-              <div className="mt-0.5 font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/55">
-                Process only the first scene for rapid iteration. Forces fast quality preset.
-              </div>
-            </div>
-          </label>
         </div>
 
         {/* Advanced config disclosure */}
@@ -471,12 +464,12 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
               <div className="text-right font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/55">
                 {estimate ? (
                   <>
-                    {devMode ? "1 scene (dev)" : `~${sceneCount} scenes`}
+                    {devMode ? "1 scene (dev)" : `about ${sceneCount} scene${sceneCount !== 1 ? "s" : ""}`}
                     <br />
-                    {presetPanelsPerScene} {t("panels/scene")}
+                    about {presetPanelsPerScene} {t("panels per scene")}
                   </>
                 ) : (
-                  <>{presetPanelsPerScene} {t("panels/scene")}</>
+                  <>about {presetPanelsPerScene} {t("panels per scene")}</>
                 )}
               </div>
             </div>
@@ -485,6 +478,23 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
 
         {showAdvanced && (
           <div className="mt-4 space-y-3 border-t-[2px] border-ink-black pt-4">
+            {/* Dev mode — an expert escape hatch, kept out of the happy path. */}
+            <label className="flex items-center gap-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={devMode}
+                onChange={(e) => setDevMode(e.target.checked)}
+                className="h-4 w-4 accent-hero-red"
+              />
+              <div>
+                <div className="font-display text-[0.9rem] font-bold uppercase leading-none tracking-[-0.02em] text-ink-black">
+                  Dev mode
+                </div>
+                <div className="mt-0.5 font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/55">
+                  Process only the first scene for rapid iteration. Forces fast quality preset.
+                </div>
+              </div>
+            </label>
             <div>
               <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
                 {t("GENERATION QUALITY")}
@@ -532,7 +542,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
               variant="outline"
               onClick={onCancel}
             >
-              {t("BACK")}
+              {t("CANCEL")}
             </Button>
           )}
         </div>

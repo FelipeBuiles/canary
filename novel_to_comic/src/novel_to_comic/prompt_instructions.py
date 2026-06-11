@@ -343,6 +343,7 @@ async def apply_asset_instruction(
         generation_job_payload,
     )
     from novel_to_comic.server.panel_acceptance import clear_panel_acceptance
+    from novel_to_comic.server.panel_flags import clear_panel_flag
 
     pkey = f"{user_id}:{project_id}"  # aligned with project_key format in pipeline.py
     instruction = validate_user_instruction(instruction)
@@ -443,6 +444,7 @@ async def apply_asset_instruction(
 
         prompt_path.write_text(updated_prompt.model_dump_json(indent=2))
         clear_panel_acceptance(project_dir, scene_id, panel_number)
+        clear_panel_flag(project_dir, scene_id, panel_number)
         
         log_path = project_dir / "draw" / "instruction_log.json"
         log_data = []

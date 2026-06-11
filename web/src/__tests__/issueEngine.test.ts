@@ -102,28 +102,28 @@ describe("contrastRatio", () => {
   });
 });
 
-// ── unaccepted_panel ─────────────────────────────────────────────────────────
+// ── flagged_panel ────────────────────────────────────────────────────────────
 
-describe("unaccepted_panel", () => {
-  it("flags panel when accepted=false and status=done", () => {
+describe("flagged_panel", () => {
+  it("surfaces panels the user flagged for re-work", () => {
     const pages = [makePage()];
-    const images = [makeImageStatus({ accepted: false })];
+    const images = [makeImageStatus({ flagged: true })];
     const issues = detectIssues(pages, images);
-    expect(issues.filter((i) => i.type === "unaccepted_panel")).toHaveLength(1);
+    expect(issues.filter((i) => i.type === "flagged_panel")).toHaveLength(1);
   });
 
-  it("does not flag when accepted=true", () => {
+  it("does not surface unflagged panels (accepted by default)", () => {
     const pages = [makePage()];
-    const images = [makeImageStatus({ accepted: true })];
+    const images = [makeImageStatus({ flagged: false })];
     const issues = detectIssues(pages, images);
-    expect(issues.filter((i) => i.type === "unaccepted_panel")).toHaveLength(0);
+    expect(issues.filter((i) => i.type === "flagged_panel")).toHaveLength(0);
   });
 
-  it("does not flag when status is not done", () => {
+  it("does not surface when status is not done", () => {
     const pages = [makePage()];
-    const images = [makeImageStatus({ accepted: false, status: "running" })];
+    const images = [makeImageStatus({ flagged: true, status: "running" })];
     const issues = detectIssues(pages, images);
-    expect(issues.filter((i) => i.type === "unaccepted_panel")).toHaveLength(0);
+    expect(issues.filter((i) => i.type === "flagged_panel")).toHaveLength(0);
   });
 });
 

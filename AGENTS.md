@@ -40,8 +40,39 @@ the contract. Use `STAGE_NAMES` in `state.py` and `REGISTRY` in `stages/__init__
 as the source of truth. Two stages currently share the `s5` prefix, and `direct`
 is implemented in `s6_storyboard.py`.
 
-**Current focus:** style selection/gating, draw-stage image review and targeted
-regeneration, compose editor/export, and credits/billing accuracy.
+**UI stations (frontend grouping only):** The web UI presents the 9 backend
+stages as 4 user-facing "stations" (implemented June 2026). Backend stages stay
+discrete — stations are presentation/navigation only, never backend
+consolidation. Plan + status: `docs/proposals/four-station-redesign.md`.
+
+| Station | Backend stages | User gate |
+|---|---|---|
+| 01 Story | `extract` | approve extract |
+| 02 Look | `style`, `cast` | select style; approve cast (kicks the auto chain) |
+| 03 Panels | `adapt`→`plan`→`storyboard`→`direct` (auto, inspectable), `draw` | run draw; flag-by-exception review; approve draw |
+| 04 Book | `compose` | export |
+
+Auto stages never block: they run as a chain after cast approval and surface
+as read-only inspect drawers (placeholder shown if not yet generated). Stage
+order is unchanged — do not reorder stages for the UI.
+
+Key invariants of the implemented redesign:
+
+- `CHECKPOINT_STAGES = {extract, style, cast, draw}` — `direct` is no longer a
+  checkpoint. Prompt editing happens per-panel in the panel detail modal.
+- Panel review is flag-by-exception: panels are accepted by default; flags
+  (`draw/panel_flags.json`) never block compose. "Accept all — Continue"
+  approves the `draw` stage. Per-panel acceptance endpoints still exist but
+  the UI no longer surfaces them.
+- Every gated room ends in the shared `ApprovalBar` (fixed bottom of content);
+  the sidebar has no CTA. Credits phrasing is `~N credits` everywhere — never
+  "Est. N" or "reserves up to N".
+- Dev Content defaults OFF. Machine vocabulary (entity IDs, hashes, model
+  names) and the old adapt/shot-plan/direct rooms are gated behind it.
+
+**Current focus:** post-redesign hardening (issues auto-fixes, es/fr copy for
+the new EN strings), draw-stage image review quality, and credits/billing
+accuracy.
 
 ## Must-Know Rules
 
@@ -49,7 +80,8 @@ regeneration, compose editor/export, and credits/billing accuracy.
   are HTTP API endpoints on the web server. The CLI only has `init` and `serve`.
   See `novel_to_comic/src/novel_to_comic/server/routers/pipeline.py` for all pipeline endpoints.
 - Do not collapse stages or add cross-stage logic. Each stage reads its inputs
-  from disk and writes its own outputs.
+  from disk and writes its own outputs. The 4-station UI grouping lives entirely
+  in the frontend (`web/src/lib/uiStages` and SideNav) — never in stage code.
 - Preserve `visual_anchor` text verbatim. Never paraphrase anchors in prompts.
 - Text belongs in Stage 9 (`compose`) post-processing, never inside generated
   panel images.
@@ -97,6 +129,11 @@ All paths are repo-relative.
 - Assembly renderer: `novel_to_comic/src/novel_to_comic/assembly/html_renderer.py`
 - Comic editing models: `novel_to_comic/src/novel_to_comic/models/comic_page.py`
 - Panel acceptance state: `novel_to_comic/src/novel_to_comic/server/panel_acceptance.py`
+- Panel re-work flags (review-by-exception): `novel_to_comic/src/novel_to_comic/server/panel_flags.py`
+- Primary cast ref selection: `read_primary_refs`/`write_primary_refs` in `novel_to_comic/src/novel_to_comic/artifacts.py`
+- Station ↔ stage mapping (frontend): `web/src/lib/stations.ts`
+- Standing approval bar: `web/src/components/composites/ApprovalBar.tsx`
+- Auto-step inspect drawers: `web/src/components/InspectDrawer.tsx`
 - Shared FastAPI deps (project resolution): `novel_to_comic/src/novel_to_comic/server/deps.py`
 - Credit-guaranteed generation jobs: `novel_to_comic/src/novel_to_comic/server/credited_job.py`
 - Credit reservation/debit: `novel_to_comic/src/novel_to_comic/server/credits.py`

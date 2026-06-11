@@ -3,7 +3,7 @@ import type { ComicPage, ImageStatus } from "../types/api";
 export type IssueSeverity = "error" | "warning";
 
 export type IssueType =
-  | "unaccepted_panel"
+  | "flagged_panel"
   | "missing_image"
   | "empty_bubble_text"
   | "bubble_outside_safe_area"
@@ -67,18 +67,20 @@ export function contrastRatio(hex1: string, hex2: string): number {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-function checkUnacceptedPanels(pages: ComicPage[], imageMap: Map<string, ImageStatus>): ComposeIssue[] {
+function checkFlaggedPanels(pages: ComicPage[], imageMap: Map<string, ImageStatus>): ComposeIssue[] {
+  // Review-by-exception: panels are good by default. Only panels the user
+  // explicitly flagged for re-work surface here.
   const issues: ComposeIssue[] = [];
   for (const page of pages) {
     for (const panel of page.panels) {
       const key = `${panel.scene_id}-${panel.panel_number}`;
       const status = imageMap.get(key);
-      if (status && status.status === "done" && status.accepted === false) {
+      if (status && status.status === "done" && status.flagged === true) {
         issues.push({
-          id: issueId("unaccepted_panel", page.page_number, panel.id),
-          type: "unaccepted_panel",
+          id: issueId("flagged_panel", page.page_number, panel.id),
+          type: "flagged_panel",
           severity: "warning",
-          message: `Panel ${panel.panel_number} image has not been accepted.`,
+          message: `Panel ${panel.panel_number} is flagged for re-work.`,
           pageNumber: page.page_number,
           panelId: panel.id,
         });
@@ -215,7 +217,7 @@ export function detectIssues(pages: ComicPage[], images: ImageStatus[]): Compose
 
   const all = [
     ...checkMissingImages(pages, imageMap),
-    ...checkUnacceptedPanels(pages, imageMap),
+    ...checkFlaggedPanels(pages, imageMap),
     ...checkEmptyBubbleText(pages),
     ...checkBubbleOutsideSafeArea(pages),
     ...checkTextTooLong(pages),

@@ -38,22 +38,16 @@ export function CostBreakdown({ cost }: CostBreakdownProps) {
       {estimate_credits > 0 && (
         <div className="flex items-baseline gap-3">
           <span className="font-meta text-[0.58rem] tracking-[0.16em] uppercase text-ink-black/60">
-            Estimated
+            Cost
           </span>
           <span className="font-display text-[1.1rem] font-bold">
-            {estimate_credits.toLocaleString()} credits
+            ~{estimate_credits.toLocaleString()} credits
           </span>
-        </div>
-      )}
-
-      {hasReservation && (
-        <div className="mt-1.5 flex items-baseline gap-3">
-          <span className="font-meta text-[0.58rem] tracking-[0.16em] uppercase text-ink-black/60">
-            Reserved
-          </span>
-          <span className="font-display text-[1.0rem]">
-            {reserved_credits!.toLocaleString()} credits
-          </span>
+          {hasReservation && (
+            <span className="font-meta text-[0.62rem] tracking-[0.06em] text-ink-black/45">
+              won&apos;t exceed {reserved_credits!.toLocaleString()}
+            </span>
+          )}
         </div>
       )}
 

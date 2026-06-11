@@ -57,10 +57,13 @@ class TestPipelineState:
         ]
 
     def test_checkpoint_stages(self):
-        assert CHECKPOINT_STAGES == {"extract", "style", "cast", "direct", "draw"}
-        # plan, storyboard, compose are NOT checkpoints
+        assert CHECKPOINT_STAGES == {"extract", "style", "cast", "draw"}
+        # adapt, plan, storyboard, direct auto-run (4-station model);
+        # compose is NOT a checkpoint either
+        assert "adapt" not in CHECKPOINT_STAGES
         assert "plan" not in CHECKPOINT_STAGES
         assert "storyboard" not in CHECKPOINT_STAGES
+        assert "direct" not in CHECKPOINT_STAGES
         assert "compose" not in CHECKPOINT_STAGES
 
 

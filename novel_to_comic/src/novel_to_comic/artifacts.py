@@ -310,6 +310,31 @@ def character_ref_instructions_path(project_dir: Path, char_id: str) -> Path:
     return project_dir / "refs" / char_id / "instructions.jsonl"
 
 
+CHARACTER_REF_POSES = ("front", "three_quarter", "profile", "gesture")
+
+
+def primary_refs_path(project_dir: Path) -> Path:
+    return project_dir / "refs" / "primary_refs.json"
+
+
+def read_primary_refs(project_dir: Path) -> dict[str, str]:
+    """User-chosen canonical pose crop per character, e.g. {"char_001": "front"}."""
+    path = primary_refs_path(project_dir)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+        return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def write_primary_refs(project_dir: Path, data: dict[str, str]) -> None:
+    path = primary_refs_path(project_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
 # ---------------------------------------------------------------------------
 # Location plates (plates)
 # ---------------------------------------------------------------------------

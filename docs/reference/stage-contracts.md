@@ -21,9 +21,11 @@ it reads its inputs from disk and writes its own outputs. Never add cross-stage 
 | 8 | Draw | `draw` | Image alias through LiteLLM | Yes |
 | 9 | Compose | `compose` | None (deterministic) | No |
 
-**Checkpoint stages** (`CHECKPOINT_STAGES = {"extract", "style", "cast", "direct", "draw"}`):
+**Checkpoint stages** (`CHECKPOINT_STAGES = {"extract", "style", "cast", "draw"}`):
 pipeline pauses at `awaiting_review` after the stage completes. Advance with
-`POST /api/projects/{project}/approve/{stage}` via the API.
+`POST /api/projects/{project}/approve/{stage}` via the API. `direct` is not a
+checkpoint: after cast approval the `adapt → plan → storyboard → direct` chain
+runs unattended (see `STAGE_AUTO_CHAIN` in `server/routers/pipeline.py`).
 
 ---
 

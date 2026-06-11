@@ -639,6 +639,7 @@ export interface ImageStatus {
   image_available?: boolean;
   image_revision?: string | null;
   accepted?: boolean;
+  flagged?: boolean;
   version_count?: number;
   failure_classification?: "provider_blocked" | "generation_error" | string | null;
   failure_message?: string | null;

@@ -1,0 +1,140 @@
+import type { ProjectStatus, StageName, StageStatus } from "../types/api";
+
+/**
+ * The 4 user-facing stations — a UI grouping over the 9 backend stages.
+ * Backend stages stay discrete (see AGENTS.md); this module is the only
+ * place that knows how they roll up into stations.
+ *
+ * Gated substeps are user decisions and navigate to a room. Auto substeps
+ * run without approval and open a read-only inspect drawer instead — they
+ * never block progression.
+ */
+
+export type StationKey = "story" | "look" | "panels" | "book";
+export type DrawerKind = "script" | "shot-plan" | "prompts";
+
+export interface StationSubstep {
+  key: string;
+  label: string;
+  kind: "gated" | "auto";
+  backendStages: StageName[];
+  /** Gated substeps navigate to this project-relative route. */
+  route?: string;
+  /** Auto substeps open this inspect drawer. */
+  drawer?: DrawerKind;
+}
+
+export interface Station {
+  key: StationKey;
+  number: string;
+  label: string;
+  /** Routes whose room belongs to this station (for active detection). */
+  routes: string[];
+  primaryRoute: string;
+  substeps: StationSubstep[];
+}
+
+export const STATIONS: Station[] = [
+  {
+    key: "story",
+    number: "01",
+    label: "Story",
+    routes: ["extract", "adapt"],
+    primaryRoute: "extract",
+    substeps: [
+      { key: "extract", label: "What PULP found", kind: "gated", backendStages: ["extract"], route: "extract" },
+      { key: "script", label: "Script", kind: "auto", backendStages: ["adapt"], drawer: "script" },
+    ],
+  },
+  {
+    key: "look",
+    number: "02",
+    label: "Look",
+    routes: ["styles", "cast"],
+    primaryRoute: "styles",
+    substeps: [
+      { key: "style", label: "Art style", kind: "gated", backendStages: ["style"], route: "styles" },
+      { key: "cast", label: "Characters & places", kind: "gated", backendStages: ["cast"], route: "cast" },
+    ],
+  },
+  {
+    key: "panels",
+    number: "03",
+    label: "Panels",
+    routes: ["draw", "shot-plan", "direct"],
+    primaryRoute: "draw",
+    substeps: [
+      { key: "shot-plan", label: "Shot plan", kind: "auto", backendStages: ["plan", "storyboard"], drawer: "shot-plan" },
+      { key: "prompts", label: "Prompts", kind: "auto", backendStages: ["direct"], drawer: "prompts" },
+      { key: "draw", label: "Draw panels", kind: "gated", backendStages: ["draw"], route: "draw" },
+    ],
+  },
+  {
+    key: "book",
+    number: "04",
+    label: "Book",
+    routes: ["compose"],
+    primaryRoute: "compose",
+    substeps: [
+      { key: "compose", label: "Pages & export", kind: "gated", backendStages: ["compose"], route: "compose" },
+    ],
+  },
+];
+
+export type StationState = "done" | "review" | "running" | "failed" | "wait";
+
+function stageStatusOf(status: ProjectStatus | undefined, stage: StageName): StageStatus {
+  return status?.stages[stage]?.status ?? "pending";
+}
+
+function stageFailed(status: ProjectStatus | undefined, stage: StageName): boolean {
+  const info = status?.stages[stage];
+  if (!info) return false;
+  return info.status === "failed" || (info.status === "complete" && (info.items_failed?.length ?? 0) > 0);
+}
+
+/**
+ * Station state derives from its substeps. Auto substeps can mark a station
+ * running or failed (work is happening / broke), but never keep it from
+ * being "done" — only the user's gated decisions do that.
+ */
+export function getStationState(station: Station, status: ProjectStatus | undefined): StationState {
+  const allStages = station.substeps.flatMap((s) => s.backendStages);
+  const gatedStages = station.substeps.filter((s) => s.kind === "gated").flatMap((s) => s.backendStages);
+
+  if (allStages.some((s) => stageFailed(status, s))) return "failed";
+  if (allStages.some((s) => stageStatusOf(status, s) === "running")) return "running";
+  if (gatedStages.some((s) => stageStatusOf(status, s) === "awaiting_review")) return "review";
+  if (gatedStages.every((s) => stageStatusOf(status, s) === "complete")) return "done";
+  return "wait";
+}
+
+export type SubstepState = "done" | "current" | "pending";
+
+export function getSubstepState(substep: StationSubstep, status: ProjectStatus | undefined): SubstepState {
+  const statuses = substep.backendStages.map((s) => stageStatusOf(status, s));
+  if (statuses.every((s) => s === "complete")) return "done";
+  if (statuses.some((s) => s === "running" || s === "awaiting_review" || s === "failed")) return "current";
+  return "pending";
+}
+
+export function stationForRoute(route: string): Station | undefined {
+  return STATIONS.find((station) => station.routes.includes(route));
+}
+
+/**
+ * Where to land for a given pipeline position. Auto stages resolve to the
+ * room where the user watches/acts on their outcome, never to the demoted
+ * machine-artifact rooms.
+ */
+export const BACKEND_STAGE_TO_STATION_ROUTE: Record<StageName, string> = {
+  extract: "extract",
+  style: "styles",
+  cast: "cast",
+  adapt: "draw",
+  plan: "draw",
+  storyboard: "draw",
+  direct: "draw",
+  draw: "draw",
+  compose: "compose",
+};

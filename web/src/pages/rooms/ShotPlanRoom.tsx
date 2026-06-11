@@ -88,7 +88,7 @@ function ShotPlanActionButton({ project }: { project: string }) {
   const estimateCredits = estimate?.estimate_credits;
   const label =
     estimateCredits && estimateCredits > 0
-      ? `${action.label} · Est. ${estimateCredits.toLocaleString()} credits`
+      ? `${action.label} · ~${estimateCredits.toLocaleString()} credits`
       : action.label;
 
   function run(stage: "plan" | "storyboard", rerun = false) {

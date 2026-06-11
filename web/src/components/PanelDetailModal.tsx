@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import type { ImagePrompt } from "../types/api";
 import { PromptLineageCard } from "./PromptLineageCard";
 import { Button } from "./ui/Button";
@@ -6,7 +6,6 @@ import { Icon } from "./ui/Icon";
 import { LazyImage } from "./ui/LazyImage";
 import { ConfirmDrawer } from "./composites";
 import {
-  useAcceptPanel,
   usePanelImageVersions,
   useProjectConfig,
   usePromptsForScene,
@@ -14,7 +13,7 @@ import {
   useRegenPanel,
   useRegenPanelWithInstruction,
   useRestorePanelImageVersion,
-  useUnacceptPanel,
+  useSetPanelFlag,
   useUpdatePrompt,
 } from "../api/queries";
 import { redactDevText, useShowDevContent } from "../lib/devContent";
@@ -22,7 +21,7 @@ import { useRegenStore } from "../store/regen";
 import { maybeShowInsufficientCredits } from "../store/insufficientCredits";
 import { useQueryClient } from "@tanstack/react-query";
 
-type TabId = "review" | "edit" | "prompt";
+type TabId = "panel" | "prompt";
 const DEFAULT_IMAGE_MODEL_ALIASES = ["image-fast", "image-balanced", "image-quality"];
 
 interface PanelDetailModalProps {
@@ -39,9 +38,9 @@ interface PanelDetailModalProps {
   failureClassification?: string | null;
   errorMessage?: string | null;
   errorDetail?: string | null;
-  accepted?: boolean;
+  flagged?: boolean;
   versionCount?: number;
-  onNextUnaccepted?: (() => void) | null;
+  onNextFlagged?: (() => void) | null;
 }
 
 function fileUrl(project: string, relativePath: string) {
@@ -80,23 +79,24 @@ function ImageModelAliasSelector({
   );
 }
 
-// ── Tab: Review ───────────────────────────────────────────────────────────────
+// ── Tab: Panel ────────────────────────────────────────────────────────────────
+// The review surface: flag for re-work, re-roll, or describe a fix.
 
-function ReviewTabContent({
+function PanelTabContent({
   project,
   sceneId,
   panelNumber,
   imageUrl,
   status,
-  accepted,
+  flagged,
   versionCount,
-  onNextUnaccepted,
-  onNext,
-  onClose,
+  prompt,
+  onNextFlagged,
   regenCredits,
   creditsLabel,
   onQuickRedo,
-  onGoToEdit,
+  onInstructionRegen,
+  isInstructionBusy,
   onDisplayUrlChange,
 }: {
   project: string;
@@ -104,27 +104,28 @@ function ReviewTabContent({
   panelNumber: number;
   imageUrl: string;
   status?: string;
-  accepted: boolean;
+  flagged: boolean;
   versionCount: number;
-  onNextUnaccepted?: (() => void) | null;
-  onNext: (() => void) | null;
-  onClose: () => void;
+  prompt: ImagePrompt;
+  onNextFlagged?: (() => void) | null;
   regenCredits: number | null;
   creditsLabel: string;
   onQuickRedo: () => void;
-  onGoToEdit: () => void;
+  onInstructionRegen: (instruction: string) => void;
+  isInstructionBusy: boolean;
   onDisplayUrlChange: (url: string) => void;
 }) {
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const [confirmRedo, setConfirmRedo] = useState(false);
+  const [instruction, setInstruction] = useState("");
+  const [instructionError, setInstructionError] = useState<string | null>(null);
+  const [confirmInstruction, setConfirmInstruction] = useState(false);
 
   const shouldLoadVersions = versionCount > 0;
   const { data: versionData } = usePanelImageVersions(project, sceneId, panelNumber, shouldLoadVersions);
   const restoreVersion = useRestorePanelImageVersion();
-  const acceptPanel = useAcceptPanel();
-  const unacceptPanel = useUnacceptPanel();
+  const setPanelFlag = useSetPanelFlag();
   const bust = useRegenStore((s) => s.bust);
-  const queryClient = useQueryClient();
 
   const versionEntries = versionData?.versions ?? [];
   const hasVersionHistory = !!versionData?.has_history && versionEntries.some((v) => !v.current);
@@ -144,24 +145,8 @@ function ReviewTabContent({
     ? `v${currentVersion.version} / ${versionEntries.length}`
     : null;
 
-  const handleAccept = () => {
-    acceptPanel.mutate(
-      { project, sceneId, panelNumber },
-      {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: ["project", project, "images"] });
-        },
-      },
-    );
-  };
-
-  const handleUndoAccept = () => {
-    unacceptPanel.mutate({ project, sceneId, panelNumber });
-  };
-
-  const handleNextPanel = () => {
-    const next = onNextUnaccepted ?? onNext;
-    if (next) next(); else onClose();
+  const handleToggleFlag = () => {
+    setPanelFlag.mutate({ project, sceneId, panelNumber, flagged: !flagged });
   };
 
   const handleRestoreVersion = () => {
@@ -178,10 +163,88 @@ function ReviewTabContent({
     );
   };
 
+  const handleInstructionRegen = () => {
+    const trimmed = instruction.trim();
+    if (!trimmed) { setInstructionError("Describe what to change first."); return; }
+    setInstructionError(null);
+    onInstructionRegen(trimmed);
+    setInstruction("");
+    setConfirmInstruction(false);
+  };
+
+  const costObj = regenCredits != null
+    ? { estimate_credits: regenCredits, reserved_credits: null as null, reservation_multiplier: 1, confidence: "low_variance" as const }
+    : undefined;
+
+  // Shot summary: one human line about this panel.
+  const shotSummary = [prompt.composition, prompt.setting?.split("\n")[0]]
+    .map((part) => part?.trim())
+    .filter(Boolean)
+    .join(" — ");
+
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto p-4">
+      {shotSummary && (
+        <p className="text-[0.82rem] leading-6 text-ink-black/70">{shotSummary}</p>
+      )}
+
+      <div className="space-y-2">
+        <Button
+          className={`w-full ${flagged ? "" : "!bg-bristol !bg-none !text-hero-red !shadow-paper-sm border-hero-red"}`}
+          onClick={handleToggleFlag}
+          disabled={setPanelFlag.isPending || status !== "done"}
+        >
+          {flagged ? "⚑ FLAGGED FOR RE-WORK — UNFLAG" : "⚑ FLAG FOR RE-WORK"}
+        </Button>
+        {onNextFlagged && (
+          <Button variant="outline" className="w-full" onClick={onNextFlagged}>
+            Next flagged ⚑ →
+          </Button>
+        )}
+      </div>
+
+      <div className="border-t-[2px] border-panel-line pt-3">
+        <div className="font-meta text-[0.55rem] tracking-[0.18em] text-ink-black/40 mb-2">FIX THIS PANEL</div>
+        <Button
+          variant="outline"
+          className="w-full"
+          onClick={() => setConfirmRedo(true)}
+          disabled={status !== "done" && status !== "failed"}
+        >
+          ⟳ Re-roll (same prompt) · {creditsLabel}
+        </Button>
+        <div className="mt-3">
+          <label className="mb-1.5 block font-meta text-[0.58rem] tracking-[0.18em] text-ink-black/45">
+            DESCRIBE A FIX
+          </label>
+          <textarea
+            value={instruction}
+            onChange={(e) => { setInstruction(e.target.value); if (instructionError) setInstructionError(null); }}
+            maxLength={500}
+            rows={2}
+            className="w-full resize-none border-[2px] border-ink-black/25 bg-bristol px-3 py-2.5 font-body text-[0.9rem] leading-6 text-ink-black outline-none focus:border-ink-black"
+            placeholder="e.g. Make the office darker, rain on the window…"
+          />
+          {instructionError && (
+            <p className="mt-1 text-sm text-hero-red">{instructionError}</p>
+          )}
+          <Button
+            className="mt-2 w-full"
+            onClick={() => {
+              const trimmed = instruction.trim();
+              if (!trimmed) { setInstructionError("Describe what to change first."); return; }
+              setInstructionError(null);
+              setConfirmInstruction(true);
+            }}
+            disabled={isInstructionBusy || !instruction.trim()}
+          >
+            {isInstructionBusy ? "APPLYING…" : `Regenerate with fix · ${creditsLabel}`}
+          </Button>
+        </div>
+      </div>
+
       {hasVersionHistory && (
-        <div className="border-b-[2px] border-panel-line pb-4">
+        <div className="border-t-[2px] border-panel-line pt-3">
           <div className="mb-2 flex items-center justify-between">
             <div className="font-meta text-[0.58rem] tracking-[0.2em] text-ink-black/45">VERSION HISTORY</div>
             <div className="font-meta text-[0.58rem] text-ink-black/45">{versionLabel}</div>
@@ -214,7 +277,7 @@ function ReviewTabContent({
             })}
             {selectedVersionEntry && !selectedVersionEntry.current && (
               <Button variant="outline" className="ml-1 h-10" onClick={handleRestoreVersion} disabled={restoreVersion.isPending}>
-                {restoreVersion.isPending ? "RESTORING..." : `RESTORE v${selectedVersionEntry.version}`}
+                {restoreVersion.isPending ? "RESTORING…" : `RESTORE v${selectedVersionEntry.version}`}
               </Button>
             )}
           </div>
@@ -230,89 +293,46 @@ function ReviewTabContent({
         </div>
       )}
 
-      <div className="space-y-2">
-        {accepted ? (
-          <>
-            <div className="flex items-center gap-3 bg-archive-sage px-4 py-3 font-meta text-[0.7rem] font-bold uppercase tracking-[0.16em] text-bristol">
-              <Icon name="check" size={14} />
-              Panel Accepted
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={handleUndoAccept} disabled={unacceptPanel.isPending}>
-                ↩ Undo Accept
-              </Button>
-              <Button onClick={handleNextPanel}>Next Panel →</Button>
-            </div>
-          </>
-        ) : (
-          <>
-            <Button
-              className="w-full bg-archive-sage"
-              onClick={handleAccept}
-              disabled={acceptPanel.isPending || status !== "done"}
-            >
-              ✓ ACCEPT PANEL
-            </Button>
-            {onNextUnaccepted && (
-              <Button variant="outline" className="w-full" onClick={onNextUnaccepted}>
-                Next Unaccepted →
-              </Button>
-            )}
-          </>
-        )}
-      </div>
-
-      <div className="border-t-[2px] border-panel-line pt-3">
-        <div className="font-meta text-[0.55rem] tracking-[0.18em] text-ink-black/40 mb-2">QUICK ACTIONS</div>
-        <div className="space-y-2">
-          <Button
-            variant="outline"
-            className="w-full"
-            onClick={onGoToEdit}
-          >
-            FIX &amp; REGENERATE…
-          </Button>
-          <Button
-            variant="outline"
-            className="w-full"
-            onClick={() => setConfirmRedo(true)}
-            disabled={status !== "done" && status !== "failed"}
-          >
-            ↺ Quick Re-Do · {creditsLabel}
-          </Button>
-        </div>
-      </div>
-
       <ConfirmDrawer
         open={confirmRedo}
-        title="Quick Re-Do"
+        title="Re-roll panel"
         body="Regenerate this panel with the same prompt. The current image will be archived."
-        cost={regenCredits != null ? { estimate_credits: regenCredits, reserved_credits: null, reservation_multiplier: 1, confidence: "low_variance" } : undefined}
-        confirmLabel={`Re-Do · ${creditsLabel}`}
+        cost={costObj}
+        confirmLabel={`Re-roll · ${creditsLabel}`}
         onConfirm={() => { setConfirmRedo(false); onQuickRedo(); }}
         onClose={() => setConfirmRedo(false)}
+      />
+      <ConfirmDrawer
+        open={confirmInstruction}
+        title="Regenerate with fix"
+        body={`Regenerate this panel using your fix. Fix: "${instruction.trim()}"`}
+        cost={costObj}
+        confirmLabel={`Regenerate · ${creditsLabel}`}
+        onConfirm={handleInstructionRegen}
+        onClose={() => setConfirmInstruction(false)}
+        busy={isInstructionBusy}
       />
     </div>
   );
 }
 
-// ── Tab: Edit ─────────────────────────────────────────────────────────────────
+// ── Tab: Prompt ───────────────────────────────────────────────────────────────
+// The structured Shot / Characters / Setting / Lighting breakdown — this is
+// where prompt editing lives (it replaced the old Prompt Review stage).
 
-function EditTabContent({
+function PromptTabContent({
   project,
   sceneId,
   panelNumber,
   draft,
   originalPrompt,
   onDraftChange,
+  projectConfig,
+  lastRewrittenPrompt,
   regenCredits,
   creditsLabel,
-  lastRewrittenPrompt,
-  onInstructionRegen,
-  onGenerateFromDraft,
-  starterInstruction,
-  onStarterConsumed,
   imageModelAlias,
+  onGenerateFromDraft,
 }: {
   project: string;
   sceneId: string;
@@ -320,53 +340,32 @@ function EditTabContent({
   draft: ImagePrompt;
   originalPrompt: ImagePrompt | undefined;
   onDraftChange: (patch: Partial<ImagePrompt>) => void;
+  projectConfig: import("../api/config").ProjectConfig | undefined;
+  lastRewrittenPrompt: ImagePrompt | null;
   regenCredits: number | null;
   creditsLabel: string;
-  lastRewrittenPrompt: ImagePrompt | null;
-  onInstructionRegen: (instruction: string) => void;
-  onGenerateFromDraft: () => void;
-  starterInstruction: string | null;
-  onStarterConsumed: () => void;
   imageModelAlias: string | null;
+  onGenerateFromDraft: () => void;
 }) {
-  const [instruction, setInstruction] = useState("");
-  const [instructionError, setInstructionError] = useState<string | null>(null);
-  const instructionTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-
-  useEffect(() => {
-    if (starterInstruction === null) return;
-    setInstruction(starterInstruction);
-    setInstructionError(null);
-    onStarterConsumed();
-    const node = instructionTextareaRef.current;
-    if (node) {
-      node.focus();
-      const end = node.value.length;
-      node.setSelectionRange(end, end);
-    }
-  }, [starterInstruction, onStarterConsumed]);
-  const [confirmInstruction, setConfirmInstruction] = useState(false);
+  const [showRaw, setShowRaw] = useState(false);
   const [confirmGenerate, setConfirmGenerate] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const instructedRegen = useRegenPanelWithInstruction();
+  const [showDevContent] = useShowDevContent();
   const updatePrompt = useUpdatePrompt();
+  const regenPanel = useRegenPanel();
   const begin = useRegenStore((s) => s.begin);
   const attachJob = useRegenStore((s) => s.attachJob);
   const fail = useRegenStore((s) => s.fail);
-  const regenPanel = useRegenPanel();
   const queryClient = useQueryClient();
 
   const hasChanges = originalPrompt ? JSON.stringify(draft) !== JSON.stringify(originalPrompt) : false;
-  const isInstructionBusy = instructedRegen.isPending;
 
-  const handleInstructionRegen = () => {
-    const trimmed = instruction.trim();
-    if (!trimmed) { setInstructionError("Add a short visual instruction first."); return; }
-    setInstructionError(null);
-    onInstructionRegen(trimmed);
-    setInstruction("");
-    setConfirmInstruction(false);
-  };
+  const rawPrompt = (draft.distilled_prompt || draft.full_prompt || "").trim();
+  const style = (projectConfig?.style_template ?? draft.style ?? "").trim();
+  const fullPromptWithStyle = (draft.prompt_version ?? 1) >= 2
+    ? (style ? `${style}\n\n${rawPrompt}` : rawPrompt)
+    : (style ? `${style}\n\n${draft.full_prompt}` : draft.full_prompt);
+  const visibleRaw = showDevContent ? fullPromptWithStyle : redactDevText(fullPromptWithStyle);
 
   const handleGenerateFromDraft = async () => {
     setIsGenerating(true);
@@ -404,164 +403,23 @@ function EditTabContent({
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto p-4">
       {lastRewrittenPrompt && (
-        <details className="border-[2px] border-archive-sage/40 bg-archive-sage/8">
-          <summary className="cursor-pointer px-3 py-2 font-meta text-[0.58rem] tracking-[0.16em] text-archive-sage">
-            REWRITTEN BY LAST REGEN ↓
-          </summary>
-          <div className="px-3 pb-3 pt-1 space-y-1 text-[0.72rem] text-ink-black/70">
-            {lastRewrittenPrompt.setting && (
-              <p><span className="font-semibold">Setting:</span> {lastRewrittenPrompt.setting}</p>
-            )}
-            {lastRewrittenPrompt.composition && (
-              <p><span className="font-semibold">Composition:</span> {lastRewrittenPrompt.composition}</p>
-            )}
-          </div>
-        </details>
-      )}
-
-      <div>
-        <label className="mb-1.5 block font-meta text-[0.58rem] tracking-[0.18em] text-ink-black/45">
-          NATURAL-LANGUAGE INSTRUCTION
-        </label>
-        <textarea
-          ref={instructionTextareaRef}
-          value={instruction}
-          onChange={(e) => { setInstruction(e.target.value); if (instructionError) setInstructionError(null); }}
-          maxLength={500}
-          rows={2}
-          className="w-full resize-none border-[2px] border-ink-black/25 bg-bristol px-3 py-2.5 font-body text-[0.9rem] leading-6 text-ink-black outline-none focus:border-ink-black"
-          placeholder="Describe what to change visually…"
-        />
-        {instructionError && (
-          <p className="mt-1 text-sm text-hero-red">{instructionError}</p>
-        )}
-        <Button
-          className="mt-2 w-full"
-          onClick={() => {
-            const trimmed = instruction.trim();
-            if (!trimmed) { setInstructionError("Add a short visual instruction first."); return; }
-            setInstructionError(null);
-            setConfirmInstruction(true);
-          }}
-          disabled={isInstructionBusy || !instruction.trim()}
-        >
-          {isInstructionBusy ? "APPLYING..." : `APPLY & REGEN · ${creditsLabel}`}
-        </Button>
-      </div>
-
-      <div className="border-t-[2px] border-panel-line pt-3">
-        <PromptLineageCard
-          prompt={draft}
-          onSave={onDraftChange}
-          mode="edit"
-          showAdvanced
-          project={project}
-        />
-        {hasChanges && (
-          <Button className="mt-3 w-full" onClick={() => setConfirmGenerate(true)} disabled={isGenerating}>
-            {isGenerating ? "SAVING..." : `GENERATE FROM EDITS · ${creditsLabel}`}
-          </Button>
-        )}
-      </div>
-
-      <ConfirmDrawer
-        open={confirmInstruction}
-        title="Apply & Regenerate"
-        body={`Regenerate this panel using your instruction. Instruction: "${instruction.trim()}"`}
-        cost={costObj}
-        confirmLabel={`Apply & Regen · ${creditsLabel}`}
-        onConfirm={handleInstructionRegen}
-        onClose={() => setConfirmInstruction(false)}
-        busy={isInstructionBusy}
-      />
-      <ConfirmDrawer
-        open={confirmGenerate}
-        title="Generate from Edits"
-        body="Save your prompt edits and regenerate this panel."
-        cost={costObj}
-        confirmLabel={`Generate · ${creditsLabel}`}
-        onConfirm={handleGenerateFromDraft}
-        onClose={() => setConfirmGenerate(false)}
-        busy={isGenerating}
-      />
-    </div>
-  );
-}
-
-// ── Tab: Prompt ───────────────────────────────────────────────────────────────
-
-function PromptTabContent({
-  prompt,
-  projectConfig,
-  lastRewrittenPrompt,
-}: {
-  prompt: ImagePrompt;
-  projectConfig: import("../api/config").ProjectConfig | undefined;
-  lastRewrittenPrompt: ImagePrompt | null;
-}) {
-  const [showRaw, setShowRaw] = useState(false);
-  const [showDevContent] = useShowDevContent();
-
-  const rawPrompt = (prompt.distilled_prompt || prompt.full_prompt || "").trim();
-  const style = (projectConfig?.style_template ?? prompt.style ?? "").trim();
-  const fullPromptWithStyle = (prompt.prompt_version ?? 1) >= 2
-    ? (style ? `${style}\n\n${rawPrompt}` : rawPrompt)
-    : (style ? `${style}\n\n${prompt.full_prompt}` : prompt.full_prompt);
-  const visibleRaw = showDevContent ? fullPromptWithStyle : redactDevText(fullPromptWithStyle);
-
-  return (
-    <div className="overflow-y-auto p-4 space-y-4">
-      {lastRewrittenPrompt && (
         <div className="border-[2px] border-archive-sage/40 bg-archive-sage/8 px-3 py-2">
           <div className="font-meta text-[0.56rem] tracking-[0.14em] text-archive-sage">UPDATED BY LAST REGEN</div>
         </div>
       )}
 
-      <div className="space-y-3">
-        {prompt.distilled_prompt && (
-          <div>
-            <div className="font-meta text-[0.54rem] tracking-[0.18em] text-ink-black/40 mb-1">DISTILLED PROMPT</div>
-            <p className="text-[0.82rem] leading-6 text-ink-black">
-              {prompt.distilled_prompt}
-            </p>
-          </div>
-        )}
-        {(prompt.composition || (lastRewrittenPrompt?.composition)) && (
-          <div>
-            <div className="font-meta text-[0.54rem] tracking-[0.18em] text-ink-black/40 mb-1">COMPOSITION</div>
-            <p className="text-[0.82rem] leading-6 text-ink-black">
-              {lastRewrittenPrompt?.composition ?? prompt.composition}
-            </p>
-          </div>
-        )}
-        {(prompt.setting || lastRewrittenPrompt?.setting) && (
-          <div>
-            <div className="font-meta text-[0.54rem] tracking-[0.18em] text-ink-black/40 mb-1">SETTING</div>
-            <p className="text-[0.82rem] leading-6 text-ink-black">
-              {lastRewrittenPrompt?.setting ?? prompt.setting}
-            </p>
-          </div>
-        )}
-        {prompt.subjects && prompt.subjects.length > 0 && (
-          <div>
-            <div className="font-meta text-[0.54rem] tracking-[0.18em] text-ink-black/40 mb-1">SUBJECTS</div>
-            <ul className="space-y-1">
-              {prompt.subjects.map((s, i) => (
-                <li key={i} className="text-[0.82rem] leading-6 text-ink-black">
-                  <span className="font-semibold">{s.name}</span>
-                  {s.action && <span className="text-ink-black/60"> — {s.action}</span>}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-        {prompt.style && (
-          <div>
-            <div className="font-meta text-[0.54rem] tracking-[0.18em] text-ink-black/40 mb-1">STYLE</div>
-            <p className="text-[0.82rem] leading-6 text-ink-black">{prompt.style}</p>
-          </div>
-        )}
-      </div>
+      <PromptLineageCard
+        prompt={draft}
+        onSave={onDraftChange}
+        mode="edit"
+        showAdvanced
+        project={project}
+      />
+      {hasChanges && (
+        <Button className="w-full" onClick={() => setConfirmGenerate(true)} disabled={isGenerating}>
+          {isGenerating ? "SAVING…" : `Generate from edits · ${creditsLabel}`}
+        </Button>
+      )}
 
       <div className="border-t-[2px] border-panel-line pt-3">
         <button
@@ -577,6 +435,17 @@ function PromptTabContent({
           </pre>
         )}
       </div>
+
+      <ConfirmDrawer
+        open={confirmGenerate}
+        title="Generate from edits"
+        body="Save your prompt edits and regenerate this panel."
+        cost={costObj}
+        confirmLabel={`Generate · ${creditsLabel}`}
+        onConfirm={handleGenerateFromDraft}
+        onClose={() => setConfirmGenerate(false)}
+        busy={isGenerating}
+      />
     </div>
   );
 }
@@ -584,8 +453,7 @@ function PromptTabContent({
 // ── PanelDetailModal ──────────────────────────────────────────────────────────
 
 const TABS: Array<{ id: TabId; label: string }> = [
-  { id: "review", label: "Review" },
-  { id: "edit", label: "Edit" },
+  { id: "panel", label: "Panel" },
   { id: "prompt", label: "Prompt" },
 ];
 
@@ -603,16 +471,16 @@ export function PanelDetailModal({
   failureClassification,
   errorMessage,
   errorDetail,
-  accepted = false,
+  flagged = false,
   versionCount = 0,
-  onNextUnaccepted,
+  onNextFlagged,
 }: PanelDetailModalProps) {
-  const [activeTab, setActiveTab] = useState<TabId>("review");
-  const [editStarterInstruction, setEditStarterInstruction] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<TabId>("panel");
   const [draft, setDraft] = useState<ImagePrompt | null>(null);
   const [lastRewrittenPrompt, setLastRewrittenPrompt] = useState<ImagePrompt | null>(null);
   const [activeDisplayUrl, setActiveDisplayUrl] = useState<string>(imageUrl);
   const [imageModelAlias, setImageModelAlias] = useState("");
+  const [showDevContent] = useShowDevContent();
 
   useEffect(() => {
     setActiveDisplayUrl(imageUrl);
@@ -628,7 +496,7 @@ export function PanelDetailModal({
   const selectedImageModelAlias = imageModelAlias || null;
   const { data: regenEstimate } = useRegenEstimate(project, sceneId, panelNumber, selectedImageModelAlias, isOpen);
   const regenCredits: number | null = regenEstimate?.estimate_credits ?? null;
-  const creditsLabel = regenCredits !== null ? `Est. ${regenCredits.toLocaleString()} credits` : "…";
+  const creditsLabel = regenCredits !== null ? `~${regenCredits.toLocaleString()} credits` : "…";
   const regenPanel = useRegenPanel();
   const instructedRegen = useRegenPanelWithInstruction();
 
@@ -638,9 +506,9 @@ export function PanelDetailModal({
 
   useEffect(() => {
     setLastRewrittenPrompt(null);
-    setActiveTab(versionCount > 0 ? "review" : "review");
+    setActiveTab("panel");
     setImageModelAlias("");
-  }, [sceneId, panelNumber, versionCount]);
+  }, [sceneId, panelNumber]);
 
   useEffect(() => {
     if (isOpen) {
@@ -668,16 +536,8 @@ export function PanelDetailModal({
   const failureTitle = failureClassification === "provider_blocked" ? "PROVIDER BLOCKED" : "GENERATION FAILED";
   const failureMessage = errorMessage
     || (failureClassification === "provider_blocked"
-      ? "The image provider blocked this panel. Edit the prompt and regenerate before composing."
-      : "Image generation failed. Check Metadata for the raw model response, edit the prompt if needed.");
-  const failureStarter = failureClassification === "provider_blocked"
-    ? "The safety filter blocked this image — soften or remove the element it flagged (violence, gore, nudity, etc.) while keeping the panel's intent."
-    : "";
-
-  const handleFixWithPrompt = () => {
-    setEditStarterInstruction(failureStarter);
-    setActiveTab("edit");
-  };
+      ? "The image provider blocked this panel. Describe a fix and regenerate before composing."
+      : "Image generation failed. Re-roll, or describe a fix and regenerate.");
 
   const handleQuickRedo = async () => {
     const key = `${sceneId}-${panelNumber}`;
@@ -761,9 +621,14 @@ export function PanelDetailModal({
               <span className="w-9" />
             )}
             <div>
-              <div className="font-meta text-[0.46rem] tracking-[0.16em] text-ink-black/45">{sceneId.toUpperCase()}</div>
+              <div className="font-meta text-[0.46rem] tracking-[0.16em] text-ink-black/45">{sceneId.replace(/_/g, " ").toUpperCase()}</div>
               <div className="font-display text-[1.25rem] font-bold tracking-[-0.04em]">
                 PANEL {String(panelNumber).padStart(2, "0")}
+                {flagged && (
+                  <span className="ml-3 inline-flex translate-y-[-2px] items-center bg-hero-red px-2 py-0.5 font-meta text-[0.5rem] tracking-[0.14em] text-bristol">
+                    ⚑ RE-WORK
+                  </span>
+                )}
               </div>
             </div>
             {onNext ? (
@@ -772,6 +637,14 @@ export function PanelDetailModal({
               </button>
             ) : (
               <span className="w-9" />
+            )}
+            {onNextFlagged && (
+              <button
+                onClick={onNextFlagged}
+                className="ml-1 font-meta text-[0.56rem] tracking-[0.12em] text-hero-red transition-colors hover:underline"
+              >
+                NEXT FLAGGED ⚑
+              </button>
             )}
           </div>
           <button onClick={onClose} className="p-2 text-ink-black/50 hover:text-hero-red transition-colors">
@@ -804,14 +677,7 @@ export function PanelDetailModal({
                       onClick={handleQuickRedo}
                       className="border-[2px] border-hero-red bg-bristol px-3 py-1.5 font-meta text-[0.58rem] tracking-[0.14em] text-hero-red transition-colors hover:bg-hero-red hover:text-bristol"
                     >
-                      QUICK RE-DO · {creditsLabel}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleFixWithPrompt}
-                      className="border-[2px] border-ink-black bg-ink-black px-3 py-1.5 font-meta text-[0.58rem] tracking-[0.14em] text-bristol transition-colors hover:bg-ink-black/85"
-                    >
-                      FIX WITH PROMPT →
+                      ⟳ RE-ROLL · {creditsLabel}
                     </button>
                   </div>
                 </div>
@@ -835,11 +701,13 @@ export function PanelDetailModal({
 
           {/* Right: tabs */}
           <div className="flex min-h-0 flex-col">
-            <ImageModelAliasSelector
-              aliases={projectConfig?.image_model_aliases}
-              value={imageModelAlias}
-              onChange={setImageModelAlias}
-            />
+            {showDevContent && (
+              <ImageModelAliasSelector
+                aliases={projectConfig?.image_model_aliases}
+                value={imageModelAlias}
+                onChange={setImageModelAlias}
+              />
+            )}
             {/* Tab bar */}
             <div className="flex border-b-[2px] border-ink-black/15 overflow-x-auto shrink-0">
               {TABS.map(({ id, label }) => (
@@ -860,51 +728,41 @@ export function PanelDetailModal({
 
             {/* Tab content */}
             <div className="min-h-0 flex-1 overflow-hidden">
-              {activeTab === "review" && (
-                <ReviewTabContent
+              {activeTab === "panel" && (
+                <PanelTabContent
                   project={project}
                   sceneId={sceneId}
                   panelNumber={panelNumber}
                   imageUrl={imageUrl}
                   status={status}
-                  accepted={accepted}
+                  flagged={flagged}
                   versionCount={versionCount}
-                  onNextUnaccepted={onNextUnaccepted}
-                  onNext={onNext}
-                  onClose={onClose}
+                  prompt={draft}
+                  onNextFlagged={onNextFlagged}
                   regenCredits={regenCredits}
                   creditsLabel={creditsLabel}
                   onQuickRedo={handleQuickRedo}
-                  onGoToEdit={() => setActiveTab("edit")}
+                  onInstructionRegen={handleInstructionRegen}
+                  isInstructionBusy={instructedRegen.isPending}
                   onDisplayUrlChange={setActiveDisplayUrl}
                 />
               )}
-              {activeTab === "edit" && (
-                <EditTabContent
+              {activeTab === "prompt" && (
+                <PromptTabContent
                   project={project}
                   sceneId={sceneId}
                   panelNumber={panelNumber}
                   draft={draft}
                   originalPrompt={originalPrompt}
                   onDraftChange={handleDraftChange}
-                  regenCredits={regenCredits}
-                  creditsLabel={creditsLabel}
-                  lastRewrittenPrompt={lastRewrittenPrompt}
-                  onInstructionRegen={handleInstructionRegen}
-                  onGenerateFromDraft={onClose}
-                  starterInstruction={editStarterInstruction}
-                  onStarterConsumed={() => setEditStarterInstruction(null)}
-                  imageModelAlias={selectedImageModelAlias}
-                />
-              )}
-              {activeTab === "prompt" && (
-                <PromptTabContent
-                  prompt={draft}
                   projectConfig={projectConfig}
                   lastRewrittenPrompt={lastRewrittenPrompt}
+                  regenCredits={regenCredits}
+                  creditsLabel={creditsLabel}
+                  imageModelAlias={selectedImageModelAlias}
+                  onGenerateFromDraft={onClose}
                 />
               )}
-
             </div>
           </div>
         </div>

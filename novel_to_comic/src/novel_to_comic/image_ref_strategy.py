@@ -87,15 +87,21 @@ def _shot_view_preference(composition: str | None) -> list[str]:
     return _SHOT_VIEW_PREFERENCES["default"]
 
 
-def _select_subject_crops(subjects: list[RefImage], composition: str | None) -> list[RefImage]:
+def _select_subject_crops(
+    subjects: list[RefImage],
+    composition: str | None,
+    primary_poses: dict[str, str] | None = None,
+) -> list[RefImage]:
     """Pick ONE pose crop per character, matched to the panel's framing.
 
     Sending several crops of the same character (or a 2x2 sheet grid) makes
     ref-driven models blend poses and occasionally leak the grid layout into
     the panel. One clean, framing-appropriate crop per character keeps identity
-    strong without those artifacts.
+    strong without those artifacts. A user-chosen primary pose (keyed by the
+    character directory name) overrides the framing preference.
     """
     preference = {stem: i for i, stem in enumerate(_shot_view_preference(composition))}
+    primary = primary_poses or {}
     order: list[Path] = []
     by_character: dict[Path, list[RefImage]] = {}
     for ref in subjects:
@@ -104,13 +110,19 @@ def _select_subject_crops(subjects: list[RefImage], composition: str | None) -> 
             by_character[character_dir] = []
             order.append(character_dir)
         by_character[character_dir].append(ref)
-    return [
-        min(by_character[d], key=lambda r: (preference.get(r.path.stem, 99), str(r.path)))
-        for d in order
-    ]
+
+    def crop_rank(character_dir: Path, ref: RefImage) -> tuple[int, int, str]:
+        is_primary = 0 if primary.get(character_dir.name) == ref.path.stem else 1
+        return (is_primary, preference.get(ref.path.stem, 99), str(ref.path))
+
+    return [min(by_character[d], key=lambda r: crop_rank(d, r)) for d in order]
 
 
-def _reve_refs(refs: list[RefImage], composition: str | None = None) -> list[RefImage]:
+def _reve_refs(
+    refs: list[RefImage],
+    composition: str | None = None,
+    primary_poses: dict[str, str] | None = None,
+) -> list[RefImage]:
     """Select up to 4 refs for Reve, identity first.
 
     Character identity is the thing reference images are best at and the
@@ -118,7 +130,9 @@ def _reve_refs(refs: list[RefImage], composition: str | None = None) -> list[Ref
     character (up to 3), chosen by the panel's framing. Remaining slots fill
     with continuity, prop, style, then location refs.
     """
-    subjects = _select_subject_crops([r for r in refs if r.role == "subject"], composition)[:3]
+    subjects = _select_subject_crops(
+        [r for r in refs if r.role == "subject"], composition, primary_poses
+    )[:3]
     continuities = [r for r in refs if r.role == "continuity"]
     props = [r for r in refs if r.role == "prop"]
     styles = [r for r in refs if r.role == "style"]
@@ -164,16 +178,20 @@ class RefStrategy:
     # ------------------------------------------------------------------
 
     def select_panel_refs(
-        self, refs: list[RefImage], composition: str | None = None
+        self,
+        refs: list[RefImage],
+        composition: str | None = None,
+        primary_poses: dict[str, str] | None = None,
     ) -> list[RefImage]:
         """Reduce candidate refs to the set this model route should receive.
 
         Input and output follow the canonical upload order from
         ``order_refs_for_upload`` — the returned list IS the upload order
-        assumed by ``render_generation_prompt``.
+        assumed by ``render_generation_prompt``. ``primary_poses`` carries the
+        user-chosen canonical crop per character (char dir name → pose stem).
         """
         if self._reve:
-            return _reve_refs(refs, composition)
+            return _reve_refs(refs, composition, primary_poses)
         if self._gpt_image_2:
             selected_paths = set(
                 _gpt_image_2_subject_refs(
