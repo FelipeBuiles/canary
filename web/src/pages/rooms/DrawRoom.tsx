@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import {
+  useApproveStage,
   useGenerationJobs,
   useImages,
   useProjectStatus,
   usePromptSummaries,
   usePromptsForScene,
+  useSetPanelFlag,
   useStageEstimate,
   useProjectConfig,
   useUpdateProjectConfig,
@@ -15,11 +17,8 @@ import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { useRunAction } from "../../hooks/useRunAction";
 import { PanelCard } from "../../components/PanelCard";
 import { PanelDetailModal } from "../../components/PanelDetailModal";
-import { Surface } from "../../components/ui/Surface";
 import {
-  Toolbar,
-  RoomTabs,
-  type RoomTab,
+  ApprovalBar,
   RoomHeader,
   RoomShell,
   StagePlaceholder,
@@ -34,14 +33,8 @@ import {
   useRecentFinishes,
 } from "../../store/drawProgress";
 import {
-  PanelProgressDonut,
   StaleStripe,
-  LiveProgressStrip,
-  InFlightCard,
-  RecentFinishesCard,
-  BySceneCard,
   isAllInkedTransition,
-  type SceneProgress,
 } from "../../components/draw/LiveCockpit";
 import type { ImageStatus, StageCostEstimate } from "../../types/api";
 
@@ -75,14 +68,59 @@ function QualityPresetField({ project }: { project: string }) {
   );
 }
 
-// ── DrawRoom ──────────────────────────────────────────────────────────────────
+// ── Status strip: ONE progress representation — a sentence and a thin bar ────
 
-const FILTER_TABS: Array<{ key: PanelFilterBucket | "all"; label: string }> = [
-  { key: "all", label: "ALL PANELS" },
-  { key: "generated", label: "GENERATED" },
-  { key: "pending", label: "PENDING" },
-  { key: "failed", label: "FAILED" },
-];
+function StatusStrip({
+  running,
+  itemsDone,
+  itemsTotal,
+  generated,
+  total,
+  flagged,
+  failed,
+  allInked,
+}: {
+  running: boolean;
+  itemsDone: number;
+  itemsTotal: number;
+  generated: number;
+  total: number;
+  flagged: number;
+  failed: number;
+  allInked: boolean;
+}) {
+  const pct = running
+    ? (itemsTotal > 0 ? Math.round((itemsDone / itemsTotal) * 100) : 0)
+    : (total > 0 ? Math.round((generated / total) * 100) : 0);
+  const sentence = running
+    ? `Drawing panel ${Math.min(itemsDone + 1, itemsTotal)}/${itemsTotal}…`
+    : [
+        `${generated}/${total} generated`,
+        flagged > 0 ? `${flagged} flagged by you` : null,
+        failed > 0 ? `${failed} failed` : null,
+      ].filter(Boolean).join(" · ");
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-3">
+        <span className="font-body text-[0.9rem] font-bold text-ink-black">{sentence}</span>
+        {allInked && (
+          <span className="animate-comic-pop inline-flex border-[2px] border-ink-black bg-narrator-gold px-2.5 py-1 font-meta text-[0.56rem] tracking-[0.18em] text-ink-black shadow-ink-sm">
+            ALL PANELS INKED
+          </span>
+        )}
+      </div>
+      <div className="h-[3px] w-full bg-ink-black/10">
+        <div
+          className={`h-full transition-[width] duration-300 ${running ? "bg-narrator-gold" : "bg-archive-sage"}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ── DrawRoom ──────────────────────────────────────────────────────────────────
 
 function panelImageUrl(project: string, img: Pick<ImageStatus, "scene_id" | "panel_number" | "image_revision">, bust?: number) {
   const baseUrl = `/api/projects/${encodeURIComponent(project)}/files/draw/${img.scene_id}/panel_${String(img.panel_number).padStart(3, "0")}.png`;
@@ -92,6 +130,7 @@ function panelImageUrl(project: string, img: Pick<ImageStatus, "scene_id" | "pan
 
 export function DrawRoom() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { isCompact, toggle } = useHeaderMode();
   const projectRegens = useActiveRegens(id ?? "");
   const bustTimestamps = useRegenStore((s) => s.bustTimestamps);
@@ -100,14 +139,14 @@ export function DrawRoom() {
   const complete = useRegenStore((s) => s.complete);
   const fail = useRegenStore((s) => s.fail);
 
-  const [statusFilter, setStatusFilter] = useState<PanelFilterBucket | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<PanelFilterBucket>("all");
   const [sceneFilter, setSceneFilter] = useState<string | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">(() => {
     try { return (localStorage.getItem("drawRoom.viewMode") as "grid" | "list") ?? "grid"; } catch { return "grid"; }
   });
   const [selectedPanel, setSelectedPanel] = useState<{ sceneId: string; panelNumber: number } | null>(null);
-  const [confirmAction, setConfirmAction] = useState<"generate_all" | "retry_failed" | null>(null);
+  const [confirmAction, setConfirmAction] = useState<"draw_all" | "retry_failed" | null>(null);
   const [retryFailedActive, setRetryFailedActive] = useState(false);
 
   const regeningKeys = Object.keys(projectRegens);
@@ -118,8 +157,6 @@ export function DrawRoom() {
   const regenModes = new Map(
     regeningKeys.map((key) => [key, projectRegens[key]?.status ?? "queued"] as const),
   );
-  const runningRegenCount = Object.values(projectRegens).filter((r) => r.status === "running").length;
-  const queuedRegenCount = Object.values(projectRegens).filter((r) => r.status === "queued").length;
 
   const { data: status } = useProjectStatus(id);
   const { data: images, isLoading } = useImages(
@@ -141,7 +178,6 @@ export function DrawRoom() {
     hydrateDrawProgress(id, drawStage);
   }, [id, drawStage, hydrateDrawProgress]);
 
-  // Subscriptions to drawProgress for live-cockpit + per-panel state.
   const inFlightSet = useInFlightSet(id ?? "");
   const recentFinishes = useRecentFinishes(id ?? "");
 
@@ -176,7 +212,10 @@ export function DrawRoom() {
 
   const { handleRun, isPending: isPipelineRunning } = useRunAction();
   const { mutate: resetStale, isPending: isResetting } = useResetStale();
+  const approveStage = useApproveStage();
+  const setPanelFlag = useSetPanelFlag();
   const { data: drawEstimate } = useStageEstimate(id, "draw");
+  const { data: composeEstimate } = useStageEstimate(id, "compose");
 
   const generateStage = drawStage;
   const failedItems = generateStage?.items_failed ?? [];
@@ -284,7 +323,7 @@ export function DrawRoom() {
       const image = imageByKey.get(regen.key);
       if (image?.status === "done") { complete(id, regen.key); continue; }
       if (image?.status === "failed") { fail(id, regen.key, "Generation failed"); continue; }
-      fail(id, regen.key, "Generation job tracking was lost (server restart/interruption). Use Quick Re-Do.");
+      fail(id, regen.key, "Generation job tracking was lost (server restart/interruption). Re-roll the panel.");
     }
   }, [generationJobs, imageByKey, projectRegens, id, complete, fail]);
 
@@ -301,15 +340,16 @@ export function DrawRoom() {
   };
 
   const panelCounts = useMemo(() => {
-    let generated = 0, pending = 0, failed = 0;
+    let generated = 0, pending = 0, failed = 0, flagged = 0;
     for (const img of allDisplayImages) {
       const state = getPanelDisplayState(img, panelInputsFor(img));
       const bucket = getPanelFilterBucket(state);
       if (bucket === "generated") generated++;
+      else if (bucket === "flagged") { flagged++; generated++; }
       else if (bucket === "pending") pending++;
       else if (bucket === "failed") failed++;
     }
-    return { generated, pending, failed, total: allDisplayImages.length };
+    return { generated, pending, failed, flagged, total: allDisplayImages.length };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allDisplayImages, regenModes, isDrawRunning, retryFailedActive, inFlightSet]);
 
@@ -323,21 +363,6 @@ export function DrawRoom() {
     }
     prevGeneratedRef.current = panelCounts.generated;
   }, [panelCounts]);
-
-  const sceneProgress: SceneProgress[] = useMemo(() => {
-    const acc = new Map<string, SceneProgress>();
-    for (const img of allDisplayImages) {
-      const sp = acc.get(img.scene_id) ?? { sceneId: img.scene_id, generated: 0, failed: 0, total: 0 };
-      sp.total++;
-      const state = getPanelDisplayState(img, panelInputsFor(img));
-      const bucket = getPanelFilterBucket(state);
-      if (bucket === "generated") sp.generated++;
-      else if (bucket === "failed") sp.failed++;
-      acc.set(img.scene_id, sp);
-    }
-    return Array.from(acc.values()).sort((a, b) => a.sceneId.localeCompare(b.sceneId));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allDisplayImages, regenModes, isDrawRunning, retryFailedActive, inFlightSet]);
 
   const displayImages = useMemo(() => {
     let filtered = allDisplayImages;
@@ -359,6 +384,11 @@ export function DrawRoom() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allDisplayImages, statusFilter, searchQuery, regenModes, isDrawRunning, retryFailedActive, inFlightSet]);
 
+  const flaggedImages = useMemo(
+    () => allDisplayImages.filter((img) => img.status === "done" && img.flagged),
+    [allDisplayImages],
+  );
+
   const scenes = useMemo(
     () => [...new Set([...images?.map((img) => img.scene_id) ?? [], ...(promptSummaries?.map((s) => s.scene_id) ?? [])])],
     [images, promptSummaries],
@@ -372,14 +402,20 @@ export function DrawRoom() {
     }
   }, [retryFailedActive, drawStageStatus, isPipelineRunning]);
 
+  // Reset the flagged filter if it empties out (e.g. last flag removed).
+  useEffect(() => {
+    if (statusFilter === "flagged" && panelCounts.flagged === 0) setStatusFilter("all");
+    if (statusFilter === "failed" && panelCounts.failed === 0) setStatusFilter("all");
+  }, [statusFilter, panelCounts.flagged, panelCounts.failed]);
+
   function handleSetViewMode(mode: "grid" | "list") {
     setViewMode(mode);
     try { localStorage.setItem("drawRoom.viewMode", mode); } catch { /* localStorage may be unavailable */ }
   }
 
-  function handleGenerateAllPending() {
+  function handleDrawAll() {
     if (!id) return;
-    handleRun(id, "draw", { actionLabel: "Run DRAW" });
+    handleRun(id, "draw", { actionLabel: "Draw all panels" });
     setConfirmAction(null);
   }
 
@@ -404,6 +440,38 @@ export function DrawRoom() {
     handleRun(id, "draw", { actionLabel: "Continue DRAW" });
   }
 
+  function handleToggleFlag(img: ImageStatus) {
+    if (!id) return;
+    setPanelFlag.mutate({
+      project: id,
+      sceneId: img.scene_id,
+      panelNumber: img.panel_number,
+      flagged: !img.flagged,
+    });
+  }
+
+  function handleAcceptAllContinue() {
+    if (!id) return;
+    if (drawStageStatus === "awaiting_review") {
+      approveStage.mutate(
+        { project: id, stage: "draw" },
+        {
+          onSuccess: () => {
+            handleRun(id, "compose", { actionLabel: "Assemble book" });
+            navigate(`/project/${id}/compose`);
+          },
+        },
+      );
+    } else {
+      navigate(`/project/${id}/compose`);
+    }
+  }
+
+  function handleReviewFlagged() {
+    const first = flaggedImages[0];
+    if (first) setSelectedPanel({ sceneId: first.scene_id, panelNumber: first.panel_number });
+  }
+
   if (isLoading || ((!images?.length && !promptSummaries?.length) && drawStageStatus !== "pending")) {
     return (
       <RoomShell
@@ -417,7 +485,10 @@ export function DrawRoom() {
     );
   }
 
-  if ((!images?.length && !promptSummaries?.length && regeningKeys.length === 0) || !id) {
+  // Pre-generation: a short explainer and one way forward.
+  const nothingGeneratedYet =
+    (!images?.length && regeningKeys.length === 0) || !id;
+  if (nothingGeneratedYet) {
     return (
       <RoomShell>
         <StagePlaceholder
@@ -426,6 +497,29 @@ export function DrawRoom() {
           itemsDone={generateStage?.items_done}
           itemsTotal={generateStage?.items_total}
         />
+        {id && !isDrawRunning && (
+          <ApprovalBar
+            next="PULP draws every planned panel in your selected style"
+            estimateCredits={drawEstimate?.estimate_credits}
+            primaryLabel="▶ DRAW ALL PANELS"
+            onPrimary={() => setConfirmAction("draw_all")}
+            primaryDisabled={isPipelineRunning}
+            busy={isPipelineRunning}
+          />
+        )}
+        {id && (
+          <ConfirmDrawer
+            open={confirmAction === "draw_all"}
+            title="Draw all panels"
+            body="PULP draws every planned panel in your selected style. You review by exception afterwards — flag anything that needs re-work."
+            cost={drawEstimate as StageCostEstimate | undefined}
+            extraBody={<QualityPresetField project={id} />}
+            confirmLabel="Draw all panels"
+            onConfirm={handleDrawAll}
+            onClose={() => setConfirmAction(null)}
+            busy={isPipelineRunning}
+          />
+        )}
       </RoomShell>
     );
   }
@@ -440,11 +534,11 @@ export function DrawRoom() {
   const nextPanel = selectedPanelIndex >= 0 && selectedPanelIndex < displayImages.length - 1
     ? displayImages[selectedPanelIndex + 1]
     : null;
-  const nextUnacceptedPanel = selectedPanelIndex >= 0
+  const nextFlaggedPanel = selectedPanelIndex >= 0
     ? displayImages
         .slice(selectedPanelIndex + 1)
-        .find((img) => img.status === "done" && !img.accepted)
-      ?? displayImages.find((img, idx) => idx !== selectedPanelIndex && img.status === "done" && !img.accepted)
+        .find((img) => img.status === "done" && img.flagged)
+      ?? displayImages.find((img, idx) => idx !== selectedPanelIndex && img.status === "done" && img.flagged)
     : null;
   const selectedPanelKey = selectedPanel ? `${selectedPanel.sceneId}-${selectedPanel.panelNumber}` : null;
   const selectedPanelBust = selectedPanelKey && id ? bustTimestamps[`${id}/${selectedPanelKey}`] : undefined;
@@ -452,41 +546,135 @@ export function DrawRoom() {
     ? panelImageUrl(id!, selectedPanelImage, selectedPanelBust)
     : "";
 
-  const costForConfirm: StageCostEstimate | undefined = drawEstimate as StageCostEstimate | undefined;
+  // Filter chips: All always; other chips only when their count is non-zero.
+  const filterChips: Array<{ key: PanelFilterBucket; label: string; count: number }> = [
+    { key: "all", label: "ALL", count: panelCounts.total },
+    ...(panelCounts.flagged > 0 ? [{ key: "flagged" as const, label: "⚑ FLAGGED", count: panelCounts.flagged }] : []),
+    ...(panelCounts.failed > 0 ? [{ key: "failed" as const, label: "FAILED", count: panelCounts.failed }] : []),
+    ...(panelCounts.pending > 0 && panelCounts.pending < panelCounts.total
+      ? [{ key: "pending" as const, label: "PENDING", count: panelCounts.pending }] : []),
+  ];
+
+  const drawApproved = drawStageStatus === "complete";
+  const allDrawn = panelCounts.pending === 0 && panelCounts.failed === 0 && panelCounts.total > 0;
+
+  const approvalBar = isDrawRunning ? (
+    <ApprovalBar
+      next="PULP is drawing your panels"
+      note={`Drawing panel ${Math.min((generateStage?.items_done ?? 0) + 1, generateStage?.items_total ?? 0)}/${generateStage?.items_total ?? 0}…`}
+      primaryLabel="DRAWING…"
+      onPrimary={() => {}}
+      primaryDisabled
+    />
+  ) : panelCounts.pending > 0 ? (
+    <ApprovalBar
+      next={panelCounts.generated > 0
+        ? `PULP draws the ${panelCounts.pending} remaining panel${panelCounts.pending === 1 ? "" : "s"}`
+        : "PULP draws every planned panel in your selected style"}
+      estimateCredits={drawEstimate?.estimate_credits}
+      primaryLabel="▶ DRAW ALL PANELS"
+      onPrimary={() => setConfirmAction("draw_all")}
+      primaryDisabled={isPipelineRunning}
+      busy={isPipelineRunning}
+      secondary={panelCounts.failed > 0 ? (
+        <button
+          type="button"
+          onClick={() => setConfirmAction("retry_failed")}
+          className="font-meta text-[0.62rem] tracking-[0.14em] text-hero-red transition-colors hover:underline"
+        >
+          ↺ RETRY {panelCounts.failed} FAILED
+        </button>
+      ) : undefined}
+    />
+  ) : panelCounts.failed > 0 ? (
+    <ApprovalBar
+      next={`${panelCounts.failed} panel${panelCounts.failed === 1 ? "" : "s"} failed — retry before assembling the book`}
+      estimateCredits={drawEstimate?.estimate_credits}
+      primaryLabel={`↺ RETRY ${panelCounts.failed} FAILED`}
+      onPrimary={() => setConfirmAction("retry_failed")}
+      primaryDisabled={isPipelineRunning}
+      busy={isPipelineRunning}
+    />
+  ) : (
+    <ApprovalBar
+      next={drawApproved ? "Letter and export your book" : "PULP assembles your comic-book pages"}
+      estimateCredits={drawApproved ? null : composeEstimate?.estimate_credits}
+      primaryLabel={drawApproved ? "GO TO BOOK →" : "ACCEPT ALL — CONTINUE →"}
+      onPrimary={handleAcceptAllContinue}
+      primaryDisabled={approveStage.isPending || isPipelineRunning}
+      busy={approveStage.isPending}
+      secondary={panelCounts.flagged > 0 ? (
+        <button
+          type="button"
+          onClick={handleReviewFlagged}
+          className="font-meta text-[0.62rem] tracking-[0.14em] text-hero-red transition-colors hover:underline"
+        >
+          ⚑ REVIEW {panelCounts.flagged} FLAGGED
+        </button>
+      ) : undefined}
+    />
+  );
 
   return (
     <RoomShell>
       <RoomHeader
-        kicker="GENERATE PANELS"
+        kicker="PANELS"
         compact={isCompact}
         onToggle={toggle}
-        title="GENERATE PANELS"
-        lead="Review and generate final illustrated panels for your story."
+        title="DRAW PANELS"
+        lead="Panels are accepted by default — flag the ones that need re-work."
       />
       <StyleCallout project={id} />
 
-      <Toolbar>
-        <RoomTabs
-          ariaLabel="Panel status filter"
-          tabs={FILTER_TABS.map(({ key, label }): RoomTab => ({
-            key,
-            label,
-            count:
-              key === "all" ? panelCounts.total
-              : key === "generated" ? panelCounts.generated
-              : key === "pending" ? panelCounts.pending
-              : panelCounts.failed,
-            active: statusFilter === key,
-            onClick: () => setStatusFilter(key),
-          }))}
+      {isStageStuck && (
+        <StaleStripe
+          lastProgressAt={lastProgressAt}
+          onContinue={handleContinueStale}
+          onReset={handleResetStale}
+          continuing={isPipelineRunning}
+          resetting={isResetting}
         />
+      )}
 
-        <div className="flex flex-1 items-center gap-2 min-w-[16rem]">
+      <StatusStrip
+        running={!!isDrawRunning}
+        itemsDone={generateStage?.items_done ?? 0}
+        itemsTotal={generateStage?.items_total ?? panelCounts.total}
+        generated={panelCounts.generated}
+        total={panelCounts.total}
+        flagged={panelCounts.flagged}
+        failed={panelCounts.failed}
+        allInked={allInked}
+      />
+
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-1.5" role="tablist" aria-label="Panel filter">
+          {filterChips.map(({ key, label, count }) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={statusFilter === key}
+              onClick={() => setStatusFilter(key)}
+              className={`inline-flex h-8 items-center gap-1.5 border-[2px] px-3 font-meta text-[0.6rem] tracking-[0.12em] transition-colors ${
+                statusFilter === key
+                  ? key === "flagged" || key === "failed"
+                    ? "border-hero-red bg-hero-red text-bristol"
+                    : "border-ink-black bg-ink-black text-bristol"
+                  : "border-ink-black/20 bg-bristol text-ink-black/60 hover:text-ink-black"
+              }`}
+            >
+              {label} · {count}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex flex-1 items-center justify-end gap-2 min-w-[14rem]">
           {scenes.length > 1 && (
             <select
               value={sceneFilter}
               onChange={(e) => setSceneFilter(e.target.value)}
-              className="border-[2px] border-ink-black/20 bg-bristol px-3 py-2 font-body text-[0.78rem] text-ink-black focus:border-ink-black focus:outline-none"
+              className="border-[2px] border-ink-black/20 bg-bristol px-3 py-1.5 font-body text-[0.78rem] text-ink-black focus:border-ink-black focus:outline-none"
             >
               <option value="all">All scenes</option>
               {scenes.map((s) => (
@@ -499,7 +687,7 @@ export function DrawRoom() {
             placeholder="Search panels…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="flex-1 border-[2px] border-ink-black/20 bg-bristol px-3 py-2 font-body text-[0.78rem] text-ink-black placeholder:text-ink-black/35 focus:border-ink-black focus:outline-none"
+            className="w-40 border-[2px] border-ink-black/20 bg-bristol px-3 py-1.5 font-body text-[0.78rem] text-ink-black placeholder:text-ink-black/35 focus:border-ink-black focus:outline-none"
           />
           <div className="flex border-[2px] border-ink-black/20 overflow-hidden">
             {(["grid", "list"] as const).map((mode) => (
@@ -507,7 +695,7 @@ export function DrawRoom() {
                 key={mode}
                 type="button"
                 onClick={() => handleSetViewMode(mode)}
-                className={`px-3 py-2 font-meta text-[0.6rem] tracking-[0.12em] transition-colors ${
+                className={`px-3 py-1.5 font-meta text-[0.6rem] tracking-[0.12em] transition-colors ${
                   viewMode === mode ? "bg-ink-black text-bristol" : "bg-bristol text-ink-black/50 hover:text-ink-black"
                 }`}
               >
@@ -516,161 +704,104 @@ export function DrawRoom() {
             ))}
           </div>
         </div>
-      </Toolbar>
+      </div>
 
-      <section className="grid items-start gap-8 xl:grid-cols-[minmax(0,1fr)_320px]">
-        {viewMode === "grid" ? (
-          <div className="grid gap-x-5 gap-y-7 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-            {displayImages.map((img) => {
-              const key = `${img.scene_id}-${img.panel_number}`;
-              const bust = id ? bustTimestamps[`${id}/${key}`] : undefined;
-              const imageUrl = panelImageUrl(id!, img, bust);
-              const regenError = id ? errors[`${id}/${key}`] : undefined;
-              const prompts = promptDescByKey.get(key);
-              const flash = finishFlashByKey.get(key) ?? null;
-              const inputs = panelInputsFor(img);
-              return (
-                <PanelCard
-                  key={key}
-                  sceneId={img.scene_id}
-                  panelNumber={img.panel_number}
-                  status={img.status}
-                  imageUrl={imageUrl}
-                  imageAvailable={img.image_available ?? img.status === "done"}
-                  failureClassification={img.failure_classification}
-                  errorMessage={img.failure_message ?? undefined}
-                  accepted={!!img.accepted}
-                  versionCount={img.version_count}
-                  regenMode={inputs.regenMode}
-                  regenError={regenError}
-                  inFlight={inputs.inFlight}
-                  queuedInRun={inputs.queuedInRun}
-                  isRetryFailedRunning={retryFailedActive}
-                  finishFlashAt={flash?.at ?? null}
-                  finishFlashStatus={flash?.status ?? null}
-                  title={prompts?.title}
-                  description={prompts?.description}
-                  onPanelClick={() => setSelectedPanel({ sceneId: img.scene_id, panelNumber: img.panel_number })}
-                />
-              );
-            })}
-          </div>
-        ) : (
-          <div className="divide-y-[2px] divide-ink-black/10 border-[2px] border-ink-black/10">
-            {displayImages.map((img) => {
-              const key = `${img.scene_id}-${img.panel_number}`;
-              const bust = id ? bustTimestamps[`${id}/${key}`] : undefined;
-              const imageUrl = panelImageUrl(id!, img, bust);
-              const state = getPanelDisplayState(img, panelInputsFor(img));
-              const prompts = promptDescByKey.get(key);
-              return (
-                <div
-                  key={key}
-                  className="flex cursor-pointer items-center gap-4 px-4 py-3 hover:bg-bristol/60 transition-colors"
-                  onClick={() => setSelectedPanel({ sceneId: img.scene_id, panelNumber: img.panel_number })}
-                >
-                  <div className="h-14 w-14 shrink-0 overflow-hidden bg-ink-black/10">
-                    {img.image_available && (
-                      <img src={imageUrl} alt={`Panel ${img.panel_number}`} className="h-full w-full object-cover" />
-                    )}
+      <p className="font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/40">
+        CLICK A PANEL TO OPEN IT · ⚑ TO FLAG FOR RE-WORK
+      </p>
+
+      {viewMode === "grid" ? (
+        <div className="grid gap-x-5 gap-y-7 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+          {displayImages.map((img) => {
+            const key = `${img.scene_id}-${img.panel_number}`;
+            const bust = id ? bustTimestamps[`${id}/${key}`] : undefined;
+            const imageUrl = panelImageUrl(id!, img, bust);
+            const regenError = id ? errors[`${id}/${key}`] : undefined;
+            const prompts = promptDescByKey.get(key);
+            const flash = finishFlashByKey.get(key) ?? null;
+            const inputs = panelInputsFor(img);
+            return (
+              <PanelCard
+                key={key}
+                sceneId={img.scene_id}
+                panelNumber={img.panel_number}
+                status={img.status}
+                imageUrl={imageUrl}
+                imageAvailable={img.image_available ?? img.status === "done"}
+                failureClassification={img.failure_classification}
+                errorMessage={img.failure_message ?? undefined}
+                flagged={!!img.flagged}
+                onToggleFlag={() => handleToggleFlag(img)}
+                versionCount={img.version_count}
+                regenMode={inputs.regenMode}
+                regenError={regenError}
+                inFlight={inputs.inFlight}
+                queuedInRun={inputs.queuedInRun}
+                isRetryFailedRunning={retryFailedActive}
+                finishFlashAt={flash?.at ?? null}
+                finishFlashStatus={flash?.status ?? null}
+                title={prompts?.title}
+                description={prompts?.description}
+                onPanelClick={() => setSelectedPanel({ sceneId: img.scene_id, panelNumber: img.panel_number })}
+              />
+            );
+          })}
+        </div>
+      ) : (
+        <div className="divide-y-[2px] divide-ink-black/10 border-[2px] border-ink-black/10">
+          {displayImages.map((img) => {
+            const key = `${img.scene_id}-${img.panel_number}`;
+            const bust = id ? bustTimestamps[`${id}/${key}`] : undefined;
+            const imageUrl = panelImageUrl(id!, img, bust);
+            const state = getPanelDisplayState(img, panelInputsFor(img));
+            const prompts = promptDescByKey.get(key);
+            return (
+              <div
+                key={key}
+                className="flex cursor-pointer items-center gap-4 px-4 py-3 hover:bg-bristol/60 transition-colors"
+                onClick={() => setSelectedPanel({ sceneId: img.scene_id, panelNumber: img.panel_number })}
+              >
+                <div className="h-14 w-14 shrink-0 overflow-hidden bg-ink-black/10">
+                  {img.image_available && (
+                    <img src={imageUrl} alt={`Panel ${img.panel_number}`} className="h-full w-full object-cover" />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="font-meta text-[0.52rem] tracking-[0.14em] text-ink-black/40">
+                    {img.scene_id.replace(/_/g, " ").toUpperCase()} · PANEL {String(img.panel_number).padStart(2, "0")}
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="font-meta text-[0.52rem] tracking-[0.14em] text-ink-black/40">
-                      {img.scene_id.replace(/_/g, " ").toUpperCase()} · PANEL {String(img.panel_number).padStart(2, "0")}
-                    </div>
-                    <div className="truncate font-body text-[0.82rem] font-semibold text-ink-black">
-                      {prompts?.title ?? `Panel ${String(img.panel_number).padStart(2, "0")}`}
-                    </div>
+                  <div className="truncate font-body text-[0.82rem] font-semibold text-ink-black">
+                    {prompts?.title ?? `Panel ${String(img.panel_number).padStart(2, "0")}`}
                   </div>
+                </div>
+                {img.status === "done" && (
+                  <button
+                    type="button"
+                    aria-pressed={!!img.flagged}
+                    title={img.flagged ? "Unflag" : "Flag for re-work"}
+                    className={`shrink-0 inline-flex h-6 items-center px-1.5 font-meta text-[0.66rem] transition-colors ${
+                      img.flagged ? "bg-hero-red text-bristol" : "text-ink-black/30 hover:text-hero-red"
+                    }`}
+                    onClick={(e) => { e.stopPropagation(); handleToggleFlag(img); }}
+                  >
+                    ⚑
+                  </button>
+                )}
+                {(state === "failed" || state === "generating" || state === "queued" || state === "pending") && (
                   <span className={`shrink-0 inline-flex h-5 items-center px-2 font-meta text-[0.52rem] tracking-[0.1em] ${
-                    state === "accepted" ? "bg-archive-sage text-bristol"
-                    : state === "generated" || state === "regenerated" ? "bg-archive-sage/50 text-ink-black"
-                    : state === "failed" ? "bg-hero-red text-bristol"
+                    state === "failed" ? "bg-hero-red text-bristol"
                     : state === "generating" ? "bg-narrator-gold text-ink-black animate-pulse"
                     : state === "queued" ? "bg-narrator-gold/30 text-ink-black"
                     : "bg-ink-black/15 text-ink-black"
                   }`}>
                     {state.toUpperCase()}
                   </span>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        <aside className="xl:sticky xl:top-4 xl:self-start space-y-5">
-          {/* Panel progress card — donut + (when running) progress bar / ETA */}
-          <Surface border="soft" shadow="none" padding="md">
-            {isStageStuck && (
-              <StaleStripe
-                lastProgressAt={lastProgressAt}
-                onContinue={handleContinueStale}
-                onReset={handleResetStale}
-                continuing={isPipelineRunning}
-                resetting={isResetting}
-              />
-            )}
-            <div className="mb-4 font-meta text-[0.58rem] tracking-[0.24em] text-ink-black/40">
-              PANEL PROGRESS
-            </div>
-            <div className={allInked ? "animate-comic-pop" : undefined}>
-              <PanelProgressDonut
-                generated={panelCounts.generated}
-                pending={panelCounts.pending}
-                failed={panelCounts.failed}
-                total={panelCounts.total}
-              />
-            </div>
-            {allInked && (
-              <div className="animate-comic-pop mt-4 inline-flex border-[2px] border-ink-black bg-narrator-gold px-3 py-1.5 font-meta text-[0.6rem] tracking-[0.18em] text-ink-black shadow-ink-sm">
-                ALL PANELS INKED
+                )}
               </div>
-            )}
-            {isDrawRunning && (
-              <LiveProgressStrip
-                itemsDone={generateStage?.items_done ?? 0}
-                itemsTotal={generateStage?.items_total ?? panelCounts.total}
-                project={id}
-              />
-            )}
-            {(runningRegenCount > 0 || queuedRegenCount > 0) && (
-              <div className="mt-3 font-meta text-[0.58rem] tracking-[0.12em] text-narrator-gold animate-pulse">
-                {runningRegenCount > 0 && `${runningRegenCount} regenerating`}
-                {runningRegenCount > 0 && queuedRegenCount > 0 && " · "}
-                {queuedRegenCount > 0 && `${queuedRegenCount} queued`}
-              </div>
-            )}
-          </Surface>
-
-          {/* Live cockpit cards — only while running */}
-          {isDrawRunning && <InFlightCard project={id} />}
-          {isDrawRunning && <RecentFinishesCard project={id} />}
-
-          <BySceneCard scenes={sceneProgress} defaultExpanded={!isDrawRunning} />
-
-          {/* Actions — only when at rest */}
-          {!isDrawRunning && (
-            <div className="space-y-2">
-              <button
-                type="button"
-                disabled={panelCounts.pending === 0 || isPipelineRunning}
-                onClick={() => setConfirmAction("generate_all")}
-                className="w-full border-[2px] border-ink-black bg-ink-black px-4 py-3 font-meta text-[0.62rem] tracking-[0.14em] text-bristol transition-colors hover:bg-ink-black/80 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                GENERATE ALL PENDING ({panelCounts.pending})
-              </button>
-              <button
-                type="button"
-                disabled={panelCounts.failed === 0 || isPipelineRunning}
-                onClick={() => setConfirmAction("retry_failed")}
-                className="w-full border-[2px] border-hero-red px-4 py-3 font-meta text-[0.62rem] tracking-[0.14em] text-hero-red transition-colors hover:bg-hero-red hover:text-bristol disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                RETRY FAILED ({panelCounts.failed})
-              </button>
-            </div>
-          )}
-        </aside>
-      </section>
+            );
+          })}
+        </div>
+      )}
 
       {selectedPanel && selectedPanelImage && id && (
         <PanelDetailModal
@@ -678,7 +809,7 @@ export function DrawRoom() {
           onClose={() => setSelectedPanel(null)}
           onPrev={prevPanel ? () => setSelectedPanel({ sceneId: prevPanel.scene_id, panelNumber: prevPanel.panel_number }) : null}
           onNext={nextPanel ? () => setSelectedPanel({ sceneId: nextPanel.scene_id, panelNumber: nextPanel.panel_number }) : null}
-          onNextUnaccepted={nextUnacceptedPanel ? () => setSelectedPanel({ sceneId: nextUnacceptedPanel.scene_id, panelNumber: nextUnacceptedPanel.panel_number }) : null}
+          onNextFlagged={nextFlaggedPanel ? () => setSelectedPanel({ sceneId: nextFlaggedPanel.scene_id, panelNumber: nextFlaggedPanel.panel_number }) : null}
           project={id}
           sceneId={selectedPanel.sceneId}
           panelNumber={selectedPanel.panelNumber}
@@ -688,29 +819,31 @@ export function DrawRoom() {
           failureClassification={selectedPanelImage.failure_classification}
           errorMessage={selectedPanelImage.failure_message}
           errorDetail={selectedPanelImage.failure_detail}
-          accepted={!!selectedPanelImage.accepted}
+          flagged={!!selectedPanelImage.flagged}
           versionCount={selectedPanelImage.version_count ?? 0}
         />
       )}
 
+      {approvalBar}
+
       <ConfirmDrawer
-        open={confirmAction === "generate_all"}
-        title="Generate All Pending"
-        body={`This will generate ${panelCounts.pending} pending panel${panelCounts.pending === 1 ? "" : "s"}.`}
-        cost={costForConfirm}
+        open={confirmAction === "draw_all"}
+        title="Draw all panels"
+        body={`PULP draws ${panelCounts.pending} pending panel${panelCounts.pending === 1 ? "" : "s"} in your selected style.`}
+        cost={drawEstimate as StageCostEstimate | undefined}
         extraBody={<QualityPresetField project={id} />}
-        confirmLabel="Generate All Pending"
-        onConfirm={handleGenerateAllPending}
+        confirmLabel="Draw all panels"
+        onConfirm={handleDrawAll}
         onClose={() => setConfirmAction(null)}
         busy={isPipelineRunning}
       />
       <ConfirmDrawer
         open={confirmAction === "retry_failed"}
-        title="Retry Failed Panels"
+        title="Retry failed panels"
         body={`This will retry ${panelCounts.failed} failed panel${panelCounts.failed === 1 ? "" : "s"}.`}
-        cost={costForConfirm}
+        cost={drawEstimate as StageCostEstimate | undefined}
         extraBody={<QualityPresetField project={id} />}
-        confirmLabel="Retry Failed"
+        confirmLabel="Retry failed"
         onConfirm={handleRetryFailed}
         onClose={() => setConfirmAction(null)}
         busy={isPipelineRunning}

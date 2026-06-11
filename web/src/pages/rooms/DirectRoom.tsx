@@ -338,7 +338,7 @@ function DirectApproveAction({
   const ctaLabel = hasWarnings
     ? `Review ${allWarnings.length} Warning${allWarnings.length !== 1 ? "s" : ""} Before Approving`
     : estimateCredits > 0
-    ? `Approve Prompts & Run Generate Panels · Est. ${estimateCredits.toLocaleString()} credits`
+    ? `Approve Prompts & Run Generate Panels · ~${estimateCredits.toLocaleString()} credits`
     : "Approve Prompts & Run Generate Panels";
 
   function doApproveAndRun() {

@@ -95,6 +95,7 @@ novel_to_comic/src/novel_to_comic/
     ├── logging.py          # configure_logging(), request_log_middleware
     ├── narration_editor.py # estimate_patch_impact, apply_patch — narration decision editing
     ├── panel_acceptance.py # Persistent draw-panel acceptance state (draw/panel_acceptance.json)
+    ├── panel_flags.py      # Re-work flags for review-by-exception (draw/panel_flags.json)
     ├── telemetry.py        # OpenTelemetry span emission
     └── routers/
         ├── billing.py      # Stripe billing + webhook handling
@@ -127,9 +128,13 @@ All stage names (used in state, API routes, and CLI paths):
 | 8 | `draw` | `s7_draw.py` | Yes | Image alias through LiteLLM |
 | 9 | `compose` | `s8_compose.py` | No | None (deterministic) |
 
-**Checkpoint stages** (`CHECKPOINT_STAGES = {"extract", "style", "cast", "direct", "draw"}`):
+**Checkpoint stages** (`CHECKPOINT_STAGES = {"extract", "style", "cast", "draw"}`):
 pipeline pauses at `awaiting_review` after the stage completes. Advance with
-`POST /api/projects/{project}/approve/{stage}` or the web UI.
+`POST /api/projects/{project}/approve/{stage}` or the web UI. `direct` stopped
+being a checkpoint in the 4-station redesign (June 2026): after cast approval
+the `adapt → plan → storyboard → direct` chain runs unattended, and prompts
+are inspected (not approved) in the UI. Older projects parked at
+`direct: awaiting_review` need a one-time approve or rerun.
 
 **File prefix warning:** stage file prefixes are not the public contract. `plan`
 and `storyboard` both use an `s5` prefix, and `direct` still lives in
@@ -473,7 +478,7 @@ pending → running → awaiting_review (checkpoint stages only) → complete / 
 
 **Stage names:** `["extract", "style", "cast", "adapt", "plan", "storyboard", "direct", "draw", "compose"]`
 
-**Checkpoint stages:** `{"extract", "style", "cast", "direct", "draw"}`
+**Checkpoint stages:** `{"extract", "style", "cast", "draw"}`
 
 Key helpers in `state.py`: `begin_stage`, `complete_stage`, `fail_stage`,
 `approve_stage`, `record_item_done`, `record_item_failed`, `record_api_usage`.
@@ -599,9 +604,11 @@ projects/my-novel/
 
 1. **Style and generation coherence:** active style samples feed cast and
    non-GPT draw routes; post-style stages are gated by `style_selected`.
-2. **Draw review loop:** per-panel acceptance, version history, targeted
+2. **Draw review loop:** review-by-exception (panels accepted by default,
+   ⚑ flags in `draw/panel_flags.json`), version history, targeted
    regeneration, instruction-based prompt rewrites, failed-panel retry, and
-   failed/missing image blockers before compose.
+   failed/missing image blockers before compose. Per-panel acceptance
+   endpoints remain but the UI approves the `draw` stage as a whole.
 3. **Compose editor/export:** canonical `compose/pages/page_NNN.json`, page
    reflow, structural operations, SVG bubble tails, character voice presets,
    translation, previews, and PDF/CBZ export.

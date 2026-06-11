@@ -30,3 +30,26 @@ npm run build   # outputs to dist/
 
 The web UI communicates with the FastAPI backend via REST + SSE. See
 `docs/reference/api-routes.md` for the full API reference.
+
+## Stations (UI grouping)
+
+The UI presents the 9 backend pipeline stages as 4 user-facing **stations**:
+`01 Story → 02 Look → 03 Panels → 04 Book`. The intermediate stages (`adapt`,
+`plan`, `storyboard`, `direct`) auto-run after cast approval and appear as
+read-only inspect drawers with an `auto · view` badge — a placeholder is shown
+if their content isn't generated yet. Panel review is flag-by-exception:
+generated panels are accepted by default and users flag the ones needing
+re-work. This grouping is presentation-only; backend stages remain discrete
+and ordered. See `docs/proposals/four-station-redesign.md` for the full plan.
+
+Key pieces:
+
+- `src/lib/stations.ts` — station ↔ stage mapping, state derivation, the
+  `BACKEND_STAGE_TO_STATION_ROUTE` landing map
+- `src/components/composites/ApprovalBar.tsx` — the one standing approval bar
+  (every gated room ends with it; the sidebar has no CTA)
+- `src/components/InspectDrawer.tsx` — script / shot-plan / prompts drawers
+- `src/lib/panelState.ts` — flag-by-exception display states
+- The old `adapt` / `shot-plan` / `direct` rooms are gated behind Dev Content
+  (`src/lib/devContent.ts`, **defaults OFF**) — their routes redirect to the
+  pipeline position otherwise.

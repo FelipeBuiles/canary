@@ -64,7 +64,7 @@ Novel (EPUB / TXT / PDF)
 | **Text in post** | Speech bubbles composited in Stage 9 — never generated inside images. |
 | **Layout plan as planner** | Stage 5 owns page/panel structure; downstream stages project from it. |
 | **Decompose relentlessly** | Each LLM call does exactly one thing. No end-to-end generation. |
-| **Human checkpoints at boundaries** | Pipeline pauses after `extract`, `style`, `cast`, `direct`, and `draw`. |
+| **Human checkpoints at boundaries** | Pipeline pauses after `extract`, `style`, `cast`, and `draw`. The `adapt → plan → storyboard → direct` chain auto-runs after cast approval — inspectable, never blocking. |
 | **Style gate enforced** | Backend blocks post-style stages until a style is selected. Frontend reads `style_selected` from status API (sourced from `config.yaml`, never stale). |
 | **Resume from failure** | `state.json` tracks every item. Interrupted stages resume where they left off. |
 

@@ -5,7 +5,48 @@ import { FieldLabel, SelectField, TextField } from "../ui/Field";
 import { SurfaceHeader } from "../ui/Surface";
 import type { ComicPage, Bubble, Sfx, PagePanel } from "../../types/api";
 import { EditableText } from "../ui/EditableText";
+import { useShowDevContent } from "../../lib/devContent";
 import { resolveThemeVars } from "./themes";
+
+/**
+ * The original prose this caption was lettered from — valuable provenance,
+ * clamped to two lines so it never dwarfs the editable text. Beat IDs are
+ * machinery and stay behind Dev Content.
+ */
+function SourcePassage({ bubble }: { bubble: Bubble }) {
+  const [expanded, setExpanded] = useState(false);
+  const [showDevContent] = useShowDevContent();
+  return (
+    <div className="border-l-[3px] border-narrator-gold bg-narrator-gold/10 px-3 py-2">
+      <div className="font-meta text-[0.55rem] font-bold tracking-[0.14em] text-narrator-gold uppercase">
+        Source passage
+      </div>
+      {showDevContent && (
+        <div className="mt-1 text-[0.72rem] leading-5 text-ink-fade">
+          {bubble.source_beat_id}
+          {bubble.narration_mode ? ` · ${bubble.narration_mode.replace(/_/g, " ")}` : ""}
+          {bubble.preferred_zone ? ` · ${bubble.preferred_zone.replace(/_/g, " ")}` : ""}
+        </div>
+      )}
+      {bubble.source_text && bubble.source_text !== bubble.text && (
+        <>
+          <div className={`mt-1 text-[0.72rem] italic leading-5 text-ink-black/65 ${expanded ? "" : "line-clamp-2"}`}>
+            "{bubble.source_text}"
+          </div>
+          {bubble.source_text.length > 120 && (
+            <button
+              type="button"
+              onClick={() => setExpanded((e) => !e)}
+              className="mt-1 font-meta text-[0.5rem] tracking-[0.12em] text-ink-black/45 transition-colors hover:text-ink-black"
+            >
+              {expanded ? "HIDE FULL PASSAGE ▴" : "SHOW FULL PASSAGE ▾"}
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 interface PropertyPanelProps {
   page: ComicPage;
@@ -193,21 +234,7 @@ function BubbleInspector({
         </div>
 
         {bubble.type === "narration" && bubble.source_beat_id && (
-          <div className="border-l-[3px] border-narrator-gold bg-narrator-gold/10 px-3 py-2">
-            <div className="font-meta text-[0.55rem] font-bold tracking-[0.14em] text-narrator-gold uppercase">
-              Source narration
-            </div>
-            <div className="mt-1 text-[0.72rem] leading-5 text-ink-fade">
-              {bubble.source_beat_id}
-              {bubble.narration_mode ? ` · ${bubble.narration_mode.replace(/_/g, " ")}` : ""}
-              {bubble.preferred_zone ? ` · ${bubble.preferred_zone.replace(/_/g, " ")}` : ""}
-            </div>
-            {bubble.source_text && bubble.source_text !== bubble.text && (
-              <div className="mt-1 text-[0.72rem] italic leading-5 text-ink-black/65">
-                Original: "{bubble.source_text}"
-              </div>
-            )}
-          </div>
+          <SourcePassage bubble={bubble} />
         )}
 
         <div className="grid grid-cols-2 gap-2">

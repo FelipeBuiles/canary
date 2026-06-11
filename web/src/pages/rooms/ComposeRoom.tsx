@@ -11,22 +11,20 @@ import {
   useProjectConfig,
   useUpdateProjectConfig,
   useProjectStatus,
-  useSetTheme,
   useImages,
 } from "../../api/queries";
 import { downloadExportUrl } from "../../api/pages";
 import { RerunStageAction, StagePlaceholder } from "../../components/composites";
 import { ComposeHeader } from "../../components/compose/ComposeHeader";
 import { ExportBurst } from "../../components/compose/ExportBurst";
-import { EditSubTabs } from "../../components/compose/ModeSwitcher";
 import { ScriptMode } from "../../components/compose/ScriptMode";
 import { LayoutMode } from "../../components/compose/LayoutMode";
 import { PreviewMode } from "../../components/compose/PreviewMode";
-import { IssueMode } from "../../components/compose/IssueMode";
+import { IssuesDrawer } from "../../components/compose/IssuesDrawer";
 import { useAllPages } from "../../hooks/useAllPages";
 import { useComposeStore } from "../../store/compose";
 import type { ComicPage, Bubble, Sfx, PagePanel } from "../../types/api";
-import type { ComposeTab, EditSubMode } from "../../components/compose/compose-types";
+import type { ComposeTab } from "../../components/compose/compose-types";
 import { detectIssues } from "../../lib/issueEngine";
 import type { ComposeIssue } from "../../lib/issueEngine";
 import "../../components/compose/comic-page.css";
@@ -41,9 +39,9 @@ function isInputFocused() {
 export function ComposeRoom() {
   const { id } = useParams<{ id: string }>();
 
-  // ── Tab / sub-mode state ─────────────────────────────────────────────────
-  const [tab, setTab] = useState<ComposeTab>("edit");
-  const [editSubMode, setEditSubMode] = useState<EditSubMode>("canvas");
+  // ── Tab / drawer state — one tab row, issues as a drawer ─────────────────
+  const [tab, setTab] = useState<ComposeTab>("pages");
+  const [issuesOpen, setIssuesOpen] = useState(false);
   const [panelReframeId, setPanelReframeId] = useState<string | null>(null);
 
   // ── Page state ────────────────────────────────────────────────────────────
@@ -79,7 +77,6 @@ export function ComposeRoom() {
   const translateBubblesMut = useTranslatePageBubbles();
   const updateProjectConfigMut = useUpdateProjectConfig();
   const exportMut = useExport();
-  const setThemeMut = useSetTheme();
 
   // ── Compose store ────────────────────────────────────────────────────────
   const selection = useComposeStore((s) => s.selection);
@@ -270,29 +267,19 @@ export function ComposeRoom() {
     updateProjectConfigMut.mutate({ project: id, data: { target_language: targetLanguage } });
   }
 
-  function handleThemeChange(theme: string) {
-    if (!id) return;
-    setThemeMut.mutate({ project: id, theme });
-  }
-
   // ── Script → Canvas deep-link ────────────────────────────────────────────
   function handleSwitchToCanvas(targetPageNum: number, panelId: string, bubbleId: string) {
     setPageNum(targetPageNum, { preserveSelection: true });
-    setEditSubMode("canvas");
+    setTab("pages");
     setPanelReframeId(null);
     select(panelId, "bubble", bubbleId);
   }
 
-  // ── Export → Issues navigation ───────────────────────────────────────────
-  function handleGoToIssues() {
-    setTab("edit");
-    setEditSubMode("issues");
-  }
-
-  // ── Issue deep-link ──────────────────────────────────────────────────────
+  // ── Issue deep-link: navigate to and select the offending item ───────────
   function handleGoToIssue(issue: ComposeIssue) {
+    setIssuesOpen(false);
     setPageNum(issue.pageNumber);
-    setEditSubMode("canvas");
+    setTab("pages");
     if (issue.panelId && issue.bubbleId) {
       select(issue.panelId, "bubble", issue.bubbleId);
     } else {
@@ -318,16 +305,17 @@ export function ComposeRoom() {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (isInputFocused()) return;
-      if (e.key === "1") { setTab("edit"); setEditSubMode("canvas"); return; }
-      if (e.key === "2") { setTab("edit"); setEditSubMode("script"); return; }
+      if (e.key === "1") { setTab("pages"); return; }
+      if (e.key === "2") { setTab("script"); return; }
       if (e.key === "3") { setTab("export"); return; }
       if ((e.metaKey || e.ctrlKey) && e.key === "e") { e.preventDefault(); setTab("export"); return; }
       if (e.key === "Escape") {
+        if (issuesOpen) { setIssuesOpen(false); return; }
         if (panelReframeId) { setPanelReframeId(null); return; }
         deselect();
         return;
       }
-      if (tab === "edit" && editSubMode === "canvas") {
+      if (tab === "pages") {
         if (e.key === "b" || e.key === "B") { handleAddBubble("speech"); return; }
         if (e.key === "t" && !e.shiftKey) { handleAddBubble("thought"); return; }
         if (e.key === "n" && !e.shiftKey) { handleAddBubble("narration"); return; }
@@ -380,17 +368,19 @@ export function ComposeRoom() {
   }
 
   const pageNumber = safePage ?? 1;
-  const activeTheme = pageList?.[0]?.theme ?? "default";
+  const errorCount = issues.filter((i) => i.severity === "error").length;
+  const warningCount = issues.filter((i) => i.severity === "warning").length;
 
   return (
     <div className="-mx-5 -my-6 flex min-h-[calc(100vh-58px)] flex-col gap-3 bg-pulp-paper md:-my-6">
-      {/* Thin persistent header */}
+      {/* Thin persistent header — the only tab row */}
       <ComposeHeader
         tab={tab}
         onTabChange={setTab}
-        isExporting={exportMut.isPending}
+        errorCount={errorCount}
+        warningCount={warningCount}
+        onOpenIssues={() => setIssuesOpen(true)}
         isMatchingStyle={generatePageStyleMut.isPending}
-        onExport={handleExport}
         onMatchStyle={handleGeneratePageStyle}
         rerunAction={
           <RerunStageAction
@@ -403,12 +393,8 @@ export function ComposeRoom() {
         pageCount={pageList.length}
       />
 
-      {/* Edit tab */}
-      {tab === "edit" && (
-        <>
-          <EditSubTabs subMode={editSubMode} onSubModeChange={setEditSubMode} issueCount={issues.length} />
-
-          {editSubMode === "canvas" && (
+      {/* Pages tab */}
+      {tab === "pages" && (
             <LayoutMode
               project={id}
               pageList={pageList}
@@ -438,28 +424,22 @@ export function ComposeRoom() {
               onDeleteElement={handleDeleteElement}
               onUnpin={handleUnpin}
             />
-          )}
+      )}
 
-          {editSubMode === "issues" && (
-            <IssueMode issues={issues} onGoToIssue={handleGoToIssue} />
-          )}
-
-          {editSubMode === "script" && (
-            <ScriptMode
-              project={id}
-              pages={allPages}
-              isLoading={loadingAllPages}
-              pageIdx={pageIdx}
-              outputLanguage={outputLanguage}
-              onPageSelect={(idx) => setPageNum(idx + 1)}
-              onUpdateBubble={(pageNum, panelId, bubbleId, patch) =>
-                handleUpdateBubble(panelId, bubbleId, patch, pageNum)
-              }
-              onBulkUpdateBubbles={handleBulkUpdateBubbles}
-              onSwitchToLayout={handleSwitchToCanvas}
-            />
-          )}
-        </>
+      {/* Script tab */}
+      {tab === "script" && (
+        <ScriptMode
+          project={id}
+          pages={allPages}
+          isLoading={loadingAllPages}
+          pageIdx={pageIdx}
+          onPageSelect={(idx) => setPageNum(idx + 1)}
+          onUpdateBubble={(pageNum, panelId, bubbleId, patch) =>
+            handleUpdateBubble(panelId, bubbleId, patch, pageNum)
+          }
+          onBulkUpdateBubbles={handleBulkUpdateBubbles}
+          onSwitchToLayout={handleSwitchToCanvas}
+        />
       )}
 
       {/* Export tab */}
@@ -471,18 +451,23 @@ export function ComposeRoom() {
           isLoading={loadingAllPages}
           pageIdx={pageIdx}
           isExporting={exportMut.isPending}
-          activeTheme={activeTheme}
           outputLanguage={outputLanguage}
           isTranslatingBubbles={translateBubblesMut.isPending}
           issues={issues}
           onPageSelect={(idx) => setPageNum(idx + 1)}
           onExport={handleExport}
-          onThemeChange={handleThemeChange}
           onOutputLanguageChange={handleOutputLanguageChange}
           onTranslateBubbles={handleTranslateBubbles}
-          onReviewIssues={handleGoToIssues}
         />
       )}
+
+      {/* Issues drawer — reachable from the header chip on any tab */}
+      <IssuesDrawer
+        open={issuesOpen}
+        issues={issues}
+        onClose={() => setIssuesOpen(false)}
+        onGoToIssue={handleGoToIssue}
+      />
 
       {exportSuccess && (
         <ExportBurst

@@ -64,7 +64,11 @@ class StageState(BaseModel):
 
 
 STAGE_NAMES = ["extract", "style", "cast", "adapt", "plan", "storyboard", "direct", "draw", "compose"]
-CHECKPOINT_STAGES = {"extract", "style", "cast", "direct", "draw"}
+# Stages that pause for user review. `direct` is intentionally NOT a
+# checkpoint: prompts auto-run after cast approval and are inspectable
+# (but non-blocking) in the UI — prompt editing happens per-panel in the
+# panel detail modal instead.
+CHECKPOINT_STAGES = {"extract", "style", "cast", "draw"}
 
 
 class PipelineState(BaseModel):

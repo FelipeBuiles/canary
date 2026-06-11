@@ -5,10 +5,9 @@ import { useCreateProject, useGenerateProjectCover, useProjects, useImportStory 
 import { usePipelineStore } from "../store/pipeline";
 import { useRunAction } from "../hooks/useRunAction";
 import { ProjectCard } from "../components/ProjectCard";
-import { StatRow } from "../components/ui/StatRow";
 import { Icon } from "../components/ui/Icon";
 import { Button } from "../components/ui/Button";
-import { UI_STAGES } from "../lib/uiStages";
+import { STATIONS } from "../lib/stations";
 import { UploadStep } from "../components/wizard/UploadStep";
 import type { ConfigOverrides } from "../types/api";
 import { useI18n } from "../i18n";
@@ -58,16 +57,16 @@ function FirstIssueInvitation({ onStart }: { onStart: () => void }) {
           {t("THE PRODUCTION LINE")}
         </div>
         <ol className="mt-4 flex flex-wrap gap-2.5">
-          {UI_STAGES.map((stage, index) => (
+          {STATIONS.map((station) => (
             <li
-              key={stage.key}
+              key={station.key}
               className="flex items-center gap-2 border-[2px] border-ink-black bg-pulp-paper px-3 py-2"
             >
               <span className="font-display text-[0.78rem] font-black leading-none text-ink-black/40">
-                {String(index + 1).padStart(2, "0")}
+                {station.number}
               </span>
               <span className="font-meta text-[0.58rem] uppercase leading-none tracking-[0.14em] text-ink-black">
-                {t(stage.label)}
+                {t(station.label)}
               </span>
             </li>
           ))}
@@ -177,8 +176,6 @@ export function Library() {
   const generateCover = useGenerateProjectCover();
   const [pendingCovers, setPendingCovers] = useState<Set<string>>(new Set());
   const [newProjectOpen, setNewProjectOpen] = useState(false);
-  const runningCount = projects?.filter((p) => p.is_running).length ?? 0;
-  const totalInkUsage = (projects ?? []).reduce((sum, project) => sum + project.total_cost_credits, 0);
   const isEmpty = (projects?.length ?? 0) === 0;
 
   useEffect(() => {
@@ -263,48 +260,16 @@ export function Library() {
 
   return (
     <div className="space-y-20">
-      <section className="grid gap-12 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start">
-        <div>
-          <div className="inline-flex bg-hero-red px-4 py-1.5 font-meta text-[0.56rem] tracking-[0.22em] text-bristol uppercase">
-            {t("STUDIO // ACTIVE PRODUCTIONS")}
-          </div>
-          <h1 className="mt-5 max-w-[10ch] font-display text-[clamp(5.25rem,11vw,9rem)] font-black uppercase leading-[0.78] tracking-[-0.065em] text-ink-black">
-            {t("LIBRARY")}
-          </h1>
-          <p className="mt-9 max-w-[49rem] border-l-[4px] border-hero-red pl-8 text-[1.28rem] font-semibold leading-10 text-ink-black/68">
-            {t("Your narrative multiverse — active productions, archived issues, and new story seeds waiting to be drawn.")}
-          </p>
+      <section>
+        <div className="inline-flex bg-hero-red px-4 py-1.5 font-meta text-[0.56rem] tracking-[0.22em] text-bristol uppercase">
+          {t("STUDIO // ACTIVE PRODUCTIONS")}
         </div>
-
-        <aside className="border-[3px] border-ink-black bg-bristol px-7 py-7">
-          <div className="mb-5 flex items-center justify-between border-b border-panel-line pb-5">
-            <div>
-              <div className="font-meta text-[0.7rem] tracking-[0.24em] text-ink-black/45">
-                {t("INDEX SIGNALS")}
-              </div>
-              <div className="mt-1 font-display text-[1.35rem] font-black uppercase leading-none tracking-[-0.04em]">
-                {t("Studio telemetry")}
-              </div>
-            </div>
-            <Icon name="sparkles" size={18} className="text-narrator-gold" />
-          </div>
-          {isEmpty ? (
-            <p className="font-meta text-[0.7rem] tracking-[0.24em] text-ink-black/45">
-              {t("AWAITING FIRST PRODUCTION")}
-            </p>
-          ) : (
-            <>
-              <div className="space-y-3">
-                <StatRow label="ARCHIVE FILES">{projects?.length ?? 0}</StatRow>
-                <StatRow label="LIVE BOARDS">{runningCount}</StatRow>
-                <StatRow label="TOTAL INK USAGE">{totalInkUsage.toLocaleString()} credits</StatRow>
-              </div>
-              <p className="mt-3 font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/50">
-                {t("Ink usage = total AI generation credits")}
-              </p>
-            </>
-          )}
-        </aside>
+        <h1 className="mt-5 max-w-[10ch] font-display text-[clamp(5.25rem,11vw,9rem)] font-black uppercase leading-[0.78] tracking-[-0.065em] text-ink-black">
+          {t("LIBRARY")}
+        </h1>
+        <p className="mt-9 max-w-[49rem] border-l-[4px] border-hero-red pl-8 text-[1.28rem] font-semibold leading-10 text-ink-black/68">
+          {t("Your productions — pick up where you left off, or start a new one.")}
+        </p>
       </section>
 
       <section>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import {
   useGenerationJobs,
   useStyles,
@@ -9,6 +9,7 @@ import {
   useSetActiveStyle,
   useImageGenerationMeta,
   useProjectConfig,
+  useUpdateProjectConfig,
   useStoryBible,
   useProjectStatus,
 } from "../../api/queries";
@@ -18,7 +19,9 @@ import { GenerationDetailsModal } from "../../components/ui/GenerationDetailsMod
 import { LazyImage } from "../../components/ui/LazyImage";
 import { StateBlock } from "../../components/ui/StateBlock";
 import { Surface } from "../../components/ui/Surface";
-import { EntityCard, RoomHeader, ConfirmDrawer, RoomShell } from "../../components/composites";
+import { ApprovalBar, EntityCard, RoomHeader, ConfirmDrawer, RoomShell } from "../../components/composites";
+import { useApproveStage, useStageEstimate } from "../../api/queries";
+import { useRunAction } from "../../hooks/useRunAction";
 import { useI18n } from "../../i18n";
 import { FlowingDotsPlaceholder } from "../../components/ui/FlowingDotsPlaceholder";
 import {
@@ -114,12 +117,20 @@ function StyleCard({
 
   const showLoading = isGenerating || (!suggestion.has_sample && actionsDisabled);
   const isActive = suggestion.is_active;
+  const canSelect = !isActive && !isGenerating && !actionsDisabled;
+
+  // The card itself is the selection — no per-card select buttons.
+  const handleCardClick = () => {
+    if (canSelect) setActive.mutate({ project: projectName, index: suggestion.index });
+  };
 
   return (
     <>
       <EntityCard
         active={isActive}
-        className="min-h-[520px]"
+        interactive={canSelect}
+        onClick={handleCardClick}
+        className={`min-h-[460px] ${isActive ? "!border-hero-red shadow-[4px_4px_0_0_var(--color-hero-red)]" : ""}`}
         media={
           <div className="relative bg-surface-container">
             {showLoading ? (
@@ -135,64 +146,55 @@ function StyleCard({
                 </div>
               </div>
             ) : (
-              <div className="group cursor-pointer" onClick={() => setIsDetailsOpen(true)}>
-                <LazyImage
-                  src={`${sampleUrl}?t=${timestamp}`}
-                  alt={suggestion.label}
-                  loading="lazy"
-                  width={320}
-                  height={400}
-                  aspect="4 / 5"
-                  containerClassName="w-full"
-                  className="object-cover object-center transition-opacity group-hover:opacity-90"
-                  onError={() => setImgFailed(true)}
-                />
-              </div>
+              <LazyImage
+                src={`${sampleUrl}?t=${timestamp}`}
+                alt={suggestion.label}
+                loading="lazy"
+                width={320}
+                height={400}
+                aspect="4 / 5"
+                containerClassName="w-full"
+                className="object-cover object-center"
+                onError={() => setImgFailed(true)}
+              />
             )}
 
             {isActive && (
-              <div className="absolute left-5 top-5 bg-hero-red px-4 py-2 font-meta text-[0.68rem] tracking-[0.18em] text-bristol">
-                {t("ACTIVE")}
+              <div className="absolute left-0 top-0 bg-hero-red px-3 py-1.5 font-meta text-[0.56rem] tracking-[0.18em] text-bristol">
+                ✓ {t("YOUR STYLE")}
               </div>
             )}
 
-            <button
-              type="button"
-              onClick={handleGenerate}
-              disabled={isGenerating || actionsDisabled}
-              title={suggestion.has_sample ? "Regenerar muestra" : "Generar muestra"}
-              className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center bg-ink-black/55 text-bristol transition-colors hover:bg-ink-black disabled:opacity-40"
-            >
-              <span className="font-meta text-[0.78rem]">↺</span>
-            </button>
+            <div className="absolute right-3 top-3 flex gap-1.5">
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setIsDetailsOpen(true); }}
+                title="View sample details"
+                className="flex h-9 w-9 items-center justify-center bg-ink-black/55 text-bristol transition-colors hover:bg-ink-black"
+              >
+                <span className="font-meta text-[0.78rem]">⌕</span>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); handleGenerate(e); }}
+                disabled={isGenerating || actionsDisabled}
+                title={suggestion.has_sample ? "Regenerate sample" : "Generate sample"}
+                className="flex h-9 w-9 items-center justify-center bg-ink-black/55 text-bristol transition-colors hover:bg-ink-black disabled:opacity-40"
+              >
+                <span className="font-meta text-[0.78rem]">↺</span>
+              </button>
+            </div>
           </div>
         }
       >
         <div className="font-display text-[1.35rem] font-bold leading-tight tracking-[-0.04em] text-ink-black">
           {suggestion.label}
         </div>
-        <p className="mt-3 flex-1 font-body text-[1rem] font-semibold leading-relaxed text-ink-black/68 line-clamp-4">
+        <p className="mt-2 flex-1 font-body text-[0.92rem] font-semibold leading-relaxed text-ink-black/68 line-clamp-2">
           {suggestion.template}
         </p>
-        <div className="mt-8">
-          {isActive ? (
-            <button
-              type="button"
-              disabled
-              className="inline-flex min-h-14 w-full items-center justify-center gap-2 bg-hero-red px-5 py-3 font-meta text-[0.9rem] tracking-[0.18em] text-bristol disabled:cursor-default"
-            >
-              ✓ SELECCIONADO
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="inline-flex min-h-14 w-full items-center justify-center bg-hero-red px-5 py-3 font-meta text-[0.9rem] tracking-[0.18em] text-bristol transition-colors hover:bg-hero-red/90 disabled:cursor-not-allowed disabled:opacity-45"
-              onClick={() => setActive.mutate({ project: projectName, index: suggestion.index })}
-              disabled={isGenerating || actionsDisabled}
-            >
-              SELECCIONAR
-            </button>
-          )}
+        <div className="mt-3 font-meta text-[0.52rem] tracking-[0.14em] text-ink-black/35">
+          {isActive ? `✓ ${t("YOUR STYLE")}` : t("CLICK TO SELECT")}
         </div>
       </EntityCard>
       <GenerationDetailsModal
@@ -210,10 +212,12 @@ function StyleCard({
 
 export function StyleRoom() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { isCompact, toggle } = useHeaderMode();
   const projectName = id ?? "";
   const { data: stylesData, isLoading, refetch: refetchStyles } = useStyles(id);
   const { data: projectConfig } = useProjectConfig(id);
+  const updateConfig = useUpdateProjectConfig();
   const { data: storyBible } = useStoryBible(id);
   const { data: status } = useProjectStatus(id);
   const suggestStyles = useSuggestStyles();
@@ -234,6 +238,10 @@ export function StyleRoom() {
 
   const styleStage = status?.stages.style;
   const isStageGenerating = styleStage?.status === "running";
+  const approveStage = useApproveStage();
+  const { handleRun, isPending: isPipelineRunning } = useRunAction();
+  const { data: castEstimate } = useStageEstimate(id, "cast");
+  const styleSelected = !!status?.style_selected;
 
   const isSuggesting = suggestionStatus === "running";
   const styleActionsDisabled = isStageGenerating || isSuggesting || suggestStyles.isPending;
@@ -302,13 +310,36 @@ export function StyleRoom() {
     return (
       <RoomShell
         isEmpty
-        emptyTitle="ESTILOS NO DISPONIBLES"
-        emptyDescription="Seleccione un proyecto primero."
+        emptyTitle="STYLES UNAVAILABLE"
+        emptyDescription="Select a project first."
       />
     );
   }
 
-  const suggestions = stylesData?.suggestions ?? [];
+  // The selected style is pinned to first position.
+  const suggestions = [...(stylesData?.suggestions ?? [])].sort(
+    (a, b) => Number(b.is_active) - Number(a.is_active),
+  );
+
+  const styleNeedsApproval = styleStage?.status === "awaiting_review";
+  const castStarted = status?.stages.cast?.status != null && status.stages.cast.status !== "pending";
+
+  function handleContinueToCast() {
+    if (!id) return;
+    if (styleNeedsApproval && styleSelected) {
+      approveStage.mutate(
+        { project: id, stage: "style" },
+        {
+          onSuccess: () => {
+            if (!castStarted) handleRun(id, "cast", { actionLabel: "Cast characters & places" });
+            navigate(`/project/${id}/cast`);
+          },
+        },
+      );
+    } else {
+      navigate(`/project/${id}/cast`);
+    }
+  }
 
   function startSuggestions() {
     clearEvents();
@@ -336,16 +367,16 @@ export function StyleRoom() {
   return (
     <RoomShell>
       <RoomHeader
-        kicker="ESTILOS"
+        kicker="STYLES"
         compact={isCompact}
         onToggle={toggle}
-        title="APARIENCIA Y ESTILO"
-        lead="Elija el estilo visual que define su cómic. Genere muestras para comparar y luego seleccione una para fijarla."
+        title="LOOK & STYLE"
+        lead="Choose the visual style that defines your comic. Generate samples to compare, then select one to lock it in."
         actions={
           <div className="flex items-center gap-3">
             {anyGenerating && (
               <span className="font-meta text-[0.48rem] tracking-[0.16em] text-ink-black/50">
-                {runningStyleCount > 0 && `${runningStyleCount} EJECUTÁNDOSE`}{runningStyleCount > 0 && queuedStyleCount > 0 && " / "}{queuedStyleCount > 0 && `${queuedStyleCount} EN COLA`}
+                {runningStyleCount > 0 && `${runningStyleCount} RUNNING`}{runningStyleCount > 0 && queuedStyleCount > 0 && " / "}{queuedStyleCount > 0 && `${queuedStyleCount} QUEUED`}
               </span>
             )}
             {sampleError && (
@@ -361,14 +392,14 @@ export function StyleRoom() {
                 disabled={styleActionsDisabled}
               >
                 {suggestStyles.isPending || isSuggesting
-                  ? "SUGIRIENDO…"
+                  ? "SUGGESTING…"
                   : isStageGenerating
-                    ? "GENERANDO…"
-                    : "SUGERIR MÁS ESTILOS"}
+                    ? "GENERATING…"
+                    : "SUGGEST MORE STYLES"}
               </Button>
               {suggestEstimate && suggestEstimate.estimate_credits > 0 && (
                 <span className="font-meta text-[0.48rem] tracking-[0.14em] text-ink-black/45">
-                  Est. {suggestEstimate.estimate_credits.toLocaleString()} créditos
+                  ~{suggestEstimate.estimate_credits.toLocaleString()} credits
                 </span>
               )}
             </div>
@@ -384,16 +415,16 @@ export function StyleRoom() {
             {(isSuggesting || isStageGenerating) && <span className="h-2.5 w-2.5 animate-pulse bg-hero-red" />}
             <span className="font-meta text-[0.48rem] tracking-[0.16em]">
               {suggestionStatus === "failed"
-                ? "FALLÓ LA SUGERENCIA DE ESTILO"
+                ? "STYLE SUGGESTION FAILED"
                 : isStageGenerating
-                  ? "GENERANDO OPCIONES DE ESTILO"
-                  : "GENERANDO ESTILOS ADICIONALES"}
+                  ? "GENERATING STYLE OPTIONS"
+                  : "GENERATING ADDITIONAL STYLES"}
             </span>
           </div>
           <div className="mt-1 font-body text-[0.78rem] leading-relaxed">
             {suggestionStatus === "failed"
               ? suggestionError
-              : "Pidiendo direcciones visuales al director de arte y renderizando una imagen de muestra por estilo. Las muestras aparecen a medida que se completan."}
+              : "Asking the art director for visual directions and rendering one sample image per style. Samples appear as they complete."}
           </div>
         </div>
       )}
@@ -402,41 +433,87 @@ export function StyleRoom() {
         <Surface padding="lg">
           <StateBlock
             minHeight="min-h-[22vh]"
-            title={isStageGenerating ? "GENERANDO OPCIONES DE ESTILO" : "AÚN NO HAY SUGERENCIAS DE ESTILO"}
+            title={isStageGenerating ? "GENERATING STYLE OPTIONS" : "NO STYLE SUGGESTIONS YET"}
             description={
               isStageGenerating
-                ? "Cinco descripciones de estilo e imágenes de muestra están en camino."
-                : "Apruebe la etapa de extracción para comenzar a generar opciones de estilo."
+                ? "Five style descriptions and sample images are on the way."
+                : "Approve the extract stage to start generating style options."
             }
             icon="styles"
           />
         </Surface>
       ) : (
-        <section className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-          {suggestions.map((s) => (
-            <StyleCard
-              key={s.index}
-              suggestion={s}
-              projectName={id}
-              isGenerating={pendingSet.has(s.index)}
-              actionsDisabled={styleActionsDisabled}
-              queueState={
-                pendingSet.has(s.index)
-                  ? styleJobStatuses[s.index] ?? "queued"
-                  : null
-              }
-              fallbackPrompt={buildFallbackStyleSamplePrompt(s, storyBible)}
-              fallbackParameters={{
-                width: projectConfig?.image_width,
-                height: projectConfig?.image_height,
-                steps: effectiveSteps,
-                guidance_scale: projectConfig?.flux_guidance_scale,
-                style_template: s.template,
-              }}
-            />
-          ))}
-        </section>
+        <>
+          <section className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+            {suggestions.map((s) => (
+              <StyleCard
+                key={s.index}
+                suggestion={s}
+                projectName={id}
+                isGenerating={pendingSet.has(s.index)}
+                actionsDisabled={styleActionsDisabled}
+                queueState={
+                  pendingSet.has(s.index)
+                    ? styleJobStatuses[s.index] ?? "queued"
+                    : null
+                }
+                fallbackPrompt={buildFallbackStyleSamplePrompt(s, storyBible)}
+                fallbackParameters={{
+                  width: projectConfig?.image_width,
+                  height: projectConfig?.image_height,
+                  steps: effectiveSteps,
+                  guidance_scale: projectConfig?.flux_guidance_scale,
+                  style_template: s.template,
+                }}
+              />
+            ))}
+          </section>
+          {suggestions.some((s) => s.has_sample) && (
+            <p className="mt-4 font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/45">
+              ✓ EVERY SAMPLE ABOVE WAS PREVIEWED ON YOUR STORY&apos;S OPENING SCENE
+            </p>
+          )}
+
+          {/* Comic page theme is a Look decision — changing it re-renders the
+              book, so it must not sit inside Export. */}
+          <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-ink-black/10 pt-4">
+            <span className="font-meta text-[0.56rem] tracking-[0.18em] text-ink-black/45">
+              COMIC PAGE THEME
+            </span>
+            <select
+              value={projectConfig?.comic_theme ?? "auto"}
+              onChange={(e) => id && updateConfig.mutate({ project: id, data: { comic_theme: e.target.value } })}
+              disabled={!projectConfig || updateConfig.isPending}
+              className="border-[2px] border-ink-black/20 bg-bristol px-3 py-1.5 font-meta text-[0.62rem] tracking-[0.1em] text-ink-black focus:border-ink-black focus:outline-none"
+            >
+              {[
+                { value: "auto", label: "Auto-detect from style" },
+                { value: "default", label: "Default" },
+                { value: "noir", label: "Noir" },
+                { value: "manga", label: "Manga" },
+                { value: "vintage", label: "Vintage" },
+                { value: "painted", label: "Painted" },
+              ].map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <span className="font-meta text-[0.5rem] tracking-[0.12em] text-ink-black/35">
+              STYLES THE ASSEMBLED PAGES — LETTERING, BORDERS, PAPER
+            </span>
+          </div>
+        </>
       )}
+
+      <ApprovalBar
+        next={styleSelected
+          ? "PULP casts your characters and places in this style"
+          : "Pick a style — click the card that fits your story"}
+        estimateCredits={styleSelected && styleNeedsApproval ? castEstimate?.estimate_credits : null}
+        primaryLabel={styleNeedsApproval || !styleSelected ? "LOOKS RIGHT — CONTINUE →" : "GO TO CAST →"}
+        onPrimary={handleContinueToCast}
+        primaryDisabled={!styleSelected || approveStage.isPending || isPipelineRunning || isStageGenerating || isSuggesting}
+        busy={approveStage.isPending}
+      />
 
       <ConfirmDrawer
         open={showSuggestConfirm}

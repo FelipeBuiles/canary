@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import {
+  useApproveStage,
   useGenerationJobs,
+  usePrimaryRefs,
   useProjectStatus,
+  useSetPrimaryRef,
+  useStageEstimate,
   useStoryBible,
   useRegenRef,
   useRegenRefWithInstruction,
@@ -11,8 +15,9 @@ import {
   useRegenProp,
   useRegenPropWithInstruction,
 } from "../../api/queries";
-import { RoomHeader, RoomShell, RerunStageAction, StagePlaceholder, SectionHeader, EntityCard } from "../../components/composites";
+import { ApprovalBar, RoomHeader, RoomShell, RerunStageAction, StagePlaceholder, SectionHeader, EntityCard } from "../../components/composites";
 import { useHeaderMode } from "../../hooks/useHeaderMode";
+import { useRunAction } from "../../hooks/useRunAction";
 import { Tag } from "../../components/ui/Tag";
 import { Button } from "../../components/ui/Button";
 import { DestructiveButton } from "../../components/ui/DestructiveButton";
@@ -29,6 +34,65 @@ function queuedLabel(job: GenerationJob | null) {
   if (job.status === "running") return "RUNNING";
   if (job.queue_position) return `QUEUE ${job.queue_position}`;
   return "QUEUED";
+}
+
+const REF_POSES = [
+  { pose: "front", label: "Front" },
+  { pose: "three_quarter", label: "¾ view" },
+  { pose: "profile", label: "Profile" },
+  { pose: "gesture", label: "Gesture" },
+] as const;
+
+/**
+ * Reference sheet: the pose crops PULP sends to the image model. Click one
+ * to set it as the primary — it then wins ref selection for every panel.
+ */
+function RefSheet({ projectName, charId, timestamp }: { projectName: string; charId: string; timestamp: number }) {
+  const { data: primaryData } = usePrimaryRefs(projectName);
+  const setPrimary = useSetPrimaryRef();
+  const [failed, setFailed] = useState<Record<string, boolean>>({});
+  const primaryPose = primaryData?.primary_refs?.[charId];
+
+  const visiblePoses = REF_POSES.filter(({ pose }) => !failed[pose]);
+  if (visiblePoses.length === 0) return null;
+
+  return (
+    <div>
+      <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1.5">
+        REFERENCE SHEET · CLICK TO SET PRIMARY
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {visiblePoses.map(({ pose, label }) => {
+          const isPrimary = primaryPose === pose;
+          const src = `/api/projects/${encodeURIComponent(projectName)}/files/refs/${encodeURIComponent(charId)}/${pose}.png?t=${timestamp}`;
+          return (
+            <button
+              key={pose}
+              type="button"
+              title={isPrimary ? `${label} — primary ref` : `Set ${label} as primary`}
+              onClick={() => setPrimary.mutate({ project: projectName, charId, pose: isPrimary ? null : pose })}
+              disabled={setPrimary.isPending}
+              className={`relative w-[64px] overflow-hidden border-[2px] transition-colors ${
+                isPrimary ? "border-hero-red" : "border-ink-black/15 hover:border-ink-black/50"
+              }`}
+            >
+              <img
+                src={src}
+                alt={`${label} reference`}
+                className="aspect-[64/84] w-full object-cover"
+                onError={() => setFailed((f) => ({ ...f, [pose]: true }))}
+              />
+              {isPrimary && (
+                <span className="absolute inset-x-0 bottom-0 bg-hero-red py-0.5 text-center font-meta text-[0.42rem] tracking-[0.14em] text-bristol">
+                  PRIMARY
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function CharacterCastCard({
@@ -270,8 +334,9 @@ function CharacterCastCard({
                 {isInstructionBusy ? "APPLYING..." : "APPLY & REGEN"}
               </Button>
             </div>
+            <RefSheet projectName={projectName} charId={character.id} timestamp={timestamp} />
             <div>
-              <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">VISUAL ANCHOR</div>
+              <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">HOW THEY'LL LOOK</div>
               <p className="text-[0.82rem] leading-6 text-ink-black">{character.visual_anchor}</p>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -874,13 +939,40 @@ function PropRefCard({
 
 export function CastRoom() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { isCompact, toggle } = useHeaderMode();
   const { data: bible, isLoading } = useStoryBible(id);
   const { data: status } = useProjectStatus(id);
+  const approveStage = useApproveStage();
+  const { handleRun, isPending: isPipelineRunning } = useRunAction();
+  // The estimate for "adapt" covers the whole auto chain: adapt → plan →
+  // storyboard → direct (the backend sums chained stages).
+  const { data: chainEstimate } = useStageEstimate(id, "adapt");
   const isCastStageRunning = status?.stages?.cast?.status === "running";
   const stageRegenerating = isCastStageRunning;
   const stageInfo = status?.stages?.cast;
   const stageStatus = stageInfo?.status ?? "pending";
+  const needsApproval = stageStatus === "awaiting_review";
+  const adaptStarted = status?.stages?.adapt?.status != null && status.stages.adapt.status !== "pending";
+
+  function handleContinueToPanels() {
+    if (!id) return;
+    if (needsApproval) {
+      approveStage.mutate(
+        { project: id, stage: "cast" },
+        {
+          onSuccess: () => {
+            // Cast approval kicks the auto chain; the user watches it from
+            // the Panels station, where "Draw all panels" comes next.
+            if (!adaptStarted) handleRun(id, "adapt", { actionLabel: "Plan shots and write prompts" });
+            navigate(`/project/${id}/draw`);
+          },
+        },
+      );
+    } else {
+      navigate(`/project/${id}/draw`);
+    }
+  }
 
   if (isLoading || (!bible && stageStatus !== "pending")) {
     return (
@@ -911,12 +1003,11 @@ export function CastRoom() {
   return (
     <RoomShell>
       <RoomHeader
-        kicker="CAST"
+        kicker="LOOK"
         compact={isCompact}
         onToggle={toggle}
-        title="CHARACTER, LOCATION & PROP REFS"
-        lead="Reference sheets, location plates, and prop refs produced by the casting director — each used as the visual anchor for every downstream panel."
-        actions={<RerunStageAction project={id} stage="cast" label="Cast" disabled={stageRegenerating} />}
+        title="CHARACTERS & PLACES"
+        lead="How your cast and settings will look in every panel. Re-roll any one of them, or open it to request a fix."
       />
 
       <section className="space-y-10">
@@ -966,6 +1057,20 @@ export function CastRoom() {
           </div>
         )}
       </section>
+
+      <ApprovalBar
+        next={needsApproval
+          ? "PULP plans shots and writes prompts — automatically"
+          : stageStatus === "complete"
+            ? "Draw your panels at the Panels station"
+            : "PULP is drawing your cast"}
+        estimateCredits={needsApproval ? chainEstimate?.estimate_credits : null}
+        primaryLabel={needsApproval ? "LOOKS RIGHT — CONTINUE →" : "GO TO PANELS →"}
+        onPrimary={handleContinueToPanels}
+        primaryDisabled={approveStage.isPending || isPipelineRunning || isCastStageRunning || stageStatus === "pending"}
+        busy={approveStage.isPending}
+        secondary={<RerunStageAction project={id} stage="cast" label="Re-cast" disabled={stageRegenerating} />}
+      />
     </RoomShell>
   );
 }

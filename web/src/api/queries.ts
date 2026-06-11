@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listProjects, getProjectStatus, createProject, deleteProject, generateProjectCover, listShortStories, importStory } from "./projects";
 import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate } from "./pipeline";
-import type { ConfigOverrides, StoryBible, ProjectStatus, StageInfo } from "../types/api";
+import type { ConfigOverrides, StoryBible, ProjectStatus, StageInfo, ImageStatus } from "../types/api";
 import { reconcileStatusPoll } from "../lib/stageProgress";
 import { getBalance, getCreditHistory, getPricingReference } from "./credits";
 import { getPackages, createCheckout } from "./billing";
@@ -25,6 +25,10 @@ import {
   restorePanelImageVersion,
   acceptImagePanel,
   unacceptImagePanel,
+  flagImagePanel,
+  unflagImagePanel,
+  getPrimaryRefs,
+  setPrimaryRef,
 } from "./stages";
 import { listPages, getPage, updatePage, replacePage, generatePageStyleVars, translatePageBubbles, setTheme, translateSinglePageBubbles, triggerExport } from "./pages";
 import { getStyles, suggestStyles, fetchSuggestStylesEstimate, generateStyleSamples, setActiveStyle } from "./styles";
@@ -613,6 +617,54 @@ export function useUnacceptPanel() {
       unacceptImagePanel(project, sceneId, panelNumber),
     onSuccess: (_data, { project }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "draw"] });
+    },
+  });
+}
+
+export function useSetPanelFlag() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, sceneId, panelNumber, flagged }: { project: string; sceneId: string; panelNumber: number; flagged: boolean }) =>
+      flagged
+        ? flagImagePanel(project, sceneId, panelNumber)
+        : unflagImagePanel(project, sceneId, panelNumber),
+    onMutate: async ({ project, sceneId, panelNumber, flagged }) => {
+      // Optimistic toggle — flagging is instant, no confirmation.
+      await qc.cancelQueries({ queryKey: ["project", project, "draw"] });
+      const previous = qc.getQueryData<ImageStatus[]>(["project", project, "draw"]);
+      qc.setQueryData<ImageStatus[]>(["project", project, "draw"], (old) =>
+        old?.map((img) =>
+          img.scene_id === sceneId && img.panel_number === panelNumber
+            ? { ...img, flagged }
+            : img,
+        ),
+      );
+      return { previous };
+    },
+    onError: (_err, { project }, context) => {
+      if (context?.previous) qc.setQueryData(["project", project, "draw"], context.previous);
+    },
+    onSettled: (_data, _err, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "draw"] });
+    },
+  });
+}
+
+export function usePrimaryRefs(project: string | undefined) {
+  return useQuery({
+    queryKey: ["project", project, "primary-refs"],
+    queryFn: () => getPrimaryRefs(project!),
+    enabled: !!project,
+  });
+}
+
+export function useSetPrimaryRef() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, charId, pose }: { project: string; charId: string; pose: string | null }) =>
+      setPrimaryRef(project, charId, pose),
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "primary-refs"] });
     },
   });
 }

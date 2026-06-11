@@ -272,7 +272,9 @@ def resolve_panel_references(
     # IS the upload order assumed by render_generation_prompt.
     refs = _ordered_refs([*subject_refs, *contextual_refs])
     return RefStrategy.for_config(config).select_panel_refs(
-        refs, getattr(prompt, "composition", None)
+        refs,
+        getattr(prompt, "composition", None),
+        primary_poses=artifacts.read_primary_refs(project_dir),
     )
 
 

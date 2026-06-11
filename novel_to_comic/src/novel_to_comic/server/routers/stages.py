@@ -19,6 +19,7 @@ from ..narration_editor import apply_patch as apply_narration_patch, estimate_pa
 from ..deps import get_project, project_key
 from ..generation_jobs import find_active_generation_job
 from ..panel_acceptance import accept_panel, clear_panel_acceptance, is_panel_accepted
+from ..panel_flags import clear_panel_flag, flag_panel, is_panel_flagged
 
 router = APIRouter()
 
@@ -52,6 +53,32 @@ def update_story_bible(body: dict, project=Depends(get_project)):
         raise HTTPException(400, f"Invalid story bible data: {e}")
     artifacts.write_story_bible(project_dir, updated_bible)
     return updated_bible.model_dump()
+
+
+# ── Cast primary refs ────────────────────────────────────────────────────────
+
+
+@router.get("/cast/primary-refs")
+def get_primary_refs(project=Depends(get_project)):
+    project_dir, config, state = project
+    return {"primary_refs": artifacts.read_primary_refs(project_dir)}
+
+
+@router.put("/cast/{char_id}/primary-ref")
+def set_primary_ref(char_id: str, body: dict, project=Depends(get_project)):
+    project_dir, config, state = project
+    pose = body.get("pose")
+    if pose is not None and pose not in artifacts.CHARACTER_REF_POSES:
+        raise HTTPException(400, f"Unknown pose: {pose}. Valid: {list(artifacts.CHARACTER_REF_POSES)}")
+    if pose is not None and not artifacts.character_ref_pose_path(project_dir, char_id, pose).exists():
+        raise HTTPException(404, f"Ref not found: {char_id}/{pose}.png")
+    data = artifacts.read_primary_refs(project_dir)
+    if pose is None:
+        data.pop(char_id, None)
+    else:
+        data[char_id] = pose
+    artifacts.write_primary_refs(project_dir, data)
+    return {"char_id": char_id, "pose": pose, "primary_refs": data}
 
 
 # ── Screenplays (ADAPT) ───────────────────────────────────────────────────────
@@ -279,6 +306,7 @@ def list_images(
                 "image_available": True,
                 "image_revision": _image_revision(img_file),
                 "accepted": is_panel_accepted(project_dir, scene_dir.name, panel_num),
+                "flagged": is_panel_flagged(project_dir, scene_dir.name, panel_num),
                 "version_count": archived_panel_version_count(project_dir, scene_dir.name, panel_num),
                 "failure_classification": failure_classification,
                 "failure_message": failure_message,
@@ -309,6 +337,7 @@ def list_images(
                 "image_available": False,
                 "image_revision": None,
                 "accepted": False,
+                "flagged": is_panel_flagged(project_dir, scene_dir.name, panel_num),
                 "version_count": archived_panel_version_count(project_dir, scene_dir.name, panel_num),
                 "failure_classification": failure_classification,
                 "failure_message": failure_message,
@@ -344,6 +373,7 @@ def list_images(
             "image_available": False,
             "image_revision": None,
             "accepted": False,
+            "flagged": is_panel_flagged(project_dir, scene_id, panel_num),
             "version_count": archived_panel_version_count(project_dir, scene_id, panel_num),
             "failure_classification": failure_classification,
             "failure_message": failure_message,
@@ -377,6 +407,29 @@ def unaccept_image_panel(scene_id: str, panel_number: int, project=Depends(get_p
         "scene_id": scene_id,
         "panel_number": panel_number,
         "accepted": False,
+    }
+
+
+@router.post("/images/{scene_id}/{panel_number}/flag")
+def flag_image_panel(scene_id: str, panel_number: int, project=Depends(get_project)):
+    project_dir, config, state = project
+    entry = flag_panel(project_dir, scene_id, panel_number)
+    return {
+        "scene_id": scene_id,
+        "panel_number": panel_number,
+        "flagged": True,
+        "flagged_at": entry["flagged_at"],
+    }
+
+
+@router.delete("/images/{scene_id}/{panel_number}/flag")
+def unflag_image_panel(scene_id: str, panel_number: int, project=Depends(get_project)):
+    project_dir, config, state = project
+    clear_panel_flag(project_dir, scene_id, panel_number)
+    return {
+        "scene_id": scene_id,
+        "panel_number": panel_number,
+        "flagged": False,
     }
 
 

@@ -7,11 +7,11 @@ interface CostInlineProps {
 /** Compact CTA fragment. Returns null for zero-cost estimates. */
 export function CostInline({ cost }: CostInlineProps) {
   if (!cost || cost.estimate_credits === 0) return null;
-  return <>{cost.estimate_credits.toLocaleString()} credits</>;
+  return <>~{cost.estimate_credits.toLocaleString()} credits</>;
 }
 
-/** Returns "Est. N credits" string or null for zero cost. */
+/** Returns "~N credits" string or null for zero cost — the one phrasing. */
 export function costInlineText(cost: CostEstimate | null | undefined): string | null {
   if (!cost || cost.estimate_credits === 0) return null;
-  return `Est. ${cost.estimate_credits.toLocaleString()} credits`;
+  return `~${cost.estimate_credits.toLocaleString()} credits`;
 }

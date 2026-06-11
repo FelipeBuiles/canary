@@ -3,6 +3,17 @@ import { Navigate, Routes, Route } from "react-router-dom";
 import { AuthGuard } from "./components/AuthGuard";
 import { LoadingBlock } from "./components/ui/StateBlock";
 import { I18nProvider } from "./i18n";
+import { useShowDevContent } from "./lib/devContent";
+
+/**
+ * Machine-artifact rooms (script, shot plan, prompts) are demoted behind Dev
+ * Content — their content surfaces through inspect drawers and the panel
+ * modal's Prompt tab. Deep links still work for debugging.
+ */
+function DevRoom({ children }: { children: ReactElement }) {
+  const [showDevContent] = useShowDevContent();
+  return showDevContent ? children : lazyRoute(NavigateToRoom);
+}
 
 const Shell = lazy(() => import("./layout/Shell").then(({ Shell }) => ({ default: Shell })));
 const ProjectRooms = lazy(() =>
@@ -76,9 +87,9 @@ export function App() {
             <Route index element={lazyRoute(NavigateToRoom)} />
             <Route path="extract" element={lazyRoute(StoryBibleRoom)} />
             <Route path="cast" element={lazyRoute(CastRoom)} />
-            <Route path="adapt" element={lazyRoute(AdaptRoom)} />
-            <Route path="shot-plan" element={lazyRoute(ShotPlanRoom)} />
-            <Route path="direct" element={lazyRoute(DirectRoom)} />
+            <Route path="adapt" element={<DevRoom>{lazyRoute(AdaptRoom)}</DevRoom>} />
+            <Route path="shot-plan" element={<DevRoom>{lazyRoute(ShotPlanRoom)}</DevRoom>} />
+            <Route path="direct" element={<DevRoom>{lazyRoute(DirectRoom)}</DevRoom>} />
             <Route path="draw" element={lazyRoute(DrawRoom)} />
             <Route path="compose" element={lazyRoute(ComposeRoom)} />
             <Route path="styles" element={lazyRoute(StyleRoom)} />

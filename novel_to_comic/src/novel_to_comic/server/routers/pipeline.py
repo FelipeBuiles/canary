@@ -48,6 +48,7 @@ from ..generation_jobs import (
     generation_semaphore_for_config,
 )
 from ..panel_acceptance import clear_panel_acceptance
+from ..panel_flags import clear_panel_flag
 
 router = APIRouter()
 logger = logging.getLogger("canary.pipeline")
@@ -653,6 +654,7 @@ async def regen_panel(
 
     async def _work():
         clear_panel_acceptance(project_dir, scene_id, panel_number)
+        clear_panel_flag(project_dir, scene_id, panel_number)
         return await s7_draw.regenerate_panel_image(regen_config, project_dir, scene_id, panel_number)
 
     job, created = enqueue_credited_job(
@@ -674,6 +676,7 @@ async def regen_panel(
         # Immediately clear acceptance so the UI shows the panel as pending
         # before the job starts running (the runner clears it again for safety).
         clear_panel_acceptance(project_dir, scene_id, panel_number)
+        clear_panel_flag(project_dir, scene_id, panel_number)
     return {
         "status": "queued",
         "job": generation_job_payload(request.app, job),

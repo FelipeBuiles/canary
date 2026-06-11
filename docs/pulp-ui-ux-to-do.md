@@ -1,5 +1,9 @@
 # PULP UI/UX Review — Main Findings
 
+> **Superseded (2026-06-11):** the four-station redesign implemented the
+> bulk of these findings — see `docs/proposals/four-station-redesign.md`
+> for what shipped and the few remaining gaps. Kept for rationale.
+
 ## Summary
 
 PULP already has a strong visual identity: editorial, production-oriented, print-room inspired, and distinct from generic SaaS dashboards. The product should keep the cream paper background, black ink typography, red production labels, card-based archive layouts, and stage-based workflow.

@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import type { ProjectSummary, StageStatus, StageName } from "../types/api";
-import { STAGE_ORDER } from "../types/api";
+import type { ProjectSummary, StageName } from "../types/api";
 import { LazyImage } from "./ui/LazyImage";
 import { Skeleton } from "./ui/Skeleton";
-import { STATUS_PRESENTATION } from "../lib/statusLabels";
+import { BACKEND_STAGE_TO_STATION_ROUTE, STATIONS, stationForRoute } from "../lib/stations";
 import { useI18n } from "../i18n";
 
 const STAGE_COVER_STYLE: Partial<Record<StageName, { bg: string }>> = {
@@ -45,27 +44,35 @@ interface Props {
   coverPending?: boolean;
 }
 
-function resolveStatus(project: ProjectSummary): StageStatus {
-  if (project.is_running) return "running";
-  if (project.furthest_stage === "compose") return "complete";
-  if (project.furthest_stage) return "awaiting_review";
-  return "pending";
-}
+/** One status line does both jobs: what state, and where in the flow. */
+function statusLine(project: ProjectSummary, t: (s: string) => string): { label: string; className: string } {
+  const stationRoute = project.furthest_stage
+    ? BACKEND_STAGE_TO_STATION_ROUTE[project.furthest_stage as StageName]
+    : null;
+  const station = stationRoute ? stationForRoute(stationRoute) ?? STATIONS[0] : null;
+  const stationLabel = station ? t(station.label) : null;
 
-function statusClass(tone: string) {
-  if (tone === "gold") return "bg-narrator-gold text-ink-black";
-  if (tone === "sage") return "bg-archive-sage text-bristol";
-  if (tone === "red") return "bg-hero-red text-bristol";
-  return "bg-surface-container text-ink-black";
+  if (project.is_running) {
+    return {
+      label: stationLabel ? `${t("In progress")} — ${stationLabel}` : t("In progress"),
+      className: "bg-surface-container text-ink-black",
+    };
+  }
+  if (project.furthest_stage === "compose") {
+    return { label: t("Complete"), className: "bg-surface-container text-ink-black/70" };
+  }
+  if (project.furthest_stage) {
+    return {
+      label: stationLabel ? `${t("Needs your review")} — ${stationLabel}` : t("Needs your review"),
+      className: "bg-surface-container text-ink-black",
+    };
+  }
+  return { label: t("New"), className: "bg-surface-container text-ink-black/60" };
 }
 
 export function ProjectCard({ project, coverPending = false }: Props) {
-  const { stageName, t } = useI18n();
-  const status = resolveStatus(project);
-  const presentation = STATUS_PRESENTATION[status];
-  const stageLabel = project.furthest_stage
-    ? stageName(project.furthest_stage as (typeof STAGE_ORDER)[number])
-    : null;
+  const { t } = useI18n();
+  const card = statusLine(project, t);
   const coverUrl = `/api/projects/${encodeURIComponent(project.id)}/files/cover/cover.png`;
 
   // Pop the card once when a cover that was generating lands. Cards that
@@ -115,9 +122,9 @@ export function ProjectCard({ project, coverPending = false }: Props) {
             </div>
           )}
 
-          {stageLabel && (
-            <div className={`absolute bottom-0 left-0 z-10 px-5 py-3 font-meta text-[0.82rem] tracking-[0.22em] text-bristol ${project.is_running ? "animate-pulse bg-hero-red" : "bg-ink-black/70"}`}>
-              {stageLabel}
+          {project.is_running && (
+            <div className="absolute bottom-0 left-0 z-10 animate-pulse bg-ink-black/70 px-5 py-3 font-meta text-[0.82rem] tracking-[0.22em] text-bristol">
+              {t("DRAWING…")}
             </div>
           )}
         </div>
@@ -133,18 +140,12 @@ export function ProjectCard({ project, coverPending = false }: Props) {
             {byline}
           </p>
 
-          <div className="mt-3 flex items-center justify-between gap-4">
+          <div className="mt-3">
             <span
-              title={presentation.description}
-              className={`inline-flex min-h-7 items-center px-3.5 font-meta text-[0.66rem] font-bold leading-none tracking-[0.2em] uppercase ${statusClass(presentation.tone)}`}
+              className={`inline-flex min-h-7 items-center px-3.5 font-meta text-[0.62rem] font-bold leading-none tracking-[0.16em] uppercase ${card.className}`}
             >
-              {presentation.label}
+              {card.label}
             </span>
-            {stageLabel && (
-              <span className="font-meta text-[0.58rem] font-bold leading-none tracking-[0.14em] text-ink-black/40">
-                {stageLabel}
-              </span>
-            )}
           </div>
         </div>
       </article>

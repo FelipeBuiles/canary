@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { cn } from "../../lib/cn";
-import { useTranslateSinglePageBubbles, useStoryBible } from "../../api/queries";
+import { useStoryBible } from "../../api/queries";
 import type { ComicPage, Bubble, PagePanel } from "../../types/api";
 
 type FilterType = "all" | "speech" | "thought" | "narration";
@@ -10,7 +10,6 @@ interface ScriptModeProps {
   pages: (ComicPage | undefined)[];
   isLoading: boolean;
   pageIdx: number;
-  outputLanguage: "en" | "es" | "fr";
   onPageSelect: (idx: number) => void;
   onUpdateBubble: (
     pageNum: number,
@@ -30,7 +29,6 @@ export function ScriptMode({
   pages,
   isLoading,
   pageIdx,
-  outputLanguage,
   onPageSelect,
   onUpdateBubble,
   onBulkUpdateBubbles,
@@ -48,7 +46,6 @@ export function ScriptMode({
   const [replaceText, setReplaceText] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageSectionRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const translateSinglePageMut = useTranslateSinglePageBubbles();
 
   useEffect(() => {
     if (pageFilter !== "all") return;
@@ -111,7 +108,7 @@ export function ScriptMode({
   ];
 
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-[166px_minmax(0,1fr)_220px] gap-3 overflow-hidden bg-pulp-paper px-2 py-3">
+    <div className="grid min-h-0 flex-1 grid-cols-[166px_minmax(0,1fr)] gap-3 overflow-hidden bg-pulp-paper px-2 py-3">
       {/* Left rail — page list */}
       <aside className="min-h-0 overflow-y-auto border-[2px] border-ink-black bg-pulp-paper p-2 shadow-[3px_3px_0_0_var(--color-ink-black)]">
         <div className="mb-2 font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/55">PAGES</div>
@@ -163,22 +160,56 @@ export function ScriptMode({
           const activeTypeFilters = FILTERS.filter((f) => f.id !== "all" && counts[f.id] > 0);
           const showFilters = activeTypeFilters.length > 1;
           return (
-            <div className={cn("sticky top-0 z-10 flex items-center justify-end gap-1.5 bg-pulp-paper px-4 py-2", showFilters && "border-b-[2px] border-ink-black")}>
-              {showFilters && [{ id: "all" as FilterType, label: "All" }, ...activeTypeFilters].map((f) => (
+            <div className="sticky top-0 z-10 border-b-[2px] border-ink-black bg-pulp-paper">
+              <div className="flex items-center justify-between gap-1.5 px-4 py-2">
                 <button
-                  key={f.id}
-                  onClick={() => setFilter(f.id)}
-                  className={cn(
-                    "flex items-center gap-1.5 border px-2.5 py-1 font-meta text-[0.52rem] tracking-[0.12em] transition-colors",
-                    activeFilter === f.id
-                      ? "bg-ink-black text-pulp-paper"
-                      : "border-ink-black/22 bg-pulp-paper text-ink-black hover:bg-bristol",
-                  )}
+                  onClick={() => setFindReplaceOpen((o) => !o)}
+                  className="flex items-center gap-2 border border-ink-black/30 bg-bristol px-2.5 py-1 font-meta text-[0.52rem] tracking-[0.1em] transition-colors hover:bg-surface-container"
                 >
-                  {f.label}
-                  <span className="opacity-50">{counts[f.id]}</span>
+                  Find &amp; replace
+                  <kbd className="font-meta text-[0.46rem] text-ink-black/50">⌘F</kbd>
                 </button>
-              ))}
+                <div className="flex items-center gap-1.5">
+                  {showFilters && [{ id: "all" as FilterType, label: "All" }, ...activeTypeFilters].map((f) => (
+                    <button
+                      key={f.id}
+                      onClick={() => setFilter(f.id)}
+                      className={cn(
+                        "flex items-center gap-1.5 border px-2.5 py-1 font-meta text-[0.52rem] tracking-[0.12em] transition-colors",
+                        activeFilter === f.id
+                          ? "bg-ink-black text-pulp-paper"
+                          : "border-ink-black/22 bg-pulp-paper text-ink-black hover:bg-bristol",
+                      )}
+                    >
+                      {f.label}
+                      <span className="opacity-50">{counts[f.id]}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {findReplaceOpen && (
+                <div className="flex items-center gap-2 border-t border-ink-black/15 px-4 py-2">
+                  <input
+                    value={findText}
+                    onChange={(e) => setFindText(e.target.value)}
+                    placeholder="Find..."
+                    className="ui-field flex-1 border-[2px] border-ink-black px-2 py-1 font-mono text-[0.75rem]"
+                  />
+                  <input
+                    value={replaceText}
+                    onChange={(e) => setReplaceText(e.target.value)}
+                    placeholder="Replace with..."
+                    className="ui-field flex-1 border-[2px] border-ink-black px-2 py-1 font-mono text-[0.75rem]"
+                  />
+                  <button
+                    onClick={handleReplaceAll}
+                    disabled={!findText}
+                    className="border-[2px] border-ink-black bg-hero-red px-3 py-1 font-meta text-[0.55rem] tracking-[0.1em] text-bristol disabled:opacity-40"
+                  >
+                    REPLACE ALL
+                  </button>
+                </div>
+              )}
             </div>
           );
         })()}
@@ -211,62 +242,6 @@ export function ScriptMode({
         </div>
       </div>
 
-      {/* Right rail — actions */}
-      <aside className="min-h-0 space-y-3 overflow-y-auto">
-        <div className="border-[2px] border-ink-black bg-pulp-paper shadow-ink-sm">
-          <div className="border-b-[2px] border-ink-black px-3 py-2">
-            <div className="font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/50">ACTIONS</div>
-            <div className="font-display text-[0.88rem] font-bold tracking-[-0.02em]">BULK OPS</div>
-          </div>
-          <div className="space-y-1.5 p-3">
-            <button
-              onClick={() => setFindReplaceOpen((o) => !o)}
-              className="flex w-full items-center justify-between border border-ink-black/30 bg-bristol px-2.5 py-1.5 text-left transition-colors hover:bg-surface-container"
-            >
-              <span className="font-meta text-[0.6rem] tracking-[0.1em]">Find & replace</span>
-              <kbd className="font-meta text-[0.5rem] text-ink-black/50">⌘F</kbd>
-            </button>
-            <button
-              onClick={() => {
-                const page = pages[pageIdx];
-                if (project && page) {
-                  translateSinglePageMut.mutate({ project, pageNum: page.page_number, targetLanguage: outputLanguage });
-                }
-              }}
-              disabled={!project || translateSinglePageMut.isPending}
-              className="flex w-full items-center justify-between border border-ink-black/30 bg-bristol px-2.5 py-1.5 text-left transition-colors hover:bg-surface-container disabled:opacity-40"
-            >
-              <span className="font-meta text-[0.6rem] tracking-[0.1em]">
-                {translateSinglePageMut.isPending ? "Translating..." : "Translate page"}
-              </span>
-            </button>
-          </div>
-
-          {findReplaceOpen && (
-            <div className="border-t-[2px] border-ink-black p-3 space-y-2">
-              <input
-                value={findText}
-                onChange={(e) => setFindText(e.target.value)}
-                placeholder="Find..."
-                className="ui-field w-full border-[2px] border-ink-black px-2 py-1 font-mono text-[0.75rem]"
-              />
-              <input
-                value={replaceText}
-                onChange={(e) => setReplaceText(e.target.value)}
-                placeholder="Replace with..."
-                className="ui-field w-full border-[2px] border-ink-black px-2 py-1 font-mono text-[0.75rem]"
-              />
-              <button
-                onClick={handleReplaceAll}
-                disabled={!findText}
-                className="w-full border-[2px] border-ink-black bg-hero-red px-2 py-1 font-meta text-[0.55rem] tracking-[0.1em] text-bristol disabled:opacity-40"
-              >
-                REPLACE ALL
-              </button>
-            </div>
-          )}
-        </div>
-      </aside>
     </div>
   );
 }
@@ -367,11 +342,16 @@ function ScriptBubbleRow({
   const [editing, setEditing] = useState(false);
   const [draftText, setDraftText] = useState(bubble.text);
 
+  // Plain words, never debug output: a narration bubble with no speaker is a
+  // CAPTION, anything else without a speaker reads as the narrator.
   const resolvedName =
     bubble.speaker_name ??
     (bubble.speaker_id ? characterNames[bubble.speaker_id] : null) ??
-    "UNKNOWN";
-  const speakerLabel = `${resolvedName.toUpperCase()} (${bubble.type} · ${bubble.side})`;
+    (bubble.type === "narration" ? "CAPTION" : "NARRATOR");
+  const kindLabel = bubble.type === "narration" ? "CAPTION" : bubble.type.toUpperCase();
+  const speakerLabel = resolvedName.toUpperCase() === kindLabel
+    ? `${kindLabel} · ${bubble.side.toUpperCase()}`
+    : `${resolvedName.toUpperCase()} · ${kindLabel} · ${bubble.side.toUpperCase()}`;
 
   function handleBlur() {
     setEditing(false);

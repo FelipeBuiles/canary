@@ -7,9 +7,9 @@ export const CONFIDENCE_LABELS: Record<CostConfidence, string> = {
 };
 
 export const RESERVATION_HELPER =
-  "Reserved credits are held before the action starts. Unused reserved credits are released after the action finishes, resets, or fails.";
+  "You only pay for what's used — any unused part of the hold is released when the action finishes.";
 
 export const ESTIMATE_ONLY_HELPER =
-  "This action is charged from reported model usage after it finishes. No separate credit hold is made before it starts.";
+  "Charged from actual usage after it finishes — nothing is held up front.";
 
-export const ZERO_COST_COPY = "No credit hold needed for this step.";
+export const ZERO_COST_COPY = "This step is free.";

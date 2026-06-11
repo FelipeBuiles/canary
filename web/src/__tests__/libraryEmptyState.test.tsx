@@ -35,20 +35,22 @@ function renderLibrary() {
 }
 
 describe("Library first-run (Issue #0)", () => {
-  it("replaces telemetry zeros and the bare card with the first-issue invitation", () => {
+  it("shows the first-issue invitation with the 4-station teaching strip", () => {
     projectsResult.data = [];
     renderLibrary();
 
-    expect(screen.getByText("AWAITING FIRST PRODUCTION")).toBeTruthy();
     expect(screen.getByText("ISSUE #0")).toBeTruthy();
     expect(screen.getByText("Every production starts with a manuscript.")).toBeTruthy();
     expect(screen.getByText("THE PRODUCTION LINE")).toBeTruthy();
-    // The 8 UI stages render as a teaching strip.
-    expect(screen.getByText("Extract")).toBeTruthy();
-    expect(screen.getByText("Letter & Compose")).toBeTruthy();
+    // The 4 stations render as a teaching strip.
+    expect(screen.getByText("Story")).toBeTruthy();
+    expect(screen.getByText("Look")).toBeTruthy();
+    expect(screen.getByText("Panels")).toBeTruthy();
+    expect(screen.getByText("Book")).toBeTruthy();
     expect(screen.getByRole("button", { name: "START NEW PROJECT" })).toBeTruthy();
-    // Telemetry zeros are gone.
+    // The Studio Telemetry widget no longer exists anywhere.
     expect(screen.queryByText("ARCHIVE FILES")).toBeNull();
+    expect(screen.queryByText("Studio telemetry")).toBeNull();
   });
 
   it("leaves non-empty libraries untouched", () => {
@@ -68,8 +70,8 @@ describe("Library first-run (Issue #0)", () => {
     renderLibrary();
 
     expect(screen.queryByText("ISSUE #0")).toBeNull();
-    expect(screen.queryByText("AWAITING FIRST PRODUCTION")).toBeNull();
-    expect(screen.getByText("ARCHIVE FILES")).toBeTruthy();
+    // No telemetry widget for non-empty libraries either.
+    expect(screen.queryByText("ARCHIVE FILES")).toBeNull();
     expect(screen.getByText("Demo")).toBeTruthy();
   });
 });
