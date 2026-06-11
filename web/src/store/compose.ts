@@ -9,16 +9,26 @@ interface Selection {
   elementId: string;
 }
 
+/**
+ * Undo entries are page-scoped: ScriptMode can edit pages other than the one
+ * currently shown on the canvas, so undo/redo must restore the snapshot to
+ * the page it came from — never to whichever page happens to be visible.
+ */
+export interface PageSnapshot {
+  pageNum: number;
+  page: ComicPage;
+}
+
 interface ComposeStore {
   selection: Selection | null;
-  undoStack: ComicPage[];
-  redoStack: ComicPage[];
+  undoStack: PageSnapshot[];
+  redoStack: PageSnapshot[];
 
   select: (panelId: string, type: "bubble" | "sfx", elementId: string) => void;
   deselect: () => void;
   pushUndo: (page: ComicPage) => void;
-  popUndo: () => ComicPage | undefined;
-  popRedo: () => ComicPage | undefined;
+  popUndo: () => PageSnapshot | undefined;
+  popRedo: () => PageSnapshot | undefined;
   clearHistory: () => void;
 }
 
@@ -34,28 +44,31 @@ export const useComposeStore = create<ComposeStore>((set, get) => ({
 
   pushUndo: (page) =>
     set((s) => ({
-      undoStack: [...s.undoStack.slice(-MAX_UNDO + 1), structuredClone(page)],
+      undoStack: [
+        ...s.undoStack.slice(-MAX_UNDO + 1),
+        { pageNum: page.page_number, page: structuredClone(page) },
+      ],
       redoStack: [],
     })),
 
   popUndo: () => {
     const s = get();
     if (s.undoStack.length === 0) return undefined;
-    const page = s.undoStack[s.undoStack.length - 1];
+    const snapshot = s.undoStack[s.undoStack.length - 1];
     set({
       undoStack: s.undoStack.slice(0, -1),
     });
-    return page;
+    return snapshot;
   },
 
   popRedo: () => {
     const s = get();
     if (s.redoStack.length === 0) return undefined;
-    const page = s.redoStack[s.redoStack.length - 1];
+    const snapshot = s.redoStack[s.redoStack.length - 1];
     set({
       redoStack: s.redoStack.slice(0, -1),
     });
-    return page;
+    return snapshot;
   },
 
   clearHistory: () => set({ undoStack: [], redoStack: [], selection: null }),

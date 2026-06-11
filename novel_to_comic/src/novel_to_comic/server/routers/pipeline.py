@@ -26,7 +26,6 @@ from novel_to_comic.state import (
     reset_stale_stages,
     save_state,
 )
-from novel_to_comic.ai import ai_request_context
 from novel_to_comic.stage_runtime import StageRuntime
 
 from ..auth import get_current_user
@@ -35,13 +34,15 @@ from ..credits import (
     UnifiedCostResolver,
     assert_sufficient_credits,
     estimate_stage_credit_reservation,
-    release_reservation,
     release_stage_reservations,
-    reserve_credits,
 )
 from ..db import get_db
 from ..deps import get_project, project_key
-from ..credited_job import enqueue_credited_job
+from ..credited_job import (
+    CreditReservationDenied,
+    enqueue_credited_job,
+    run_credited_stage,
+)
 from ..generation_jobs import (
     generation_job_payload,
     generation_semaphore_for_config,
@@ -203,52 +204,34 @@ async def _run_stage_with_credits(
     *,
     retry_failed: bool = False,
 ):
-    """Reserve credits, run the stage, then settle or release the reservation."""
-    db = get_db()
+    """Run the stage behind a credit guarantee, then auto-chain."""
     try:
-        reservation_credits = estimate_stage_credit_reservation(config, project_dir, state, stage)
-        reservation_id, job_id = reserve_credits(db, user_id, project_id, stage, reservation_credits)
-    except Exception as exc:
+        await run_credited_stage(
+            user_id=user_id,
+            project_id=project_id,
+            project_dir=project_dir,
+            config=config,
+            state=state,
+            stage=stage,
+            run=lambda: _run_stage(
+                stage, config, project_dir, state, queue, app_state, pkey,
+                retry_failed=retry_failed,
+            ),
+        )
+    except CreditReservationDenied as denied:
         # Insufficient credits or DB error — fail the stage so the UI reflects it.
-        detail = getattr(exc, "detail", None)
-        if isinstance(detail, str):
-            message = detail
-        elif isinstance(detail, dict):
-            message = str(detail.get("message") or detail.get("error") or exc)
-        else:
-            message = str(exc)
-        fail_stage(state, stage, message)
+        fail_stage(state, stage, denied.message)
         save_state(state, project_dir)
-        event: dict[str, object] = {"type": "stage_fail", "stage": stage, "message": message}
-        if isinstance(detail, dict) and detail.get("error") == "insufficient_credits":
+        event: dict[str, object] = {"type": "stage_fail", "stage": stage, "message": denied.message}
+        if denied.detail and denied.detail.get("error") == "insufficient_credits":
             event["error_code"] = "insufficient_credits"
-            event["balance_credits"] = detail.get("balance_credits")
-            event["required_credits"] = detail.get("required_credits")
-            event["shortfall_credits"] = detail.get("shortfall_credits")
+            event["balance_credits"] = denied.detail.get("balance_credits")
+            event["required_credits"] = denied.detail.get("required_credits")
+            event["shortfall_credits"] = denied.detail.get("shortfall_credits")
         queue.put_nowait(event)
         return
 
-    try:
-        with ai_request_context(
-            user_id=user_id,
-            project_id=project_id,
-            project_name=project_dir.name,
-            workspace_id=str(project_dir.parent),
-            stage=stage,
-            job_id=job_id,
-        ):
-            await _run_stage(
-                stage, config, project_dir, state, queue, app_state, pkey,
-                retry_failed=retry_failed,
-            )
-
-        s = state.stages[stage]
-    finally:
-        # Per-call debits land in the AI client as each API call returns
-        # (see ai.client._settle_event_usage), so a crash mid-stage only loses
-        # the in-flight request. Reservation just gets released either way.
-        if reservation_id:
-            release_reservation(db, reservation_id)
+    s = state.stages[stage]
 
     # Auto-chain: if the stage completed (not awaiting_review, not failed),
     # automatically run the next stages in the chain.
@@ -594,6 +577,45 @@ async def event_stream(
     return StreamingResponse(generator(), media_type="text/event-stream")
 
 
+def _enqueue_cast_asset_regen(
+    request: Request,
+    project_id: str,
+    user_id: str,
+    project,
+    *,
+    kind: str,
+    asset_id_key: str,
+    asset_id: str,
+    label: str,
+    work,
+    debit_description: str,
+) -> dict:
+    """One intake for cast asset regens — ref, plate, and prop handlers
+    differ only in kind, payload key, and work callable."""
+    project_dir, config, state = project
+    pkey = project_key(user_id, project_id)
+
+    job, _ = enqueue_credited_job(
+        request.app,
+        project_name=pkey,
+        user_id=user_id,
+        project_id=project_id,
+        project_dir=project_dir,
+        stage="cast",
+        kind=kind,
+        label=label,
+        payload={asset_id_key: asset_id},
+        work=work,
+        debit_description=debit_description,
+        semaphore=generation_semaphore_for_config(request.app, config),
+    )
+    return {
+        "status": "queued",
+        "job": generation_job_payload(request.app, job),
+        asset_id_key: asset_id,
+    }
+
+
 @router.post("/regen")
 async def regen_panel(
     request: Request,
@@ -703,28 +725,16 @@ async def regen_ref(
 ):
     from novel_to_comic.stages import s3_cast
 
-    project_dir, config, state = project
-    pkey = project_key(user_id, project_id)
-
-    job, _ = enqueue_credited_job(
-        request.app,
-        project_name=pkey,
-        user_id=user_id,
-        project_id=project_id,
-        project_dir=project_dir,
-        stage="cast",
+    _project_dir, config, _state = project
+    return _enqueue_cast_asset_regen(
+        request, project_id, user_id, project,
         kind="character_ref_regen",
+        asset_id_key="char_id",
+        asset_id=char_id,
         label=f"Character ref / {char_id}",
-        payload={"char_id": char_id},
-        work=lambda: s3_cast.regenerate_character_ref(config, project_dir, char_id),
+        work=lambda: s3_cast.regenerate_character_ref(config, _project_dir, char_id),
         debit_description=f"Model call: regenerate character ref {char_id}",
-        semaphore=generation_semaphore_for_config(request.app, config),
     )
-    return {
-        "status": "queued",
-        "job": generation_job_payload(request.app, job),
-        "char_id": char_id,
-    }
 
 
 @router.post("/regen-plate")
@@ -737,28 +747,16 @@ async def regen_plate(
 ):
     from novel_to_comic.stages import s3_cast
 
-    project_dir, config, state = project
-    pkey = project_key(user_id, project_id)
-
-    job, _ = enqueue_credited_job(
-        request.app,
-        project_name=pkey,
-        user_id=user_id,
-        project_id=project_id,
-        project_dir=project_dir,
-        stage="cast",
+    _project_dir, config, _state = project
+    return _enqueue_cast_asset_regen(
+        request, project_id, user_id, project,
         kind="location_plate_regen",
+        asset_id_key="loc_id",
+        asset_id=loc_id,
         label=f"Location plate / {loc_id}",
-        payload={"loc_id": loc_id},
-        work=lambda: s3_cast.regenerate_location_plate(config, project_dir, loc_id),
+        work=lambda: s3_cast.regenerate_location_plate(config, _project_dir, loc_id),
         debit_description=f"Model call: regenerate location plate {loc_id}",
-        semaphore=generation_semaphore_for_config(request.app, config),
     )
-    return {
-        "status": "queued",
-        "job": generation_job_payload(request.app, job),
-        "loc_id": loc_id,
-    }
 
 
 @router.post("/regen-ref-instructed")
@@ -823,28 +821,16 @@ async def regen_prop(
 ):
     from novel_to_comic.stages import s3_cast
 
-    project_dir, config, state = project
-    pkey = project_key(user_id, project_id)
-
-    job, _ = enqueue_credited_job(
-        request.app,
-        project_name=pkey,
-        user_id=user_id,
-        project_id=project_id,
-        project_dir=project_dir,
-        stage="cast",
+    _project_dir, config, _state = project
+    return _enqueue_cast_asset_regen(
+        request, project_id, user_id, project,
         kind="prop_ref_regen",
+        asset_id_key="prop_id",
+        asset_id=prop_id,
         label=f"Prop ref / {prop_id}",
-        payload={"prop_id": prop_id},
-        work=lambda: s3_cast.regenerate_prop_ref(config, project_dir, prop_id),
+        work=lambda: s3_cast.regenerate_prop_ref(config, _project_dir, prop_id),
         debit_description=f"Model call: regenerate prop ref {prop_id}",
-        semaphore=generation_semaphore_for_config(request.app, config),
     )
-    return {
-        "status": "queued",
-        "job": generation_job_payload(request.app, job),
-        "prop_id": prop_id,
-    }
 
 
 @router.post("/regen-prop-instructed")

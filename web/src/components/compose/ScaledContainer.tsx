@@ -1,18 +1,35 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { computeScale } from "./coordinates";
+import { PAGE_W, PAGE_H } from "./layouts";
 
 interface ScaledContainerProps {
   children: React.ReactNode;
   zoom?: number;
   onZoomChange?: (zoom: number) => void;
   onScaleChange?: (scale: number) => void;
+  /** Native content size — defaults to a single comic page. */
+  nativeW?: number;
+  nativeH?: number;
+  maxZoom?: number;
+  /** Inner padding (px) reserved around the content when computing fit. */
+  fitPadding?: number;
 }
 
 /**
- * Renders children at 2480x3508 native size, scaled to fit the viewport
- * via CSS transform. Uses ResizeObserver to track container size.
+ * Renders children at native size (default 2480x3508), scaled to fit the
+ * viewport via CSS transform. Uses ResizeObserver to track container size.
+ * Handles wheel-zoom around the cursor and drag-panning when zoomed in.
  */
-export function ScaledContainer({ children, zoom = 1, onZoomChange, onScaleChange }: ScaledContainerProps) {
+export function ScaledContainer({
+  children,
+  zoom = 1,
+  onZoomChange,
+  onScaleChange,
+  nativeW = PAGE_W,
+  nativeH = PAGE_H,
+  maxZoom = 2.5,
+  fitPadding = 0,
+}: ScaledContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [fitScale, setFitScale] = useState(0);
   const panRef = useRef<{ startX: number; startY: number; left: number; top: number } | null>(null);
@@ -21,8 +38,8 @@ export function ScaledContainer({ children, zoom = 1, onZoomChange, onScaleChang
   const compute = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
-    setFitScale(computeScale(el.clientWidth, el.clientHeight));
-  }, []);
+    setFitScale(computeScale(el.clientWidth - fitPadding, el.clientHeight - fitPadding, nativeW, nativeH));
+  }, [nativeW, nativeH, fitPadding]);
 
   useEffect(() => {
     compute();
@@ -47,7 +64,7 @@ export function ScaledContainer({ children, zoom = 1, onZoomChange, onScaleChang
       e.preventDefault();
 
       const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
-      const nextZoom = Math.max(0.5, Math.min(2.5, Number((zoom * zoomFactor).toFixed(3))));
+      const nextZoom = Math.max(0.5, Math.min(maxZoom, Number((zoom * zoomFactor).toFixed(3))));
       if (nextZoom === zoom) return;
 
       const rect = el.getBoundingClientRect();
@@ -63,7 +80,7 @@ export function ScaledContainer({ children, zoom = 1, onZoomChange, onScaleChang
 
     el.addEventListener("wheel", handleWheel, { passive: false });
     return () => el.removeEventListener("wheel", handleWheel);
-  }, [fitScale, onZoomChange, zoom]);
+  }, [fitScale, onZoomChange, zoom, maxZoom]);
 
   useLayoutEffect(() => {
     const el = containerRef.current;
@@ -122,16 +139,16 @@ export function ScaledContainer({ children, zoom = 1, onZoomChange, onScaleChang
     >
       <div
         style={{
-          width: Math.round(2480 * scale),
-          height: Math.round(3508 * scale),
+          width: Math.round(nativeW * scale),
+          height: Math.round(nativeH * scale),
           margin: "auto",
           position: "relative",
         }}
       >
         <div
           style={{
-            width: 2480,
-            height: 3508,
+            width: nativeW,
+            height: nativeH,
             transform: `scale(${scale})`,
             transformOrigin: "top left",
             position: "absolute",

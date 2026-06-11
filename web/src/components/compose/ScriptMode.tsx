@@ -18,6 +18,10 @@ interface ScriptModeProps {
     bubbleId: string,
     patch: Partial<Bubble>,
   ) => void;
+  onBulkUpdateBubbles: (
+    pageNum: number,
+    panelPatches: { id: string; bubbles: (Partial<Bubble> & { id: string })[] }[],
+  ) => void;
   onSwitchToLayout: (pageNum: number, panelId: string, bubbleId: string) => void;
 }
 
@@ -29,6 +33,7 @@ export function ScriptMode({
   outputLanguage,
   onPageSelect,
   onUpdateBubble,
+  onBulkUpdateBubbles,
   onSwitchToLayout,
 }: ScriptModeProps) {
   const { data: storyBible } = useStoryBible(project);
@@ -53,6 +58,39 @@ export function ScriptMode({
     const offset = target.offsetTop - container.offsetTop - 16;
     container.scrollTo({ top: offset, behavior: "smooth" });
   }, [pageIdx, pageFilter]);
+
+  // ⌘F opens find & replace (matches the hint shown on the button).
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+        e.preventDefault();
+        setFindReplaceOpen(true);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  function handleReplaceAll() {
+    if (!findText) return;
+    for (const page of pages) {
+      if (!page) continue;
+      // Batch all edits on a page into one PATCH — per-bubble requests race
+      // each other on the server's read-modify-write of the page file.
+      const panelPatches: { id: string; bubbles: (Partial<Bubble> & { id: string })[] }[] = [];
+      for (const panel of page.panels) {
+        const bubblePatches = panel.bubbles
+          .filter((b) => b.text.includes(findText))
+          .map((b) => ({ id: b.id, text: b.text.replaceAll(findText, replaceText) }));
+        if (bubblePatches.length > 0) {
+          panelPatches.push({ id: panel.id, bubbles: bubblePatches });
+        }
+      }
+      if (panelPatches.length > 0) {
+        onBulkUpdateBubbles(page.page_number, panelPatches);
+      }
+    }
+  }
 
   const visiblePages = pageFilter === "all" ? pages : [pages[pageFilter]];
   const allBubbles = visiblePages.flatMap((p) => p?.panels.flatMap((panel) => panel.bubbles) ?? []);
@@ -201,7 +239,6 @@ export function ScriptMode({
               <span className="font-meta text-[0.6rem] tracking-[0.1em]">
                 {translateSinglePageMut.isPending ? "Translating..." : "Translate page"}
               </span>
-              <kbd className="font-meta text-[0.5rem] text-ink-black/50">⌘T</kbd>
             </button>
           </div>
 
@@ -220,21 +257,7 @@ export function ScriptMode({
                 className="ui-field w-full border-[2px] border-ink-black px-2 py-1 font-mono text-[0.75rem]"
               />
               <button
-                onClick={() => {
-                  if (!findText) return;
-                  for (const page of pages) {
-                    if (!page) continue;
-                    for (const panel of page.panels) {
-                      for (const bubble of panel.bubbles) {
-                        if (bubble.text.includes(findText)) {
-                          onUpdateBubble(page.page_number, panel.id, bubble.id, {
-                            text: bubble.text.replaceAll(findText, replaceText),
-                          });
-                        }
-                      }
-                    }
-                  }
-                }}
+                onClick={handleReplaceAll}
                 disabled={!findText}
                 className="w-full border-[2px] border-ink-black bg-hero-red px-2 py-1 font-meta text-[0.55rem] tracking-[0.1em] text-bristol disabled:opacity-40"
               >

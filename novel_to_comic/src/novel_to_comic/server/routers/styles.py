@@ -1,7 +1,6 @@
 """Style suggestion, sample generation, and active style selection."""
 
 import asyncio
-import math
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -23,11 +22,9 @@ from novel_to_comic.stages.s2_style import (
 from ..auth import get_current_user
 from ..credits import (
     assert_sufficient_credits,
-    provider_usd_to_credits,
+    credit_estimate_for_provider_cost,
     release_reservation,
-    reservation_buffer,
     reserve_credits,
-    stage_cost_confidence,
 )
 from ..db import get_db
 from ..deps import get_project, project_key
@@ -75,15 +72,7 @@ def _get_bible(project_dir):
 
 def _suggest_batch_credit_estimate(config: Config, project_dir) -> dict:
     cost_usd = estimate_style_batch_cost_usd(config, project_dir)
-    estimate = max(1, provider_usd_to_credits(cost_usd)) if cost_usd > 0 else 0
-    multiplier = reservation_buffer()
-    reserved = math.ceil(estimate * multiplier) if estimate > 0 else 0
-    return {
-        "estimate_credits": estimate,
-        "reserved_credits": reserved,
-        "reservation_multiplier": multiplier,
-        "confidence": stage_cost_confidence("style"),
-    }
+    return dict(credit_estimate_for_provider_cost(cost_usd, "style", reserve=True))
 
 
 def _assert_no_pipeline_task(request: Request, pkey: str) -> None:

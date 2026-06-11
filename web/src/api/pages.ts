@@ -1,12 +1,5 @@
 import { apiFetch } from "./client";
-import type { ComicPage, PageSummary, CharacterVoice } from "../types/api";
-
-export interface StructuralPageResponse {
-  layout_plan: Record<string, unknown>;
-  pages: ComicPage[];
-  summary: Record<string, unknown>;
-  page?: ComicPage;
-}
+import type { ComicPage, PageSummary } from "../types/api";
 
 export function listPages(project: string): Promise<PageSummary[]> {
   return apiFetch(`/projects/${encodeURIComponent(project)}/pages/`);
@@ -41,26 +34,6 @@ export function replacePage(
   });
 }
 
-export function reorderPanels(
-  project: string,
-  pages: { page_number: number; panel_ids: string[] }[],
-): Promise<void> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/reorder`, {
-    method: "POST",
-    body: JSON.stringify({ pages }),
-  });
-}
-
-export function reflowPages(
-  project: string,
-  panelsPerPage: number,
-): Promise<PageSummary[]> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/reflow`, {
-    method: "POST",
-    body: JSON.stringify({ panels_per_page: panelsPerPage }),
-  });
-}
-
 export function generatePageStyleVars(
   project: string,
 ): Promise<{ status: string; style_vars: Record<string, string>; pages: PageSummary[] }> {
@@ -89,22 +62,6 @@ export function setTheme(
   });
 }
 
-export function applyBubblePreset(
-  project: string,
-  presetName: string,
-): Promise<{ status: string; preset_name: string; updated_bubbles: number }> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/apply-bubble-preset`, {
-    method: "POST",
-    body: JSON.stringify({ preset_name: presetName }),
-  });
-}
-
-export function getBubblePresets(
-  project: string,
-): Promise<Record<string, Record<string, string>>> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/bubble-presets`);
-}
-
 export function translateSinglePageBubbles(
   project: string,
   pageNum: number,
@@ -113,52 +70,6 @@ export function translateSinglePageBubbles(
   return apiFetch(`/projects/${encodeURIComponent(project)}/pages/${pageNum}/translate-bubbles`, {
     method: "POST",
     body: JSON.stringify(targetLanguage ? { target_language: targetLanguage } : {}),
-  });
-}
-
-export function getCharacterVoices(
-  project: string,
-): Promise<Record<string, CharacterVoice>> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/character-voices`);
-}
-
-export function putCharacterVoice(
-  project: string,
-  voice: CharacterVoice,
-): Promise<CharacterVoice> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/character-voices/${encodeURIComponent(voice.character_id)}`, {
-    method: "PUT",
-    body: JSON.stringify(voice),
-  });
-}
-
-export function deleteCharacterVoice(
-  project: string,
-  characterId: string,
-): Promise<{ status: string }> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/character-voices/${encodeURIComponent(characterId)}`, {
-    method: "DELETE",
-  });
-}
-
-export function reflowSinglePage(
-  project: string,
-  pageNum: number,
-  layoutPreset: string,
-): Promise<ComicPage> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/${pageNum}/reflow`, {
-    method: "POST",
-    body: JSON.stringify({ layout_preset: layoutPreset }),
-  });
-}
-
-export function applyStructuralOperation(
-  project: string,
-  data: Record<string, unknown>,
-): Promise<StructuralPageResponse> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/structural`, {
-    method: "POST",
-    body: JSON.stringify(data),
   });
 }
 

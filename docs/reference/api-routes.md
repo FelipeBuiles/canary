@@ -38,6 +38,8 @@ Replace `{project}` with the project directory name.
 |--------|------|---------|------|
 | `GET` | `/api/projects` | `list_projects` | `projects.py` |
 | `POST` | `/api/projects` | `create_project` | `projects.py` |
+| `GET` | `/api/projects/short-stories` | `list_short_stories` | `projects.py` |
+| `POST` | `/api/projects/import-story` | `import_short_story` | `projects.py` |
 | `GET` | `/api/projects/{project}/status` | `project_status` | `projects.py` |
 | `POST` | `/api/projects/{project}/cover` | `generate_cover` | `projects.py` |
 | `DELETE` | `/api/projects/{project}` | `delete_project` | `projects.py` |

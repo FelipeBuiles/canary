@@ -32,7 +32,7 @@ export function RerunStageAction({
   const estimate = useStageEstimate(project, stage, open);
 
   function confirmRerun() {
-    handleRun(project, stage, true);
+    handleRun(project, stage, { rerun: true });
     setOpen(false);
   }
 

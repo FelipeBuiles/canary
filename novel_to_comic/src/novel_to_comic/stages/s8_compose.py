@@ -3,22 +3,17 @@
 Two distinct responsibilities:
 
 1. BUILD  — reads panel images + PanelBreakdown data, groups them into pages,
-             and writes ``assembly/pages/page_NNN.json`` (ComicPage models).
-             These JSON files are the canonical editing surface.  Edit them
-             directly or via the future web dashboard; the next export picks
-             up your changes.
+             and writes ``compose/pages/page_NNN.json`` (ComicPage models).
+             These JSON files are the canonical editing surface — the web
+             dashboard edits them via the pages REST API, and the next
+             render picks up the changes.
 
 2. RENDER — reads ComicPage JSON → builds HTML → Playwright screenshot → PNG
              → PDF / CBZ export.
 
-``pipeline run assemble``  →  build + render (full path)
-``pipeline export``         →  render only (respects any JSON edits you've made)
-``pipeline export --rebuild``  →  build + render (force fresh JSON)
-
-Web dashboard path (future):
-    GET  /api/pages/         →  serve page JSON files
-    PATCH /api/pages/1/      →  save edits (bubble positions, theme, layout)
-    POST /api/export/        →  trigger render_pages() → download PDF
+``run(..., rebuild=True)``   →  build + render (full stage run)
+``run(..., rebuild=False)``  →  render only (respects any JSON edits;
+                                 used by ``POST /api/projects/{id}/export/``)
 """
 
 import re
@@ -64,28 +59,12 @@ console = Console()
 
 # ── Build: panel data → ComicPage JSON ───────────────────────────────────────
 
-def _collect_panel_data(
-    project_dir: Path,
-    use_layout_plan: bool = True,
-) -> list[tuple[Path, PanelBreakdown]]:
-    """Collect ordered (img_path, breakdown) pairs, preferring layout plan ordering."""
-    if use_layout_plan:
-        plan_path = project_dir / "plan" / "layout_plan.json"
-        if plan_path.exists():
-            plan = load_layout_plan(project_dir)
-            panel_lookup = planned_panel_index(plan)
-            panel_data: list[tuple[Path, PanelBreakdown]] = []
-            for page in plan.planned_pages:
-                for panel_id in page.panel_ids:
-                    planned_panel = panel_lookup.get(panel_id)
-                    if planned_panel is None:
-                        continue
-                    img_path = image_path_for_panel(project_dir, planned_panel)
-                    if not img_path.exists():
-                        continue
-                    panel_data.append((img_path, planned_panel_to_breakdown(planned_panel)))
-            return panel_data
+def _collect_panel_data(project_dir: Path) -> list[tuple[Path, PanelBreakdown]]:
+    """Collect ordered (img_path, breakdown) pairs from the draw/storyboard dirs.
 
+    Only used when no layout plan exists; the plan path goes through
+    ``_collect_page_groups_from_layout_plan`` instead.
+    """
     images_dir = project_dir / "draw"
     panels_dir = project_dir / "storyboard"
     panel_data: list[tuple[Path, PanelBreakdown]] = []
@@ -271,20 +250,61 @@ def _export_cbz(compressed_paths: list[Path], output_path: Path) -> None:
 def _do_exports(page_paths: list[Path], exports_dir: Path, formats: list[str]) -> None:
     if not page_paths:
         return
-    
-    console.print("[dim]Optimizando tamaño de imágenes para exportación...[/dim]")
-    
+
+    console.print("[dim]Compressing page images for export...[/dim]")
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         compressed_paths = _get_compressed_images(page_paths, tmp_dir)
-        
+
         if "pdf" in formats:
             pdf_path = exports_dir / "comic.pdf"
             _export_pdf(compressed_paths, pdf_path)
-            console.log(f"[green]PDF (Optimizado):[/green] {pdf_path}")
+            console.log(f"[green]PDF:[/green] {pdf_path}")
         if "cbz" in formats:
             cbz_path = exports_dir / "comic.cbz"
             _export_cbz(compressed_paths, cbz_path)
-            console.log(f"[green]CBZ (Optimizado):[/green] {cbz_path}")
+            console.log(f"[green]CBZ:[/green] {cbz_path}")
+
+
+# ── Render: ComicPage JSON → HTML → PNG → exports ────────────────────────────
+
+async def _render_and_export(
+    json_paths: list[Path],
+    html_dir: Path,
+    png_dir: Path,
+    project_dir: Path,
+    custom_css: str,
+    exports_dir: Path,
+    export_formats: list[str],
+    ctx: StageRuntime,
+) -> None:
+    """Render each page JSON to HTML + PNG, then write PDF/CBZ exports."""
+    async with browser_context() as browser:
+        with make_progress(ctx.on_event) as progress:
+            task = progress.add_task("Rendering pages", total=len(json_paths))
+            png_paths: list[Path] = []
+            for json_path in json_paths:
+                comic_page   = ComicPage.model_validate_json(json_path.read_text())
+                html_content = build_page_html(comic_page, project_dir, custom_css)
+
+                html_path = html_dir / f"page_{comic_page.page_number:03d}.html"
+                html_path.write_text(html_content, encoding="utf-8")
+
+                png_path = png_dir / f"page_{comic_page.page_number:03d}.png"
+                await render_html_to_png(
+                    html_content, png_path,
+                    browser=browser, source_path=html_path,
+                )
+                png_paths.append(png_path)
+                ctx.record_item_done()
+                ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+                if task is not None:
+                    progress.advance(task)
+
+    _do_exports(png_paths, exports_dir, export_formats)
+    for fmt in export_formats:
+        out = exports_dir / f"comic.{fmt}"
+        ctx.log(f"{fmt.upper()}: {out}")
 
 
 # ── Public stage entry points ─────────────────────────────────────────────────
@@ -332,111 +352,73 @@ async def run(
     # ── Build phase (panel data → ComicPage JSON) ─────────────────────────────
     if rebuild:
         plan_path = artifacts.layout_plan_path(project_dir)
-        panel_data = _collect_panel_data(project_dir, use_layout_plan=plan_path.exists())
-        if not panel_data:
-            console.print("[red]No valid panel images found.[/red]")
-            ctx.log("No valid panel images found.", level="error")
-            return
-
         if plan_path.exists():
-            projected_pages = persist_projected_pages(project_dir, story_bible, theme_name)
             page_groups = _collect_page_groups_from_layout_plan(project_dir)
+            if not page_groups:
+                console.print("[red]No valid panel images found.[/red]")
+                ctx.log("No valid panel images found.", level="error")
+                return
+            panel_count = sum(len(group) for group in page_groups)
+            # persist_projected_pages prunes stale page JSON before writing
+            projected_pages = persist_projected_pages(project_dir, story_bible, theme_name)
             json_paths = [
                 json_dir / f"page_{page.page_number:03d}.json"
                 for page in projected_pages
             ]
+            source_desc = " from layout plan"
         else:
+            panel_data = _collect_panel_data(project_dir)
+            if not panel_data:
+                console.print("[red]No valid panel images found.[/red]")
+                ctx.log("No valid panel images found.", level="error")
+                return
             page_groups = _group_into_pages(panel_data, max_per_page)
+            panel_count = len(panel_data)
+            # Prune stale page JSON from a previous, larger build so render-only
+            # runs and the pages API never pick up ghost pages.
+            for old in json_dir.glob("page_*.json"):
+                old.unlink()
             json_paths = []
+            for i, group in enumerate(page_groups):
+                comic_page = _build_comic_page(group, i + 1, project_dir, story_bible, theme_name)
+                artifacts.write_compose_page(project_dir, i + 1, comic_page)
+                json_paths.append(artifacts.compose_page_path(project_dir, i + 1))
+            source_desc = f" ({max_per_page}/page)"
 
-        with ctx.execute(total=len(page_groups)):
+        with ctx.execute(total=len(json_paths)):
             console.print(
-                f"[bold]Building {len(panel_data)} panels → "
-                f"{len(page_groups)} pages{' from layout plan' if plan_path.exists() else f' ({max_per_page}/page)'}...[/bold]"
+                f"[bold]Building {panel_count} panels → {len(json_paths)} pages{source_desc}...[/bold]"
             )
-            ctx.log(f"Building {len(panel_data)} panels → {len(page_groups)} pages", level="bold")
-            if not plan_path.exists():
-                for i, group in enumerate(page_groups):
-                    comic_page = _build_comic_page(group, i + 1, project_dir, story_bible, theme_name)
-                    artifacts.write_compose_page(project_dir, i + 1, comic_page)
-                    json_paths.append(artifacts.compose_page_path(project_dir, i + 1))
+            ctx.log(f"Building {panel_count} panels → {len(json_paths)} pages", level="bold")
             ctx.save()
             console.print(f"[dim]Page JSON files in:[/dim] [bold]{json_dir.relative_to(project_dir)}[/bold]")
             ctx.log(f"Page JSON files in: {json_dir.relative_to(project_dir)}", level="dim")
 
-            # ── Render phase (ComicPage JSON → HTML → PNG) ───────────────────
-            async with browser_context() as browser:
-                with make_progress(ctx.on_event) as progress:
-                    task = progress.add_task("Rendering pages", total=len(json_paths))
-                    png_paths: list[Path] = []
-                    for json_path in json_paths:
-                        comic_page   = ComicPage.model_validate_json(json_path.read_text())
-                        html_content = build_page_html(comic_page, project_dir, custom_css)
-
-                        html_path = html_dir / f"page_{comic_page.page_number:03d}.html"
-                        html_path.write_text(html_content, encoding="utf-8")
-
-                        png_path = png_dir / f"page_{comic_page.page_number:03d}.png"
-                        await render_html_to_png(
-                            html_content, png_path,
-                            browser=browser, source_path=html_path,
-                        )
-                        png_paths.append(png_path)
-                        ctx.record_item_done()
-                        ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
-                        if task is not None:
-                            progress.advance(task)
+            await _render_and_export(
+                json_paths, html_dir, png_dir, project_dir,
+                custom_css, exports_dir, export_formats, ctx,
+            )
 
             console.print(
                 f"[dim]HTML previews in:[/dim] [bold]{html_dir.relative_to(project_dir)}[/bold]  "
                 f"(open in browser to preview, edit theme.css, hard-refresh)"
             )
             ctx.log(f"HTML previews in: {html_dir.relative_to(project_dir)}", level="dim")
-
-            _do_exports(png_paths, exports_dir, export_formats)
-            for fmt in export_formats:
-                out = exports_dir / f"comic.{fmt}"
-                ctx.log(f"{fmt.upper()}: {out}")
-
             console.print("[green]Compose stage complete.[/green]")
     else:
         # Render-only: load existing JSON
         json_paths = sorted(json_dir.glob("page_*.json"))
         if not json_paths:
-            console.print("[red]No page JSON files found. Run without --from-json first.[/red]")
+            console.print("[red]No page JSON files found. Run the compose stage first.[/red]")
             ctx.log("No page JSON files found.", level="error")
             return
 
         with ctx.execute(total=len(json_paths)):
             console.print(f"[bold]Re-rendering {len(json_paths)} existing page(s)...[/bold]")
-
-            async with browser_context() as browser:
-                with make_progress(ctx.on_event) as progress:
-                    task = progress.add_task("Rendering pages", total=len(json_paths))
-                    png_paths = []
-                    for json_path in json_paths:
-                        comic_page   = ComicPage.model_validate_json(json_path.read_text())
-                        html_content = build_page_html(comic_page, project_dir, custom_css)
-
-                        html_path = html_dir / f"page_{comic_page.page_number:03d}.html"
-                        html_path.write_text(html_content, encoding="utf-8")
-
-                        png_path = png_dir / f"page_{comic_page.page_number:03d}.png"
-                        await render_html_to_png(
-                            html_content, png_path,
-                            browser=browser, source_path=html_path,
-                        )
-                        png_paths.append(png_path)
-                        ctx.record_item_done()
-                        ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
-                        if task is not None:
-                            progress.advance(task)
-
-            _do_exports(png_paths, exports_dir, export_formats)
-            for fmt in export_formats:
-                out = exports_dir / f"comic.{fmt}"
-                ctx.log(f"{fmt.upper()}: {out}")
-
+            await _render_and_export(
+                json_paths, html_dir, png_dir, project_dir,
+                custom_css, exports_dir, export_formats, ctx,
+            )
             console.print("[green]Compose stage complete.[/green]")
 
 

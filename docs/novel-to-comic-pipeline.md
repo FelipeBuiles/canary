@@ -99,12 +99,12 @@ image_model: "image-balanced"
 fallback_image_model: "image-fast"
 ```
 
-Available image aliases: `image-fast`, `image-balanced`, `image-quality`.
-The LiteLLM proxy resolves them to provider/model routes. Current defaults route
-`image-balanced` to Gemini Pro Image and `image-quality` to OpenAI
-`gpt-image-2`; only `image-quality` uses the GPT Image 2 reference-image path.
-Draw keeps GPT Image 2 style/location/previous-panel context text-only and
-uploads a minimal subject reference set.
+Available image aliases: `image-fast`, `image-balanced`, `image-quality`, `image-reve`.
+The LiteLLM proxy resolves them to provider/model routes. `image-balanced` routes
+to Gemini Pro Image. `image-quality` and `image-reve` both route to Reve
+(`REVE_ALIASES`). Draw selects refs via `_reve_refs()` for Reve: up to 3 subject
+crops plus continuity/prop/style/location up to 4 total. GPT Image 2 is no longer
+a default gateway alias (`GPT_IMAGE_2_ALIASES` is empty).
 
 ---
 

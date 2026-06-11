@@ -1,7 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listProjects, getProjectStatus, createProject, deleteProject, generateProjectCover, listShortStories, importStory } from "./projects";
 import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate } from "./pipeline";
-import type { ConfigOverrides, StoryBible, CharacterVoice, ProjectStatus, StageInfo } from "../types/api";
+import type { ConfigOverrides, StoryBible, ProjectStatus, StageInfo } from "../types/api";
+import { reconcileStatusPoll } from "../lib/stageProgress";
 import { getBalance, getCreditHistory, getPricingReference } from "./credits";
 import { getPackages, createCheckout } from "./billing";
 import {
@@ -25,7 +26,7 @@ import {
   acceptImagePanel,
   unacceptImagePanel,
 } from "./stages";
-import { listPages, getPage, updatePage, replacePage, reflowPages, generatePageStyleVars, translatePageBubbles, setTheme, applyBubblePreset, getBubblePresets, translateSinglePageBubbles, getCharacterVoices, putCharacterVoice, deleteCharacterVoice, reflowSinglePage, triggerExport, applyStructuralOperation } from "./pages";
+import { listPages, getPage, updatePage, replacePage, generatePageStyleVars, translatePageBubbles, setTheme, translateSinglePageBubbles, triggerExport } from "./pages";
 import { getStyles, suggestStyles, fetchSuggestStylesEstimate, generateStyleSamples, setActiveStyle } from "./styles";
 import { getProjectConfig, updateProjectConfig } from "./config";
 import {
@@ -57,23 +58,8 @@ export function useProjectStatus(name: string | undefined) {
     queryKey: ["project", name, "status"],
     queryFn: async () => {
       const fresh = await getProjectStatus(name!);
-      // Prevent REST poll from regressing in-progress stage counters that SSE
-      // already advanced — progress should never go backward while running.
       const cached = qc.getQueryData<ProjectStatus>(["project", name, "status"]);
-      if (!cached) return fresh;
-      const mergedStages = { ...fresh.stages };
-      for (const stage of Object.keys(fresh.stages)) {
-        const freshInfo = fresh.stages[stage];
-        const cachedInfo = cached.stages[stage];
-        if (cachedInfo && freshInfo.status === "running" && cachedInfo.items_done > freshInfo.items_done) {
-          mergedStages[stage] = {
-            ...freshInfo,
-            items_done: cachedInfo.items_done,
-            items_total: Math.max(cachedInfo.items_total, freshInfo.items_total),
-          };
-        }
-      }
-      return { ...fresh, stages: mergedStages };
+      return reconcileStatusPoll(cached, fresh);
     },
     enabled: !!name,
     refetchInterval: (query) => {
@@ -676,18 +662,6 @@ export function useReplacePage() {
   });
 }
 
-export function useReflowPages() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ project, panelsPerPage }: { project: string; panelsPerPage: number }) =>
-      reflowPages(project, panelsPerPage),
-    onSuccess: (_data, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
-      qc.invalidateQueries({ queryKey: ["project", project, "plan"] });
-    },
-  });
-}
-
 export function useGeneratePageStyleVars() {
   const qc = useQueryClient();
   return useMutation({
@@ -721,25 +695,6 @@ export function useSetTheme() {
   });
 }
 
-export function useBubblePresets(project: string | undefined) {
-  return useQuery({
-    queryKey: ["project", project, "bubble-presets"],
-    queryFn: () => getBubblePresets(project!),
-    enabled: !!project,
-  });
-}
-
-export function useApplyBubblePreset() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ project, presetName }: { project: string; presetName: string }) =>
-      applyBubblePreset(project, presetName),
-    onSuccess: (_data, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
-    },
-  });
-}
-
 export function useTranslateSinglePageBubbles() {
   const qc = useQueryClient();
   return useMutation({
@@ -748,81 +703,6 @@ export function useTranslateSinglePageBubbles() {
     onSuccess: (_data, { project, pageNum }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "pages", pageNum] });
       qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
-    },
-  });
-}
-
-export function useCharacterVoices(project: string | undefined) {
-  return useQuery({
-    queryKey: ["project", project, "character-voices"],
-    queryFn: () => getCharacterVoices(project!),
-    enabled: !!project,
-  });
-}
-
-export function usePutCharacterVoice() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ project, voice }: { project: string; voice: CharacterVoice }) =>
-      putCharacterVoice(project, voice),
-    onSuccess: (_data, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "character-voices"] });
-      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
-    },
-  });
-}
-
-export function useDeleteCharacterVoice() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ project, characterId }: { project: string; characterId: string }) =>
-      deleteCharacterVoice(project, characterId),
-    onSuccess: (_data, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "character-voices"] });
-      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
-    },
-  });
-}
-
-export function useReflowSinglePage() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ project, pageNum, layoutPreset }: { project: string; pageNum: number; layoutPreset: string }) =>
-      reflowSinglePage(project, pageNum, layoutPreset),
-    onSuccess: (data, { project, pageNum }) => {
-      qc.setQueryData(["project", project, "pages", pageNum], data);
-      qc.setQueriesData(
-        { queryKey: ["project", project, "pages"] },
-        (existing: import("../types/api").PageSummary[] | undefined) =>
-          existing?.map((summary) =>
-            summary.page_number === pageNum
-              ? {
-                  ...summary,
-                  panel_count: data.panels.length,
-                  layout: data.layout,
-                  theme: data.theme,
-                }
-              : summary,
-          ) ?? existing,
-      );
-      qc.invalidateQueries({ queryKey: ["project", project, "pages", pageNum] });
-      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
-      qc.invalidateQueries({ queryKey: ["project", project, "plan"] });
-    },
-  });
-}
-
-export function useApplyStructuralOperation() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ project, data }: { project: string; data: Record<string, unknown> }) =>
-      applyStructuralOperation(project, data),
-    onSuccess: (data, { project }) => {
-      if (data.page) {
-        qc.setQueryData(["project", project, "pages", data.page.page_number], data.page);
-      }
-      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
-      qc.invalidateQueries({ queryKey: ["project", project, "plan"] });
     },
   });
 }

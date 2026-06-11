@@ -52,6 +52,12 @@ GPT_IMAGE_2_ALIASES: frozenset[str] = frozenset()
 # Reve aliases pointing to the custom Reve provider.
 REVE_ALIASES: frozenset[str] = frozenset({GATEWAY_IMAGE_REVE, GATEWAY_IMAGE_QUALITY})
 
+# Default parallel image generations for Gemini/Vertex routes when
+# image_concurrency is unset. Vertex preview image models carry tight RPM
+# quotas; this cap plus the 429-aware backoff in ai/client keeps draws
+# parallel without tripping the limiter.
+GEMINI_IMAGE_CONCURRENCY_DEFAULT = 3
+
 
 def is_gpt_image_2(model: str) -> bool:
     """True if `model` resolves to OpenAI gpt-image-2 via the gateway or directly."""
@@ -188,6 +194,12 @@ class Config(BaseModel):
     flux_guidance_scale: float = 3.5
     continuity_mode: str = "hybrid"  # off | text_only | ref_only | hybrid
 
+    # Max panel/cast images generated in parallel. None → per-provider default:
+    # Gemini/Vertex routes use GEMINI_IMAGE_CONCURRENCY_DEFAULT, everything
+    # else uses max_concurrent_requests. Set explicitly when your quota allows
+    # more (or demands less).
+    image_concurrency: int | None = None
+
     # LLM visual-brief pass: rewrite each panel's structured spec into flowing
     # prose (via prompt_model) before image generation. Falls back to the
     # deterministic distilled prompt when disabled or when the call fails.
@@ -318,16 +330,14 @@ class Config(BaseModel):
 
         return snap(width), snap(height)
 
-    def effective_image_concurrency(self, *, google_model: bool = False) -> int:
+    def effective_image_concurrency(self) -> int:
         if self.dev_mode:
             return max(1, self.dev_image_concurrency)
-        is_google = google_model
-        if not is_google:
-            model = self.effective_image_model().lower()
-            if self.image_provider == "gemini" or "gemini" in model or "vertex" in model:
-                is_google = True
-        if is_google:
-            return 1
+        if self.image_concurrency is not None:
+            return max(1, self.image_concurrency)
+        model = self.effective_image_model().lower()
+        if self.image_provider == "gemini" or "gemini" in model or "vertex" in model:
+            return GEMINI_IMAGE_CONCURRENCY_DEFAULT
         return max(1, self.max_concurrent_requests)
 
 
@@ -454,6 +464,8 @@ image_steps: {config.image_steps}       # inference steps — 28 is a good balan
 image_quality: "{config.image_quality}"  # OpenAI GPT Image only: auto | low | medium | high
 flux_guidance_scale: {config.flux_guidance_scale}  # 3.5–4.5 recommended for FLUX.2 Pro
 continuity_mode: "{config.continuity_mode}"  # off | text_only | ref_only | hybrid
+# image_concurrency: 3  # parallel image generations; unset → provider default
+#                       # (Gemini/Vertex: 3, others: max_concurrent_requests)
 negative_prompt: "{config.negative_prompt}"  # applied to Together AI models only
 
 # ---------------------------------------------------------------------------

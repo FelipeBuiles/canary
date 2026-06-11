@@ -1,18 +1,18 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { ComicPage, PageSummary } from "../../types/api";
 import { Button } from "../ui/Button";
 import { ConfirmDrawer } from "../composites";
 import { pagePreviewUrl } from "../../api/pages";
 import { cn } from "../../lib/cn";
 import type { ComposeIssue } from "../../lib/issueEngine";
+import { ScaledContainer } from "./ScaledContainer";
+import { PAGE_W, PAGE_H } from "./layouts";
+import { THEME_NAMES } from "./themes";
 
-const THEMES = [
-  { id: "default", label: "Default" },
-  { id: "noir", label: "Noir" },
-  { id: "manga", label: "Manga" },
-  { id: "vintage", label: "Vintage" },
-  { id: "painted", label: "Painted" },
-] as const;
+const THEMES = THEME_NAMES.map((id) => ({
+  id,
+  label: id.charAt(0).toUpperCase() + id.slice(1),
+}));
 
 const LANGUAGES = [
   { value: "en" as const, label: "English" },
@@ -293,9 +293,6 @@ export function PreviewMode({
   );
 }
 
-const PAGE_W = 2480;
-const PAGE_H = 3508;
-
 function SpreadView({
   project,
   isLoading,
@@ -307,123 +304,34 @@ function SpreadView({
   leftSummary: PageSummary | undefined;
   rightSummary: PageSummary | undefined;
 }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [fitScale, setFitScale] = useState(0.2);
   const [zoom, setZoom] = useState(1);
-  const panRef = useRef<{ startX: number; startY: number; left: number; top: number } | null>(null);
-  const pendingScrollRef = useRef<{ left: number; top: number } | null>(null);
 
   const pageCount = leftSummary && rightSummary ? 2 : 1;
   const nativeW = PAGE_W * pageCount;
-  const nativeH = PAGE_H;
 
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const compute = () => {
-      const w = el.clientWidth - 64;
-      const h = el.clientHeight - 64;
-      if (w <= 0 || h <= 0) return;
-      const s = Math.min(h / nativeH, w / nativeW);
-      setFitScale(isFinite(s) && s > 0 ? s : 0.2);
-    };
-    compute();
-    const ro = new ResizeObserver(compute);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [nativeW, nativeH]);
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const factor = e.deltaY < 0 ? 1.1 : 0.9;
-      const nextZoom = parseFloat(Math.max(0.5, Math.min(3, zoom * factor)).toFixed(3));
-      if (nextZoom === zoom) return;
-
-      const rect = el.getBoundingClientRect();
-      const xInContent = e.clientX - rect.left + el.scrollLeft;
-      const yInContent = e.clientY - rect.top + el.scrollTop;
-      const ratio = nextZoom / zoom;
-      const nextLeft = xInContent * ratio - (e.clientX - rect.left);
-      const nextTop = yInContent * ratio - (e.clientY - rect.top);
-
-      pendingScrollRef.current = { left: nextLeft, top: nextTop };
-      setZoom(nextZoom);
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, [zoom]);
-
-  useLayoutEffect(() => {
-    const el = containerRef.current;
-    const scroll = pendingScrollRef.current;
-    if (!el || !scroll) return;
-    pendingScrollRef.current = null;
-    el.scrollLeft = scroll.left;
-    el.scrollTop = scroll.top;
-  }, [zoom]);
-
-  const scale = fitScale * zoom;
-  const scaledW = Math.round(nativeW * scale);
-  const scaledH = Math.round(nativeH * scale);
-
-  function handleMouseDown(e: React.MouseEvent<HTMLDivElement>) {
-    if (zoom <= 1 || e.button !== 0) return;
-    const el = containerRef.current;
-    if (!el) return;
-    panRef.current = { startX: e.clientX, startY: e.clientY, left: el.scrollLeft, top: el.scrollTop };
-    el.style.cursor = "grabbing";
-    e.preventDefault();
-  }
-
-  function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
-    const pan = panRef.current;
-    const el = containerRef.current;
-    if (!pan || !el) return;
-    el.scrollLeft = pan.left - (e.clientX - pan.startX);
-    el.scrollTop = pan.top - (e.clientY - pan.startY);
-  }
-
-  function stopPan() {
-    panRef.current = null;
-    if (containerRef.current) containerRef.current.style.cursor = zoom > 1 ? "grab" : "default";
+  if (isLoading) {
+    return (
+      <div className="flex min-w-0 flex-1 items-center justify-center">
+        <p className="font-meta text-[0.6rem] tracking-[0.2em] text-ink-black/40">LOADING PREVIEW...</p>
+      </div>
+    );
   }
 
   return (
-    <div
-      ref={containerRef}
-      className="flex min-w-0 flex-1 overflow-auto p-8"
-      style={{ cursor: zoom > 1 ? "grab" : "default" }}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={stopPan}
-      onMouseLeave={stopPan}
-    >
-      {isLoading ? (
-        <div className="flex h-40 w-full items-center justify-center">
-          <p className="font-meta text-[0.6rem] tracking-[0.2em] text-ink-black/40">LOADING PREVIEW...</p>
+    <div className="min-w-0 flex-1 overflow-hidden">
+      <ScaledContainer
+        zoom={zoom}
+        onZoomChange={setZoom}
+        nativeW={nativeW}
+        nativeH={PAGE_H}
+        maxZoom={3}
+        fitPadding={64}
+      >
+        <div className="flex shadow-ink-lg" style={{ width: nativeW, height: PAGE_H }}>
+          {leftSummary && <PreviewPageSheet project={project} summary={leftSummary} isLeft />}
+          {rightSummary && <PreviewPageSheet project={project} summary={rightSummary} isLeft={false} />}
         </div>
-      ) : (
-        <div style={{ width: scaledW, height: scaledH, margin: "auto", position: "relative", flexShrink: 0 }}>
-          <div
-            className="flex shadow-ink-lg"
-            style={{
-              width: nativeW,
-              height: nativeH,
-              transform: `scale(${scale})`,
-              transformOrigin: "top left",
-              position: "absolute",
-              top: 0,
-              left: 0,
-            }}
-          >
-            {leftSummary && <PreviewPageSheet project={project} summary={leftSummary} isLeft />}
-            {rightSummary && <PreviewPageSheet project={project} summary={rightSummary} isLeft={false} />}
-          </div>
-        </div>
-      )}
+      </ScaledContainer>
     </div>
   );
 }

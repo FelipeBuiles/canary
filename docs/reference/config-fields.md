@@ -26,7 +26,7 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `panel_model` | `str` | `'panel-balanced'` | Stage 5 gateway alias |
 | `prompt_model` | `str` | `'prompt-balanced'` | Prompt/style/instruction task gateway alias |
 | `quality_preset` | `QualityPreset or None` | `None` | Overrides all five intent fields (extract/adapt/plan/prompt/image). `fast` \| `balanced` \| `quality`. `dev_mode` forces `fast`. Each preset routes to a distinct gateway alias defined in `litellm/config.yaml`. |
-| `image_provider` | `Literal` | `'gemini'` | Legacy metadata field; runtime image calls use LiteLLM |
+| `image_provider` | `Literal` | `'gemini'` | Legacy metadata field; runtime image calls use LiteLLM. Valid values: `gemini` \| `openai` \| `openrouter` \| `together` \| `reve` |
 | `image_model` | `str` | `'image-balanced'` | Image gateway alias |
 | `fallback_image_model` | `str` | `'image-fast'` | Fallback image gateway alias (used in dev mode) |
 | `dev_mode` | `bool` | `False` | Faster iteration: lower resolution/steps, uses fallback_image_model |
@@ -38,7 +38,10 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `image_steps` | `int` | `28` | Inference steps |
 | `image_quality` | `str` | `'medium'` | OpenAI GPT Image quality: `auto` \| `low` \| `medium` \| `high` |
 | `flux_guidance_scale` | `float` | `3.5` | Guidance scale for FLUX/Together AI models |
+| `visual_brief_enabled` | `bool` | `True` | LLM visual-brief pass: rewrites each panel's structured spec into flowing prose via `prompt_model` before image generation. Falls back to deterministic distilled prompt on failure. |
+| `style_sample_brief_enabled` | `bool` | `True` | LLM style-sample brief: composes shared subject/setting prose for Stage 2 style proof images, cached per project. Falls back to deterministic first-character/first-location body on failure. |
 | `continuity_mode` | `str` | `'hybrid'` | Character consistency mode: `off` \| `text_only` \| `ref_only` \| `hybrid` |
+| `image_concurrency` | `Optional[int]` | `None` | Parallel image generations (stages 3 & 7). Unset → provider default: Gemini/Vertex `3`, others `max_concurrent_requests` |
 | `negative_prompt` | `str` | `'ugly, deformed, blurry, ...'` | Applied to Together AI / SDXL models only (Gemini ignores) |
 | `style_template` | `str` | `'High quality visual storytelling. ...'` | Injected verbatim at start of every image prompt |
 | `plan_mode` | `Literal` | `'llm'` | Stage 5 planning mode: `llm` \| `heuristic` |
@@ -46,7 +49,7 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `max_panels_per_page` | `int` | `6` | Panels per assembled comic page |
 | `max_words_per_bubble` | `int` | `35` | Max words per dialogue bubble |
 | `parallel_batch_size` | `int` | `5` | Scenes to process in parallel (stages 3–6) |
-| `max_concurrent_requests` | `int` | `5` | Max simultaneous image generation requests (stage 7) |
+| `max_concurrent_requests` | `int` | `5` | Image-generation concurrency for non-Gemini providers when `image_concurrency` is unset |
 | `cost_limit_usd` | `Optional[float]` | `None` | Hard cap — pipeline pauses if total cost exceeds this |
 | `comic_theme` | `str` | `'auto'` | Comic theme: `auto` \| `default` \| `noir` \| `manga` \| `vintage` \| `painted` |
 | `target_language` | `str` | `'en'` | Output language for generated text: `en` \| `es` \| `fr` |
@@ -72,9 +75,10 @@ is one entry in `litellm/config.yaml`.
 
 | Alias | Purpose |
 |-------|---------|
-| `image-fast` | Fast / dev-mode image generation |
+| `image-fast` | Fast / dev-mode image generation (Gemini Flash Image) |
 | `image-balanced` | Balanced image generation (default; Gemini Pro Image) |
-| `image-quality` | Highest-fidelity image generation (gpt-image-2) |
+| `image-quality` | Highest-fidelity image generation via Reve |
+| `image-reve` | Reve image generation (same provider as `image-quality`) |
 
 ## Environment Variables
 

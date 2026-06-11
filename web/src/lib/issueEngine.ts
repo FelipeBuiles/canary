@@ -132,13 +132,18 @@ function checkEmptyBubbleText(pages: ComicPage[]): ComposeIssue[] {
 }
 
 function checkBubbleOutsideSafeArea(pages: ComicPage[]): ComposeIssue[] {
+  // Bubble x/y are panel-relative. The check only makes sense once they're
+  // translated into page space, which requires the panel's page geometry —
+  // available on freeform (planner-projected) pages, unknown in grid mode.
   const issues: ComposeIssue[] = [];
   for (const page of pages) {
     for (const panel of page.panels) {
+      if (panel.x == null || panel.y == null) continue;
       for (const bubble of panel.bubbles) {
-        if (bubble.x === null || bubble.y === null) continue;
-        const { x, y } = bubble;
-        if (x < SAFE_X || y < SAFE_Y || x > PAGE_W - SAFE_X || y > PAGE_H - SAFE_Y) {
+        if (bubble.x == null || bubble.y == null) continue;
+        const pageX = panel.x + bubble.x;
+        const pageY = panel.y + bubble.y;
+        if (pageX < SAFE_X || pageY < SAFE_Y || pageX > PAGE_W - SAFE_X || pageY > PAGE_H - SAFE_Y) {
           issues.push({
             id: issueId("bubble_outside_safe_area", page.page_number, panel.id, bubble.id),
             type: "bubble_outside_safe_area",

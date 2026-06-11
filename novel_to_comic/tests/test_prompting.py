@@ -980,7 +980,7 @@ def test_reve_aspect_ratio_mapping():
 
 
 def test_reve_refs_one_crop_per_character_and_capping():
-    from novel_to_comic.stages.s7_draw import _reve_refs
+    from novel_to_comic.image_ref_strategy import RefStrategy
     from novel_to_comic.ai.providers.base import RefImage
 
     refs = [
@@ -993,7 +993,7 @@ def test_reve_refs_one_crop_per_character_and_capping():
         RefImage(path=Path("cont.png"), role="continuity", label="Cont"),
     ]
 
-    selected = _reve_refs(refs, "wide establishing panel, low angle camera")
+    selected = RefStrategy("image-reve").select_panel_refs(refs, "wide establishing panel, low angle camera")
 
     assert len(selected) == 4
     names = [ref.path.name for ref in selected]
@@ -1007,7 +1007,7 @@ def test_reve_refs_one_crop_per_character_and_capping():
 
 
 def test_reve_refs_close_up_prefers_front_crop():
-    from novel_to_comic.stages.s7_draw import _reve_refs
+    from novel_to_comic.image_ref_strategy import RefStrategy
     from novel_to_comic.ai.providers.base import RefImage
 
     refs = [
@@ -1016,7 +1016,7 @@ def test_reve_refs_close_up_prefers_front_crop():
         RefImage(path=Path("style.png"), role="style", label="Style"),
     ]
 
-    selected = _reve_refs(refs, "close-up panel, eye-level camera")
+    selected = RefStrategy("image-reve").select_panel_refs(refs, "close-up panel, eye-level camera")
 
     names = [ref.path.name for ref in selected]
     assert names == ["front.png", "style.png"]

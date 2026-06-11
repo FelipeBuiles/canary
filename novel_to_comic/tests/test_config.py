@@ -7,6 +7,7 @@ import yaml
 
 from novel_to_comic.config import (
     Config,
+    GEMINI_IMAGE_CONCURRENCY_DEFAULT,
     GATEWAY_EXTRACT_BALANCED,
     GATEWAY_IMAGE_BALANCED,
     GATEWAY_IMAGE_FAST,
@@ -256,17 +257,23 @@ class TestEffectiveImageConcurrency:
         cfg = Config(dev_mode=True, dev_image_concurrency=3)
         assert cfg.effective_image_concurrency() == 3
 
-    def test_google_model_returns_1(self):
+    def test_gemini_route_uses_conservative_default(self):
         cfg = Config(dev_mode=False, max_concurrent_requests=5)
-        assert cfg.effective_image_concurrency(google_model=True) == 1
+        assert cfg.effective_image_concurrency() == GEMINI_IMAGE_CONCURRENCY_DEFAULT
+
+    def test_explicit_image_concurrency_overrides_provider_default(self):
+        cfg = Config(dev_mode=False, image_concurrency=8)
+        assert cfg.effective_image_concurrency() == 8
 
     def test_non_google_returns_max_concurrent_requests(self):
         cfg = Config(dev_mode=False, max_concurrent_requests=5, image_provider="openai")
-        assert cfg.effective_image_concurrency(google_model=False) == 5
+        assert cfg.effective_image_concurrency() == 5
 
     def test_minimum_1(self):
-        cfg = Config(dev_mode=False, max_concurrent_requests=0)
-        assert cfg.effective_image_concurrency(google_model=False) == 1
+        cfg = Config(dev_mode=False, max_concurrent_requests=0, image_provider="openai")
+        assert cfg.effective_image_concurrency() == 1
+        cfg = Config(dev_mode=False, image_concurrency=0)
+        assert cfg.effective_image_concurrency() == 1
 
 
 class TestEffectiveImageSteps:

@@ -19,8 +19,9 @@ from novel_to_comic import artifacts
 from novel_to_comic.ai.providers.base import RefImage, order_refs_for_upload
 from novel_to_comic.prompt_assembly import ensure_current_panel_prompt, ensure_visual_brief
 from novel_to_comic.clients import flux
-from novel_to_comic.config import Config, is_gpt_image_2, is_reve_model
+from novel_to_comic.config import Config
 from novel_to_comic.events import make_progress
+from novel_to_comic.image_ref_strategy import RefStrategy, is_prop_ref
 from novel_to_comic.layout_planning import load_layout_plan, prompt_path_for_panel, scene_panel_map
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.panel_versions import record_current_panel_version
@@ -99,149 +100,8 @@ def _raise_if_aspect_mismatch(meta_payload: dict) -> None:
         )
 
 
-def _should_use_prev_panel_image(config: Config, prev_transition_type: str | None) -> bool:
-    """Return True if the previous panel's image should be used as a style reference.
-
-    Hard cuts (smash cut, fade to, cut to, scene change, time jump) can make the
-    previous panel image actively harmful - the model might blend the previous scene
-    into the new one. Smooth continuations should stay text-only: previous-panel
-    image refs are strong edit inputs and can override character identity, scale,
-    and composition. Reserve image continuity for intentional match cuts.
-    """
-    if not prev_transition_type:
-        return False
-    transition_type = (prev_transition_type or "").strip().lower()
-    if is_gpt_image_2(config.effective_image_model()):
-        return False
-    if transition_type == "match_cut":
-        return True
-    return False
-
-
 def _use_continuity_refs(config: Config) -> bool:
     return getattr(config, "continuity_mode", "hybrid") in {"ref_only", "hybrid"}
-
-
-def _use_location_plate_refs(config: Config) -> bool:
-    # GPT Image 2 processes every supplied image at high fidelity, so location
-    # plates can leak repeated background textures into panels. Keep locations
-    # text-driven for the gpt-image-2 route.
-    return not is_gpt_image_2(config.effective_image_model())
-
-
-def _use_style_sample_refs(config: Config) -> bool:
-    # GPT Image 2 uses the image edit endpoint whenever any reference image is
-    # supplied. Keep style text-driven to avoid copying sample texture/noise.
-    return not is_gpt_image_2(config.effective_image_model())
-
-
-def _is_prop_ref(path: Path) -> bool:
-    parts = path.parts
-    return len(parts) >= 3 and parts[-3] == "props"
-
-
-def _gpt_image_2_subject_refs(paths: list[Path]) -> list[Path]:
-    """Return a minimal, stable identity ref set for GPT Image 2 panels.
-
-    Multiple pose crops plus prop refs push GPT Image 2 into noisy edit behavior.
-    Prefer one front-facing crop per character. Prop refs stay text-only unless a
-    panel has no character refs at all, in which case one prop ref is allowed.
-    """
-    character_refs = [p for p in paths if not _is_prop_ref(p)]
-    prop_refs = [p for p in paths if _is_prop_ref(p)]
-    selected: list[Path] = []
-    seen_character_dirs: set[Path] = set()
-
-    def sort_key(path: Path) -> tuple[int, str]:
-        preferred = {
-            "front.png": 0,
-            "three_quarter.png": 1,
-            "profile.png": 2,
-            "gesture.png": 3,
-            "sheet.png": 4,
-        }
-        return preferred.get(path.name, 99), str(path)
-
-    for path in sorted(character_refs, key=sort_key):
-        character_dir = path.parent
-        if character_dir in seen_character_dirs:
-            continue
-        selected.append(path)
-        seen_character_dirs.add(character_dir)
-
-    if selected:
-        return selected
-
-    return prop_refs[:1]
-
-
-# Pose-crop preference per framing. Close framings want a face-forward crop;
-# wide framings want a full-body/gesture crop so proportions carry over.
-_SHOT_VIEW_PREFERENCES: dict[str, list[str]] = {
-    "close": ["front", "three_quarter", "profile", "gesture", "sheet"],
-    "wide": ["gesture", "three_quarter", "front", "profile", "sheet"],
-    "default": ["three_quarter", "front", "gesture", "profile", "sheet"],
-}
-
-
-def _shot_view_preference(composition: str | None) -> list[str]:
-    text = (composition or "").lower()
-    if "close-up" in text or "close up" in text or "portrait" in text:
-        return _SHOT_VIEW_PREFERENCES["close"]
-    if any(token in text for token in ("wide", "establishing", "panorama", "full body")):
-        return _SHOT_VIEW_PREFERENCES["wide"]
-    return _SHOT_VIEW_PREFERENCES["default"]
-
-
-def _select_subject_crops(subjects: list[RefImage], composition: str | None) -> list[RefImage]:
-    """Pick ONE pose crop per character, matched to the panel's framing.
-
-    Sending several crops of the same character (or a 2x2 sheet grid) makes
-    ref-driven models blend poses and occasionally leak the grid layout into
-    the panel. One clean, framing-appropriate crop per character keeps identity
-    strong without those artifacts.
-    """
-    preference = {stem: i for i, stem in enumerate(_shot_view_preference(composition))}
-    order: list[Path] = []
-    by_character: dict[Path, list[RefImage]] = {}
-    for ref in subjects:
-        character_dir = ref.path.parent
-        if character_dir not in by_character:
-            by_character[character_dir] = []
-            order.append(character_dir)
-        by_character[character_dir].append(ref)
-    return [
-        min(by_character[d], key=lambda r: (preference.get(r.path.stem, 99), str(r.path)))
-        for d in order
-    ]
-
-
-def _reve_refs(refs: list[RefImage], composition: str | None = None) -> list[RefImage]:
-    """Select up to 4 refs for Reve, identity first.
-
-    Character identity is the thing reference images are best at and the
-    hardest to recover via text, so subjects always win slots: one crop per
-    character (up to 3), chosen by the panel's framing. Remaining slots fill
-    with continuity, prop, style, then location refs.
-    """
-    subjects = _select_subject_crops([r for r in refs if r.role == "subject"], composition)[:3]
-    continuities = [r for r in refs if r.role == "continuity"]
-    props = [r for r in refs if r.role == "prop"]
-    styles = [r for r in refs if r.role == "style"]
-    locations = [r for r in refs if r.role == "location_plate"]
-
-    selected: list[RefImage] = list(subjects)
-    for ref in [*continuities[:1], *props, *styles[:1], *locations[:1]]:
-        if len(selected) >= 4:
-            break
-        if ref not in selected:
-            selected.append(ref)
-    return order_refs_for_upload(selected)
-
-
-def _is_seedream_model(model: str) -> bool:
-    normalized = (model or "").strip().lower()
-    return "seedream" in normalized
 
 
 def _ordered_refs(refs: list[RefImage]) -> list[RefImage]:
@@ -362,7 +222,7 @@ def resolve_panel_references(
         resolved = (project_dir / p) if not Path(p).is_absolute() else Path(p)
         if not resolved.exists():
             continue
-        role = "prop" if _is_prop_ref(resolved) else "subject"
+        role = "prop" if is_prop_ref(resolved) else "subject"
         label = (
             _prop_label_from_ref(resolved)
             if role == "prop"
@@ -374,6 +234,7 @@ def resolve_panel_references(
             label=label,
         ))
 
+    strategy = RefStrategy.for_config(config)
     contextual_refs: list[RefImage] = []
     resolved_output_dir = output_dir or project_dir / "draw" / prompt.scene_id
     if _use_continuity_refs(config) and prompt.panel_number > 1:
@@ -389,14 +250,14 @@ def resolve_panel_references(
                 prev_prompt = ImagePrompt.model_validate_json(prev_prompt_path.read_text())
             except Exception:
                 prev_prompt = None
-        if prev_image.exists() and _should_use_prev_panel_image(config, getattr(prev_prompt, "transition_out", None)):
+        if prev_image.exists() and strategy.use_prev_panel_image(getattr(prev_prompt, "transition_out", None)):
             contextual_refs.append(RefImage(path=prev_image, role="continuity"))
 
     if not contextual_refs:
-        if style_sample and style_sample.exists() and _use_style_sample_refs(config):
+        if style_sample and style_sample.exists() and strategy.use_style_sample_refs():
             contextual_refs.append(RefImage(path=style_sample, role="style", label="selected style"))
         loc_id = (scene_to_location or {}).get(prompt.scene_id)
-        if loc_id and _use_location_plate_refs(config):
+        if loc_id and strategy.use_location_plate_refs():
             plate = _plate_ref_path(
                 project_dir, loc_id, getattr(prompt, "location_state_id", None)
             )
@@ -407,18 +268,12 @@ def resolve_panel_references(
                     label=(location_labels or {}).get(loc_id) or loc_id,
                 ))
 
-    # Every branch below must return refs in canonical upload order — the
-    # returned list IS the upload order assumed by render_generation_prompt.
+    # The strategy returns refs in canonical upload order — the returned list
+    # IS the upload order assumed by render_generation_prompt.
     refs = _ordered_refs([*subject_refs, *contextual_refs])
-    model = config.effective_image_model()
-    if is_reve_model(model):
-        return _reve_refs(refs, getattr(prompt, "composition", None))
-    if is_gpt_image_2(model):
-        selected_paths = set(_gpt_image_2_subject_refs([ref.path for ref in refs if ref.role in {"subject", "prop"}]))
-        return [ref for ref in refs if ref.path in selected_paths]
-    if _is_seedream_model(model):
-        return refs[:10]
-    return refs
+    return RefStrategy.for_config(config).select_panel_refs(
+        refs, getattr(prompt, "composition", None)
+    )
 
 
 def estimate_panel_image_cost_usd(
@@ -587,8 +442,8 @@ async def _generate_panel(
         if (
             prev_event
             and _use_continuity_refs(config)
-            and _should_use_prev_panel_image(
-                config, _prev_transition_out(prompt_path, raw_prompt.panel_number)
+            and RefStrategy.for_config(config).use_prev_panel_image(
+                _prev_transition_out(prompt_path, raw_prompt.panel_number)
             )
         ):
             await prev_event.wait()
@@ -918,7 +773,7 @@ async def run(
         ctx.log(drift_msg, level="warning")
 
     estimated = estimate_image_cost(config.effective_image_model(), len(prompt_files), quality=getattr(config, "image_quality", None))
-    batch_size = config.effective_image_concurrency(google_model=False)
+    batch_size = config.effective_image_concurrency()
     semaphore = asyncio.Semaphore(batch_size)
 
     with ctx.execute(total=len(prompt_files), estimated_cost_usd=estimated):

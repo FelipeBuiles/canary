@@ -4,7 +4,6 @@ import {
   useApproveStage,
   usePromptSummaries,
   usePromptsForScene,
-  useRunPipeline,
   useStageEstimate,
   useUpdatePrompt,
   useProjectStatus,
@@ -25,11 +24,10 @@ import {
   WarningOverrideDrawer,
 } from "../../components/composites";
 import { useCharacterName } from "../../hooks/useCharacterName";
-import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { renderPanelPromptBody } from "../../lib/prompting";
 import { detectAllWarnings } from "../../lib/promptWarnings";
-import { usePipelineStore } from "../../store/pipeline";
+import { useRunAction } from "../../hooks/useRunAction";
 import type { ImagePrompt, PromptWarning } from "../../types/api";
 
 function SummaryTile({
@@ -329,12 +327,10 @@ function DirectApproveAction({
 
   const { data: estimate } = useStageEstimate(project, "draw", confirmOpen || warningOpen);
   const approveStage = useApproveStage();
-  const runPipeline = useRunPipeline();
-  const connect = usePipelineStore((s) => s.connect);
-  const clearEvents = usePipelineStore((s) => s.clearEvents);
+  const { handleRun, isPending: isRunPending } = useRunAction();
 
   const busy =
-    approveStage.isPending || runPipeline.isPending || (status?.is_running ?? false);
+    approveStage.isPending || isRunPending || (status?.is_running ?? false);
 
   const hasWarnings = allWarnings.length > 0;
   const estimateCredits = estimate?.estimate_credits ?? 0;
@@ -346,22 +342,13 @@ function DirectApproveAction({
     : "Approve Prompts & Run Generate Panels";
 
   function doApproveAndRun() {
-    clearEvents();
     approveStage.mutate(
       { project, stage: "direct" },
       {
         onSuccess: () => {
-          runPipeline.mutate(
-            { project, stage: "draw" },
-            {
-              onSuccess: () => connect(project),
-              onError: (err) =>
-                maybeShowInsufficientCredits(err, {
-                  actionLabel: "Run DRAW",
-                  onRetry: doApproveAndRun,
-                }),
-            },
-          );
+          // Approval already succeeded — a credit-shortfall retry re-runs
+          // only the draw stage, not the approval.
+          handleRun(project, "draw", { actionLabel: "Run DRAW" });
         },
       },
     );

@@ -9,8 +9,10 @@ import hashlib
 import json
 import logging
 import os
+import random
 import time
 import uuid
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +42,12 @@ logger = logging.getLogger("canary.ai")
 
 _RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
 _MAX_RETRIES = 3
+# 429s get their own, longer retry budget: the provider is asking us to slow
+# down, not reporting a failure. Backoff windows double from the base up to
+# the cap (4/8/16/32/60s), so the full budget rides out a quota refill cycle.
+_MAX_RATE_LIMIT_RETRIES = 5
+_RATE_LIMIT_BASE_DELAY = 4.0
+_RATE_LIMIT_MAX_DELAY = 60.0
 # How many extra times to re-issue a structured-object call when the model
 # returns malformed JSON. Set to 2 → up to 3 total attempts. Most JSON parse
 # failures are one-off sampling artifacts (unescaped quote, truncated tail)
@@ -51,10 +59,42 @@ _JSON_PARSE_MAX_RETRIES = 2
 _TEMPERATURE_DEPRECATED_ALIASES = frozenset({"screenplay-quality"})
 
 
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    """Parse a Retry-After header (delta-seconds or HTTP-date) into seconds."""
+    raw = response.headers.get("retry-after", "").strip()
+    if not raw:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        pass
+    try:
+        retry_at = parsedate_to_datetime(raw)
+    except (TypeError, ValueError):
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=datetime.UTC)
+    return max(0.0, (retry_at - datetime.datetime.now(datetime.UTC)).total_seconds())
+
+
+def _jittered(window: float) -> float:
+    # Equal jitter: half the window fixed, half random, so concurrent workers
+    # desynchronize instead of retrying in lockstep.
+    return window / 2 + random.uniform(0.0, window / 2)
+
+
 async def _post_with_retry(url: str, *, headers: dict[str, str], json: dict[str, Any] | None = None, data: dict[str, Any] | None = None, files: list | None = None) -> httpx.Response:
-    """POST with automatic retry on transient HTTP errors and connection failures."""
+    """POST with automatic retry on transient HTTP errors and connection failures.
+
+    429 responses are retried on a separate, longer budget and honor the
+    server's Retry-After header when present.
+    """
     last_exc: Exception | None = None
-    for attempt in range(_MAX_RETRIES + 1):
+    transient_attempts = 0
+    rate_limit_attempts = 0
+    while True:
+        rate_limited = False
+        retry_after: float | None = None
         try:
             if files:
                 response = await _http.post(url, headers=headers, data=data, files=files)
@@ -62,6 +102,8 @@ async def _post_with_retry(url: str, *, headers: dict[str, str], json: dict[str,
                 response = await _http.post(url, headers=headers, json=json)
             if response.status_code not in _RETRYABLE_STATUS_CODES:
                 return response
+            rate_limited = response.status_code == 429
+            retry_after = _retry_after_seconds(response)
             last_exc = httpx.HTTPStatusError(
                 f"Server returned {response.status_code}",
                 request=response.request,
@@ -69,9 +111,28 @@ async def _post_with_retry(url: str, *, headers: dict[str, str], json: dict[str,
             )
         except (httpx.ConnectError, httpx.ReadError, httpx.WriteError, httpx.PoolTimeout) as exc:
             last_exc = exc
-        if attempt < _MAX_RETRIES:
-            await asyncio.sleep(min(2 ** attempt, 10))
-    raise last_exc  # type: ignore[misc]
+        if rate_limited:
+            rate_limit_attempts += 1
+            if rate_limit_attempts > _MAX_RATE_LIMIT_RETRIES:
+                raise last_exc  # type: ignore[misc]
+            if retry_after is not None:
+                delay = retry_after + random.uniform(0.0, 1.0)
+            else:
+                delay = _jittered(
+                    min(_RATE_LIMIT_BASE_DELAY * 2 ** (rate_limit_attempts - 1), _RATE_LIMIT_MAX_DELAY)
+                )
+            logger.warning(
+                "Rate limited (429), waiting %.1fs before retry %d/%d",
+                delay,
+                rate_limit_attempts,
+                _MAX_RATE_LIMIT_RETRIES,
+            )
+        else:
+            transient_attempts += 1
+            if transient_attempts > _MAX_RETRIES:
+                raise last_exc  # type: ignore[misc]
+            delay = _jittered(min(2.0 ** (transient_attempts - 1), 10.0))
+        await asyncio.sleep(delay)
 
 
 # Shared connection pool — LiteLLM runs as a local/nearby sidecar so keepalive
