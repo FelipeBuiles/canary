@@ -111,26 +111,31 @@ class TestPromptLayoutSanitized:
 
 
 class TestLayoutPassApplies:
-    def test_applies_for_reve_model(self):
-        assert layout_pass_applies(Config(image_model="image-reve"))
+    def test_applies_for_reve_model_when_enabled(self):
+        assert layout_pass_applies(Config(image_model="image-reve", layout_prompts_enabled=True))
 
-    def test_applies_for_image_quality_alias(self):
-        assert layout_pass_applies(Config(image_model="image-quality"))
+    def test_applies_for_image_quality_alias_when_enabled(self):
+        assert layout_pass_applies(Config(image_model="image-quality", layout_prompts_enabled=True))
+
+    def test_disabled_by_default_pending_reve_feature_grant(self):
+        # /v2/image/create 403s (partnerapi.layout_endpoint) until Reve
+        # enables the feature for the API key — the pass must default off.
+        assert not layout_pass_applies(Config(image_model="image-reve"))
 
     def test_skips_non_reve_models(self):
-        assert not layout_pass_applies(Config(image_model="image-balanced"))
+        assert not layout_pass_applies(Config(image_model="image-balanced", layout_prompts_enabled=True))
 
     def test_skips_when_disabled(self):
         config = Config(image_model="image-reve", layout_prompts_enabled=False)
         assert not layout_pass_applies(config)
 
     def test_skips_prompt_with_existing_layout(self):
-        config = Config(image_model="image-reve")
+        config = Config(image_model="image-reve", layout_prompts_enabled=True)
         assert not layout_pass_applies(config, _prompt(layout=_layout()))
 
     def test_ensure_layout_is_noop_for_non_reve(self):
         prompt = _prompt()
-        result = asyncio.run(ensure_layout(Config(image_model="image-balanced"), prompt))
+        result = asyncio.run(ensure_layout(Config(image_model="image-balanced", layout_prompts_enabled=True), prompt))
         assert result is prompt
 
 
@@ -291,7 +296,7 @@ class TestReveLayoutProvider:
         captured, _ = _run_provider(monkeypatch, tmp_path, _ok_response(), refs=refs)
         payload = captured["payload"]
         assert len(payload["references"]) == 2
-        assert payload["references"][0]["prompt"] == "Character reference for Carl."
+        assert payload["references"][0]["prompt"].startswith("Character identity reference for Carl")
         regions = {r["label"]: r for r in payload["description"]["regions"]}
         assert regions["carl"]["image_index"] == 0
         assert "image_index" not in regions["street"]

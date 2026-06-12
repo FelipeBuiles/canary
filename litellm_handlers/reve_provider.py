@@ -63,6 +63,14 @@ def _log_request(url: str, api_key: str | None, payload: dict[str, Any]) -> None
         logged_payload["reference_images"] = [
             f"<Base64 String, length={len(r)}>" for r in logged_payload["reference_images"]
         ]
+    if "references" in logged_payload:
+        logged_payload["references"] = [
+            {
+                "image": f"<Base64 String, length={len((r.get('image') or {}).get('data') or '')}>",
+                "prompt": r.get("prompt"),
+            }
+            for r in logged_payload["references"]
+        ]
     sys.stderr.write(f"Payload: {json.dumps(logged_payload, indent=2)}\n")
     sys.stderr.write("==============================\n\n")
     sys.stderr.flush()
@@ -141,10 +149,19 @@ class ReveLLM(CustomLLM):
         size = optional_params.get("size") or kwargs.get("size")
         aspect_ratio = _map_aspect_ratio(size)
 
-        # Prefer exact dimensions when provided by the caller
+        # When the caller supplied exact dimensions, use them to pick the
+        # closest supported aspect ratio (more precise than the
+        # OpenAI-bucketed `size`). Reve has no exact-pixel sizing knob.
         width = optional_params.get("canary_requested_width") or kwargs.get("canary_requested_width")
         height = optional_params.get("canary_requested_height") or kwargs.get("canary_requested_height")
+        if width and height:
+            aspect_ratio = _map_aspect_ratio(f"{int(width)}x{int(height)}")
 
+        # v1 create. The v2 layout-aware endpoint is gated behind the Reve
+        # partner feature `partnerapi.layout_endpoint` (403 FEATURE_NOT_ENABLED
+        # without it), so the gateway stays on v1. Note v1 has no exact-pixel
+        # sizing — width/height are rejected as UNRECOGNIZED_PARAMETER;
+        # aspect_ratio is the only sizing knob.
         final_prompt = prompt or ""
         # Reve accepts very long prompts; only truncate as a last resort
         if len(final_prompt) > 8000:
@@ -153,10 +170,6 @@ class ReveLLM(CustomLLM):
             "prompt": final_prompt,
             "aspect_ratio": aspect_ratio,
         }
-        # Pass through exact dimensions when available
-        if width and height:
-            payload["width"] = int(width)
-            payload["height"] = int(height)
         seed = optional_params.get("seed") or kwargs.get("seed")
         if seed is not None:
             payload["seed"] = seed
@@ -181,6 +194,7 @@ class ReveLLM(CustomLLM):
             _log_response(response)
             _raise_for_status(response)
             data = response.json()
+        _raise_for_content_violation(data)
 
         b64 = _extract_b64(data)
         if isinstance(b64, str) and (b64.startswith("http://") or b64.startswith("https://")):
@@ -245,58 +259,35 @@ class ReveLLM(CustomLLM):
         size = (optional_params or {}).get("size") or kwargs.get("size")
         aspect_ratio = _map_aspect_ratio(size)
 
-        reference_images = []
-        prompt_injections = []
-
-        # Limit to max 4 reference images
+        # v1 remix (the v2 layout endpoint is feature-gated, see
+        # aimage_generation). References upload as a flat base64 list and the
+        # prompt references them positionally via <img>N</img> instructions.
+        reference_images: list[str] = []
+        prompt_injections: list[str] = []
         for idx, item in enumerate(image[:4]):
             b64_str = _image_to_base64(item)
             if not b64_str:
                 continue
             reference_images.append(b64_str)
-
             filename = _item_filename(item)
             role, bare = _parse_role_and_name(filename)
             if role is None:
                 role = _heuristic_role(bare)
-
             label = _extract_label_from_bare(role, bare)
-
-            if role == "subject":
-                injection = f"Use <img>{idx}</img> as the character reference for {label}." if label else f"Use <img>{idx}</img> as the character reference."
-            elif role == "style":
-                injection = f"Use <img>{idx}</img> as the style reference for {label}." if label else f"Use <img>{idx}</img> as the style reference."
-            elif role == "location_plate":
-                injection = f"Use <img>{idx}</img> as the location reference for {label}." if label else f"Use <img>{idx}</img> as the location reference."
-            elif role == "prop":
-                injection = f"Use <img>{idx}</img> as the object reference for {label}." if label else f"Use <img>{idx}</img> as the object reference."
-            elif role == "continuity":
-                injection = f"Use <img>{idx}</img> for visual continuity."
-            else:
-                injection = f"Use <img>{idx}</img> as a reference."
-            prompt_injections.append(injection)
+            prompt_injections.append(f"Use <img>{idx}</img>: {_role_reference_prompt(role, label)}")
 
         final_prompt = prompt or ""
-
-        # Integrate reference instructions naturally into the prompt
         if "<img>" not in final_prompt and prompt_injections:
-            # Add reference instructions at the beginning for better integration
             ref_block = "Reference images:\n" + "\n".join(prompt_injections) + "\n\n"
             final_prompt = ref_block + final_prompt
 
-        # Reve accepts very long prompts; only truncate as a last resort
+        # Reve accepts very long prompts; only truncate as a last resort,
+        # preserving the reference block when present.
         if len(final_prompt) > 8000:
-            suffix = ""
-            if "Reference images:" in final_prompt:
-                # Preserve reference block when truncating
-                parts = final_prompt.split("\n\n", 1)
-                if len(parts) == 2 and parts[0].startswith("Reference images:"):
-                    suffix = parts[0] + "\n\n"
-                    remaining = parts[1]
-                    limit = 8000 - len(suffix)
-                    final_prompt = suffix + remaining[:limit]
-                else:
-                    final_prompt = final_prompt[:8000]
+            parts = final_prompt.split("\n\n", 1)
+            if len(parts) == 2 and parts[0].startswith("Reference images:"):
+                suffix = parts[0] + "\n\n"
+                final_prompt = suffix + parts[1][: 8000 - len(suffix)]
             else:
                 final_prompt = final_prompt[:8000]
 
@@ -320,6 +311,7 @@ class ReveLLM(CustomLLM):
             _log_response(response)
             _raise_for_status(response)
             data = response.json()
+        _raise_for_content_violation(data)
 
         b64 = _extract_b64(data)
         if isinstance(b64, str) and (b64.startswith("http://") or b64.startswith("https://")):
@@ -372,6 +364,33 @@ def _raise_for_status(response: httpx.Response) -> None:
         response.raise_for_status()
     except httpx.HTTPStatusError as e:
         raise ValueError(f"Reve API returned error {response.status_code}: {response.text}") from e
+
+
+def _role_reference_prompt(role: str, label: str) -> str:
+    if role == "subject":
+        name = label if label and label != "character" else None
+        return (
+            f"Character identity reference for {name} — match face, hair, build, and wardrobe; do not copy its pose or background."
+            if name
+            else "Character identity reference — match face, hair, build, and wardrobe; do not copy its pose or background."
+        )
+    if role == "style":
+        return "Art style reference — match this rendering style exactly."
+    if role == "location_plate":
+        return f"Location reference for {label}." if label else "Location reference."
+    if role == "prop":
+        return f"Object reference for {label}." if label else "Object reference."
+    if role == "continuity":
+        return "Previous panel — maintain visual continuity."
+    return "Reference image."
+
+
+def _raise_for_content_violation(data: Any) -> None:
+    if isinstance(data, dict) and str(data.get("content_violation", "")).lower() in {"true", "1", "yes"}:
+        raise ValueError(
+            "Reve flagged a content violation for this request "
+            f"(request_id={data.get('request_id')})"
+        )
 
 
 def _extract_b64(data: Any) -> str:
