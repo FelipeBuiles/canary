@@ -261,6 +261,17 @@ def asset_failure_path(output_path: Path) -> Path:
     return output_path.with_suffix(f"{output_path.suffix}.failure.json")
 
 
+def asset_layout_echo_path(output_path: Path) -> Path:
+    """Sidecar holding the layout the image model actually generated."""
+    return output_path.with_suffix(f"{output_path.suffix}.layout.json")
+
+
+def write_asset_layout_echo(output_path: Path, layout: dict) -> None:
+    path = asset_layout_echo_path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(layout, indent=2, sort_keys=True))
+
+
 def read_asset_meta(output_path: Path) -> dict:
     path = asset_meta_path(output_path)
     if not path.exists():

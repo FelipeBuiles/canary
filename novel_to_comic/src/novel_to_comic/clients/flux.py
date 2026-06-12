@@ -8,6 +8,7 @@ from pathlib import Path
 from novel_to_comic.ai import generate_image as ai_generate_image
 from novel_to_comic.ai.providers.base import RefImage
 from novel_to_comic.config import Config
+from novel_to_comic.models.prompt import PromptLayout
 from novel_to_comic.usage import ApiResult
 
 
@@ -90,6 +91,7 @@ async def generate_image_multi_ref(
     width: int | None = None,
     height: int | None = None,
     steps: int | None = None,
+    layout: PromptLayout | None = None,
     feature: str = "image.generate_multi_ref",
 ) -> ApiResult[Path]:
     """Generate an image conditioned on subject and style references."""
@@ -105,6 +107,7 @@ async def generate_image_multi_ref(
         height=height,
         steps=steps,
         refs=refs,
+        layout=layout,
         feature=feature,
     )
     final = await _downscale_dev_output(config, result.value, width, height)

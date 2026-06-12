@@ -100,6 +100,10 @@ async def finalise_image_success(
     raw_response = raw.raw_response or {}
     output_path.parent.mkdir(parents=True, exist_ok=True)
     await asyncio.to_thread(output_path.write_bytes, raw.image_bytes)
+    if raw.layout_echo:
+        from novel_to_comic import artifacts
+
+        await asyncio.to_thread(artifacts.write_asset_layout_echo, output_path, raw.layout_echo)
     usage = ai_client._extract_usage(
         raw_response,
         ctx.event_id,

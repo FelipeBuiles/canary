@@ -13,6 +13,7 @@ import {
 import { Button } from "../../components/ui/Button";
 import { CollapsibleSection } from "../../components/ui/CollapsibleSection";
 import { EditableText } from "../../components/ui/EditableText";
+import { LayoutSection } from "../../components/LayoutRegionEditor";
 import { LoadingBlock, StateBlock } from "../../components/ui/StateBlock";
 import {
   ConfirmDrawer,
@@ -161,6 +162,18 @@ function DirectPromptDetail({
           </div>
         </div>
       </div>
+
+      {/* Layout regions (layout-aware models only) */}
+      {prompt.layout && prompt.layout.regions?.length ? (
+        <div className="mt-7">
+          <LayoutSection
+            layout={prompt.layout}
+            imageUrl={null}
+            aspectRatio={prompt.width && prompt.height ? prompt.width / prompt.height : 1.5}
+            onChange={(layout) => onSave({ layout })}
+          />
+        </div>
+      ) : null}
 
       {/* Assembled prompt — collapsed by default */}
       <div className="mt-7">

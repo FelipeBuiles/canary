@@ -464,6 +464,25 @@ export interface PromptSubject {
   position: string;
 }
 
+export interface LayoutBbox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+export interface LayoutRegion {
+  label: string;
+  prompt: string;
+  bbox: LayoutBbox;
+  reference_key?: string | null;
+}
+
+export interface PromptLayout {
+  prompt?: string | null;
+  regions: LayoutRegion[];
+}
+
 export interface ImagePrompt {
   prompt_version?: number;
   planned_panel_id?: string | null;
@@ -487,6 +506,7 @@ export interface ImagePrompt {
   subjects?: PromptSubject[];
   props?: string[];
   constraints?: string | null;
+  layout?: PromptLayout | null;
   reference_image_paths: string[];
   width: number;
   height: number;

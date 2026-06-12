@@ -49,97 +49,6 @@ _GENERIC_STEMS = frozenset({
 })
 
 
-def _normalize_layout(layout: Any) -> Any:
-    if not isinstance(layout, dict):
-        return layout
-
-    normalized = layout.copy()
-
-    # 1. Map 'description' to 'overall_prompt' at the root level if overall_prompt is missing
-    if "description" in normalized and "overall_prompt" not in normalized:
-        normalized["overall_prompt"] = normalized["description"]
-
-    # 2. Extract regions list
-    regions = normalized.get("regions")
-    if isinstance(regions, list):
-        normalized_regions = []
-        for reg in regions:
-            if not isinstance(reg, dict):
-                normalized_regions.append(reg)
-                continue
-            r = reg.copy()
-
-            # Map 'description' to 'prompt' at region level if prompt is missing
-            if "description" in r and "prompt" not in r:
-                r["prompt"] = r["description"]
-
-            # Handle coordinate normalization to 'bbox' dict with x0, y0, x1, y1
-            if "bbox" not in r:
-                # Scenario A: direct x, y, w, h keys
-                if all(k in r for k in ("x", "y", "w", "h")):
-                    try:
-                        x = float(r["x"])
-                        y = float(r["y"])
-                        w = float(r["w"])
-                        h = float(r["h"])
-                        r["bbox"] = {"x0": x, "y0": y, "x1": x + w, "y1": y + h}
-                    except (ValueError, TypeError):
-                        pass
-                # Scenario B: direct x0, y0, x1, y1 keys
-                elif all(k in r for k in ("x0", "y0", "x1", "y1")):
-                    try:
-                        r["bbox"] = {
-                            "x0": float(r["x0"]),
-                            "y0": float(r["y0"]),
-                            "x1": float(r["x1"]),
-                            "y1": float(r["y1"]),
-                        }
-                    except (ValueError, TypeError):
-                        pass
-            else:
-                bbox_val = r["bbox"]
-                # Scenario C: bbox is a list [x0, y0, x1, y1] or [x, y, w, h]
-                if isinstance(bbox_val, list) and len(bbox_val) == 4:
-                    try:
-                        coords = [float(c) for c in bbox_val]
-                        r["bbox"] = {
-                            "x0": coords[0],
-                            "y0": coords[1],
-                            "x1": coords[2],
-                            "y1": coords[3]
-                        }
-                    except (ValueError, TypeError):
-                        pass
-                # Scenario D: bbox is a dict
-                elif isinstance(bbox_val, dict):
-                    # Check if dict has x0, y0, x1, y1
-                    if all(k in bbox_val for k in ("x0", "y0", "x1", "y1")):
-                        try:
-                            r["bbox"] = {
-                                "x0": float(bbox_val["x0"]),
-                                "y0": float(bbox_val["y0"]),
-                                "x1": float(bbox_val["x1"]),
-                                "y1": float(bbox_val["y1"]),
-                            }
-                        except (ValueError, TypeError):
-                            pass
-                    # Check if dict has x, y, w, h
-                    elif all(k in bbox_val for k in ("x", "y", "w", "h")):
-                        try:
-                            x = float(bbox_val["x"])
-                            y = float(bbox_val["y"])
-                            w = float(bbox_val["w"])
-                            h = float(bbox_val["h"])
-                            r["bbox"] = {"x0": x, "y0": y, "x1": x + w, "y1": y + h}
-                        except (ValueError, TypeError):
-                            pass
-
-            normalized_regions.append(r)
-        normalized["regions"] = normalized_regions
-
-    return normalized
-
-
 def _log_request(url: str, api_key: str | None, payload: dict[str, Any]) -> None:
     import sys
     import json
@@ -236,93 +145,42 @@ class ReveLLM(CustomLLM):
         width = optional_params.get("canary_requested_width") or kwargs.get("canary_requested_width")
         height = optional_params.get("canary_requested_height") or kwargs.get("canary_requested_height")
 
-        # Check for layout prompt
-        import json
-        layout = optional_params.get("layout") or kwargs.get("layout")
-        is_layout = False
-        if layout:
-            is_layout = True
-        else:
-            if isinstance(prompt, str) and prompt.strip().startswith("{"):
-                try:
-                    parsed = json.loads(prompt)
-                    if "layout" in parsed:
-                        layout = parsed["layout"]
-                        is_layout = True
-                    elif "regions" in parsed:
-                        layout = parsed
-                        is_layout = True
-                except Exception:
-                    pass
+        final_prompt = prompt or ""
+        # Reve accepts very long prompts; only truncate as a last resort
+        if len(final_prompt) > 8000:
+            final_prompt = final_prompt[:8000]
+        payload: dict[str, Any] = {
+            "prompt": final_prompt,
+            "aspect_ratio": aspect_ratio,
+        }
+        # Pass through exact dimensions when available
+        if width and height:
+            payload["width"] = int(width)
+            payload["height"] = int(height)
+        seed = optional_params.get("seed") or kwargs.get("seed")
+        if seed is not None:
+            payload["seed"] = seed
+        steps = optional_params.get("steps") or kwargs.get("steps")
+        if steps is not None:
+            payload["steps"] = int(steps)
+        quality = optional_params.get("quality") or kwargs.get("quality")
+        if quality is not None:
+            payload["quality"] = quality
+        negative_prompt = optional_params.get("negative_prompt") or kwargs.get("negative_prompt")
+        if negative_prompt is not None:
+            payload["negative_prompt"] = negative_prompt
 
-        if is_layout:
-            layout = _normalize_layout(layout)
-            layout_model = "layout2image"
-            if model and "/" in model:
-                model_suffix = model.split("/")[-1]
-                if model_suffix in ("layout2image", "text2layout", "image2layout", "layout2layout"):
-                    layout_model = model_suffix
-
-            payload = {
-                "model": layout_model,
-                "layout": layout,
-            }
-            seed = optional_params.get("seed") or kwargs.get("seed")
-            if seed is not None:
-                payload["seed"] = seed
-
-            postprocessing = optional_params.get("postprocessing") or kwargs.get("postprocessing")
-            if postprocessing:
-                payload["postprocessing"] = postprocessing
-
-            request_timeout = timeout if timeout is not None else 300.0
-            _log_request("https://api.reve.com/v1/image/layout", api_key, payload)
-            async with httpx.AsyncClient(timeout=request_timeout) as http:
-                response = await http.post(
-                    "https://api.reve.com/v1/image/layout",
-                    headers=_headers(api_key),
-                    json=payload,
-                )
-                _log_response(response)
-                _raise_for_status(response)
-                data = response.json()
-        else:
-            final_prompt = prompt or ""
-            # Reve accepts very long prompts; only truncate as a last resort
-            if len(final_prompt) > 8000:
-                final_prompt = final_prompt[:8000]
-            payload: dict[str, Any] = {
-                "prompt": final_prompt,
-                "aspect_ratio": aspect_ratio,
-            }
-            # Pass through exact dimensions when available
-            if width and height:
-                payload["width"] = int(width)
-                payload["height"] = int(height)
-            seed = optional_params.get("seed") or kwargs.get("seed")
-            if seed is not None:
-                payload["seed"] = seed
-            steps = optional_params.get("steps") or kwargs.get("steps")
-            if steps is not None:
-                payload["steps"] = int(steps)
-            quality = optional_params.get("quality") or kwargs.get("quality")
-            if quality is not None:
-                payload["quality"] = quality
-            negative_prompt = optional_params.get("negative_prompt") or kwargs.get("negative_prompt")
-            if negative_prompt is not None:
-                payload["negative_prompt"] = negative_prompt
-
-            request_timeout = timeout if timeout is not None else 300.0
-            _log_request("https://api.reve.com/v1/image/create", api_key, payload)
-            async with httpx.AsyncClient(timeout=request_timeout) as http:
-                response = await http.post(
-                    "https://api.reve.com/v1/image/create",
-                    headers=_headers(api_key),
-                    json=payload,
-                )
-                _log_response(response)
-                _raise_for_status(response)
-                data = response.json()
+        request_timeout = timeout if timeout is not None else 300.0
+        _log_request("https://api.reve.com/v1/image/create", api_key, payload)
+        async with httpx.AsyncClient(timeout=request_timeout) as http:
+            response = await http.post(
+                "https://api.reve.com/v1/image/create",
+                headers=_headers(api_key),
+                json=payload,
+            )
+            _log_response(response)
+            _raise_for_status(response)
+            data = response.json()
 
         b64 = _extract_b64(data)
         if isinstance(b64, str) and (b64.startswith("http://") or b64.startswith("https://")):
@@ -418,102 +276,50 @@ class ReveLLM(CustomLLM):
                 injection = f"Use <img>{idx}</img> as a reference."
             prompt_injections.append(injection)
 
-        # Check for layout
-        import json
-        layout = (optional_params or {}).get("layout") or kwargs.get("layout")
-        is_layout = False
-        if layout:
-            is_layout = True
-        else:
-            if isinstance(prompt, str) and prompt.strip().startswith("{"):
-                try:
-                    parsed = json.loads(prompt)
-                    if "layout" in parsed:
-                        layout = parsed["layout"]
-                        is_layout = True
-                    elif "regions" in parsed:
-                        layout = parsed
-                        is_layout = True
-                except Exception:
-                    pass
+        final_prompt = prompt or ""
 
-        if is_layout:
-            layout = _normalize_layout(layout)
-            layout_model = "layout2image"
-            if model and "/" in model:
-                model_suffix = model.split("/")[-1]
-                if model_suffix in ("layout2image", "text2layout", "image2layout", "layout2layout"):
-                    layout_model = model_suffix
+        # Integrate reference instructions naturally into the prompt
+        if "<img>" not in final_prompt and prompt_injections:
+            # Add reference instructions at the beginning for better integration
+            ref_block = "Reference images:\n" + "\n".join(prompt_injections) + "\n\n"
+            final_prompt = ref_block + final_prompt
 
-            payload = {
-                "model": layout_model,
-                "layout": layout,
-                "reference_images": reference_images,
-            }
-            seed = (optional_params or {}).get("seed") or kwargs.get("seed")
-            if seed is not None:
-                payload["seed"] = seed
-
-            postprocessing = (optional_params or {}).get("postprocessing") or kwargs.get("postprocessing")
-            if postprocessing:
-                payload["postprocessing"] = postprocessing
-
-            request_timeout = timeout if timeout is not None else 300.0
-            _log_request("https://api.reve.com/v1/image/layout", api_key, payload)
-            async with httpx.AsyncClient(timeout=request_timeout) as http:
-                response = await http.post(
-                    "https://api.reve.com/v1/image/layout",
-                    headers=_headers(api_key),
-                    json=payload,
-                )
-                _log_response(response)
-                _raise_for_status(response)
-                data = response.json()
-        else:
-            final_prompt = prompt or ""
-
-            # Integrate reference instructions naturally into the prompt
-            if "<img>" not in final_prompt and prompt_injections:
-                # Add reference instructions at the beginning for better integration
-                ref_block = "Reference images:\n" + "\n".join(prompt_injections) + "\n\n"
-                final_prompt = ref_block + final_prompt
-
-            # Reve accepts very long prompts; only truncate as a last resort
-            if len(final_prompt) > 8000:
-                suffix = ""
-                if "Reference images:" in final_prompt:
-                    # Preserve reference block when truncating
-                    parts = final_prompt.split("\n\n", 1)
-                    if len(parts) == 2 and parts[0].startswith("Reference images:"):
-                        suffix = parts[0] + "\n\n"
-                        remaining = parts[1]
-                        limit = 8000 - len(suffix)
-                        final_prompt = suffix + remaining[:limit]
-                    else:
-                        final_prompt = final_prompt[:8000]
+        # Reve accepts very long prompts; only truncate as a last resort
+        if len(final_prompt) > 8000:
+            suffix = ""
+            if "Reference images:" in final_prompt:
+                # Preserve reference block when truncating
+                parts = final_prompt.split("\n\n", 1)
+                if len(parts) == 2 and parts[0].startswith("Reference images:"):
+                    suffix = parts[0] + "\n\n"
+                    remaining = parts[1]
+                    limit = 8000 - len(suffix)
+                    final_prompt = suffix + remaining[:limit]
                 else:
                     final_prompt = final_prompt[:8000]
+            else:
+                final_prompt = final_prompt[:8000]
 
-            payload: dict[str, Any] = {
-                "prompt": final_prompt,
-                "reference_images": reference_images,
-                "aspect_ratio": aspect_ratio,
-            }
-            seed = (optional_params or {}).get("seed") or kwargs.get("seed")
-            if seed is not None:
-                payload["seed"] = seed
+        payload: dict[str, Any] = {
+            "prompt": final_prompt,
+            "reference_images": reference_images,
+            "aspect_ratio": aspect_ratio,
+        }
+        seed = (optional_params or {}).get("seed") or kwargs.get("seed")
+        if seed is not None:
+            payload["seed"] = seed
 
-            request_timeout = timeout if timeout is not None else 300.0
-            _log_request("https://api.reve.com/v1/image/remix", api_key, payload)
-            async with httpx.AsyncClient(timeout=request_timeout) as http:
-                response = await http.post(
-                    "https://api.reve.com/v1/image/remix",
-                    headers=_headers(api_key),
-                    json=payload,
-                )
-                _log_response(response)
-                _raise_for_status(response)
-                data = response.json()
+        request_timeout = timeout if timeout is not None else 300.0
+        _log_request("https://api.reve.com/v1/image/remix", api_key, payload)
+        async with httpx.AsyncClient(timeout=request_timeout) as http:
+            response = await http.post(
+                "https://api.reve.com/v1/image/remix",
+                headers=_headers(api_key),
+                json=payload,
+            )
+            _log_response(response)
+            _raise_for_status(response)
+            data = response.json()
 
         b64 = _extract_b64(data)
         if isinstance(b64, str) and (b64.startswith("http://") or b64.startswith("https://")):

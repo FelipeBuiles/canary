@@ -941,6 +941,7 @@ async def generate_image(
     height: int,
     steps: int | None = None,
     refs: list[RefImage] | None = None,
+    layout: Any | None = None,
     feature: str = "image.generate",
 ) -> ApiResult[Path]:
     from novel_to_comic.ai.providers import selector
@@ -957,7 +958,7 @@ async def generate_image(
         except OSError:
             ref_reads.append((ref, None))
 
-    provider = selector.pick(model, config)
+    provider = selector.pick(model, config, layout=layout)
     # Provider-specific controls such as diffusion steps belong in LiteLLM
     # config; passing them through gateway aliases can make the proxy fail
     # before the provider responds.
@@ -967,6 +968,11 @@ async def generate_image(
         height=height,
         config=config,
     )
+    # The layout rides in params only for the layout-aware provider — the
+    # LiteLLM provider serialises params into request fields and must never
+    # see it.
+    if layout is not None and provider.name == "reve_layout":
+        params["layout"] = layout.model_dump() if hasattr(layout, "model_dump") else layout
     ctx = begin_image_call(
         config=config,
         model=model,
