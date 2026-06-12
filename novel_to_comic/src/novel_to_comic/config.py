@@ -212,6 +212,13 @@ class Config(BaseModel):
     # the call fails.
     style_sample_brief_enabled: bool = True
 
+    # LLM layout pass: decompose each panel's structured spec into a flat map
+    # of labelled, bounded regions (via prompt_model) for layout-aware image
+    # models. Only runs when the effective image model is Reve; generation
+    # falls back to the flat prompt when disabled, when the pass fails, or for
+    # any other image model.
+    layout_prompts_enabled: bool = True
+
     # Negative prompt — only applied for Together AI / SDXL models (Gemini native ignores it)
     # Keep style-neutral: no photorealistic/cartoon terms here. Put those in config.yaml
     # when you want to push toward or away from a specific look.

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import type { ImagePrompt } from "../types/api";
 import { PromptLineageCard } from "./PromptLineageCard";
+import { LayoutSection } from "./LayoutRegionEditor";
 import { Button } from "./ui/Button";
 import { Icon } from "./ui/Icon";
 import { LazyImage } from "./ui/LazyImage";
@@ -324,6 +325,7 @@ function PromptTabContent({
   project,
   sceneId,
   panelNumber,
+  imageUrl,
   draft,
   originalPrompt,
   onDraftChange,
@@ -337,6 +339,7 @@ function PromptTabContent({
   project: string;
   sceneId: string;
   panelNumber: number;
+  imageUrl: string | null;
   draft: ImagePrompt;
   originalPrompt: ImagePrompt | undefined;
   onDraftChange: (patch: Partial<ImagePrompt>) => void;
@@ -414,6 +417,12 @@ function PromptTabContent({
         mode="edit"
         showAdvanced
         project={project}
+      />
+      <LayoutSection
+        layout={draft.layout}
+        imageUrl={imageUrl}
+        aspectRatio={draft.width && draft.height ? draft.width / draft.height : 1.5}
+        onChange={(layout) => onDraftChange({ layout })}
       />
       {hasChanges && (
         <Button className="w-full" onClick={() => setConfirmGenerate(true)} disabled={isGenerating}>
@@ -752,6 +761,7 @@ export function PanelDetailModal({
                   project={project}
                   sceneId={sceneId}
                   panelNumber={panelNumber}
+                  imageUrl={imageAvailable === false ? null : activeDisplayUrl}
                   draft={draft}
                   originalPrompt={originalPrompt}
                   onDraftChange={handleDraftChange}

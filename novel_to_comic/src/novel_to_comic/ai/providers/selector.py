@@ -2,10 +2,22 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from novel_to_comic.ai.providers.base import ImageProvider
 from novel_to_comic.ai.providers.litellm_http import LitellmHttpProvider
-from novel_to_comic.config import Config
+from novel_to_comic.ai.providers.reve_layout import ReveLayoutProvider
+from novel_to_comic.config import Config, is_reve_model
 
 
-def pick(model_alias: str, config: Config) -> ImageProvider:  # noqa: ARG001
+def pick(model_alias: str, config: Config, layout: Any | None = None) -> ImageProvider:  # noqa: ARG001
+    """Pick the provider for one image request.
+
+    Layout-aware requests on Reve bypass the LiteLLM gateway: the gateway's
+    OpenAI-compatible image endpoints cannot carry the structured v2 request
+    or return the layout echo. Everything else — including flat Reve
+    generation — goes through the gateway.
+    """
+    if layout is not None and getattr(layout, "regions", None) and is_reve_model(model_alias):
+        return ReveLayoutProvider()
     return LitellmHttpProvider()

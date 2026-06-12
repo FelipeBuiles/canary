@@ -50,6 +50,9 @@ class ProviderRawResult:
     response_headers: httpx.Headers | None = None
     provider_cost_usd: float | None = None
     request_params: dict[str, Any] | None = None
+    # Layout the model actually generated (Reve v2 description echo) — persisted
+    # as a sidecar next to the output image when present.
+    layout_echo: dict[str, Any] | None = None
 
 
 class ImageProvider(Protocol):

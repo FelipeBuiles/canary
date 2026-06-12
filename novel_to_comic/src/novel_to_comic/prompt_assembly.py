@@ -13,7 +13,7 @@ from pathlib import Path
 
 from novel_to_comic.config import Config
 from novel_to_comic.models.layout_plan import PlannedPanel
-from novel_to_comic.models.prompt import ImagePrompt
+from novel_to_comic.models.prompt import ImagePrompt, PromptLayout
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.prompting import (
     IMAGE_PROMPT_VERSION,
@@ -241,15 +241,189 @@ async def ensure_visual_brief(config: Config, prompt: ImagePrompt) -> ImagePromp
     return updated
 
 
+# ── LLM layout pass (Reve v2 regional prompting) ────────────────────────────
+#
+# Decomposes the structured panel spec into a flat list of labelled, bounded
+# regions matching the Reve v2 Description wire format: absolute bboxes in
+# [0, 1], no nesting (containment is expressed by overlapping boxes), unique
+# labels. Subject regions carry a reference_key (character id) so the draw
+# provider can bind that character's reference image to the region. On any
+# failure the prompt keeps layout=None and generation falls back to the flat
+# visual brief.
+
+LAYOUT_SYSTEM_PROMPT = (
+    "You are a comic-panel layout director. Decompose the panel spec you receive "
+    "into a flat list of rectangular regions for a layout-aware image model.\n"
+    "\n"
+    "Coordinates: every bbox is {x0, y0, x1, y1} with values in [0, 1], top-left "
+    "origin, absolute to the full canvas. x0 < x1 and y0 < y1.\n"
+    "\n"
+    "Rules:\n"
+    "- Output 2-8 regions. Big elements first (background/setting, then each "
+    "character), fine detail regions after.\n"
+    "- The list is FLAT. To put a detail inside a subject (a face, a held prop), "
+    "give the detail its own region whose box lies inside the subject's box.\n"
+    "- Every region label must be unique, short, and snake_case.\n"
+    "- Each region prompt describes ONLY what is inside that box, in concrete "
+    "visual terms. Never mention other regions, the spec, or art style.\n"
+    "- For each character in the spec, emit exactly one region covering their "
+    "full body placement, and set reference_key to that character's id from the "
+    "spec. Regions without a listed id use reference_key: null.\n"
+    "- Respect stated positions (left/right/foreground/background) and the "
+    "panel's aspect ratio when placing boxes.\n"
+    "- Background/setting regions should cover the canvas areas not dominated by "
+    "subjects; boxes may overlap.\n"
+    "- If the spec reserves quiet space for a narration caption, keep that zone "
+    "free of detail regions.\n"
+    "\n"
+    'Output JSON only: {"prompt": "<one-sentence overall scene summary>", '
+    '"regions": [{"label": "...", "prompt": "...", '
+    '"bbox": {"x0": 0.0, "y0": 0.0, "x1": 1.0, "y1": 1.0}, '
+    '"reference_key": "<character id or null>"}]}'
+)
+
+_LAYOUT_JSON_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "prompt": {"type": ["string", "null"]},
+        "regions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string"},
+                    "prompt": {"type": "string"},
+                    "bbox": {
+                        "type": "object",
+                        "properties": {
+                            "x0": {"type": "number"},
+                            "y0": {"type": "number"},
+                            "x1": {"type": "number"},
+                            "y1": {"type": "number"},
+                        },
+                        "required": ["x0", "y0", "x1", "y1"],
+                    },
+                    "reference_key": {"type": ["string", "null"]},
+                },
+                "required": ["label", "prompt", "bbox"],
+            },
+        },
+    },
+    "required": ["regions"],
+}
+
+
+def _layout_source_spec(prompt: ImagePrompt) -> str:
+    """Spec text for the layout pass: brief/spec plus binding keys and frame shape."""
+    spec = visual_brief_source_spec(prompt)
+    if not spec.strip():
+        return ""
+    lines = [spec]
+    character_ids = [
+        f"- {subject.character_id}: {subject.name}"
+        for subject in getattr(prompt, "subjects", []) or []
+        if (getattr(subject, "character_id", None) or "").strip()
+    ]
+    if character_ids:
+        lines.append("Character ids for reference_key:\n" + "\n".join(character_ids))
+    brief = (getattr(prompt, "visual_brief", None) or "").strip()
+    if brief:
+        lines.append(f"Visual brief (final composition intent): {brief}")
+    width = getattr(prompt, "generation_width", None) or prompt.width
+    height = getattr(prompt, "generation_height", None) or prompt.height
+    if width and height:
+        orientation = "landscape" if width > height else "portrait" if height > width else "square"
+        lines.append(f"Canvas: {width}x{height} ({orientation})")
+    return "\n\n".join(lines)
+
+
+def layout_pass_applies(config: Config, prompt: ImagePrompt | None = None) -> bool:
+    """True when the layout pass should run for this config (and prompt)."""
+    from novel_to_comic.config import is_reve_model
+
+    if not getattr(config, "layout_prompts_enabled", True):
+        return False
+    if not is_reve_model(config.effective_image_model()):
+        return False
+    if prompt is not None and getattr(prompt, "layout", None) is not None:
+        return False
+    return True
+
+
+async def generate_layout(config: Config, prompt: ImagePrompt) -> PromptLayout | None:
+    """One LLM call: structured panel spec → flat region layout.
+
+    Returns None (never raises) when the spec is empty, the call fails, or the
+    output sanitizes down to fewer than two regions — callers fall back to
+    flat prompting.
+    """
+    spec = _layout_source_spec(prompt)
+    if not spec.strip():
+        return None
+    from novel_to_comic.ai.client import generate_structured_object
+
+    try:
+        result = await generate_structured_object(
+            config=config,
+            model=config.effective_prompt_model(),
+            system_prompt=LAYOUT_SYSTEM_PROMPT,
+            user_content=spec,
+            temperature=0.3,
+            max_output_tokens=4096,
+            json_schema=_LAYOUT_JSON_SCHEMA,
+            feature="prompt.layout",
+        )
+        layout = PromptLayout.model_validate(result.value).sanitized()
+    except Exception:
+        logger.warning(
+            "Layout generation failed for panel %s/%s; falling back to flat prompt",
+            getattr(prompt, "scene_id", "?"),
+            getattr(prompt, "panel_number", "?"),
+            exc_info=True,
+        )
+        return None
+    if len(layout.regions) < 2:
+        logger.warning(
+            "Layout output rejected for panel %s/%s (%d usable regions); "
+            "falling back to flat prompt",
+            getattr(prompt, "scene_id", "?"),
+            getattr(prompt, "panel_number", "?"),
+            len(layout.regions),
+        )
+        return None
+    return layout
+
+
+async def ensure_layout(config: Config, prompt: ImagePrompt) -> ImagePrompt:
+    """Return prompt with layout populated when the layout pass applies.
+
+    Returns the same object when a layout already exists, the pass is disabled,
+    the image model is not layout-aware, or generation fails — callers can use
+    identity to decide whether to persist.
+    """
+    if not layout_pass_applies(config, prompt):
+        return prompt
+    layout = await generate_layout(config, prompt)
+    if layout is None:
+        return prompt
+    updated = prompt.model_copy(deep=True)
+    updated.layout = layout
+    return updated
+
+
 __all__ = [
     "IMAGE_PROMPT_VERSION",
+    "LAYOUT_SYSTEM_PROMPT",
     "VISUAL_BRIEF_SYSTEM_PROMPT",
     "assemble_panel_prompt",
     "ensure_current_panel_prompt",
     "ensure_distilled_prompt",
+    "ensure_layout",
     "ensure_visual_brief",
-    "prompt_is_current",
+    "generate_layout",
     "generate_visual_brief",
+    "layout_pass_applies",
     "normalize_prose_brief",
+    "prompt_is_current",
     "rerender_prompt_body",
 ]

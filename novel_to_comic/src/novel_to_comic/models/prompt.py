@@ -4,6 +4,79 @@
 from pydantic import BaseModel, Field
 
 
+class LayoutBbox(BaseModel):
+    """Normalized bounding box, top-left origin, values in [0, 1].
+
+    Mirrors the Reve v2 wire format exactly (x0, y0, x1, y1) so a stored
+    layout serializes to the API without translation.
+    """
+
+    x0: float = 0.0
+    y0: float = 0.0
+    x1: float = 1.0
+    y1: float = 1.0
+
+    def clamped(self) -> "LayoutBbox | None":
+        """Return a copy clamped to [0, 1] with corners ordered, or None when degenerate."""
+        x0, x1 = sorted((min(max(self.x0, 0.0), 1.0), min(max(self.x1, 0.0), 1.0)))
+        y0, y1 = sorted((min(max(self.y0, 0.0), 1.0), min(max(self.y1, 0.0), 1.0)))
+        if x1 - x0 < 0.01 or y1 - y0 < 0.01:
+            return None
+        return LayoutBbox(x0=x0, y0=y0, x1=x1, y1=y1)
+
+
+class LayoutRegion(BaseModel):
+    """One flat region of a panel layout (no nesting — containment is spatial).
+
+    reference_key binds the region to a reference image: a character id
+    (e.g. "char_carl") for subjects or a prop id for props. The draw-stage
+    provider resolves it to the Reve `image_index` of the uploaded reference.
+    """
+
+    label: str
+    prompt: str
+    bbox: LayoutBbox = Field(default_factory=LayoutBbox)
+    reference_key: str | None = None
+
+
+class PromptLayout(BaseModel):
+    """Flat layout for layout-aware generation (Reve v2 Description shape)."""
+
+    prompt: str | None = None
+    regions: list[LayoutRegion] = Field(default_factory=list)
+
+    def sanitized(self) -> "PromptLayout":
+        """Drop malformed regions, clamp boxes, and de-duplicate labels.
+
+        Stored layouts come from an LLM or hand edits, so loading stays
+        lenient and correctness is enforced here at the generation boundary
+        (Reve requires unique labels and boxes within [0, 1]).
+        """
+        seen: set[str] = set()
+        regions: list[LayoutRegion] = []
+        for region in self.regions:
+            label = (region.label or "").strip()
+            prompt = (region.prompt or "").strip()
+            if not label or not prompt:
+                continue
+            bbox = region.bbox.clamped()
+            if bbox is None:
+                continue
+            base = label
+            suffix = 2
+            while label in seen:
+                label = f"{base}_{suffix}"
+                suffix += 1
+            seen.add(label)
+            regions.append(LayoutRegion(
+                label=label,
+                prompt=prompt,
+                bbox=bbox,
+                reference_key=region.reference_key,
+            ))
+        return PromptLayout(prompt=(self.prompt or "").strip() or None, regions=regions)
+
+
 class PromptSubject(BaseModel):
     character_id: str | None = None
     name: str
@@ -49,6 +122,9 @@ class ImagePrompt(BaseModel):
     visual_requirements: list[str] = Field(default_factory=list)
     props: list[str] = Field(default_factory=list)
     constraints: str | None = None
+    # Flat layout-aware region map. Only used when the image model supports
+    # regional prompting (Reve v2); other models ignore it.
+    layout: PromptLayout | None = None
     reference_image_paths: list[str] = Field(default_factory=list)  # Project-relative paths to character ref images
     width: int
     height: int

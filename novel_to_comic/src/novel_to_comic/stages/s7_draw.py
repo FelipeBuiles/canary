@@ -17,7 +17,12 @@ from rich.console import Console
 
 from novel_to_comic import artifacts
 from novel_to_comic.ai.providers.base import RefImage, order_refs_for_upload
-from novel_to_comic.prompt_assembly import ensure_current_panel_prompt, ensure_visual_brief
+from novel_to_comic.prompt_assembly import (
+    ensure_current_panel_prompt,
+    ensure_layout,
+    ensure_visual_brief,
+    layout_pass_applies,
+)
 from novel_to_comic.clients import flux
 from novel_to_comic.config import Config
 from novel_to_comic.events import make_progress
@@ -462,6 +467,12 @@ async def _generate_panel(
         if briefed_prompt is not prompt:
             prompt = briefed_prompt
             prompt_path.write_text(prompt.model_dump_json(indent=2))
+        # Backfill the region layout for layout-aware models (Reve) when the
+        # prompt predates the layout pass or an edit cleared it.
+        laid_out_prompt = await ensure_layout(config, prompt)
+        if laid_out_prompt is not prompt:
+            prompt = laid_out_prompt
+            prompt_path.write_text(prompt.model_dump_json(indent=2))
 
         output_dir = project_dir / "draw" / prompt.scene_id
         output_path = output_dir / f"panel_{prompt.panel_number:03d}.png"
@@ -520,6 +531,11 @@ async def _generate_panel(
                     for ref in refs
                 ],
                 "continuity_note": prompt.continuity_note,
+                "layout": (
+                    prompt.layout.sanitized().model_dump()
+                    if prompt.layout is not None and layout_pass_applies(config)
+                    else None
+                ),
             },
         }
         if (
@@ -544,6 +560,7 @@ async def _generate_panel(
                     width=prompt.width,
                     height=prompt.height,
                     steps=prompt.steps,
+                    layout=prompt.layout if layout_pass_applies(config) else None,
                     feature="draw.panel_image",
                 )
             result = flux_result.value
@@ -559,6 +576,9 @@ async def _generate_panel(
                     reason="before_regenerate",
                 )
                 generation_path.replace(output_path)
+                tmp_echo = artifacts.asset_layout_echo_path(generation_path)
+                if tmp_echo.exists():
+                    tmp_echo.replace(artifacts.asset_layout_echo_path(output_path))
                 record_current_panel_version(
                     project_dir,
                     prompt.scene_id,
@@ -569,6 +589,8 @@ async def _generate_panel(
         finally:
             if force and generation_path.exists():
                 generation_path.unlink(missing_ok=True)
+            if force:
+                artifacts.asset_layout_echo_path(generation_path).unlink(missing_ok=True)
 
         if result:
             artifacts.asset_failure_path(output_path).unlink(missing_ok=True)

@@ -19,6 +19,7 @@ from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.prompt_assembly import (
     ensure_current_panel_prompt,
     ensure_distilled_prompt,
+    ensure_layout,
     ensure_visual_brief,
 )
 from novel_to_comic.stage_runtime import StageRuntime
@@ -38,6 +39,7 @@ async def _process_panel(
     prompt = ensure_current_panel_prompt(config, project_dir, panel, story_bible, prev_panel)
     updated = ensure_distilled_prompt(config, prompt)
     updated = await ensure_visual_brief(config, updated)
+    updated = await ensure_layout(config, updated)
     if updated is not prompt:
         output_path.write_text(updated.model_dump_json(indent=2))
     return updated
