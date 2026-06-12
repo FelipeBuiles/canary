@@ -127,6 +127,25 @@ def _extract_label_from_bare(role: str, bare: str) -> str:
     return "reference"
 
 
+def _role_reference_prompt(role: str, label: str) -> str:
+    if role == "subject":
+        name = label if label and label != "character" else None
+        return (
+            f"Character identity reference for {name} — match face, hair, build, and wardrobe; do not copy its pose or background."
+            if name
+            else "Character identity reference — match face, hair, build, and wardrobe; do not copy its pose or background."
+        )
+    if role == "style":
+        return "Art style reference — match this rendering style exactly."
+    if role == "location_plate":
+        return f"Location reference for {label}." if label else "Location reference."
+    if role == "prop":
+        return f"Object reference for {label}." if label else "Object reference."
+    if role == "continuity":
+        return "Previous panel — maintain visual continuity."
+    return "Reference image."
+
+
 def _extract_b64(data: Any) -> str:
     if isinstance(data, dict):
         images_list = data.get("images") or data.get("data")
@@ -156,11 +175,11 @@ class ReveProvider:
         size = f"{inp.width}x{inp.height}"
         aspect_ratio = _map_aspect_ratio(size)
 
-        # 2. Process reference images
-        reference_images = []
-        prompt_injections = []
-        
-        # Limit to max 4 reference images (same as litellm custom handler)
+        # 2. Process reference images (v1 remix: flat base64 list + positional
+        # <img>N</img> instructions in the prompt; the v2 structured-references
+        # endpoint is gated behind the partnerapi.layout_endpoint feature).
+        reference_images: list[str] = []
+        prompt_injections: list[str] = []
         for idx, path in enumerate(inp.reference_image_paths[:4]):
             if not path.exists():
                 continue
@@ -174,27 +193,16 @@ class ReveProvider:
 
             role = _heuristic_role(path.name)
             label = _extract_label_from_bare(role, path.name)
-            
-            if role == "subject":
-                injection = f"Use <img>{idx}</img> as the character reference for {label}." if label else f"Use <img>{idx}</img> as the character reference."
-            elif role == "style":
-                injection = f"Use <img>{idx}</img> as the style reference for {label}." if label else f"Use <img>{idx}</img> as the style reference."
-            elif role == "location_plate":
-                injection = f"Use <img>{idx}</img> as the location reference for {label}." if label else f"Use <img>{idx}</img> as the location reference."
-            elif role == "prop":
-                injection = f"Use <img>{idx}</img> as the object reference for {label}." if label else f"Use <img>{idx}</img> as the object reference."
-            elif role == "continuity":
-                injection = f"Use <img>{idx}</img> for visual continuity."
-            else:
-                injection = f"Use <img>{idx}</img> as a reference."
-            prompt_injections.append(injection)
+            prompt_injections.append(f"Use <img>{idx}</img>: {_role_reference_prompt(role, label)}")
 
         final_prompt = inp.composed_prompt()
         if "<img>" not in final_prompt and prompt_injections:
             ref_block = "Reference images:\n" + "\n".join(prompt_injections) + "\n\n"
             final_prompt = ref_block + final_prompt
 
-        # 3. Determine endpoint URL and construct payload
+        # 3. Determine endpoint URL and construct payload. Note Reve has no
+        # exact-pixel sizing — width/height are rejected as
+        # UNRECOGNIZED_PARAMETER; aspect_ratio is the only sizing knob.
         params = params or {}
         seed = params.get("seed")
         steps = params.get("steps")
@@ -203,7 +211,7 @@ class ReveProvider:
 
         if reference_images:
             url = "https://api.reve.com/v1/image/remix"
-            payload = {
+            payload: dict[str, Any] = {
                 "prompt": final_prompt,
                 "reference_images": reference_images,
                 "aspect_ratio": aspect_ratio,
@@ -215,8 +223,6 @@ class ReveProvider:
             payload = {
                 "prompt": final_prompt,
                 "aspect_ratio": aspect_ratio,
-                "width": inp.width,
-                "height": inp.height,
             }
             if seed is not None:
                 payload["seed"] = seed

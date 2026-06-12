@@ -274,5 +274,11 @@ class RefStrategy:
         return self._gpt_image_2
 
     def use_indexed_ref_instructions(self) -> bool:
-        """Reve prompts reference uploads positionally via <img>N</img> tags."""
+        """Reve v1 remix prompts reference uploads positionally via <img>N</img>.
+
+        The v2 API replaces inline tags with per-reference prompts in the
+        structured `references` payload, but v2 is gated behind the Reve
+        partner feature `partnerapi.layout_endpoint`. The direct layout
+        provider (reve_layout.py) strips these tags from its v2 instruction.
+        """
         return self._reve

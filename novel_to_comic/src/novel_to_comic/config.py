@@ -217,7 +217,12 @@ class Config(BaseModel):
     # models. Only runs when the effective image model is Reve; generation
     # falls back to the flat prompt when disabled, when the pass fails, or for
     # any other image model.
-    layout_prompts_enabled: bool = True
+    #
+    # Default OFF: layout draws call Reve's /v2/image/create directly, which
+    # is gated behind the partner feature `partnerapi.layout_endpoint` and
+    # returns 403 FEATURE_NOT_ENABLED until Reve enables it for the API key.
+    # Flip to true once the key has the feature.
+    layout_prompts_enabled: bool = False
 
     # Negative prompt — only applied for Together AI / SDXL models (Gemini native ignores it)
     # Keep style-neutral: no photorealistic/cartoon terms here. Put those in config.yaml

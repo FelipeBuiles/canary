@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -91,7 +92,11 @@ def _ref_binding_key(ref: RefImage) -> str | None:
 def _reference_prompt(ref: RefImage) -> str:
     label = (ref.label or "").strip()
     if ref.role == "subject":
-        return f"Character reference for {label}." if label else "Character reference."
+        return (
+            f"Character identity reference for {label} — match face, hair, build, and wardrobe; do not copy its pose or background."
+            if label
+            else "Character identity reference — match face, hair, build, and wardrobe; do not copy its pose or background."
+        )
     if ref.role == "style":
         return "Art style reference — match this rendering style exactly."
     if ref.role == "location_plate":
@@ -147,7 +152,7 @@ class ReveLayoutProvider:
 
         references, index_by_key = self._build_references(refs)
         payload: dict[str, Any] = {
-            "instruction": (prompt or "")[:_INSTRUCTION_MAX_CHARS],
+            "instruction": _strip_inline_ref_tags(prompt or "")[:_INSTRUCTION_MAX_CHARS],
             "description": self._description(layout, index_by_key),
             "aspect_ratio": request_params.get("aspect_ratio") or _aspect_ratio_for(width, height),
         }
@@ -249,3 +254,20 @@ def _read_ref_bytes(path: Path) -> bytes | None:
         return path.read_bytes()
     except OSError:
         return None
+
+
+_INLINE_REF_LINE_RE = re.compile(r"^.*<img>\d+</img>.*$", re.MULTILINE)
+
+
+def _strip_inline_ref_tags(prompt: str) -> str:
+    """Drop v1-remix positional <img>N</img> instructions from the prompt.
+
+    The renderer emits them for Reve's v1 remix path; on v2 each reference
+    carries its own prompt in the structured payload, so inline tags are
+    noise in the instruction text.
+    """
+    if "<img>" not in prompt:
+        return prompt
+    cleaned = _INLINE_REF_LINE_RE.sub("", prompt)
+    cleaned = cleaned.replace("Reference images:\n\n", "").replace("Reference images:\n", "")
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip()

@@ -898,7 +898,7 @@ def test_reve_prompt_injection():
     ]
     
     generation_prompt = render_generation_prompt(prompt, "Ink wash.", "image-reve", refs=refs)
-    
+
     assert "Reference images:" in generation_prompt
     assert (
         "Use <img>0</img> as the identity reference for Alice — match face, hair, build, "
