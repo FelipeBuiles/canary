@@ -31,7 +31,8 @@
     "--page-num-color": "#AAAAAA",
     "--page-num-font-size": "17px",
     "--letter-font": "'Comic Neue', 'Comic Sans MS', cursive, sans-serif",
-    "--display-font": "'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif"
+    "--display-font": "'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif",
+    "--page-texture-color": "rgba(17,17,17,0.05)"
   },
   "themes": {
     "default": {},
@@ -48,7 +49,8 @@
       "--speaker-color": "#444444",
       "--sfx-color": "#FFFFFF",
       "--sfx-shadow": "#000000",
-      "--page-num-color": "#555555"
+      "--page-num-color": "#555555",
+      "--page-texture-color": "rgba(245,245,245,0.05)"
     },
     "manga": {
       "--panel-border-width": "2px",
