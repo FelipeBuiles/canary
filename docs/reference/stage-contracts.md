@@ -218,17 +218,17 @@ before compose.
 - `storyboard/scene_NNN/panel_NNN.json` (compatibility fallback only)
 - `story_bible.json` (character names for bubble attribution)
 - `assembly/character_voices.json` (optional per-character lettering overrides)
+- `assembly/lettering_style.json` (project lettering style: theme, font pair, CSS-var overrides)
 
 **Writes:**
 - `compose/pages/page_NNN.json` — **canonical editing surface** (`ComicPage` model)
 - `compose/pages/page_NNN.png` — rendered preview
-- `compose/html/page_NNN.html` — HTML preview (open in browser, edit `theme.css`, hard-refresh)
-- `compose/theme.css` — CSS variables (written on first run; user-editable)
+- `compose/html/page_NNN.html` — HTML preview (open in browser, hard-refresh)
 - `assembly/character_voices.json` — optional web-editor voice presets
 - `exports/comic.pdf` and/or `exports/comic.cbz` (on export)
 
 **What it does:** Projects the layout plan into `ComicPage` JSON, then renders
-HTML via the theme system and screenshots to PNG via Playwright. The
+HTML via the project lettering style and screenshots to PNG via Playwright. The
 `page_NNN.json` file is the canonical Stage 9 editing surface. All page-editor
 edits must persist through this JSON instead of bypassing it with renderer-only
 state.
@@ -237,8 +237,9 @@ state.
 - Compose is deterministic assembly. It does not call image models and does not
   change panel art except for page placement, cropping offsets, and overlays.
 - It owns lettering and production elements: speech/thought/narration bubbles,
-  SFX, bubble tails, per-bubble typography, per-page style variables, themes,
-  panel borders, page numbers, and export.
+  SFX, bubble tails, per-bubble typography, panel borders, page numbers, and
+  export. The book-wide look (theme, font pair, color/border overrides) comes
+  from the project `LetteringStyle`, chosen at the Look stage.
 - It reads planner-owned structure from `plan/layout_plan.json`. Structural
   edits such as panel importance, shape intent, generation mode, page reorder,
   layout presets, and repagination are applied back to the layout plan, then
@@ -251,9 +252,10 @@ state.
 - It supports pinned SVG speech tails with `tail_x` / `tail_y` panel-relative
   target points. When those are missing, speech bubbles use CSS tails with
   `tail_direction` (`auto`, `up`, or `down`).
-- It exposes four web-editor modes: Script for text review and translation,
-  Layout for page/bubble/SFX placement, Style for lettering/theme operations,
-  and Preview for spread review/export.
+- It exposes three web-editor tabs: Pages for page/bubble/SFX placement, Script
+  for text review and translation, and Export for spread review and PDF/CBZ.
+  Book-wide lettering is chosen at the Look stage and re-tuned from the Book
+  header's lettering menu.
 - It must invalidate or replace cached page data carefully. Dragging elements
   updates the specific page cache directly so the editor does not snap back
   during optimistic interaction.

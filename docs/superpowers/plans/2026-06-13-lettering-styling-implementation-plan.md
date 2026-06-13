@@ -2,7 +2,12 @@
 
 ## Status
 
-In progress. Spec: `docs/superpowers/specs/2026-06-13-lettering-styling-design.md`.
+Complete (2026-06-13) — all ten slices shipped. 448 backend + 199 web tests
+green, `ruff check src/` clean, production build clean. Spec:
+`docs/superpowers/specs/2026-06-13-lettering-styling-design.md`.
+
+Deviation from spec: the Book one-time reveal "seen" flag is stored in
+localStorage (per-device) rather than server-side project state.
 
 ## Goal
 

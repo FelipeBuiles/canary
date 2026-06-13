@@ -1,5 +1,8 @@
 # Comic Lettering & Styling Design
 
+> **Status: Shipped 2026-06-13.** Implemented across ten slices — see
+> `docs/superpowers/plans/2026-06-13-lettering-styling-implementation-plan.md`.
+
 ## Problem
 
 The visual styling of an assembled comic page — dialogue, narration, thought
