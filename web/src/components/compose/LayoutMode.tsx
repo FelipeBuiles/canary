@@ -4,6 +4,7 @@ import { PageNavigator } from "./PageNavigator";
 import { EditorToolbar } from "./EditorToolbar";
 import { PageEditor } from "./PageEditor";
 import { PropertyPanel } from "./PropertyPanel";
+import { useLetteringStyle } from "../../api/queries";
 
 interface LayoutModeProps {
   project: string;
@@ -63,6 +64,7 @@ export function LayoutMode({
   onDeleteElement,
   onUnpin,
 }: LayoutModeProps) {
+  const { data: lettering } = useLetteringStyle(project);
   const canvasShellRef = useRef<HTMLElement>(null);
   const [floatingPosition, setFloatingPosition] = useState<{ top: number; left: number; shellViewportTop: number } | null>(null);
   const [dragOffset, setDragOffset] = useState({ dx: 0, dy: 0 });
@@ -206,6 +208,7 @@ export function LayoutMode({
             ) : page ? (
               <PageEditor
                 page={page}
+                lettering={lettering}
                 project={project}
                 zoom={zoom}
                 onZoomChange={onZoomChange}

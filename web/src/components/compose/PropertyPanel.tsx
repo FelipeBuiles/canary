@@ -163,7 +163,6 @@ export function PropertyPanel({
     if (!found) return null;
     return (
       <BubbleInspector
-        page={page}
         panel={found.panel}
         bubble={found.bubble}
         panelId={selection.panelId}
@@ -191,14 +190,12 @@ export function PropertyPanel({
 }
 
 function BubbleInspector({
-  page,
   panel,
   bubble,
   onUpdate,
   onUnpin,
   onDelete,
 }: {
-  page: ComicPage;
   panel: PagePanel;
   bubble: Bubble;
   panelId: string;
@@ -209,7 +206,7 @@ function BubbleInspector({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const isPinned = bubble.x != null && bubble.y != null;
 
-  const tv = resolveThemeVars(page.theme ?? "default");
+  const tv = resolveThemeVars("default");
   const themeFs = parseInt(tv["--bubble-font-size"] ?? "36");
   const themeRadius = parseInt(tv["--bubble-radius"] ?? "14");
   const themeBorder = parseInt(tv["--bubble-border-width"] ?? "2");

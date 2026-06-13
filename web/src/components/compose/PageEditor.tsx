@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ComicPage } from "../../types/api";
+import type { ComicPage, LetteringStyle } from "../../types/api";
 import { ScaledContainer } from "./ScaledContainer";
 import { ComicPageCanvas } from "./ComicPageCanvas";
 import { exceedsThreshold } from "./coordinates";
@@ -12,6 +12,7 @@ function parseSfxIndexFromId(elementId: string): number {
 interface PageEditorProps {
   page: ComicPage;
   project: string;
+  lettering?: LetteringStyle;
   zoom: number;
   onZoomChange: (zoom: number) => void;
   selectedId: string | null;
@@ -64,6 +65,7 @@ function closest(el: HTMLElement | null, sel: string): HTMLElement | null {
 export function PageEditor({
   page,
   project,
+  lettering,
   zoom,
   onZoomChange,
   selectedId,
@@ -291,6 +293,7 @@ export function PageEditor({
       <ScaledContainer zoom={zoom} onZoomChange={onZoomChange} onScaleChange={handleScaleChange}>
         <ComicPageCanvas
           page={displayPage}
+          lettering={lettering}
           selectedPanelId={selectedPanelId}
           selectedElementId={selectedId}
           selectedType={selectedType}

@@ -553,7 +553,6 @@ export function DrawRoom() {
   ];
 
   const drawApproved = drawStageStatus === "complete";
-  const allDrawn = panelCounts.pending === 0 && panelCounts.failed === 0 && panelCounts.total > 0;
 
   const approvalBar = isDrawRunning ? (
     <ApprovalBar

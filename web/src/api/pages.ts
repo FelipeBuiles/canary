@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import type { ComicPage, PageSummary } from "../types/api";
+import type { ComicPage, PageSummary, LetteringStyle } from "../types/api";
 
 export function listPages(project: string): Promise<PageSummary[]> {
   return apiFetch(`/projects/${encodeURIComponent(project)}/pages/`);
@@ -34,11 +34,24 @@ export function replacePage(
   });
 }
 
-export function generatePageStyleVars(
-  project: string,
-): Promise<{ status: string; style_vars: Record<string, string>; pages: PageSummary[] }> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/style-vars/generate`, {
+export function getLetteringStyle(project: string): Promise<LetteringStyle> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/lettering-style`);
+}
+
+export function generateLetteringStyle(project: string, reroll = false): Promise<LetteringStyle> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/lettering-style/generate`, {
     method: "POST",
+    body: JSON.stringify({ reroll }),
+  });
+}
+
+export function setLetteringStyle(
+  project: string,
+  body: { mode: "auto" | "preset"; preset?: string },
+): Promise<LetteringStyle> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/lettering-style`, {
+    method: "PUT",
+    body: JSON.stringify(body),
   });
 }
 
@@ -49,16 +62,6 @@ export function translatePageBubbles(
   return apiFetch(`/projects/${encodeURIComponent(project)}/pages/translate-bubbles`, {
     method: "POST",
     body: JSON.stringify(targetLanguage ? { target_language: targetLanguage } : {}),
-  });
-}
-
-export function setTheme(
-  project: string,
-  theme: string,
-): Promise<{ status: string; theme: string; updated: number }> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/set-theme`, {
-    method: "POST",
-    body: JSON.stringify({ theme }),
   });
 }
 
