@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   usePages,
   usePage,
   useUpdatePage,
   useReplacePage,
+  useLetteringStyle,
   useGenerateLetteringStyle,
+  useSetLetteringStyle,
   useTranslatePageBubbles,
   useExport,
   useProjectConfig,
@@ -17,6 +19,7 @@ import { downloadExportUrl } from "../../api/pages";
 import { RerunStageAction, StagePlaceholder } from "../../components/composites";
 import { ComposeHeader } from "../../components/compose/ComposeHeader";
 import { ExportBurst } from "../../components/compose/ExportBurst";
+import { LetteringReveal } from "../../components/compose/LetteringReveal";
 import { ScriptMode } from "../../components/compose/ScriptMode";
 import { LayoutMode } from "../../components/compose/LayoutMode";
 import { PreviewMode } from "../../components/compose/PreviewMode";
@@ -38,6 +41,7 @@ function isInputFocused() {
 
 export function ComposeRoom() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
 
   // ── Tab / drawer state — one tab row, issues as a drawer ─────────────────
   const [tab, setTab] = useState<ComposeTab>("pages");
@@ -73,7 +77,9 @@ export function ComposeRoom() {
   // ── Mutations ────────────────────────────────────────────────────────────
   const updatePageMut = useUpdatePage();
   const replacePageMut = useReplacePage();
-  const generatePageStyleMut = useGenerateLetteringStyle();
+  const generateLetteringMut = useGenerateLetteringStyle();
+  const setLetteringMut = useSetLetteringStyle();
+  const { data: lettering } = useLetteringStyle(id);
   const translateBubblesMut = useTranslatePageBubbles();
   const updateProjectConfigMut = useUpdateProjectConfig();
   const exportMut = useExport();
@@ -241,6 +247,11 @@ export function ComposeRoom() {
 
   // ── Export / style / translate ───────────────────────────────────────────
   const [exportSuccess, setExportSuccess] = useState<{ format: "pdf" | "cbz"; url: string } | null>(null);
+  const [revealSeen, setRevealSeen] = useState(() => !id || !!localStorage.getItem(`pulp:lettering-reveal:${id}`));
+  function dismissReveal() {
+    if (id) localStorage.setItem(`pulp:lettering-reveal:${id}`, "1");
+    setRevealSeen(true);
+  }
 
   function handleExport(format: "pdf" | "cbz") {
     if (!id) return;
@@ -251,9 +262,18 @@ export function ComposeRoom() {
     );
   }
 
-  function handleGeneratePageStyle() {
+  function handleRerollLettering() {
     if (!id) return;
-    generatePageStyleMut.mutate({ project: id });
+    generateLetteringMut.mutate({ project: id, reroll: true });
+  }
+
+  function handleSetLetteringPreset(preset: string) {
+    if (!id) return;
+    setLetteringMut.mutate({ project: id, mode: "preset", preset });
+  }
+
+  function handleEditLetteringAtLook() {
+    if (id) navigate(`/project/${id}/styles`);
   }
 
   function handleTranslateBubbles(targetLanguage: "en" | "es" | "fr") {
@@ -380,8 +400,11 @@ export function ComposeRoom() {
         errorCount={errorCount}
         warningCount={warningCount}
         onOpenIssues={() => setIssuesOpen(true)}
-        isMatchingStyle={generatePageStyleMut.isPending}
-        onMatchStyle={handleGeneratePageStyle}
+        letteringLabel={lettering?.label}
+        isLettering={generateLetteringMut.isPending || setLetteringMut.isPending}
+        onRerollLettering={handleRerollLettering}
+        onSetLetteringPreset={handleSetLetteringPreset}
+        onEditLetteringAtLook={handleEditLetteringAtLook}
         rerunAction={
           <RerunStageAction
             project={id}
@@ -392,6 +415,12 @@ export function ComposeRoom() {
         }
         pageCount={pageList.length}
       />
+
+      {!revealSeen && lettering?.label && composeStageStatus === "complete" && pageList.length > 0 && (
+        <div className="px-3">
+          <LetteringReveal lettering={lettering} onDismiss={dismissReveal} />
+        </div>
+      )}
 
       {/* Pages tab */}
       {tab === "pages" && (
