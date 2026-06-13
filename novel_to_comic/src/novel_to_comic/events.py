@@ -77,7 +77,8 @@ EventCallback = Callable[[dict[str, Any]], None]
 
 # Sentinel no-op: stages call ``emit = on_event or _NOOP`` so callers that
 # pass None pay zero overhead.
-_NOOP: EventCallback = lambda _: None
+def _NOOP(_: dict[str, Any]) -> None:
+    return None
 
 
 class _SilentProgress:

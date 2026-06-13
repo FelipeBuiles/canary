@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import gzip
 import json
 import logging
 import re
 import shutil
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Form
+from pydantic import BaseModel
 
 from novel_to_comic.config import Config, save_config
 from novel_to_comic.ai import ai_request_context
@@ -31,9 +35,6 @@ from ..generation_jobs import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-import httpx
-from pydantic import BaseModel
 
 # Simple cache in-memory for the short story library catalog
 _story_catalog_cache: list[dict] | None = None
@@ -517,9 +518,6 @@ def delete_project(
     shutil.rmtree(project_dir)
     return {"status": "deleted", "id": project_id}
 
-
-import time
-import gzip
 
 @router.get("/short-stories")
 async def list_short_stories():
