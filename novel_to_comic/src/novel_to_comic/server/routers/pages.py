@@ -1,18 +1,20 @@
 """ComicPage JSON CRUD, HTML preview, and project file serving."""
 
+import hashlib
 import json
 import mimetypes
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import ValidationError
 
 from novel_to_comic import artifacts
 from novel_to_comic.config import Config, LANGUAGE_NAMES, save_config
 from novel_to_comic.ai import ai_request_context
-from novel_to_comic.assembly.html_renderer import build_page_html, resolve_theme, write_theme_css, THEMES
+from novel_to_comic.assembly.html_renderer import build_page_html, resolve_theme, write_theme_css, THEMES, FONT_PAIRS
 from novel_to_comic.layout_planning import (
     apply_page_layout_preset,
     apply_panel_override,
@@ -25,6 +27,8 @@ from novel_to_comic.layout_planning import (
 )
 from novel_to_comic.models.comic_page import Bubble, ComicPage, Sfx, BUBBLE_PRESETS, CharacterVoice, normalize_sfx_text
 from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.models.lettering import LetteringStyle
+from novel_to_comic.assembly.lettering_style import load_lettering_style, save_lettering_style
 
 from ..auth import get_current_user
 from ..credits import debit_model_usage
@@ -174,104 +178,84 @@ def _sanitize_style_vars(raw: dict) -> dict[str, str]:
     return clean
 
 
-def _fallback_lettering_style(style_template: str) -> dict[str, str]:
-    low = style_template.lower()
-    if any(word in low for word in ("noir", "monochrome", "black and white", "shadow")):
-        return {
-            "--panel-border": "#E6E6E6",
-            "--panel-border-width": "3px",
-            "--caption-bg": "#1D1D1D",
-            "--caption-border": "#7A7A7A",
-            "--caption-color": "#F1F1F1",
-            "--caption-font-size": "26px",
-            "--bubble-bg": "#F2F2F2",
-            "--bubble-border": "#111111",
-            "--bubble-border-width": "3px",
-            "--speaker-color": "#444444",
-            "--sfx-color": "#FFFFFF",
-            "--sfx-shadow": "#000000",
-        }
-    if any(word in low for word in ("manga", "anime", "ink", "screentone")):
-        return {
-            "--panel-border": "#000000",
-            "--panel-border-width": "2px",
-            "--caption-bg": "#FFFFFF",
-            "--caption-border": "#000000",
-            "--caption-color": "#000000",
-            "--caption-font-size": "26px",
-            "--bubble-bg": "#FFFFFF",
-            "--bubble-border": "#000000",
-            "--bubble-border-width": "2px",
-            "--bubble-radius": "24px",
-            "--sfx-color": "#000000",
-            "--sfx-shadow": "transparent",
-            "--thought-border-style": "solid",
-        }
-    if any(word in low for word in ("vintage", "risograph", "screen-print", "poster", "pulp")):
-        return {
-            "--panel-border": "#5C2E00",
-            "--panel-border-width": "4px",
-            "--caption-bg": "#FFE2A3",
-            "--caption-border": "#8B4513",
-            "--caption-color": "#4A2600",
-            "--caption-font-size": "26px",
-            "--bubble-bg": "#FFF4C7",
-            "--bubble-border": "#6E3511",
-            "--bubble-border-width": "3px",
-            "--speaker-color": "#8B2500",
-            "--sfx-color": "#9E1B12",
-            "--sfx-shadow": "#2B1000",
-        }
-    if any(word in low for word in ("watercolor", "paint", "gouache", "oil", "pastel")):
-        return {
-            "--panel-border": "#4A3728",
-            "--panel-border-width": "3px",
-            "--caption-bg": "#E8DCC8",
-            "--caption-border": "#6C5847",
-            "--caption-color": "#2A1A0A",
-            "--caption-font-size": "26px",
-            "--bubble-bg": "#FFFDF7",
-            "--bubble-border": "#4A3728",
-            "--bubble-border-width": "2px",
-            "--bubble-radius": "18px",
-            "--sfx-color": "#7B3B00",
-            "--sfx-shadow": "#2A1000",
-        }
-    return {
-        "--panel-border": "#111111",
-        "--panel-border-width": "3px",
-        "--caption-bg": "#F7F0DC",
-        "--caption-border": "#9B8A5A",
-        "--caption-color": "#3A2A10",
-        "--caption-font-size": "26px",
-        "--bubble-bg": "#FFFFFF",
-        "--bubble-border": "#1A1A1A",
-        "--bubble-border-width": "2px",
-        "--bubble-radius": "14px",
-        "--speaker-color": "#664400",
-        "--sfx-color": "#CC1111",
-        "--sfx-shadow": "#000000",
-    }
+FONT_PAIR_MOODS = {
+    "golden-age": "classic four-color comic - punchy display + clean comic lettering",
+    "manga": "manga / anime ink - bold display + rounded gothic lettering",
+    "horror": "gritty horror - dripping display + typewriter lettering",
+    "painterly": "painterly / literary - brush display + elegant serif lettering",
+    "kids": "friendly all-ages - rounded display + soft rounded lettering",
+    "sci-fi": "technical sci-fi - angular geometric display + techy lettering",
+}
+
+PRESET_LABELS = {
+    "default": ("Default", "Clean classic comic lettering."),
+    "noir": ("Noir", "High-contrast monochrome - pale captions on dark ink."),
+    "manga": ("Manga", "Crisp black-and-white manga lettering."),
+    "vintage": ("Vintage", "Warm aged-paper Golden-Age treatment."),
+    "painted": ("Painted", "Soft painterly tones for illustrated art."),
+}
+
+PRESET_FONT_PAIR = {
+    "default": "golden-age",
+    "noir": "golden-age",
+    "manga": "manga",
+    "vintage": "golden-age",
+    "painted": "painterly",
+}
 
 
-async def _generate_lettering_style(config: Config) -> tuple[dict[str, str], object | None]:
+def _style_hash(template: str) -> str:
+    return hashlib.sha256((template or "").encode("utf-8")).hexdigest()[:16]
+
+
+def _fallback_theme_and_pair(style_template: str) -> tuple[str, str]:
+    """Keyword map from an image style to a (theme, font_pair) fallback."""
+    low = (style_template or "").lower()
+    if any(w in low for w in ("noir", "monochrome", "black and white", "grayscale", "shadow")):
+        return "noir", "golden-age"
+    if any(w in low for w in ("horror", "gothic", "grim", "eerie", "macabre", "creepy")):
+        return "noir", "horror"
+    if any(w in low for w in ("manga", "anime", "shonen", "shojo", "ink", "screentone", "japanese")):
+        return "manga", "manga"
+    if any(w in low for w in ("vintage", "retro", "golden age", "silver age", "risograph", "poster", "pulp")):
+        return "vintage", "golden-age"
+    if any(w in low for w in ("watercolor", "painted", "painterly", "gouache", "oil", "pastel")):
+        return "painted", "painterly"
+    if any(w in low for w in ("kids", "children", "cartoon", "cute", "whimsical", "all-ages")):
+        return "default", "kids"
+    if any(w in low for w in ("sci-fi", "scifi", "cyberpunk", "futuristic", "space", "mecha", "neon")):
+        return "default", "sci-fi"
+    return "default", "golden-age"
+
+
+async def _generate_lettering_style(config: Config, *, reroll: bool = False) -> tuple[dict, object | None]:
+    """Ask the model for a base theme, a curated font pair, and CSS-var overrides
+    that match the image-generation style. Returns (fields, usage)."""
     from novel_to_comic.clients import text
 
+    fb_theme, fb_pair = _fallback_theme_and_pair(config.style_template)
+
     system = (
-        "You are a comic book lettering and production designer. Given an image generation style, "
-        "choose CSS custom property values for panel borders, narration captions, speech bubbles, "
-        "thought bubbles, SFX, and page numbers. Return JSON only. Use readable lettering with "
-        "strong contrast. Do not set font sizes — only set colors, borders, backgrounds, radii, "
-        "padding, and decorative properties. "
-        "Do not use url(), external assets, gradients, or CSS functions except simple px/% values."
+        "You are a comic book lettering and production designer. Given an image "
+        "generation style, choose a base theme, a font pair, and CSS custom property "
+        "values for panel borders, narration captions, speech bubbles, thought "
+        "bubbles, SFX, and page numbers. Return JSON only. Use readable lettering "
+        "with strong contrast. Do not set font sizes or font families directly - the "
+        "font pair controls type. Do not use url(), external assets, gradients, or "
+        "CSS functions except simple px/% values."
     )
+    pairs = "\n".join(f"- {k}: {v}" for k, v in FONT_PAIR_MOODS.items())
     user = (
         f"Image generation style:\n{config.style_template}\n\n"
-        "Return an object with a short label, rationale, and a vars object. "
-        "The vars object may include only these keys:\n"
+        f"Choose theme (one of): {', '.join(THEMES)}\n"
+        f"Choose font_pair (one of):\n{pairs}\n\n"
+        "Return an object with: label (short), rationale (one sentence on why it "
+        "fits the art), theme, font_pair, and a vars object. The vars object may "
+        "include only these keys:\n"
         f"{', '.join(sorted(STYLE_VAR_ALLOWLIST))}\n\n"
-        "Example shape: "
-        '{"label":"Noir Lettering","rationale":"...","vars":{"--panel-border":"#111111","--bubble-bg":"#FFFFFF"}}'
+        'Example: {"label":"Noir Lettering","rationale":"Pale captions read against '
+        'heavy blacks.","theme":"noir","font_pair":"golden-age","vars":'
+        '{"--panel-border":"#E6E6E6","--bubble-bg":"#F2F2F2"}}'
     )
     try:
         api_result = await text.generate_json(
@@ -279,17 +263,35 @@ async def _generate_lettering_style(config: Config) -> tuple[dict[str, str], obj
             model=config.effective_prompt_model(),
             system_prompt=system,
             user_content=user,
-            temperature=0.45,
+            temperature=0.85 if reroll else 0.45,
             max_output_tokens=4096,
             feature="compose.lettering_style",
         )
         result = api_result.value
+        usage = api_result.usage
     except Exception:
-        return _fallback_lettering_style(config.style_template), None
+        return {
+            "theme": fb_theme,
+            "font_pair": fb_pair,
+            "vars": {},
+            "label": "Auto Lettering",
+            "rationale": "Tuned to your selected style.",
+            "source": "fallback",
+        }, None
 
-    vars_raw = result.get("vars", result) if isinstance(result, dict) else {}
-    generated = _sanitize_style_vars(vars_raw)
-    return generated or _fallback_lettering_style(config.style_template), api_result.usage
+    if not isinstance(result, dict):
+        result = {}
+    theme = result.get("theme")
+    font_pair = result.get("font_pair")
+    raw_vars = result.get("vars")
+    return {
+        "theme": theme if theme in THEMES else fb_theme,
+        "font_pair": font_pair if font_pair in FONT_PAIRS else fb_pair,
+        "vars": _sanitize_style_vars(raw_vars if isinstance(raw_vars, dict) else {}),
+        "label": str(result.get("label") or "Matched Lettering")[:80],
+        "rationale": str(result.get("rationale") or "")[:240],
+        "source": "ai",
+    }, usage
 
 
 async def _translate_text_items(config: Config, items: list[dict]) -> tuple[dict[str, str], object | None]:
@@ -587,67 +589,97 @@ def _apply_page_patch(cp: ComicPage, body: dict) -> None:
                         panel.sfx.append(new_sfx)
 
 
-@router.post("/pages/style-vars/generate")
-async def generate_page_style_vars(
-    request: Request,
+@router.get("/lettering-style")
+def get_lettering_style(project=Depends(get_project)):
+    """Return the project-level lettering style (golden-age default if unset)."""
+    project_dir, config, state = project
+    return load_lettering_style(project_dir).model_dump()
+
+
+@router.post("/lettering-style/generate")
+async def generate_lettering_style(
     project_id: str,
+    body: dict | None = None,
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
-    """Generate page-level lettering/panel CSS variables from the active image style."""
+    """Auto-match lettering to the active image style. Cached by style-template
+    hash; re-selecting the same style is free unless reroll is set."""
     project_dir, config, state = project
+    reroll = bool((body or {}).get("reroll"))
+    cur_hash = _style_hash(config.style_template)
+    existing = load_lettering_style(project_dir)
+    if (
+        not reroll
+        and existing.mode == "auto"
+        and existing.source == "ai"
+        and existing.style_template_hash == cur_hash
+    ):
+        return existing.model_dump()
 
     with ai_request_context(
         user_id=user_id,
         project_id=project_id,
         project_name=project_dir.name,
         workspace_id=str(project_dir.parent),
-        stage="compose",
+        stage="style",
     ):
-        style_vars, usage = await _generate_lettering_style(config)
+        gen, usage = await _generate_lettering_style(config, reroll=reroll)
     if usage:
         debit_model_usage(
             get_db(),
             user_id,
             project_id,
             usage,
-            stage="compose",
-            description="Model call: page style",
+            stage="style",
+            description="Model call: lettering style",
         )
-    pd = _pages_dir(project_dir)
-    page_paths = sorted(pd.glob("page_*.json"))
-    if not page_paths:
-        raise HTTPException(404, "No pages found")
 
-    for path in page_paths:
-        cp = ComicPage.model_validate_json(path.read_text())
-        cp.style_vars = style_vars
-        path.write_text(cp.model_dump_json(indent=2))
+    ls = LetteringStyle(
+        mode="auto",
+        preset=None,
+        theme=gen["theme"],
+        font_pair=gen["font_pair"],
+        vars=gen["vars"],
+        label=gen["label"],
+        rationale=gen["rationale"],
+        source=gen["source"],
+        style_template_hash=cur_hash,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    save_lettering_style(project_dir, ls)
+    return ls.model_dump()
 
-    return {"status": "updated", "style_vars": style_vars, "pages": _page_summaries(project_dir)}
 
-
-@router.post("/pages/set-theme")
-def set_theme(body: dict, project=Depends(get_project)):
-    """Bulk-set the theme for all pages at once."""
+@router.put("/lettering-style")
+def set_lettering_style(body: dict, project=Depends(get_project)):
+    """Set lettering intent: a named preset (no AI) or flip back to auto."""
     project_dir, config, state = project
-    theme = body.get("theme", "default")
-    if theme not in THEMES:
-        raise HTTPException(400, f"Invalid theme. Must be one of: {', '.join(THEMES.keys())}")
+    mode = body.get("mode", "auto")
+    if mode == "preset":
+        preset = body.get("preset", "default")
+        if preset not in THEMES:
+            raise HTTPException(400, f"Invalid preset. Must be one of: {', '.join(THEMES.keys())}")
+        label, rationale = PRESET_LABELS.get(preset, (preset.title(), ""))
+        ls = LetteringStyle(
+            mode="preset",
+            preset=preset,
+            theme=preset,
+            font_pair=PRESET_FONT_PAIR.get(preset, "golden-age"),
+            vars={},
+            label=label,
+            rationale=rationale,
+            source="preset",
+            style_template_hash=_style_hash(config.style_template),
+            generated_at=datetime.now(timezone.utc).isoformat(),
+        )
+        save_lettering_style(project_dir, ls)
+        return ls.model_dump()
 
-    pd = _pages_dir(project_dir)
-    page_paths = sorted(pd.glob("page_*.json"))
-    if not page_paths:
-        raise HTTPException(404, "No pages found")
-
-    updated = 0
-    for path in page_paths:
-        cp = ComicPage.model_validate_json(path.read_text())
-        cp.theme = theme
-        path.write_text(cp.model_dump_json(indent=2))
-        updated += 1
-
-    return {"status": "ok", "theme": theme, "updated": updated}
+    existing = load_lettering_style(project_dir)
+    existing.mode = "auto"
+    save_lettering_style(project_dir, existing)
+    return existing.model_dump()
 
 
 @router.post("/pages/apply-bubble-preset")
