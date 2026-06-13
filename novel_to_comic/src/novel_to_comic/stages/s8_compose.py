@@ -29,9 +29,8 @@ from novel_to_comic.assembly.html_renderer import (
     browser_context,
     build_page_html,
     render_html_to_png,
-    resolve_theme,
-    write_theme_css,
 )
+from novel_to_comic.assembly.lettering_style import load_lettering_style
 from novel_to_comic.config import Config
 from novel_to_comic.events import make_progress
 from novel_to_comic.layout_planning import (
@@ -134,7 +133,6 @@ def _build_comic_page(
     page_number: int,
     project_dir: Path,
     story_bible: StoryBible,
-    theme_name: str,
 ) -> ComicPage:
     """Convert a list of (image_path, PanelBreakdown) into a ComicPage model."""
     n = len(group)
@@ -213,7 +211,6 @@ def _build_comic_page(
 
     return ComicPage(
         page_number=page_number,
-        theme=theme_name,
         layout=layout,
         panels=panels,
     )
@@ -279,13 +276,14 @@ async def _render_and_export(
     ctx: StageRuntime,
 ) -> None:
     """Render each page JSON to HTML + PNG, then write PDF/CBZ exports."""
+    lettering = load_lettering_style(project_dir)
     async with browser_context() as browser:
         with make_progress(ctx.on_event) as progress:
             task = progress.add_task("Rendering pages", total=len(json_paths))
             png_paths: list[Path] = []
             for json_path in json_paths:
                 comic_page   = ComicPage.model_validate_json(json_path.read_text())
-                html_content = build_page_html(comic_page, project_dir, custom_css)
+                html_content = build_page_html(comic_page, project_dir, custom_css, lettering=lettering)
 
                 html_path = html_dir / f"page_{comic_page.page_number:03d}.html"
                 html_path.write_text(html_content, encoding="utf-8")
@@ -339,15 +337,7 @@ async def run(
         d.mkdir(parents=True, exist_ok=True)
 
     # ── Theme ─────────────────────────────────────────────────────────────────
-    theme_name = resolve_theme(config)
-    css_path   = write_theme_css(project_dir, theme_name)
-    custom_css = css_path.read_text()
-    console.print(f"[dim]Theme:[/dim] {theme_name}")
-    console.print(
-        f"[dim]Edit [bold]{css_path.relative_to(project_dir)}[/bold] "
-        f"then run [bold]pipeline export[/bold] to apply changes.[/dim]"
-    )
-    ctx.log(f"Theme: {theme_name}")
+    custom_css = ""
 
     # ── Build phase (panel data → ComicPage JSON) ─────────────────────────────
     if rebuild:
@@ -360,7 +350,7 @@ async def run(
                 return
             panel_count = sum(len(group) for group in page_groups)
             # persist_projected_pages prunes stale page JSON before writing
-            projected_pages = persist_projected_pages(project_dir, story_bible, theme_name)
+            projected_pages = persist_projected_pages(project_dir, story_bible)
             json_paths = [
                 json_dir / f"page_{page.page_number:03d}.json"
                 for page in projected_pages
@@ -380,7 +370,7 @@ async def run(
                 old.unlink()
             json_paths = []
             for i, group in enumerate(page_groups):
-                comic_page = _build_comic_page(group, i + 1, project_dir, story_bible, theme_name)
+                comic_page = _build_comic_page(group, i + 1, project_dir, story_bible)
                 artifacts.write_compose_page(project_dir, i + 1, comic_page)
                 json_paths.append(artifacts.compose_page_path(project_dir, i + 1))
             source_desc = f" ({max_per_page}/page)"

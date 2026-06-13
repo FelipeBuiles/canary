@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from novel_to_comic import artifacts
 from novel_to_comic.config import Config, LANGUAGE_NAMES, save_config
 from novel_to_comic.ai import ai_request_context
-from novel_to_comic.assembly.html_renderer import build_page_html, resolve_theme, write_theme_css, THEMES, FONT_PAIRS
+from novel_to_comic.assembly.html_renderer import build_page_html, THEMES, FONT_PAIRS
 from novel_to_comic.layout_planning import (
     apply_page_layout_preset,
     apply_panel_override,
@@ -56,7 +56,7 @@ def _load_story_bible(project_dir: Path) -> StoryBible:
 
 def _project_structural_pages(project_dir: Path, config: Config) -> list[ComicPage]:
     story_bible = _load_story_bible(project_dir)
-    return persist_projected_pages(project_dir, story_bible, resolve_theme(config))
+    return persist_projected_pages(project_dir, story_bible)
 
 
 STYLE_VAR_ALLOWLIST = {
@@ -360,7 +360,6 @@ def _page_summaries(project_dir: Path) -> list[dict]:
             "page_number": cp.page_number,
             "panel_count": len(cp.panels),
             "layout": cp.layout,
-            "theme": cp.theme,
         })
     return pages
 
@@ -484,16 +483,10 @@ def update_page(page_num: int, body: dict, project=Depends(get_project)):
 
 def _apply_page_patch(cp: ComicPage, body: dict) -> None:
     # Apply top-level fields
-    if "theme" in body:
-        if body["theme"] not in THEMES:
-            raise HTTPException(400, f"Invalid theme. Must be one of: {', '.join(THEMES.keys())}")
-        cp.theme = body["theme"]
     if "layout" in body:
         if str(body["layout"]) not in _VALID_LAYOUTS:
             raise HTTPException(400, f"Invalid layout. Must be one of: {', '.join(sorted(_VALID_LAYOUTS))}")
         cp.layout = str(body["layout"])
-    if "style_vars" in body:
-        cp.style_vars = _sanitize_style_vars(body["style_vars"])
 
     # Apply per-panel bubble/sfx updates
     if "panels" in body:
@@ -1002,10 +995,9 @@ def page_preview(page_num: int, project_id: str, project=Depends(get_project)):
     project_dir, config, state = project
     cp = _load_page(project_dir, page_num)
 
-    theme_name = resolve_theme(config)
-    css_path = write_theme_css(project_dir, theme_name)
-    custom_css = css_path.read_text()
+    custom_css = ""
     character_voices = _load_voices(project_dir)
+    lettering = load_lettering_style(project_dir)
 
     html = build_page_html(
         cp,
@@ -1014,6 +1006,7 @@ def page_preview(page_num: int, project_id: str, project=Depends(get_project)):
         character_voices=character_voices,
         image_url_fn=lambda rel: f"/api/projects/{project_id}/files/{rel}",
         font_url_fn=lambda filename: f"/static/fonts/{filename}",
+        lettering=lettering,
     )
     return HTMLResponse(html)
 
