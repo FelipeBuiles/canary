@@ -60,10 +60,8 @@ function makePage(overrides: Partial<ComicPage> = {}): ComicPage {
   return {
     page_number: 1,
     source_page_id: null,
-    theme: "default",
     layout: "2x2",
     layout_mode: "grid",
-    style_vars: {},
     panels: [makePanel()],
     ...overrides,
   };

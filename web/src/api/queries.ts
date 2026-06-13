@@ -30,7 +30,7 @@ import {
   getPrimaryRefs,
   setPrimaryRef,
 } from "./stages";
-import { listPages, getPage, updatePage, replacePage, generatePageStyleVars, translatePageBubbles, setTheme, translateSinglePageBubbles, triggerExport } from "./pages";
+import { listPages, getPage, updatePage, replacePage, getLetteringStyle, generateLetteringStyle, setLetteringStyle, translatePageBubbles, translateSinglePageBubbles, triggerExport } from "./pages";
 import { getStyles, suggestStyles, fetchSuggestStylesEstimate, generateStyleSamples, setActiveStyle } from "./styles";
 import { getProjectConfig, updateProjectConfig } from "./config";
 import {
@@ -714,11 +714,21 @@ export function useReplacePage() {
   });
 }
 
-export function useGeneratePageStyleVars() {
+export function useLetteringStyle(project?: string) {
+  return useQuery({
+    queryKey: ["project", project, "lettering-style"],
+    queryFn: () => getLetteringStyle(project!),
+    enabled: !!project,
+  });
+}
+
+export function useGenerateLetteringStyle() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ project }: { project: string }) => generatePageStyleVars(project),
+    mutationFn: ({ project, reroll }: { project: string; reroll?: boolean }) =>
+      generateLetteringStyle(project, reroll),
     onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "lettering-style"] });
       qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
     },
   });
@@ -736,12 +746,13 @@ export function useTranslatePageBubbles() {
   });
 }
 
-export function useSetTheme() {
+export function useSetLetteringStyle() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ project, theme }: { project: string; theme: string }) =>
-      setTheme(project, theme),
+    mutationFn: ({ project, mode, preset }: { project: string; mode: "auto" | "preset"; preset?: string }) =>
+      setLetteringStyle(project, { mode, preset }),
     onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "lettering-style"] });
       qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
     },
   });

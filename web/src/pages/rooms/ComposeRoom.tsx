@@ -5,7 +5,7 @@ import {
   usePage,
   useUpdatePage,
   useReplacePage,
-  useGeneratePageStyleVars,
+  useGenerateLetteringStyle,
   useTranslatePageBubbles,
   useExport,
   useProjectConfig,
@@ -73,7 +73,7 @@ export function ComposeRoom() {
   // ── Mutations ────────────────────────────────────────────────────────────
   const updatePageMut = useUpdatePage();
   const replacePageMut = useReplacePage();
-  const generatePageStyleMut = useGeneratePageStyleVars();
+  const generatePageStyleMut = useGenerateLetteringStyle();
   const translateBubblesMut = useTranslatePageBubbles();
   const updateProjectConfigMut = useUpdateProjectConfig();
   const exportMut = useExport();

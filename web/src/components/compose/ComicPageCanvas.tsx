@@ -1,7 +1,7 @@
-import type { ComicPage } from "../../types/api";
+import type { ComicPage, LetteringStyle } from "../../types/api";
 import { PanelCell } from "./PanelCell";
 import { getLayout } from "./layouts";
-import { resolveThemeVars, sanitizeStyleVars } from "./themes";
+import { resolveLetteringVars } from "./themes";
 
 interface ComicPageCanvasProps {
   page: ComicPage;
@@ -10,6 +10,7 @@ interface ComicPageCanvasProps {
   selectedType: "bubble" | "sfx" | null;
   reframePanelId: string | null;
   imageBaseUrl: string;
+  lettering?: LetteringStyle;
 }
 
 /**
@@ -24,9 +25,10 @@ export function ComicPageCanvas({
   selectedType,
   reframePanelId,
   imageBaseUrl,
+  lettering,
 }: ComicPageCanvasProps) {
   const layout = getLayout(page.layout);
-  const vars = { ...resolveThemeVars(page.theme), ...sanitizeStyleVars(page.style_vars) };
+  const vars = resolveLetteringVars(lettering);
 
   const cssVars = vars as unknown as React.CSSProperties;
 
@@ -39,7 +41,7 @@ export function ComicPageCanvas({
         background: vars["--page-bg"],
         overflow: "hidden",
         position: "relative",
-        fontFamily: "'ComicNeue', 'Comic Neue', cursive, sans-serif",
+        fontFamily: vars["--letter-font"],
         ...cssVars,
       }}
     >

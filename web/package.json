@@ -4,8 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "sync-tokens": "node scripts/sync-tokens.mjs",
+    "dev": "npm run sync-tokens && vite",
+    "build": "npm run sync-tokens && tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",

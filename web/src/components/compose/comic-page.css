@@ -25,6 +25,75 @@
   font-display: block;
 }
 
+@font-face {
+  font-family: 'Bungee';
+  src: url('/static/fonts/Bungee-Regular.ttf') format('truetype');
+  font-weight: 100 900;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'M PLUS 1p';
+  src: url('/static/fonts/MPLUS1p-Bold.ttf') format('truetype');
+  font-weight: 100 900;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'Creepster';
+  src: url('/static/fonts/Creepster-Regular.ttf') format('truetype');
+  font-weight: 100 900;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'Special Elite';
+  src: url('/static/fonts/SpecialElite-Regular.ttf') format('truetype');
+  font-weight: 100 900;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'Shrikhand';
+  src: url('/static/fonts/Shrikhand-Regular.ttf') format('truetype');
+  font-weight: 100 900;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'EB Garamond';
+  src: url('/static/fonts/EBGaramond-SemiBold.ttf') format('truetype');
+  font-weight: 100 900;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'Baloo 2';
+  src: url('/static/fonts/Baloo2-SemiBold.ttf') format('truetype');
+  font-weight: 100 900;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'Fredoka';
+  src: url('/static/fonts/Fredoka-SemiBold.ttf') format('truetype');
+  font-weight: 100 900;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'Orbitron';
+  src: url('/static/fonts/Orbitron-Bold.ttf') format('truetype');
+  font-weight: 100 900;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'Exo 2';
+  src: url('/static/fonts/Exo2-SemiBold.ttf') format('truetype');
+  font-weight: 100 900;
+  font-display: block;
+}
 .comic-page-root *,
 .comic-page-root *::before,
 .comic-page-root *::after {
@@ -73,7 +142,7 @@
   background: #b51822;
   color: #fff;
   padding: 5px 8px;
-  font-family: 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif;
+  font-family: var(--display-font, 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif);
   font-size: 16px;
   letter-spacing: 0.08em;
   pointer-events: none;
@@ -98,7 +167,7 @@
   background: #1682dc;
   color: #fff;
   padding: 5px 8px;
-  font-family: 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif;
+  font-family: var(--display-font, 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif);
   font-size: 16px;
   letter-spacing: 0.08em;
   pointer-events: none;
@@ -164,7 +233,7 @@
   border-radius: 2px;
   color: var(--caption-color);
   padding: 8px 14px;
-  font-family: 'ComicNeue', 'Comic Neue', 'Comic Sans MS', cursive, sans-serif;
+  font-family: var(--letter-font, 'Comic Neue', 'Comic Sans MS', cursive, sans-serif);
   font-size: var(--caption-font-size);
   font-weight: bold;
   line-height: 1.35;
@@ -208,7 +277,7 @@
   border: var(--bubble-border-width) solid var(--bubble-border);
   border-radius: var(--bubble-radius);
   padding: var(--bubble-padding);
-  font-family: 'ComicNeue', 'Comic Neue', 'Comic Sans MS', cursive, sans-serif;
+  font-family: var(--letter-font, 'Comic Neue', 'Comic Sans MS', cursive, sans-serif);
   font-size: var(--bubble-font-size);
   font-weight: bold;
   line-height: 1.35;
@@ -285,7 +354,7 @@
 /* Speaker label */
 .speaker {
   display: block;
-  font-family: 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif;
+  font-family: var(--display-font, 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif);
   font-size: var(--speaker-font-size);
   color: var(--speaker-color);
   margin-bottom: 2px;
@@ -323,7 +392,7 @@
 /* ── SFX ── */
 .sfx {
   position: absolute;
-  font-family: 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif;
+  font-family: var(--display-font, 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif);
   font-size: var(--sfx-font-size);
   color: var(--sfx-color);
   text-shadow:
@@ -389,7 +458,7 @@
   bottom: 10px;
   left: 0; right: 0;
   text-align: center;
-  font-family: 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif;
+  font-family: var(--display-font, 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif);
   font-size: var(--page-num-font-size);
   color: var(--page-num-color);
   letter-spacing: 0.08em;

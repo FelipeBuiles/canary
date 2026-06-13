@@ -1,99 +1,23 @@
-/** Theme CSS variable maps — ported from Python html_renderer.py _BASE_VARS + THEMES */
+/**
+ * Theme + font tokens for the live comic canvas.
+ *
+ * Tokens are synced from the canonical backend file
+ * (novel_to_comic/.../assembly/theme_tokens.json) via `npm run sync-tokens`
+ * into src/generated/theme_tokens.json, so the canvas and the PNG/PDF renderer
+ * can never drift. A vitest parity test asserts the two stay identical.
+ */
+import tokens from "../../generated/theme_tokens.json";
+import type { LetteringStyle } from "../../types/api";
 
 export type ThemeName = "default" | "noir" | "manga" | "vintage" | "painted";
 
 export const THEME_NAMES: ThemeName[] = ["default", "noir", "manga", "vintage", "painted"];
 
-export const BASE_VARS: Record<string, string> = {
-  "--page-bg":              "#FFFFFF",
-  "--gutter":               "16px",
-  "--margin":               "30px",
-  "--panel-border":         "#111111",
-  "--panel-border-width":   "3px",
-  "--panel-bg":             "#888888",
-  "--caption-bg":           "#F7F0DC",
-  "--caption-border":       "#9B8A5A",
-  "--caption-color":        "#3A2A10",
-  "--caption-font-size":    "26px",
-  "--bubble-bg":            "#FFFFFF",
-  "--bubble-border":        "#1A1A1A",
-  "--bubble-border-width":  "2px",
-  "--bubble-radius":        "14px",
-  "--bubble-font-size":     "32px",
-  "--bubble-padding":       "7px 11px",
-  "--bubble-max-width":     "52%",
-  "--bubble-center-width":  "68%",
-  "--speaker-color":        "#664400",
-  "--speaker-font-size":    "9px",
-  "--thought-border-style": "dashed",
-  "--thought-radius":       "50px",
-  "--sfx-color":            "#CC1111",
-  "--sfx-shadow":           "#000000",
-  "--sfx-font-size":        "37px",
-  "--sfx-mechanical-color": "#2A6B8F",
-  "--sfx-voice-color":      "#C2891A",
-  "--sfx-ambient-color":    "#777777",
-  "--page-num-color":       "#AAAAAA",
-  "--page-num-font-size":   "17px",
-};
+export const BASE_VARS: Record<string, string> = tokens.base;
+export const THEMES: Record<string, Record<string, string>> = tokens.themes;
+export const FONT_PAIRS: Record<string, Record<string, string>> = tokens.font_pairs;
 
-export const THEMES: Record<string, Record<string, string>> = {
-  default: {},
-  noir: {
-    "--page-bg":              "#1C1C1C",
-    "--panel-border":         "#DDDDDD",
-    "--panel-border-width":   "2px",
-    "--panel-bg":             "#444444",
-    "--caption-bg":           "#2A2A2A",
-    "--caption-border":       "#666666",
-    "--caption-color":        "#DDDDDD",
-    "--bubble-bg":            "#F0F0F0",
-    "--bubble-border":        "#111111",
-    "--speaker-color":        "#444444",
-    "--sfx-color":            "#FFFFFF",
-    "--sfx-shadow":           "#000000",
-    "--page-num-color":       "#555555",
-  },
-  manga: {
-    "--panel-border-width":   "2px",
-    "--panel-border":         "#000000",
-    "--caption-bg":           "#FFFFFF",
-    "--caption-border":       "#000000",
-    "--caption-color":        "#000000",
-    "--bubble-border":        "#000000",
-    "--bubble-font-size":     "33px",
-    "--sfx-color":            "#000000",
-    "--sfx-shadow":           "transparent",
-    "--thought-border-style": "solid",
-  },
-  vintage: {
-    "--page-bg":              "#FFF8E7",
-    "--panel-border":         "#8B4513",
-    "--panel-border-width":   "4px",
-    "--caption-bg":           "#FFE4B5",
-    "--caption-border":       "#8B4513",
-    "--caption-color":        "#5C2E00",
-    "--bubble-bg":            "#FFFACD",
-    "--bubble-border":        "#8B4513",
-    "--speaker-color":        "#8B2500",
-    "--sfx-color":            "#8B0000",
-    "--sfx-shadow":           "#3A0000",
-    "--page-num-color":       "#8B4513",
-  },
-  painted: {
-    "--page-bg":              "#F5F0E8",
-    "--panel-border":         "#4A3728",
-    "--panel-border-width":   "3px",
-    "--caption-bg":           "#E8DCC8",
-    "--caption-border":       "#4A3728",
-    "--caption-color":        "#2A1A0A",
-    "--bubble-border":        "#4A3728",
-    "--sfx-color":            "#7B3B00",
-    "--sfx-shadow":           "#2A1000",
-  },
-};
-
-/** Merge base vars with theme overrides, return as CSSStyleDeclaration-compatible object */
+/** Merge base vars with a theme preset's overrides. */
 export function resolveThemeVars(themeName: string): Record<string, string> {
   return { ...BASE_VARS, ...(THEMES[themeName] ?? {}) };
 }
@@ -147,8 +71,22 @@ export function sanitizeStyleVars(input: Record<string, string> | undefined): Re
   return out;
 }
 
-/** Return CSS variable declarations as a style object for React */
+/**
+ * Resolve the full CSS-var set for a project's lettering style, lowest →
+ * highest precedence: BASE → theme → font pair → sanitized overrides.
+ * Mirrors the backend's `_vars_css(ls.theme, FONT_PAIRS[ls.font_pair] | ls.vars)`.
+ */
+export function resolveLetteringVars(ls: LetteringStyle | undefined | null): Record<string, string> {
+  if (!ls) return { ...BASE_VARS };
+  return {
+    ...BASE_VARS,
+    ...(THEMES[ls.theme] ?? {}),
+    ...(FONT_PAIRS[ls.font_pair] ?? {}),
+    ...sanitizeStyleVars(ls.vars),
+  };
+}
+
+/** Return CSS variable declarations as a style object for React. */
 export function themeStyleObj(themeName: string): React.CSSProperties {
-  const vars = resolveThemeVars(themeName);
-  return vars as unknown as React.CSSProperties;
+  return resolveThemeVars(themeName) as unknown as React.CSSProperties;
 }

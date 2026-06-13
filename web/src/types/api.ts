@@ -626,10 +626,8 @@ export interface PagePanel {
 export interface ComicPage {
   page_number: number;
   source_page_id: string | null;
-  theme: string;
   layout: string;
   layout_mode: "grid" | "freeform";
-  style_vars: Record<string, string>;
   panels: PagePanel[];
 }
 
@@ -637,7 +635,19 @@ export interface PageSummary {
   page_number: number;
   panel_count: number;
   layout: string;
+}
+
+export interface LetteringStyle {
+  mode: "auto" | "preset";
+  preset: string | null;
   theme: string;
+  font_pair: string;
+  vars: Record<string, string>;
+  label: string;
+  rationale: string;
+  source: "ai" | "fallback" | "preset";
+  style_template_hash: string;
+  generated_at: string;
 }
 
 export interface ScreenplaySummary {
