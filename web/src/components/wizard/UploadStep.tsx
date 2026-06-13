@@ -7,6 +7,7 @@ import type { ConfigOverrides } from "../../types/api";
 import { LANGUAGES, useI18n } from "../../i18n";
 import type { LanguageCode } from "../../i18n";
 import { useShortStories } from "../../api/queries";
+import { Select } from "../ui/Select";
 
 interface UploadStepProps {
   onSubmit: (file: File, name: string, configOverrides?: Partial<ConfigOverrides>) => void;
@@ -393,16 +394,13 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
             <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
               {t("OUTPUT LANGUAGE")}
             </label>
-            <select
-              name="targetLanguage"
+            <Select
+              aria-label={t("OUTPUT LANGUAGE")}
               value={targetLanguage}
-              onChange={(e) => setTargetLanguage(e.target.value as LanguageCode)}
-              className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
-            >
-              {LANGUAGES.map((item) => (
-                <option key={item.code} value={item.code}>{item.label}</option>
-              ))}
-            </select>
+              onValueChange={(value) => setTargetLanguage(value as LanguageCode)}
+              options={LANGUAGES.map((item) => ({ value: item.code, label: item.label }))}
+              className="w-full"
+            />
             <p className="mt-1 text-[0.72rem] leading-relaxed text-ink-black/45">
               {t("Controls generated dialogue, narration, style suggestions, and prompt artifacts.")}
             </p>
@@ -499,17 +497,18 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
               <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
                 {t("GENERATION QUALITY")}
               </label>
-              <select
-                name="renderPreset"
+              <Select
+                aria-label={t("GENERATION QUALITY")}
                 value={devMode ? "fast_draft" : renderPreset}
-                onChange={(e) => setRenderPreset(e.target.value as RenderPreset)}
+                onValueChange={(value) => setRenderPreset(value as RenderPreset)}
                 disabled={devMode}
-                className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <option value="fast_draft">Fast draft{devMode ? " (locked — dev mode)" : ""}</option>
-                <option value="balanced">Balanced (recommended)</option>
-                <option value="high_quality">High quality</option>
-              </select>
+                options={[
+                  { value: "fast_draft", label: `Fast draft${devMode ? " (locked — dev mode)" : ""}` },
+                  { value: "balanced", label: "Balanced (recommended)" },
+                  { value: "high_quality", label: "High quality" },
+                ]}
+                className="w-full"
+              />
               <p className="mt-1 text-[0.72rem] leading-relaxed text-ink-black/45">
                 {devMode
                   ? "Locked to fast in dev mode."

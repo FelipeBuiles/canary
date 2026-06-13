@@ -10,6 +10,8 @@ interface SettingsLayoutProps {
   kicker: string;
   title: string;
   subtitle?: string;
+  /** Hide the in-page hero when the shell masthead already carries the title. */
+  hero?: boolean;
   tabs: SettingsTab[];
   activeTab: string;
   onTabChange: (id: string) => void;
@@ -20,6 +22,7 @@ export function SettingsLayout({
   kicker,
   title,
   subtitle,
+  hero = true,
   tabs,
   activeTab,
   onTabChange,
@@ -27,13 +30,15 @@ export function SettingsLayout({
 }: SettingsLayoutProps) {
   return (
     <div className="space-y-8">
-      <section>
-        <SectionLabel tone="red">{kicker}</SectionLabel>
-        <h1 className="mt-4 max-w-[14ch] display-impact">{title}</h1>
-        {subtitle && (
-          <p className="mt-5 lead-pulp max-w-[44rem]">{subtitle}</p>
-        )}
-      </section>
+      {hero && (
+        <section>
+          <SectionLabel tone="red">{kicker}</SectionLabel>
+          <h1 className="mt-4 max-w-[14ch] display-impact">{title}</h1>
+          {subtitle && (
+            <p className="mt-5 lead-pulp max-w-[44rem]">{subtitle}</p>
+          )}
+        </section>
+      )}
 
       <div className="flex flex-col gap-6 md:flex-row md:gap-8">
         {/* Desktop sidebar tabs */}

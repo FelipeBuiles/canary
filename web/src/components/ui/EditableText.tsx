@@ -93,24 +93,27 @@ export function EditableText({
     );
   };
 
+  // Display and edit states share identical box metrics (same 2px underline
+  // slot, no padding, inherited font) so entering edit mode never shifts
+  // layout. The dotted underline is the standing "this is editable" mark.
   const sharedWrapperClasses = cn(
-    "min-w-0 cursor-text transition-colors",
+    "min-w-0 cursor-text border-b-[2px] transition-colors",
     multiline ? "block whitespace-pre-wrap" : "inline-block max-w-full align-baseline",
     className,
   );
 
   if (editing) {
     const inputClasses = cn(
-      "min-w-0 border-[2px] border-ink-black bg-bristol px-2 py-1 text-inherit outline-none shadow-none",
-      "focus:shadow-[inset_0_-3px_0_0_var(--color-hero-red)]",
+      "min-w-0 border-0 bg-transparent p-0 caret-hero-red outline-none shadow-none",
+      "[font:inherit] [letter-spacing:inherit] [line-height:inherit] text-inherit",
       multiline
-        ? "block w-full resize-none overflow-hidden whitespace-pre-wrap break-words [line-height:inherit]"
-        : "inline-block w-full max-w-full [line-height:inherit]",
+        ? "block w-full resize-none overflow-hidden whitespace-pre-wrap break-words"
+        : "inline-block w-full max-w-full",
       inputClassName,
     );
 
     return (
-      <span className={sharedWrapperClasses}>
+      <span className={cn(sharedWrapperClasses, "border-solid border-hero-red", !multiline && "w-full")}>
         {multiline ? (
           <textarea
             ref={ref as React.RefObject<HTMLTextAreaElement>}
@@ -137,10 +140,23 @@ export function EditableText({
 
   return (
     <span
-      className={sharedWrapperClasses}
+      role="button"
+      tabIndex={0}
+      aria-label="Edit text"
+      className={cn(
+        sharedWrapperClasses,
+        "border-dotted border-ink-black/25 hover:border-hero-red/70 hover:bg-hero-red/[0.04] focus-visible:border-hero-red focus-visible:outline-none",
+      )}
       onClick={() => {
         setDraft(value);
         setEditing(true);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          setDraft(value);
+          setEditing(true);
+        }
       }}
     >
       {renderValue()}

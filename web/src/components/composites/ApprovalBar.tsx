@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { useCreditBalance } from "../../api/queries";
 import { Button } from "../ui/Button";
 import { useI18n } from "../../i18n";
+import { BottomBarPortal } from "../../layout/TopBarSlot";
 
 interface ApprovalBarProps {
   /** Plain-language preview of what happens next, without the "Next:" prefix. */
@@ -20,8 +21,9 @@ interface ApprovalBarProps {
 
 /**
  * The one standing approval bar: every station ends the same way — what
- * happens next, what it costs, one primary button — fixed to the bottom of
- * the content area (never in the sidebar).
+ * happens next, what it costs, one primary button. Renders into the shell
+ * footer slot so it spans the full content column as a true footer, below
+ * the scroll area (never in the sidebar).
  */
 export function ApprovalBar({
   next,
@@ -45,10 +47,10 @@ export function ApprovalBar({
   );
 
   return (
-    <div className="sticky bottom-0 z-30 -mx-5 -mb-6 mt-10 md:-mx-10 md:-mb-10">
-      <div className="flex min-h-[68px] items-center gap-4 border-t-[2px] border-ink-black bg-bristol px-5 py-3 md:px-10">
-        <div className="min-w-0 flex-1">
-          <div className="truncate font-body text-[0.9rem] font-bold leading-snug text-ink-black">
+    <BottomBarPortal>
+      <footer className="flex min-h-[64px] flex-wrap items-center gap-x-4 gap-y-2 border-t-[2px] border-ink-black bg-bristol px-4 py-3 md:px-8">
+        <div className="w-full min-w-0 md:w-auto md:flex-1">
+          <div className="font-body text-[0.85rem] font-bold leading-snug text-ink-black md:truncate md:text-[0.9rem]">
             {t("Next:")} {next}
           </div>
           {costLine && (
@@ -57,13 +59,13 @@ export function ApprovalBar({
             </div>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-3">
+        <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2 md:gap-3">
           {secondary}
           <Button size="md" onClick={onPrimary} disabled={primaryDisabled || busy}>
             {busy ? t("WORKING…") : primaryLabel}
           </Button>
         </div>
-      </div>
-    </div>
+      </footer>
+    </BottomBarPortal>
   );
 }

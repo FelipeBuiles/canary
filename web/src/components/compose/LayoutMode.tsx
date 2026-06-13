@@ -177,8 +177,8 @@ export function LayoutMode({
         />
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[154px_minmax(0,1fr)] gap-3 overflow-hidden bg-pulp-paper px-2 pb-3 pt-3">
-        <aside className="min-h-0 min-w-0 overflow-y-auto">
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto bg-pulp-paper px-2 pb-3 pt-3 md:grid md:grid-cols-[154px_minmax(0,1fr)] md:overflow-hidden">
+        <aside className="min-h-0 min-w-0 shrink-0 md:overflow-y-auto">
           <PageNavigator
             project={project}
             pages={pageList}
@@ -189,7 +189,7 @@ export function LayoutMode({
 
         <section
           ref={canvasShellRef}
-          className="relative min-h-[560px] min-w-0 overflow-hidden border-[3px] border-ink-black bg-pulp-paper p-3 shadow-[4px_4px_0_0_var(--color-ink-black)] md:min-h-0 md:p-4"
+          className="relative flex min-h-[560px] min-w-0 flex-col overflow-hidden border-[3px] border-ink-black bg-pulp-paper p-3 shadow-[4px_4px_0_0_var(--color-ink-black)] md:min-h-0 md:p-4"
         >
           <div className="mb-2">
             <div className="font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/45">PAGE BENCH</div>
@@ -198,7 +198,7 @@ export function LayoutMode({
             </div>
           </div>
 
-          <div className="h-[72vh] min-h-[480px] overflow-hidden border-[2px] border-ink-black bg-bristol p-2 md:h-[calc(100vh-320px)] md:min-h-0">
+          <div className="h-[72vh] min-h-[480px] overflow-hidden border-[2px] border-ink-black bg-bristol p-2 md:h-auto md:min-h-0 md:flex-1">
             {isLoadingPage ? (
               <div className="flex h-full items-center justify-center bg-ink-black/5" style={{ aspectRatio: "2480 / 3508", maxHeight: "100%" }}>
                 <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">LOADING PAGE...</p>

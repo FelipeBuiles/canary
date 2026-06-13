@@ -56,12 +56,8 @@ export function FloatingPalette() {
               <div className="mb-2 font-meta text-[0.46rem] tracking-[0.18em] text-ink-black/45">
                 TYPOGRAPHY
               </div>
-              <div className="border-[2px] border-ink-black bg-pulp-paper p-2">
-                <select className="w-full bg-transparent font-body text-[0.78rem]">
-                  <option>Space Grotesk</option>
-                  <option>Be Vietnam Pro</option>
-                  <option>Lexend</option>
-                </select>
+              <div className="border-[2px] border-ink-black bg-pulp-paper p-2 font-body text-[0.78rem]">
+                Be Vietnam Pro
               </div>
             </div>
             <div>

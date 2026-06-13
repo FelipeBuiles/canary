@@ -57,7 +57,7 @@ export function EditorToolbar({
 
   return (
     <div className="flex min-h-10 flex-wrap items-center gap-x-5 gap-y-2 bg-pulp-paper px-3 py-2">
-      <div className="flex items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
         <span className="font-meta text-[0.52rem] tracking-[0.16em] text-ink-black/45">ADD:</span>
         <ToolbarButton label="SPEECH" shortcut="B" icon={<Icon name="speech" size={12} />} onClick={() => onAddBubble("speech")} />
         <ToolbarButton label="THOUGHT" shortcut="T" icon={<Icon name="thought" size={12} />} onClick={() => onAddBubble("thought")} />

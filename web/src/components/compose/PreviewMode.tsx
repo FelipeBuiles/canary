@@ -109,14 +109,16 @@ export function PreviewMode({
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto md:flex-row md:overflow-hidden">
         {/* Spread view */}
-        <SpreadView
-          project={project}
-          isLoading={isLoading}
-          leftSummary={leftSummary}
-          rightSummary={rightSummary}
-        />
+        <div className="flex min-h-[42vh] min-w-0 shrink-0 md:min-h-0 md:flex-1">
+          <SpreadView
+            project={project}
+            isLoading={isLoading}
+            leftSummary={leftSummary}
+            rightSummary={rightSummary}
+          />
+        </div>
 
         {/* Export ConfirmDrawer */}
         <ConfirmDrawer
@@ -133,7 +135,7 @@ export function PreviewMode({
         />
 
         {/* Right rail: Your book + Translate — nothing else. */}
-        <aside className="w-[240px] shrink-0 overflow-y-auto border-l-[2px] border-ink-black bg-pulp-paper p-3 space-y-4">
+        <aside className="w-full shrink-0 space-y-4 border-t-[2px] border-ink-black bg-pulp-paper p-3 md:w-[240px] md:overflow-y-auto md:border-l-[2px] md:border-t-0">
 
           {/* Your book */}
           <div className="border-[2px] border-ink-black bg-surface-container p-3 shadow-ink-sm">

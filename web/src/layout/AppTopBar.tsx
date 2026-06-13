@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useLocation, useParams } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { supabase } from "../lib/supabase";
-import { useCreditBalance, useProjectStatus } from "../api/queries";
+import { useCreditBalance } from "../api/queries";
 import { useAuth } from "../hooks/useAuth";
 import { useCountUp } from "../hooks/useCountUp";
+import { useTopBarSlotRegister } from "./TopBarSlot";
 import { cn } from "../lib/cn";
 
 function initials(email?: string | null) {
@@ -13,20 +14,18 @@ function initials(email?: string | null) {
 }
 
 export function AppTopBar() {
-  const { id: projectId } = useParams<{ id: string }>();
   const location = useLocation();
   const { user } = useAuth();
   const { data: balance } = useCreditBalance();
-  const { data: status } = useProjectStatus(projectId);
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const registerSlot = useTopBarSlotRegister();
 
   const credits = balance?.balance_credits ?? 0;
   // Top-ups count up over ~600ms; spends snap instantly (see useCountUp).
   const displayCredits = useCountUp(credits);
   const isLow = credits < 150;
-  const inProject = location.pathname.startsWith("/project/") && !!projectId;
-  const projectTitle = status?.project_name ?? projectId;
+  const inProject = location.pathname.startsWith("/project/");
   const studioName = String(user?.user_metadata?.studio_name || "Inkwell Studio");
   const email = user?.email ?? "jesse@pulp.studio";
 
@@ -40,43 +39,43 @@ export function AppTopBar() {
   }, [open]);
 
   return (
-    <header className="relative z-40 flex h-11 shrink-0 items-center border-b border-ink-black/12 bg-bristol px-4 text-ink-black">
-      <div className="flex min-w-0 flex-1 items-center gap-4">
-        {inProject ? (
-          <>
-            <Link to="/" className="font-meta text-[0.62rem] font-bold uppercase tracking-[0.16em] text-ink-black/62 hover:text-hero-red">
-              ← Library
-            </Link>
-            <span className="h-5 w-px bg-ink-black/14" />
-            <span className="min-w-0 truncate font-meta text-[0.62rem] font-bold uppercase tracking-[0.18em] text-ink-black/45">
-              {projectTitle}
+    <header
+      className={cn(
+        "relative z-40 flex shrink-0 items-stretch border-b-[2px] border-ink-black bg-bristol text-ink-black",
+        inProject ? "h-[4.5rem]" : "h-14",
+      )}
+    >
+      {inProject ? (
+        // In a project the sidebar owns identity; this row belongs to the
+        // room header, which portals its content into the slot below.
+        <div
+          ref={registerSlot}
+          className="flex min-w-0 flex-1 items-stretch"
+        />
+      ) : (
+        <div className="flex min-w-0 flex-1 items-center gap-4 px-4">
+          <Link to="/" className="flex items-center gap-3">
+            <span className="font-display text-[1.05rem] font-black uppercase leading-none tracking-[-0.03em]">
+              PULP
             </span>
-          </>
-        ) : (
-          <>
-            <Link to="/" className="flex items-center gap-3">
-              <span className="font-display text-[1.05rem] font-black uppercase leading-none tracking-[-0.03em]">
-                PULP
-              </span>
-              <span className="bg-hero-red px-2.5 py-1 font-meta text-[0.54rem] font-bold tracking-[0.16em] text-bristol">
-                BETA
-              </span>
-            </Link>
-            <span className="h-5 w-px bg-ink-black/14" />
-            <Link
-              to="/labs"
-              className={cn(
-                "font-meta text-[0.62rem] font-bold uppercase tracking-[0.16em] hover:text-hero-red",
-                location.pathname.startsWith("/labs") ? "text-ink-black" : "text-ink-black/62",
-              )}
-            >
-              Labs
-            </Link>
-          </>
-        )}
-      </div>
+            <span className="bg-hero-red px-2.5 py-1 font-meta text-[0.54rem] font-bold tracking-[0.16em] text-bristol">
+              BETA
+            </span>
+          </Link>
+          <span className="h-5 w-px bg-ink-black/14" />
+          <Link
+            to="/labs"
+            className={cn(
+              "font-meta text-[0.62rem] font-bold uppercase tracking-[0.16em] hover:text-hero-red",
+              location.pathname.startsWith("/labs") ? "text-ink-black" : "text-ink-black/62",
+            )}
+          >
+            Labs
+          </Link>
+        </div>
+      )}
 
-      <div className="flex items-center gap-3">
+      <div className="flex shrink-0 items-center gap-3 pl-3 pr-4">
         <Link
           to="/credits"
           className={cn(
@@ -92,7 +91,7 @@ export function AppTopBar() {
           <span className="text-ink-black/42">credits{isLow ? " · top up" : ""}</span>
         </Link>
 
-        <div ref={menuRef} className="relative">
+        <div ref={menuRef} className="relative flex items-center">
           <button
             type="button"
             onClick={() => setOpen((value) => !value)}

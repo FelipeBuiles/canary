@@ -25,7 +25,6 @@ import {
   WarningOverrideDrawer,
 } from "../../components/composites";
 import { useCharacterName } from "../../hooks/useCharacterName";
-import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { renderPanelPromptBody } from "../../lib/prompting";
 import { detectAllWarnings } from "../../lib/promptWarnings";
 import { useRunAction } from "../../hooks/useRunAction";
@@ -428,7 +427,6 @@ export function DirectRoom() {
   const stageInfo = status?.stages?.direct;
   const stageStatus = stageInfo?.status ?? "pending";
   const resolveName = useCharacterName(id);
-  const { isCompact, toggle } = useHeaderMode();
   const { data: stylesData } = useStyles(id);
   const activeStyle = stylesData?.active_index != null
     ? (stylesData.suggestions.find((s) => s.index === stylesData.active_index) ?? null)
@@ -528,8 +526,6 @@ export function DirectRoom() {
               {rerunAction}
             </div>
           }
-          compact={isCompact}
-          onToggle={toggle}
         />
 
         <section className="grid min-h-0 flex-1 grid-rows-[minmax(132px,30%)_minmax(0,1fr)] overflow-hidden border-[2px] border-ink-black bg-bristol xl:grid-cols-[200px_minmax(0,1fr)] xl:grid-rows-none">

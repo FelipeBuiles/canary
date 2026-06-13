@@ -25,7 +25,7 @@ export function PageNavigator({
   onSelect,
 }: PageNavigatorProps) {
   return (
-    <div className="min-h-0 border-[3px] border-ink-black bg-pulp-paper shadow-[3px_3px_0_0_var(--color-ink-black)] md:flex md:max-h-[calc(100vh-236px)] md:flex-col">
+    <div className="min-h-0 border-[3px] border-ink-black bg-pulp-paper shadow-[3px_3px_0_0_var(--color-ink-black)] md:flex md:max-h-full md:flex-col">
       <div className="border-b border-ink-black/20 px-2.5 py-2">
         <div className="font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/55">
           PAGES
