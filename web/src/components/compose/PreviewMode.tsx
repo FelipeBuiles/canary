@@ -139,8 +139,9 @@ export function PreviewMode({
 
           {/* Your book */}
           <div className="border-[2px] border-ink-black bg-surface-container p-3 shadow-ink-sm">
-            <div className="mb-2 font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/50">YOUR BOOK</div>
-            <div className="mb-3 font-body text-[0.82rem] font-semibold leading-5 text-ink-black">
+            <div className="mb-1 font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/50">READY TO PRINT</div>
+            <div className="mb-1 font-display text-[1.15rem] font-black uppercase leading-none tracking-[-0.02em] [font-stretch:75%]">Ship your issue</div>
+            <div className="mb-3 font-body text-[0.82rem] font-semibold leading-5 text-ink-black/70">
               {pageList.length} page{pageList.length !== 1 ? "s" : ""} · {totalPanels} panel{totalPanels !== 1 ? "s" : ""} · {totalLettering} lettering item{totalLettering !== 1 ? "s" : ""}
             </div>
             <div className="space-y-1.5">

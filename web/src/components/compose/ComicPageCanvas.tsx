@@ -38,7 +38,7 @@ export function ComicPageCanvas({
       style={{
         width: 2480,
         height: 3508,
-        background: vars["--page-bg"],
+        backgroundColor: vars["--page-bg"],
         overflow: "hidden",
         position: "relative",
         fontFamily: vars["--letter-font"],

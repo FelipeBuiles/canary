@@ -63,7 +63,9 @@ _STATIC_CSS = """\
 body {
   width: {PAGE_W}px;
   height: {PAGE_H}px;
-  background: var(--page-bg);
+  background-color: var(--page-bg);
+  background-image: radial-gradient(var(--page-texture-color, transparent) 1px, transparent 1.6px);
+  background-size: 14px 14px;
   overflow: hidden;
   position: relative;
 }
@@ -226,6 +228,31 @@ body {
 .bubble.thought {
   border-radius: var(--thought-radius);
   border-style: var(--thought-border-style);
+}
+
+.bubble.thought::after {
+  content: '';
+  position: absolute;
+  bottom: -13px;
+  left: 22px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--bubble-bg);
+  border: var(--bubble-border-width) solid var(--bubble-border);
+  z-index: 1;
+}
+.bubble.thought::before {
+  content: '';
+  position: absolute;
+  bottom: -24px;
+  left: 12px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--bubble-bg);
+  border: var(--bubble-border-width) solid var(--bubble-border);
+  z-index: 1;
 }
 
 /* ── Upward tails (default — character is above bubble) ── */
