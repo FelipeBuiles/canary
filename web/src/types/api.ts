@@ -38,7 +38,6 @@ export interface ConfigOverrides {
   flux_guidance_scale?: number;
   max_panels_per_scene?: number;
   max_panels_per_page?: number;
-  comic_theme?: string;
   image_model_aliases?: string[];
 }
 
