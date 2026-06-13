@@ -188,14 +188,17 @@ keeps each build self-contained for CI/Docker.
 
 ### Font bundling
 
-Curated faces are added in both locations the renderers load from:
+Curated faces live in **one** place: `novel_to_comic/src/novel_to_comic/fonts/`.
+The backend already mounts it at `/static/fonts` (`app.py:184`) and the Vite dev
+server proxies `/static` to the backend, so both renderers load the same files:
 
-- `novel_to_comic/src/novel_to_comic/fonts/` → `@font-face` in the backend
-  `_STATIC_CSS` (PNG / PDF).
-- `web/public/static/fonts/` → `@font-face` in `comic-page.css` (live canvas).
+- PNG / PDF render → `@font-face` in the backend `_STATIC_CSS`.
+- Live canvas → `@font-face` in `comic-page.css`, via the `/static/fonts/*` URL.
 
-The headless render must `await document.fonts.ready` before snapshotting so a
-newly-selected pair never renders in a fallback face; verify and add if missing.
+No copy in `web/public/` is needed (and would be shadowed by the backend mount in
+production). The headless render must `await document.fonts.ready` before
+snapshotting so a newly-selected pair never renders in a fallback face; verify and
+add if missing.
 
 ## Curated Font Pairs
 
