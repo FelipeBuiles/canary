@@ -161,29 +161,6 @@ export function ProjectSettingsPage() {
                 ))}
               </SelectField>
             </Row>
-
-            <Row
-              label={t("COMIC THEME")}
-              hint={t("Visual identity of the assembled comic pages. Set to 'auto' to detect from style.")}
-            >
-              <SelectField
-                value={config?.comic_theme ?? "auto"}
-                onChange={(e) => patch({ comic_theme: e.target.value })}
-                disabled={!config || updating}
-                className="max-w-sm bg-bristol font-meta text-[0.72rem] tracking-[0.1em]"
-              >
-                {[
-                  { value: "auto", label: "Auto-detect" },
-                  { value: "default", label: "Default" },
-                  { value: "noir", label: "Noir" },
-                  { value: "manga", label: "Manga" },
-                  { value: "vintage", label: "Vintage" },
-                  { value: "painted", label: "Painted" },
-                ].map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </SelectField>
-            </Row>
           </Card>
         )}
 

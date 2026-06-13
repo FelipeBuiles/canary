@@ -9,21 +9,23 @@ import {
   useSetActiveStyle,
   useImageGenerationMeta,
   useProjectConfig,
-  useUpdateProjectConfig,
   useStoryBible,
   useProjectStatus,
+  useLetteringStyle,
+  useGenerateLetteringStyle,
+  useSetLetteringStyle,
 } from "../../api/queries";
 import { Button } from "../../components/ui/Button";
 import { GenerationDetailsModal } from "../../components/ui/GenerationDetailsModal";
 import { LazyImage } from "../../components/ui/LazyImage";
 import { StateBlock } from "../../components/ui/StateBlock";
 import { Surface } from "../../components/ui/Surface";
-import { Select } from "../../components/ui/Select";
 import { ApprovalBar, EntityCard, RoomHeader, ConfirmDrawer, RoomShell } from "../../components/composites";
 import { useApproveStage, useStageEstimate } from "../../api/queries";
 import { useRunAction } from "../../hooks/useRunAction";
 import { useI18n } from "../../i18n";
 import { FlowingDotsPlaceholder } from "../../components/ui/FlowingDotsPlaceholder";
+import { LetteringChooser } from "../../components/compose/LetteringChooser";
 import {
   useStyleGenStore,
   usePendingIndices,
@@ -216,7 +218,9 @@ export function StyleRoom() {
   const projectName = id ?? "";
   const { data: stylesData, isLoading, refetch: refetchStyles } = useStyles(id);
   const { data: projectConfig } = useProjectConfig(id);
-  const updateConfig = useUpdateProjectConfig();
+  const { data: lettering } = useLetteringStyle(id);
+  const generateLettering = useGenerateLetteringStyle();
+  const setLettering = useSetLetteringStyle();
   const { data: storyBible } = useStoryBible(id);
   const { data: status } = useProjectStatus(id);
   const suggestStyles = useSuggestStyles();
@@ -300,6 +304,15 @@ export function StyleRoom() {
     if (last.type !== "stage_progress" && last.type !== "stage_complete") return;
     refetchStyles();
   }, [events, refetchStyles]);
+
+  // Auto-tune lettering once when a style is selected but not yet matched.
+  const autoLetteringRef = useRef(false);
+  useEffect(() => {
+    if (!id || !styleSelected || !lettering) return;
+    if (lettering.label || autoLetteringRef.current) return;
+    autoLetteringRef.current = true;
+    generateLettering.mutate({ project: id });
+  }, [id, styleSelected, lettering, generateLettering]);
 
   if (isLoading) {
     return <RoomShell isLoading loadingText="MIXING PALETTES…" />;
@@ -471,31 +484,20 @@ export function StyleRoom() {
             </p>
           )}
 
-          {/* Comic page theme is a Look decision — changing it re-renders the
-              book, so it must not sit inside Export. */}
-          <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-ink-black/10 pt-4">
-            <span className="font-meta text-[0.56rem] tracking-[0.18em] text-ink-black/45">
-              COMIC PAGE THEME
-            </span>
-            <Select
-              aria-label="Comic page theme"
-              size="sm"
-              value={projectConfig?.comic_theme ?? "auto"}
-              onValueChange={(value) => id && updateConfig.mutate({ project: id, data: { comic_theme: value } })}
-              disabled={!projectConfig || updateConfig.isPending}
-              options={[
-                { value: "auto", label: "Auto-detect from style" },
-                { value: "default", label: "Default" },
-                { value: "noir", label: "Noir" },
-                { value: "manga", label: "Manga" },
-                { value: "vintage", label: "Vintage" },
-                { value: "painted", label: "Painted" },
-              ]}
-            />
-            <span className="font-meta text-[0.5rem] tracking-[0.12em] text-ink-black/35">
-              STYLES THE ASSEMBLED PAGES — LETTERING, BORDERS, PAPER
-            </span>
-          </div>
+          <LetteringChooser
+            lettering={lettering}
+            isGenerating={generateLettering.isPending || setLettering.isPending}
+            disabled={styleActionsDisabled}
+            onMatchMyStyle={() =>
+              id &&
+              setLettering.mutate(
+                { project: id, mode: "auto" },
+                { onSuccess: () => generateLettering.mutate({ project: id }) },
+              )
+            }
+            onReroll={() => id && generateLettering.mutate({ project: id, reroll: true })}
+            onSelectPreset={(preset) => id && setLettering.mutate({ project: id, mode: "preset", preset })}
+          />
         </>
       )}
 
