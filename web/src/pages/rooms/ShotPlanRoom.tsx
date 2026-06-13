@@ -23,7 +23,6 @@ import {
 import { cn } from "../../lib/cn";
 import { getShotPlanAction, getShotPlanSubStatus } from "../../lib/shotPlan";
 import { useCharacterName } from "../../hooks/useCharacterName";
-import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { useRunAction } from "../../hooks/useRunAction";
 import type {
   DialogueLine,
@@ -898,7 +897,6 @@ export function ShotPlanRoom() {
   const { data: status } = useProjectStatus(id);
   const { data: bible } = useStoryBible(id);
   const resolveName = useCharacterName(id);
-  const { isCompact, toggle } = useHeaderMode();
 
   const subStatus = getShotPlanSubStatus(status);
   const defaultView: ShotPlanView = summaries?.length ? "board" : "outline";
@@ -965,8 +963,6 @@ export function ShotPlanRoom() {
             </span>
           }
           actions={<ShotPlanActionButton project={id} />}
-          compact={isCompact}
-          onToggle={toggle}
         />
 
         {plan.warnings.length > 0 && (

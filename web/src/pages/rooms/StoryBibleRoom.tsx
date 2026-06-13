@@ -7,7 +7,6 @@ import {
   useStoryBible,
   useUpdateStoryBible,
 } from "../../api/queries";
-import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { useRunAction } from "../../hooks/useRunAction";
 import { Tag } from "../../components/ui/Tag";
 import { EditableText } from "../../components/ui/EditableText";
@@ -34,45 +33,17 @@ function VisualAnchorEditor({
   onSave: (value: string) => void;
   label?: string;
 }) {
-  const truncateAt = 120;
-  const [expanded, setExpanded] = useState(value.length <= truncateAt);
-  const shouldTruncate = value.length > truncateAt;
-  const displayValue = !expanded && shouldTruncate ? `${value.slice(0, truncateAt).trim()}...` : value;
-
   return (
-    <div className="mt-5 text-[1.05rem] font-semibold leading-8 text-ink-black/70">
+    <div className="mt-5">
       <span className="block font-meta text-[0.68rem] font-bold tracking-[0.22em] text-ink-black/45">
         {label} <span className="font-normal text-ink-black/30">✎</span>
       </span>
-      {expanded ? (
-        <EditableText
-          value={value}
-          onSave={onSave}
-          multiline
-          className="mt-2 block max-w-[72ch] text-[1.05rem] font-semibold leading-8 text-ink-black/70"
-        />
-      ) : (
-        <p className="mt-2 max-w-[72ch]">
-          {displayValue}
-          {" "}
-          <button
-            type="button"
-            onClick={() => setExpanded(true)}
-            className="font-meta text-[0.72rem] tracking-[0.14em] text-hero-red hover:text-ink-black"
-          >
-            expand
-          </button>
-        </p>
-      )}
-      {expanded && shouldTruncate && (
-        <button
-          type="button"
-          onClick={() => setExpanded(false)}
-          className="mt-2 font-meta text-[0.72rem] tracking-[0.14em] text-hero-red hover:text-ink-black"
-        >
-          collapse
-        </button>
-      )}
+      <EditableText
+        value={value}
+        onSave={onSave}
+        multiline
+        className="mt-2 block max-w-[72ch] text-[0.95rem] font-semibold leading-7 text-ink-black/70"
+      />
     </div>
   );
 }
@@ -246,7 +217,6 @@ function WhatPulpFound({
 export function StoryBibleRoom() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { isCompact, toggle } = useHeaderMode();
   const { data: bible, isLoading, error } = useStoryBible(id);
   const { data: status } = useProjectStatus(id);
   const updateBible = useUpdateStoryBible();
@@ -326,8 +296,6 @@ export function StoryBibleRoom() {
     <RoomShell>
       <RoomHeader
         kicker="STORY"
-        compact={isCompact}
-        onToggle={toggle}
         title={bible.title}
         lead="Check what PULP read out of your story — fix names, looks, and details before anything is drawn."
       />

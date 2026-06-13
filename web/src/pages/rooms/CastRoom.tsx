@@ -16,7 +16,6 @@ import {
   useRegenPropWithInstruction,
 } from "../../api/queries";
 import { ApprovalBar, RoomHeader, RoomShell, RerunStageAction, StagePlaceholder, SectionHeader, EntityCard } from "../../components/composites";
-import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { useRunAction } from "../../hooks/useRunAction";
 import { Tag } from "../../components/ui/Tag";
 import { Button } from "../../components/ui/Button";
@@ -940,7 +939,6 @@ function PropRefCard({
 export function CastRoom() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { isCompact, toggle } = useHeaderMode();
   const { data: bible, isLoading } = useStoryBible(id);
   const { data: status } = useProjectStatus(id);
   const approveStage = useApproveStage();
@@ -1004,8 +1002,6 @@ export function CastRoom() {
     <RoomShell>
       <RoomHeader
         kicker="LOOK"
-        compact={isCompact}
-        onToggle={toggle}
         title="CHARACTERS & PLACES"
         lead="How your cast and settings will look in every panel. Re-roll any one of them, or open it to request a fix."
       />

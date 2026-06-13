@@ -1,10 +1,15 @@
-import type {
-  InputHTMLAttributes,
-  LabelHTMLAttributes,
-  SelectHTMLAttributes,
-  TextareaHTMLAttributes,
+import {
+  Children,
+  isValidElement,
+  type ChangeEvent,
+  type InputHTMLAttributes,
+  type LabelHTMLAttributes,
+  type OptionHTMLAttributes,
+  type SelectHTMLAttributes,
+  type TextareaHTMLAttributes,
 } from "react";
 import { cn } from "../../lib/cn";
+import { Select, type SelectOption } from "./Select";
 
 type FieldLabelProps = LabelHTMLAttributes<HTMLLabelElement>;
 
@@ -20,8 +25,40 @@ export function TextField({ className, type = "text", ...props }: TextFieldProps
 
 type SelectFieldProps = SelectHTMLAttributes<HTMLSelectElement>;
 
-export function SelectField({ className, ...props }: SelectFieldProps) {
-  return <select className={cn("ui-field", className)} {...props} />;
+/**
+ * Drop-in replacement for the old native-select SelectField: accepts the same
+ * <option> children and a ChangeEvent-style onChange, but renders the custom
+ * print-shop Select so the system dropdown never clashes with the site.
+ */
+export function SelectField({
+  className,
+  children,
+  value,
+  onChange,
+  disabled,
+  id,
+  "aria-label": ariaLabel,
+}: SelectFieldProps) {
+  const options: SelectOption[] = [];
+  Children.forEach(children, (child) => {
+    if (!isValidElement<OptionHTMLAttributes<HTMLOptionElement>>(child)) return;
+    const optionValue = child.props.value ?? child.props.children;
+    options.push({ value: String(optionValue ?? ""), label: String(child.props.children ?? "") });
+  });
+
+  return (
+    <Select
+      value={String(value ?? "")}
+      options={options}
+      disabled={disabled}
+      id={id}
+      aria-label={ariaLabel}
+      onValueChange={(next) => {
+        onChange?.({ target: { value: next } } as ChangeEvent<HTMLSelectElement>);
+      }}
+      className={cn("w-full", className)}
+    />
+  );
 }
 
 type TextAreaFieldProps = TextareaHTMLAttributes<HTMLTextAreaElement>;

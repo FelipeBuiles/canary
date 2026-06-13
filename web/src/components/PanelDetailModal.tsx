@@ -21,6 +21,7 @@ import { redactDevText, useShowDevContent } from "../lib/devContent";
 import { useRegenStore } from "../store/regen";
 import { maybeShowInsufficientCredits } from "../store/insufficientCredits";
 import { useQueryClient } from "@tanstack/react-query";
+import { Select } from "./ui/Select";
 
 type TabId = "panel" | "prompt";
 const DEFAULT_IMAGE_MODEL_ALIASES = ["image-fast", "image-balanced", "image-quality"];
@@ -66,16 +67,17 @@ function ImageModelAliasSelector({
       <label className="mb-1.5 block font-meta text-[0.54rem] tracking-[0.18em] text-ink-black/45">
         IMAGE MODEL
       </label>
-      <select
+      <Select
+        aria-label="Image model"
+        size="sm"
         value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="w-full border-[2px] border-ink-black/25 bg-bristol px-3 py-2 font-meta text-[0.62rem] tracking-[0.12em] text-ink-black outline-none focus:border-ink-black"
-      >
-        <option value="">Project default</option>
-        {options.map((alias) => (
-          <option key={alias} value={alias}>{alias}</option>
-        ))}
-      </select>
+        onValueChange={onChange}
+        options={[
+          { value: "", label: "Project default" },
+          ...options.map((alias) => ({ value: alias, label: alias })),
+        ]}
+        className="w-full"
+      />
     </div>
   );
 }

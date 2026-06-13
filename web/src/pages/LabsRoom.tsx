@@ -24,6 +24,7 @@ import type {
 import { Button } from "../components/ui/Button";
 import { Surface } from "../components/ui/Surface";
 import { cn } from "../lib/cn";
+import { Select } from "../components/ui/Select";
 
 const TIER_LABEL: Record<LabsTier, string> = {
   fast: "FAST",
@@ -1082,40 +1083,40 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
             {sceneSource === "imported" && (
               <div className="mt-4 space-y-3 border-l-[3px] border-narrator-gold/60 pl-4">
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
-                  <select
+                  <Select
+                    aria-label="Import project"
                     value={importProjectId}
-                    onChange={(e) => {
-                      setImportProjectId(e.target.value);
+                    onValueChange={(value) => {
+                      setImportProjectId(value);
                       setImportSceneId("");
                       setImportedRefs([]);
                       setImportedRefPaths([]);
                     }}
-                    className="border-[2px] border-ink-black/15 bg-pulp-paper px-3 py-2 font-meta text-[0.7rem] tracking-[0.06em]"
-                  >
-                    <option value="">— Project —</option>
-                    {(importableProjects?.projects ?? []).map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} · {p.scene_count} scenes
-                      </option>
-                    ))}
-                  </select>
-                  <select
+                    options={[
+                      { value: "", label: "— Project —" },
+                      ...(importableProjects?.projects ?? []).map((p) => ({
+                        value: p.id,
+                        label: `${p.name} · ${p.scene_count} scenes`,
+                      })),
+                    ]}
+                  />
+                  <Select
+                    aria-label="Import scene"
                     value={importSceneId}
-                    onChange={(e) => {
-                      setImportSceneId(e.target.value);
+                    onValueChange={(value) => {
+                      setImportSceneId(value);
                       setImportedRefs([]);
                       setImportedRefPaths([]);
                     }}
                     disabled={!importProjectId}
-                    className="border-[2px] border-ink-black/15 bg-pulp-paper px-3 py-2 font-meta text-[0.7rem] tracking-[0.06em] disabled:opacity-50"
-                  >
-                    <option value="">— Scene —</option>
-                    {(importScenes?.scenes ?? []).map((s) => (
-                      <option key={s.scene_id} value={s.scene_id}>
-                        {s.scene_id} · {s.panel_count} panels
-                      </option>
-                    ))}
-                  </select>
+                    options={[
+                      { value: "", label: "— Scene —" },
+                      ...(importScenes?.scenes ?? []).map((scene) => ({
+                        value: scene.scene_id,
+                        label: `${scene.scene_id} · ${scene.panel_count} panels`,
+                      })),
+                    ]}
+                  />
                   <Button
                     variant="outline"
                     size="sm"

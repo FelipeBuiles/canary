@@ -13,12 +13,12 @@ import {
   useStoryBible,
   useProjectStatus,
 } from "../../api/queries";
-import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { Button } from "../../components/ui/Button";
 import { GenerationDetailsModal } from "../../components/ui/GenerationDetailsModal";
 import { LazyImage } from "../../components/ui/LazyImage";
 import { StateBlock } from "../../components/ui/StateBlock";
 import { Surface } from "../../components/ui/Surface";
+import { Select } from "../../components/ui/Select";
 import { ApprovalBar, EntityCard, RoomHeader, ConfirmDrawer, RoomShell } from "../../components/composites";
 import { useApproveStage, useStageEstimate } from "../../api/queries";
 import { useRunAction } from "../../hooks/useRunAction";
@@ -213,7 +213,6 @@ function StyleCard({
 export function StyleRoom() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { isCompact, toggle } = useHeaderMode();
   const projectName = id ?? "";
   const { data: stylesData, isLoading, refetch: refetchStyles } = useStyles(id);
   const { data: projectConfig } = useProjectConfig(id);
@@ -368,8 +367,6 @@ export function StyleRoom() {
     <RoomShell>
       <RoomHeader
         kicker="STYLES"
-        compact={isCompact}
-        onToggle={toggle}
         title="LOOK & STYLE"
         lead="Choose the visual style that defines your comic. Generate samples to compare, then select one to lock it in."
         actions={
@@ -480,23 +477,21 @@ export function StyleRoom() {
             <span className="font-meta text-[0.56rem] tracking-[0.18em] text-ink-black/45">
               COMIC PAGE THEME
             </span>
-            <select
+            <Select
+              aria-label="Comic page theme"
+              size="sm"
               value={projectConfig?.comic_theme ?? "auto"}
-              onChange={(e) => id && updateConfig.mutate({ project: id, data: { comic_theme: e.target.value } })}
+              onValueChange={(value) => id && updateConfig.mutate({ project: id, data: { comic_theme: value } })}
               disabled={!projectConfig || updateConfig.isPending}
-              className="border-[2px] border-ink-black/20 bg-bristol px-3 py-1.5 font-meta text-[0.62rem] tracking-[0.1em] text-ink-black focus:border-ink-black focus:outline-none"
-            >
-              {[
+              options={[
                 { value: "auto", label: "Auto-detect from style" },
                 { value: "default", label: "Default" },
                 { value: "noir", label: "Noir" },
                 { value: "manga", label: "Manga" },
                 { value: "vintage", label: "Vintage" },
                 { value: "painted", label: "Painted" },
-              ].map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
+              ]}
+            />
             <span className="font-meta text-[0.5rem] tracking-[0.12em] text-ink-black/35">
               STYLES THE ASSEMBLED PAGES — LETTERING, BORDERS, PAPER
             </span>

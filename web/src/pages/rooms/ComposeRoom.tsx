@@ -372,7 +372,7 @@ export function ComposeRoom() {
   const warningCount = issues.filter((i) => i.severity === "warning").length;
 
   return (
-    <div className="-mx-5 -my-6 flex min-h-[calc(100vh-58px)] flex-col gap-3 bg-pulp-paper md:-my-6">
+    <div className="flex h-full min-h-0 flex-col gap-3 bg-pulp-paper">
       {/* Thin persistent header — the only tab row */}
       <ComposeHeader
         tab={tab}

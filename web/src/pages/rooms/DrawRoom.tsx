@@ -13,9 +13,9 @@ import {
   useUpdateProjectConfig,
   useResetStale,
 } from "../../api/queries";
-import { useHeaderMode } from "../../hooks/useHeaderMode";
 import { useRunAction } from "../../hooks/useRunAction";
 import { PanelCard } from "../../components/PanelCard";
+import { Select } from "../../components/ui/Select";
 import { PanelDetailModal } from "../../components/PanelDetailModal";
 import {
   ApprovalBar,
@@ -55,15 +55,13 @@ function QualityPresetField({ project }: { project: string }) {
       <label className="mb-1 block font-meta text-[0.56rem] tracking-[0.18em] text-ink-black/45">
         GENERATION QUALITY
       </label>
-      <select
+      <Select
+        aria-label="Generation quality"
         value={config.quality_preset ?? "balanced"}
-        onChange={(e) => updateConfig({ project, data: { quality_preset: e.target.value as "fast" | "balanced" | "quality" } })}
-        className="w-full border-[2px] border-ink-black/20 bg-bristol px-3 py-2 font-body text-[0.85rem] text-ink-black focus:border-ink-black focus:outline-none"
-      >
-        {QUALITY_OPTIONS.map((opt) => (
-          <option key={opt.value} value={opt.value}>{opt.label}</option>
-        ))}
-      </select>
+        onValueChange={(value) => updateConfig({ project, data: { quality_preset: value as "fast" | "balanced" | "quality" } })}
+        options={QUALITY_OPTIONS}
+        className="w-full"
+      />
     </div>
   );
 }
@@ -131,7 +129,6 @@ function panelImageUrl(project: string, img: Pick<ImageStatus, "scene_id" | "pan
 export function DrawRoom() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { isCompact, toggle } = useHeaderMode();
   const projectRegens = useActiveRegens(id ?? "");
   const bustTimestamps = useRegenStore((s) => s.bustTimestamps);
   const errors = useRegenStore((s) => s.errors);
@@ -619,8 +616,6 @@ export function DrawRoom() {
     <RoomShell>
       <RoomHeader
         kicker="PANELS"
-        compact={isCompact}
-        onToggle={toggle}
         title="DRAW PANELS"
         lead="Panels are accepted by default — flag the ones that need re-work."
       />
@@ -669,25 +664,26 @@ export function DrawRoom() {
           ))}
         </div>
 
-        <div className="flex flex-1 items-center justify-end gap-2 min-w-[14rem]">
+        <div className="flex w-full flex-1 items-center justify-end gap-2 sm:w-auto sm:min-w-[14rem]">
           {scenes.length > 1 && (
-            <select
+            <Select
+              aria-label="Scene filter"
+              size="sm"
               value={sceneFilter}
-              onChange={(e) => setSceneFilter(e.target.value)}
-              className="border-[2px] border-ink-black/20 bg-bristol px-3 py-1.5 font-body text-[0.78rem] text-ink-black focus:border-ink-black focus:outline-none"
-            >
-              <option value="all">All scenes</option>
-              {scenes.map((s) => (
-                <option key={s} value={s}>{s.replace(/_/g, " ").toUpperCase()}</option>
-              ))}
-            </select>
+              onValueChange={setSceneFilter}
+              className="shrink-0"
+              options={[
+                { value: "all", label: "All scenes" },
+                ...scenes.map((s) => ({ value: s, label: s.replace(/_/g, " ").toUpperCase() })),
+              ]}
+            />
           )}
           <input
             type="search"
             placeholder="Search panels…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-40 border-[2px] border-ink-black/20 bg-bristol px-3 py-1.5 font-body text-[0.78rem] text-ink-black placeholder:text-ink-black/35 focus:border-ink-black focus:outline-none"
+            className="min-w-0 flex-1 border-[2px] border-ink-black/20 bg-bristol px-3 py-1.5 font-body text-[0.78rem] text-ink-black placeholder:text-ink-black/35 focus:border-ink-black focus:outline-none sm:w-40 sm:flex-none"
           />
           <div className="flex border-[2px] border-ink-black/20 overflow-hidden">
             {(["grid", "list"] as const).map((mode) => (

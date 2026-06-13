@@ -15,7 +15,6 @@ import {
 } from "../../components/composites";
 import { LoadingBlock, StateBlock } from "../../components/ui/StateBlock";
 import { useCharacterName } from "../../hooks/useCharacterName";
-import { useHeaderMode } from "../../hooks/useHeaderMode";
 
 export function AdaptRoom() {
   const { id } = useParams<{ id: string }>();
@@ -29,7 +28,6 @@ export function AdaptRoom() {
   const stageInfo = status?.stages?.adapt;
   const stageStatus = stageInfo?.status ?? "pending";
   const resolveName = useCharacterName(id);
-  const { isCompact, toggle } = useHeaderMode();
 
   // Character filter state
   const [activeCharFilter, setActiveCharFilter] = useState<string | null>(null);
@@ -95,8 +93,6 @@ export function AdaptRoom() {
           title="SCREENPLAY VIEWER"
           lead="Each scene's prose rendered into beats — action, dialogue, sfx, description — ready to panel."
           actions={rerunAction}
-          compact={isCompact}
-          onToggle={toggle}
         />
 
         <section className="grid min-h-0 flex-1 grid-rows-[minmax(132px,30%)_minmax(0,1fr)] overflow-hidden border-[2px] border-ink-black bg-bristol xl:grid-cols-[200px_minmax(0,1fr)] xl:grid-rows-none">

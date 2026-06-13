@@ -108,50 +108,52 @@ export function ScriptMode({
   ];
 
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-[166px_minmax(0,1fr)] gap-3 overflow-hidden bg-pulp-paper px-2 py-3">
-      {/* Left rail — page list */}
-      <aside className="min-h-0 overflow-y-auto border-[2px] border-ink-black bg-pulp-paper p-2 shadow-[3px_3px_0_0_var(--color-ink-black)]">
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden bg-pulp-paper px-2 py-3 md:grid md:grid-cols-[166px_minmax(0,1fr)]">
+      {/* Left rail — page list (a horizontal strip on mobile, vertical on desktop) */}
+      <aside className="shrink-0 border-[2px] border-ink-black bg-pulp-paper p-2 shadow-[3px_3px_0_0_var(--color-ink-black)] md:min-h-0 md:overflow-y-auto">
         <div className="mb-2 font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/55">PAGES</div>
-        <button
-          onClick={() => setPageFilter("all")}
-          className={cn(
-            "mb-2 w-full border p-2 text-left transition-colors",
-            pageFilter === "all"
-              ? "border-hero-red bg-bristol text-ink-black"
-              : "border-ink-black/24 bg-pulp-paper hover:bg-bristol",
-          )}
-        >
-          <div className="font-meta text-[0.52rem] tracking-[0.18em] opacity-70">ALL PAGES</div>
-          <div className="mt-0.5 font-display text-[0.88rem] font-bold leading-tight tracking-[-0.02em]">
-            {pages.length} page{pages.length !== 1 ? "s" : ""}
-          </div>
-        </button>
-        {pages.map((page, idx) => {
-          const bubbleCount = page?.panels.flatMap((p) => p.bubbles).length ?? 0;
-          const panelCount = page?.panels.length ?? 0;
-          return (
-            <button
-              key={idx}
-              onClick={() => { setPageFilter(idx); onPageSelect(idx); }}
-              className={cn(
-                "mb-2 w-full border p-2 text-left transition-colors",
-                pageFilter === idx
-                  ? "border-hero-red bg-bristol text-ink-black"
-                  : "border-ink-black/24 bg-pulp-paper hover:bg-bristol",
-              )}
-            >
-              <div className="font-meta text-[0.52rem] tracking-[0.18em] opacity-70">
-                PAGE {String(idx + 1).padStart(2, "0")}
-              </div>
-              <div className="mt-0.5 font-display text-[0.88rem] font-bold leading-tight tracking-[-0.02em]">
-                {panelCount} panel{panelCount !== 1 ? "s" : ""}
-              </div>
-              <div className="mt-0.5 font-meta text-[0.5rem] tracking-[0.12em] opacity-60">
-                {bubbleCount} bubble{bubbleCount !== 1 ? "s" : ""}
-              </div>
-            </button>
-          );
-        })}
+        <div className="flex gap-2 overflow-x-auto md:flex-col md:overflow-x-visible">
+          <button
+            onClick={() => setPageFilter("all")}
+            className={cn(
+              "w-32 shrink-0 border p-2 text-left transition-colors md:w-full",
+              pageFilter === "all"
+                ? "border-hero-red bg-bristol text-ink-black"
+                : "border-ink-black/24 bg-pulp-paper hover:bg-bristol",
+            )}
+          >
+            <div className="font-meta text-[0.52rem] tracking-[0.18em] opacity-70">ALL PAGES</div>
+            <div className="mt-0.5 font-display text-[0.88rem] font-bold leading-tight tracking-[-0.02em]">
+              {pages.length} page{pages.length !== 1 ? "s" : ""}
+            </div>
+          </button>
+          {pages.map((page, idx) => {
+            const bubbleCount = page?.panels.flatMap((p) => p.bubbles).length ?? 0;
+            const panelCount = page?.panels.length ?? 0;
+            return (
+              <button
+                key={idx}
+                onClick={() => { setPageFilter(idx); onPageSelect(idx); }}
+                className={cn(
+                  "w-32 shrink-0 border p-2 text-left transition-colors md:w-full",
+                  pageFilter === idx
+                    ? "border-hero-red bg-bristol text-ink-black"
+                    : "border-ink-black/24 bg-pulp-paper hover:bg-bristol",
+                )}
+              >
+                <div className="font-meta text-[0.52rem] tracking-[0.18em] opacity-70">
+                  PAGE {String(idx + 1).padStart(2, "0")}
+                </div>
+                <div className="mt-0.5 font-display text-[0.88rem] font-bold leading-tight tracking-[-0.02em]">
+                  {panelCount} panel{panelCount !== 1 ? "s" : ""}
+                </div>
+                <div className="mt-0.5 font-meta text-[0.5rem] tracking-[0.12em] opacity-60">
+                  {bubbleCount} bubble{bubbleCount !== 1 ? "s" : ""}
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </aside>
 
       {/* Center — bubble list */}
@@ -161,15 +163,15 @@ export function ScriptMode({
           const showFilters = activeTypeFilters.length > 1;
           return (
             <div className="sticky top-0 z-10 border-b-[2px] border-ink-black bg-pulp-paper">
-              <div className="flex items-center justify-between gap-1.5 px-4 py-2">
+              <div className="flex flex-wrap items-center justify-between gap-1.5 px-4 py-2">
                 <button
                   onClick={() => setFindReplaceOpen((o) => !o)}
-                  className="flex items-center gap-2 border border-ink-black/30 bg-bristol px-2.5 py-1 font-meta text-[0.52rem] tracking-[0.1em] transition-colors hover:bg-surface-container"
+                  className="flex shrink-0 items-center gap-2 border border-ink-black/30 bg-bristol px-2.5 py-1 font-meta text-[0.52rem] tracking-[0.1em] whitespace-nowrap transition-colors hover:bg-surface-container"
                 >
                   Find &amp; replace
                   <kbd className="font-meta text-[0.46rem] text-ink-black/50">⌘F</kbd>
                 </button>
-                <div className="flex items-center gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
                   {showFilters && [{ id: "all" as FilterType, label: "All" }, ...activeTypeFilters].map((f) => (
                     <button
                       key={f.id}

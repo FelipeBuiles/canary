@@ -5,6 +5,7 @@ import { useCreditBalance, useCreditHistory, useCreditPackages, useCreateCheckou
 import type { CreditPackage, CreditTransaction } from "../types/api";
 import { cn } from "../lib/cn";
 import { Icon } from "../components/ui/Icon";
+import { Select } from "../components/ui/Select";
 import { stageLabel } from "../lib/stageLabels";
 
 interface LedgerGroup {
@@ -435,18 +436,16 @@ export function CreditsPage() {
             History
           </div>
           {filterProjectIds.length > 0 && (
-            <select
+            <Select
+              aria-label="Filter history by project"
+              size="sm"
               value={projectFilter ?? ""}
-              onChange={(e) => setProjectFilter(e.target.value || null)}
-              className="border border-ink-black/20 bg-bristol px-3 py-1.5 font-meta text-[0.6rem] tracking-[0.12em] text-ink-black/70 focus:outline-none"
-            >
-              <option value="">ALL PROJECTS</option>
-              {filterProjectIds.map((id) => (
-                <option key={id} value={id}>
-                  {projectNameMap.get(id) ?? id.slice(0, 8)}
-                </option>
-              ))}
-            </select>
+              onValueChange={(value) => setProjectFilter(value || null)}
+              options={[
+                { value: "", label: "ALL PROJECTS" },
+                ...filterProjectIds.map((id) => ({ value: id, label: projectNameMap.get(id) ?? id.slice(0, 8) })),
+              ]}
+            />
           )}
         </div>
         {historyLoading ? (

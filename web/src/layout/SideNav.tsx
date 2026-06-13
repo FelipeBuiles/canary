@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Select } from "../components/ui/Select";
 import { useProjectStatus, useProjects } from "../api/queries";
 import { InspectDrawer } from "../components/InspectDrawer";
 import { useI18n } from "../i18n";
@@ -122,7 +123,8 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     );
   }
 
-  const mobileNav = (
+  // Only meaningful inside a project — non-project pages keep just the brand bar.
+  const mobileNav = projectId == null ? null : (
     <header className="flex shrink-0 items-center gap-2 border-b-[2px] border-ink-black bg-ink-black px-3 py-2 text-bristol md:hidden">
       <Link to="/" className="flex min-w-0 flex-1 items-center gap-2">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center bg-pulp-paper font-display text-[0.72rem] font-black text-ink-black">
@@ -138,18 +140,24 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
         </span>
       </Link>
       {projectId && (
-        <select
+        <Select
           aria-label={t("STATION")}
-          value={activeStation?.primaryRoute ?? STATIONS[0].primaryRoute}
-          onChange={(event) => goTo(event.target.value)}
-          className="max-w-[9.5rem] border border-bristol/20 bg-ink-black px-2 py-2 font-meta text-[0.56rem] tracking-[0.12em] text-bristol"
-        >
-          {STATIONS.map((station) => (
-            <option key={station.key} value={station.primaryRoute}>
-              {station.number} {t(station.label)}
-            </option>
-          ))}
-        </select>
+          tone="dark"
+          size="sm"
+          value={isSettingsActive ? "settings" : (activeStation?.primaryRoute ?? STATIONS[0].primaryRoute)}
+          onValueChange={goTo}
+          options={[
+            ...STATIONS.map((station) => ({
+              value: station.primaryRoute,
+              label: `${station.number} ${t(station.label)}`,
+            })),
+            // Settings isn't a station, but the mobile nav has no other way to
+            // reach it — surface it here so the selector also never falsely
+            // highlights a station while the user is on Settings.
+            { value: "settings", label: `⚙ ${t("Settings")}` },
+          ]}
+          className="max-w-[9.5rem]"
+        />
       )}
     </header>
   );
@@ -169,7 +177,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
             {projectTitle.charAt(0)}
           </span>
           <span className="min-w-0">
-            <span className="block truncate font-display text-[0.98rem] font-black uppercase leading-none tracking-[-0.02em] 2xl:text-[1.12rem]">
+            <span className="line-clamp-2 font-display text-[0.92rem] font-black uppercase leading-[1.08] tracking-[-0.02em] 2xl:text-[1.05rem]" title={projectTitle}>
               {projectTitle}
             </span>
             <span className="mt-1.5 block font-meta text-[0.56rem] tracking-[0.16em] text-bristol/38 2xl:text-[0.64rem]">

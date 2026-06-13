@@ -1,6 +1,7 @@
 import { Outlet, useLocation } from "react-router-dom";
 import { SideNav } from "./SideNav";
 import { AppTopBar } from "./AppTopBar";
+import { TopBarSlotProvider, BottomBarHost } from "./TopBarSlot";
 import { FloatingIndicator } from "../components/ui/FloatingIndicator";
 import { InsufficientCreditsDialog } from "../components/InsufficientCreditsDialog";
 import { cn } from "../lib/cn";
@@ -17,28 +18,32 @@ export function Shell() {
   const { t } = useI18n();
 
   return (
-    <div className="flex h-screen flex-col bg-pulp-paper">
-      <a
-        href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:bg-hero-red focus:px-4 focus:py-2 focus:text-bristol focus:font-meta focus:text-[0.6rem] focus:tracking-[0.18em] focus:outline-none"
-      >
-        {t("SKIP TO CONTENT")}
-      </a>
-      <AppTopBar />
-      <div className="flex flex-1 flex-col overflow-hidden md:flex-row">
+    <TopBarSlotProvider>
+      <div className="flex h-screen flex-col bg-pulp-paper md:flex-row">
+        <a
+          href="#main-content"
+          className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:bg-hero-red focus:px-4 focus:py-2 focus:text-bristol focus:font-meta focus:text-[0.6rem] focus:tracking-[0.18em] focus:outline-none"
+        >
+          {t("SKIP TO CONTENT")}
+        </a>
         <SideNav showDesktop={showDesktopProjectNav} />
-        <main id="main-content" className="min-w-0 flex-1 overflow-y-auto bg-pulp-paper">
-          <div className={cn(
-            "flex w-full flex-col px-5 py-6 md:px-10 md:py-10",
-            isFullHeight ? "h-full" : "min-h-full",
-            !isCompose && !isLibrary && "mx-auto max-w-[1560px]"
-          )}>
-            <Outlet />
-          </div>
-        </main>
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <AppTopBar />
+          <main id="main-content" className="min-w-0 flex-1 overflow-y-auto bg-pulp-paper">
+            <div className={cn(
+              "flex w-full flex-col",
+              !isCompose && "px-5 py-6 md:px-10 md:py-10",
+              isFullHeight || isCompose ? "h-full" : "min-h-full",
+              !isCompose && !isLibrary && "mx-auto max-w-[1560px]"
+            )}>
+              <Outlet />
+            </div>
+          </main>
+          <BottomBarHost />
+        </div>
+        <FloatingIndicator />
+        <InsufficientCreditsDialog />
       </div>
-      <FloatingIndicator />
-      <InsufficientCreditsDialog />
-    </div>
+    </TopBarSlotProvider>
   );
 }
