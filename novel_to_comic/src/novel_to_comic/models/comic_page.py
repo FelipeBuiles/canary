@@ -316,10 +316,8 @@ class ComicPage(BaseModel):
 
     page_number: int
     source_page_id: str | None = None
-    theme: str = "default"
     layout: str = "4"                           # "1"–"6" or "many"
     layout_mode: Literal["grid", "freeform"] = "grid"
-    style_vars: dict[str, str] = Field(default_factory=dict)
     panels: list[PagePanel] = Field(default_factory=list)
 
 

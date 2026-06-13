@@ -33,8 +33,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Callable
 
-from novel_to_comic.config import Config
 from novel_to_comic.models.comic_page import Bubble, ComicPage, PagePanel, Sfx
+from novel_to_comic.models.lettering import LetteringStyle
 
 PAGE_W = 2480
 PAGE_H = 3508
@@ -47,26 +47,6 @@ _TOKENS: dict = json.loads((Path(__file__).parent / "theme_tokens.json").read_te
 _BASE_VARS: dict[str, str] = _TOKENS["base"]
 THEMES: dict[str, dict[str, str]] = _TOKENS["themes"]
 FONT_PAIRS: dict[str, dict[str, str]] = _TOKENS["font_pairs"]
-
-
-def detect_theme(style_template: str) -> str:
-    low = style_template.lower()
-    if any(w in low for w in ("noir", "black and white", "monochrome", "grayscale", "shadowy")):
-        return "noir"
-    if any(w in low for w in ("manga", "anime", "shonen", "shojo", "japanese")):
-        return "manga"
-    if any(w in low for w in ("vintage", "golden age", "retro", "silver age")):
-        return "vintage"
-    if any(w in low for w in ("watercolor", "painted", "painterly", "gouache")):
-        return "painted"
-    return "default"
-
-
-def resolve_theme(config: Config) -> str:
-    raw = getattr(config, "comic_theme", "auto") or "auto"
-    if raw == "auto":
-        return detect_theme(config.style_template)
-    return raw if raw in THEMES else "default"
 
 
 def _vars_css(theme_name: str, overrides: dict[str, str] | None = None) -> str:
@@ -184,7 +164,7 @@ body {
   border-radius: 2px;
   color: var(--caption-color);
   padding: 8px 14px;
-  font-family: 'ComicNeue', 'Comic Neue', 'Comic Sans MS', cursive, sans-serif;
+  font-family: var(--letter-font, 'Comic Neue', 'Comic Sans MS', cursive, sans-serif);
   font-size: var(--caption-font-size);
   font-weight: bold;
   line-height: 1.35;
@@ -228,7 +208,7 @@ body {
   border: var(--bubble-border-width) solid var(--bubble-border);
   border-radius: var(--bubble-radius);
   padding: var(--bubble-padding);
-  font-family: 'ComicNeue', 'Comic Neue', 'Comic Sans MS', cursive, sans-serif;
+  font-family: var(--letter-font, 'Comic Neue', 'Comic Sans MS', cursive, sans-serif);
   font-size: var(--bubble-font-size);
   font-weight: bold;
   line-height: 1.35;
@@ -305,7 +285,7 @@ body {
 /* Speaker label */
 .speaker {
   display: block;
-  font-family: 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif;
+  font-family: var(--display-font, 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif);
   font-size: var(--speaker-font-size);
   color: var(--speaker-color);
   margin-bottom: 2px;
@@ -343,7 +323,7 @@ body {
 /* ── SFX ── */
 .sfx {
   position: absolute;
-  font-family: 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif;
+  font-family: var(--display-font, 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif);
   font-size: var(--sfx-font-size);
   color: var(--sfx-color);
   text-shadow:
@@ -404,7 +384,7 @@ body {
   bottom: 10px;
   left: 0; right: 0;
   text-align: center;
-  font-family: 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif;
+  font-family: var(--display-font, 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif);
   font-size: var(--page-num-font-size);
   color: var(--page-num-color);
   letter-spacing: 0.08em;
@@ -731,6 +711,7 @@ def _panel_html(
     project_dir: Path,
     image_url_fn: Callable[[str], str] | None = None,
     character_voices: dict[str, dict] | None = None,
+    lettering: LetteringStyle | None = None,
 ) -> str:
     """Render one PagePanel to an HTML element string.
 
@@ -845,6 +826,7 @@ def build_page_html(
     image_url_fn: Callable[[str], str] | None = None,
     font_url_fn: Callable[[str], str] | None = None,
     character_voices: dict[str, dict] | None = None,
+    lettering: LetteringStyle | None = None,
 ) -> str:
     """Return a complete, self-contained HTML document for one comic page.
 
@@ -876,9 +858,21 @@ def build_page_html(
         _font_face("Bangers",    "Bangers-Regular.ttf",         url_fn=font_url_fn),
         _font_face("ComicNeue",  "ComicNeue-Bold.ttf", "bold",  url_fn=font_url_fn),
         _font_face("Comic Neue", "ComicNeue-Bold.ttf", "bold",  url_fn=font_url_fn),
+        _font_face("Bungee",        "Bungee-Regular.ttf",       "100 900", url_fn=font_url_fn),
+        _font_face("M PLUS 1p",     "MPLUS1p-Bold.ttf",         "100 900", url_fn=font_url_fn),
+        _font_face("Creepster",     "Creepster-Regular.ttf",    "100 900", url_fn=font_url_fn),
+        _font_face("Special Elite", "SpecialElite-Regular.ttf", "100 900", url_fn=font_url_fn),
+        _font_face("Shrikhand",     "Shrikhand-Regular.ttf",    "100 900", url_fn=font_url_fn),
+        _font_face("EB Garamond",   "EBGaramond-SemiBold.ttf",  "100 900", url_fn=font_url_fn),
+        _font_face("Baloo 2",       "Baloo2-SemiBold.ttf",      "100 900", url_fn=font_url_fn),
+        _font_face("Fredoka",       "Fredoka-SemiBold.ttf",     "100 900", url_fn=font_url_fn),
+        _font_face("Orbitron",      "Orbitron-Bold.ttf",        "100 900", url_fn=font_url_fn),
+        _font_face("Exo 2",         "Exo2-SemiBold.ttf",        "100 900", url_fn=font_url_fn),
     ]))
 
-    vars_css   = _vars_css(comic_page.theme, comic_page.style_vars)
+    ls = lettering or LetteringStyle()
+    merged_vars = {**FONT_PAIRS.get(ls.font_pair, {}), **ls.vars}
+    vars_css   = _vars_css(ls.theme, merged_vars)
     static_css = _STATIC_CSS.replace("{PAGE_W}", str(PAGE_W)).replace("{PAGE_H}", str(PAGE_H))
     user_block = f"\n/* ── theme.css ── */\n{custom_css}" if custom_css.strip() else ""
 
@@ -887,7 +881,7 @@ def build_page_html(
 <head>
 <meta charset="utf-8">
 <meta name="page-number"  content="{comic_page.page_number}">
-<meta name="page-theme"   content="{_e(comic_page.theme)}">
+<meta name="page-theme"   content="{_e(ls.theme)}">
 <meta name="page-layout"  content="{_e(comic_page.layout)}">
 <style>
 {font_css}

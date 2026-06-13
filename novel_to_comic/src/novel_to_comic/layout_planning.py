@@ -484,12 +484,10 @@ def _panel_style_key(panel: PagePanel) -> str:
 def project_layout_plan_to_pages(
     project_dir: Path,
     story_bible: StoryBible,
-    theme_name: str,
     existing_pages: list[ComicPage] | None = None,
 ) -> list[ComicPage]:
     plan = load_layout_plan(project_dir)
     panel_lookup = planned_panel_index(plan)
-    existing_by_page = {_page_style_key(page): page for page in existing_pages or []}
     existing_panels: dict[str, PagePanel] = {}
     for page in existing_pages or []:
         for panel in page.panels:
@@ -499,10 +497,6 @@ def project_layout_plan_to_pages(
     pages: list[ComicPage] = []
 
     for planned_page in plan.planned_pages:
-        previous_page = existing_by_page.get(planned_page.page_id)
-        page_theme = previous_page.theme if previous_page else theme_name
-        page_style_vars = previous_page.style_vars if previous_page else {}
-
         page_panels: list[PagePanel] = []
         for index, geometry in enumerate(planned_page.panel_geometries):
             planned_panel = panel_lookup.get(geometry.panel_id)
@@ -579,10 +573,8 @@ def project_layout_plan_to_pages(
             ComicPage(
                 page_number=planned_page.page_number,
                 source_page_id=planned_page.page_id,
-                theme=page_theme,
                 layout=str(len(page_panels)) if len(page_panels) <= 6 else "many",
                 layout_mode="freeform",
-                style_vars=page_style_vars,
                 panels=page_panels,
             )
         )
@@ -795,14 +787,13 @@ def structural_summary(plan: LayoutPlan) -> dict[str, object]:
 def persist_projected_pages(
     project_dir: Path,
     story_bible: StoryBible,
-    theme_name: str,
 ) -> list[ComicPage]:
     existing = []
     try:
         existing = artifacts.list_compose_pages(project_dir)
     except Exception:
         pass
-    pages = project_layout_plan_to_pages(project_dir, story_bible, theme_name, existing_pages=existing)
+    pages = project_layout_plan_to_pages(project_dir, story_bible, existing_pages=existing)
     write_projected_pages(project_dir, pages)
     return pages
 

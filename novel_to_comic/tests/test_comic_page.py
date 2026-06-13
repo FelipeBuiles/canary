@@ -229,15 +229,10 @@ class TestPagePanel:
 
 
 class TestComicPageDefaults:
-    def test_theme_default(self):
+    def test_layout_defaults(self):
         page = ComicPage(page_number=1)
-        assert page.theme == "default"
         assert page.layout == "4"
         assert page.layout_mode == "grid"
-
-    def test_style_vars_default_empty(self):
-        page = ComicPage(page_number=1)
-        assert page.style_vars == {}
 
 
 class TestComicPageWithPanels:

@@ -257,12 +257,6 @@ class Config(BaseModel):
     max_concurrent_requests: int = 5
     cost_limit_usd: Optional[float] = None
 
-    # Assembly theme
-    # "auto" detects from style_template keywords (noir/manga/vintage/painted/default)
-    # Override: "default" | "noir" | "manga" | "vintage" | "painted"
-    # Fine-grained control: edit project_dir/assembly/theme.css after first run
-    comic_theme: str = "auto"
-
     def effective_image_model(self) -> str:
         # In dev_mode an explicit user override wins. Only fall back to
         # fallback_image_model when image_model is still at its default.
@@ -531,11 +525,4 @@ max_concurrent_requests: {config.max_concurrent_requests}
 cost_limit_usd: {cost_limit}
 
 # ---------------------------------------------------------------------------
-# Assembly theme (stage 7)
-# ---------------------------------------------------------------------------
-# "auto" = detected from style_template keywords (noir/manga/vintage/painted/default)
-# Set explicitly to override: default | noir | manga | vintage | painted
-# For fine-grained control, edit assembly/theme.css after the first run.
-# HTML previews are written to assembly/html/ — open in any browser to iterate.
-comic_theme: "{config.comic_theme}"
 """)
