@@ -172,7 +172,7 @@ body {
   line-height: 1.35;
   max-width: 86%;
   box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.24);
-  word-break: break-word;
+  overflow-wrap: break-word;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -216,7 +216,7 @@ body {
   line-height: 1.35;
   max-width: var(--bubble-max-width);
   align-self: flex-start;
-  word-break: break-word;
+  overflow-wrap: break-word;
   user-select: none;
   -webkit-user-select: none;
 }
