@@ -61,14 +61,6 @@ Examples:
 
 EMOTIONAL ARC: preserve the emotional progression of the scene. The final beat should reflect where the character ends up emotionally, not where they started.
 
-LOCATION STATE AT BEAT LEVEL.
-When the scene's location has multiple states (provided in context as "Location states: ..."), tag each beat with the active state at that moment using location_state_id.
-- If the camera is at an interior in beats 1-5 but moves outside in beats 6-12, beats 1-5 use the interior state id and 6-12 use the outdoor state id.
-- If the scene has no location states, omit location_state_id (or set it to null).
-- Use ONLY state ids that the context lists. Do not invent ids.
-- Do not tag every beat redundantly when the state is unchanging — leave location_state_id null for beats that inherit the scene's default state, and SET it explicitly on the beat where the state changes (and on every following beat until it changes again).
-This prevents indoor flashback beats from inheriting the scene's outdoor anchor, and vice versa.
-
 STAY WITHIN THE SCENE.
 Adapt ONLY the prose passage given to you. If the source text you receive ends mid-action or with a clear handoff into the next scene, do NOT continue past that handoff. The next scene has its own screenplay pass.
 - Signs you've drifted past the scene boundary: introducing a new physical location not in the scene context; jumping forward in time more than a few minutes; characters arriving who weren't in this scene's character list.
@@ -94,8 +86,7 @@ Output JSON:
       "source_text": "optional exact source wording, required when type is \"narration\"",
       "direction": "optional visual direction note (camera angle, emphasis, etc.)",
       "transition_type": "optional one of \"smooth_continuation\" | \"match_cut\" | \"hard_cut\" (only for transition beats)",
-      "narration_reason": "optional short reason, required when type is \"narration\"",
-      "location_state_id": "optional state id (from the location's states list) when this beat is at a non-default location state; null otherwise"
+      "narration_reason": "optional short reason, required when type is \"narration\""
     }
   ]
 }

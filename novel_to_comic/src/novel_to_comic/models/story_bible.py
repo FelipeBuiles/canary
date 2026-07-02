@@ -5,6 +5,8 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, field_validator
 
+from novel_to_comic.models.appearance import AppearanceState, StateActivation
+
 
 class CharacterRelationship(BaseModel):
     character_id: str
@@ -21,6 +23,13 @@ class Character(BaseModel):
     default_outfit: str
     relationships: list[CharacterRelationship] = []
     first_appearance_scene: str  # "scene_001"
+    appearance_states: list[AppearanceState] = []
+    # Alternate looks this character takes on mid-story (e.g. stumps, silver
+    # hands, restored). Each anchor is self-contained. Empty = one stable look.
+    appearance_timeline: list[StateActivation] = []
+    # Ordered transitions into the states above. The look before the first
+    # activation at-or-before a panel is the base visual_anchor. Resolved per
+    # panel by novel_to_comic.appearance.active_state — never by text matching.
 
     @field_validator("distinguishing_features", mode="before")
     @classmethod
@@ -31,31 +40,20 @@ class Character(BaseModel):
         return v
 
 
-class LocationState(BaseModel):
-    """A specific physical state of a location.
-
-    When a single physical place (e.g. "Seattle Street") undergoes a
-    transformation mid-story (pre-collapse vs post-collapse rubble), each
-    state is captured here. Each state carries its OWN clean visual_anchor
-    — never combine pre/post details in one anchor, as that pollutes every
-    panel that references the location.
-    """
-    id: str  # "loc_001_pre" — must extend the parent location id
-    name: str  # short label, e.g. "Pre-collapse" or "Apartment intact"
-    visual_anchor: str  # tags for THIS state only, no mixing across states
-    description: Optional[str] = None  # optional one-line "when this applies"
-
-
 class Location(BaseModel):
     id: str  # "loc_001"
     name: str  # "The Bunker"
-    visual_anchor: str  # Default state tags. Used when no state_id resolves.
+    visual_anchor: str  # Base-state tags. Used when no activation resolves.
     time_of_day: Optional[str] = None  # "night", "dawn", etc.
     mood: str  # "tense", "warm", "desolate"
-    states: list[LocationState] = []
-    # When the location's physical appearance changes meaningfully across
-    # scenes/panels (collapsed, burned, day → night), each variant lives here.
-    # An empty list means the location has one stable appearance.
+    appearance_states: list[AppearanceState] = []
+    # Alternate physical states this place takes on mid-story (pre/post
+    # collapse, dried moat, interior). Each anchor is self-contained — never
+    # mix pre/post in one. Empty = one stable look. State ids must extend the
+    # parent location id (e.g. "loc_001_pre") so generated plates never collide.
+    appearance_timeline: list[StateActivation] = []
+    # Ordered transitions into the states above, resolved per panel by
+    # novel_to_comic.appearance.active_state — the same mechanism as characters.
 
 
 class TransientObject(BaseModel):
@@ -83,13 +81,9 @@ class Scene(BaseModel):
     scene_type: str  # "action", "dialogue", "emotional", "transition"
     narrative_beat: str  # "inciting_incident", "climax", "resolution", etc.
     source_start_quote: str  # verbatim first ~60 chars of this scene in the novel text
-    character_appearances: dict[str, str] = {}
-    # Maps character_id → appearance notes when DIFFERENT from their default.
-    # e.g. {"char_001": "barefoot, shivering, blue lips, thin torn shirt"}
-    # Only populated when a character's appearance in this scene differs from default.
-    location_state_id: Optional[str] = None
-    # When the location has multiple states, which one is active at scene start.
-    # If None, the location's default visual_anchor applies.
+    # Per-character and per-location appearance change is modeled on the entity
+    # itself (appearance_states + appearance_timeline), resolved per panel by
+    # novel_to_comic.appearance — not as per-scene override fields.
     transient_objects: list[TransientObject] = []
     # Story-critical visual elements scoped to this scene only.
 

@@ -485,6 +485,7 @@ export function DrawRoom() {
   // Pre-generation: a short explainer and one way forward.
   const nothingGeneratedYet =
     (!images?.length && regeningKeys.length === 0) || !id;
+  const upstreamReady = status?.stages?.direct?.status === "complete";
   if (nothingGeneratedYet) {
     return (
       <RoomShell>
@@ -494,7 +495,7 @@ export function DrawRoom() {
           itemsDone={generateStage?.items_done}
           itemsTotal={generateStage?.items_total}
         />
-        {id && !isDrawRunning && (
+        {id && !isDrawRunning && upstreamReady && (
           <ApprovalBar
             next="PULP draws every planned panel in your selected style"
             estimateCredits={drawEstimate?.estimate_credits}
@@ -502,6 +503,14 @@ export function DrawRoom() {
             onPrimary={() => setConfirmAction("draw_all")}
             primaryDisabled={isPipelineRunning}
             busy={isPipelineRunning}
+          />
+        )}
+        {id && !isDrawRunning && !upstreamReady && (
+          <ApprovalBar
+            next="Waiting for shot plan and prompts — open SHOT PLAN above to retry"
+            primaryLabel="▶ DRAW ALL PANELS"
+            onPrimary={() => {}}
+            primaryDisabled
           />
         )}
         {id && (

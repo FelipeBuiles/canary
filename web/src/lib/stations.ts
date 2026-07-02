@@ -90,6 +90,7 @@ function stageStatusOf(status: ProjectStatus | undefined, stage: StageName): Sta
 function stageFailed(status: ProjectStatus | undefined, stage: StageName): boolean {
   const info = status?.stages[stage];
   if (!info) return false;
+  if (info.approved) return false; // user signed off — partial failures no longer block
   return info.status === "failed" || (info.status === "complete" && (info.items_failed?.length ?? 0) > 0);
 }
 
@@ -120,6 +121,21 @@ export function getSubstepState(substep: StationSubstep, status: ProjectStatus |
 
 export function stationForRoute(route: string): Station | undefined {
   return STATIONS.find((station) => station.routes.includes(route));
+}
+
+/**
+ * The backend stage a drawer's "Rerun from here" action targets: the first
+ * backend stage of the auto substep that owns the drawer. Rerunning it clears
+ * and regenerates that substep plus everything downstream (see RERUN_IMPACT /
+ * clean_cascade), which is how the four-station UI re-exposes "re-run from a
+ * determinate stage" for the auto chain.
+ */
+export function rerunStageForDrawer(kind: DrawerKind): StageName {
+  for (const station of STATIONS) {
+    const substep = station.substeps.find((s) => s.drawer === kind);
+    if (substep) return substep.backendStages[0];
+  }
+  throw new Error(`No substep owns drawer kind: ${kind}`);
 }
 
 /**

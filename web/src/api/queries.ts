@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listProjects, getProjectStatus, createProject, deleteProject, generateProjectCover, listShortStories, importStory } from "./projects";
-import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate } from "./pipeline";
+import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenStateRef, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate, getCharacterRefVersions, restoreCharacterRefVersion } from "./pipeline";
 import type { ConfigOverrides, StoryBible, ProjectStatus, StageInfo, ImageStatus } from "../types/api";
 import { reconcileStatusPoll } from "../lib/stageProgress";
 import { getBalance, getCreditHistory, getPricingReference } from "./credits";
@@ -164,6 +164,7 @@ function markStageRunningInCache(
     items_done: existing?.items_done ?? 0,
     items_total: existing?.items_total ?? 0,
     items_failed: existing?.items_failed ?? [],
+    approved: existing?.approved ?? null,
     cost_credits: existing?.cost_credits ?? 0,
     estimated_cost_credits: existing?.estimated_cost_credits ?? 0,
     error: null,
@@ -352,6 +353,13 @@ export function useRegenRef() {
   return useMutation({
     mutationFn: ({ project, charId }: { project: string; charId: string }) =>
       regenRef(project, charId),
+  });
+}
+
+export function useRegenStateRef() {
+  return useMutation({
+    mutationFn: ({ project, charId, stateId }: { project: string; charId: string; stateId: string }) =>
+      regenStateRef(project, charId, stateId),
   });
 }
 
@@ -584,6 +592,40 @@ export function useRestorePanelImageVersion() {
       qc.invalidateQueries({ queryKey: ["project", project, "draw"] });
       qc.invalidateQueries({ queryKey: ["project", project, "image-generation-meta", panelRelPath] });
       qc.invalidateQueries({ queryKey: ["project", project, "panel-image-versions", sceneId, panelNumber] });
+    },
+  });
+}
+
+export function useCharacterRefVersions(
+  project: string | undefined,
+  charId: string | undefined,
+  stateId: string | undefined,
+  refreshKey?: unknown,
+) {
+  return useQuery({
+    queryKey: ["project", project, "character-ref-versions", charId, stateId ?? null, refreshKey],
+    queryFn: () => getCharacterRefVersions(project!, charId!, stateId),
+    enabled: !!project && !!charId,
+    retry: false,
+  });
+}
+
+export function useRestoreCharacterRefVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      project,
+      charId,
+      version,
+      stateId,
+    }: {
+      project: string;
+      charId: string;
+      version: number;
+      stateId?: string;
+    }) => restoreCharacterRefVersion(project, charId, version, stateId),
+    onSuccess: (_data, { project, charId, stateId }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "character-ref-versions", charId, stateId ?? null] });
     },
   });
 }

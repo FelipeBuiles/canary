@@ -1,25 +1,3 @@
-# Delegation Rules — MANDATORY
-
-**STOP before every Read. Run `ask-ai` or `ai-write` instead unless the task requires editing/debugging.**
-
-| If you are about to... | You MUST... |
-|------------------------|-------------|
-| Read 1+ file >300 lines to answer a factual question | `ask-ai` — do NOT use Read |
-| Read 2+ files to summarize or understand something | `ask-ai` — do NOT use Read |
-| Grep across 5+ files for a bulk answer | `ask-ai` — do NOT use Bash grep |
-| Write boilerplate, test stubs, fixture files, or docs | `ai-write` — do NOT write it yourself |
-| Edit, debug, or reason across abstractions | Use Claude directly (Read is fine) |
-
-```bash
-# Tools are in PATH via ~/Code/delegate
-ask-ai "what does X do?" src/foo.py src/bar.py
-ai-write "pytest stubs for all public functions" --ref src/utils.py --out tests/test_utils.py --type test
-```
-
-**Never delegate:** editing code, debugging logic, security review, cross-abstraction reasoning.
-
----
-
 # Claude Code Compatibility
 
 Read `AGENTS.md` first. It is the canonical instruction file for this repo and

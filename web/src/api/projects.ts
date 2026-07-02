@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import type { GenerationJob, ProjectSummary, ProjectStatus, ConfigOverrides } from "../types/api";
+import type { GenerationJob, ProjectSummary, ProjectStatus, ConfigOverrides, ShortStory } from "../types/api";
 
 export function listProjects(): Promise<ProjectSummary[]> {
   return apiFetch<ProjectSummary[]>("/projects/");
@@ -41,8 +41,8 @@ export function generateProjectCover(
   });
 }
 
-export function listShortStories(): Promise<any[]> {
-  return apiFetch<any[]>("/projects/short-stories");
+export function listShortStories(): Promise<ShortStory[]> {
+  return apiFetch<ShortStory[]>("/projects/short-stories");
 }
 
 export function importStory(

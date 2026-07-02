@@ -144,6 +144,7 @@ def _stage_payload(
         "items_done": s.items_done,
         "items_total": s.items_total,
         "items_failed": s.items_failed,
+        "approved": s.approved,
         "cost_credits": provider_usd_to_credits(s.cost_usd),
         "estimated_cost_credits": provider_usd_to_credits(s.estimated_cost_usd),
         "error": error,

@@ -8,6 +8,7 @@ function stage(status: StageStatus): StageInfo {
     items_done: 0,
     items_total: 0,
     items_failed: [],
+    approved: null,
     cost_credits: 0,
     estimated_cost_credits: 0,
     error: null,

@@ -5,6 +5,7 @@ comic panel breakdown.
 """
 
 import asyncio
+import re
 from pathlib import Path
 
 from rich.console import Console
@@ -13,6 +14,7 @@ from novel_to_comic import artifacts
 from novel_to_comic.clients import text
 from novel_to_comic.config import Config
 from novel_to_comic.events import make_progress
+from novel_to_comic.models.appearance import StoryPosition
 from novel_to_comic.models.panel import Screenplay
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.stage_runtime import StageRuntime
@@ -55,17 +57,9 @@ def _build_user_content(scene_text: str, story_bible: StoryBible, scene_id: str)
     loc = next((loc for loc in story_bible.locations if loc.id == scene.location_id), None)
     loc_desc = f"Location: {loc.name} — {loc.visual_anchor}" if loc else ""
 
-    # Surface location states so the LLM can stamp each beat with the active state.
-    state_lines: list[str] = []
-    if loc and loc.states:
-        default_id = scene.location_state_id or (loc.states[0].id if loc.states else None)
-        state_lines.append("Location states (tag beats with these ids when the state changes):")
-        for state in loc.states:
-            marker = " [default]" if state.id == default_id else ""
-            description = f" — {state.description}" if state.description else ""
-            state_lines.append(
-                f"- {state.id}{marker}: {state.visual_anchor}{description}"
-            )
+    # Location/character appearance state is resolved per panel from each
+    # entity's appearance_timeline (novel_to_comic.appearance), not tagged onto
+    # screenplay beats — so the screenplay LLM no longer stamps state ids.
 
     # Boundary cue: tell the LLM where the NEXT scene begins so it stops in time.
     boundary_lines: list[str] = []
@@ -89,7 +83,6 @@ def _build_user_content(scene_text: str, story_bible: StoryBible, scene_id: str)
         f"SCENE: {scene.id} — {scene.title}",
         f"Type: {scene.scene_type} | Beat: {scene.narrative_beat}",
         loc_desc,
-        *state_lines,
         "",
         "CHARACTERS IN SCENE:",
         *char_info,
@@ -172,6 +165,70 @@ def _normalize_screenplay(screenplay: Screenplay, story_bible: StoryBible) -> Sc
     return screenplay.model_copy(update={"characters": visible_characters, "beats": beats})
 
 
+def _beat_present_ids(text: str, name_patterns: list[tuple[str, re.Pattern]]) -> list[str]:
+    """Cast ids whose name is named in ``text``, dropping subsumed matches.
+
+    Character names overlap ("The Miller" ⊂ "The Miller's Daughter", "The King"
+    ⊂ "The King's Mother"), so a naive search tags the shorter name inside the
+    longer one. We keep only matches not strictly contained in a longer match.
+    """
+    spans: list[tuple[int, int, str]] = []
+    for cid, pat in name_patterns:
+        for m in pat.finditer(text):
+            spans.append((m.start(), m.end(), cid))
+    present: list[str] = []
+    for i, (s, e, cid) in enumerate(spans):
+        subsumed = any(
+            j != i and os <= s and e <= oe and (oe - os) > (e - s)
+            for j, (os, oe, _) in enumerate(spans)
+        )
+        if not subsumed and cid not in present:
+            present.append(cid)
+    return present
+
+
+def _resolve_present_characters(screenplay: Screenplay, story_bible: StoryBible) -> Screenplay:
+    """Re-attach on-screen cast members the adapt model dropped.
+
+    The adapt LLM occasionally marks a physically-present, named character as an
+    "off-screen speaker" (and omits them from ``screenplay.characters``) — e.g.
+    The King in scene_004 of the-girl-without-hands. Downstream that strips his
+    reference image, so the draw stage redraws him from a hallucinated,
+    panel-to-panel-inconsistent description. We re-add any NON-off-screen cast
+    member named in an action/transition beat (physical staging establishes who
+    is in frame) and tag an otherwise-unattributed action beat that names
+    exactly one such character.
+    """
+    offscreen_ids = {c.id for c in story_bible.characters if _is_offscreen_character(c)}
+    cast = [
+        (c.id, c.name)
+        for c in story_bible.characters
+        if c.id not in offscreen_ids and c.name
+    ]
+    if not cast:
+        return screenplay
+    name_patterns = [(cid, re.compile(rf"\b{re.escape(name)}", re.IGNORECASE)) for cid, name in cast]
+
+    present_in_scene: list[str] = []
+    new_beats = []
+    for beat in screenplay.beats:
+        text = " ".join(p for p in (beat.content, beat.direction) if p)
+        present = _beat_present_ids(text, name_patterns)
+        if beat.type in ("action", "transition"):
+            for cid in present:
+                if cid not in present_in_scene:
+                    present_in_scene.append(cid)
+        if beat.type == "action" and beat.character_id is None and len(present) == 1:
+            beat = beat.model_copy(update={"character_id": present[0]})
+        new_beats.append(beat)
+
+    merged = list(screenplay.characters)
+    for cid in present_in_scene:
+        if cid not in merged:
+            merged.append(cid)
+    return screenplay.model_copy(update={"characters": merged, "beats": new_beats})
+
+
 def _transition_type_for_text(text: str) -> str:
     # Keyword table mirrors the examples in prompts/screenplay.txt: fades and
     # cuts are deliberate jumps (hard_cut); visual echoes are match cuts;
@@ -206,6 +263,112 @@ def _annotate_transition_beats(screenplay: Screenplay) -> Screenplay:
         else:
             beats.append(beat)
     return screenplay.model_copy(update={"beats": beats})
+
+
+_TRANSITION_STOPWORDS = {
+    "the", "her", "his", "their", "them", "and", "for", "with", "from", "into",
+    "under", "over", "that", "this", "they", "she", "him", "was", "were", "are",
+    "has", "had", "off", "out", "its", "not", "but", "all", "any", "who", "once",
+    "then", "she", "you", "your", "now",
+}
+
+
+def _keyword_tokens(text: str) -> set[str]:
+    return {
+        w
+        for w in re.findall(r"[a-z]+", (text or "").lower())
+        if len(w) >= 3 and w not in _TRANSITION_STOPWORDS
+    }
+
+
+def _find_transition_beat(activation, state, base_anchor: str, beats) -> int | None:
+    """1-indexed ordinal of the beat that DEPICTS an appearance transition.
+
+    Keywords come from the transition ``label`` plus the words the new state
+    adds over the base look — deliberately NOT ``transition.cause``, which names
+    recurring agents (e.g. "the Devil") that appear all over the scene and would
+    mis-pin the boundary. Among matching beats we prefer the LAST action/sfx
+    beat (the act itself — the axe falling — happens after the dialogue that
+    threatens it). Returns None when nothing matches, leaving the activation at
+    scene granularity (never worse than today).
+    """
+    transition = getattr(activation, "transition", None)
+    label = transition.label if transition else ""
+    keywords = _keyword_tokens(label)
+    if state is not None:
+        base_tokens = _keyword_tokens(base_anchor)
+        keywords |= {
+            t for t in _keyword_tokens(state.visual_anchor)
+            if t not in base_tokens and len(t) >= 4
+        }
+    if not keywords:
+        return None
+    patterns = [re.compile(rf"\b{re.escape(k)}\b", re.IGNORECASE) for k in keywords]
+
+    matches: list[int] = []
+    act_matches: list[int] = []
+    for i, beat in enumerate(beats):
+        text = " ".join(p for p in (beat.content, beat.direction) if p)
+        if any(p.search(text) for p in patterns):
+            matches.append(i + 1)
+            if beat.type in ("action", "sfx"):
+                act_matches.append(i + 1)
+    if act_matches:
+        return act_matches[-1]
+    if matches:
+        return matches[-1]
+    return None
+
+
+def _pin_appearance_transitions(project_dir: Path, story_bible: StoryBible) -> int:
+    """Pin within-scene appearance transitions to a beat, once screenplays exist.
+
+    Extraction authors appearance activations at scene granularity (``at.beat``
+    is null) because beats don't exist yet. The resolver is beat-capable, so a
+    scene-level ``at`` wrongly maps the WHOLE transition scene to the new look —
+    e.g. the girl shows stumps in scene_003's opening chalk-circle panel, before
+    her father severs her hands later in the same scene. We locate the depicting
+    beat and set ``at.beat`` to the FIRST beat the new look holds (the act is
+    shown in the beat just before), so pre-transformation panels resolve to the
+    prior look. Best-effort: unmatched activations stay scene-level. Idempotent
+    (only fills null beats). Single-writer — called after the parallel batch.
+    """
+    scene_ids = {s.id for s in story_bible.scenes}
+    screenplay_cache: dict[str, Screenplay | None] = {}
+
+    def beats_for(scene_id: str):
+        if scene_id not in screenplay_cache:
+            if scene_id in scene_ids and artifacts.screenplay_path(project_dir, scene_id).exists():
+                screenplay_cache[scene_id] = artifacts.read_screenplay(project_dir, scene_id)
+            else:
+                screenplay_cache[scene_id] = None
+        sp = screenplay_cache[scene_id]
+        return sp.beats if sp else []
+
+    changed = 0
+    for entity in [*story_bible.characters, *story_bible.locations]:
+        states = {s.id: s for s in entity.appearance_states}
+        for activation in entity.appearance_timeline:
+            if activation.at.beat is not None:
+                continue
+            beats = beats_for(activation.at.scene_id)
+            if not beats:
+                continue
+            k = _find_transition_beat(
+                activation, states.get(activation.state_id), entity.visual_anchor, beats
+            )
+            if k is None:
+                continue
+            activation.at.beat = k + 1 if k < len(beats) else k
+            if activation.transition is not None:
+                activation.transition.depicted_at = StoryPosition(
+                    scene_id=activation.at.scene_id, beat=k
+                )
+            changed += 1
+
+    if changed:
+        artifacts.write_story_bible(project_dir, story_bible)
+    return changed
 
 
 def _localized_system_prompt(config: Config, system_prompt: str) -> str:
@@ -248,6 +411,7 @@ async def _process_scene(
     screenplay, boundary_warning = _enforce_scene_boundary(screenplay, story_bible)
     if boundary_warning:
         console.print(f"[yellow]{boundary_warning}[/yellow]")
+    screenplay = _resolve_present_characters(screenplay, story_bible)
     artifacts.write_screenplay(project_dir, scene_id, screenplay)
     return ApiResult(value=screenplay, usage=api_result.usage)
 
@@ -308,6 +472,17 @@ async def run(
                 f"All {len(ctx.stage_state.items_failed)} scenes failed during adapt stage"
             )
 
+        # Now that beats exist, pin within-scene appearance transitions to the
+        # depicting beat so the resolver shows pre-transformation panels in the
+        # prior look (best-effort; single-writer, after the parallel batch).
+        try:
+            pinned = _pin_appearance_transitions(project_dir, story_bible)
+            if pinned:
+                console.print(f"[green]Pinned {pinned} within-scene appearance transition(s).[/green]")
+        except Exception as exc:  # noqa: BLE001 — enrichment must not fail the stage
+            console.print(f"[yellow]Appearance-transition pinning skipped: {exc}[/yellow]")
+            ctx.log(f"appearance pinning skipped: {exc}", level="warning")
+
         console.print("[green]Adapt stage complete.[/green]")
 
 
@@ -353,6 +528,6 @@ STAGE = Stage(
     name="adapt",
     run=run,
     outputs=lambda d: [d / "screenplays"],
-    clean_paths=lambda d: clean_cascade(d, "adapt"),
+    clean_paths=lambda d: clean_cascade(d, "screenplays"),
     estimate_cost=estimate_cost,
 )

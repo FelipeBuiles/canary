@@ -17,6 +17,7 @@ function emptyStage(): StageInfo {
     items_done: 0,
     items_total: 10,
     items_failed: [],
+    approved: null,
     cost_credits: 0,
     estimated_cost_credits: 0,
     error: null,

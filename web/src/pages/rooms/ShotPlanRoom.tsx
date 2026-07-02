@@ -922,7 +922,7 @@ export function ShotPlanRoom() {
     setSearchParams(next, { replace: true });
   }
 
-  if (loadingPlan || (!plan && subStatus.status !== "pending")) {
+  if (loadingPlan || (!plan && subStatus.status === "running")) {
     return (
       <RoomShell
         isLoading
@@ -944,6 +944,11 @@ export function ShotPlanRoom() {
           itemsDone={subStatus.itemsDone || undefined}
           itemsTotal={subStatus.itemsTotal || undefined}
         />
+        {id && subStatus.status === "failed" && (
+          <div className="mt-6 flex justify-center">
+            <ShotPlanActionButton project={id} />
+          </div>
+        )}
       </RoomShell>
     );
   }

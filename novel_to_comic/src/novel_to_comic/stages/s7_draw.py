@@ -376,6 +376,27 @@ def _exception_chain(exc: BaseException) -> list[BaseException]:
     return chain
 
 
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    """True when the failure is an upstream quota / rate-limit (HTTP 429).
+
+    These are transient and prompt-independent — gemini-3-pro-image preview has
+    tight quota — so they should be retried (``retry_failed``) once quota
+    resets, NOT diagnosed as a prompt problem.
+    """
+    tokens = ("429", "resource_exhausted", "rate limit", "ratelimit", "quota")
+    for node in _exception_chain(exc):
+        if isinstance(getattr(node, "response", None), object):
+            status = getattr(getattr(node, "response", None), "status_code", None)
+            if status == 429:
+                return True
+        text = " ".join(
+            [str(node), *(str(arg) for arg in getattr(node, "args", ()) if arg is not None)]
+        ).lower()
+        if any(token in text for token in tokens):
+            return True
+    return False
+
+
 def _is_provider_blocked_error(exc: BaseException) -> bool:
     tokens = (
         "image_prohibited",
@@ -606,6 +627,7 @@ async def _generate_panel(
         if output_path is not None and meta_payload is not None:
             try:
                 provider_blocked = _is_provider_blocked_error(exc)
+                rate_limited = not provider_blocked and _is_rate_limit_error(exc)
                 failure_payload = {
                     **meta_payload,
                     "kind": "panel_image_failure",
@@ -613,6 +635,8 @@ async def _generate_panel(
                     "classification": (
                         "provider_blocked"
                         if provider_blocked
+                        else "rate_limited"
+                        if rate_limited
                         else "shape_mismatch"
                         if isinstance(exc, AspectMismatchError)
                         else "generation_error"
@@ -622,6 +646,9 @@ async def _generate_panel(
                         "The image provider blocked this panel. Edit the prompt and use Quick Re-Do "
                         "to generate replacement art before composing."
                         if provider_blocked
+                        else "The image provider was rate-limited (quota exhausted). The prompt is fine — "
+                        "wait for quota to reset and use Retry Failed; no prompt edit is needed."
+                        if rate_limited
                         else "The image provider returned art with the wrong frame shape. Regenerate this panel before composing."
                         if isinstance(exc, AspectMismatchError)
                         else "Image generation failed. Review the model error, edit the prompt if needed, and use Quick Re-Do."

@@ -246,3 +246,113 @@ def restore_panel_version(
     restored_versions = list_panel_versions(project_dir, scene_id, panel_number)
     restored = next(candidate for candidate in restored_versions if candidate.get("version") == version)
     return {**restored, "restored_from_version": version}
+
+
+# ── Generic asset version history ────────────────────────────────────────────
+# Cast reference sheets (refs/<char>/sheet.png, refs/<char>/states/<id>/sheet.png)
+# are overwritten in place on regenerate, so prior re-rolls were lost. These
+# helpers archive any image asset by its own path — same manifest shape as draw
+# panels — so a regen keeps a comparable, restorable history.
+
+
+def asset_versions_dir(image_path: Path) -> Path:
+    return image_path.parent / "versions" / image_path.stem
+
+
+def record_asset_version(
+    image_path: Path,
+    project_dir: Path,
+    *,
+    reason: str,
+) -> dict[str, Any] | None:
+    """Archive the current asset image (+ its .meta.json) before it is
+    overwritten. No-op (returns None) when the asset does not exist yet."""
+    if not image_path.exists():
+        return None
+
+    versions_dir = asset_versions_dir(image_path)
+    manifest_path = versions_dir / "history.json"
+    manifest = _read_manifest(manifest_path)
+    entries: list[dict[str, Any]] = manifest["entries"]
+
+    fingerprint = _image_fingerprint(image_path)
+    for entry in entries:
+        if entry.get("fingerprint") == fingerprint:
+            return entry  # already archived (identical bytes)
+
+    version = _next_version_number(entries)
+    stem = f"v{version:03d}"
+    archived = versions_dir / f"{stem}{image_path.suffix}"
+    versions_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(image_path, archived)
+
+    meta_src = _meta_path(image_path)
+    archived_meta: Path | None = None
+    if meta_src.exists():
+        archived_meta = versions_dir / f"{stem}.meta.json"
+        shutil.copy2(meta_src, archived_meta)
+
+    entry: dict[str, Any] = {
+        "version": version,
+        "archived_at": datetime.now(UTC).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
+        "reason": reason,
+        "image_path": _relative_to_project(archived, project_dir),
+        "fingerprint": _image_fingerprint(archived),
+    }
+    dimensions = _image_dimensions(archived)
+    if dimensions:
+        entry.update(dimensions)
+    if archived_meta:
+        entry["meta_path"] = _relative_to_project(archived_meta, project_dir)
+
+    entries.append(entry)
+    manifest["entries"] = entries
+    _write_manifest(manifest_path, manifest)
+    return entry
+
+
+def list_asset_versions(image_path: Path, project_dir: Path) -> list[dict[str, Any]]:
+    """Archived versions of one asset, newest last; the live file is appended as
+    the current entry."""
+    manifest = _read_manifest(asset_versions_dir(image_path) / "history.json")
+    entries = [
+        entry
+        for entry in manifest["entries"]
+        if isinstance(entry.get("image_path"), str) and (project_dir / entry["image_path"]).exists()
+    ]
+    if image_path.exists():
+        live_fp = _image_fingerprint(image_path)
+        if not any(entry.get("fingerprint") == live_fp for entry in entries):
+            current: dict[str, Any] = {
+                "version": (entries[-1]["version"] + 1) if entries else 1,
+                "current": True,
+                "image_path": _relative_to_project(image_path, project_dir),
+                "fingerprint": live_fp,
+            }
+            dims = _image_dimensions(image_path)
+            if dims:
+                current.update(dims)
+            entries.append(current)
+    return entries
+
+
+def restore_asset_version(image_path: Path, project_dir: Path, version: int) -> Path:
+    """Copy an archived version back to the live asset path. The caller is
+    responsible for any derived artifacts (e.g. re-cropping a character sheet)."""
+    manifest = _read_manifest(asset_versions_dir(image_path) / "history.json")
+    entry = next(
+        (e for e in manifest["entries"] if e.get("version") == version),
+        None,
+    )
+    if not entry or not isinstance(entry.get("image_path"), str):
+        raise FileNotFoundError(f"Asset version not found: {image_path.name}/v{version:03d}")
+    # Archive the current bytes first so a restore is itself reversible.
+    record_asset_version(image_path, project_dir, reason="before_restore")
+    shutil.copy2(project_dir / entry["image_path"], image_path)
+    archived_meta = entry.get("meta_path")
+    live_meta = _meta_path(image_path)
+    live_meta.unlink(missing_ok=True)
+    if isinstance(archived_meta, str) and (project_dir / archived_meta).exists():
+        shutil.copy2(project_dir / archived_meta, live_meta)
+    return image_path

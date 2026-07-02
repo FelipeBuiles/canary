@@ -18,7 +18,9 @@ from novel_to_comic.clients import flux
 from novel_to_comic.config import Config
 from novel_to_comic.image_ref_strategy import RefStrategy
 from novel_to_comic.events import make_progress
+from novel_to_comic.models.appearance import AppearanceState
 from novel_to_comic.models.story_bible import Character, Prop, StoryBible
+from novel_to_comic.panel_versions import record_asset_version
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.text_utils import clean, shorten
 from novel_to_comic.usage import ApiResult
@@ -253,28 +255,59 @@ def _style_authority_block(asset_kind: str) -> str:
     )
 
 
+def _state_anatomy_directive(char_name: str, state: AppearanceState) -> str:
+    """Force a state sheet to depict the altered body consistently.
+
+    The 2x2 sheet renders the figure four times, so the changed body part (lost
+    hands, prosthetics) can come out inconsistent across quadrants — or the
+    hardcoded "one hand raised in gesture" pose reasserts a default hand the
+    state doesn't have. State-agnostic: it pins whatever the anchor describes,
+    sharpened by the authored continuity_guard when present.
+    """
+    lines = [
+        f"APPEARANCE STATE — this sheet depicts {char_name} in a specific altered state: {state.label}.",
+        "The altered body (hands, limbs, or other changed features) MUST look identical in all four "
+        "quadrants and match the description above exactly — never show a different version of it in "
+        "any quadrant, and never blend in the character's other appearance states.",
+    ]
+    guard = (state.continuity_guard or "").strip()
+    if guard:
+        lines.append(f"Continuity rule: {guard}.")
+    return " ".join(lines)
+
+
 def _character_ref_prompt(
     config: Config,
     story_bible: StoryBible,
     char: Character,
     addendum: str = "",
+    state: AppearanceState | None = None,
 ) -> str:
     # All four views in one image guarantees identical style, identical face,
     # identical rendering. Separate calls drift even with the same text prompt.
     identity_lock = _cast_identity_lock(char, story_bible)
     addendum_block = f"\nUSER FIX NOTE: {addendum.strip()}\n" if addendum.strip() else ""
+    # For an altered-anatomy state, a literal "one hand raised" pose forces a
+    # default hand the state may not have — keep the gesture pose neutral.
+    gesture_pose = (
+        "three-quarter, mid-gesture pose"
+        if state is not None
+        else "three-quarter with one hand raised in gesture"
+    )
+    state_block = f"\n{_state_anatomy_directive(char.name, state)}\n" if state is not None else ""
     return (
         f"{config.style_template}\n\n"
         f"{_style_authority_block('character reference sheet')}\n\n"
         f"CHARACTER REFERENCE SHEET - {char.name}, {char.gender}.\n"
         f"{identity_lock}\n"
         f"{char.visual_anchor}\n"
-        f"{addendum_block}\n"
+        f"{addendum_block}"
+        f"{state_block}\n"
         f"One square image divided into a 2x2 grid of four equal panels: "
         f"top-left: front-facing, arms at sides; "
         f"top-right: three-quarter turn, near shoulder forward; "
         f"bottom-left: side profile, only profile of face visible; "
-        f"bottom-right: three-quarter with one hand raised in gesture. "
+        f"bottom-right: {gesture_pose}. "
         f"All four figures are the SAME character - identical face, hair, build, and clothing. "
         f"Each figure is fully contained within its quadrant with white space around it - no figure touches or crosses the edge of the image. "
         f"Plain uncluttered reference background; a subtle style-colored studio wash or cast light is allowed, but no scenery. "
@@ -289,6 +322,7 @@ def _character_ref_clean_text_prompt(
     config: Config,
     char: Character,
     addendum: str = "",
+    state: AppearanceState | None = None,
 ) -> str:
     style = config.style_template.strip()
     name = char.name
@@ -307,13 +341,20 @@ def _character_ref_clean_text_prompt(
         parts.append(f"Default clothing: {outfit}")
     if addendum.strip():
         parts.append(f"USER FIX NOTE: {addendum.strip()}")
+    if state is not None:
+        parts.append(_state_anatomy_directive(name, state))
 
+    gesture_pose = (
+        "three-quarter view, mid-gesture pose"
+        if state is not None
+        else "three-quarter view with one hand raised in a gesture"
+    )
     grid_desc = (
         "One square image divided into a 2x2 grid of four equal panels showing the SAME character: "
         "top-left: front-facing view; "
         "top-right: three-quarter turn view; "
         "bottom-left: side profile view; "
-        "bottom-right: three-quarter view with one hand raised in a gesture. "
+        f"bottom-right: {gesture_pose}. "
         "Identical face, hair, build, and clothing in all panels. "
         "Plain neutral background. No text, no labels, no grid lines."
     )
@@ -327,10 +368,11 @@ def _character_sheet_prompt(
     story_bible: StoryBible,
     char: Character,
     addendum: str = "",
+    state: AppearanceState | None = None,
 ) -> str:
     if RefStrategy.for_config(config).use_clean_text_character_prompt():
-        return _character_ref_clean_text_prompt(config, char, addendum)
-    return _character_ref_prompt(config, story_bible, char, addendum)
+        return _character_ref_clean_text_prompt(config, char, addendum, state)
+    return _character_ref_prompt(config, story_bible, char, addendum, state)
 
 
 def _location_plate_prompt(config: Config, loc, addendum: str = "", anchor: str | None = None) -> str:
@@ -382,9 +424,24 @@ def _location_plate_jobs(loc) -> list[tuple[str, str, str | None]]:
     id, so plates/{stem}.png never collides.
     """
     jobs: list[tuple[str, str, str | None]] = [(loc.id, loc.visual_anchor, None)]
-    for state in loc.states or []:
+    for state in loc.appearance_states or []:
         jobs.append((state.id, state.visual_anchor, state.id))
     return jobs
+
+
+def _character_state_jobs(char: Character) -> list[tuple[str, str]]:
+    """(state_id, anchor) for each visually-significant appearance state.
+
+    A character whose body changes mid-story (stumps, silver hands, restored)
+    gets a dedicated reference sheet per flagged state so panels in that state
+    reference the changed body instead of the canonical one. Minor, text-only
+    appearance states are not flagged and produce no extra generation.
+    """
+    return [
+        (state.id, state.visual_anchor)
+        for state in char.appearance_states or []
+        if state.visually_significant
+    ]
 
 
 def _cast_semaphore(config: Config) -> asyncio.Semaphore:
@@ -463,6 +520,63 @@ async def regenerate_character_ref(
                 ref_type="style",
                 feature="cast.character_ref",
             )
+        record_asset_version(output_path, project_dir, reason="before_regenerate")
+        tmp_path.replace(output_path)
+        await asyncio.to_thread(_crop_sheet_to_poses, output_path)
+        artifacts.write_asset_meta(output_path, meta)
+        return ApiResult(value=output_path, usage=flux_result.usage)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
+async def regenerate_character_state_ref(
+    config: Config,
+    project_dir: Path,
+    char_id: str,
+    state_id: str,
+    semaphore: asyncio.Semaphore | None = None,
+) -> ApiResult[Path]:
+    """Regenerate one character appearance-state ref sheet (e.g. silver hands).
+
+    Mirrors regenerate_character_ref but renders from the state's self-contained
+    anchor into refs/<char>/states/<state_id>/. Used to retry a state that
+    failed during the cast batch, or to re-roll one on demand.
+    """
+    story_bible = artifacts.read_story_bible(project_dir)
+    char = next((c for c in story_bible.characters if c.id == char_id), None)
+    if char is None:
+        raise ValueError(f"Character not found: {char_id}")
+    state = next((s for s in char.appearance_states or [] if s.id == state_id), None)
+    if state is None:
+        raise ValueError(f"Appearance state not found: {char_id}/{state_id}")
+
+    state_char = char.model_copy(update={"visual_anchor": state.visual_anchor})
+    sem = semaphore or asyncio.Semaphore(1)
+    output_path = project_dir / "refs" / char.id / "states" / state.id / "sheet.png"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = output_path.with_name(
+        f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
+    )
+    style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
+    addendum = _read_character_ref_addendum(project_dir, char.id)
+    prompt = _character_sheet_prompt(config, story_bible, state_char, addendum, state)
+    meta = _character_ref_meta(config, project_dir, style_ref, state_char, prompt, addendum)
+    meta["appearance_state_id"] = state.id
+
+    try:
+        async with sem:
+            flux_result = await flux.generate_image(
+                config,
+                prompt,
+                tmp_path,
+                width=1024,
+                height=1024,
+                reference_image_path=style_ref,
+                ref_type="style",
+                feature="cast.character_state_ref",
+            )
+        record_asset_version(output_path, project_dir, reason="before_regenerate")
         tmp_path.replace(output_path)
         await asyncio.to_thread(_crop_sheet_to_poses, output_path)
         artifacts.write_asset_meta(output_path, meta)
@@ -528,7 +642,7 @@ async def regenerate_location_plate(
     anchor = loc.visual_anchor
     plate_stem = loc.id
     if state_id:
-        state = next((s for s in loc.states or [] if s.id == state_id), None)
+        state = next((s for s in loc.appearance_states or [] if s.id == state_id), None)
         if state is None:
             raise ValueError(f"Location state not found: {state_id}")
         anchor = state.visual_anchor
@@ -654,6 +768,76 @@ async def _generate_character_refs(
                 progress.advance(task)
 
         await asyncio.gather(*(_one_character(char) for char in chars_to_gen))
+
+
+async def _generate_character_state_refs(
+    config: Config, project_dir: Path, story_bible: StoryBible, ctx: StageRuntime,
+    char_ids: list[str] | None = None,
+) -> None:
+    """Generate a reference sheet per visually-significant appearance state.
+
+    Each flagged state (e.g. silver hands) is generated from the state's own
+    self-contained anchor, reusing the canonical character-sheet prompt so the
+    identity lock and 2x2 pose grid stay consistent. Output lives under
+    refs/<char>/states/<state_id>/ and is selected by prompting.py when that
+    state is active for a panel.
+    """
+    chars = [c for c in story_bible.characters if not char_ids or c.id in char_ids]
+    jobs = [(c, sid, anchor) for c in chars for sid, anchor in _character_state_jobs(c)]
+    if not jobs:
+        return
+
+    console.print("[bold]Generating character appearance-state refs...[/bold]")
+    ctx.log("Generating character appearance-state refs...")
+    style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
+    semaphore = _cast_semaphore(config)
+
+    with make_progress(ctx.on_event) as progress:
+        task = progress.add_task("State refs", total=len(jobs))
+
+        async def _one_state(char: Character, state_id: str, anchor: str) -> None:
+            state_char = char.model_copy(update={"visual_anchor": anchor})
+            state_obj = next((s for s in char.appearance_states or [] if s.id == state_id), None)
+            out_dir = project_dir / "refs" / char.id / "states" / state_id
+            out_dir.mkdir(parents=True, exist_ok=True)
+            output_path = out_dir / "sheet.png"
+            addendum = _read_character_ref_addendum(project_dir, char.id)
+            prompt = _character_sheet_prompt(config, story_bible, state_char, addendum, state_obj)
+            meta = _character_ref_meta(config, project_dir, style_ref, state_char, prompt, addendum)
+            meta["appearance_state_id"] = state_id
+
+            if artifacts.asset_matches_meta(output_path, meta):
+                if not (out_dir / "front.png").exists():
+                    try:
+                        await asyncio.to_thread(_crop_sheet_to_poses, output_path)
+                    except Exception:
+                        pass
+                ctx.record_item_done(cost=0.0)
+                ctx.log(f"Using existing {state_id} ref for {char.name}", level="dim")
+            else:
+                try:
+                    ctx.log(f"Generating {state_id} ref for {char.name}")
+                    async with semaphore:
+                        flux_result = await flux.generate_image(
+                            config, prompt, output_path,
+                            width=1024, height=1024,
+                            reference_image_path=style_ref,
+                            ref_type="style",
+                            feature="cast.character_state_ref",
+                        )
+                    await asyncio.to_thread(_crop_sheet_to_poses, output_path)
+                    artifacts.write_asset_meta(output_path, meta)
+                    ctx.record_item_done(usage=flux_result.usage)
+                except Exception as e:
+                    cause = e.last_attempt.exception() if hasattr(e, "last_attempt") else e
+                    console.print(f"[red]Failed {state_id} ref for {char.name}: {cause}[/red]")
+                    ctx.record_item_failed(f"{char.id}:{state_id}")
+                    ctx.log(f"Failed {state_id} ref for {char.name}: {cause}", level="error")
+            ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+            if task is not None:
+                progress.advance(task)
+
+        await asyncio.gather(*(_one_state(*job) for job in jobs))
 
 
 async def _generate_location_plates(
@@ -808,7 +992,9 @@ async def run(
 
     total_items = 0
     if should_generate_refs:
-        total_items += len([c for c in story_bible.characters if not char_ids or c.id in char_ids])
+        chars_for_count = [c for c in story_bible.characters if not char_ids or c.id in char_ids]
+        total_items += len(chars_for_count)
+        total_items += sum(len(_character_state_jobs(c)) for c in chars_for_count)
     if should_generate_plates:
         total_items += sum(
             len(_location_plate_jobs(loc))
@@ -821,6 +1007,7 @@ async def run(
     with ctx.execute(total=total_items):
         if should_generate_refs:
             await _generate_character_refs(config, project_dir, story_bible, ctx, char_ids)
+            await _generate_character_state_refs(config, project_dir, story_bible, ctx, char_ids)
             ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
 
         if should_generate_plates:
@@ -858,6 +1045,12 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
         1 for char in story_bible.characters
         if not (project_dir / "refs" / char.id / "sheet.png").exists()
     )
+    missing_state_refs = sum(
+        1
+        for char in story_bible.characters
+        for state_id, _anchor in _character_state_jobs(char)
+        if not (project_dir / "refs" / char.id / "states" / state_id / "sheet.png").exists()
+    )
     missing_plates = sum(
         1
         for loc in story_bible.locations
@@ -870,7 +1063,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     )
     return estimate_image_cost(
         config.effective_image_model(),
-        missing_refs + missing_plates + missing_prop_refs,
+        missing_refs + missing_state_refs + missing_plates + missing_prop_refs,
         quality=getattr(config, "image_quality", None),
     )
 

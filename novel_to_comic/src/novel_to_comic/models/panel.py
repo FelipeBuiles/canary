@@ -69,11 +69,6 @@ class ScreenplayBeat(BaseModel):
     direction: Optional[str] = None
     transition_type: Optional[str] = None  # "smooth_continuation", "match_cut", "hard_cut"
     narration_reason: Optional[str] = None
-    location_state_id: Optional[str] = None
-    # When the scene's location has multiple states (e.g. pre/post collapse) or
-    # a flashback shifts to a different interior, the beat-level state override
-    # lets each panel anchor the correct setting. Falls back to the scene's
-    # default location_state_id (or location's default anchor) when None.
 
 
 class Screenplay(BaseModel):

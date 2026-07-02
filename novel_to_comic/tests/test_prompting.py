@@ -10,10 +10,15 @@ if workspace_root not in sys.path:
 from novel_to_comic.config import Config
 from novel_to_comic.models.layout_plan import PlannedPanel
 from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
+from novel_to_comic.models.appearance import (
+    AppearanceState,
+    StateActivation,
+    StoryPosition,
+    Transition,
+)
 from novel_to_comic.models.story_bible import (
     Character,
     Location,
-    LocationState,
     Prop,
     Scene,
     StoryBible,
@@ -23,6 +28,7 @@ from novel_to_comic.prompting import (
     dimensions_for_panel,
     generate_distilled_prompt,
     render_generation_prompt,
+    visual_brief_source_spec,
 )
 
 
@@ -113,7 +119,6 @@ def _flowers_story_bible() -> StoryBible:
                 title="Spring bank",
                 location_id="loc_002",
                 character_ids=["char_001"],
-                character_appearances={"char_001": "holding a short knobby stick"},
                 summary="Myop follows the fence to the stream.",
                 scene_type="transition",
                 narrative_beat="wandering",
@@ -173,6 +178,80 @@ def test_prompt_collapses_sequential_same_character_action_to_single_instant(tmp
     assert "leans into the fragrant bush with her bundle crowding her chin" in prompt.full_prompt
     assert "lifts the blue flowers" not in prompt.full_prompt
     assert "single frozen instant, not a sequence or split-screen" in prompt.constraints
+
+
+def _stumps_story_bible() -> StoryBible:
+    """A protagonist with a visually-significant 'stumps' state active in scene_002."""
+    bible = _story_bible()
+    char = bible.characters[0]
+    char.appearance_states = [
+        AppearanceState(
+            id="stumps",
+            label="Maimed",
+            visual_anchor="1girl, child, dark skin, simple dress, barefoot, arm stumps, bandaged ends",
+            visually_significant=True,
+            continuity_guard=(
+                "She has no hands — both arms end in bandaged stumps; never depict her "
+                "holding or gripping; she acts with her mouth or against her stumps"
+            ),
+        )
+    ]
+    char.appearance_timeline = [
+        StateActivation(state_id="stumps", at=StoryPosition(scene_id="scene_002")),
+    ]
+    return bible
+
+
+def test_significant_state_locks_appearance_in_constraints_and_brief(tmp_path):
+    panel = PlannedPanel(
+        panel_id="scene_002:panel_009",
+        scene_id="scene_002",
+        panel_number=9,
+        beat_ids=["scene_002:beat_009"],
+        shot_type="medium",
+        camera_angle="eye-level",
+        characters_present=["char_001"],
+        character_actions={"char_001": "eats a pear"},
+        character_positions={"char_001": "center"},
+        lighting="moonlight",
+        mood="tender",
+    )
+    prompt = build_planned_panel_prompt_spec(Config(), tmp_path, panel, _stumps_story_bible())
+
+    subject = prompt.subjects[0]
+    assert subject.appearance_locked is True
+    assert subject.appearance_guard and "no hands" in subject.appearance_guard
+
+    # Hard constraint forbids reverting to the default look (carries the guard).
+    assert "fixed altered appearance" in prompt.constraints
+    assert "do not restore" in prompt.constraints
+    assert "never depict her holding or gripping" in prompt.constraints
+
+    # The brief pass elevates the locked subject + stages around it.
+    spec = visual_brief_source_spec(prompt)
+    assert "APPEARANCE LOCKED" in spec
+    assert "Continuity rule: She has no hands" in spec
+    assert "never write" in spec  # staging instruction present
+
+
+def test_base_look_character_is_not_locked(tmp_path):
+    panel = PlannedPanel(
+        panel_id="scene_002:panel_001",
+        scene_id="scene_002",
+        panel_number=1,
+        beat_ids=["scene_002:beat_001"],
+        shot_type="medium",
+        camera_angle="eye-level",
+        characters_present=["char_001"],
+        character_actions={"char_001": "gathers flowers"},
+        character_positions={"char_001": "center"},
+        lighting="soft",
+        mood="curious",
+    )
+    prompt = build_planned_panel_prompt_spec(Config(), tmp_path, panel, _story_bible())
+    assert prompt.subjects[0].appearance_locked is False
+    assert "fixed altered appearance" not in (prompt.constraints or "")
+    assert "APPEARANCE LOCKED" not in visual_brief_source_spec(prompt)
 
 
 def test_prompt_does_not_split_non_sequential_then_phrase(tmp_path):
@@ -494,7 +573,7 @@ def test_prompt_does_not_promote_ambient_flowers_to_carried_bundle_prop(tmp_path
         panel_number=2,
         shot_type="medium",
         characters_present=["char_001"],
-        character_actions={"char_001": "walks beside the fence toward the stream"},
+        character_actions={"char_001": "walks beside the fence gripping her knobby stick"},
         character_positions={"char_001": "center"},
         key_objects=["prop_001", "prop_002", "Knobby Stick", "Bundle of Flowers"],
         visual_requirements=[
@@ -734,9 +813,10 @@ def test_distilled_prompt_surfaces_continuity_note():
     assert "CONTINUING FROM" in distilled or "smooth continuation" in distilled.lower()
 
 
-def test_panel_location_state_id_overrides_default_anchor(tmp_path):
-    """When a panel sets location_state_id, the prompt uses that state's
-    visual_anchor instead of the location's default anchor."""
+def test_location_state_resolves_anchor_by_panel_position(tmp_path):
+    """The location's active state is resolved per panel from its
+    appearance_timeline: panels before the transition use the base anchor,
+    panels at/after it use the post-state anchor and carry its state id."""
     story_bible = StoryBible(
         title="DCC",
         author="Matt Dinniman",
@@ -746,24 +826,27 @@ def test_panel_location_state_id_overrides_default_anchor(tmp_path):
             Location(
                 id="loc_001",
                 name="Seattle Street",
-                visual_anchor="default tags do not appear",
+                visual_anchor=(
+                    "night, outdoors, snow, brick apartment facade, "
+                    "streetlamp, parked cars, sidewalk"
+                ),
                 mood="apocalyptic",
-                states=[
-                    LocationState(
-                        id="loc_001_pre",
-                        name="Pre-collapse",
-                        visual_anchor=(
-                            "night, outdoors, snow, brick apartment facade, "
-                            "streetlamp, parked cars, sidewalk"
-                        ),
-                    ),
-                    LocationState(
+                appearance_states=[
+                    AppearanceState(
                         id="loc_001_post",
-                        name="Post-collapse aftermath",
+                        label="Post-collapse aftermath",
                         visual_anchor=(
                             "night, flattened dirt, rubble, distant fire, "
                             "bicycle rack, moped, stop sign"
                         ),
+                        visually_significant=True,
+                    ),
+                ],
+                appearance_timeline=[
+                    StateActivation(
+                        state_id="loc_001_post",
+                        at=StoryPosition(scene_id="scene_001", beat=4),
+                        transition=Transition(label="the block collapses"),
                     ),
                 ],
             )
@@ -774,9 +857,8 @@ def test_panel_location_state_id_overrides_default_anchor(tmp_path):
                 chapter=1,
                 title="The Transformation",
                 location_id="loc_001",
-                location_state_id="loc_001_pre",
                 character_ids=[],
-                summary="Pre-collapse street",
+                summary="The street collapses mid-scene",
                 scene_type="transition",
                 narrative_beat="inciting_incident",
                 source_start_quote="The transformation occurred",
@@ -790,6 +872,7 @@ def test_panel_location_state_id_overrides_default_anchor(tmp_path):
         panel_id="scene_001:panel_001",
         scene_id="scene_001",
         panel_number=1,
+        beat_ids=["scene_001:beat_001", "scene_001:beat_002"],
         shot_type="wide",
         camera_angle="eye-level",
         characters_present=[],
@@ -801,13 +884,13 @@ def test_panel_location_state_id_overrides_default_anchor(tmp_path):
         panel_id="scene_001:panel_006",
         scene_id="scene_001",
         panel_number=6,
+        beat_ids=["scene_001:beat_005", "scene_001:beat_006"],
         shot_type="wide",
         camera_angle="eye-level",
         characters_present=[],
         background_description="entire block flattened, rubble where the apartment stood",
         lighting="dark, distant fire glow",
         mood="catastrophic",
-        location_state_id="loc_001_post",
     )
 
     pre_prompt = build_planned_panel_prompt_spec(Config(), tmp_path, panel_pre, story_bible)
@@ -816,14 +899,16 @@ def test_panel_location_state_id_overrides_default_anchor(tmp_path):
     pre_setting = (pre_prompt.setting or "").lower()
     post_setting = (post_prompt.setting or "").lower()
 
-    # Pre-collapse panel picks up the pre state's anchor, NOT the post tags.
+    # Pre-collapse panel uses the base anchor, NOT the post tags.
     assert "brick apartment facade" in pre_setting or "streetlamp" in pre_setting
     assert "rubble" not in pre_setting
     assert "bicycle rack" not in pre_setting
+    assert pre_prompt.location_state_id is None
 
-    # Post-collapse panel picks up the post state's anchor.
+    # Post-collapse panel uses the post state's anchor and carries its id.
     assert "rubble" in post_setting or "flattened dirt" in post_setting
     assert "bicycle rack" in post_setting
+    assert post_prompt.location_state_id == "loc_001_post"
 
 
 def test_distilled_prompt_keeps_props_with_visual_anchor():
@@ -1115,6 +1200,121 @@ def test_build_style_sample_prompt_adds_surface_discipline_for_texture_styles():
 
     assert "broad intentional structure" in textured
     assert "broad intentional structure" not in clean
+
+
+def test_silver_hands_never_leak_before_their_activation(tmp_path):
+    """The Girl Without Hands regression: silver hands are a CHARACTER state
+    that begins at scene_009. A scene_003 panel that merely mentions washing
+    'hands' must resolve to the base look — no silver in identity or prompt."""
+    girl = Character(
+        id="char_001",
+        name="The Miller's Daughter",
+        visual_anchor="1woman, adult female, long blonde hair, blue eyes, pale skin, simple peasant dress",
+        age_range="20s",
+        gender="female",
+        distinguishing_features=["long blonde hair"],
+        default_outfit="A simple peasant dress with a white apron.",
+        relationships=[],
+        first_appearance_scene="scene_003",
+        appearance_states=[
+            AppearanceState(
+                id="silver",
+                label="Silver hands",
+                visual_anchor="1woman, long blonde hair, pale skin, peasant dress, polished silver prosthetic hands",
+                visually_significant=True,
+            ),
+        ],
+        appearance_timeline=[
+            StateActivation(
+                state_id="silver",
+                at=StoryPosition(scene_id="scene_009"),
+                transition=Transition(label="silver hands forged", cause="the King has them made"),
+            ),
+        ],
+    )
+    scenes = [
+        Scene(
+            id=f"scene_{i:03d}", chapter=1, title="t", location_id="loc_001",
+            character_ids=["char_001"], summary="s", scene_type="action",
+            narrative_beat="rising_action", source_start_quote="q",
+        )
+        for i in range(1, 10)
+    ]
+    bible = StoryBible(
+        title="The Girl Without Hands", author="Grimm", total_scenes=9,
+        characters=[girl],
+        locations=[Location(id="loc_001", name="Mill", visual_anchor="mill yard, water wheel", mood="calm")],
+        scenes=scenes, narrative_arcs=[], props=[],
+    )
+
+    early = PlannedPanel(
+        panel_id="scene_003:panel_001", scene_id="scene_003", panel_number=1,
+        beat_ids=["scene_003:beat_001"],
+        characters_present=["char_001"],
+        character_actions={"char_001": "washing her hands in a basin, water dripping from her fingers"},
+        background_description="mill yard at dawn", lighting="soft dawn", mood="peaceful",
+    )
+    late = PlannedPanel(
+        panel_id="scene_009:panel_001", scene_id="scene_009", panel_number=1,
+        beat_ids=["scene_009:beat_002"],
+        characters_present=["char_001"],
+        character_actions={"char_001": "stands in the throne room"},
+        background_description="palace hall", lighting="warm", mood="regal",
+    )
+
+    early_prompt = build_planned_panel_prompt_spec(Config(), tmp_path, early, bible)
+    late_prompt = build_planned_panel_prompt_spec(Config(), tmp_path, late, bible)
+
+    # scene_003: base look; "silver" appears nowhere despite "hands" in the action.
+    assert "silver" not in early_prompt.subjects[0].identity.lower()
+    assert "silver" not in early_prompt.full_prompt.lower()
+    # scene_009: the silver-hands state is active.
+    assert "silver" in late_prompt.subjects[0].identity.lower()
+
+
+def test_prop_is_gated_by_its_debut_scene(tmp_path):
+    """A prop never attaches to a panel before its first_appearance_scene, even
+    when that panel names the prop verbatim."""
+    bible = StoryBible(
+        title="t", author="a", total_scenes=2,
+        characters=[],
+        locations=[Location(id="loc_001", name="L", visual_anchor="a room", mood="calm")],
+        scenes=[
+            Scene(
+                id=f"scene_{i:03d}", chapter=1, title="t", location_id="loc_001",
+                character_ids=[], summary="s", scene_type="action",
+                narrative_beat="rising_action", source_start_quote="q",
+            )
+            for i in range(1, 3)
+        ],
+        narrative_arcs=[],
+        props=[
+            Prop(
+                id="prop_001",
+                name="The Forged Letters",
+                visual_anchor="parchment letters sealed with red wax",
+                first_appearance_scene="scene_002",
+            )
+        ],
+    )
+    before = PlannedPanel(
+        panel_id="scene_001:panel_001", scene_id="scene_001", panel_number=1,
+        beat_ids=["scene_001:beat_001"],
+        visual_requirements=["the forged letters lie on the table"],
+        background_description="a room", lighting="x", mood="y",
+    )
+    after = PlannedPanel(
+        panel_id="scene_002:panel_001", scene_id="scene_002", panel_number=1,
+        beat_ids=["scene_002:beat_001"],
+        visual_requirements=["the forged letters lie on the table"],
+        background_description="a room", lighting="x", mood="y",
+    )
+
+    before_prompt = build_planned_panel_prompt_spec(Config(), tmp_path, before, bible)
+    after_prompt = build_planned_panel_prompt_spec(Config(), tmp_path, after, bible)
+
+    assert all("Forged Letters" not in p for p in before_prompt.props)
+    assert any("Forged Letters" in p for p in after_prompt.props)
 
 
 

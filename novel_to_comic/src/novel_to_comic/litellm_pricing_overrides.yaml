@@ -86,6 +86,13 @@ model_overrides:
     input_cost_per_token: 0.00000025
     output_cost_per_token: 0.0000015
     mode: chat
+  # Gemini 3.1 Flash Preview — Fast preview model.
+  # source: https://cloud.google.com/vertex-ai/generative-ai/pricing, verified 2026-06-14.
+  gemini-3.1-flash-preview:
+    input_cost_per_token: 0.0000003
+    output_cost_per_token: 0.0000025
+    mode: chat
+
 
   # Anthropic Claude models.
   # source: https://platform.claude.com/docs/en/about-claude/pricing,

@@ -740,6 +740,81 @@ async def regen_ref(
     )
 
 
+@router.post("/regen-state-ref")
+async def regen_state_ref(
+    request: Request,
+    project_id: str,
+    char_id: str = Query(...),
+    state_id: str = Query(...),
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
+    from novel_to_comic.stages import s3_cast
+
+    _project_dir, config, _state = project
+    return _enqueue_cast_asset_regen(
+        request, project_id, user_id, project,
+        kind="character_ref_regen",
+        asset_id_key="char_id",
+        asset_id=f"{char_id}:{state_id}",
+        label=f"Appearance state / {char_id} · {state_id}",
+        work=lambda: s3_cast.regenerate_character_state_ref(config, _project_dir, char_id, state_id),
+        debit_description=f"Model call: regenerate appearance state {char_id}/{state_id}",
+    )
+
+
+def _character_ref_sheet_path(project_dir, char_id: str, state_id: str | None):
+    base = project_dir / "refs" / char_id
+    return base / "states" / state_id / "sheet.png" if state_id else base / "sheet.png"
+
+
+@router.get("/character-ref-versions")
+def get_character_ref_versions(
+    char_id: str = Query(...),
+    state_id: str | None = Query(None),
+    project=Depends(get_project),
+):
+    """Archived re-roll history for a character ref sheet (canonical or a state)."""
+    from novel_to_comic.panel_versions import list_asset_versions
+
+    project_dir, _config, _state = project
+    sheet = _character_ref_sheet_path(project_dir, char_id, state_id)
+    versions = list_asset_versions(sheet, project_dir)
+    archived = [version for version in versions if not version.get("current")]
+    return {
+        "char_id": char_id,
+        "state_id": state_id,
+        "has_history": len(archived) > 0,
+        "versions": versions,
+    }
+
+
+@router.post("/character-ref-versions/restore")
+def restore_character_ref_version(
+    char_id: str = Query(...),
+    version: int = Query(...),
+    state_id: str | None = Query(None),
+    project=Depends(get_project),
+):
+    from novel_to_comic.panel_versions import list_asset_versions, restore_asset_version
+    from novel_to_comic.stages import s3_cast
+
+    project_dir, _config, _state = project
+    sheet = _character_ref_sheet_path(project_dir, char_id, state_id)
+    try:
+        restore_asset_version(sheet, project_dir, version)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    # The single-pose crops (front/three_quarter/profile/gesture) are derived
+    # from the sheet, so re-crop after restoring so they match.
+    s3_cast._crop_sheet_to_poses(sheet)
+    return {
+        "char_id": char_id,
+        "state_id": state_id,
+        "versions": list_asset_versions(sheet, project_dir),
+    }
+
+
 @router.post("/regen-plate")
 async def regen_plate(
     request: Request,

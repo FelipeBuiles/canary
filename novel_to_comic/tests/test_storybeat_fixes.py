@@ -10,6 +10,7 @@ from novel_to_comic.models.layout_plan import (
     LLMPanelSpec,
     PlannedPanel,
 )
+from novel_to_comic.models.appearance import AppearanceState, StateActivation, StoryPosition
 from novel_to_comic.models.panel import Screenplay, ScreenplayBeat
 from novel_to_comic.models.story_bible import Location, Scene, StoryBible
 from novel_to_comic.stages.s1_extract import _find_quote_position, _write_scene_files
@@ -206,21 +207,41 @@ def test_stabilize_character_positions_keeps_sides_across_panels():
     assert solo.character_positions == {"char_b": "center"}
 
 
+def _two_scene_bible(location: Location) -> StoryBible:
+    return StoryBible(
+        title="t", author="a", total_scenes=2,
+        characters=[],
+        locations=[location],
+        scenes=[
+            Scene(id=sid, chapter=1, title="t", location_id="loc_001",
+                  character_ids=[], summary="s", scene_type="action",
+                  narrative_beat="rising_action", source_start_quote="q")
+            for sid in ("scene_001", "scene_002")
+        ],
+        narrative_arcs=[],
+    )
+
+
 def test_cross_scene_state_change_is_hard_cut():
+    # Same physical place, but it changes state at scene_002 → hard cut.
     p1 = _panel(1, scene_id="scene_001")
     p2 = _panel(1, scene_id="scene_002")
-    locations = {"scene_001": "loc_001", "scene_002": "loc_001"}
-    states = {"scene_001": "loc_001_pre", "scene_002": "loc_001_post"}
-    out = _cross_scene_transition_pass([p1, p2], locations, states)
+    location = Location(
+        id="loc_001", name="L", visual_anchor="intact building", mood="calm",
+        appearance_states=[AppearanceState(id="loc_001_post", label="Post", visual_anchor="rubble")],
+        appearance_timeline=[StateActivation(state_id="loc_001_post", at=StoryPosition(scene_id="scene_002"))],
+    )
+    out = _cross_scene_transition_pass([p1, p2], _two_scene_bible(location))
     assert out[0].transition_out == "hard_cut"
     assert out[1].transition_in == "hard_cut"
 
 
 def test_cross_scene_same_location_and_state_is_smooth():
+    # Same place, no state change across the boundary → smooth continuation.
     p1 = _panel(1, scene_id="scene_001")
     p2 = _panel(1, scene_id="scene_002")
-    locations = {"scene_001": "loc_001", "scene_002": "loc_001"}
-    out = _cross_scene_transition_pass([p1, p2], locations, {})
+    location = Location(id="loc_001", name="L", visual_anchor="intact building", mood="calm")
+    out = _cross_scene_transition_pass([p1, p2], _two_scene_bible(location))
     assert out[0].transition_out == "smooth_continuation"
 
 

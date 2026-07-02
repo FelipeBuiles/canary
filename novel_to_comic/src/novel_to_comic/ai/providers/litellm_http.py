@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from novel_to_comic.ai.errors import AIRefusalError
 from novel_to_comic.ai.providers.base import ProviderRawResult, RefImage, order_refs_for_upload
 from novel_to_comic.config import Config, is_gpt_image_2
@@ -139,7 +141,17 @@ class LitellmHttpProvider:
         sys.stderr.write("==========================================\n\n")
         sys.stderr.flush()
 
-        response.raise_for_status()
+        if response.status_code >= 400:
+            # httpx's default raise_for_status() message drops the response body,
+            # so a gateway 429/500 surfaces to the draw stage as a bare
+            # "500 Internal Server Error" with no reason. Include the body (e.g.
+            # the translated "RESOURCE_EXHAUSTED" message) so the failure record
+            # is self-explaining.
+            raise httpx.HTTPStatusError(
+                f"{response.status_code} from {url}: {response.text[:1000]}",
+                request=response.request,
+                response=response,
+            )
         data = resp_data if resp_data is not None else response.json()
         if ai_client._is_refusal(data):
             raise AIRefusalError(
