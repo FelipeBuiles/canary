@@ -21,6 +21,11 @@ const ProjectRooms = lazy(() =>
 );
 const LoginPage = lazy(() => import("./pages/auth/LoginPage").then(({ LoginPage }) => ({ default: LoginPage })));
 const SignupPage = lazy(() => import("./pages/auth/SignupPage").then(({ SignupPage }) => ({ default: SignupPage })));
+const TermsPage = lazy(() => import("./pages/legal/TermsPage").then(({ TermsPage }) => ({ default: TermsPage })));
+const PrivacyPage = lazy(() => import("./pages/legal/PrivacyPage").then(({ PrivacyPage }) => ({ default: PrivacyPage })));
+const AcceptableUsePage = lazy(() =>
+  import("./pages/legal/AcceptableUsePage").then(({ AcceptableUsePage }) => ({ default: AcceptableUsePage })),
+);
 const Library = lazy(() => import("./pages/Library").then(({ Library }) => ({ default: Library })));
 const LabsRoom = lazy(() => import("./pages/LabsRoom").then(({ LabsRoom }) => ({ default: LabsRoom })));
 const PrimitiveReference = lazy(() =>
@@ -65,6 +70,11 @@ export function App() {
         {/* Public auth routes */}
         <Route path="/login" element={lazyRoute(LoginPage)} />
         <Route path="/signup" element={lazyRoute(SignupPage)} />
+
+        {/* Public legal routes */}
+        <Route path="/legal/terms" element={lazyRoute(TermsPage)} />
+        <Route path="/legal/privacy" element={lazyRoute(PrivacyPage)} />
+        <Route path="/legal/acceptable-use" element={lazyRoute(AcceptableUsePage)} />
 
         {/* Protected app routes */}
         <Route

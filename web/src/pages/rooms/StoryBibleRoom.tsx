@@ -184,7 +184,7 @@ function WhatPulpFound({
 
       {/* What PULP found card */}
       <EntityCard>
-        <div className="font-meta text-[0.56rem] tracking-[0.22em] text-ink-black/45">WHAT PULP FOUND</div>
+        <div className="font-meta text-[0.56rem] tracking-[0.22em] text-ink-black/45">WHAT SCENEWRIGHT FOUND</div>
         <dl className="mt-3 space-y-2.5">
           <div className="flex items-baseline justify-between gap-3 border-b border-ink-black/10 pb-2.5">
             <dt className="text-[0.85rem] text-ink-black/60">Scenes</dt>
@@ -297,7 +297,7 @@ export function StoryBibleRoom() {
       <RoomHeader
         kicker="STORY"
         title={bible.title}
-        lead="Check what PULP read out of your story — fix names, looks, and details before anything is drawn."
+        lead="Check what Scenewright read out of your story — fix names, looks, and details before anything is drawn."
       />
 
       <WhatPulpFound
@@ -346,7 +346,7 @@ export function StoryBibleRoom() {
 
       <ApprovalBar
         next={needsApproval
-          ? "PULP proposes five art styles drawn from your story"
+          ? "Scenewright proposes five art styles drawn from your story"
           : "Pick your art style at the Look station"}
         estimateCredits={needsApproval ? styleEstimate?.estimate_credits : null}
         primaryLabel={needsApproval ? "LOOKS RIGHT — CONTINUE →" : "GO TO LOOK →"}

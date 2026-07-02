@@ -6,6 +6,7 @@ import { useAuth } from "../hooks/useAuth";
 import { useCountUp } from "../hooks/useCountUp";
 import { useTopBarSlotRegister } from "./TopBarSlot";
 import { cn } from "../lib/cn";
+import { BrandMark } from "../components/BrandMark";
 
 function initials(email?: string | null) {
   if (!email) return "JP";
@@ -27,7 +28,7 @@ export function AppTopBar() {
   const isLow = credits < 150;
   const inProject = location.pathname.startsWith("/project/");
   const studioName = String(user?.user_metadata?.studio_name || "Inkwell Studio");
-  const email = user?.email ?? "jesse@pulp.studio";
+  const email = user?.email ?? "hello@scenewright.ink";
 
   useEffect(() => {
     if (!open) return;
@@ -54,9 +55,10 @@ export function AppTopBar() {
         />
       ) : (
         <div className="flex min-w-0 flex-1 items-center gap-4 px-4">
-          <Link to="/" className="flex items-center gap-3">
+          <Link to="/" className="flex items-center gap-2.5">
+            <BrandMark className="h-7 w-7 shrink-0" />
             <span className="font-display text-[1.05rem] font-black uppercase leading-none tracking-[-0.03em]">
-              PULP
+              Scenewright
             </span>
             <span className="bg-hero-red px-2.5 py-1 font-meta text-[0.54rem] font-bold tracking-[0.16em] text-bristol">
               BETA

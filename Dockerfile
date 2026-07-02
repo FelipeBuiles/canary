@@ -47,4 +47,7 @@ COPY --from=frontend /build/dist ./web/dist
 EXPOSE 8000
 
 ENTRYPOINT ["/app/novel_to_comic/.venv/bin/pipeline"]
-CMD ["serve", "--host", "0.0.0.0", "--port", "8000", "--projects-dir", "/projects"]
+# --proxy-headers: trust X-Forwarded-* from Fly's TLS proxy so secure cookies
+# and client-IP detection work. Safe behind a reverse proxy; the image is the
+# production/behind-proxy artifact (local dev runs `pipeline serve` directly).
+CMD ["serve", "--host", "0.0.0.0", "--port", "8000", "--projects-dir", "/projects", "--proxy-headers"]

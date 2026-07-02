@@ -1,6 +1,6 @@
-# Canary Web UI
+# Scenewright Web UI
 
-React + TypeScript + Vite frontend for Canary. This is the default interface
+React + TypeScript + Vite frontend for Scenewright. This is the default interface
 for controlling the pipeline, reviewing artifacts, and exporting comics.
 
 ## Running

@@ -1,0 +1,52 @@
+# Fly.io app config for the LiteLLM AI gateway (Machine B — PRIVATE).
+#
+# This is the sibling app to canary-web. It holds ALL provider API keys and is
+# reached ONLY over the Fly org's 6PN private network at:
+#
+#     http://litellm-gw.internal:4000
+#
+# It has NO public endpoint (no [http_service]) so provider keys are never
+# exposed to the internet. canary-web (same Fly org) calls it directly.
+#
+# Build: the image bakes in litellm/config.yaml + litellm_handlers/ (Fly can't
+# bind-mount local dirs like docker-compose does). GCP service-account creds are
+# materialized at startup from the GCP_CREDENTIALS_B64 secret (see entrypoint.sh)
+# — never baked into the image.
+#
+# Provisioning (run from the REPO ROOT so the Docker build context can see both
+# litellm/ and litellm_handlers/):
+#
+#   fly launch --config fly.litellm.toml --no-deploy
+#   fly secrets set -a litellm-gw \
+#     LITELLM_MASTER_KEY=... LITELLM_SALT_KEY=... \
+#     OPENAI_API_KEY=... ANTHROPIC_API_KEY=... GEMINI_API_KEY=... \
+#     REVE_API_KEY=... FAL_KEY=... OPENROUTER_API_KEY=... TOGETHER_API_KEY=... \
+#     VERTEXAI_PROJECT=... \
+#     GCP_CREDENTIALS_B64="$(base64 < litellm/gcp-credentials.json)"
+#   fly deploy --config fly.litellm.toml
+#
+# Verify from canary-web:
+#   fly ssh console -a canary-web --command "curl -s http://litellm-gw.internal:4000/health"
+
+app = "litellm-gw"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile.litellm"
+
+[env]
+  VERTEXAI_LOCATION = "global"
+  GOOGLE_APPLICATION_CREDENTIALS = "/app/gcp-credentials.json"
+  PYTHONPATH = "/app:/app/litellm_handlers"
+  # Secrets (set via `fly secrets set -a litellm-gw`, not here):
+  #   LITELLM_MASTER_KEY, LITELLM_SALT_KEY,
+  #   OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY,
+  #   REVE_API_KEY, FAL_KEY, OPENROUTER_API_KEY, TOGETHER_API_KEY,
+  #   VERTEXAI_PROJECT, GCP_CREDENTIALS_B64
+
+# No [http_service] → no public URL. The machine runs the LiteLLM process
+# continuously and is reachable only over 6PN at litellm-gw.internal:4000.
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

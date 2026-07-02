@@ -5,26 +5,46 @@ from __future__ import annotations
 import gzip
 import json
 import logging
+import os
 import re
 import shutil
 import time
 from datetime import datetime, timezone
+from json import JSONDecodeError
 from pathlib import Path
+from typing import cast
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Form
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from pydantic import BaseModel
 
-from novel_to_comic.config import Config, save_config
 from novel_to_comic.ai import ai_request_context
+from novel_to_comic.config import Config, save_config
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.state import STAGE_NAMES, StageStatus, create_initial_state, is_stale, load_state, save_state
+from novel_to_comic.state import (
+    STAGE_NAMES,
+    StageStatus,
+    create_initial_state,
+    is_stale,
+    load_state,
+    save_state,
+)
 
 from ..auth import get_current_user
 from ..credits import debit_model_usage, provider_usd_to_credits
 from ..db import get_db
 from ..deps import get_project, get_projects_dir, project_key
+from ..ratelimit import create_limit, limiter
 from .styles import clear_style_failures_after_selection, is_style_selected
 from ..generation_jobs import (
     enqueue_generation_job,
@@ -42,7 +62,6 @@ _story_catalog_last_fetch: float = 0.0
 _CACHE_EXPIRY: int = 86400  # 24 hours
 
 
-
 def _draw_prompt_files(project_dir: Path, config: Config) -> list[Path]:
     prompts_dir = project_dir / "direct"
     if not prompts_dir.exists():
@@ -50,21 +69,37 @@ def _draw_prompt_files(project_dir: Path, config: Config) -> list[Path]:
     scene_dirs = sorted(d for d in prompts_dir.iterdir() if d.is_dir())
     if config.dev_mode:
         scene_dirs = scene_dirs[:1]
-    return [prompt for scene_dir in scene_dirs for prompt in sorted(scene_dir.glob("panel_*.json"))]
+    return [
+        prompt
+        for scene_dir in scene_dirs
+        for prompt in sorted(scene_dir.glob("panel_*.json"))
+    ]
 
 
 def _draw_output_path_for_prompt(project_dir: Path, prompt_path: Path) -> Path | None:
     try:
         prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
-        return project_dir / "draw" / prompt.scene_id / f"panel_{prompt.panel_number:03d}.png"
+        return (
+            project_dir
+            / "draw"
+            / prompt.scene_id
+            / f"panel_{prompt.panel_number:03d}.png"
+        )
     except Exception:
         match = re.match(r"panel_(\d+)$", prompt_path.stem)
         if not match:
             return None
-        return project_dir / "draw" / prompt_path.parent.name / f"panel_{int(match.group(1)):03d}.png"
+        return (
+            project_dir
+            / "draw"
+            / prompt_path.parent.name
+            / f"panel_{int(match.group(1)):03d}.png"
+        )
 
 
-def _reconcile_completed_draw_stage(project_dir: Path, config: Config, state, *, is_running: bool) -> bool:
+def _reconcile_completed_draw_stage(
+    project_dir: Path, config: Config, state, *, is_running: bool
+) -> bool:
     """Recover draw state when images were written but the final state save was missed."""
     draw_state = state.stages["draw"]
     if is_running or draw_state.status != StageStatus.RUNNING:
@@ -77,7 +112,8 @@ def _reconcile_completed_draw_stage(project_dir: Path, config: Config, state, *,
     output_paths = [
         output_path
         for prompt_path in prompt_files
-        if (output_path := _draw_output_path_for_prompt(project_dir, prompt_path)) is not None
+        if (output_path := _draw_output_path_for_prompt(project_dir, prompt_path))
+        is not None
     ]
     if len(output_paths) != len(prompt_files):
         return False
@@ -85,7 +121,8 @@ def _reconcile_completed_draw_stage(project_dir: Path, config: Config, state, *,
     completed_paths = [
         output_path
         for output_path in output_paths
-        if output_path.exists() and not output_path.with_suffix(f"{output_path.suffix}.failure.json").exists()
+        if output_path.exists()
+        and not output_path.with_suffix(f"{output_path.suffix}.failure.json").exists()
     ]
     if len(completed_paths) != len(prompt_files):
         return False
@@ -150,7 +187,9 @@ def _stage_payload(
         "error": error,
         "started_at": s.started_at.isoformat() if s.started_at else None,
         "finished_at": s.finished_at.isoformat() if s.finished_at else None,
-        "last_progress_at": s.last_progress_at.isoformat() if s.last_progress_at else None,
+        "last_progress_at": s.last_progress_at.isoformat()
+        if s.last_progress_at
+        else None,
         "stale": stale,
         "in_flight": in_flight or [],
     }
@@ -204,7 +243,10 @@ def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
         try:
             data = json.loads(suggestions_path.read_text())
             for i, suggestion in enumerate(data.get("suggestions", []), 1):
-                if isinstance(suggestion, dict) and suggestion.get("template", "").strip() == style_template.strip():
+                if (
+                    isinstance(suggestion, dict)
+                    and suggestion.get("template", "").strip() == style_template.strip()
+                ):
                     sample = project_dir / "samples" / f"style_{i}.png"
                     if sample.exists():
                         return sample
@@ -219,12 +261,10 @@ def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
 
 def _cover_prompt(config: Config, bible: StoryBible) -> str:
     characters = "; ".join(
-        f"{c.name}: {c.visual_anchor[:180]}"
-        for c in bible.characters[:3]
+        f"{c.name}: {c.visual_anchor[:180]}" for c in bible.characters[:3]
     )
     locations = "; ".join(
-        f"{loc.name}: {loc.visual_anchor[:160]}"
-        for loc in bible.locations[:2]
+        f"{loc.name}: {loc.visual_anchor[:160]}" for loc in bible.locations[:2]
     )
     return (
         f"{config.style_template}\n\n"
@@ -286,6 +326,73 @@ async def _generate_project_cover(
 _ALLOWED_EXTENSIONS = {".txt", ".epub", ".pdf"}
 
 
+def _env_int(name: str, default: int) -> int:
+    """Read an integer env var, falling back to ``default`` on a bad value.
+
+    A misconfigured knob (e.g. ``CANARY_MAX_UPLOAD_MB=abc``) would otherwise
+    crash the request with ValueError; a typed fallback is safer for ops knobs.
+    """
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _rows(resp) -> list[dict]:
+    """Typed view of a Supabase query response (always a list of dict rows).
+
+    The supabase-py client types ``.data`` loosely (``bool | JSON | None``); in
+    practice every query here returns a list of dict rows (or an empty list).
+    """
+    return cast(list[dict], resp.data or [])
+
+
+def _max_upload_bytes() -> int:
+    """Hard cap on uploaded novel size, before any bytes are persisted."""
+    return _env_int("CANARY_MAX_UPLOAD_MB", 10) * 1024 * 1024
+
+
+def _max_projects_per_user() -> int:
+    """Cap on how many projects a single user may own."""
+    return _env_int("CANARY_MAX_PROJECTS_PER_USER", 25)
+
+
+def _save_upload_capped(file: UploadFile, dst: Path) -> None:
+    """Stream an upload to disk, aborting (and cleaning up) past the size cap.
+
+    Rejecting via Content-Length alone is unsafe (chunked transfers omit it), so
+    we enforce while streaming. Raises 413 on overflow and removes the partial file.
+    """
+    cap = _max_upload_bytes()
+    written = 0
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(dst, "wb") as f:
+            while True:
+                chunk = file.file.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > cap:
+                    f.close()
+                    dst.unlink(missing_ok=True)
+                    limit_mb = cap // (1024 * 1024)
+                    raise HTTPException(
+                        413, f"Uploaded file exceeds the {limit_mb} MB limit."
+                    )
+                f.write(chunk)
+    except OSError:
+        # Disk/permission failure mid-write: clean up the partial file and
+        # surface a clean error instead of leaking an OSError traceback.
+        dst.unlink(missing_ok=True)
+        raise HTTPException(500, "Could not save uploaded file.") from None
+
+
+def _count_user_projects(user_id: str) -> int:
+    result = get_db().table("projects").select("id").eq("user_id", user_id).execute()
+    return len(_rows(result))
+
+
 def _slugify(name: str) -> str:
     """Turn a display name into a filesystem-safe directory name."""
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", name.strip()).strip("-")
@@ -293,6 +400,7 @@ def _slugify(name: str) -> str:
 
 
 @router.post("/")
+@limiter.limit(create_limit)
 async def create_project(
     request: Request,
     file: UploadFile = File(...),
@@ -301,10 +409,22 @@ async def create_project(
     projects_dir: Path = Depends(get_projects_dir),
     user_id: str = Depends(get_current_user),
 ):
+    # Per-user project cap — prevents unbounded disk growth / project spam.
+    existing = _count_user_projects(user_id)
+    if existing >= _max_projects_per_user():
+        raise HTTPException(
+            409,
+            f"You've reached the project limit ({_max_projects_per_user()}). "
+            f"Delete an existing project to create a new one.",
+        )
+
     # Validate file extension
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in _ALLOWED_EXTENSIONS:
-        raise HTTPException(400, f"Unsupported file type: {suffix}. Accepted: {', '.join(sorted(_ALLOWED_EXTENSIONS))}")
+        raise HTTPException(
+            400,
+            f"Unsupported file type: {suffix}. Accepted: {', '.join(sorted(_ALLOWED_EXTENSIONS))}",
+        )
 
     # Build project directory (user-scoped to prevent cross-user collisions)
     slug = _slugify(name)
@@ -314,22 +434,37 @@ async def create_project(
 
     # Create directory structure
     project_dir.mkdir(parents=True)
-    for subdir in ["input", "scenes", "refs", "plates", "adapt", "plan", "storyboard",
-                   "direct", "draw", "compose", "exports", "cover"]:
+    for subdir in [
+        "input",
+        "scenes",
+        "refs",
+        "plates",
+        "adapt",
+        "plan",
+        "storyboard",
+        "direct",
+        "draw",
+        "compose",
+        "exports",
+        "cover",
+    ]:
         (project_dir / subdir).mkdir()
 
-    # Save uploaded file
+    # Save uploaded file (size-capped to prevent disk exhaustion)
     dst = project_dir / "input" / (file.filename or "novel")
-    with open(dst, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    try:
+        _save_upload_capped(file, dst)
+    except HTTPException:
+        shutil.rmtree(project_dir, ignore_errors=True)
+        raise
 
     # Build config with optional overrides
     overrides = {}
     if config_overrides:
         try:
             overrides = json.loads(config_overrides)
-        except json.JSONDecodeError:
-            raise HTTPException(400, "Invalid JSON in config_overrides")
+        except JSONDecodeError:
+            raise HTTPException(400, "Invalid JSON in config_overrides") from None
     config = Config(**overrides)
     save_config(config, project_dir)
 
@@ -350,12 +485,20 @@ async def create_project(
     # Register project in DB. On failure, clean up the directory so filesystem
     # and DB don't get out of sync.
     try:
-        db_result = get_db().table("projects").insert({"user_id": user_id, "name": slug}).execute()
-        project_id = db_result.data[0]["id"] if db_result.data else None
+        db_result = (
+            get_db()
+            .table("projects")
+            .insert({"user_id": user_id, "name": slug})
+            .execute()
+        )
+        inserted = _rows(db_result)
+        project_id = inserted[0]["id"] if inserted else None
     except Exception as exc:
         shutil.rmtree(project_dir, ignore_errors=True)
         logger.exception("Failed to register project %s for user %s", slug, user_id)
-        raise HTTPException(500, "Failed to register project. Please try again.") from exc
+        raise HTTPException(
+            500, "Failed to register project. Please try again."
+        ) from exc
 
     return {"id": project_id, "name": slug, "project_name": name, "status": "created"}
 
@@ -367,7 +510,7 @@ def list_projects(
     user_id: str = Depends(get_current_user),
 ):
     """Return projects owned by the user, ordered by DB created_at."""
-    rows = (
+    resp = (
         get_db()
         .table("projects")
         .select("id, name, created_at")
@@ -376,7 +519,7 @@ def list_projects(
         .execute()
     )
     results = []
-    for row in rows.data:
+    for row in _rows(resp):
         d = projects_dir / user_id / row["name"]
         state_file = d / "state.json"
         if not d.is_dir() or not state_file.exists():
@@ -386,20 +529,27 @@ def list_projects(
         cover_job = _latest_project_cover_job(request, pkey)
         furthest = None
         for name in STAGE_NAMES:
-            if _stage_payload(d, name, state)["status"] in ("complete", "awaiting_review"):
+            if _stage_payload(d, name, state)["status"] in (
+                "complete",
+                "awaiting_review",
+            ):
                 furthest = name
-        results.append({
-            "id": row["id"],
-            "name": row["name"],
-            "project_name": state.project_name,
-            "author": _story_bible_author(d),
-            "created_at": state.created_at.isoformat(),
-            "total_cost_credits": provider_usd_to_credits(state.total_cost_usd),
-            "furthest_stage": furthest,
-            "is_running": _is_project_running(user_id, row["id"], request),
-            "has_cover": _cover_path(d).exists(),
-            "cover_job": generation_job_payload(request.app, cover_job) if cover_job else None,
-        })
+        results.append(
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "project_name": state.project_name,
+                "author": _story_bible_author(d),
+                "created_at": state.created_at.isoformat(),
+                "total_cost_credits": provider_usd_to_credits(state.total_cost_usd),
+                "furthest_stage": furthest,
+                "is_running": _is_project_running(user_id, row["id"], request),
+                "has_cover": _cover_path(d).exists(),
+                "cover_job": generation_job_payload(request.app, cover_job)
+                if cover_job
+                else None,
+            }
+        )
     return results
 
 
@@ -415,15 +565,18 @@ def project_status(
 
     # Reconcile draw stage only when a task was running and has just finished.
     # This avoids mutating state on every GET /status poll.
-    if not running:
-        if _reconcile_completed_draw_stage(project_dir, config, state, is_running=False):
-            save_state(state, project_dir)
+    if not running and _reconcile_completed_draw_stage(
+        project_dir, config, state, is_running=False
+    ):
+        save_state(state, project_dir)
     style_selected = is_style_selected(project_dir, config)
     if style_selected and clear_style_failures_after_selection(state):
         save_state(state, project_dir)
 
     pkey = project_key(user_id, project_id)
-    draw_in_flight = list(getattr(request.app.state, "draw_in_flight", {}).get(pkey, []))
+    draw_in_flight = list(
+        getattr(request.app.state, "draw_in_flight", {}).get(pkey, [])
+    )
 
     stages = {}
     for name in STAGE_NAMES:
@@ -440,7 +593,8 @@ def project_status(
         .eq("id", project_id)
         .execute()
     )
-    share_info = db_row.data[0] if db_row.data else {}
+    share_rows = _rows(db_row)
+    share_info = share_rows[0] if share_rows else {}
 
     return {
         "id": project_id,
@@ -515,8 +669,15 @@ def delete_project(
     if _is_project_running(user_id, project_id, request):
         raise HTTPException(409, "Cannot delete a project while a stage is running")
 
-    get_db().table("projects").delete().eq("user_id", user_id).eq("id", project_id).execute()
-    shutil.rmtree(project_dir)
+    get_db().table("projects").delete().eq("user_id", user_id).eq(
+        "id", project_id
+    ).execute()
+    try:
+        shutil.rmtree(project_dir)
+    except OSError as exc:
+        # DB row already removed; filesystem cleanup is best-effort. A stranded
+        # dir can be reclaimed later — don't fail the already-committed delete.
+        logger.warning("Could not remove project directory %s: %s", project_dir, exc)
     return {"status": "deleted", "id": project_id}
 
 
@@ -524,12 +685,17 @@ def delete_project(
 async def list_short_stories():
     global _story_catalog_cache, _story_catalog_last_fetch
     now = time.time()
-    if _story_catalog_cache is not None and (now - _story_catalog_last_fetch) < _CACHE_EXPIRY:
+    if (
+        _story_catalog_cache is not None
+        and (now - _story_catalog_last_fetch) < _CACHE_EXPIRY
+    ):
         return _story_catalog_cache
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.get("https://www.libraryofshortstories.com/storylist-reduced")
+            r = await client.get(
+                "https://www.libraryofshortstories.com/storylist-reduced"
+            )
             r.raise_for_status()
             data = r.json()
             _story_catalog_cache = data
@@ -539,7 +705,7 @@ async def list_short_stories():
         logger.exception("Failed to fetch short story catalog")
         if _story_catalog_cache is not None:
             return _story_catalog_cache
-        raise HTTPException(502, f"Failed to retrieve story catalog: {exc}")
+        raise HTTPException(502, f"Failed to retrieve story catalog: {exc}") from exc
 
 
 class ImportStoryRequest(BaseModel):
@@ -555,6 +721,17 @@ async def import_short_story(
     projects_dir: Path = Depends(get_projects_dir),
     user_id: str = Depends(get_current_user),
 ):
+    # Per-user project cap — same guard as POST /, applied here too so the labs
+    # import path can't be used to bypass the disk-growth limit. Checked before
+    # the external fetch to avoid wasted work for an over-cap user.
+    existing = _count_user_projects(user_id)
+    if existing >= _max_projects_per_user():
+        raise HTTPException(
+            409,
+            f"You've reached the project limit ({_max_projects_per_user()}). "
+            f"Delete an existing project to create a new one.",
+        )
+
     url_or_code = payload.url_or_code.strip()
     match = re.search(r"onlinereader/([a-zA-Z0-9_\-]+)", url_or_code)
     if match:
@@ -574,13 +751,13 @@ async def import_short_story(
             r = await client.get(story_url)
             r.raise_for_status()
             content_bytes = r.content
-            if content_bytes.startswith(b'\x1f\x8b'):
+            if content_bytes.startswith(b"\x1f\x8b"):
                 story_text = gzip.decompress(content_bytes).decode("utf-8")
             else:
                 story_text = r.text
     except Exception as exc:
         logger.exception("Failed to fetch story text from %s", story_url)
-        raise HTTPException(502, f"Failed to download story text: {exc}")
+        raise HTTPException(502, f"Failed to download story text: {exc}") from exc
 
     if not story_text.strip():
         raise HTTPException(400, "Story content is empty")
@@ -591,8 +768,20 @@ async def import_short_story(
         raise HTTPException(409, f"Project '{slug}' already exists")
 
     project_dir.mkdir(parents=True)
-    for subdir in ["input", "scenes", "refs", "plates", "adapt", "plan", "storyboard",
-                   "direct", "draw", "compose", "exports", "cover"]:
+    for subdir in [
+        "input",
+        "scenes",
+        "refs",
+        "plates",
+        "adapt",
+        "plan",
+        "storyboard",
+        "direct",
+        "draw",
+        "compose",
+        "exports",
+        "cover",
+    ]:
         (project_dir / subdir).mkdir()
 
     dst = project_dir / "input" / f"{story_code}.txt"
@@ -602,8 +791,8 @@ async def import_short_story(
     if payload.config_overrides:
         try:
             overrides = json.loads(payload.config_overrides)
-        except json.JSONDecodeError:
-            raise HTTPException(400, "Invalid JSON in config_overrides")
+        except JSONDecodeError:
+            raise HTTPException(400, "Invalid JSON in config_overrides") from None
     config = Config(**overrides)
     save_config(config, project_dir)
 
@@ -620,12 +809,26 @@ async def import_short_story(
     )
 
     try:
-        db_result = get_db().table("projects").insert({"user_id": user_id, "name": slug}).execute()
-        project_id = db_result.data[0]["id"] if db_result.data else None
+        db_result = (
+            get_db()
+            .table("projects")
+            .insert({"user_id": user_id, "name": slug})
+            .execute()
+        )
+        inserted = _rows(db_result)
+        project_id = inserted[0]["id"] if inserted else None
     except Exception as exc:
         shutil.rmtree(project_dir, ignore_errors=True)
-        logger.exception("Failed to register imported project %s for user %s", slug, user_id)
-        raise HTTPException(500, "Failed to register project. Please try again.") from exc
+        logger.exception(
+            "Failed to register imported project %s for user %s", slug, user_id
+        )
+        raise HTTPException(
+            500, "Failed to register project. Please try again."
+        ) from exc
 
-    return {"id": project_id, "name": slug, "project_name": payload.name, "status": "created"}
-
+    return {
+        "id": project_id,
+        "name": slug,
+        "project_name": payload.name,
+        "status": "created",
+    }

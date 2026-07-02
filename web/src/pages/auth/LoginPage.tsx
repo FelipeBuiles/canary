@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
 import { useAuth } from "../../hooks/useAuth";
 import { Button } from "../../components/ui/Button";
 import { cn } from "../../lib/cn";
+import { BrandMark } from "../../components/BrandMark";
 
 type AuthMode = "signin" | "signup";
 
@@ -77,7 +78,7 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
     <div className="flex min-h-svh flex-col bg-ink-black text-pulp-paper">
       <header className="flex h-14 shrink-0 items-center border-b-[2px] border-ink-black bg-bristol px-4 text-ink-black">
         <div className="font-display text-[1.05rem] font-black uppercase leading-none tracking-[-0.03em]">
-          PULP
+          Scenewright
         </div>
         <div className="ml-3 bg-hero-red px-2.5 py-1 font-meta text-[0.54rem] font-bold tracking-[0.16em] text-bristol">
           BETA
@@ -87,20 +88,23 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
       <main className="grid flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_520px]">
         {/* The pressroom stage */}
         <section className="relative flex flex-col justify-between overflow-hidden px-8 py-10 sm:px-14 lg:px-[4.8vw]">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_1px_1px,rgba(252,250,237,0.035)_1px,transparent_0)] [background-size:28px_28px]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_1px_1px,rgba(252,250,237,0.09)_1px,transparent_0)] [background-size:28px_28px]" />
           <div className="relative">
-            <div className="font-meta text-[0.7rem] font-bold uppercase tracking-[0.48em] text-hero-red">
-              PULP
+            <div className="flex items-center gap-4 text-pulp-paper">
+              <BrandMark className="h-10 w-10 shrink-0" />
+              <div className="font-meta text-[0.7rem] font-bold uppercase tracking-[0.48em] text-hero-red">
+                Scenewright
+              </div>
             </div>
-            <h1 className="mt-[6vh] max-w-[6ch] font-display text-[clamp(3.8rem,7.5vw,8rem)] font-black uppercase leading-[0.84] tracking-[-0.04em] text-pulp-paper">
-              YOUR STORY. IN PANELS.
+            <h1 className="mt-[6vh] max-w-[10ch] font-display text-[clamp(3.4rem,6.8vw,7rem)] font-black uppercase leading-[0.84] tracking-[-0.04em] text-pulp-paper">
+              Your novel, scene by scene.
             </h1>
             <p className="mt-8 max-w-[32rem] border-l-[4px] border-hero-red pl-7 text-[1.05rem] font-semibold leading-8 text-pulp-paper/65">
-              Upload a novel. PULP extracts characters, plans compositions, and draws every panel — a full comic pipeline powered by AI.
+              Upload your manuscript. Scenewright drafts characters, storyboards each chapter, and lays out every panel — you direct every page, and the work stays yours.
             </p>
           </div>
           <div className="relative mt-12 font-meta text-[0.62rem] uppercase tracking-[0.22em] text-pulp-paper/40">
-            © 2026 Pulp Studio
+            © 2026 Scenewright
           </div>
         </section>
 
@@ -190,7 +194,16 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
                   </button>
                 ) : (
                   <p className="pt-1 text-center font-body text-[0.8rem] font-semibold text-ink-black/60">
-                    500 free credits on signup.
+                    500 free credits on signup. By creating an account you agree
+                    to our{" "}
+                    <Link to="/legal/terms" className="text-ink-black underline underline-offset-2">
+                      Terms
+                    </Link>{" "}
+                    and{" "}
+                    <Link to="/legal/privacy" className="text-ink-black underline underline-offset-2">
+                      Privacy Policy
+                    </Link>
+                    .
                   </p>
                 )}
               </form>

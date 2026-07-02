@@ -12,6 +12,43 @@ SESSION_COOKIE_NAME = "pulp_session"
 _jwks_client: PyJWKClient | None = None
 
 
+def _cookie_secure(request: Request) -> bool:
+    """Decide whether to mark the session cookie Secure (HTTPS-only).
+
+    Explicit opt-in via CANARY_COOKIE_SECURE=true wins and is the correct
+    setting in production behind a TLS-terminating proxy. Without it we fall
+    back to scheme detection — but note that behind a proxy ``request.url``
+    reports the *internal* scheme (http) unless Uvicorn runs with
+    ``--proxy-headers``, so prod must set the env flag explicitly.
+    """
+    raw = os.environ.get("CANARY_COOKIE_SECURE")
+    if raw is not None:
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return request.url.scheme == "https"
+
+
+def _expected_audience() -> str | None:
+    """The JWT audience to enforce (e.g. Supabase's "authenticated").
+
+    Resolution order:
+
+    1. ``SUPABASE_JWT_AUDIENCE`` — explicit override (any value, incl. empty
+       string to opt out entirely).
+    2. In production (``CANARY_ENV=production``) — defaults to Supabase's
+       standard ``"authenticated"`` audience. Supabase JWTs always carry this
+       claim, so enforcing it costs nothing and blocks tokens minted for a
+       different audience.
+    3. Elsewhere (dev/test) — ``None`` (no audience check), preserving
+       backwards compatibility for hand-built test tokens.
+    """
+    if "SUPABASE_JWT_AUDIENCE" in os.environ:
+        raw = os.environ["SUPABASE_JWT_AUDIENCE"].strip()
+        return raw or None
+    if (os.environ.get("CANARY_ENV") or "").lower() == "production":
+        return "authenticated"
+    return None
+
+
 def _get_jwks_client() -> PyJWKClient:
     global _jwks_client
     if _jwks_client is None:
@@ -53,11 +90,15 @@ async def get_current_user(
         raise HTTPException(status_code=500, detail=str(exc))
     try:
         signing_key = client.get_signing_key_from_jwt(token)
+        expected_audience = _expected_audience()
         payload = jwt.decode(
             token,
             signing_key.key,
             algorithms=["RS256", "ES256"],
-            options={"verify_aud": False},
+            audience=expected_audience,
+            # verify_aud only has an effect when `audience` is provided, so this
+            # is a no-op unless SUPABASE_JWT_AUDIENCE is set in production.
+            options={"verify_aud": expected_audience is not None},
         )
         user_id = payload["sub"]
         # Refresh the HttpOnly session cookie so browser-native consumers
@@ -66,7 +107,7 @@ async def get_current_user(
             SESSION_COOKIE_NAME,
             token,
             httponly=True,
-            secure=request.url.scheme == "https",
+            secure=_cookie_secure(request),
             samesite="lax",
             max_age=60 * 60,
             path="/",

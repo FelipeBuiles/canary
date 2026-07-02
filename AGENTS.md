@@ -21,6 +21,11 @@ pipeline. Each stage is discrete, resumable, and produces inspectable JSON/file
 output. The pipeline is orchestrated through a FastAPI web server — there is no
 `pipeline run` CLI command. Use the web UI or call the API directly.
 
+**Brand & GTM:** "Canary" is the internal codename. Recommended launch name is
+**`Scenewright`** (`scenewright.ink`), chosen for an AI-hostile indie-author
+audience. Full naming research, competitive/market analysis, and lean-tier
+go-to-market plan: `docs/proposals/branding-and-marketing.md`.
+
 **Pipeline stages (in order):**
 
 | # | Stage name | What it does |

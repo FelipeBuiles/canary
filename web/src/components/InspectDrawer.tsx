@@ -25,17 +25,17 @@ const DRAWER_META: Record<DrawerKind, { kicker: string; title: string; placehold
   script: {
     kicker: "AUTO · READ ONLY",
     title: "Script",
-    placeholder: "PULP writes the script automatically after you approve the cast. Nothing to read yet.",
+    placeholder: "Scenewright writes the script automatically after you approve the cast. Nothing to read yet.",
   },
   "shot-plan": {
     kicker: "AUTO · READ ONLY",
     title: "Shot plan",
-    placeholder: "PULP plans shots automatically after you approve the cast. Nothing to inspect yet.",
+    placeholder: "Scenewright plans shots automatically after you approve the cast. Nothing to inspect yet.",
   },
   prompts: {
     kicker: "AUTO · READ ONLY",
     title: "Prompts",
-    placeholder: "PULP writes one image prompt per panel automatically. Open a panel in the Panels station to edit its prompt.",
+    placeholder: "Scenewright writes one image prompt per panel automatically. Open a panel in the Panels station to edit its prompt.",
   },
 };
 
