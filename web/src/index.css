@@ -298,6 +298,46 @@
     background-repeat: no-repeat, repeat;
     animation: benday-shimmer 2s infinite ease-in-out;
   }
+
+  /* Long-form legal docs (Terms, Privacy, AUP). Scoped so the rest of the
+     app's utility-first styling is unaffected. */
+  .legal-prose h2 {
+    font-family: var(--font-display);
+    font-weight: 900;
+    font-size: 1.1rem;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    text-transform: uppercase;
+    color: var(--color-pulp-paper);
+    margin-top: 2.25rem;
+    margin-bottom: 0.6rem;
+  }
+  .legal-prose h2:first-child {
+    margin-top: 0;
+  }
+  .legal-prose p {
+    margin-bottom: 0.9rem;
+  }
+  .legal-prose ul {
+    list-style: disc;
+    padding-left: 1.4rem;
+    margin-bottom: 0.9rem;
+  }
+  .legal-prose li {
+    margin-bottom: 0.35rem;
+  }
+  .legal-prose a {
+    color: var(--color-narrator-gold);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .legal-prose a:hover {
+    color: var(--color-hero-red);
+  }
+  .legal-prose strong {
+    color: var(--color-pulp-paper);
+    font-weight: 700;
+  }
 }
 
 @keyframes shimmer {

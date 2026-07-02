@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 
 from novel_to_comic.server.env import bool_env
+from novel_to_comic.server.sentry import configure_sentry
 from novel_to_comic.server.telemetry import configure_telemetry
 
 
@@ -21,15 +22,25 @@ api_logger = logging.getLogger("canary.api")
 def configure_logging() -> None:
     """Configure concise terminal logs for `pipeline serve`."""
     import sys
-    
+
     level_name = os.environ.get("CANARY_LOG_LEVEL", "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
     show_time = bool_env("CANARY_LOG_SHOW_TIME", default=False)
-    
+
     # Suppress verbose traceback frames from third-party libraries and venv
     suppress_list = [
-        "httpx", "asyncio", "fastapi", "uvicorn", "starlette", "anyio",
-        "click", "jinja2", "sqlalchemy", "pydantic", "http", "litellm",
+        "httpx",
+        "asyncio",
+        "fastapi",
+        "uvicorn",
+        "starlette",
+        "anyio",
+        "click",
+        "jinja2",
+        "sqlalchemy",
+        "pydantic",
+        "http",
+        "litellm",
     ]
     try:
         for path in sys.path:
@@ -58,6 +69,7 @@ def configure_logging() -> None:
     logging.getLogger("uvicorn.access").disabled = True
     logging.getLogger("httpx").setLevel(logging.WARNING)
     configure_telemetry()
+    configure_sentry()
 
 
 _STATIC_FILE_PATH_FRAGMENTS = (

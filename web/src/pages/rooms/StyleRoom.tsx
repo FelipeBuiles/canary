@@ -503,7 +503,7 @@ export function StyleRoom() {
 
       <ApprovalBar
         next={styleSelected
-          ? "PULP casts your characters and places in this style"
+          ? "Scenewright casts your characters and places in this style"
           : "Pick a style — click the card that fits your story"}
         estimateCredits={styleSelected && styleNeedsApproval ? castEstimate?.estimate_credits : null}
         primaryLabel={styleNeedsApproval || !styleSelected ? "LOOKS RIGHT — CONTINUE →" : "GO TO CAST →"}

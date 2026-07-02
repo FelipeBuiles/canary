@@ -1370,10 +1370,10 @@ export function CastRoom() {
 
       <ApprovalBar
         next={needsApproval
-          ? "PULP plans shots and writes prompts — automatically"
+          ? "Scenewright plans shots and writes prompts — automatically"
           : stageStatus === "complete"
             ? "Draw your panels at the Panels station"
-            : "PULP is drawing your cast"}
+            : "Scenewright is drawing your cast"}
         estimateCredits={needsApproval ? chainEstimate?.estimate_credits : null}
         primaryLabel={needsApproval ? "LOOKS RIGHT — CONTINUE →" : "GO TO PANELS →"}
         onPrimary={handleContinueToPanels}

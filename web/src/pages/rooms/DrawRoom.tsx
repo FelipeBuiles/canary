@@ -497,7 +497,7 @@ export function DrawRoom() {
         />
         {id && !isDrawRunning && upstreamReady && (
           <ApprovalBar
-            next="PULP draws every planned panel in your selected style"
+            next="Scenewright draws every planned panel in your selected style"
             estimateCredits={drawEstimate?.estimate_credits}
             primaryLabel="▶ DRAW ALL PANELS"
             onPrimary={() => setConfirmAction("draw_all")}
@@ -517,7 +517,7 @@ export function DrawRoom() {
           <ConfirmDrawer
             open={confirmAction === "draw_all"}
             title="Draw all panels"
-            body="PULP draws every planned panel in your selected style. You review by exception afterwards — flag anything that needs re-work."
+            body="Scenewright draws every planned panel in your selected style. You review by exception afterwards — flag anything that needs re-work."
             cost={drawEstimate as StageCostEstimate | undefined}
             extraBody={<QualityPresetField project={id} />}
             confirmLabel="Draw all panels"
@@ -565,7 +565,7 @@ export function DrawRoom() {
 
   const approvalBar = isDrawRunning ? (
     <ApprovalBar
-      next="PULP is drawing your panels"
+      next="Scenewright is drawing your panels"
       note={`Drawing panel ${Math.min((generateStage?.items_done ?? 0) + 1, generateStage?.items_total ?? 0)}/${generateStage?.items_total ?? 0}…`}
       primaryLabel="DRAWING…"
       onPrimary={() => {}}
@@ -574,8 +574,8 @@ export function DrawRoom() {
   ) : panelCounts.pending > 0 ? (
     <ApprovalBar
       next={panelCounts.generated > 0
-        ? `PULP draws the ${panelCounts.pending} remaining panel${panelCounts.pending === 1 ? "" : "s"}`
-        : "PULP draws every planned panel in your selected style"}
+        ? `Scenewright draws the ${panelCounts.pending} remaining panel${panelCounts.pending === 1 ? "" : "s"}`
+        : "Scenewright draws every planned panel in your selected style"}
       estimateCredits={drawEstimate?.estimate_credits}
       primaryLabel="▶ DRAW ALL PANELS"
       onPrimary={() => setConfirmAction("draw_all")}
@@ -602,7 +602,7 @@ export function DrawRoom() {
     />
   ) : (
     <ApprovalBar
-      next={drawApproved ? "Letter and export your book" : "PULP assembles your comic-book pages"}
+      next={drawApproved ? "Letter and export your book" : "Scenewright assembles your comic-book pages"}
       estimateCredits={drawApproved ? null : composeEstimate?.estimate_credits}
       primaryLabel={drawApproved ? "GO TO BOOK →" : "ACCEPT ALL — CONTINUE →"}
       onPrimary={handleAcceptAllContinue}
@@ -833,7 +833,7 @@ export function DrawRoom() {
       <ConfirmDrawer
         open={confirmAction === "draw_all"}
         title="Draw all panels"
-        body={`PULP draws ${panelCounts.pending} pending panel${panelCounts.pending === 1 ? "" : "s"} in your selected style.`}
+        body={`Scenewright draws ${panelCounts.pending} pending panel${panelCounts.pending === 1 ? "" : "s"} in your selected style.`}
         cost={drawEstimate as StageCostEstimate | undefined}
         extraBody={<QualityPresetField project={id} />}
         confirmLabel="Draw all panels"

@@ -92,7 +92,7 @@ export function LetteringChooser({
 
           {activeId === "auto" && (
             <p className="mt-2 font-meta text-[0.48rem] tracking-[0.12em] text-ink-black/35">
-              ✦ RECOMMENDED — PULP CHOSE THIS TO MATCH YOUR ART
+              ✦ RECOMMENDED — SCENEWRIGHT CHOSE THIS TO MATCH YOUR ART
             </p>
           )}
         </div>

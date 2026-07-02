@@ -213,7 +213,10 @@ def test_panel_estimate_counts_actual_uploaded_references(tmp_path):
         scene_to_location={"scene_001": "loc_001"},
     )
 
-    assert cost == pytest.approx(0.06868)
+    # image-fast -> vertex_ai/gemini-3.1-flash-lite-image: 0.0336 output +
+    # 3 uploaded refs (hero subject + style + plate) x 0.00028 input each.
+    # The missing `refs/missing/sheet.png` must be ignored, not counted.
+    assert cost == pytest.approx(0.03444)
 
 
 def test_output_aspect_meta_flags_shape_mismatch(tmp_path):

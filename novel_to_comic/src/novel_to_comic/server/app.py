@@ -17,7 +17,20 @@ from novel_to_comic.usage import audit_pricing
 
 from .generation_jobs import generation_worker
 from .logging import request_log_middleware
-from .routers import billing, config, credits, export, labs, pages, pipeline, projects, stages, styles
+from .ratelimit import configure_rate_limiting
+from .sentry import configure_sentry
+from .routers import (
+    billing,
+    config,
+    credits,
+    export,
+    labs,
+    pages,
+    pipeline,
+    projects,
+    stages,
+    styles,
+)
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +76,9 @@ def _audit_pricing_at_startup() -> None:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    # Initialise Sentry first so it can capture startup errors (e.g. pricing
+    # audit failures). No-op without SENTRY_DSN.
+    configure_sentry()
     _audit_pricing_at_startup()
     app.state.pricing_refresh_task = asyncio.create_task(
         asyncio.to_thread(_refresh_pricing_if_stale)
@@ -71,23 +87,29 @@ async def _lifespan(app: FastAPI):
     async def _release_stale_reservations():
         from .db import get_db
         from .credits import release_all_stale_reservations
+
         try:
             released = await asyncio.to_thread(release_all_stale_reservations, get_db())
             if released:
-                log.info("Released %d stale credit reservation(s) from previous server run", released)
+                log.info(
+                    "Released %d stale credit reservation(s) from previous server run",
+                    released,
+                )
         except Exception as exc:
-            log.warning("Could not clean up stale credit reservations on startup: %s", exc)
+            log.warning(
+                "Could not clean up stale credit reservations on startup: %s", exc
+            )
 
     asyncio.create_task(_release_stale_reservations())
 
     worker_count = max(1, int(os.environ.get("CANARY_GENERATION_WORKERS", "5")))
     app.state.generation_worker_tasks = [
-        asyncio.create_task(generation_worker(app))
-        for _ in range(worker_count)
+        asyncio.create_task(generation_worker(app)) for _ in range(worker_count)
     ]
     yield
     # Close shared httpx pool used by ai/client.py
     from novel_to_comic.ai.client import _http
+
     await _http.aclose()
     if not app.state.pricing_refresh_task.done():
         app.state.pricing_refresh_task.cancel()
@@ -101,8 +123,9 @@ async def _lifespan(app: FastAPI):
 
 
 def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
-    app = FastAPI(title="Pulp", lifespan=_lifespan)
+    app = FastAPI(title="Scenewright", lifespan=_lifespan)
     app.middleware("http")(request_log_middleware)
+    configure_rate_limiting(app)
 
     # Shared state for SSE streaming and concurrency control
     from .generation_jobs import (
@@ -142,7 +165,67 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
 
     @app.get("/api/health", tags=["meta"])
     def health():
+        # Liveness: always ok and cheap. Never depend on external services here —
+        # a slow dependency must not make the load balancer kill a healthy instance.
         return {"status": "ok"}
+
+    @app.get("/api/branding", tags=["meta"])
+    def branding():
+        # Public brand + contact identifiers consumed by legal pages, the footer,
+        # and the report-abuse channel. No secrets — safe to expose unauthenticated.
+        from .branding import get_branding
+
+        b = get_branding()
+        return {
+            "product_name": b.product_name,
+            "support_email": b.support_email,
+            "legal_email": b.legal_email,
+        }
+
+    @app.get("/api/health/ready", tags=["meta"])
+    def health_ready():
+        # Readiness: verifies core dependencies (Supabase, LiteLLM) are reachable
+        # so the load balancer stops routing to a half-up instance. Falls back to
+        # 'ok' when a dependency isn't configured (local dev / test).
+        checks: dict[str, str] = {}
+        ok = True
+        if os.environ.get("SUPABASE_URL"):
+            try:
+                from .db import get_db
+
+                get_db().table("projects").select("id").limit(1).execute()
+                checks["supabase"] = "ok"
+            except Exception as exc:  # noqa: BLE001 - surfaced to the probe payload
+                ok = False
+                checks["supabase"] = f"error: {type(exc).__name__}"
+        else:
+            checks["supabase"] = "skipped"
+
+        # LiteLLM gateway liveliness. Every AI call routes through it, so a dead
+        # gateway means the app can't serve its core function. /health/liveliness
+        # is the lightweight probe (no per-model DB round-trips). Short timeout —
+        # the LB check itself only allows ~5s, and we don't want to stall here.
+        litellm_base = os.environ.get("LITELLM_BASE_URL", "").rstrip("/")
+        if litellm_base:
+            import httpx
+
+            try:
+                headers = {}
+                api_key = os.environ.get("LITELLM_API_KEY")
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
+                with httpx.Client(timeout=2.0) as client:
+                    r = client.get(
+                        f"{litellm_base}/health/liveliness", headers=headers
+                    )
+                    r.raise_for_status()
+                checks["litellm"] = "ok"
+            except Exception as exc:  # noqa: BLE001 - surfaced to the probe payload
+                ok = False
+                checks["litellm"] = f"error: {type(exc).__name__}"
+        else:
+            checks["litellm"] = "skipped"
+        return {"status": "ok" if ok else "error", "checks": checks}
 
     # Routers
     app.include_router(credits.router, prefix="/api/credits", tags=["credits"])

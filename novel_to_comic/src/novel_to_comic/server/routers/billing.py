@@ -8,6 +8,7 @@ import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..auth import get_current_user
+from ..branding import get_branding
 from ..db import get_db
 
 router = APIRouter()
@@ -67,6 +68,7 @@ async def create_checkout(
 
     pkg = CREDIT_PACKAGES[package_id]
     _stripe()
+    branding = get_branding()
 
     # Use the request origin for redirect URLs so this works in both dev and prod
     # without an extra env var.
@@ -77,12 +79,17 @@ async def create_checkout(
         line_items=[{
             "price_data": {
                 "currency": "usd",
-                "product_data": {"name": f"Pulp — {pkg['credits']} credits ({pkg['label']})"},
+                "product_data": {"name": f"{branding.product_name} — {pkg['credits']} credits ({pkg['label']})"},
                 "unit_amount": pkg["price_cents"],
             },
             "quantity": 1,
         }],
         mode="payment",
+        # Surface the ToS at the moment of payment and require explicit consent.
+        # Stripe records the acceptance; this is the strongest consent signal we
+        # collect (stronger than browsewrap text on signup).
+        terms_of_service_url=branding.terms_url,
+        consent_collection={"terms_of_service": "required"},
         success_url=f"{origin}/credits?success=true",
         cancel_url=f"{origin}/credits",
         metadata={"user_id": user_id, "package": package_id},

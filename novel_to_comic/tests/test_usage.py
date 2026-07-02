@@ -6,7 +6,13 @@ from novel_to_comic import usage as usage_module
 from novel_to_comic.config import _QUALITY_PRESETS
 from novel_to_comic.model_costs import PricingResolver
 from novel_to_comic.server.credits import debit_model_usage, provider_usd_to_credits
-from novel_to_comic.usage import UsageRecord, audit_pricing, calculate_cost, calculate_cost_breakdown, estimate_image_cost
+from novel_to_comic.usage import (
+    UsageRecord,
+    audit_pricing,
+    calculate_cost,
+    calculate_cost_breakdown,
+    estimate_image_cost,
+)
 
 
 def test_image_alias_with_token_usage_uses_resolved_provider_token_pricing():
@@ -56,14 +62,18 @@ def test_token_priced_image_alias_estimates_via_quality_token_table():
     assert estimate_image_cost("gpt-image-2", 2, quality="high") == approx(0.2496)
 
 
-def test_balanced_image_alias_estimates_gemini_pro_image_cost():
-    assert estimate_image_cost("image-balanced", 2) == approx(0.268)
+def test_balanced_image_alias_estimates_flash_lite_image_cost():
+    # image-balanced -> nano banana 2 lite (gemini-3.1-flash-lite-image): $0.0336/image.
+    assert estimate_image_cost("image-balanced", 2) == approx(0.0672)
 
 
 def test_fast_image_alias_estimates_reference_input_images():
-    assert estimate_image_cost("image-fast", 1, ref_count=0) == 0.067
-    assert estimate_image_cost("image-fast", 1, ref_count=4) == approx(0.06924)
-    assert provider_usd_to_credits(estimate_image_cost("image-fast", 1, ref_count=4)) == 7
+    # image-fast -> nano banana 2 lite (gemini-3.1-flash-lite-image): $0.0336/image.
+    assert estimate_image_cost("image-fast", 1, ref_count=0) == 0.0336
+    assert estimate_image_cost("image-fast", 1, ref_count=4) == approx(0.03472)
+    assert (
+        provider_usd_to_credits(estimate_image_cost("image-fast", 1, ref_count=4)) == 4
+    )
 
 
 def test_per_megapixel_image_pricing_rounds_output_and_references():
@@ -105,14 +115,15 @@ def test_pricing_snapshot_changes_when_overrides_change(tmp_path):
     cost_map.write_text('{"gpt-test": {"input_cost_per_token": 1e-6}}')
     overrides.write_text("aliases: {}\nmodel_overrides: {}\n")
 
-    first = PricingResolver(cost_map_path=cost_map, overrides_path=overrides).pricing_snapshot
+    first = PricingResolver(
+        cost_map_path=cost_map, overrides_path=overrides
+    ).pricing_snapshot
     overrides.write_text(
-        "aliases: {}\n"
-        "model_overrides:\n"
-        "  gpt-test:\n"
-        "    output_cost_per_token: 2e-6\n"
+        "aliases: {}\nmodel_overrides:\n  gpt-test:\n    output_cost_per_token: 2e-6\n"
     )
-    second = PricingResolver(cost_map_path=cost_map, overrides_path=overrides).pricing_snapshot
+    second = PricingResolver(
+        cost_map_path=cost_map, overrides_path=overrides
+    ).pricing_snapshot
 
     assert first != second
 
@@ -131,7 +142,9 @@ def test_audit_pricing_checks_all_quality_preset_aliases(monkeypatch):
 
     assert audit_pricing() == []
 
-    expected_aliases = {alias for preset in _QUALITY_PRESETS.values() for alias in preset.values()}
+    expected_aliases = {
+        alias for preset in _QUALITY_PRESETS.values() for alias in preset.values()
+    }
     assert expected_aliases.issubset(set(resolver.seen))
 
 

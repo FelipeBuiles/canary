@@ -259,8 +259,9 @@ export function Library() {
   }
 
   return (
-    <div className="space-y-20">
-      <section>
+    <div className="relative space-y-20">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_1px_1px,rgba(27,28,21,0.1)_1px,transparent_0)] [background-size:28px_28px]" />
+      <section className="relative">
         <div className="inline-flex bg-hero-red px-4 py-1.5 font-meta text-[0.56rem] tracking-[0.22em] text-bristol uppercase">
           {t("STUDIO // ACTIVE PRODUCTIONS")}
         </div>
@@ -272,7 +273,7 @@ export function Library() {
         </p>
       </section>
 
-      <section>
+      <section className="relative">
         {isEmpty ? (
           <FirstIssueInvitation onStart={() => setNewProjectOpen(true)} />
         ) : (

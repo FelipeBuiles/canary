@@ -716,6 +716,10 @@ def _estimated_image_cost(model: str, ref_count: int) -> float | None:
     normalized = _vertex_model(model)
     if normalized == "gemini-3.1-flash-image-preview":
         return 0.067 + 0.00056 * ref_count
+    if normalized == "gemini-3.1-flash-lite-image":
+        # Nano Banana 2 Lite — image output at $30/1M tokens (1120 tokens for a
+        # 1K image = $0.0336); input refs at $0.25/1M tokens (1120 tokens = $0.00028).
+        return 0.0336 + 0.00028 * ref_count
     if normalized == "gemini-3-pro-image-preview":
         return 0.134 + 0.00112 * ref_count
     return None

@@ -118,7 +118,11 @@ def init(input_path: str, name: str | None, image_model: str | None):
               help="Parent directory containing project subdirectories")
 @click.option("--dev", is_flag=True,
               help="Dev mode: skip frontend static mount (use Vite dev server instead)")
-def serve(host: str, port: int, projects_dir: str, dev: bool):
+@click.option("--proxy-headers", is_flag=True,
+              help="Trust X-Forwarded-* headers from a reverse proxy (TLS terminator, "
+                   "e.g. Fly.io / nginx / a load balancer). Required in production behind "
+                   "a proxy so secure cookies and client-IP detection work. Off by default.")
+def serve(host: str, port: int, projects_dir: str, dev: bool, proxy_headers: bool):
     """Launch the web server.
 
     Points at a directory containing one or more project subdirectories.
@@ -142,11 +146,25 @@ def serve(host: str, port: int, projects_dir: str, dev: bool):
     load_config(p)
     configure_logging()
     app = create_app(projects_dir=p, dev=dev)
-    console.print(f"[bold]Canary[/bold] → http://{host}:{port}")
+    console.print(f"[bold]Scenewright[/bold] → http://{host}:{port}")
     console.print(f"[dim]Projects dir:[/dim] {p}")
     if dev:
         console.print("[dim]Dev mode: frontend served by Vite at http://localhost:5173[/dim]")
-    uvicorn.run(app, host=host, port=port, access_log=False, log_config=None)
+    if proxy_headers:
+        console.print("[dim]Proxy headers enabled (trusting X-Forwarded-* from upstream)[/dim]")
+    # proxy_headers + forwarded_allow_ips make Uvicorn honour X-Forwarded-Proto / -For
+    # so that request.url.scheme and the client IP reflect the real caller. Only enable
+    # when explicitly requested — behind no proxy these headers are client-spoofable.
+    forwarded_allow_ips = "*" if proxy_headers else None
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        access_log=False,
+        log_config=None,
+        proxy_headers=proxy_headers,
+        forwarded_allow_ips=forwarded_allow_ips,
+    )
 
 
 if __name__ == "__main__":

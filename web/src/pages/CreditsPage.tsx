@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCreditBalance, useCreditHistory, useCreditPackages, useCreateCheckout, usePricingReference, useProjects } from "../api/queries";
 import type { CreditPackage, CreditTransaction } from "../types/api";
@@ -426,7 +426,12 @@ export function CreditsPage() {
               })}
         </div>
         <p className="mt-4 font-body text-[0.86rem] font-semibold text-ink-black/46">
-          Payments processed securely by Stripe. Credits never expire.
+          Payments processed securely by Stripe. Credits never expire. Purchases
+          are subject to our{" "}
+          <Link to="/legal/terms" className="text-ink-black underline underline-offset-2">
+            Terms
+          </Link>
+          .
         </p>
       </section>
 

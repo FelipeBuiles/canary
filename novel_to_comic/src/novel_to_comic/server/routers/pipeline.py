@@ -38,6 +38,7 @@ from ..credits import (
 )
 from ..db import get_db
 from ..deps import get_project, project_key
+from ..ratelimit import cost_limit, limiter
 from ..credited_job import (
     CreditReservationDenied,
     enqueue_credited_job,
@@ -54,7 +55,9 @@ router = APIRouter()
 logger = logging.getLogger("canary.pipeline")
 
 
-def _panel_regen_config_for_alias(config: Config, image_model_alias: str | None) -> Config:
+def _panel_regen_config_for_alias(
+    config: Config, image_model_alias: str | None
+) -> Config:
     try:
         return config_for_image_model_alias(config, image_model_alias)
     except ValueError as exc:
@@ -100,15 +103,18 @@ def _wrap_on_event(queue: asyncio.Queue, app_state, pkey: str):
             return
         evt_type = event.get("type")
         if evt_type == "panel_start":
-            in_flight_map.setdefault(pkey, []).append({
-                "scene_id": event["scene_id"],
-                "panel_number": event["panel_number"],
-                "started_at": event["started_at"],
-            })
+            in_flight_map.setdefault(pkey, []).append(
+                {
+                    "scene_id": event["scene_id"],
+                    "panel_number": event["panel_number"],
+                    "started_at": event["started_at"],
+                }
+            )
         elif evt_type == "panel_done":
             existing = in_flight_map.get(pkey, [])
             in_flight_map[pkey] = [
-                e for e in existing
+                e
+                for e in existing
                 if not (
                     e["scene_id"] == event["scene_id"]
                     and e["panel_number"] == event["panel_number"]
@@ -146,13 +152,17 @@ async def _run_stage(
         if retry_failed and stage == "draw":
             extra_kwargs["retry_failed"] = True
         ctx = StageRuntime(
-            stage, state, project_dir,
+            stage,
+            state,
+            project_dir,
             on_event=_wrap_on_event(queue, app_state, pkey),
         )
         await stage_obj.run(config, project_dir, ctx, **extra_kwargs)
         elapsed = time.perf_counter() - started
         status = state.stages[stage].status.value
-        status_color = "green" if status in {"complete", "awaiting_review"} else "yellow"
+        status_color = (
+            "green" if status in {"complete", "awaiting_review"} else "yellow"
+        )
         logger.info(
             "[bold green]Stage end[/] project=[white]%s[/] stage=[bold]%s[/] "
             "status=[%s]%s[/] elapsed=[bold]%.1fs[/]",
@@ -164,6 +174,7 @@ async def _run_stage(
         )
     except Exception as exc:
         from novel_to_comic.text_utils import clean_exception_message
+
         message = clean_exception_message(exc)
         # StageRuntime.execute() already called fail_stage + save_state + emitted stage_fail.
         # This catch handles the case where a stage raises before entering execute().
@@ -180,7 +191,6 @@ async def _run_stage(
             elapsed,
             message,
         )
-
 
 
 # Stages that auto-chain: when the first stage completes, the rest run automatically.
@@ -215,7 +225,13 @@ async def _run_stage_with_credits(
             state=state,
             stage=stage,
             run=lambda: _run_stage(
-                stage, config, project_dir, state, queue, app_state, pkey,
+                stage,
+                config,
+                project_dir,
+                state,
+                queue,
+                app_state,
+                pkey,
                 retry_failed=retry_failed,
             ),
         )
@@ -223,7 +239,11 @@ async def _run_stage_with_credits(
         # Insufficient credits or DB error — fail the stage so the UI reflects it.
         fail_stage(state, stage, denied.message)
         save_state(state, project_dir)
-        event: dict[str, object] = {"type": "stage_fail", "stage": stage, "message": denied.message}
+        event: dict[str, object] = {
+            "type": "stage_fail",
+            "stage": stage,
+            "message": denied.message,
+        }
         if denied.detail and denied.detail.get("error") == "insufficient_credits":
             event["error_code"] = "insufficient_credits"
             event["balance_credits"] = denied.detail.get("balance_credits")
@@ -242,13 +262,22 @@ async def _run_stage_with_credits(
             if next_s.status != StageStatus.PENDING:
                 continue
             await _run_stage_with_credits(
-                next_stage, config, project_dir, state, queue,
-                user_id, project_id, app_state, pkey,
+                next_stage,
+                config,
+                project_dir,
+                state,
+                queue,
+                user_id,
+                project_id,
+                app_state,
+                pkey,
             )
             # Stop if the chained stage failed or hit a review checkpoint
-            if state.stages[next_stage].status in (StageStatus.FAILED, StageStatus.AWAITING_REVIEW):
+            if state.stages[next_stage].status in (
+                StageStatus.FAILED,
+                StageStatus.AWAITING_REVIEW,
+            ):
                 break
-
 
 
 async def _run_job(pkey: str, request: Request, job):
@@ -348,7 +377,9 @@ def _append_instruction_log(
     patch: dict,
     prompt: ImagePrompt,
 ) -> None:
-    log_path = artifacts.panel_prompt_instructions_path(project_dir, scene_id, panel_number)
+    log_path = artifacts.panel_prompt_instructions_path(
+        project_dir, scene_id, panel_number
+    )
     payload = {
         "created_at": datetime.now(UTC).isoformat(),
         "instruction": instruction,
@@ -377,12 +408,17 @@ async def estimate_stage_cost(
 
     # Sum costs for the stage and all stages it will auto-chain into.
     chain = [stage] + STAGE_AUTO_CHAIN.get(stage, [])
-    breakdown = UnifiedCostResolver.estimate_stage_cost(config, project_dir, state, chain[0])
+    breakdown = UnifiedCostResolver.estimate_stage_cost(
+        config, project_dir, state, chain[0]
+    )
     for chained in chain[1:]:
-        extra = UnifiedCostResolver.estimate_stage_cost(config, project_dir, state, chained)
+        extra = UnifiedCostResolver.estimate_stage_cost(
+            config, project_dir, state, chained
+        )
         breakdown = CreditEstimate(
             estimate_credits=breakdown["estimate_credits"] + extra["estimate_credits"],
-            reserved_credits=(breakdown["reserved_credits"] or 0) + (extra["reserved_credits"] or 0),
+            reserved_credits=(breakdown["reserved_credits"] or 0)
+            + (extra["reserved_credits"] or 0),
             reservation_multiplier=breakdown["reservation_multiplier"],
             confidence=breakdown["confidence"],
         )
@@ -412,6 +448,7 @@ async def regen_panel_estimate(
 
 
 @router.post("/run")
+@limiter.limit(cost_limit)
 async def run_pipeline(
     request: Request,
     project_id: str,
@@ -440,7 +477,9 @@ async def run_pipeline(
         raise HTTPException(409, "A stage is already running for this project")
     existing_style = request.app.state.style_tasks.get(pkey)
     if existing_style and not existing_style.done():
-        raise HTTPException(409, "A style operation is already running for this project")
+        raise HTTPException(
+            409, "A style operation is already running for this project"
+        )
 
     if stage == "compose":
         draw_error = _draw_ready_for_compose_error(project_dir)
@@ -451,9 +490,18 @@ async def run_pipeline(
         raise HTTPException(400, "stage parameter is required")
 
     # Gate: post-style stages require a style to have been selected
-    _POST_STYLE_STAGES = {"cast", "adapt", "plan", "storyboard", "direct", "draw", "compose"}
+    _POST_STYLE_STAGES = {
+        "cast",
+        "adapt",
+        "plan",
+        "storyboard",
+        "direct",
+        "draw",
+        "compose",
+    }
     if stage in _POST_STYLE_STAGES:
         from ..routers.styles import is_style_selected
+
         if not is_style_selected(project_dir, config):
             raise HTTPException(
                 403,
@@ -471,15 +519,25 @@ async def run_pipeline(
     # the task — this is just the fast path that returns 402 with structured detail
     # so the client can render a "buy more credits" prompt before any work starts.
     db = get_db()
-    required_credits = estimate_stage_credit_reservation(config, project_dir, state, stage)
+    required_credits = estimate_stage_credit_reservation(
+        config, project_dir, state, stage
+    )
     assert_sufficient_credits(db, user_id, required_credits, stage=stage)
 
     queue: asyncio.Queue = asyncio.Queue()
     request.app.state.event_queues[pkey] = queue
 
     job = _run_stage_with_credits(
-        stage, config, project_dir, state, queue, user_id, project_id,
-        request.app.state, pkey, retry_failed=retry_failed,
+        stage,
+        config,
+        project_dir,
+        state,
+        queue,
+        user_id,
+        project_id,
+        request.app.state,
+        pkey,
+        retry_failed=retry_failed,
     )
 
     task = asyncio.create_task(_run_job(pkey, request, job))
@@ -494,6 +552,7 @@ async def run_pipeline(
 
 
 @router.post("/regen-extract")
+@limiter.limit(cost_limit)
 async def regen_extract(
     request: Request,
     project_id: str,
@@ -510,7 +569,9 @@ async def regen_extract(
         raise HTTPException(409, "A stage is already running for this project")
     existing_style = request.app.state.style_tasks.get(pkey)
     if existing_style and not existing_style.done():
-        raise HTTPException(409, "A style operation is already running for this project")
+        raise HTTPException(
+            409, "A style operation is already running for this project"
+        )
 
     # Keep behavior aligned with /run?stage=extract&rerun=1:
     # reset extract + all downstream stage state, and clear downstream outputs.
@@ -519,15 +580,24 @@ async def regen_extract(
     save_state(state, project_dir)
 
     db = get_db()
-    required_credits = estimate_stage_credit_reservation(config, project_dir, state, "extract")
+    required_credits = estimate_stage_credit_reservation(
+        config, project_dir, state, "extract"
+    )
     assert_sufficient_credits(db, user_id, required_credits, stage="extract")
 
     # Run extract stage via SSE pipeline (same pattern as POST /run?stage=extract)
     queue: asyncio.Queue = asyncio.Queue()
     request.app.state.event_queues[pkey] = queue
     job = _run_stage_with_credits(
-        "extract", config, project_dir, state, queue, user_id, project_id,
-        request.app.state, pkey,
+        "extract",
+        config,
+        project_dir,
+        state,
+        queue,
+        user_id,
+        project_id,
+        request.app.state,
+        pkey,
     )
     task = asyncio.create_task(_run_job(pkey, request, job))
     running[pkey] = task
@@ -618,6 +688,7 @@ def _enqueue_cast_asset_regen(
 
 
 @router.post("/regen")
+@limiter.limit(cost_limit)
 async def regen_panel(
     request: Request,
     project_id: str,
@@ -640,10 +711,14 @@ async def regen_panel(
 
     prompt_path = artifacts.panel_prompt_path(project_dir, scene_id, panel_number)
     if not prompt_path.exists():
-        raise HTTPException(404, f"Prompt not found: {scene_id}/panel_{panel_number:03d}")
+        raise HTTPException(
+            404, f"Prompt not found: {scene_id}/panel_{panel_number:03d}"
+        )
     planned_panel_id = None
     try:
-        planned_panel_id = ImagePrompt.model_validate_json(prompt_path.read_text()).planned_panel_id
+        planned_panel_id = ImagePrompt.model_validate_json(
+            prompt_path.read_text()
+        ).planned_panel_id
     except Exception:
         planned_panel_id = None
 
@@ -655,7 +730,9 @@ async def regen_panel(
     async def _work():
         clear_panel_acceptance(project_dir, scene_id, panel_number)
         clear_panel_flag(project_dir, scene_id, panel_number)
-        return await s7_draw.regenerate_panel_image(regen_config, project_dir, scene_id, panel_number)
+        return await s7_draw.regenerate_panel_image(
+            regen_config, project_dir, scene_id, panel_number
+        )
 
     job, created = enqueue_credited_job(
         request.app,
@@ -687,6 +764,7 @@ async def regen_panel(
 
 
 @router.post("/regen-instructed")
+@limiter.limit(cost_limit)
 async def regen_panel_with_instruction(
     request: Request,
     project_id: str,
@@ -719,6 +797,7 @@ async def regen_panel_with_instruction(
 
 
 @router.post("/regen-ref")
+@limiter.limit(cost_limit)
 async def regen_ref(
     request: Request,
     project_id: str,
@@ -730,7 +809,10 @@ async def regen_ref(
 
     _project_dir, config, _state = project
     return _enqueue_cast_asset_regen(
-        request, project_id, user_id, project,
+        request,
+        project_id,
+        user_id,
+        project,
         kind="character_ref_regen",
         asset_id_key="char_id",
         asset_id=char_id,
@@ -741,6 +823,7 @@ async def regen_ref(
 
 
 @router.post("/regen-state-ref")
+@limiter.limit(cost_limit)
 async def regen_state_ref(
     request: Request,
     project_id: str,
@@ -753,12 +836,17 @@ async def regen_state_ref(
 
     _project_dir, config, _state = project
     return _enqueue_cast_asset_regen(
-        request, project_id, user_id, project,
+        request,
+        project_id,
+        user_id,
+        project,
         kind="character_ref_regen",
         asset_id_key="char_id",
         asset_id=f"{char_id}:{state_id}",
         label=f"Appearance state / {char_id} · {state_id}",
-        work=lambda: s3_cast.regenerate_character_state_ref(config, _project_dir, char_id, state_id),
+        work=lambda: s3_cast.regenerate_character_state_ref(
+            config, _project_dir, char_id, state_id
+        ),
         debit_description=f"Model call: regenerate appearance state {char_id}/{state_id}",
     )
 
@@ -816,6 +904,7 @@ def restore_character_ref_version(
 
 
 @router.post("/regen-plate")
+@limiter.limit(cost_limit)
 async def regen_plate(
     request: Request,
     project_id: str,
@@ -827,7 +916,10 @@ async def regen_plate(
 
     _project_dir, config, _state = project
     return _enqueue_cast_asset_regen(
-        request, project_id, user_id, project,
+        request,
+        project_id,
+        user_id,
+        project,
         kind="location_plate_regen",
         asset_id_key="loc_id",
         asset_id=loc_id,
@@ -838,6 +930,7 @@ async def regen_plate(
 
 
 @router.post("/regen-ref-instructed")
+@limiter.limit(cost_limit)
 async def regen_ref_with_instruction(
     request: Request,
     project_id: str,
@@ -862,8 +955,8 @@ async def regen_ref_with_instruction(
     )
 
 
-
 @router.post("/regen-plate-instructed")
+@limiter.limit(cost_limit)
 async def regen_plate_with_instruction(
     request: Request,
     project_id: str,
@@ -888,8 +981,8 @@ async def regen_plate_with_instruction(
     )
 
 
-
 @router.post("/regen-prop")
+@limiter.limit(cost_limit)
 async def regen_prop(
     request: Request,
     project_id: str,
@@ -901,7 +994,10 @@ async def regen_prop(
 
     _project_dir, config, _state = project
     return _enqueue_cast_asset_regen(
-        request, project_id, user_id, project,
+        request,
+        project_id,
+        user_id,
+        project,
         kind="prop_ref_regen",
         asset_id_key="prop_id",
         asset_id=prop_id,
@@ -912,6 +1008,7 @@ async def regen_prop(
 
 
 @router.post("/regen-prop-instructed")
+@limiter.limit(cost_limit)
 async def regen_prop_with_instruction(
     request: Request,
     project_id: str,
@@ -934,7 +1031,6 @@ async def regen_prop_with_instruction(
         instruction=body.instruction,
         app=request.app,
     )
-
 
 
 @router.get("/generation-jobs")
@@ -988,7 +1084,7 @@ def reset_stage(
         raise HTTPException(
             409,
             f"Stage '{stage}' is not failed (status: {stage_state.status.value}). "
-            "Only failed stages can be reset."
+            "Only failed stages can be reset.",
         )
 
     state.stages[stage] = StageState()
@@ -998,7 +1094,7 @@ def reset_stage(
     return {
         "status": "reset",
         "stage": stage,
-        "message": f"Stage '{stage}' has been reset to pending. You can now re-run it."
+        "message": f"Stage '{stage}' has been reset to pending. You can now re-run it.",
     }
 
 
@@ -1041,8 +1137,7 @@ def get_stage_error(stage: str, project_id: str, project=Depends(get_project)):
     stage_state = state.stages[stage]
     if stage_state.status != StageStatus.FAILED:
         raise HTTPException(
-            404,
-            f"Stage '{stage}' is not failed (status: {stage_state.status.value})."
+            404, f"Stage '{stage}' is not failed (status: {stage_state.status.value})."
         )
 
     return {

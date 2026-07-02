@@ -42,7 +42,7 @@ export const STATIONS: Station[] = [
     routes: ["extract", "adapt"],
     primaryRoute: "extract",
     substeps: [
-      { key: "extract", label: "What PULP found", kind: "gated", backendStages: ["extract"], route: "extract" },
+      { key: "extract", label: "What Scenewright found", kind: "gated", backendStages: ["extract"], route: "extract" },
       { key: "script", label: "Script", kind: "auto", backendStages: ["adapt"], drawer: "script" },
     ],
   },

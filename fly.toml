@@ -1,0 +1,69 @@
+# Fly.io app config for the Canary web server (Machine A — public).
+#
+# Sibling app: litellm-gw (Machine B) runs the LiteLLM proxy privately on the
+# same org's 6PN network and is reached at http://litellm-gw.internal:4000.
+# See litellm/fly.toml for the gateway app.
+#
+# Provisioning:
+#   fly launch --no-deploy
+#   fly volumes create canary_projects --region iad --size 10
+#   fly secrets set LITELLM_API_KEY=... SUPABASE_URL=... SUPABASE_SECRET_KEY=... \
+#     STRIPE_SECRET_KEY=... STRIPE_WEBHOOK_SECRET=... SENTRY_DSN=... \
+#     LANGFUSE_PUBLIC_KEY=... LANGFUSE_SECRET_KEY=... \
+#     OTEL_EXPORTER_OTLP_ENDPOINT=... OTEL_EXPORTER_OTLP_HEADERS=...
+#   fly certs add app.yourdomain.com
+#   fly deploy
+
+app = "canary-web"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  CANARY_ENV = "production"
+  CANARY_GENERATION_WORKERS = "5"
+  CANARY_GENERATION_JOB_TIMEOUT_SECONDS = "900"
+  CANARY_OTEL_ENABLED = "true"
+  CANARY_LABS_ENABLED = "false"
+  CANARY_COOKIE_SECURE = "true"
+  LITELLM_BASE_URL = "http://litellm-gw.internal:4000"
+  # Secrets (set via `fly secrets set`, not here):
+  #   LITELLM_API_KEY, SUPABASE_URL, SUPABASE_SECRET_KEY,
+  #   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, SENTRY_DSN,
+  #   LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY,
+  #   OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_HEADERS,
+  #   R2_ENDPOINT, R2_ACCESS_KEY, R2_SECRET_KEY, R2_BUCKET, R2_PUBLIC_URL,
+  #   PULP_MODEL_COST_MARKUP (set > 1.0 for margin)
+
+# Persistent volume for /projects — survives redeploy.
+# In-memory job queue + SSE state pin this to a single instance; do not scale
+# horizontally until the queue is externalized (Phase 3 refactor).
+[mounts]
+  source = "canary_projects"
+  destination = "/projects"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  # Long-running image-generation jobs cannot survive a machine stop, so keep
+  # the box warm. auto_start still lets a stopped box wake on the first request.
+  auto_stop_machines = false
+  auto_start_machines = true
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 200
+    soft_limit = 150
+
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "60s"
+  method = "GET"
+  # Readiness probe: pings Supabase + LiteLLM so Fly stops routing to a half-up
+  # machine. Falls back to 'ok' when a dependency isn't configured.
+  path = "/api/health/ready"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "2g"   # Playwright/Chromium in the compose stage needs headroom

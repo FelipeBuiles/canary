@@ -13,13 +13,13 @@ model_list:
       # internal and outputs are reviewed downstream.
       safety_settings: &vertex_safety_off
         - category: HARM_CATEGORY_HARASSMENT
-          threshold: 'OFF'
+          threshold: "OFF"
         - category: HARM_CATEGORY_HATE_SPEECH
-          threshold: 'OFF'
+          threshold: "OFF"
         - category: HARM_CATEGORY_SEXUALLY_EXPLICIT
-          threshold: 'OFF'
+          threshold: "OFF"
         - category: HARM_CATEGORY_DANGEROUS_CONTENT
-          threshold: 'OFF'
+          threshold: "OFF"
   - model_name: extract-balanced
     litellm_params:
       model: vertex_ai/gemini-3.5-flash
@@ -96,12 +96,16 @@ model_list:
   # ─── Image generation ─────────────────────────────────────────────────────
   - model_name: image-fast
     litellm_params:
-      model: vertex-multimodal/gemini-3.1-flash-image-preview
+      # Nano Banana 2 Lite — fastest/cheapest tier; mirrors image-balanced.
+      model: vertex-multimodal/gemini-3.1-flash-lite-image
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
   - model_name: image-balanced
     litellm_params:
-      model: vertex-multimodal/gemini-3-pro-image-preview
+      # Nano Banana 2 Lite (Gemini 3.1 Flash Lite Image) — ultra-low latency,
+      # ~half the per-image cost of the Pro image model. Balanced default as of
+      # 2026-07-01. Routed through the vertex-multimodal custom handler.
+      model: vertex-multimodal/gemini-3.1-flash-lite-image
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
   - model_name: image-balanced-seedream-test
@@ -128,9 +132,12 @@ litellm_settings:
   retry_after: 2
   drop_params: true
   custom_provider_map:
-    - {"provider": "fal-queue", "custom_handler": "litellm_handlers.fal_provider.fal_queue_llm"}
-    - {"provider": "vertex-multimodal", "custom_handler": "litellm_handlers.vertex_multimodal.vertex_multimodal_llm"}
-    - {"provider": "reve", "custom_handler": "litellm_handlers.reve_provider.reve_llm"}
+    - provider: fal-queue
+      custom_handler: litellm_handlers.fal_provider.fal_queue_llm
+    - provider: vertex-multimodal
+      custom_handler: litellm_handlers.vertex_multimodal.vertex_multimodal_llm
+    - provider: reve
+      custom_handler: litellm_handlers.reve_provider.reve_llm
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
