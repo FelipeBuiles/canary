@@ -52,6 +52,7 @@ export interface StageInfo {
   items_done: number;
   items_total: number;
   items_failed: string[];
+  approved: boolean | null;
   cost_credits: number;
   estimated_cost_credits: number;
   error: string | null;
@@ -225,6 +226,16 @@ export interface CharacterRelationship {
   relationship: string;
 }
 
+/** One distinct look an entity takes on mid-story (e.g. silver hands). When
+ * visually_significant, the cast stage generates its own ref under
+ * refs/<id>/states/<state_id>/ (characters) or plates/<state_id>.png (locations). */
+export interface AppearanceState {
+  id: string;
+  label: string;
+  visual_anchor: string;
+  visually_significant: boolean;
+}
+
 export interface Character {
   id: string;
   name: string;
@@ -235,6 +246,7 @@ export interface Character {
   default_outfit: string;
   relationships: CharacterRelationship[];
   first_appearance_scene: string;
+  appearance_states: AppearanceState[];
 }
 
 export interface Location {
@@ -243,6 +255,7 @@ export interface Location {
   visual_anchor: string;
   time_of_day: string | null;
   mood: string;
+  appearance_states: AppearanceState[];
 }
 
 export interface Scene {
@@ -722,6 +735,24 @@ export interface RestorePanelImageVersionResponse {
   versions: PanelImageVersion[];
 }
 
+export interface AssetVersion {
+  version: number;
+  current?: boolean;
+  image_path: string;
+  archived_at?: string;
+  reason?: string;
+  width?: number;
+  height?: number;
+  meta_path?: string;
+}
+
+export interface CharacterRefVersionsResponse {
+  char_id: string;
+  state_id: string | null;
+  has_history: boolean;
+  versions: AssetVersion[];
+}
+
 export type PromptWarningCode =
   | "missing_character_ref"
   | "thin_composition"
@@ -748,4 +779,27 @@ export interface CharacterVoice {
   border_color?: string | null;
   border_width?: number | null;
   border_radius?: number | null;
+}
+
+/**
+ * A story from the short-story library catalog (libraryofshortstories.com,
+ * proxied via GET /projects/short-stories). Only `code`, `title`, `author`,
+ * `words`, and `genres` are guaranteed present across the catalog; everything
+ * else is sparse. `code` — not `_id`, which exists on only a handful of
+ * curated entries — is the stable unique handle and the import identifier.
+ */
+export interface ShortStory {
+  code: string;
+  title: string;
+  author: string;
+  words: number;
+  genres: string[];
+  publish_year?: number;
+  publish_source?: string;
+  rating?: number;
+  series?: string;
+  _id?: string;
+  image?: string;
+  blurb?: string;
+  description?: string;
 }

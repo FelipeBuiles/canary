@@ -71,6 +71,47 @@ def test_generate_panel_writes_failure_metadata(tmp_path, monkeypatch):
     assert "IMAGE_PROHIBITED_CONTENT" in payload["error"]["message"]
 
 
+def test_generate_panel_classifies_rate_limit(tmp_path, monkeypatch):
+    """A Vertex 429 (quota) is classified rate_limited, not a prompt problem."""
+    prompt_dir = tmp_path / "direct" / "scene_001"
+    prompt_dir.mkdir(parents=True)
+    prompt_path = prompt_dir / "panel_002.json"
+    prompt = ImagePrompt(
+        prompt_version=IMAGE_PROMPT_VERSION,
+        planned_panel_id="scene_001:panel_002",
+        scene_id="scene_001",
+        panel_number=2,
+        full_prompt="A perfectly fine panel.",
+        width=768,
+        height=1024,
+        steps=28,
+    )
+    prompt_path.write_text(prompt.model_dump_json(indent=2))
+
+    async def rate_limited(**kwargs):
+        raise RuntimeError(
+            "500 from /v1/images/edits: litellm.RateLimitError: Vertex image generation "
+            "failed (RESOURCE_EXHAUSTED): 429 Resource has been exhausted (check quota)."
+        )
+
+    monkeypatch.setattr(s7_draw.flux, "generate_image_multi_ref", rate_limited)
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(
+            s7_draw._generate_panel(
+                Config(), tmp_path, prompt_path, asyncio.Semaphore(1), None, {}, None, None,
+            )
+        )
+
+    payload = json.loads(
+        (tmp_path / "draw" / "scene_001" / "panel_002.png.failure.json").read_text()
+    )
+    assert payload["classification"] == "rate_limited"
+    assert payload["recoverable"] is True
+    assert "wait for quota" in payload["user_message"].lower()
+    assert "edit the prompt" not in payload["user_message"].lower()
+
+
 def test_generate_panel_regenerates_stale_existing_image(tmp_path, monkeypatch):
     prompt_dir = tmp_path / "direct" / "scene_004"
     prompt_dir.mkdir(parents=True)

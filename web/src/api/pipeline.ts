@@ -1,5 +1,6 @@
 import { apiFetch } from "./client";
 import type {
+  CharacterRefVersionsResponse,
   GenerationJob,
   InstructedPanelRegenResponse,
   InstructedPlateRegenResponse,
@@ -79,6 +80,48 @@ export function regenRef(
 ): Promise<{ status: string; job: GenerationJob; char_id: string }> {
   return apiFetch(
     `/projects/${encodeURIComponent(project)}/regen-ref?char_id=${encodeURIComponent(charId)}`,
+    { method: "POST" },
+  );
+}
+
+export function regenStateRef(
+  project: string,
+  charId: string,
+  stateId: string,
+): Promise<{ status: string; job: GenerationJob; char_id: string }> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/regen-state-ref?char_id=${encodeURIComponent(charId)}&state_id=${encodeURIComponent(stateId)}`,
+    { method: "POST" },
+  );
+}
+
+export function getCharacterRefVersions(
+  project: string,
+  charId: string,
+  stateId?: string,
+): Promise<CharacterRefVersionsResponse> {
+  const params = new URLSearchParams({ char_id: charId });
+  if (stateId) params.set("state_id", stateId);
+  return apiFetch<CharacterRefVersionsResponse>(
+    `/projects/${encodeURIComponent(project)}/character-ref-versions?${params.toString()}`,
+  ).catch((err) => {
+    if (err instanceof Error && err.message.startsWith("API 404:")) {
+      return { char_id: charId, state_id: stateId ?? null, has_history: false, versions: [] };
+    }
+    throw err;
+  });
+}
+
+export function restoreCharacterRefVersion(
+  project: string,
+  charId: string,
+  version: number,
+  stateId?: string,
+): Promise<CharacterRefVersionsResponse> {
+  const params = new URLSearchParams({ char_id: charId, version: String(version) });
+  if (stateId) params.set("state_id", stateId);
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/character-ref-versions/restore?${params.toString()}`,
     { method: "POST" },
   );
 }

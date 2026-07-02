@@ -12,13 +12,94 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from google import genai
-from google.genai import types
-from litellm.llms.custom_llm import CustomLLM
 import struct
-from litellm.types.utils import ImageObject, ImageResponse, ImageUsage, ImageUsageInputTokensDetails
+try:
+    from google import genai
+    from google.genai import types
+except (ModuleNotFoundError, ImportError):
+    class DummyGenAI:
+        pass
+    class DummyClass:
+        def __init__(self, *args, **kwargs):
+            pass
+    genai = DummyGenAI()
+    types = DummyGenAI()
+    types.SafetySetting = DummyClass
+    types.Part = DummyClass
+    types.GenerateContentConfig = DummyClass
+    types.GenerateContentResponse = DummyClass
+try:
+    import litellm
+    from litellm.llms.custom_llm import CustomLLM
+    from litellm.types.utils import ImageObject, ImageResponse, ImageUsage, ImageUsageInputTokensDetails
+except ModuleNotFoundError:
+    class CustomLLM:
+        pass
+    class ImageObject:
+        pass
+    class ImageResponse:
+        pass
+    class ImageUsage:
+        pass
+    class ImageUsageInputTokensDetails:
+        pass
+    class DummyLiteLLM:
+        class RateLimitError(Exception):
+            def __init__(self, message, llm_provider, model):
+                super().__init__(message)
+                self.llm_provider = llm_provider
+                self.model = model
+        class APIError(Exception):
+            def __init__(self, status_code, message, llm_provider, model):
+                super().__init__(message)
+                self.status_code = status_code
+                self.llm_provider = llm_provider
+                self.model = model
+    litellm = DummyLiteLLM
 
 _ASPECT_TOLERANCE = 0.12
+
+# Canary renders public-domain literature whose canonical content can include
+# violence (e.g. The Girl Without Hands). Vertex's default image safety filters
+# return no candidate on such panels, which surfaces as an image-extraction
+# failure in the draw stage. Mirror the text models' safety_settings in
+# litellm/config.yaml so the image stage doesn't silently drop those panels.
+_SAFETY_OFF = [
+    types.SafetySetting(category=_c, threshold="OFF")
+    for _c in (
+        "HARM_CATEGORY_HARASSMENT",
+        "HARM_CATEGORY_HATE_SPEECH",
+        "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+        "HARM_CATEGORY_DANGEROUS_CONTENT",
+    )
+]
+
+
+def _translate_vertex_error(exc: BaseException, model: str) -> BaseException:
+    """Map a raw Vertex/genai API error to a typed LiteLLM exception.
+
+    Without this, a Vertex ``429 RESOURCE_EXHAUSTED`` (quota) propagates
+    uncaught, LiteLLM wraps it as a generic ``APIConnectionError``, and the
+    gateway returns an opaque ``500`` with no body — so the draw stage records
+    only "500 Internal Server Error" and tells the user to "edit the prompt"
+    when in fact they were rate-limited. Re-raising the correct status + the
+    upstream message makes image failures self-explaining, mirroring the
+    text-side diagnostics. Returns ``exc`` unchanged when it is not a
+    recognized Vertex API error (e.g. our own "no image bytes" ValueError).
+    """
+    code = getattr(exc, "code", None)
+    if not isinstance(code, int):
+        code = getattr(exc, "status_code", None)
+    status = getattr(exc, "status", None)
+    message = getattr(exc, "message", None) or str(exc)
+    detail = f"Vertex image generation failed ({status or code or type(exc).__name__}): {message}"
+    if code == 429 or status == "RESOURCE_EXHAUSTED":
+        return litellm.RateLimitError(message=detail, llm_provider="vertex-multimodal", model=model)
+    if isinstance(code, int) and 400 <= code < 600:
+        return litellm.APIError(
+            status_code=code, message=detail, llm_provider="vertex-multimodal", model=model
+        )
+    return exc
 
 
 class VertexMultimodalLLM(CustomLLM):
@@ -149,12 +230,21 @@ class VertexMultimodalLLM(CustomLLM):
                 contents.append(_role_label(role, bare, index=role_seen[role], total=role_totals[role]))
                 contents.append(part)
         client = genai.Client(vertexai=True, project=project, location=location)
-        response = await asyncio.to_thread(
-            client.models.generate_content,
-            model=vertex_model,
-            contents=contents,
-            config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
-        )
+        try:
+            response = await asyncio.to_thread(
+                client.models.generate_content,
+                model=vertex_model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    response_modalities=["IMAGE"],
+                    safety_settings=_SAFETY_OFF,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 — re-raised as a typed LiteLLM error
+            translated = _translate_vertex_error(exc, vertex_model)
+            if translated is exc:
+                raise
+            raise translated from exc
         image_bytes, mime = _extract_image(response)
         actual_width, actual_height = _image_dimensions(image_bytes)
         actual_aspect = (actual_width / actual_height) if actual_width and actual_height else None
@@ -537,7 +627,55 @@ def _extract_image(response: types.GenerateContentResponse) -> tuple[bytes, str]
             inline = getattr(part, "inline_data", None)
             if inline and inline.data:
                 return inline.data, inline.mime_type or "image/png"
-    raise ValueError(f"Vertex response did not contain image bytes: {response}")
+
+    # Build a detailed diagnostic message
+    details = []
+
+    # Inspect candidates
+    if response.candidates:
+        for idx, candidate in enumerate(response.candidates):
+            cand_details = [f"candidate #{idx}"]
+            finish_reason = getattr(candidate, "finish_reason", None)
+            if finish_reason is not None:
+                cand_details.append(f"finish_reason={finish_reason}")
+            finish_message = getattr(candidate, "finish_message", None)
+            if finish_message:
+                cand_details.append(f"finish_message={finish_message}")
+            safety_ratings = getattr(candidate, "safety_ratings", None)
+            if safety_ratings:
+                ratings = []
+                for rating in safety_ratings:
+                    category = getattr(rating, "category", None)
+                    probability = getattr(rating, "probability", None)
+                    blocked = getattr(rating, "blocked", None)
+                    rating_str = f"{category or 'UNKNOWN'}(prob={probability or 'UNKNOWN'}, blocked={blocked})"
+                    ratings.append(rating_str)
+                cand_details.append(f"safety_ratings=[{', '.join(ratings)}]")
+            details.append("; ".join(cand_details))
+    else:
+        details.append("no candidates returned")
+
+    # Inspect prompt feedback
+    feedback = getattr(response, "prompt_feedback", None)
+    if feedback:
+        feedback_details = []
+        block_reason = getattr(feedback, "block_reason", None)
+        if block_reason:
+            feedback_details.append(f"block_reason={block_reason}")
+        safety_ratings = getattr(feedback, "safety_ratings", None)
+        if safety_ratings:
+            ratings = []
+            for rating in safety_ratings:
+                category = getattr(rating, "category", None)
+                probability = getattr(rating, "probability", None)
+                blocked = getattr(rating, "blocked", None)
+                rating_str = f"{category or 'UNKNOWN'}(prob={probability or 'UNKNOWN'}, blocked={blocked})"
+                ratings.append(rating_str)
+            feedback_details.append(f"safety_ratings=[{', '.join(ratings)}]")
+        details.append(f"prompt_feedback: {'; '.join(feedback_details)}")
+
+    detail_str = " | ".join(details)
+    raise ValueError(f"Vertex response did not contain image bytes: {detail_str} (Full response: {response})")
 
 
 def _detail_value(detail: Any, key: str) -> Any:

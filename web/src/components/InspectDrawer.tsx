@@ -2,13 +2,18 @@ import { useState } from "react";
 import {
   usePanelSummaries,
   usePanelsForScene,
+  useProjectStatus,
   usePromptSummaries,
   usePromptsForScene,
   useScreenplay,
   useScreenplays,
 } from "../api/queries";
-import type { DrawerKind } from "../lib/stations";
+import { useRunAction } from "../hooks/useRunAction";
+import { getShotPlanAction } from "../lib/shotPlan";
+import { rerunStageForDrawer, type DrawerKind } from "../lib/stations";
 import { cn } from "../lib/cn";
+import { Button } from "./ui/Button";
+import { RerunStageAction } from "./composites";
 
 interface InspectDrawerProps {
   project: string;
@@ -136,8 +141,37 @@ function ShotPlanScene({ project, sceneId, panelCount }: { project: string; scen
 
 function ShotPlanBody({ project }: { project: string }) {
   const { data: summaries, isLoading } = usePanelSummaries(project);
+  const { data: status } = useProjectStatus(project);
+  const { handleRun, isPending } = useRunAction();
+
   if (isLoading) return <DrawerLoading />;
-  if (!summaries?.length) return <DrawerPlaceholder kind="shot-plan" />;
+  if (!summaries?.length) {
+    const action = getShotPlanAction(status);
+    if (action.kind !== "none") {
+      return (
+        <div className="flex min-h-[30vh] flex-col items-center justify-center gap-4 px-6 text-center">
+          <span className="font-meta text-[0.6rem] tracking-[0.2em] text-hero-red">FAILED</span>
+          <p className="max-w-[36ch] text-[0.85rem] leading-6 text-ink-black/60">
+            Shot planning failed. Retry to generate the panel layout.
+          </p>
+          <Button
+            size="sm"
+            variant="primary"
+            disabled={isPending || status?.is_running}
+            onClick={() =>
+              handleRun(project, action.backendStage, {
+                rerun: action.kind === "rerun",
+                actionLabel: action.label,
+              })
+            }
+          >
+            {isPending ? "Working…" : action.label}
+          </Button>
+        </div>
+      );
+    }
+    return <DrawerPlaceholder kind="shot-plan" />;
+  }
   return (
     <div className="space-y-3">
       {summaries.map((s) => (
@@ -223,6 +257,33 @@ function DrawerPlaceholder({ kind }: { kind: DrawerKind }) {
 }
 
 /**
+ * Footer action for the auto-step drawers: re-run this step (and everything
+ * downstream) from the frontend. These stages run automatically and are
+ * otherwise read-only, so this is how the four-station UI re-exposes
+ * "re-run from a determinate stage" for the auto chain. Hidden until the step
+ * has produced output; disabled while any stage is running. Reuses
+ * RerunStageAction's guarded confirmation (downstream impact + credit estimate).
+ */
+function InspectDrawerRerun({ project, kind }: { project: string; kind: DrawerKind }) {
+  const { data: status } = useProjectStatus(project);
+  const stage = rerunStageForDrawer(kind);
+  if (status?.stages[stage]?.status !== "complete") return null;
+  return (
+    <div className="flex items-center justify-between gap-3 border-t-[2px] border-ink-black bg-bristol px-4 py-3">
+      <p className="max-w-[22ch] text-[0.7rem] leading-5 text-ink-black/55">
+        Regenerate this step and everything after it.
+      </p>
+      <RerunStageAction
+        project={project}
+        stage={stage}
+        label={DRAWER_META[kind].title}
+        disabled={status?.is_running}
+      />
+    </div>
+  );
+}
+
+/**
  * Read-only inspect drawer for auto pipeline steps (script, shot plan,
  * prompts). Opens over the content area; never blocks progression.
  */
@@ -255,6 +316,7 @@ export function InspectDrawer({ project, kind, onClose }: InspectDrawerProps) {
           {kind === "shot-plan" && <ShotPlanBody project={project} />}
           {kind === "prompts" && <PromptsBody project={project} />}
         </div>
+        <InspectDrawerRerun project={project} kind={kind} />
       </aside>
     </div>
   );

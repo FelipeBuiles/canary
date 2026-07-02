@@ -299,24 +299,31 @@ def _extract_usage(
     )
 
 
-def _is_refusal(data: dict[str, Any]) -> bool:
-    # Only inspect provider-specific refusal fields, not the full payload — broad
-    # substring matching produces false positives on story content (e.g. a character
-    # named "Safety" or a scene where someone is "blocked").
+def _refusal_reason(data: dict[str, Any]) -> str | None:
+    """The provider's refusal reason, or None if it did not refuse.
+
+    Only inspects provider-specific refusal fields, not the full payload — broad
+    substring matching produces false positives on story content (e.g. a character
+    named "Safety" or a scene where someone is "blocked").
+    """
     choices = data.get("choices") or []
     if choices:
         choice = choices[0]
         if choice.get("finish_reason") == "content_filter":
-            return True
+            return "finish_reason=content_filter"
         message = choice.get("message") or {}
         if message.get("refusal"):
-            return True
+            return f"message.refusal={str(message['refusal'])[:120]!r}"
     error = data.get("error") or {}
     if isinstance(error, dict):
         code = str(error.get("code") or "").lower()
         if code in {"content_policy_violation", "content_filter", "policy_violation"}:
-            return True
-    return False
+            return f"error.code={code}"
+    return None
+
+
+def _is_refusal(data: dict[str, Any]) -> bool:
+    return _refusal_reason(data) is not None
 
 
 def _error_json(exc: BaseException | None = None, response: httpx.Response | None = None) -> dict[str, Any]:
@@ -831,11 +838,24 @@ async def _chat_completion(
         )
         response.raise_for_status()
         data = response.json()
-        if _is_refusal(data):
-            raise AIRefusalError("AI request was refused by gateway/provider")
-        text = (data.get("choices") or [{}])[0].get("message", {}).get("content")
+        refusal = _refusal_reason(data)
+        if refusal:
+            raise AIRefusalError(f"AI request was refused by gateway/provider ({refusal})")
+        choice = (data.get("choices") or [{}])[0]
+        text = (choice.get("message") or {}).get("content")
         if not text:
-            raise ValueError(f"Empty response from LiteLLM ({model})")
+            # Surface WHY it was empty so a safety block (finish_reason
+            # content_filter/SAFETY) is distinguishable from thinking-budget
+            # exhaustion (finish_reason length/MAX_TOKENS with high
+            # completion_tokens). Otherwise every cause looks identical in logs.
+            detail = f"finish_reason={choice.get('finish_reason')!r}"
+            feedback = data.get("prompt_feedback") or choice.get("content_filter_results")
+            if feedback:
+                detail += f", feedback={feedback!r}"
+            completion_tokens = (data.get("usage") or {}).get("completion_tokens")
+            if completion_tokens is not None:
+                detail += f", completion_tokens={completion_tokens}"
+            raise ValueError(f"Empty response from LiteLLM ({model}; {detail})")
         usage = _extract_usage(data, event_id, model, operation, response.headers)
         if not usage.input_tokens and not usage.output_tokens:
             usage = estimate_text_usage(

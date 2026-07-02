@@ -8,7 +8,8 @@ from pathlib import Path
 from novel_to_comic.config import Config
 from novel_to_comic.models.layout_plan import PlannedPanel
 from novel_to_comic.models.prompt import ImagePrompt
-from novel_to_comic.models.story_bible import Location, LocationState, Scene, StoryBible
+from novel_to_comic.models.appearance import AppearanceState, StateActivation, StoryPosition
+from novel_to_comic.models.story_bible import Character, Location, Scene, StoryBible
 from novel_to_comic.prompt_assembly import ensure_current_panel_prompt
 from novel_to_comic.prompting import (
     IMAGE_PROMPT_VERSION,
@@ -16,26 +17,34 @@ from novel_to_comic.prompting import (
     build_planned_panel_prompt_spec,
 )
 from novel_to_comic.stages import clean_cascade
-from novel_to_comic.stages.s3_cast import _location_plate_jobs
+from novel_to_comic.stages.s3_cast import (
+    _character_ref_clean_text_prompt,
+    _character_ref_prompt,
+    _location_plate_jobs,
+)
 from novel_to_comic.stages.s7_draw import _interleave_by_scene, _plate_ref_path
 
 
 def _stateful_location() -> Location:
+    """Base anchor = pre-collapse; one alternate state (post-collapse) that
+    activates partway through scene_001 (at beat 3)."""
     return Location(
         id="loc_001",
         name="Seattle Street",
         visual_anchor="night, outdoors, brick apartment facade, streetlamp",
         mood="tense",
-        states=[
-            LocationState(
-                id="loc_001_pre",
-                name="Pre-collapse",
-                visual_anchor="night, outdoors, brick apartment facade, parked cars",
-            ),
-            LocationState(
+        appearance_states=[
+            AppearanceState(
                 id="loc_001_post",
-                name="Post-collapse",
+                label="Post-collapse",
                 visual_anchor="night, flattened dirt, rubble, distant fire",
+                visually_significant=True,
+            ),
+        ],
+        appearance_timeline=[
+            StateActivation(
+                state_id="loc_001_post",
+                at=StoryPosition(scene_id="scene_001", beat=3),
             ),
         ],
     )
@@ -47,10 +56,9 @@ def test_location_plate_jobs_cover_default_and_states():
     jobs = _location_plate_jobs(_stateful_location())
     assert [(stem, state_id) for stem, _anchor, state_id in jobs] == [
         ("loc_001", None),
-        ("loc_001_pre", "loc_001_pre"),
         ("loc_001_post", "loc_001_post"),
     ]
-    assert jobs[2][1] == "night, flattened dirt, rubble, distant fire"
+    assert jobs[1][1] == "night, flattened dirt, rubble, distant fire"
 
 
 def test_plate_ref_path_prefers_state_plate(tmp_path):
@@ -66,7 +74,9 @@ def test_plate_ref_path_prefers_state_plate(tmp_path):
     assert _plate_ref_path(tmp_path, "loc_999", None) is None
 
 
-def test_image_prompt_carries_effective_location_state(tmp_path):
+def test_image_prompt_resolves_location_state_from_timeline(tmp_path):
+    """Location state is resolved per panel from the location's
+    appearance_timeline + the panel's beat position — no per-panel/scene tag."""
     bible = StoryBible(
         title="t", author="a", total_scenes=1,
         characters=[],
@@ -74,26 +84,29 @@ def test_image_prompt_carries_effective_location_state(tmp_path):
         scenes=[
             Scene(
                 id="scene_001", chapter=1, title="T",
-                location_id="loc_001", location_state_id="loc_001_pre",
+                location_id="loc_001",
                 character_ids=[], summary="s", scene_type="action",
                 narrative_beat="rising_action", source_start_quote="q",
             )
         ],
         narrative_arcs=[],
     )
-    scene_default = PlannedPanel(
+    # Beats 1-2 are before the post-collapse activation (beat 3) → base look.
+    early = PlannedPanel(
         panel_id="scene_001:panel_001", scene_id="scene_001", panel_number=1,
+        beat_ids=["scene_001:beat_001", "scene_001:beat_002"],
     )
-    panel_override = PlannedPanel(
+    # Beats 3-4 are at/after the activation → post-collapse state.
+    late = PlannedPanel(
         panel_id="scene_001:panel_002", scene_id="scene_001", panel_number=2,
-        location_state_id="loc_001_post",
+        beat_ids=["scene_001:beat_003", "scene_001:beat_004"],
     )
 
     assert build_planned_panel_prompt_spec(
-        Config(), tmp_path, scene_default, bible
-    ).location_state_id == "loc_001_pre"
+        Config(), tmp_path, early, bible
+    ).location_state_id is None
     assert build_planned_panel_prompt_spec(
-        Config(), tmp_path, panel_override, bible
+        Config(), tmp_path, late, bible
     ).location_state_id == "loc_001_post"
 
 
@@ -177,3 +190,76 @@ def test_clean_cascade_runs_to_end_of_pipeline(tmp_path):
     ]
     assert clean_cascade(tmp_path, "samples")[0] == tmp_path / "samples"
     assert clean_cascade(tmp_path, "samples")[-1] == tmp_path / "exports"
+
+
+def test_clean_cascade_targets_real_artifact_dirs(tmp_path):
+    """The cascade must use artifact DIRECTORY names, not stage names.
+
+    The adapt stage writes to ``screenplays/`` but the cascade once listed the
+    stage name ``adapt``, so re-running an upstream stage cleaned a nonexistent
+    ``adapt/`` dir and left stale screenplays behind — silently corrupting the
+    downstream chain after a re-extract.
+    """
+    from novel_to_comic.stages import REGISTRY
+
+    cascade = clean_cascade(tmp_path, "screenplays")
+    assert tmp_path / "screenplays" in cascade
+    assert tmp_path / "adapt" not in cascade
+    # The adapt stage's own outputs must be inside what it cleans on re-run.
+    adapt_outputs = set(REGISTRY["adapt"].outputs(tmp_path))
+    assert adapt_outputs <= set(REGISTRY["adapt"].clean_paths(tmp_path))
+
+
+# ── Cast appearance-state ref sheets ─────────────────────────────────────────
+
+def _girl_and_stumps() -> tuple[StoryBible, Character, AppearanceState]:
+    char = Character(
+        id="char_001",
+        name="The Miller's Daughter",
+        visual_anchor="1woman, long blonde hair, blue eyes, peasant dress, bare feet",
+        age_range="20s",
+        gender="female",
+        distinguishing_features=["long blonde hair"],
+        default_outfit="simple peasant dress",
+        relationships=[],
+        first_appearance_scene="scene_001",
+    )
+    stumps = AppearanceState(
+        id="stumps",
+        label="Maimed",
+        visual_anchor="1woman, long blonde hair, blue eyes, peasant dress, arm stumps, bandaged ends",
+        visually_significant=True,
+        continuity_guard="She has no hands; both arms end in bandaged stumps; never depict her gripping",
+    )
+    bible = StoryBible(
+        title="T", author="A", total_scenes=1,
+        characters=[char], locations=[], scenes=[], narrative_arcs=[], props=[],
+    )
+    return bible, char, stumps
+
+
+def test_state_ref_prompt_drops_hand_pose_and_locks_anatomy():
+    """A state sheet must not force a 'one hand raised' pose, and must demand the
+    altered body be consistent across all quadrants (carrying the guard)."""
+    bible, char, stumps = _girl_and_stumps()
+    state_char = char.model_copy(update={"visual_anchor": stumps.visual_anchor})
+    prompt = _character_ref_prompt(Config(), bible, state_char, "", stumps)
+
+    assert "one hand raised" not in prompt.lower()
+    assert "mid-gesture" in prompt.lower()
+    assert "specific altered state" in prompt.lower()
+    assert "never depict her gripping" in prompt  # guard injected
+
+    # The canonical (base) sheet is unchanged — still uses the hand-gesture pose.
+    base = _character_ref_prompt(Config(), bible, char, "")
+    assert "one hand raised" in base.lower()
+    assert "altered state" not in base.lower()
+
+
+def test_state_ref_clean_text_prompt_drops_hand_pose():
+    bible, char, stumps = _girl_and_stumps()
+    state_char = char.model_copy(update={"visual_anchor": stumps.visual_anchor})
+    prompt = _character_ref_clean_text_prompt(Config(), state_char, "", stumps)
+    assert "one hand raised" not in prompt.lower()
+    assert "mid-gesture" in prompt.lower()
+    assert "altered state" in prompt.lower()

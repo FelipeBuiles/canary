@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Sequence
 
+from novel_to_comic.appearance import ResolvedAppearance, active_state, panel_position
 from novel_to_comic.config import Config
 from novel_to_comic.image_ref_strategy import RefStrategy
+from novel_to_comic.models.appearance import StoryPosition
 from novel_to_comic.models.layout_plan import PlannedPanel
 from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
 from novel_to_comic.models.story_bible import Character, StoryBible
@@ -160,7 +163,7 @@ def _labels(config: Config | None = None) -> dict[str, str]:
 
 _clean = clean
 _shorten = shorten
-IMAGE_PROMPT_VERSION = 18  # 18: ImagePrompt.location_state_id for per-state plates
+IMAGE_PROMPT_VERSION = 20  # 20: active visually-significant states lock appearance (brief + constraints)
 _SOFT_CONTINUITY = {"smooth_continuation", "match_cut"}
 
 # Generic interior/exterior vocabulary for anchor filtering. All matching is
@@ -277,45 +280,55 @@ def _filter_location_anchor_for_panel(anchor: str, background: str) -> str:
     return ", ".join(kept)
 
 
-def _character_identity(
-    character: Character,
-    scene_appearance: str | None = None,
-    labels: dict[str, str] | None = None,
-) -> str:
+def _appearance_lock_clause(name: str, guard: str | None) -> str:
+    """A hard-constraint clause that elevates an active altered appearance state.
+
+    Generic across entities (character, location, world): tell the model to keep
+    the entity exactly as described/referenced and NOT revert to its default
+    prior. The authored ``continuity_guard`` (if any) sharpens it with the
+    case-specific rule, but the clause works without one.
+    """
+    clause = (
+        f"{name} is shown in a fixed altered appearance — render {name} EXACTLY as described "
+        f"and as the reference image; do not restore {name}'s default look or add features not shown"
+    )
+    note = (guard or "").strip().rstrip(".")
+    if note:
+        clause += f" ({note})"
+    return clause
+
+
+def _character_identity(character: Character, resolved: ResolvedAppearance) -> str:
     """Assemble the identity blob for one subject.
 
-    Keeps the full visual_anchor verbatim — the anchor carries permanent
-    identity (face, build, hair, distinguishing marks) AND the character's
-    default wardrobe tags. When scene_appearance is set, we append it with
-    an explicit override directive so the model knows this panel's clothing
-    supersedes any wardrobe tags in the anchor, without us having to strip
-    those tags and lose the richer description.
+    For the base look, keeps the full visual_anchor verbatim (permanent
+    identity — face, build, hair, marks — plus the character's default
+    wardrobe). When an appearance state is active, its SELF-CONTAINED anchor
+    fully replaces the base look: it already carries the state's wardrobe and
+    the changed body, so we never append the default outfit or blend the two.
+    That blending is exactly what painted silver hands onto a peasant girl who
+    still had her real hands.
     """
-    label_set = labels or _PROMPT_LABELS["en"]
-    anchor = _clean(character.visual_anchor)
-    default_outfit = _clean(character.default_outfit)
-    scene_override = _clean(scene_appearance)
+    if resolved.state is not None:
+        return _shorten(_clean(resolved.anchor), 220)
 
     _NULL_OUTFIT = {"none", "n/a", "-", "null", ""}
+    anchor = _clean(character.visual_anchor)
+    default_outfit = _clean(character.default_outfit)
     parts: list[str] = [anchor] if anchor else []
-    if scene_override and scene_override.lower() not in _NULL_OUTFIT:
-        parts.append(f"{label_set['wardrobe_override']}: {_shorten(scene_override, 180)}")
-    elif default_outfit and default_outfit.lower() not in _NULL_OUTFIT:
+    if default_outfit and default_outfit.lower() not in _NULL_OUTFIT:
         parts.append(_shorten(default_outfit, 180))
-
     return "; ".join(part for part in parts if part)
 
 
-def _reference_paths(project_dir: Path, character_id: str, character_count: int) -> list[str]:
-    """Return subject ref paths for one character as project-relative paths.
+def _pose_crops_in(ref_dir: Path, project_dir: Path, character_count: int) -> list[str]:
+    """Project-relative pose crops from a ref directory.
 
     Prefers individual pose crops (front/three_quarter/gesture) over the 2x2
     sheet composite — passing the grid directly leaks its layout into the
     model's panel compositions. Falls back to sheet.png only when crops are
-    not yet available (e.g. projects generated before cropping was added).
+    not yet available. Returns [] when the directory has no usable refs.
     """
-    char_ref_dir = project_dir / "refs" / character_id
-
     if character_count <= 1:
         views = ["front", "three_quarter", "gesture"]
     elif character_count == 2:
@@ -323,39 +336,34 @@ def _reference_paths(project_dir: Path, character_id: str, character_count: int)
     else:
         views = ["front"]
     cropped = [
-        str((char_ref_dir / f"{v}.png").relative_to(project_dir))
+        str((ref_dir / f"{v}.png").relative_to(project_dir))
         for v in views
-        if (char_ref_dir / f"{v}.png").exists()
+        if (ref_dir / f"{v}.png").exists()
     ]
     if cropped:
         return cropped
-
-    sheet = char_ref_dir / "sheet.png"
+    sheet = ref_dir / "sheet.png"
     if sheet.exists():
         return [str(sheet.relative_to(project_dir))]
     return []
 
 
-_PROP_CONTEXT_CUE_RE = re.compile(
-    r"\b("
-    r"hold|holds|holding|held|carry|carries|carrying|carried|"
-    r"clutch|clutches|clutching|grip|grips|gripping|gripped|"
-    r"cradle|cradles|cradling|gather|gathers|gathering|gathered|"
-    r"collect|collects|collecting|collected|reach|reaches|reaching|"
-    r"touch|touches|touching|touched|set|sets|setting|lay|lays|laying|"
-    r"lower|lowers|lowering|hang|hangs|hanging|wear|wears|wearing|"
-    r"use|uses|using|used|armful|crook|chest|hand|hands|feet"
-    r")\b",
-    re.IGNORECASE,
-)
+def _reference_paths(project_dir: Path, character_id: str, character_count: int) -> list[str]:
+    """Canonical (base-look) ref paths for one character."""
+    return _pose_crops_in(project_dir / "refs" / character_id, project_dir, character_count)
 
 
-def _story_prop_tokens(value: str) -> set[str]:
-    return {
-        token
-        for token in re.findall(r"[a-z0-9]+", value.lower())
-        if len(token) > 3 and token not in {"with", "from", "that", "this", "they", "their"}
-    }
+def _state_reference_paths(
+    project_dir: Path, character_id: str, state_id: str, character_count: int
+) -> list[str]:
+    """Refs for a character's flagged appearance state, if generated.
+
+    Reads refs/<char>/states/<state>/. Returns [] when the state's dedicated
+    refs were not generated (e.g. cast not re-run), so the caller can fall back
+    to the canonical refs while still applying the state's anchor text.
+    """
+    state_dir = project_dir / "refs" / character_id / "states" / state_id
+    return _pose_crops_in(state_dir, project_dir, character_count)
 
 
 def _planned_panel_text_pieces(
@@ -394,8 +402,40 @@ def _planned_panel_text_blob(
     )
 
 
+# Verbs/positions that signal a prop is actively present (held, carried, worn,
+# set down). Deliberately EXCLUDES body-part words ("hand/hands/feet"): a panel
+# that merely mentions a body part is not a prop-context cue. Including "hands"
+# here is exactly what let the "Silver Hands" prop match "washing her hands".
+_PROP_CONTEXT_CUE_RE = re.compile(
+    r"\b("
+    r"hold|holds|holding|held|carry|carries|carrying|carried|"
+    r"clutch|clutches|clutching|grip|grips|gripping|gripped|"
+    r"cradle|cradles|cradling|gather|gathers|gathering|gathered|"
+    r"collect|collects|collecting|collected|reach|reaches|reaching|"
+    r"touch|touches|touching|touched|set|sets|setting|lay|lays|laying|"
+    r"lower|lowers|lowering|hang|hangs|hanging|wear|wears|wearing|"
+    r"use|uses|using|used|armful|crook|chest"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _story_prop_tokens(value: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", value.lower())
+        if len(token) > 3 and token not in {"with", "from", "that", "this", "they", "their"}
+    }
+
+
 def _prop_matches_context(prop, blob: str, pieces: list[str]) -> bool:
-    """Return True when a story prop appears as an active panel object."""
+    """Return True when a story prop appears as an active panel object.
+
+    Exact full-name / id match anywhere, OR a distinctive name token co-located
+    with an active-handling cue in the same piece. The cue requirement is what
+    distinguishes a carried Bundle of Flowers ("cradles an armful … to her
+    chest") from ambient wildflowers ("wild flowers crowd the water's edge").
+    """
     name = (prop.name or "").lower()
     prop_id = (prop.id or "").lower()
     if (name and name in blob) or (prop_id and prop_id in blob):
@@ -410,21 +450,42 @@ def _prop_matches_context(prop, blob: str, pieces: list[str]) -> bool:
     )
 
 
-def _props_present_in_panel(panel: PlannedPanel, story_bible: StoryBible, scene=None) -> list:
-    """Return story props that are actively used, carried, touched, or shown."""
-    scene_appearance_text: list[str] = []
-    if scene is not None:
-        appearances = getattr(scene, "character_appearances", {}) or {}
-        scene_appearance_text = [
-            appearances.get(character_id, "")
-            for character_id in getattr(panel, "characters_present", []) or []
-        ]
+def _prop_has_debuted(
+    prop, position: StoryPosition | None, scene_order: Sequence[str] | None
+) -> bool:
+    """Gate a prop by its debut scene: it never appears before
+    first_appearance_scene. No debut set, or no position → always allowed."""
+    debut = getattr(prop, "first_appearance_scene", None)
+    if not debut or position is None or not scene_order:
+        return True
+    order = list(scene_order)
+    try:
+        return order.index(position.scene_id) >= order.index(debut)
+    except ValueError:
+        return True
 
-    pieces = _planned_panel_text_pieces(panel, extra_text=scene_appearance_text)
+
+def _props_present_in_panel(
+    panel: PlannedPanel,
+    story_bible: StoryBible,
+    position: StoryPosition | None = None,
+    scene_order: Sequence[str] | None = None,
+) -> list:
+    """Return story props actively shown in this panel.
+
+    A prop matches only when it is named/handled in the panel's DESCRIPTIVE
+    text (not the planner's over-eager key_objects list, which _filtered_key_objects
+    prunes against this result) AND the panel is at or after the prop's debut
+    scene. Body modifications are character appearance states, never props, so
+    this matcher never sees them.
+    """
+    pieces = _planned_panel_text_pieces(panel)
     blob = " ".join(pieces)
     matched = []
     seen: set[str] = set()
     for prop in getattr(story_bible, "props", []) or []:
+        if not _prop_has_debuted(prop, position, scene_order):
+            continue
         if _prop_matches_context(prop, blob, pieces):
             if prop.id and prop.id not in seen:
                 matched.append(prop)
@@ -541,48 +602,82 @@ def build_planned_panel_prompt_spec(
     character_count = len(panel.characters_present)
     subjects: list[PromptSubject] = []
     ref_paths: list[str] = []
+    # Hard-constraint clauses for any entity in a non-base, visually-significant
+    # appearance state (characters and the location). These flow into both the
+    # image prompt and the brief pass (visual_brief_source_spec reads constraints).
+    appearance_locks: list[str] = []
     labels = _labels(config)
 
     scene = next((s for s in story_bible.scenes if s.id == panel.scene_id), None)
+    scene_order = [s.id for s in story_bible.scenes]
+    position = panel_position(panel, scene_order)
 
     for character_id in panel.characters_present:
         character = next((c for c in story_bible.characters if c.id == character_id), None)
         if not character:
             continue
-        scene_appearance = None
-        if scene:
-            scene_appearance = scene.character_appearances.get(character_id)
+        resolved = active_state(
+            character.visual_anchor,
+            character.appearance_states,
+            character.appearance_timeline,
+            position,
+            scene_order,
+        )
+        # A non-base, visually-significant state is a fixed altered look the
+        # model's prior tends to revert (stumps → hands). Lock it: brief stages
+        # around it, and a hard constraint forbids reverting.
+        locked = resolved.state is not None and resolved.state.visually_significant
+        guard = resolved.state.continuity_guard if resolved.state is not None else None
         subjects.append(
             PromptSubject(
                 character_id=character_id,
                 name=character.name,
-                identity=_character_identity(character, scene_appearance, labels),
+                identity=_character_identity(character, resolved),
                 action=_single_instant_direction(
                     panel.character_actions.get(character_id, "")
                 ),
                 expression=_clean(panel.character_expressions.get(character_id, "")),
                 position=_clean(panel.character_positions.get(character_id, "")),
+                appearance_locked=locked,
+                appearance_guard=(guard or None),
             )
         )
-        ref_paths.extend(_reference_paths(project_dir, character_id, character_count))
+        if locked:
+            appearance_locks.append(_appearance_lock_clause(character.name, guard))
+        # A flagged state with its own generated refs replaces the canonical
+        # ones (so a normal-hands sheet never fights "silver hands" text). If
+        # those refs do not exist yet, fall back to canonical + state anchor.
+        state_refs: list[str] = []
+        if locked and resolved.state_id:
+            state_refs = _state_reference_paths(
+                project_dir, character_id, resolved.state_id, character_count
+            )
+        ref_paths.extend(state_refs or _reference_paths(project_dir, character_id, character_count))
 
     location = None
     if scene:
         location = next((loc for loc in story_bible.locations if loc.id == scene.location_id), None)
 
-    # Resolve the active location state for this panel. Panel-level override
-    # wins, then scene-level, else the location's default visual_anchor.
+    # Resolve the active location state from the location's own timeline (same
+    # resolver as characters). The resolved state id flows to the ImagePrompt so
+    # the draw stage selects the matching per-state plate.
     active_state_anchor = None
-    state_id = getattr(panel, "location_state_id", None) or (
-        scene.location_state_id if scene else None
-    )
-    if location and state_id:
-        active_state = next(
-            (st for st in (location.states or []) if st.id == state_id),
-            None,
+    location_state_id = None
+    if location:
+        loc_resolved = active_state(
+            location.visual_anchor,
+            location.appearance_states,
+            location.appearance_timeline,
+            position,
+            scene_order,
         )
-        if active_state:
-            active_state_anchor = active_state.visual_anchor
+        if loc_resolved.state is not None:
+            active_state_anchor = loc_resolved.anchor
+            location_state_id = loc_resolved.state_id
+            if loc_resolved.state.visually_significant:
+                appearance_locks.append(
+                    _appearance_lock_clause(location.name, loc_resolved.state.continuity_guard)
+                )
 
     shot_key = panel.shot_type.lower().replace(" ", "-")
     composition_map = _SHOT_COMPOSITION_EMPTY if character_count == 0 else _SHOT_COMPOSITION
@@ -653,7 +748,9 @@ def build_planned_panel_prompt_spec(
     lighting = _strip_text_render_sentences(_clean(panel.lighting))
     mood = _clean(panel.mood)
     visual_requirements = _clean_list(getattr(panel, "visual_requirements", []) or [], limit=12)
-    matched_props = _props_present_in_panel(panel, story_bible, scene=scene)
+    matched_props = _props_present_in_panel(
+        panel, story_bible, position=position, scene_order=scene_order
+    )
     key_objects = _clean_list(
         _filtered_key_objects(
             getattr(panel, "key_objects", []) or [],
@@ -678,6 +775,8 @@ def build_planned_panel_prompt_spec(
         )
     if panel.crop_policy:
         constraints = f"{constraints}; crop policy: {panel.crop_policy}"
+    if appearance_locks:
+        constraints = f"{constraints}; " + "; ".join(appearance_locks)
 
     full_prompt = _render_panel_prompt_body_parts(
         labels=labels,
@@ -707,7 +806,7 @@ def build_planned_panel_prompt_spec(
         crop_policy=panel.crop_policy,
         transition_in=panel.transition_in,
         transition_out=panel.transition_out,
-        location_state_id=state_id,
+        location_state_id=location_state_id,
         has_narration_caption=panel.has_narration_caption,
         narration_mode=panel.narration_mode,
         preferred_caption_zone=panel.preferred_caption_zone,
@@ -1145,20 +1244,40 @@ def visual_brief_source_spec(prompt: ImagePrompt) -> str:
         lines.append(f"Framing: {framing}")
 
     for subject in getattr(prompt, "subjects", []) or []:
-        details: list[str] = []
         identity = _readable_prompt_text(subject.identity)
-        if identity:
-            details.append(f"appearance: {identity}")
         action = _readable_prompt_text(subject.action)
-        if action:
-            details.append(f"action: {action}")
         expression = _readable_prompt_text(subject.expression)
-        if expression:
-            details.append(f"expression: {expression}")
         position = _readable_prompt_text(subject.position)
+        tail_bits: list[str] = []
+        if action:
+            tail_bits.append(f"action: {action}")
+        if expression:
+            tail_bits.append(f"expression: {expression}")
         if position:
-            details.append(f"position: {position}")
-        lines.append(f"Character — {subject.name}: {'; '.join(details) if details else 'present'}")
+            tail_bits.append(f"position: {position}")
+        tail = ("; " + "; ".join(tail_bits)) if tail_bits else ""
+
+        if getattr(subject, "appearance_locked", False) and identity:
+            # A locked appearance is NOT one fact among many — it is fixed. Tell
+            # the brief writer to stage actions around it so the prose never asks
+            # for something the look forbids (which is what the image model then
+            # hallucinates, e.g. a hand to hold a pear when she has stumps).
+            head = f"Character — {subject.name} [APPEARANCE LOCKED — fixed for this panel]: {identity}"
+            guard = (getattr(subject, "appearance_guard", None) or "").strip().rstrip(".")
+            if guard:
+                head += f". Continuity rule: {guard}"
+            head += (
+                f". Describe every action so it stays consistent with this exact look; never write "
+                f"{subject.name} doing anything that requires features they do not have, and never "
+                f"revert {subject.name} to a default appearance"
+            )
+            lines.append(head + tail)
+        else:
+            details: list[str] = []
+            if identity:
+                details.append(f"appearance: {identity}")
+            details.extend(tail_bits)
+            lines.append(f"Character — {subject.name}: {'; '.join(details) if details else 'present'}")
 
     setting = _readable_prompt_text(getattr(prompt, "setting", None))
     if setting:

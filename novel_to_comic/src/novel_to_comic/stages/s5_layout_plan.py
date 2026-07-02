@@ -26,6 +26,7 @@ from pathlib import Path
 from rich.console import Console
 
 from novel_to_comic import artifacts
+from novel_to_comic.appearance import active_state, panel_position
 from novel_to_comic.clients.structured_call import (
     StructuredCallError,
     generate_validated_json,
@@ -584,17 +585,9 @@ def _scene_planning_user_content(
     else:
         loc_text = screenplay.location_id
 
-    # Surface location states so panel specs can carry the correct
-    # location_state_id when a single scene spans interior/exterior or
-    # before/after states.
-    state_lines: list[str] = []
-    if location and location.states:
-        state_lines.append("Location states (use these ids in panel.location_state_id):")
-        for state in location.states:
-            description = f" — {state.description}" if state.description else ""
-            state_lines.append(
-                f"  {state.id}: {(state.visual_anchor or '')[:160]}{description}"
-            )
+    # Location (and character) appearance state is resolved per panel from each
+    # entity's appearance_timeline (novel_to_comic.appearance), so panels no
+    # longer carry a location_state_id and the planner is not asked to tag it.
 
     beat_lines: list[str] = []
     for i, beat in enumerate(screenplay.beats, start=1):
@@ -612,15 +605,12 @@ def _scene_planning_user_content(
             parts.append(f"transition:{beat.transition_type}")
         if beat.narration_reason:
             parts.append(f"narration_reason:{beat.narration_reason!r}")
-        if beat.location_state_id:
-            parts.append(f"loc_state:{beat.location_state_id}")
         beat_lines.append(" ".join(parts))
 
     beat_count = len(screenplay.beats)
-    state_block = "\n" + "\n".join(state_lines) + "\n" if state_lines else ""
     return (
         f"Scene: {screenplay.scene_id}\n"
-        f"Location: {loc_text}{state_block}"
+        f"Location: {loc_text}\n"
         f"Characters:\n{chars_lines}\n"
         f"Story props:\n{prop_lines}\n"
         f"Target: {target_panels} panels for {beat_count} beats "
@@ -953,29 +943,7 @@ def _llm_spec_to_planned_panel(
         dialogue=dialogue,
         sfx=sfx_list,
         page_break_after=spec.page_break_after,
-        location_state_id=_resolve_panel_location_state(spec, covered_beats),
     )
-
-
-def _resolve_panel_location_state(
-    spec: LLMPanelSpec,
-    covered_beats: list[ScreenplayBeat],
-) -> str | None:
-    """Pick the active location_state_id for a planned panel.
-
-    Priority:
-      1. LLM-supplied panel-level hint (spec.location_state_id).
-      2. First non-empty location_state_id among the covered screenplay beats
-         — this carries the beat-level state through to the panel without
-         requiring the planner to re-derive it.
-      3. None — caller falls back to the scene's default.
-    """
-    if spec.location_state_id:
-        return spec.location_state_id
-    for beat in covered_beats:
-        if beat.location_state_id:
-            return beat.location_state_id
-    return None
 
 
 def _build_narration_decisions(
@@ -1327,29 +1295,44 @@ def _warn_scene_panel_overflow(
 
 def _cross_scene_transition_pass(
     panels: list[PlannedPanel],
-    scene_location_map: dict[str, str],
-    scene_state_map: dict[str, str | None] | None = None,
+    story_bible: StoryBible,
 ) -> list[PlannedPanel]:
     """Set transition_in / transition_out at every scene boundary.
 
     Same location AND same active location state on both sides ->
     smooth_continuation. Different location, or the same place in a different
     state (collapsed, burned, day -> night — i.e. a visible time/event jump)
-    -> hard_cut.
+    -> hard_cut. The active location state is resolved per panel from the
+    location's appearance_timeline (novel_to_comic.appearance).
     """
-    scene_state_map = scene_state_map or {}
+    scene_order = [s.id for s in story_bible.scenes]
+    loc_by_scene = {
+        scene.id: next(
+            (loc for loc in story_bible.locations if loc.id == scene.location_id), None
+        )
+        for scene in story_bible.scenes
+    }
 
     def _effective_state(panel: PlannedPanel) -> str | None:
-        return panel.location_state_id or scene_state_map.get(panel.scene_id)
+        loc = loc_by_scene.get(panel.scene_id)
+        if loc is None:
+            return None
+        return active_state(
+            loc.visual_anchor,
+            loc.appearance_states,
+            loc.appearance_timeline,
+            panel_position(panel, scene_order),
+            scene_order,
+        ).state_id
 
     for i in range(len(panels) - 1):
         curr = panels[i]
         nxt = panels[i + 1]
         if curr.scene_id == nxt.scene_id:
             continue
-        curr_loc = scene_location_map.get(curr.scene_id)
-        nxt_loc = scene_location_map.get(nxt.scene_id)
-        same_place = bool(curr_loc and nxt_loc and curr_loc == nxt_loc)
+        curr_loc = loc_by_scene.get(curr.scene_id)
+        nxt_loc = loc_by_scene.get(nxt.scene_id)
+        same_place = bool(curr_loc and nxt_loc and curr_loc.id == nxt_loc.id)
         same_state = _effective_state(curr) == _effective_state(nxt)
         if same_place and same_state:
             curr.transition_out = "smooth_continuation"
@@ -1500,10 +1483,6 @@ async def _build_layout_plan(
     usage_records: list[UsageRecord] | None = None,
 ) -> LayoutPlan:
     screenplays = [_load_screenplay(project_dir, scene_id) for scene_id in scene_ids]
-    scene_location_map = {sp.scene_id: sp.location_id for sp in screenplays}
-    scene_state_map: dict[str, str | None] = {
-        scene.id: scene.location_state_id for scene in story_bible.scenes
-    }
     scene_beat_map: dict[str, str] = {
         scene.id: scene.narrative_beat or "" for scene in story_bible.scenes
     }
@@ -1554,7 +1533,7 @@ async def _build_layout_plan(
         panels_by_scene.setdefault(panel.scene_id, []).append(panel)
 
     # -- Step 2: Cross-scene transition pass -----------------------------------
-    all_panels = _cross_scene_transition_pass(all_panels, scene_location_map, scene_state_map)
+    all_panels = _cross_scene_transition_pass(all_panels, story_bible)
 
     # -- Step 3: Importance-aware pagination per scene -------------------------
     planned_pages: list[PlannedPage] = []

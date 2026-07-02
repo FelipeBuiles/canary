@@ -1,13 +1,14 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
 import { SectionLabel } from "../SectionLabel";
-import type { ConfigOverrides } from "../../types/api";
+import type { ConfigOverrides, ShortStory } from "../../types/api";
 import { LANGUAGES, useI18n } from "../../i18n";
 import type { LanguageCode } from "../../i18n";
 import { useShortStories } from "../../api/queries";
 import { Select } from "../ui/Select";
+import { browseStories, deriveGenres, genreLabel, SORT_OPTIONS, type SortKey } from "../../lib/storyBrowser";
 
 interface UploadStepProps {
   onSubmit: (file: File, name: string, configOverrides?: Partial<ConfigOverrides>) => void;
@@ -92,10 +93,35 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
   // project, not the first.
   const [tab, setTab] = useState<"file" | "library">("library");
   const [searchQuery, setSearchQuery] = useState("");
+  const [sortBy, setSortBy] = useState<SortKey>("recommended");
+  const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [pastedUrlOrCode, setPastedUrlOrCode] = useState("");
-  const [selectedStory, setSelectedStory] = useState<any | null>(null);
+  const [selectedStory, setSelectedStory] = useState<ShortStory | null>(null);
 
   const { data: shortStories } = useShortStories();
+
+  const allGenres = useMemo(() => deriveGenres(shortStories ?? []), [shortStories]);
+  const visibleStories = useMemo(
+    () =>
+      browseStories(shortStories ?? [], {
+        search: searchQuery,
+        genres: selectedGenres,
+        sort: sortBy,
+      }),
+    [shortStories, searchQuery, selectedGenres, sortBy],
+  );
+  const filtersActive = searchQuery.trim() !== "" || selectedGenres.length > 0;
+
+  function toggleGenre(genre: string) {
+    setSelectedGenres((prev) =>
+      prev.includes(genre) ? prev.filter((g) => g !== genre) : [...prev, genre],
+    );
+  }
+
+  function clearFilters() {
+    setSearchQuery("");
+    setSelectedGenres([]);
+  }
 
   const ext = file ? "." + file.name.split(".").pop()?.toLowerCase() : "";
   const extOk = !file || ACCEPTED.includes(ext);
@@ -276,41 +302,81 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                 <p className="text-[0.78rem] leading-relaxed text-ink-black/60 mb-2">
                   {t("Select a story from the library or paste a URL below to import it.")}
                 </p>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder={t("Search stories by title, author, or genre...")}
-                    className="w-full border-[2px] border-ink-black bg-bristol pl-8 pr-3 py-2 text-sm font-body focus:outline-none focus:ring-2 focus:ring-hero-red"
-                  />
-                  <div className="absolute left-2.5 top-3.5 text-ink-black/40">
-                    <Icon name="sparkles" size={14} />
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder={t("Search stories by title, author, or genre...")}
+                      className="w-full border-[2px] border-ink-black bg-bristol pl-8 pr-3 py-2 text-sm font-body focus:outline-none focus:ring-2 focus:ring-hero-red"
+                    />
+                    <div className="absolute left-2.5 top-3.5 text-ink-black/40">
+                      <Icon name="sparkles" size={14} />
+                    </div>
                   </div>
+                  <Select
+                    aria-label={t("Sort stories")}
+                    value={sortBy}
+                    onValueChange={(value) => setSortBy(value as SortKey)}
+                    options={SORT_OPTIONS.map((option) => ({
+                      value: option.value,
+                      label: t(option.label),
+                    }))}
+                    className="shrink-0"
+                  />
                 </div>
 
-                <div className="mt-3 max-h-[180px] overflow-y-auto border-[2px] border-ink-black bg-pulp-paper divide-y divide-ink-black/10">
-                  {(() => {
-                    const query = searchQuery.trim().toLowerCase();
-                    const filtered = (shortStories ?? []).filter((s: any) =>
-                      s.title.toLowerCase().includes(query) ||
-                      s.author.toLowerCase().includes(query) ||
-                      s.genres.some((g: string) => g.toLowerCase().includes(query))
-                    );
-
-                    if (filtered.length === 0) {
-                      return (
-                        <div className="p-4 text-center text-xs text-ink-black/40 font-meta">
-                          NO STORIES FOUND
-                        </div>
-                      );
-                    }
-
-                    return filtered.map((story: any) => {
-                      const isSelected = selectedStory?._id === story._id;
+                {allGenres.length > 0 && (
+                  <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                    {allGenres.map((genre) => {
+                      const active = selectedGenres.includes(genre);
                       return (
                         <button
-                          key={story._id}
+                          key={genre}
+                          type="button"
+                          onClick={() => toggleGenre(genre)}
+                          aria-pressed={active}
+                          className={`rounded border px-2 py-0.5 font-meta text-[10px] uppercase tracking-wide transition-colors ${
+                            active
+                              ? "border-ink-black bg-ink-black text-bristol"
+                              : "border-transparent bg-ink-black/5 text-ink-black/55 hover:border-ink-black/30"
+                          }`}
+                        >
+                          {genreLabel(genre)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="mt-2 flex min-h-[16px] items-center justify-between">
+                  <span className="font-meta text-[10px] tracking-[0.14em] text-ink-black/45 tabular-nums">
+                    {visibleStories.length}
+                    {filtersActive ? ` / ${(shortStories ?? []).length}` : ""}
+                  </span>
+                  {filtersActive && (
+                    <button
+                      type="button"
+                      onClick={clearFilters}
+                      className="font-meta text-[10px] uppercase tracking-[0.14em] text-hero-red hover:underline"
+                    >
+                      {t("Clear")}
+                    </button>
+                  )}
+                </div>
+
+                <div className="mt-2 max-h-[180px] overflow-y-auto border-[2px] border-ink-black bg-pulp-paper divide-y divide-ink-black/10">
+                  {visibleStories.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-ink-black/40 font-meta">
+                      {t("NO STORIES FOUND")}
+                    </div>
+                  ) : (
+                    visibleStories.map((story) => {
+                      const isSelected = selectedStory?.code === story.code;
+                      return (
+                        <button
+                          key={story.code}
                           type="button"
                           onClick={() => {
                             setSelectedStory(story);
@@ -358,8 +424,8 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                           </div>
                         </button>
                       );
-                    });
-                  })()}
+                    })
+                  )}
                 </div>
               </div>
 
@@ -373,7 +439,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                   onChange={(e) => {
                     setPastedUrlOrCode(e.target.value);
                     setSelectedStory(null);
-                    const codeMatch = e.target.value.match(/onlinereader\/([a-zA-Z0-9_\-]+)/);
+                    const codeMatch = e.target.value.match(/onlinereader\/([a-zA-Z0-9_-]+)/);
                     const code = codeMatch ? codeMatch[1] : e.target.value.split("/").pop() || "";
                     if (code && code.trim()) {
                       const nameSug = code

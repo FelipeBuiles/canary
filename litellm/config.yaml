@@ -5,16 +5,33 @@ model_list:
       model: vertex_ai/gemini-3.1-flash-lite-preview
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
+      # Canary adapts public-domain literature (Grimm, Lovecraft, …) whose
+      # canonical content includes violence. Vertex's default filters
+      # (BLOCK_MEDIUM_AND_ABOVE) return empty candidates on such passages,
+      # which surface as "Empty response from LiteLLM" and degrade the
+      # pipeline. Disable filtering for these text models; the gateway is
+      # internal and outputs are reviewed downstream.
+      safety_settings: &vertex_safety_off
+        - category: HARM_CATEGORY_HARASSMENT
+          threshold: 'OFF'
+        - category: HARM_CATEGORY_HATE_SPEECH
+          threshold: 'OFF'
+        - category: HARM_CATEGORY_SEXUALLY_EXPLICIT
+          threshold: 'OFF'
+        - category: HARM_CATEGORY_DANGEROUS_CONTENT
+          threshold: 'OFF'
   - model_name: extract-balanced
     litellm_params:
       model: vertex_ai/gemini-3.5-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
+      safety_settings: *vertex_safety_off
   - model_name: extract-quality
     litellm_params:
       model: vertex_ai/gemini-3.1-pro-preview
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
+      safety_settings: *vertex_safety_off
 
   # ─── Stage 3: screenplay / dialogue adaptation ────────────────────────────
   - model_name: screenplay-fast
@@ -36,35 +53,45 @@ model_list:
       model: vertex_ai/gemini-3.1-flash-lite-preview
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
+      safety_settings: *vertex_safety_off
   - model_name: panel-balanced
     litellm_params:
       model: vertex_ai/gemini-3.5-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
+      safety_settings: *vertex_safety_off
   - model_name: panel-quality
     litellm_params:
       model: openai/gpt-5.4
       api_key: os.environ/OPENAI_API_KEY
 
   # ─── Stage 5: image-prompt assembly (template filling) ────────────────────
-  # All three presets resolve to the same model — prompt assembly is light
-  # template-filling work and Flash-Lite is sufficient. Kept as three aliases
-  # so future tuning (e.g. quality → Flash) only touches this file.
+  # Prompt assembly is light rewriting (structured panel spec → prose), so all
+  # three presets use Flash-Lite with reasoning disabled. gemini-3.5-flash could
+  # NOT fully turn off thinking (~945 reasoning tokens even with
+  # reasoning_effort=disable) and leaked chain-of-thought into the brief;
+  # Flash-Lite emits zero reasoning tokens and an equivalent brief.
   - model_name: prompt-fast
     litellm_params:
       model: vertex_ai/gemini-3.1-flash-lite-preview
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
+      safety_settings: *vertex_safety_off
+      reasoning_effort: "disable"
   - model_name: prompt-balanced
     litellm_params:
-      model: vertex_ai/gemini-3.5-flash
+      model: vertex_ai/gemini-3.1-flash-lite-preview
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
+      safety_settings: *vertex_safety_off
+      reasoning_effort: "disable"
   - model_name: prompt-quality
     litellm_params:
       model: vertex_ai/gemini-3.1-flash-lite-preview
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
+      safety_settings: *vertex_safety_off
+      reasoning_effort: "disable"
 
   # ─── Image generation ─────────────────────────────────────────────────────
   - model_name: image-fast

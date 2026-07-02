@@ -22,7 +22,23 @@ Given the complete text of a novel, output a single JSON object matching the sch
       "relationships": [
         {"character_id": "char_002", "relationship": "husband"}
       ],
-      "first_appearance_scene": "scene_001"
+      "first_appearance_scene": "scene_001",
+      "appearance_states": [
+        {
+          "id": "silver",
+          "label": "Silver hands",
+          "visual_anchor": "SELF-CONTAINED tags for the WHOLE look in this state (identity + the change) — e.g. the full base anchor PLUS 'polished silver prosthetic hands'. Never a bare delta, never mixed with another state.",
+          "visually_significant": true,
+          "continuity_guard": "When visually_significant is true, ONE imperative sentence stating what the image model must preserve and must NOT revert to its default, plus how to stage actions to stay consistent. State the rule in this entity's own terms; do not assume a generic case. Examples: a lost limb → 'She has no hands — both arms end in bandaged stumps; never depict her holding, gripping, or gesturing; she acts with her mouth or against her stumps.' A prosthetic → 'Her hands are rigid polished silver prosthetics, not flesh; always show the metallic sheen.' Omit (null) for minor/text-only states."
+        }
+      ],
+      "appearance_timeline": [
+        {
+          "state_id": "silver",
+          "at": {"scene_id": "scene_009", "beat": null},
+          "transition": {"label": "silver hands forged", "depicted_at": {"scene_id": "scene_009", "beat": null}, "cause": "the King has them made for her"}
+        }
+      ]
     }
   ],
 
@@ -33,12 +49,20 @@ Given the complete text of a novel, output a single JSON object matching the sch
       "visual_anchor": "STRICT DANBOORU-STYLE TAGS (comma-separated). Default-state tags only — used when no state resolves. Minimum 15 tags of physical environment — e.g. 'night, indoors, dim lighting, wooden table'.",
       "time_of_day": "night",
       "mood": "tense",
-      "states": [
+      "appearance_states": [
         {
-          "id": "loc_001_pre",
-          "name": "Pre-collapse",
-          "visual_anchor": "STRICT TAGS for this state only. NEVER mix pre/post or before/after details in one anchor.",
-          "description": "Optional one-line description of when this state applies."
+          "id": "loc_001_post",
+          "label": "Post-collapse",
+          "visual_anchor": "STRICT self-contained TAGS for this state only. NEVER mix pre/post or before/after details in one anchor.",
+          "visually_significant": true,
+          "continuity_guard": "When visually_significant is true, ONE imperative sentence on what to preserve and NOT revert to the default — e.g. a drained lake → 'The basin is empty cracked mud, never water'; a burned house → 'Charred timber and ash, never an intact building.' Null for minor states."
+        }
+      ],
+      "appearance_timeline": [
+        {
+          "state_id": "loc_001_post",
+          "at": {"scene_id": "scene_005", "beat": null},
+          "transition": {"label": "the building collapses", "cause": "the bombardment"}
         }
       ]
     }
@@ -50,13 +74,11 @@ Given the complete text of a novel, output a single JSON object matching the sch
       "chapter": 1,
       "title": "Brief Scene Title",
       "location_id": "loc_001",
-      "location_state_id": "loc_001_pre",
       "character_ids": ["char_001", "char_002"],
       "summary": "2-3 sentence summary of what happens.",
       "scene_type": "action",
       "narrative_beat": "inciting_incident",
       "source_start_quote": "Copy verbatim the first 60-80 characters of this scene, exactly as they appear in the original text — including punctuation and capitalisation.",
-      "character_appearances": {},
       "transient_objects": [
         {
           "id": "trans_001",
@@ -106,8 +128,8 @@ Given the complete text of a novel, output a single JSON object matching the sch
 - narrative_arcs[].title: SHORT string — e.g. "Setup", "Confrontation", "Resolution".
 - characters[].distinguishing_features: ARRAY of strings — e.g. ["long red hair", "scar on chin"]. NOT a single string.
 - scenes[].source_start_quote: VERBATIM string — copy the first 60-80 characters of that scene exactly as they appear in the text. Do NOT paraphrase or summarise. Do NOT count characters.
-- locations[].states: ARRAY of state objects (may be empty). See LOCATION STATES rules below.
-- scenes[].location_state_id: string id of one of the parent location's states, or null. MUST resolve to an existing state.id under the scene's location_id.
+- characters[].appearance_states, locations[].appearance_states: ARRAY (may be empty) of alternate-look objects. See APPEARANCE TIMELINE rules below.
+- characters[].appearance_timeline, locations[].appearance_timeline: ARRAY (may be empty) of activations, each {state_id, at:{scene_id, beat}, transition?}, ordered by story position. See APPEARANCE TIMELINE rules below.
 - scenes[].transient_objects: ARRAY (may be empty). See TRANSIENT OBJECTS rules below.
 
 === EXTRACTION RULES ===
@@ -117,14 +139,14 @@ CHARACTERS
 - Include only characters who can be visually shown in panels.
 - Do NOT create Character entries for off-screen voices, unseen speakers, people only heard from another room, or people mentioned but never physically shown. Preserve their dialogue/events in scene summaries instead.
 - Do NOT add voice-only or off-screen speakers to scenes[].character_ids.
-- visual_anchor = Danbooru-style comma-separated tags ONLY. No prose, no sentences. The character's typical, recognizable look — physical traits, usual clothing, usual accessories. The only exclusion is situational state: no "wet", "injured", "shivering", "covered in blood", "exhausted". These temporary states belong in the scene's character_appearances instead.
+- visual_anchor = Danbooru-style comma-separated tags ONLY. No prose, no sentences. The character's typical, recognizable look — physical traits, usual clothing, usual accessories. The only exclusion is situational/changed state: no "wet", "injured", "shivering", "covered in blood", "exhausted", "silver hands". A permanent mid-story change to the body (loses a hand, gains a scar, silver prostheses) belongs in appearance_states + appearance_timeline (see APPEARANCE TIMELINE), never baked into the base anchor.
 - Ground every visual_anchor tag in textual evidence from the source. Do NOT invent specific clothing items, facial features, or accessories that are not supported by the text.
 - Prefer omission over fabrication. If details are sparse, use broader but evidence-supported tags instead of made-up specifics.
 - Preserve deliberate ambiguity from the source text. If the text frames a character as gender-ambiguous/indeterminate, keep that ambiguity in the tags and avoid collapsing to a strongly gendered archetype unless the source explicitly does so.
 - Cast contrast is required: when two recurring characters share a scene, include at least 3 clearly differentiating visual tags per character so they are not rendered as the same generic person.
 - Avoid overusing generic filler tags that make characters converge (e.g., "average face", "neutral expression", "relaxed posture") unless those traits are textually salient.
   WRONG: "A tall woman with short black hair who is wearing a tactical jacket."
-  WRONG: "1woman, adult female, tall, short black hair, grey eyes, shivering, thin torn clothes, lips blue from cold" (situational state — belongs in character_appearances)
+  WRONG: "1woman, adult female, tall, short black hair, grey eyes, shivering, thin torn clothes, lips blue from cold" (situational/changed state — belongs in appearance_states)
   RIGHT: "1woman, adult female, tall, short black hair, grey eyes, jagged scar on cheek, olive skin, athletic build, dark tactical jacket, red arm patch, upright posture"
 - default_outfit = supplementary clothing details the anchor tags may not fully capture. e.g. "cargo pants, combat boots, dog tags around neck"
 - Use age-appropriate count/gender tags:
@@ -132,37 +154,56 @@ CHARACTERS
   - Adult female characters MUST start with "1woman, adult female" — NEVER "1girl".
   - Child male characters use "1boy, child".
   - Child female characters use "1girl, child".
-- distinguishing_features: specific visual details a storyboard artist needs (scars, hair, marks).
+- distinguishing_features: PERMANENT, state-invariant identity details true for the WHOLE story (scars present throughout, hair, marks). NEVER a feature the character acquires or loses partway through (severed hands, prosthetics, a wound, aging) — those are appearance_states, not identity. A tag like "maimed arms" here would brand her maimed in every panel, including before the injury. The base visual_anchor and distinguishing_features must describe her ORIGINAL, default look.
 
 LOCATIONS
 - One Location entry per distinct PHYSICAL PLACE. The bunker, the apartment, the alley — each gets its own entry.
-- visual_anchor = the DEFAULT state's tags. If the place only ever appears in one state, this is the only anchor needed and `states` may be left empty.
+- visual_anchor = the BASE state's tags (how the place looks at its first appearance). If it only ever appears one way, this is the only anchor needed and `appearance_states` may be left empty.
 - An anchor MUST describe ONE coherent visible state. NEVER fuse mutually exclusive details into one bag of tags.
   WRONG: "street lamp, parked cars, stop sign, ruins, rubble, dirt, bicycle rack, moped, debris"
          (mixes pre-collapse furniture with post-collapse aftermath in one anchor — every panel will be polluted with both)
   RIGHT: default → "night, outdoors, street, sidewalk, snow, brick apartment facade, streetlamp, parked cars, stop sign"
          state "loc_001_post" → "night, outdoors, flattened dirt, rubble, distant fire, bicycle rack, moped, debris, empty space"
 
-LOCATION STATES (locations[].states)
-- Use states when ONE physical place visibly changes mid-story:
+LOCATION STATES (locations[].appearance_states + appearance_timeline)
+- Use appearance_states when ONE physical place visibly changes mid-story:
   - before/after a destructive event (apartment block standing → flattened rubble)
   - day → night within the same set
   - intact → on-fire, clean → blood-soaked, etc.
-- Each state has its OWN clean visual_anchor (15+ tags). Tags must describe THAT state's visible details only; do not bleed in details from sibling states.
-- State id MUST extend the parent location id, e.g. "loc_001_pre", "loc_001_post", "loc_001_burning".
-- If the place is visually stable across the whole story, leave `states` empty and rely on the location's default visual_anchor.
-- Scenes (and panels) reference the active state via location_state_id; downstream stages route the correct tags into each panel.
+- Each state has its OWN self-contained visual_anchor (15+ tags) describing THAT state only; never bleed in details from sibling states. Set visually_significant: true (a location state exists precisely because it looks different and needs its own plate).
+- State id MUST extend the parent location id, e.g. "loc_001_post", "loc_001_burning".
+- If the place is visually stable across the whole story, leave both appearance_states and appearance_timeline empty and rely on the base visual_anchor.
+- Record WHEN each state takes effect in appearance_timeline (see APPEARANCE TIMELINE). Downstream stages resolve the active state per panel.
 
 INTERIOR vs EXTERIOR
 - An interior (apartment bedroom, dungeon corridor) and the exterior visible from it (street outside, sky above) are NOT the same location. A character standing in a bedroom looking out a window at the street is INSIDE — the location is the bedroom; the window-frame view is a background detail of the bedroom scene.
 - If a character moves from interior to exterior within a chapter, split the events into separate scenes with separate location_ids — even if the temporal gap is small. This prevents indoor/outdoor location anchors from contaminating each other's panels.
 - A flashback or cold-open that depicts a different physical location (or a clearly different time) is ALSO a separate scene. Do NOT bundle a remembered interior into the "now" exterior scene.
 
+APPEARANCE TIMELINE (characters[] and locations[] — how a look changes over the story)
+- Most entities look the SAME throughout: leave appearance_states and appearance_timeline empty ([]).
+- Use them when an entity's visible appearance changes at a definite point: a character loses a hand, gains silver prostheses, is restored; a place collapses, burns, shifts day→night.
+- Model it as a CATALOG of alternate looks (appearance_states) + an ordered TIMELINE of transitions (appearance_timeline).
+- appearance_states[]: each {id, label, visual_anchor, visually_significant}.
+  - visual_anchor is SELF-CONTAINED: it fully describes the entity in that state (identity + the change) so it can REPLACE the base look with no contradiction. Never a bare delta; never mix two states' tags.
+  - visually_significant: true when the state deserves its own generated reference image (a body transformation, a collapsed building); false for a minor text-only difference (dusty travel clothes).
+- appearance_timeline[]: each {state_id, at, transition?}, ORDERED by story position.
+  - at = {scene_id, beat}: the FIRST point where the new look holds. beat = null means "from that scene's start" (the usual case). Before the first activation, the base visual_anchor applies.
+  - Place `at` at the scene where the NEW look first clearly holds. If a destructive act must be SHOWN with the old look (the hand being cut), set `at` to the following scene.
+  - transition (encouraged): {label, depicted_at, cause}. label = short name ("hands severed"); depicted_at = where it is shown; cause = why (kept for narration, does not change rendering).
+- THINK IN TRANSITIONS: list each moment an entity's look changes, in order; each becomes one appearance_state + one timeline activation.
+- WORKED EXAMPLE — The Girl Without Hands, char_001 base anchor = a real-handed peasant girl:
+  appearance_states: stumps, silver, restored (all visually_significant: true)
+  appearance_timeline:
+    {"state_id":"stumps",   "at":{"scene_id":"scene_004","beat":null}, "transition":{"label":"hands severed",      "cause":"her father's axe, at the Devil's command"}}
+    {"state_id":"silver",   "at":{"scene_id":"scene_009","beat":null}, "transition":{"label":"silver hands forged", "cause":"the King has them made"}}
+    {"state_id":"restored", "at":{"scene_id":"scene_016","beat":null}, "transition":{"label":"hands restored",      "cause":"divine grace"}}
+  Result: scenes 1-3 show real hands, 4-8 stumps, 9-15 silver, 16 restored — and silver NEVER appears before scene_009.
+
 SCENES
-- A new scene starts when ANY of the following changes: location, location_state, POV character, OR a significant time jump (>30 min, "later that day", flashback to earlier).
+- A new scene starts when ANY of the following changes: location, location appearance state, POV character, OR a significant time jump (>30 min, "later that day", flashback to earlier).
 - source_start_quote: copy the first 60-80 characters of the scene VERBATIM from the text — exact words, punctuation, capitalisation. This is used to locate the scene in the source file. Do NOT invent or paraphrase this field.
-- location_state_id: REQUIRED when the scene's location has any states defined. Pick the state that's active at scene start. If the location has no states, set to null.
-- character_appearances: a dict mapping character_id → appearance description for characters whose look DIFFERS from their default in this scene. Only include entries where a character's appearance is noticeably different from their visual_anchor + default_outfit. Examples: character is undressed/injured/wet/dirty/covered in blood/wearing borrowed clothes. If they look normal, omit them from this dict. Leave as {} when no characters have altered appearances.
+- A character's or location's CHANGED appearance is NOT recorded on the scene. It lives on the entity's appearance_states + appearance_timeline (see APPEARANCE TIMELINE), which resolve per panel automatically.
 - Target 5-15 scenes for a short story, 30-60 for a full novel. Be exhaustive — cover the ENTIRE novel from first page to last.
 - Each scene should yield 3-8 comic panels. If a scene is too long OR spans an in/out transition OR jumps locations, SPLIT it.
 - scene_type: one of action / dialogue / emotional / transition
@@ -173,6 +214,7 @@ PROPS (recurring, multi-scene)
 - visual_anchor must describe what the object LOOKS LIKE in detail — size, shape, material, color, condition
 - If the object is commonly misrepresented by image AI (e.g., a severed paw mistaken for a prosthetic), add an explicit "NOT" clause
 - Leave props as an empty array [] if there are no recurring significant objects
+- A prop is a DETACHABLE object that can be picked up, carried, or set down. A permanent change to a CHARACTER's body (a lost hand, a prosthetic, silver hands) is NOT a prop — model it as that character's appearance_state. A visible change to a PLACE is a location appearance_state. (Modeling silver hands as a prop is exactly what made them bleed onto every panel that merely mentioned hands.)
 
 TRANSIENT OBJECTS (scene-scoped, one-time)
 - A transient object is a story-critical visual element that appears in ONE scene only and is too narrow in scope to qualify as a Prop. Examples: a severed head visible for one beat, a floating alien text overlay during one announcement, a glowing portal that closes by scene's end.

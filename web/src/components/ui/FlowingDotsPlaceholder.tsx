@@ -8,6 +8,9 @@ interface FlowingDotsPlaceholderProps {
   className?: string;
   label?: ReactNode;
   caption?: ReactNode;
+  /** Small contexts (e.g. 84px state tiles): shrink the label and drop the
+   *  oversized badge/caption so it fits instead of overflowing the tile. */
+  compact?: boolean;
   "aria-label"?: string;
 }
 
@@ -16,6 +19,7 @@ export function FlowingDotsPlaceholder({
   className,
   label,
   caption,
+  compact = false,
   "aria-label": ariaLabel = "Image generation in progress",
 }: FlowingDotsPlaceholderProps) {
   const { t } = useI18n();
@@ -54,79 +58,46 @@ export function FlowingDotsPlaceholder({
 
     const draw = (now: number) => {
       if (!startRef.current) startRef.current = now;
-      const t = reducedMotion ? 0 : ((now - startRef.current) / 1000) * 1.8;
+      // Seconds since start; frozen at a representative frame when the user
+      // prefers reduced motion.
+      const elapsed = reducedMotion ? 0.6 : (now - startRef.current) / 1000;
 
-      // 1. Fondo de papel pulpa
+      // 1. Pulp-paper ground
       ctx.fillStyle = "#fcfaed";
       ctx.fillRect(0, 0, width, height);
 
-      // 2. Líneas de boceto azul cián (Non-photo blue)
-      ctx.strokeStyle = "rgba(44, 150, 219, 0.12)";
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      // Regla de tercios
-      ctx.moveTo(width / 3, 0); ctx.lineTo(width / 3, height);
-      ctx.moveTo((2 * width) / 3, 0); ctx.lineTo((2 * width) / 3, height);
-      ctx.moveTo(0, height / 3); ctx.lineTo(width, height / 3);
-      ctx.moveTo(0, (2 * height) / 3); ctx.lineTo(width, (2 * height) / 3);
-      // Diagonales de composición
-      ctx.moveTo(0, 0); ctx.lineTo(width, height);
-      ctx.moveTo(width, 0); ctx.lineTo(0, height);
-      ctx.stroke();
-
-      // 3. Onda de escáner dorada (Onda de Revelado) - Muy suave y lenta
-      const sweepCenter = 0.5 + 0.75 * Math.sin(t * 0.22);
-      
-      const grad = ctx.createLinearGradient(0, 0, width, height);
-      const c = Math.max(0, Math.min(1, sweepCenter));
-      
-      grad.addColorStop(Math.max(0, c - 0.4), "rgba(250, 227, 97, 0)");
-      grad.addColorStop(Math.max(0, c - 0.15), "rgba(250, 227, 97, 0.05)");
-      grad.addColorStop(c, "rgba(250, 227, 97, 0.16)");
-      grad.addColorStop(Math.min(1, c + 0.15), "rgba(250, 227, 97, 0.05)");
-      grad.addColorStop(Math.min(1, c + 0.4), "rgba(250, 227, 97, 0)");
-      
-      ctx.fillStyle = grad;
+      // 2. Gold "develop" band — a soft narrator-gold glow drifting slowly
+      //    down and back up the page, like ink developing line by line.
+      const sweep = 0.5 + 0.62 * Math.sin(elapsed * 0.5); // normalized Y center
+      const c = Math.max(0, Math.min(1, sweep));
+      const band = ctx.createLinearGradient(0, 0, 0, height);
+      band.addColorStop(Math.max(0, c - 0.35), "rgba(250, 227, 97, 0)");
+      band.addColorStop(c, "rgba(250, 227, 97, 0.18)");
+      band.addColorStop(Math.min(1, c + 0.35), "rgba(250, 227, 97, 0)");
+      ctx.fillStyle = band;
       ctx.fillRect(0, 0, width, height);
 
-      // 4. Trama de puntos Benday Halftone - Pulsación suave en escala de grises
-      const cellSize = 14;
-      const cols = Math.ceil(width / cellSize);
-      const rows = Math.ceil(height / cellSize);
-      const baseRadius = 1.8;
-
-      for (let row = 0; row < rows; row++) {
-        for (let col = 0; col < cols; col++) {
-          const px = col * cellSize + cellSize * 0.5;
-          const py = row * cellSize + cellSize * 0.5;
-          const nx = px / Math.max(width, 1);
-          const ny = py / Math.max(height, 1);
-          const cellDiag = (nx + ny) / 2;
-
-          const distToSweep = cellDiag - sweepCenter;
-          const sweepGlow = Math.max(0, 1 - Math.abs(distToSweep) / 0.25);
-
-          let radius = baseRadius;
-          const rgb = [27, 28, 21]; // Mantener siempre tinta negra
-          let alpha = 0.06;
-
-          if (sweepGlow > 0) {
-            // Crecimiento y oscurecimiento muy suaves y progresivos
-            radius = baseRadius * (1.0 + sweepGlow * 0.35);
-            alpha = 0.06 + sweepGlow * 0.16;
-          }
-
-          // Micro-pulso individual por celda para dar textura orgánica
-          const pulse = 0.9 + 0.1 * Math.sin(t * 1.8 + (col + row) * 0.25);
-
+      // 3. Benday halftone dots — ink-black, swelling and darkening as the
+      //    gold band crosses them. glow/radius/alpha depend only on the row,
+      //    so they are hoisted out of the inner loop; the micro-pulse adds a
+      //    faint per-cell shimmer.
+      const cellSize = 12;
+      const baseRadius = 1.5;
+      for (let py = cellSize * 0.5; py < height; py += cellSize) {
+        const ny = py / Math.max(height, 1);
+        const glow = Math.max(0, 1 - Math.abs(ny - sweep) / 0.22);
+        const radius = baseRadius * (1 + glow * 0.6);
+        const alpha = 0.07 + glow * 0.18;
+        for (let px = cellSize * 0.5; px < width; px += cellSize) {
+          const pulse = 0.92 + 0.08 * Math.sin(elapsed * 1.6 + (px + py) * 0.05);
           ctx.beginPath();
-          ctx.fillStyle = `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
+          ctx.fillStyle = `rgba(27, 28, 21, ${alpha})`;
           ctx.arc(px, py, radius * pulse, 0, Math.PI * 2);
           ctx.fill();
         }
       }
 
-      // 5. Borde grueso táctil neobrutalista
+      // 4. Thick tactile neobrutalist border
       ctx.strokeStyle = "#1b1c15";
       ctx.lineWidth = 4;
       ctx.strokeRect(0, 0, width, height);
@@ -159,16 +130,24 @@ export function FlowingDotsPlaceholder({
       />
       {(displayLabel || displayCaption) && (
         <div
-          className="absolute inset-0 flex flex-col items-center justify-center px-4 text-center pointer-events-none"
+          className={cn(
+            "absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none",
+            compact ? "px-1" : "px-4",
+          )}
         >
           {displayLabel && (
             <div
-              className="border-[3px] border-ink-black px-5 py-2.5 font-display text-[clamp(1rem,8vw,1.38rem)] font-black leading-none shadow-ink bg-bristol text-ink-black uppercase tracking-tight"
+              className={cn(
+                "border-ink-black bg-bristol text-ink-black font-display font-black uppercase leading-none",
+                compact
+                  ? "border-[2px] px-1.5 py-1 text-[0.5rem] tracking-[0.08em]"
+                  : "border-[3px] px-5 py-2.5 text-[clamp(1rem,8vw,1.38rem)] shadow-ink tracking-tight",
+              )}
             >
               {displayLabel}
             </div>
           )}
-          {displayCaption && (
+          {displayCaption && !compact && (
             <div className="mt-3.5 border-[2px] border-ink-black bg-pulp-paper px-3 py-1 font-meta text-[0.62rem] font-bold tracking-[0.16em] text-ink-black shadow-paper-sm uppercase">
               {displayCaption}
             </div>

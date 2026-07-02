@@ -213,11 +213,14 @@ async def generate_visual_brief(config: Config, prompt: ImagePrompt) -> str | No
         return None
     brief = normalize_prose_brief(result.value)
     if brief is None:
+        raw = result.value or ""
         logger.warning(
-            "Visual brief output rejected for panel %s/%s (malformed or out of bounds); "
+            "Visual brief output rejected for panel %s/%s (len=%d, starts=%r); "
             "falling back to distilled prompt",
             getattr(prompt, "scene_id", "?"),
             getattr(prompt, "panel_number", "?"),
+            len(raw.strip()),
+            raw.strip()[:60],
         )
     return brief
 

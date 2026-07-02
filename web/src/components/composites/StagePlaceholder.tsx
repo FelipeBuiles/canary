@@ -286,7 +286,7 @@ export function StagePlaceholder({ stage, status, itemsDone, itemsTotal }: Stage
         </div>
         <p className="mt-2 text-[0.82rem] leading-6 text-ink-black/50">
           {status === "failed"
-            ? "This stage failed. Try re-running it from the sidebar."
+            ? "This stage failed. Use the button below to retry."
             : "Data for this stage could not be loaded."}
         </p>
       </div>

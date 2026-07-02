@@ -9,6 +9,9 @@ import {
   useStageEstimate,
   useStoryBible,
   useRegenRef,
+  useRegenStateRef,
+  useCharacterRefVersions,
+  useRestoreCharacterRefVersion,
   useRegenRefWithInstruction,
   useRegenPlate,
   useRegenPlateWithInstruction,
@@ -23,7 +26,7 @@ import { DestructiveButton } from "../../components/ui/DestructiveButton";
 import { ImageModal } from "../../components/ui/ImageModal";
 import { LazyImage } from "../../components/ui/LazyImage";
 import { StatusPill } from "../../components/ui/StatusPill";
-import type { Character, GenerationJob, Location, Prop } from "../../types/api";
+import type { AppearanceState, Character, GenerationJob, Location, Prop } from "../../types/api";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { useI18n } from "../../i18n";
 import { FlowingDotsPlaceholder } from "../../components/ui/FlowingDotsPlaceholder";
@@ -89,6 +92,290 @@ function RefSheet({ projectName, charId, timestamp }: { projectName: string; cha
             </button>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Per-state appearance refs (silver hands, stumps, collapsed building, …).
+ * Each visually-significant state gets its own generated ref under
+ * refs/<id>/states/<state>/ (characters) or plates/<state>.png (locations).
+ * States whose ref hasn't been generated yet (or failed) show a PENDING chip
+ * rather than vanishing, so the gap is visible.
+ */
+function StateRefRow({
+  projectName,
+  entityId,
+  kind,
+  states,
+}: {
+  projectName: string;
+  entityId: string;
+  kind: "character" | "location";
+  states: AppearanceState[] | undefined;
+}) {
+  const { t } = useI18n();
+  const [failed, setFailed] = useState<Record<string, boolean>>({});
+  const [viewer, setViewer] = useState<{ src: string; title: string } | null>(null);
+
+  const significant = (states ?? []).filter((s) => s.visually_significant);
+  if (significant.length === 0) return null;
+
+  const base = `/api/projects/${encodeURIComponent(projectName)}/files`;
+  const thumbUrl = (stateId: string) =>
+    kind === "character"
+      ? `${base}/refs/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}/front.png`
+      : `${base}/plates/${encodeURIComponent(stateId)}.png`;
+  const fullUrl = (stateId: string) =>
+    kind === "character"
+      ? `${base}/refs/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}/sheet.png`
+      : `${base}/plates/${encodeURIComponent(stateId)}.png`;
+
+  const tileWidth = kind === "character" ? "w-[64px]" : "w-[104px]";
+  const imgAspect = kind === "character" ? "aspect-[64/84]" : "aspect-[16/9]";
+
+  return (
+    <div className="mt-4">
+      <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1.5">
+        {t("APPEARANCE STATES")}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {significant.map((s) =>
+          failed[s.id] ? (
+            <div
+              key={s.id}
+              title={t("Not generated yet — re-run cast to build this state")}
+              className={`flex ${tileWidth} flex-col items-center justify-center gap-1 border-[2px] border-dashed border-ink-black/20 bg-surface-container px-1 py-3 text-center`}
+            >
+              <span className="font-meta text-[0.46rem] leading-tight tracking-[0.12em] text-ink-black/55">
+                {s.label}
+              </span>
+              <span className="font-meta text-[0.42rem] tracking-[0.14em] text-hero-red">
+                {t("PENDING")}
+              </span>
+            </div>
+          ) : (
+            <button
+              key={s.id}
+              type="button"
+              title={`${s.label} — ${t("click for full size")}`}
+              onClick={() => setViewer({ src: fullUrl(s.id), title: s.label })}
+              className={`${tileWidth} overflow-hidden border-[2px] border-ink-black/15 transition-colors hover:border-ink-black/50`}
+            >
+              <img
+                src={thumbUrl(s.id)}
+                alt={`${s.label} reference`}
+                className={`${imgAspect} w-full object-cover`}
+                onError={() => setFailed((f) => ({ ...f, [s.id]: true }))}
+              />
+              <span className="block truncate bg-ink-black/5 px-1 py-0.5 font-meta text-[0.42rem] tracking-[0.1em] text-ink-black/70">
+                {s.label}
+              </span>
+            </button>
+          )
+        )}
+      </div>
+      <ImageModal
+        isOpen={!!viewer}
+        onClose={() => setViewer(null)}
+        src={viewer?.src ?? ""}
+        alt={viewer?.title ?? ""}
+        title={viewer?.title}
+      />
+    </div>
+  );
+}
+
+/**
+ * Re-roll history for one character ref sheet (canonical or a state). Renders
+ * nothing until at least one prior version has been archived, so it stays out
+ * of the way until you've actually re-rolled. Clicking a thumbnail restores it.
+ */
+function RefVersionHistory({
+  projectName,
+  charId,
+  stateId,
+  refreshKey,
+  onRestored,
+  heading,
+}: {
+  projectName: string;
+  charId: string;
+  stateId?: string;
+  refreshKey?: unknown;
+  onRestored?: () => void;
+  heading?: string;
+}) {
+  const { t } = useI18n();
+  const { data } = useCharacterRefVersions(projectName, charId, stateId, refreshKey);
+  const restore = useRestoreCharacterRefVersion();
+  const archived = (data?.versions ?? []).filter((v) => !v.current);
+  if (archived.length === 0) return null;
+
+  const fileUrl = (relPath: string) =>
+    `/api/projects/${encodeURIComponent(projectName)}/files/${relPath}`;
+
+  return (
+    <div className="mt-1.5">
+      <div className="font-meta text-[0.46rem] tracking-[0.14em] text-ink-black/45">
+        {heading ?? t("PREVIOUS")} ({archived.length})
+      </div>
+      <div className="mt-1 flex flex-wrap gap-1">
+        {archived.map((v) => (
+          <button
+            key={`${v.version}-${v.image_path}`}
+            type="button"
+            title={t("Restore") + ` v${v.version}`}
+            disabled={restore.isPending}
+            onClick={() =>
+              restore.mutate(
+                { project: projectName, charId, version: v.version, stateId },
+                { onSuccess: () => onRestored?.() },
+              )
+            }
+            className="relative h-9 w-9 overflow-hidden border-[1.5px] border-ink-black/20 transition-colors hover:border-ink-black disabled:opacity-50"
+          >
+            <img src={fileUrl(v.image_path)} alt={`v${v.version}`} className="h-full w-full object-cover" />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One alternate-appearance tile inside the base character's full-size modal:
+ * its generated ref thumbnail, or a GENERATE button when the ref is missing
+ * (failed/incomplete in the cast run), plus a RE-ROLL. Owns its own regen job
+ * lifecycle so each state retries independently.
+ */
+function StateRefTile({
+  projectName,
+  charId,
+  state,
+}: {
+  projectName: string;
+  charId: string;
+  state: AppearanceState;
+}) {
+  const { t } = useI18n();
+  const [imgFailed, setImgFailed] = useState(false);
+  const [timestamp, setTimestamp] = useState(() => Date.now());
+  const [activeJob, setActiveJob] = useState<GenerationJob | null>(null);
+  const [regenError, setRegenError] = useState<string | null>(null);
+  const regenState = useRegenStateRef();
+  const { data: generationJobs } = useGenerationJobs(projectName, activeJob ? [activeJob.id] : []);
+
+  useEffect(() => {
+    const job = generationJobs?.jobs[0];
+    if (!job) return;
+    const timer = window.setTimeout(() => {
+      if (job.status === "complete") {
+        setTimestamp(Date.now());
+        setImgFailed(false);
+        setActiveJob(null);
+        setRegenError(null);
+      } else if (job.status === "failed") {
+        setActiveJob(null);
+        setRegenError(job.error ?? "Regeneration failed");
+      } else {
+        setActiveJob(job);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [generationJobs]);
+
+  const thumbUrl = `/api/projects/${encodeURIComponent(projectName)}/files/refs/${encodeURIComponent(charId)}/states/${encodeURIComponent(state.id)}/front.png?t=${timestamp}`;
+
+  const startRegen = () => {
+    setRegenError(null);
+    regenState.mutate(
+      { project: projectName, charId, stateId: state.id },
+      {
+        onSuccess: (data) => setActiveJob(data.job),
+        onError: (err) => {
+          if (maybeShowInsufficientCredits(err, { actionLabel: "Regenerate appearance", onRetry: startRegen })) return;
+          setRegenError(err.message);
+        },
+      },
+    );
+  };
+
+  const busy = regenState.isPending || !!activeJob;
+  const isQueued = activeJob?.status === "queued" || (activeJob && activeJob.queue_position);
+
+  return (
+    <div className="w-[84px]">
+      <div className="relative aspect-[64/84] w-full overflow-hidden border-[2px] border-ink-black/15 bg-surface-container">
+        {busy ? (
+          <FlowingDotsPlaceholder
+            compact
+            aspect="64 / 84"
+            className="!border-0 h-full"
+            label={isQueued ? t("QUEUED") : t("DRAWING…")}
+          />
+        ) : imgFailed ? (
+          <div className="flex h-full w-full items-center justify-center px-1 text-center">
+            <span className="font-meta text-[0.46rem] leading-tight tracking-[0.12em] text-hero-red">{t("NOT GENERATED")}</span>
+          </div>
+        ) : (
+          <img
+            src={thumbUrl}
+            alt={`${state.label} reference`}
+            className="h-full w-full object-cover"
+            onError={() => setImgFailed(true)}
+          />
+        )}
+      </div>
+      <div className="mt-1 truncate font-meta text-[0.46rem] tracking-[0.1em] text-ink-black/70" title={state.label}>
+        {state.label}
+      </div>
+      <button
+        type="button"
+        onClick={startRegen}
+        disabled={busy}
+        className="mt-1 w-full border-[1.5px] border-ink-black/25 bg-bristol px-1.5 py-1 font-meta text-[0.5rem] tracking-[0.12em] text-ink-black/70 transition-colors hover:border-ink-black hover:text-ink-black disabled:opacity-50"
+      >
+        {busy ? queuedLabel(activeJob) : imgFailed ? t("GENERATE") : t("RE-ROLL")}
+      </button>
+      <RefVersionHistory
+        projectName={projectName}
+        charId={charId}
+        stateId={state.id}
+        refreshKey={timestamp}
+        onRestored={() => {
+          setTimestamp(Date.now());
+          setImgFailed(false);
+        }}
+      />
+      {regenError && <div className="mt-1 text-[0.5rem] leading-tight text-hero-red">{regenError}</div>}
+    </div>
+  );
+}
+
+/** Alternate-appearance refs for a character, shown inside its full-size modal. */
+function AppearanceStatesPanel({
+  projectName,
+  charId,
+  states,
+}: {
+  projectName: string;
+  charId: string;
+  states: AppearanceState[] | undefined;
+}) {
+  const { t } = useI18n();
+  const significant = (states ?? []).filter((s) => s.visually_significant);
+  if (significant.length === 0) return null;
+  return (
+    <div>
+      <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1.5">
+        {t("ALTERNATE APPEARANCES")}
+      </div>
+      <div className="flex flex-wrap gap-3">
+        {significant.map((s) => (
+          <StateRefTile key={s.id} projectName={projectName} charId={charId} state={s} />
+        ))}
       </div>
     </div>
   );
@@ -283,6 +570,12 @@ function CharacterCastCard({
             <Tag key={f}>{f}</Tag>
           ))}
         </div>
+        <StateRefRow
+          projectName={projectName}
+          entityId={character.id}
+          kind="character"
+          states={character.appearance_states}
+        />
         {regenError && (
           <div className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-[0.72rem] leading-relaxed text-bristol">
             {regenError}
@@ -334,6 +627,21 @@ function CharacterCastCard({
               </Button>
             </div>
             <RefSheet projectName={projectName} charId={character.id} timestamp={timestamp} />
+            <RefVersionHistory
+              projectName={projectName}
+              charId={character.id}
+              refreshKey={timestamp}
+              heading="PREVIOUS VERSIONS"
+              onRestored={() => {
+                setTimestamp(Date.now());
+                setImgFailed(false);
+              }}
+            />
+            <AppearanceStatesPanel
+              projectName={projectName}
+              charId={character.id}
+              states={character.appearance_states}
+            />
             <div>
               <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">HOW THEY'LL LOOK</div>
               <p className="text-[0.82rem] leading-6 text-ink-black">{character.visual_anchor}</p>
@@ -579,6 +887,12 @@ function LocationPlateCard({
           )}
           <Tag>{location.mood}</Tag>
         </div>
+        <StateRefRow
+          projectName={projectName}
+          entityId={location.id}
+          kind="location"
+          states={location.appearance_states}
+        />
         {regenError && (
           <div className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-[0.72rem] leading-relaxed text-bristol">
             {regenError}

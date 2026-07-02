@@ -23,7 +23,7 @@ class Stage:
 # own outputs plus everything downstream, so each stage's clean_paths is just
 # the cascade from its first directory.
 _CLEAN_CASCADE: tuple[str, ...] = (
-    "samples", "refs", "plates", "adapt", "plan", "storyboard",
+    "samples", "refs", "plates", "screenplays", "plan", "storyboard",
     "direct", "draw", "compose", "exports",
 )
 

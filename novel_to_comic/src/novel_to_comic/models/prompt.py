@@ -84,6 +84,12 @@ class PromptSubject(BaseModel):
     action: str = ""
     expression: str = ""
     position: str = ""
+    # True when ``identity`` is a non-base, visually-significant appearance state
+    # (e.g. stumps, silver hands). The brief pass treats it as a fixed, immutable
+    # look and stages actions around it rather than as one fact among many.
+    appearance_locked: bool = False
+    # Optional authored continuity rule from the active AppearanceState.
+    appearance_guard: str | None = None
 
 
 class ImagePrompt(BaseModel):
