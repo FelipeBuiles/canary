@@ -14,10 +14,16 @@ from ..db import get_db
 router = APIRouter()
 logger = logging.getLogger("pulp.billing")
 
+# Pricing set per docs/proposals/pricing-and-margin.md (PULP_MODEL_COST_MARKUP=2.0,
+# PULP_CREDITS_PER_PROVIDER_USD=100). Bulk tiers discount via more credits per
+# dollar, not lower per-credit pricing — same "credits never expire" model the
+# indie-author audience expects. A typical 60k-word book is ~2,540 credits, so
+# Standard covers one full book + regen headroom.
 CREDIT_PACKAGES: dict[str, dict] = {
-    "10": {"label": "1,000 credits", "price_cents": 1000, "credits": 1000},
-    "25": {"label": "2,750 credits", "price_cents": 2500, "credits": 2750},
-    "50": {"label": "6,000 credits", "price_cents": 5000, "credits": 6000},
+    "starter": {"label": "1,200 credits", "price_cents": 1200, "credits": 1200},
+    "standard": {"label": "3,000 credits", "price_cents": 3000, "credits": 3000},
+    "creator": {"label": "7,500 credits", "price_cents": 7000, "credits": 7500},
+    "studio": {"label": "18,000 credits", "price_cents": 15000, "credits": 18000},
 }
 
 
@@ -47,6 +53,32 @@ def _stripe_dict(value: Any) -> dict:
     return normalized if isinstance(normalized, dict) else {}
 
 
+def _wrap_stripe_error(exc: Exception) -> HTTPException:
+    """Turn a stripe.error.StripeError into a useful HTTPException.
+
+    Without this, any Stripe failure (bad key, rate limit, invalid request)
+    propagates as a generic 500 with no detail — the user just sees
+    'Internal Server Error' and ops sees nothing in the response. Map the
+    common cases to specific status codes so the cause is obvious.
+    """
+    if isinstance(exc, stripe.error.AuthenticationError):
+        # Most common deploy cause: STRIPE_SECRET_KEY missing, expired, or wrong
+        # mode (test vs live). Log the full detail; surface a short message.
+        logger.exception("Stripe authentication failed — check STRIPE_SECRET_KEY")
+        return HTTPException(500, "Stripe authentication failed — check STRIPE_SECRET_KEY")
+    if isinstance(exc, stripe.error.PermissionError):
+        logger.exception("Stripe permission error (key lacks required scope)")
+        return HTTPException(500, "Stripe key lacks permission for this operation")
+    if isinstance(exc, stripe.error.RateLimitError):
+        return HTTPException(429, "Stripe rate limit reached — please retry shortly")
+    if isinstance(exc, stripe.error.InvalidRequestError):
+        logger.warning("Invalid Stripe request: %s", exc)
+        return HTTPException(502, f"Stripe rejected the request: {exc.user_message or exc}")
+    # APIConnectionError, SignatureVerificationError, generic StripeError, etc.
+    logger.exception("Stripe call failed")
+    return HTTPException(502, f"Stripe call failed: {exc.user_message or exc}")
+
+
 @router.get("/packages")
 def list_packages():
     """Return available credit packages — used by the frontend to render buy buttons."""
@@ -74,26 +106,29 @@ async def create_checkout(
     # without an extra env var.
     origin = request.headers.get("origin", "http://localhost:5173")
 
-    session = stripe.checkout.Session.create(
-        payment_method_types=["card"],
-        line_items=[{
-            "price_data": {
-                "currency": "usd",
-                "product_data": {"name": f"{branding.product_name} — {pkg['credits']} credits ({pkg['label']})"},
-                "unit_amount": pkg["price_cents"],
-            },
-            "quantity": 1,
-        }],
-        mode="payment",
-        # Surface the ToS at the moment of payment and require explicit consent.
-        # Stripe records the acceptance; this is the strongest consent signal we
-        # collect (stronger than browsewrap text on signup).
-        terms_of_service_url=branding.terms_url,
-        consent_collection={"terms_of_service": "required"},
-        success_url=f"{origin}/credits?success=true",
-        cancel_url=f"{origin}/credits",
-        metadata={"user_id": user_id, "package": package_id},
-    )
+    try:
+        session = stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            line_items=[{
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {"name": f"{branding.product_name} — {pkg['credits']} credits ({pkg['label']})"},
+                    "unit_amount": pkg["price_cents"],
+                },
+                "quantity": 1,
+            }],
+            mode="payment",
+            # Surface the ToS at the moment of payment and require explicit consent.
+            # Stripe records the acceptance; this is the strongest consent signal we
+            # collect (stronger than browsewrap text on signup).
+            terms_of_service_url=branding.terms_url,
+            consent_collection={"terms_of_service": "required"},
+            success_url=f"{origin}/credits?success=true",
+            cancel_url=f"{origin}/credits",
+            metadata={"user_id": user_id, "package": package_id},
+        )
+    except stripe.error.StripeError as exc:
+        raise _wrap_stripe_error(exc) from exc
 
     return {"url": session.url}
 

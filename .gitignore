@@ -158,9 +158,10 @@ $RECYCLE.BIN/
 .python-version
 .nvmrc
 
-# ── Claude Code / agent metadata (project-local; user-specific) ───────────────
+# ── Agent / editor metadata (project-local; user-specific) ────────────────────
 .claude/cache/
 .claude/sessions/
+.commandcode/
 
 # ── Misc ──────────────────────────────────────────────────────────────────────
 *.bak

@@ -2,10 +2,8 @@
 
 import asyncio
 from pathlib import Path
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
-import pytest
 
 from novel_to_comic.usage import ApiResult, UsageRecord
 
@@ -103,7 +101,7 @@ class TestEnqueueCreditedJob:
         async def _work():
             return ApiResult(value=None)
 
-        with patch("novel_to_comic.server.credited_job.get_db") as mock_db, \
+        with patch("novel_to_comic.server.credited_job.get_db"), \
              patch("novel_to_comic.server.credited_job.assert_sufficient_credits") as mock_assert:
             enqueue_credited_job(
                 app,

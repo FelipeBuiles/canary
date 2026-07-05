@@ -89,9 +89,10 @@ function formatWhen(iso: string): string {
 }
 
 function packageName(pkg: CreditPackage) {
-  if (pkg.credits <= 1000) return "Starter";
-  if (pkg.credits < 6000) return "Studio";
-  return "Production";
+  if (pkg.credits <= 1200) return "Starter";
+  if (pkg.credits <= 3000) return "Standard";
+  if (pkg.credits <= 7500) return "Creator";
+  return "Studio";
 }
 
 function perThousand(pkg: CreditPackage) {
@@ -387,7 +388,7 @@ export function CreditsPage() {
           {packagesLoading
             ? [1, 2, 3].map((i) => <div key={i} className="h-52 animate-pulse bg-ink-black/5" />)
             : (packagesData?.packages ?? []).map((pkg) => {
-                const popular = pkg.credits > 1000 && pkg.credits < 6000;
+                const popular = pkg.credits === 3000;
                 return (
                   <article
                     key={pkg.id}

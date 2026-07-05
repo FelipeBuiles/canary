@@ -1,6 +1,5 @@
 """Tests for panel_store — validates that save_breakdown / save_prompt enforce invariants."""
 
-import json
 from pathlib import Path
 
 import pytest

@@ -1,0 +1,104 @@
+name: CI
+
+# Test + build gate. Every PR and push to main must pass this before merge or
+# deploy — it's the launch-readiness green-CI gate (P0 #1). A failing billing
+# test (P1 #5) or any regression here blocks `fly deploy`.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: # manual trigger for prod release validation
+
+# Cancel superseded runs on the same ref — keeps the queue cheap on a busy branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: novel_to_comic
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        # setup-uv stopped publishing floating major tags after v7, so pin the
+        # exact stable release. Bump deliberately when upgrading.
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: novel_to_comic/uv.lock
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Ruff (lint + format check)
+        run: uv run ruff check .
+
+      - name: Pytest
+        run: uv run pytest -x -q
+
+  web:
+    name: Web (vitest + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Vitest
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+  docker:
+    name: Docker image (build smoke test)
+    runs-on: ubuntu-latest
+    # Builds the production image end-to-end but does NOT push it. Catches
+    # Dockerfile regressions (e.g. the latent theme_tokens.json copy bug that
+    # broke every Docker build for weeks while CI stayed green). Runs in
+    # parallel with backend/web — it's the slow job (~5 min, pulls Python +
+    # Playwright/Chromium) and a separate failure surface.
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          # The frontend stage inlines VITE_* at build time; supply placeholders
+          # so the build succeeds. Values are irrelevant for a smoke test.
+          build-args: |
+            VITE_SUPABASE_URL=https://ci-smoke.supabase.co
+            VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_ci_smoke
+            VITE_CANARY_ENV=production
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

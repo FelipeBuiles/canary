@@ -1,6 +1,5 @@
 """Tests for text utilities (text_utils.py)."""
 
-import pytest
 
 from novel_to_comic.text_utils import clean, shorten, clean_exception_message
 

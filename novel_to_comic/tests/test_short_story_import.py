@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from starlette.requests import Request
 
 from novel_to_comic.config import load_config
 from novel_to_comic.server.routers.projects import (
@@ -15,6 +16,34 @@ from novel_to_comic.server.routers.projects import (
     list_short_stories,
 )
 from novel_to_comic.state import load_state
+
+
+def _request() -> Request:
+    """A minimal real Starlette request.
+
+    ``import_short_story`` is unit-tested by calling it directly, but the
+    ``@limiter.limit`` decorator validates that ``request`` is a genuine
+    ``starlette.requests.Request`` (it reads the client address for the
+    rate-limit key) and that ``request.app.state.limiter`` is set. A bare
+    MagicMock is rejected, so build a real one wired to the shared limiter.
+    """
+    from starlette.applications import Starlette
+
+    from novel_to_comic.server.ratelimit import limiter
+
+    app = Starlette()
+    app.state.limiter = limiter
+    return Request(
+        scope={
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "headers": [],
+            "query_string": b"",
+            "client": ("127.0.0.1", 0),
+            "app": app,
+        }
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -80,7 +109,7 @@ def test_import_short_story_handles_onlinereader_url(tmp_path: Path):
     with patch("novel_to_comic.server.routers.projects.httpx.AsyncClient", async_client_cls), \
          patch("novel_to_comic.server.routers.projects.get_db", return_value=mock_db):
         res = asyncio.run(import_short_story(
-            request=MagicMock(),
+            request=_request(),
             payload=payload,
             projects_dir=tmp_path,
             user_id="user123",
@@ -126,7 +155,7 @@ def test_import_short_story_handles_raw_code(tmp_path: Path):
     with patch("novel_to_comic.server.routers.projects.httpx.AsyncClient", async_client_cls), \
          patch("novel_to_comic.server.routers.projects.get_db", return_value=mock_db):
         res = asyncio.run(import_short_story(
-            request=MagicMock(),
+            request=_request(),
             payload=payload,
             projects_dir=tmp_path,
             user_id="user456",

@@ -117,7 +117,10 @@ class TestEventEmission:
 
     def test_on_event_property_returns_callback_with_listener(self, tmp_path):
         state = _state(tmp_path)
-        cb = lambda e: None
+
+        def cb(e):
+            return None
+
         ctx = StageRuntime("plan", state, tmp_path, on_event=cb)
         assert ctx.on_event is cb
 

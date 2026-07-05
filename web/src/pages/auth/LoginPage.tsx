@@ -74,6 +74,25 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
     }
   }
 
+  async function handleForgotPassword() {
+    setError(null);
+    setMessage(null);
+    if (!email) {
+      setError("Enter your email above, then tap “Forgot password?” again.");
+      return;
+    }
+    setSubmitting(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    setSubmitting(false);
+    if (error) {
+      setError(error.message);
+    } else {
+      setMessage(`Check ${email} for a password-reset link.`);
+    }
+  }
+
   return (
     <div className="flex min-h-svh flex-col bg-ink-black text-pulp-paper">
       <header className="flex h-14 shrink-0 items-center border-b-[2px] border-ink-black bg-bristol px-4 text-ink-black">
@@ -188,7 +207,9 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
                 {mode === "signin" ? (
                   <button
                     type="button"
-                    className="mx-auto block pt-1 font-body text-[0.8rem] font-semibold text-ink-black/55 transition-colors hover:text-ink-black"
+                    onClick={handleForgotPassword}
+                    disabled={submitting}
+                    className="mx-auto block pt-1 font-body text-[0.8rem] font-semibold text-ink-black/55 transition-colors hover:text-ink-black disabled:opacity-50"
                   >
                     Forgot password?
                   </button>
