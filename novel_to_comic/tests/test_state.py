@@ -1,14 +1,12 @@
 """Tests for pipeline state machine (state.py)."""
 
 from datetime import datetime, timedelta, timezone
-import json
 import tempfile
 from pathlib import Path
 
 import pytest
 
 from novel_to_comic.state import (
-    PipelineState,
     StageState,
     StageStatus,
     STAGE_NAMES,

@@ -1,12 +1,44 @@
 # Stage 1: Build React frontend
+#
+# VITE_* vars are inlined into the JS bundle at build time (the browser talks
+# to Supabase directly for auth), so they must be present HERE, not at runtime.
+# They flow in as build args (publishable/anon values only — safe to expose in
+# the image; RLS gates access). Pass via `docker build --build-arg VITE_...=...`
+# or Fly's `fly deploy --build-arg`.
 FROM node:22-slim AS frontend
 WORKDIR /build
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_PUBLISHABLE_KEY
+ARG VITE_SENTRY_DSN
+ARG VITE_CANARY_ENV=production
 COPY web/package.json web/package-lock.json ./
 RUN npm install
 COPY web/ ./
-RUN npm run build
+# sync-tokens.mjs (run by `npm run build`) copies the canonical theme tokens
+# from the Python package into the web tree so the live canvas and the PNG/PDF
+# renderer share one source of truth. The script resolves the source relative
+# to web/scripts/ (../../novel_to_comic/...), so place it at that sibling path.
+COPY novel_to_comic/src/novel_to_comic/assembly/theme_tokens.json /novel_to_comic/src/novel_to_comic/assembly/theme_tokens.json
+# Export the build args into the shell environment so Vite inlines them into
+# the bundle. Missing values (e.g. VITE_SENTRY_DSN unset) are fine — Vite
+# leaves them undefined and the client no-ops gracefully.
+RUN export VITE_SUPABASE_URL="$VITE_SUPABASE_URL" \
+    VITE_SUPABASE_PUBLISHABLE_KEY="$VITE_SUPABASE_PUBLISHABLE_KEY" \
+    VITE_SENTRY_DSN="$VITE_SENTRY_DSN" \
+    VITE_CANARY_ENV="$VITE_CANARY_ENV" \
+    && npm run build
 
-# Stage 2: Python backend
+# Stage 2: Python backend + co-located LiteLLM proxy
+#
+# One container runs two processes:
+#   1. LiteLLM proxy on 127.0.0.1:4000 (holds all provider API keys; the only
+#      process that egresses to OpenAI/Anthropic/Vertex/Reve/fal).
+#   2. uvicorn web app on 0.0.0.0:8000 (talks to the proxy over loopback).
+#
+# Collapsing the previous two-Fly-app split into one machine keeps provider
+# keys off the public path (the proxy is bound to loopback, never exposed)
+# while letting the whole box scale to zero on idle and trimming ~$10-15/mo
+# of idle compute. See docs/deploy.md for the architecture rationale.
 FROM python:3.12-slim
 WORKDIR /app
 
@@ -41,13 +73,35 @@ RUN for i in 1 2 3; do \
 COPY novel_to_comic/ ./novel_to_comic/
 RUN cd novel_to_comic && uv sync --extra web --frozen --no-dev
 
+# ─── LiteLLM proxy (loopback subprocess) ────────────────────────────────────
+# The proxy has its own dependency tree (transitively large, occasionally
+# conflicting with the web app's pinned versions). Install it in an isolated
+# venv so the two never contend on resolution, mirroring the previous
+# two-image split but inside one container.
+#
+# `[proxy]` pulls the proxy-server extras (uvicorn, fastapi, gunicorn,
+# websockets, anthropic, vertexai, google-cloud-aiplatform, …) that the
+# docker.litellm.ai prebuilt image ships with. Without it the proxy boots
+# then immediately ModuleNotFoundError-exits.
+RUN python -m venv /app/.venv-litellm \
+    && /app/.venv-litellm/bin/pip install --no-cache-dir 'litellm[proxy]==1.83.14'
+
+# LiteLLM config + custom handlers (vertex-multimodal / reve / fal-queue).
+# PYTHONPATH makes the handlers importable; config.yaml's custom_provider_map
+# registers them with the proxy at boot.
+COPY litellm/config.yaml /app/config.yaml
+COPY litellm_handlers/ /app/litellm_handlers/
+
+# Copy the merged entrypoint (materializes GCP creds → starts litellm in the
+# background → execs uvicorn in the foreground as PID 1).
+COPY litellm/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 # Copy built frontend so FastAPI can serve it as static files
 COPY --from=frontend /build/dist ./web/dist
 
+ENV PYTHONPATH=/app:/app/litellm_handlers
+
 EXPOSE 8000
 
-ENTRYPOINT ["/app/novel_to_comic/.venv/bin/pipeline"]
-# --proxy-headers: trust X-Forwarded-* from Fly's TLS proxy so secure cookies
-# and client-IP detection work. Safe behind a reverse proxy; the image is the
-# production/behind-proxy artifact (local dev runs `pipeline serve` directly).
-CMD ["serve", "--host", "0.0.0.0", "--port", "8000", "--projects-dir", "/projects", "--proxy-headers"]
+ENTRYPOINT ["/app/entrypoint.sh"]

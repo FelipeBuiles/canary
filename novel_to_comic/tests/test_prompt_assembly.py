@@ -1,6 +1,5 @@
 """Tests for prompt_assembly — narration constraint idempotency and rerender path."""
 
-import pytest
 
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.prompt_assembly import _apply_narration_constraint, rerender_prompt_body

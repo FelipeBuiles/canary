@@ -6,13 +6,23 @@
 > **Status (2026-07-02):** the following items from the P0/P1 list below are now
 > **closed** in `main` — see `deployment-platform-review.md` §6 for the living
 > checklist: #1 deployment artifacts (`fly.toml`, `fly.litellm.toml`,
-> `Dockerfile.litellm`, `--proxy-headers`), #2 upload cap + project cap + rate
-> limiting (`slowapi` on create/run/all `*/regen*`), #3 Sentry (backend init in
-> `_lifespan` + frontend), #4 ToS/Privacy/AUP + abuse-report + DMCA contact
-> (legal pages, Stripe ToS consent, `legal@` report channel), #5 billing-test
-> fix, #6 cookie `secure` + `verify_aud` (enforced by default in production),
-> #8 readiness probe (Supabase + LiteLLM).
-> **Still open:** #9 credit margin, plus CI/CD.
+> `Dockerfile.litellm`, `--proxy-headers`) **+ CI/CD** (`.github/workflows/ci.yml`
+> — pytest + ruff + vitest + build, gates deploys on green), #2 upload cap +
+> project cap + rate limiting (`slowapi` on create / run / all `*/regen*` /
+> `import-story` / `cover`), #3 Sentry (backend init in `_lifespan` + frontend),
+> #4 ToS/Privacy/AUP + abuse-report + DMCA contact (legal pages, Stripe ToS
+> consent, `legal@` report channel), #5 billing-test fix, #6 cookie `secure` +
+> `verify_aud` (enforced by default in production), #8 readiness probe (Supabase
+> + LiteLLM). **Also closed:** P2 #11 — Labs gated behind
+> `CANARY_LABS_ENABLED` (defaults on; set `false` in prod).
+> **Still open:** #9 credit margin (operator decision — `PULP_MODEL_COST_MARKUP`
+> still defaults to `1.0`; pick a margin before opening purchases).
+> **Follow-up hardening (2026-07-03):** wired up the dead "Forgot password?"
+> button + added a `/reset-password` route; fixed the Dockerfile frontend
+> build (VITE_* build-args + missing `theme_tokens.json` copy that broke any
+> Docker build); documented schema bootstrap, volume backups, CSRF posture,
+> Stripe webhook path, and Supabase auth redirect/SMTP config in the runbook +
+> Phase 1 plan.
 >
 > **Decisions locked:** host = **Fly.io**; launch scope = **public signup from
 > day 1**. Public scope means every P0 item below is mandatory before launch.
@@ -163,6 +173,13 @@ plain HTTP. Also flip `verify_aud` to `True` (currently `False`).
 `CANARY_COOKIE_SECURE` flag) instead of scheme detection; start Uvicorn with
 `--proxy-headers --forwarded-allow-ips='*'`.
 
+> **CSRF posture (confirmed safe, no action needed):** the session cookie is
+> `HttpOnly; SameSite=Lax` (`auth.py:111`). SameSite=Lax blocks cross-site
+> POSTs — the classic CSRF vector for cookie-authed state-changing routes —
+> while still permitting top-level GET navigations and the `img`/`EventSource`
+> browser-native consumers the cookie exists to serve. No CSRF token is
+> required under this posture; adding one would be belt-and-suspenders only.
+
 #### 7. In-flight generation work lost on restart
 
 Credit reservations are released on startup (no user charge for lost work ✅),
@@ -291,16 +308,42 @@ primary_region = "iad"   # pick closest to users
 ### Provisioning runbook (Machine A)
 
 ```bash
+# 0. Bootstrap the prod Supabase schema (tables, RLS, indexes). There is no
+#    migration runner — apply the canonical schema SQL directly. Re-running is
+#    safe (statements are IF NOT EXISTS / idempotent).
+psql "<prod database url>" -f docs/supabase-schema.sql
+
+# 1. Create the app + persistent volume.
 fly launch --no-deploy              # creates app from Dockerfile + fly.toml
 fly volumes create canary_projects --region iad --size 10   # 10 GB to start
+
+# 2. Runtime secrets (the app reads these at startup).
 fly secrets set \
   LITELLM_API_KEY="<litellm master key>" \
   SUPABASE_URL="<prod url>" SUPABASE_SECRET_KEY="<service-role key>" \
   STRIPE_SECRET_KEY="<live sk>" STRIPE_WEBHOOK_SECRET="<live whsec>" \
   SENTRY_DSN="<dsn>" LANGFUSE_PUBLIC_KEY="<pk>" LANGFUSE_SECRET_KEY="<sk>" \
   OTEL_EXPORTER_OTLP_ENDPOINT="<langfuse otlp host>"
+
+# 3. Build args — the frontend talks to Supabase directly from the browser, so
+#    VITE_* vars are inlined into the JS bundle at *build* time (not runtime).
+#    The publishable key is safe to expose (anon key, gated by RLS).
+fly deploy --build-arg VITE_SUPABASE_URL="<prod url>" \
+            --build-arg VITE_SUPABASE_PUBLISHABLE_KEY="<anon/publishable key>" \
+            --build-arg VITE_SENTRY_DSN="<frontend dsn>" \
+            --build-arg VITE_CANARY_ENV="production"
+
 fly certs add app.yourdomain.com     # TLS auto-provisioned
-fly deploy
+```
+
+**Volume backups (do not skip):** Fly volumes are single-region with no
+automatic backup. Project files live on the `canary_projects` volume — losing
+the machine loses all user data unless you snapshot. Set up scheduled snapshots:
+
+```bash
+fly volumes snapshots schedule canary_projects --schedule "daily"
+# And/or sync the exported books to R2 (storage.py upload helper exists):
+#   wire a post-compose hook to push exports/ to R2 for durability.
 ```
 
 ### LiteLLM (Machine B) — sibling app
@@ -318,6 +361,16 @@ fly deploy
 
 Keep the same `litellm/config.yaml` + `litellm_handlers/` you use locally.
 
+### Stripe webhook (live mode)
+
+In the Stripe dashboard, create a webhook endpoint pointing at the live app
+URL with path **`/api/billing/webhook`** (full URL:
+`https://app.yourdomain.com/api/billing/webhook`). Subscribe it to
+`checkout.session.completed` + `payment_intent.succeeded`. The signing secret
+Stripe returns becomes `STRIPE_WEBHOOK_SECRET`. The handler verifies the
+signature and is idempotent on `stripe_payment_intent_id`, so duplicate
+deliveries are safe.
+
 ### CI/CD (GitHub Actions)
 
 A `main`-triggered workflow: run `pytest` + `npm test` (fail-fast on the
@@ -326,12 +379,19 @@ remotely). Gate on green tests. Add a manual dispatch for prod.
 
 ### Prod env-var checklist
 
+**Runtime (set via `fly secrets`):**
 `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `STRIPE_SECRET_KEY` (live),
 `STRIPE_WEBHOOK_SECRET` (live endpoint), `LITELLM_BASE_URL`,
 `LITELLM_API_KEY`, `SENTRY_DSN`, `LANGFUSE_*`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
 `PULP_CREDITS_PER_PROVIDER_USD`, `PULP_MODEL_COST_MARKUP` (set > 1.0 if margin
 intended), `CANARY_ENV=production`, `CANARY_COOKIE_SECURE=true`,
 `CANARY_LABS_ENABLED=false`, `CANARY_OTEL_ENABLED=true`.
+
+**Build-time (set via `fly deploy --build-arg`):** the browser talks to
+Supabase directly for auth, so these are inlined into the JS bundle at build
+time, NOT available at runtime — `VITE_SUPABASE_URL`,
+`VITE_SUPABASE_PUBLISHABLE_KEY` (anon/publishable key — safe to expose, gated
+by RLS), `VITE_SENTRY_DSN` (optional), `VITE_CANARY_ENV=production`.
 
 ---
 
@@ -351,14 +411,26 @@ intended), `CANARY_ENV=production`, `CANARY_COOKIE_SECURE=true`,
    DMCA contact (P0 #4).~~ **Done** — legal pages shipped; report channel is
    `mailto:legal@` (not a `POST /report` endpoint, by scope choice). Operator
    to-dos remain: monitor `legal@`, set `SCENEWRIGHT_TERMS_URL`.
-9. Gate labs behind `CANARY_LABS_ENABLED` (P2 #11 — cheap, do now).
+9. Gate labs behind `CANARY_LABS_ENABLED` (P2 #11 — cheap, do now). **Done** —
+   labs router conditionally included in `create_app`; defaults on for dev.
 
 ### Phase 1 — Ship to Fly.io (~2–3 days)
 
 1. Provision Machine A (canary-web) + volume; Machine B (litellm-gw) (P0 #1).
-2. Wire GitHub Actions: test → build → deploy on `main` (P0 #1).
-3. Provision prod secrets; Stripe **live** webhook endpoint; custom domain + TLS.
-4. End-to-end run against prod keys in staging first (a private Fly app).
+2. **Bootstrap the prod Supabase schema** — `psql -f docs/supabase-schema.sql`
+   (idempotent; no migration runner exists). Without this every query 500s.
+3. **Configure Supabase Auth redirect URLs** to the production domain: in the
+   Supabase dashboard add `https://app.yourdomain.com/reset-password` to the
+   allowed redirect URLs so the password-reset + email-confirmation flows land
+   on the right page. Decide email delivery: Supabase's default sender
+   (`noreply@mail.app.supabase.io`) is rate-limited — configure custom SMTP in
+   the dashboard before a public launch, or expect deliverability issues.
+4. Wire GitHub Actions: test → build → deploy on `main` (P0 #1).
+5. Provision prod secrets (runtime `fly secrets` + build-time `--build-arg
+   VITE_*`); Stripe **live** webhook at `/api/billing/webhook`; custom domain + TLS.
+6. Schedule `fly volumes snapshots` for `canary_projects` — the volume is
+   single-region with no auto-backup (see runbook above).
+7. End-to-end run against prod keys in staging first (a private Fly app).
 
 ### Phase 2 — Public launch
 

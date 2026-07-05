@@ -1,8 +1,7 @@
 """Tests for event system (events.py)."""
 
-import pytest
 
-from novel_to_comic.events import EventCallback, make_progress, _NOOP
+from novel_to_comic.events import make_progress, _NOOP
 
 
 class TestNoop:
@@ -18,7 +17,9 @@ class TestNoop:
 
 class TestMakeProgress:
     def test_returns_silent_progress_when_on_event_provided(self):
-        callback: EventCallback = lambda e: None
+        def callback(e):
+            return None
+
         p = make_progress(callback)
         # _SilentProgress is returned — all its methods are no-ops
         task_id = p.add_task("test")
@@ -37,7 +38,10 @@ class TestMakeProgress:
 
 class TestSilentProgressContextManager:
     def test_context_manager_enter_exit(self):
-        p = make_progress(lambda e: None)
+        def noop(e):
+            return None
+
+        p = make_progress(noop)
         with p as progress:
             assert progress is p
         # no error on exit

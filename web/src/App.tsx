@@ -21,6 +21,9 @@ const ProjectRooms = lazy(() =>
 );
 const LoginPage = lazy(() => import("./pages/auth/LoginPage").then(({ LoginPage }) => ({ default: LoginPage })));
 const SignupPage = lazy(() => import("./pages/auth/SignupPage").then(({ SignupPage }) => ({ default: SignupPage })));
+const ResetPasswordPage = lazy(() =>
+  import("./pages/auth/ResetPasswordPage").then(({ ResetPasswordPage }) => ({ default: ResetPasswordPage })),
+);
 const TermsPage = lazy(() => import("./pages/legal/TermsPage").then(({ TermsPage }) => ({ default: TermsPage })));
 const PrivacyPage = lazy(() => import("./pages/legal/PrivacyPage").then(({ PrivacyPage }) => ({ default: PrivacyPage })));
 const AcceptableUsePage = lazy(() =>
@@ -70,6 +73,7 @@ export function App() {
         {/* Public auth routes */}
         <Route path="/login" element={lazyRoute(LoginPage)} />
         <Route path="/signup" element={lazyRoute(SignupPage)} />
+        <Route path="/reset-password" element={lazyRoute(ResetPasswordPage)} />
 
         {/* Public legal routes */}
         <Route path="/legal/terms" element={lazyRoute(TermsPage)} />

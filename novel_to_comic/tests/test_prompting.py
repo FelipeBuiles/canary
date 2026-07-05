@@ -7,23 +7,23 @@ workspace_root = str(Path(__file__).parent.parent.parent)
 if workspace_root not in sys.path:
     sys.path.insert(0, workspace_root)
 
-from novel_to_comic.config import Config
-from novel_to_comic.models.layout_plan import PlannedPanel
-from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
-from novel_to_comic.models.appearance import (
+from novel_to_comic.config import Config  # noqa: E402
+from novel_to_comic.models.layout_plan import PlannedPanel  # noqa: E402
+from novel_to_comic.models.prompt import ImagePrompt, PromptSubject  # noqa: E402
+from novel_to_comic.models.appearance import (  # noqa: E402
     AppearanceState,
     StateActivation,
     StoryPosition,
     Transition,
 )
-from novel_to_comic.models.story_bible import (
+from novel_to_comic.models.story_bible import (  # noqa: E402
     Character,
     Location,
     Prop,
     Scene,
     StoryBible,
 )
-from novel_to_comic.prompting import (
+from novel_to_comic.prompting import (  # noqa: E402
     build_planned_panel_prompt_spec,
     dimensions_for_panel,
     generate_distilled_prompt,

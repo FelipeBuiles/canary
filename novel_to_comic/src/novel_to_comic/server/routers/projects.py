@@ -44,7 +44,7 @@ from ..auth import get_current_user
 from ..credits import debit_model_usage, provider_usd_to_credits
 from ..db import get_db
 from ..deps import get_project, get_projects_dir, project_key
-from ..ratelimit import create_limit, limiter
+from ..ratelimit import cost_limit, create_limit, limiter
 from .styles import clear_style_failures_after_selection, is_style_selected
 from ..generation_jobs import (
     enqueue_generation_job,
@@ -613,6 +613,7 @@ def project_status(
 
 
 @router.post("/{project_id}/cover")
+@limiter.limit(cost_limit)
 async def generate_cover(
     request: Request,
     project_id: str,
@@ -715,6 +716,7 @@ class ImportStoryRequest(BaseModel):
 
 
 @router.post("/import-story")
+@limiter.limit(create_limit)
 async def import_short_story(
     request: Request,
     payload: ImportStoryRequest,

@@ -45,6 +45,12 @@ pipeline = "novel_to_comic.cli:cli"
 requires = ["setuptools>=75.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.pytest.ini_options]
+# Scope collection to the tests/ dir. Manual smoke-test scripts under scripts/
+# (e.g. test_vertex_native.py) require optional extras (google-genai) and aren't
+# part of the unit suite — collecting them breaks CI on a clean checkout.
+testpaths = ["tests"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

@@ -9,9 +9,49 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.staticfiles import StaticFiles
 
 from novel_to_comic.assembly.html_renderer import FONTS_DIR
+
+
+class SPAStaticFiles(StaticFiles):
+    """Static files that fall back to ``index.html`` for unknown routes.
+
+    The React app uses client-side routing (e.g. ``/login``, ``/project/123``);
+    those paths exist only in the browser, not as files on disk. A plain
+    ``StaticFiles(html=True)`` mount returns ``{"detail":"Not Found"}`` for any
+    such path, breaking deep links and refreshes. Here we catch the 404 for
+    non-asset requests and serve ``index.html`` so the client router can take
+    over. Real missing assets (``*.js``, ``*.css``, …) still 404 so broken
+    links surface instead of silently returning the HTML shell.
+    """
+
+    # Extensions that should always be served as real files (or 404). Anything
+    # without one of these is treated as a client-side route.
+    _ASSET_SUFFIXES = frozenset(
+        {".js", ".mjs", ".css", ".map", ".html", ".htm", ".json", ".txt",
+         ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".avif",
+         ".woff", ".woff2", ".ttf", ".eot", ".otf", ".wasm"}
+    )
+
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            # Real assets (.js/.css/…) must 404 so broken links surface, and
+            # API paths must never get the HTML shell — clients expect JSON.
+            path_lc = path.lower()
+            if (
+                any(path_lc.endswith(suf) for suf in self._ASSET_SUFFIXES)
+                or path_lc.startswith("api/")
+            ):
+                raise
+            # Looks like a client-side route — serve the SPA shell so the
+            # browser's history/router can render it.
+            return await super().get_response("index.html", scope)
 from novel_to_comic.model_costs import DEFAULT_COST_MAP_PATH, refresh_litellm_cost_cache
 from novel_to_comic.usage import audit_pricing
 
@@ -33,6 +73,15 @@ from .routers import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def _labs_enabled() -> bool:
+    """Feature flag for the Labs experimentation router.
+
+    Defaults ON (dev/unconfigured) so local workflows are unaffected; flip to
+    ``false`` in production to shrink the public attack surface (P2 #11)."""
+    raw = os.environ.get("CANARY_LABS_ENABLED", "true").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
 
 
 def _pricing_refresh_ttl_days() -> int:
@@ -261,15 +310,24 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         prefix="/api/projects/{project_id}",
         tags=["styles"],
     )
-    app.include_router(labs.router, prefix="/api/labs", tags=["labs"])
+    # Labs is an image-model experimentation surface — useful for development
+    # but extra attack surface for a public launch. Gated behind an env flag so
+    # it can be disabled in production without a code change. Defaults ON to
+    # preserve local/dev behaviour; set CANARY_LABS_ENABLED=false in prod.
+    if _labs_enabled():
+        app.include_router(labs.router, prefix="/api/labs", tags=["labs"])
+    else:
+        log.info("Labs router disabled (CANARY_LABS_ENABLED=false)")
 
     # Serve bundled fonts
     app.mount("/static/fonts", StaticFiles(directory=str(FONTS_DIR)), name="fonts")
 
-    # In production, serve the built React app
+    # In production, serve the built React app. SPAStaticFiles falls back to
+    # index.html for unknown non-asset paths so client-side routes (e.g.
+    # /login) survive direct hits and refreshes.
     if not dev:
         dist = Path(__file__).parent.parent.parent.parent.parent / "web" / "dist"
         if dist.is_dir():
-            app.mount("/", StaticFiles(directory=str(dist), html=True), name="frontend")
+            app.mount("/", SPAStaticFiles(directory=str(dist), html=True), name="frontend")
 
     return app
