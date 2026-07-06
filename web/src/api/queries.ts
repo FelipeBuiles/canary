@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listProjects, getProjectStatus, createProject, deleteProject, generateProjectCover, listShortStories, importStory } from "./projects";
 import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenStateRef, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate, getCharacterRefVersions, restoreCharacterRefVersion } from "./pipeline";
-import type { ConfigOverrides, StoryBible, ProjectStatus, StageInfo, ImageStatus } from "../types/api";
+import type { ConfigOverrides, StoryBible, ProjectStatus, StageInfo, ImageStatus, CreditBalance } from "../types/api";
 import { reconcileStatusPoll } from "../lib/stageProgress";
 import { getBalance, getCreditHistory, getPricingReference } from "./credits";
 import { getPackages, createCheckout } from "./billing";
@@ -159,6 +159,21 @@ function markStageRunningInCache(
   const previous = qc.getQueryData<ProjectStatus>(key);
   if (!previous) return previous;
   const existing: StageInfo | undefined = previous.stages[stage];
+  // Don't fake a "running" state the user can't afford — a 0-credit user
+  // landing on a fresh project would otherwise see the optimistic running
+  // flash before the 402 rolls it back. When the cached balance is below the
+  // stage's positive estimate, leave the cache alone; the real 402 + the
+  // CreditsGate panel handle the rest.
+  const balanceData = qc.getQueryData<CreditBalance>(["credits", "balance"]);
+  const balance = balanceData?.balance_credits;
+  if (
+    typeof balance === "number" &&
+    existing &&
+    existing.estimated_cost_credits > 0 &&
+    balance < existing.estimated_cost_credits
+  ) {
+    return previous;
+  }
   const next: StageInfo = {
     status: "running",
     items_done: existing?.items_done ?? 0,
@@ -168,6 +183,10 @@ function markStageRunningInCache(
     cost_credits: existing?.cost_credits ?? 0,
     estimated_cost_credits: existing?.estimated_cost_credits ?? 0,
     error: null,
+    error_code: null,
+    balance_credits: null,
+    required_credits: null,
+    shortfall_credits: null,
     started_at: existing?.started_at ?? null,
     finished_at: null,
     last_progress_at: existing?.last_progress_at ?? null,
