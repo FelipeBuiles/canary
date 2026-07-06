@@ -4,6 +4,7 @@ export { RoomTabs, type RoomTab } from "./RoomTabs";
 export { Toolbar } from "./Toolbar";
 
 export { ApprovalBar } from "./ApprovalBar";
+export { CreditsGate } from "./CreditsGate";
 export { ConfirmDrawer, type ConfirmDrawerProps } from "./ConfirmDrawer";
 export { ConfirmModal, type ConfirmModalProps } from "./ConfirmModal";
 export { RerunDrawer, type RerunDrawerProps } from "./RerunDrawer";

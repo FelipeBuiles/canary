@@ -232,6 +232,7 @@ export function StoryBibleRoom() {
   if (isLoading || (!bible && stageStatus !== "pending")) {
     return (
       <RoomShell
+        project={id ?? ""}
         isLoading
         loadingText="SKETCHING THE STORY BIBLE…"
         loadingStage="extract"
@@ -244,8 +245,9 @@ export function StoryBibleRoom() {
 
   if (error || !bible || !id) {
     return (
-      <RoomShell>
+      <RoomShell project={id ?? ""}>
         <StagePlaceholder
+          project={id ?? ""}
           stage="extract"
           status={stageStatus}
           itemsDone={stageInfo?.items_done}
@@ -293,7 +295,7 @@ export function StoryBibleRoom() {
   }
 
   return (
-    <RoomShell>
+    <RoomShell project={id}>
       <RoomHeader
         kicker="STORY"
         title={bible.title}

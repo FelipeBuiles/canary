@@ -315,12 +315,13 @@ export function StyleRoom() {
   }, [id, styleSelected, lettering, generateLettering]);
 
   if (isLoading) {
-    return <RoomShell isLoading loadingText="MIXING PALETTES…" />;
+    return <RoomShell project={id ?? ""} isLoading loadingText="MIXING PALETTES…" />;
   }
 
   if (!id) {
     return (
       <RoomShell
+        project={id ?? ""}
         isEmpty
         emptyTitle="STYLES UNAVAILABLE"
         emptyDescription="Select a project first."
@@ -377,7 +378,7 @@ export function StyleRoom() {
      : projectConfig?.image_steps;
 
   return (
-    <RoomShell>
+    <RoomShell project={id}>
       <RoomHeader
         kicker="STYLES"
         title="LOOK & STYLE"

@@ -925,6 +925,7 @@ export function ShotPlanRoom() {
   if (loadingPlan || (!plan && subStatus.status === "running")) {
     return (
       <RoomShell
+        project={id ?? ""}
         isLoading
         loadingText="LOADING SHOT PLAN…"
         loadingStage="plan"
@@ -937,8 +938,9 @@ export function ShotPlanRoom() {
 
   if (!plan || !id) {
     return (
-      <RoomShell>
+      <RoomShell project={id ?? ""}>
         <StagePlaceholder
+          project={id ?? ""}
           stage="plan"
           status={subStatus.status}
           itemsDone={subStatus.itemsDone || undefined}
@@ -954,7 +956,7 @@ export function ShotPlanRoom() {
   }
 
   return (
-    <RoomShell fullHeight>
+    <RoomShell project={id} fullHeight>
       <div className="flex h-full min-h-0 flex-col gap-3 md:gap-8">
         <RoomHeader
           kicker="SHOT PLAN"

@@ -5,16 +5,17 @@ import { LoadingBlock, StateBlock } from "../ui/StateBlock";
 import { StagePlaceholder } from "./StagePlaceholder";
 
 interface RoomShellProps {
+  project: string;
   isLoading?: boolean;
   loadingText?: string;
   isEmpty?: boolean;
   emptyTitle?: string;
   emptyDescription?: string;
   fullHeight?: boolean;
-  // When the room is loading because the stage hasn't run yet (pending) or
-  // is currently running, pass the stage info to render the rich
-  // StagePlaceholder (stage badge + progress) instead of the basic
-  // LoadingBlock spinner.
+  // When the room is loading because the stage hasn't run yet (pending), is
+  // currently running, or failed, pass the stage info to render the rich
+  // StagePlaceholder (stage badge + progress, or the CreditsGate panel when
+  // blocked on credits) instead of the basic LoadingBlock spinner.
   loadingStage?: StageName;
   loadingStageStatus?: StageStatus;
   loadingStageItemsDone?: number;
@@ -23,6 +24,7 @@ interface RoomShellProps {
 }
 
 export function RoomShell({
+  project,
   isLoading,
   loadingText = "LOADING…",
   isEmpty,
@@ -39,10 +41,13 @@ export function RoomShell({
   if (isLoading) {
     if (
       loadingStage &&
-      (loadingStageStatus === "running" || loadingStageStatus === "pending")
+      (loadingStageStatus === "running" ||
+        loadingStageStatus === "pending" ||
+        loadingStageStatus === "failed")
     ) {
       return (
         <StagePlaceholder
+          project={project}
           stage={loadingStage}
           status={loadingStageStatus}
           itemsDone={loadingStageItemsDone}

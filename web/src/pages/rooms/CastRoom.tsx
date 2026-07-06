@@ -1289,6 +1289,7 @@ export function CastRoom() {
   if (isLoading || (!bible && stageStatus !== "pending")) {
     return (
       <RoomShell
+        project={id ?? ""}
         isLoading
         loadingText="LOADING CAST…"
         loadingStage="cast"
@@ -1301,8 +1302,9 @@ export function CastRoom() {
 
   if (!bible || !id) {
     return (
-      <RoomShell>
+      <RoomShell project={id ?? ""}>
         <StagePlaceholder
+          project={id ?? ""}
           stage="cast"
           status={stageStatus}
           itemsDone={stageInfo?.items_done}
@@ -1313,7 +1315,7 @@ export function CastRoom() {
   }
 
   return (
-    <RoomShell>
+    <RoomShell project={id}>
       <RoomHeader
         kicker="LOOK"
         title="CHARACTERS & PLACES"
