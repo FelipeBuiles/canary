@@ -61,6 +61,13 @@ class StageState(BaseModel):
     # future per-call billing. Stored as dicts for JSON portability.
     usage_log: list[dict] = Field(default_factory=list)
     error: Optional[str] = None
+    # Structured credit-failure detail. Set only when a stage fails because
+    # the user's balance couldn't cover the reservation (see fail_stage). Cleared
+    # on every non-credit failure so a stale code can't linger across re-runs.
+    error_code: Optional[str] = None
+    balance_credits: Optional[int] = None
+    required_credits: Optional[int] = None
+    shortfall_credits: Optional[int] = None
 
 
 STAGE_NAMES = ["extract", "style", "cast", "adapt", "plan", "storyboard", "direct", "draw", "compose"]
@@ -174,12 +181,29 @@ def complete_stage(state: PipelineState, stage: str) -> None:
     state.total_cost_usd = sum(st.cost_usd for st in state.stages.values()) + state.misc_cost_usd
 
 
-def fail_stage(state: PipelineState, stage: str, error: str) -> None:
-    """Mark a stage as failed."""
+def fail_stage(state: PipelineState, stage: str, error: str, *, detail: dict | None = None) -> None:
+    """Mark a stage as failed.
+
+    Pass ``detail`` (the structured payload from the credits layer, shaped like
+    ``{"error": "insufficient_credits", "balance_credits": ..., ...}``) to
+    persist the credit-failure reason on the stage. Non-credit failures always
+    clear any previously-set credit fields so a stale code can't linger across
+    a re-run that fails for a different reason.
+    """
     s = state.stages[stage]
     s.status = StageStatus.FAILED
     s.finished_at = datetime.now(timezone.utc)
     s.error = error
+    if detail and detail.get("error") == "insufficient_credits":
+        s.error_code = "insufficient_credits"
+        s.balance_credits = detail.get("balance_credits")
+        s.required_credits = detail.get("required_credits")
+        s.shortfall_credits = detail.get("shortfall_credits")
+    else:
+        s.error_code = None
+        s.balance_credits = None
+        s.required_credits = None
+        s.shortfall_credits = None
     state.total_cost_usd = sum(st.cost_usd for st in state.stages.values()) + state.misc_cost_usd
 
 

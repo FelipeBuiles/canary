@@ -39,9 +39,15 @@ from novel_to_comic.state import (
     load_state,
     save_state,
 )
+from novel_to_comic.usage import estimate_image_cost
 
 from ..auth import get_current_user
-from ..credits import debit_model_usage, provider_usd_to_credits
+from ..credits import (
+    assert_sufficient_credits,
+    credit_estimate_for_provider_cost,
+    debit_model_usage,
+    provider_usd_to_credits,
+)
 from ..db import get_db
 from ..deps import get_project, get_projects_dir, project_key
 from ..ratelimit import cost_limit, create_limit, limiter
@@ -185,6 +191,10 @@ def _stage_payload(
         "cost_credits": provider_usd_to_credits(s.cost_usd),
         "estimated_cost_credits": provider_usd_to_credits(s.estimated_cost_usd),
         "error": error,
+        "error_code": s.error_code,
+        "balance_credits": s.balance_credits,
+        "required_credits": s.required_credits,
+        "shortfall_credits": s.shortfall_credits,
         "started_at": s.started_at.isoformat() if s.started_at else None,
         "finished_at": s.finished_at.isoformat() if s.finished_at else None,
         "last_progress_at": s.last_progress_at.isoformat()
@@ -630,6 +640,22 @@ async def generate_cover(
 
     if not (project_dir / "story_bible.json").exists():
         raise HTTPException(404, "Story bible not found — run extract first.")
+
+    # Credit pre-check before queuing: cover generation calls the image model
+    # for real (see _generate_project_cover) and is debited on success, so a
+    # zero-balance user would otherwise drive their balance negative.
+    cover_estimate = credit_estimate_for_provider_cost(
+        estimate_image_cost(
+            config.effective_image_model(), 1, width=768, height=1024,
+            quality=getattr(config, "image_quality", None),
+        ),
+        "cast",  # one-off image generation, no reservation
+        reserve=False,
+        zero_cost_estimate=1,
+    )
+    assert_sufficient_credits(
+        get_db(), user_id, cover_estimate["estimate_credits"], action="project_cover",
+    )
 
     existing = _active_project_cover_job(request, pkey)
     if existing:
