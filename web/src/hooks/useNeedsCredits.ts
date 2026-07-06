@@ -1,5 +1,4 @@
-import { useCreditBalance } from "../api/queries";
-import { useProjectStatus } from "../api/queries";
+import { useCreditBalance, useProjectStatus, useStageEstimate } from "../api/queries";
 import type { StageName } from "../types/api";
 
 export type NeedsCredits =
@@ -21,9 +20,12 @@ export type NeedsCredits =
  *    the persisted `required_credits`; the Balance column always shows the
  *    LIVE balance (polled, so it's at least as fresh as the persisted
  *    snapshot and updates after a purchase).
- * 2. Heuristic: the stage is `pending` or non-credit `failed`, has a positive
- *    estimate, and the live balance is below it. This catches the brand-new
- *    0-credit user before they ever hit Run.
+ * 2. Heuristic: the stage is `pending` or non-credit `failed`, and the live
+ *    balance is below the stage's live estimate (from the /estimate endpoint,
+ *    which calls the stage's estimate_cost hook — NOT the
+ *    `estimated_cost_credits` field on StageInfo, which is 0 until a stage
+ *    has actually run). This catches the brand-new 0-credit user before they
+ *    ever hit Run.
  *
  * Returns `{ blocked: false }` while data is still loading so the room can
  * render its normal loading state.
@@ -34,6 +36,8 @@ export function useNeedsCredits(
 ): NeedsCredits {
   const { data: status } = useProjectStatus(project);
   const { data: balanceData } = useCreditBalance();
+  // Only fetch the estimate for stages that aren't already blocked via the
+  // persisted path — avoids an unnecessary call for completed/running stages.
   const stageInfo = status?.stages?.[stage];
   const liveBalance = balanceData?.balance_credits ?? 0;
 
@@ -58,15 +62,22 @@ export function useNeedsCredits(
   const isRunnableState =
     stageInfo.status === "pending" ||
     (stageInfo.status === "failed" && stageInfo.error_code !== "insufficient_credits");
-  const estimate = stageInfo.estimated_cost_credits;
-  if (isRunnableState && estimate > 0 && liveBalance < estimate) {
-    return {
-      blocked: true,
-      balance: liveBalance,
-      required: estimate,
-      shortfall: estimate - liveBalance,
-      reason: "heuristic",
-    };
+  const { data: estimateData } = useStageEstimate(
+    project,
+    stage,
+    isRunnableState,
+  );
+  if (isRunnableState) {
+    const estimate = estimateData?.estimate_credits ?? 0;
+    if (estimate > 0 && liveBalance < estimate) {
+      return {
+        blocked: true,
+        balance: liveBalance,
+        required: estimate,
+        shortfall: estimate - liveBalance,
+        reason: "heuristic",
+      };
+    }
   }
 
   return { blocked: false };

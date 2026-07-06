@@ -8,10 +8,12 @@ import type { ProjectStatus, StageInfo } from "../types/api";
 // rendering the hook.
 let statusFixture: ProjectStatus | undefined;
 let balanceFixture: number;
+let estimateFixture: { estimate_credits: number } | undefined;
 
 vi.mock("../api/queries", () => ({
   useProjectStatus: () => ({ data: statusFixture }),
   useCreditBalance: () => ({ data: { balance_credits: balanceFixture } }),
+  useStageEstimate: () => ({ data: estimateFixture }),
 }));
 
 import { useNeedsCredits } from "../hooks/useNeedsCredits";
@@ -59,6 +61,7 @@ function status(stages: Record<string, StageInfo>): ProjectStatus {
 beforeEach(() => {
   statusFixture = undefined;
   balanceFixture = 0;
+  estimateFixture = undefined;
 });
 
 describe("useNeedsCredits", () => {
@@ -104,8 +107,9 @@ describe("useNeedsCredits", () => {
 
   it("blocks heuristically when pending, estimate > 0, and balance below it", () => {
     statusFixture = status({
-      extract: stage({ status: "pending", estimated_cost_credits: 120 }),
+      extract: stage({ status: "pending" }),
     });
+    estimateFixture = { estimate_credits: 120 };
     balanceFixture = 10;
     const { result } = renderHook(() => useNeedsCredits("p", "extract"));
     expect(result.current).toMatchObject({
@@ -122,9 +126,9 @@ describe("useNeedsCredits", () => {
       cast: stage({
         status: "failed",
         error_code: null,
-        estimated_cost_credits: 200,
       }),
     });
+    estimateFixture = { estimate_credits: 200 };
     balanceFixture = 5;
     const { result } = renderHook(() => useNeedsCredits("p", "cast"));
     expect(result.current).toMatchObject({ blocked: true, reason: "heuristic" });
@@ -132,8 +136,9 @@ describe("useNeedsCredits", () => {
 
   it("does not block when estimate is 0 (free stage)", () => {
     statusFixture = status({
-      adapt: stage({ status: "pending", estimated_cost_credits: 0 }),
+      adapt: stage({ status: "pending" }),
     });
+    estimateFixture = { estimate_credits: 0 };
     balanceFixture = 0;
     const { result } = renderHook(() => useNeedsCredits("p", "adapt"));
     expect(result.current).toEqual({ blocked: false });
@@ -159,8 +164,9 @@ describe("useNeedsCredits", () => {
 
   it("does not block when balance covers the estimate", () => {
     statusFixture = status({
-      extract: stage({ status: "pending", estimated_cost_credits: 100 }),
+      extract: stage({ status: "pending" }),
     });
+    estimateFixture = { estimate_credits: 100 };
     balanceFixture = 150;
     const { result } = renderHook(() => useNeedsCredits("p", "extract"));
     expect(result.current).toEqual({ blocked: false });
