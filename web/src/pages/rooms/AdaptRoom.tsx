@@ -41,6 +41,7 @@ export function AdaptRoom() {
   if (loadingList || (!summaries?.length && stageStatus !== "pending")) {
     return (
       <RoomShell
+        project={id ?? ""}
         isLoading
         loadingText="LOADING SCREENPLAYS…"
         loadingStage="adapt"
@@ -53,8 +54,9 @@ export function AdaptRoom() {
 
   if (!summaries?.length || !id) {
     return (
-      <RoomShell>
+      <RoomShell project={id ?? ""}>
         <StagePlaceholder
+          project={id ?? ""}
           stage="adapt"
           status={stageStatus}
           itemsDone={stageInfo?.items_done}
@@ -86,7 +88,7 @@ export function AdaptRoom() {
   });
 
   return (
-    <RoomShell fullHeight>
+    <RoomShell project={id} fullHeight>
       <div className="flex h-full min-h-0 flex-col gap-3 md:gap-8">
         <RoomHeader
           kicker="ADAPT"

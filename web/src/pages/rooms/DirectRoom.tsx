@@ -475,6 +475,7 @@ export function DirectRoom() {
   if (isLoading || (!summaries?.length && stageStatus !== "pending")) {
     return (
       <RoomShell
+        project={id ?? ""}
         isLoading
         loadingText="LOADING IMAGE PROMPTS…"
         loadingStage="direct"
@@ -487,8 +488,9 @@ export function DirectRoom() {
 
   if (!summaries?.length || !id) {
     return (
-      <RoomShell>
+      <RoomShell project={id ?? ""}>
         <StagePlaceholder
+          project={id ?? ""}
           stage="direct"
           status={stageStatus}
           itemsDone={stageInfo?.items_done}
@@ -502,7 +504,7 @@ export function DirectRoom() {
   const approveAction = id ? <DirectApproveAction project={id} allWarnings={sceneWarnings} /> : null;
 
   return (
-    <RoomShell fullHeight>
+    <RoomShell project={id} fullHeight>
       <div className="flex h-full min-h-0 flex-col gap-3 md:gap-8">
         <RoomHeader
           kicker="DIRECT"

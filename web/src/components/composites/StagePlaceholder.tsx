@@ -1,7 +1,9 @@
 import { useMemo } from "react";
 import { STAGE_ORDER, type StageName, type StageStatus } from "../../types/api";
 import { usePipelineStore } from "../../store/pipeline";
+import { useNeedsCredits } from "../../hooks/useNeedsCredits";
 import { Icon } from "../ui/Icon";
+import { CreditsGate } from "./CreditsGate";
 
 // ── Stage metadata ────────────────────────────────────────────────────────────
 
@@ -257,13 +259,33 @@ export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0 }: StageRunn
 // ── Combined switcher ─────────────────────────────────────────────────────────
 
 interface StagePlaceholderProps {
+  project: string;
   stage: StageName;
   status: StageStatus;
   itemsDone?: number;
   itemsTotal?: number;
 }
 
-export function StagePlaceholder({ stage, status, itemsDone, itemsTotal }: StagePlaceholderProps) {
+export function StagePlaceholder({ project, stage, status, itemsDone, itemsTotal }: StagePlaceholderProps) {
+  // Credit gate takes priority over every other placeholder state — a user
+  // blocked on credits should never see "WAITING FOR PIPELINE" or a fake
+  // running flash. Covers both the persisted credit-failure case (survives
+  // reload) and the heuristic 0-credit-new-user case.
+  const needsCredits = useNeedsCredits(project, stage);
+  if (needsCredits.blocked) {
+    return (
+      <CreditsGate
+        project={project}
+        stage={stage}
+        stageLabel={STAGE_META[stage].title}
+        balance={needsCredits.balance}
+        required={needsCredits.required}
+        shortfall={needsCredits.shortfall}
+        reason={needsCredits.reason}
+      />
+    );
+  }
+
   if (status === "running") {
     return <StageRunning stage={stage} itemsDone={itemsDone} itemsTotal={itemsTotal} />;
   }

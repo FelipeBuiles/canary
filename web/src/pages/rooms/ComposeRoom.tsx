@@ -357,9 +357,10 @@ export function ComposeRoom() {
   // ── Loading / empty states ───────────────────────────────────────────────
   const composeStageInfo = projectStatus?.stages?.compose;
   if (loadingList || (!pageList?.length && composeStageStatus !== "pending")) {
-    if (composeStageStatus === "running" || composeStageStatus === "pending") {
+    if (composeStageStatus === "running" || composeStageStatus === "pending" || composeStageStatus === "failed") {
       return (
         <StagePlaceholder
+          project={id ?? ""}
           stage="compose"
           status={composeStageStatus}
           itemsDone={composeStageInfo?.items_done}
@@ -378,6 +379,7 @@ export function ComposeRoom() {
     return (
       <div className="flex min-h-[40vh] items-center justify-center">
         <StagePlaceholder
+          project={id ?? ""}
           stage="compose"
           status={composeStageInfo?.status ?? "pending"}
           itemsDone={composeStageInfo?.items_done}

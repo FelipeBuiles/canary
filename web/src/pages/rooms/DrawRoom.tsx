@@ -472,6 +472,7 @@ export function DrawRoom() {
   if (isLoading || ((!images?.length && !promptSummaries?.length) && drawStageStatus !== "pending")) {
     return (
       <RoomShell
+        project={id ?? ""}
         isLoading
         loadingText="LOADING PANEL GALLERY…"
         loadingStage="draw"
@@ -488,8 +489,9 @@ export function DrawRoom() {
   const upstreamReady = status?.stages?.direct?.status === "complete";
   if (nothingGeneratedYet) {
     return (
-      <RoomShell>
+      <RoomShell project={id ?? ""}>
         <StagePlaceholder
+          project={id ?? ""}
           stage="draw"
           status={drawStageStatus}
           itemsDone={generateStage?.items_done}
@@ -621,7 +623,7 @@ export function DrawRoom() {
   );
 
   return (
-    <RoomShell>
+    <RoomShell project={id}>
       <RoomHeader
         kicker="PANELS"
         title="DRAW PANELS"
