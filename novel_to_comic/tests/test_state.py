@@ -121,6 +121,51 @@ class TestFailStage:
         fail_stage(state, "extract", "boom")
         assert state.total_cost_usd == 0.05
 
+    def test_credit_detail_persists_credit_fields(self):
+        state = create_initial_state("p", "n.txt")
+        fail_stage(
+            state,
+            "extract",
+            "Insufficient credits — 0 available, 100 required for 'EXTRACT'",
+            detail={
+                "error": "insufficient_credits",
+                "balance_credits": 0,
+                "required_credits": 100,
+                "shortfall_credits": 100,
+            },
+        )
+        s = state.stages["extract"]
+        assert s.status == StageStatus.FAILED
+        assert s.error_code == "insufficient_credits"
+        assert s.balance_credits == 0
+        assert s.required_credits == 100
+        assert s.shortfall_credits == 100
+
+    def test_no_detail_clears_credit_fields(self):
+        # Pre-seed credit fields, then fail for a non-credit reason — the stale
+        # code must not linger across the re-run.
+        state = create_initial_state("p", "n.txt")
+        s = state.stages["extract"]
+        s.error_code = "insufficient_credits"
+        s.balance_credits = 0
+        s.required_credits = 100
+        s.shortfall_credits = 100
+
+        fail_stage(state, "extract", "API timeout")
+        assert s.error_code is None
+        assert s.balance_credits is None
+        assert s.required_credits is None
+        assert s.shortfall_credits is None
+
+    def test_non_credit_detail_clears_credit_fields(self):
+        state = create_initial_state("p", "n.txt")
+        s = state.stages["extract"]
+        s.error_code = "insufficient_credits"
+        s.required_credits = 100
+        fail_stage(state, "extract", "oops", detail={"error": "other_error"})
+        assert s.error_code is None
+        assert s.required_credits is None
+
 
 class TestApproveStage:
     def test_awaiting_review_becomes_complete(self):
@@ -273,3 +318,49 @@ class TestLoadSaveState:
             save_state(state, project_dir)
             loaded = load_state(project_dir)
         assert list(loaded.stages.keys()) == STAGE_NAMES
+
+    def test_legacy_state_without_credit_fields_loads_as_none(self):
+        # A state.json written before the error_code/balance_credits/... fields
+        # existed must deserialize with those fields as None (no migration).
+        import json
+        state = create_initial_state("p", "n.txt")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            save_state(state, project_dir)
+            # Strip the new keys to simulate a legacy file.
+            path = project_dir / "state.json"
+            data = json.loads(path.read_text())
+            for s in data["stages"].values():
+                for k in ("error_code", "balance_credits", "required_credits", "shortfall_credits"):
+                    s.pop(k, None)
+            path.write_text(json.dumps(data))
+            loaded = load_state(project_dir)
+
+        s = loaded.stages["extract"]
+        assert s.error_code is None
+        assert s.balance_credits is None
+        assert s.required_credits is None
+        assert s.shortfall_credits is None
+
+    def test_credit_failure_survives_save_load_roundtrip(self):
+        state = create_initial_state("p", "n.txt")
+        fail_stage(
+            state,
+            "extract",
+            "Insufficient credits",
+            detail={
+                "error": "insufficient_credits",
+                "balance_credits": 0,
+                "required_credits": 100,
+                "shortfall_credits": 100,
+            },
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            save_state(state, project_dir)
+            loaded = load_state(project_dir)
+
+        s = loaded.stages["extract"]
+        assert s.error_code == "insufficient_credits"
+        assert s.required_credits == 100
+        assert s.shortfall_credits == 100

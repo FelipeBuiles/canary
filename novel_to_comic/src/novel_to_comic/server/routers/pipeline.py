@@ -237,7 +237,7 @@ async def _run_stage_with_credits(
         )
     except CreditReservationDenied as denied:
         # Insufficient credits or DB error — fail the stage so the UI reflects it.
-        fail_stage(state, stage, denied.message)
+        fail_stage(state, stage, denied.message, detail=denied.detail)
         save_state(state, project_dir)
         event: dict[str, object] = {
             "type": "stage_fail",
@@ -666,6 +666,13 @@ def _enqueue_cast_asset_regen(
     project_dir, config, state = project
     pkey = project_key(user_id, project_id)
 
+    # Credit pre-check: each cast regen calls the image model for real and is
+    # debited on success. estimate_credits>0 also makes enqueue_credited_job
+    # run assert_sufficient_credits, blocking zero-balance users up front.
+    asset_estimate = UnifiedCostResolver.estimate_asset_regen_cost(
+        config, project_dir, asset_type=kind, asset_id=asset_id,
+    )
+
     job, _ = enqueue_credited_job(
         request.app,
         project_name=pkey,
@@ -679,6 +686,7 @@ def _enqueue_cast_asset_regen(
         work=work,
         debit_description=debit_description,
         semaphore=generation_semaphore_for_config(request.app, config),
+        estimate_credits=asset_estimate["estimate_credits"],
     )
     return {
         "status": "queued",
