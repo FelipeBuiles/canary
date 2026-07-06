@@ -8,17 +8,11 @@ import {
   useCreditBalance,
   useCreditPackages,
 } from "../api/queries";
+import {
+  packageMeetsShortfall,
+  pickRecommendedPackage,
+} from "../lib/creditsPurchase";
 import { useInsufficientCreditsStore } from "../store/insufficientCredits";
-import type { CreditPackage } from "../types/api";
-
-function packageMeetsShortfall(pkg: CreditPackage, shortfall: number) {
-  return pkg.credits >= shortfall;
-}
-
-function pickRecommended(packages: CreditPackage[], shortfall: number) {
-  const sorted = [...packages].sort((a, b) => a.credits - b.credits);
-  return sorted.find((p) => packageMeetsShortfall(p, shortfall)) ?? sorted[sorted.length - 1] ?? null;
-}
 
 export function InsufficientCreditsDialog() {
   const open = useInsufficientCreditsStore((s) => s.open);
@@ -53,7 +47,7 @@ export function InsufficientCreditsDialog() {
   const shortfall = Math.max(0, required - balance);
   const packages = useMemo(() => packagesData?.packages ?? [], [packagesData?.packages]);
   const recommended = useMemo(
-    () => (info ? pickRecommended(packages, shortfall) : null),
+    () => (info ? pickRecommendedPackage(packages, shortfall) : undefined),
     [packages, shortfall, info],
   );
 

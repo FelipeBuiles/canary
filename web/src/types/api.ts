@@ -56,6 +56,13 @@ export interface StageInfo {
   cost_credits: number;
   estimated_cost_credits: number;
   error: string | null;
+  // Structured credit-failure detail. Set only when the stage failed because
+  // the user's balance couldn't cover the reservation. Drives the in-room
+  // CreditsGate panel (see useNeedsCredits).
+  error_code: string | null;
+  balance_credits: number | null;
+  required_credits: number | null;
+  shortfall_credits: number | null;
   started_at: string | null;
   finished_at: string | null;
   last_progress_at: string | null;
