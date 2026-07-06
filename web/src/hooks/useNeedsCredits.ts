@@ -36,11 +36,18 @@ export function useNeedsCredits(
 ): NeedsCredits {
   const { data: status } = useProjectStatus(project);
   const { data: balanceData } = useCreditBalance();
-  // Only fetch the estimate for stages that aren't already blocked via the
-  // persisted path — avoids an unnecessary call for completed/running stages.
   const stageInfo = status?.stages?.[stage];
   const liveBalance = balanceData?.balance_credits ?? 0;
 
+  // Only fetch the estimate for stages that could heuristically block
+  // (pending or non-credit failed) — but the hook itself MUST be called
+  // unconditionally (Rules of Hooks). The `enabled` flag gates the fetch.
+  const isRunnableState =
+    stageInfo?.status === "pending" ||
+    (stageInfo?.status === "failed" && stageInfo.error_code !== "insufficient_credits");
+  const { data: estimateData } = useStageEstimate(project, stage, isRunnableState);
+
+  // All hooks above this point. Early returns are safe below.
   if (!stageInfo) return { blocked: false };
 
   // 1. Persisted credit failure.
@@ -59,14 +66,6 @@ export function useNeedsCredits(
   }
 
   // 2. Heuristic: not yet run (or non-credit failed), but can't afford it.
-  const isRunnableState =
-    stageInfo.status === "pending" ||
-    (stageInfo.status === "failed" && stageInfo.error_code !== "insufficient_credits");
-  const { data: estimateData } = useStageEstimate(
-    project,
-    stage,
-    isRunnableState,
-  );
   if (isRunnableState) {
     const estimate = estimateData?.estimate_credits ?? 0;
     if (estimate > 0 && liveBalance < estimate) {
