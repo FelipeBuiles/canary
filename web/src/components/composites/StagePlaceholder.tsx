@@ -2,7 +2,9 @@ import { useMemo } from "react";
 import { STAGE_ORDER, type StageName, type StageStatus } from "../../types/api";
 import { usePipelineStore } from "../../store/pipeline";
 import { useNeedsCredits } from "../../hooks/useNeedsCredits";
+import { useRunAction } from "../../hooks/useRunAction";
 import { Icon } from "../ui/Icon";
+import { Button } from "../ui/Button";
 import { CreditsGate } from "./CreditsGate";
 
 // ── Stage metadata ────────────────────────────────────────────────────────────
@@ -256,6 +258,44 @@ export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0 }: StageRunn
   );
 }
 
+// ── Failed state ──────────────────────────────────────────────────────────────
+
+interface StageFailedProps {
+  project: string;
+  stage: StageName;
+}
+
+function StageFailed({ project, stage }: StageFailedProps) {
+  const meta = STAGE_META[stage];
+  const { handleRun, isPending } = useRunAction();
+  return (
+    <div className="flex min-h-[40vh] items-center justify-center px-6">
+      <div className="w-full max-w-sm text-center">
+        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center border-[2px] border-ink-black/12 bg-surface-container text-ink-black/25">
+          <span className="font-display text-lg font-black">
+            {String(STAGE_ORDER.indexOf(stage) + 1).padStart(2, "0")}
+          </span>
+        </div>
+        <div className="font-display text-[1.5rem] font-bold tracking-[-0.05em] text-ink-black/30">
+          {meta.title.toUpperCase()} FAILED
+        </div>
+        <p className="mt-2 text-[0.82rem] leading-6 text-ink-black/50">
+          This stage didn't complete. Try running it again.
+        </p>
+        <div className="mt-5 flex justify-center">
+          <Button
+            size="md"
+            disabled={isPending}
+            onClick={() => handleRun(project, stage)}
+          >
+            {isPending ? "Starting…" : "Retry stage"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Combined switcher ─────────────────────────────────────────────────────────
 
 interface StagePlaceholderProps {
@@ -292,8 +332,11 @@ export function StagePlaceholder({ project, stage, status, itemsDone, itemsTotal
   if (status === "pending") {
     return <StagePending stage={stage} />;
   }
-  // Stage completed/failed but no data — shouldn't normally happen,
-  // show a minimal state while the data loads or indicate the issue.
+  if (status === "failed") {
+    return <StageFailed project={project} stage={stage} />;
+  }
+  // Stage completed but no data — shouldn't normally happen; show a minimal
+  // state while the data loads.
   const meta = STAGE_META[stage];
   return (
     <div className="flex min-h-[40vh] items-center justify-center px-6">
@@ -307,9 +350,7 @@ export function StagePlaceholder({ project, stage, status, itemsDone, itemsTotal
           {meta.title.toUpperCase()} NOT AVAILABLE
         </div>
         <p className="mt-2 text-[0.82rem] leading-6 text-ink-black/50">
-          {status === "failed"
-            ? "This stage failed. Use the button below to retry."
-            : "Data for this stage could not be loaded."}
+          Data for this stage could not be loaded.
         </p>
       </div>
     </div>
