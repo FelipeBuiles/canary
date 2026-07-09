@@ -446,21 +446,21 @@ _THEME_HEADER = """\
  *    --caption-bg              background (#F7F0DC)
  *    --caption-border          border (#9B8A5A)
  *    --caption-color           text colour (#3A2A10)
- *    --caption-font-size       (26px)
+ *    --caption-font-size       (52px)
  *
  *  Speech / thought bubbles
  *    --bubble-bg               background (#FFFFFF)
  *    --bubble-border           border colour (#1A1A1A)
  *    --bubble-border-width     (2px)
  *    --bubble-radius           corner radius (14px)
- *    --bubble-font-size        (32px)
+ *    --bubble-font-size        (64px)
  *    --bubble-padding          (7px 11px)
  *    --bubble-max-width        max % of panel width (52%)
  *    --bubble-center-width     max % for centred bubbles (68%)
  *
  *  Speaker name labels (shown when 3+ characters in a panel)
  *    --speaker-color           (#664400)
- *    --speaker-font-size       (9px)
+ *    --speaker-font-size       (22px)
  *
  *  Thought bubbles
  *    --thought-border-style    "dashed" | "solid" | "dotted" (dashed)
@@ -469,11 +469,11 @@ _THEME_HEADER = """\
  *  Sound effects
  *    --sfx-color               fill (#CC1111)
  *    --sfx-shadow              outline (use "transparent" to disable) (#000000)
- *    --sfx-font-size           (37px)
+ *    --sfx-font-size           (74px)
  *
  *  Page number
  *    --page-num-color          (#AAAAAA)
- *    --page-num-font-size      (17px)
+ *    --page-num-font-size      (26px)
  * ─────────────────────────────────────────────────────────────────
  * Full CSS is supported. Add custom rules after the :root block.
  */
@@ -495,7 +495,7 @@ def write_theme_css(project_dir: Path, theme_name: str) -> Path:
         if theme_vars:
             var_lines = "\n".join(f"  {k}: {v};" for k, v in theme_vars.items())
         else:
-            var_lines = "  /* base defaults active — uncomment to override: */\n  /* --bubble-font-size: 32px; */"
+            var_lines = "  /* base defaults active — uncomment to override: */\n  /* --bubble-font-size: 64px; */"
         path.write_text(_THEME_HEADER.format(theme_name=theme_name, var_lines=var_lines))
     return path
 

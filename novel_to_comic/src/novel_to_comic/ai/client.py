@@ -668,6 +668,21 @@ def _settle_event_usage(usage: UsageRecord, *, feature: str, status: str) -> Non
             job_id=ctx.job_id,
         )
     except Exception:
+        # The provider was already charged for this call, so we must not fail
+        # the user's request — but a dropped debit is a direct margin leak
+        # (user gets the output, platform eats the cost). Log at error level
+        # with enough detail to reconcile manually; operator should alert on
+        # this logger path (canary.ai, "Credit debit failed").
+        logger.error(
+            "Credit debit failed — provider was charged but user %s was not "
+            "debited for %s call_id=%s model=%s cost_usd=%.6f",
+            ctx.user_id,
+            feature,
+            getattr(usage, "call_id", None),
+            getattr(usage, "model", None),
+            getattr(usage, "cost_usd", 0.0) or 0.0,
+            exc_info=True,
+        )
         return
 
 

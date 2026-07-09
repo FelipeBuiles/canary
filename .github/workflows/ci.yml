@@ -40,7 +40,11 @@ jobs:
           cache-dependency-glob: novel_to_comic/uv.lock
 
       - name: Sync dependencies
-        run: uv sync --frozen
+        # ruff + pytest live in the `dev` extra, and the test suite imports
+        # FastAPI from the `web` extra — plain `uv sync --frozen` installs
+        # neither, so `uv run ruff`/`pytest` fail with "No such file or
+        # directory". Mirror the Dockerfile's explicit-extras style.
+        run: uv sync --frozen --extra web --extra dev
 
       - name: Ruff (lint + format check)
         run: uv run ruff check .
@@ -67,7 +71,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # supabase.ts throws at import time when VITE_SUPABASE_* are unset, which
+      # breaks the two suites that pull it in transitively (api/client →
+      # store/insufficientCredits). web/.env is gitignored, so provide
+      # placeholders here — values are irrelevant to the unit tests.
       - name: Vitest
+        env:
+          VITE_SUPABASE_URL: https://ci.supabase.co
+          VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci
         run: npm run test
 
       - name: Build

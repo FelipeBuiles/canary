@@ -48,9 +48,21 @@ export function sanitizeStyleVars(input: Record<string, string> | undefined): Re
   if (bubbleFontSize) out["--bubble-font-size"] = bubbleFontSize;
   else delete out["--bubble-font-size"];
 
-  const captionFontSize = normalizePx(out["--caption-font-size"], 14, 80);
+  const captionFontSize = normalizePx(out["--caption-font-size"], 14, 160);
   if (captionFontSize) out["--caption-font-size"] = captionFontSize;
   else delete out["--caption-font-size"];
+
+  const speakerFontSize = normalizePx(out["--speaker-font-size"], 8, 60);
+  if (speakerFontSize) out["--speaker-font-size"] = speakerFontSize;
+  else delete out["--speaker-font-size"];
+
+  const sfxFontSize = normalizePx(out["--sfx-font-size"], 20, 260);
+  if (sfxFontSize) out["--sfx-font-size"] = sfxFontSize;
+  else delete out["--sfx-font-size"];
+
+  const pageNumFontSize = normalizePx(out["--page-num-font-size"], 10, 80);
+  if (pageNumFontSize) out["--page-num-font-size"] = pageNumFontSize;
+  else delete out["--page-num-font-size"];
 
   const bubbleRadius = normalizePx(out["--bubble-radius"], 6, 120);
   if (bubbleRadius) out["--bubble-radius"] = bubbleRadius;

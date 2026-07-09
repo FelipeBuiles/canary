@@ -17,10 +17,13 @@ def _has_labs_routes(app) -> bool:
     return any(r.path.startswith("/api/labs") for r in app.routes)
 
 
-def test_labs_enabled_by_default(monkeypatch, tmp_path):
+def test_labs_disabled_by_default(monkeypatch, tmp_path):
     monkeypatch.delenv("CANARY_LABS_ENABLED", raising=False)
     app = create_app(Path(str(tmp_path)), dev=True)
-    assert _has_labs_routes(app), "Labs should be mounted when the flag is unset"
+    assert not _has_labs_routes(app), (
+        "Labs must default OFF — it bills provider quota directly and is not "
+        "credit-gated, so it should not ship enabled without an explicit opt-in."
+    )
 
 
 @pytest.mark.parametrize("value", ["false", "0", "no", "off", "FALSE"])

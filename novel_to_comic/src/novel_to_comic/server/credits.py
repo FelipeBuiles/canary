@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import uuid as uuid_lib
@@ -17,6 +18,8 @@ from novel_to_comic.state import PipelineState
 from novel_to_comic.usage import UsageRecord, calculate_cost, calculate_cost_breakdown, estimate_image_cost, usage_has_billable_activity
 
 CostConfidence = Literal["low_variance", "usually_within_estimate", "variable"]
+
+log = logging.getLogger("canary.credits")
 
 
 class CreditEstimate(TypedDict):
@@ -348,6 +351,10 @@ def debit_model_usage(
     try:
         cost = calculate_cost_breakdown(usage)
     except Exception:
+        # The breakdown is optional metadata (provider_model, source, pricing
+        # snapshot). The core debit still goes through; we just lose the
+        # audit color. Log so a persistent pricing-resolver failure surfaces.
+        log.warning("calculate_cost_breakdown failed; debiting without metadata", exc_info=True)
         cost = None
     if credits <= 0:
         return

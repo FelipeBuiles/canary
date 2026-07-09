@@ -1,34 +1,68 @@
 services:
-  # Canary app service — uncomment for full-stack Docker testing.
-  # During the LiteLLM gateway migration the app runs via `pipeline serve`
-  # outside Docker while infra services (LiteLLM, Langfuse, etc.) run here.
-  # canary:
-  #   build: .
-  #   ports:
-  #     - "8000:8000"
-  #   environment:
-  #     LITELLM_BASE_URL: http://litellm:4000
-  #     LITELLM_API_KEY: ${LITELLM_MASTER_KEY:-sk-local-canary}
-  #     AI_BILL_FAILED_REQUESTS: ${AI_BILL_FAILED_REQUESTS:-provider_usage_only}
-  #     SUPABASE_URL: ${SUPABASE_URL:-}
-  #     SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:-}
-  #     STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-  #     STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
-  #     PULP_CREDITS_PER_PROVIDER_USD: ${PULP_CREDITS_PER_PROVIDER_USD:-100}
-  #     PULP_MODEL_COST_MARKUP: ${PULP_MODEL_COST_MARKUP:-1.0}
-  #     PULP_RESERVATION_BUFFER: ${PULP_RESERVATION_BUFFER:-1.25}
-  #     R2_ENDPOINT: ${R2_ENDPOINT:-}
-  #     R2_ACCESS_KEY: ${R2_ACCESS_KEY:-}
-  #     R2_SECRET_KEY: ${R2_SECRET_KEY:-}
-  #     R2_BUCKET: ${R2_BUCKET:-}
-  #     R2_PUBLIC_URL: ${R2_PUBLIC_URL:-}
-  #     CANARY_GENERATION_WORKERS: ${CANARY_GENERATION_WORKERS:-5}
-  #   volumes:
-  #     - ./projects:/projects
-  #   depends_on:
-  #     litellm:
-  #       condition: service_started
-  #   restart: unless-stopped
+  # ─── Prod-parity image (opt-in via `--profile prod`) ─────────────────────
+  # Builds the merged Dockerfile (uvicorn + LiteLLM proxy in one container,
+  # loopback at 127.0.0.1:4000) so you can smoke-test the exact Fly artifact
+  # before deploying. Commented block above is the legacy two-service flow
+  # that was active during the gateway migration.
+  #
+  # Run:       docker compose --profile prod up canary-prod
+  # Rebuild:   docker compose --profile prod build canary-prod
+  # Stop:      Ctrl+C, then `docker compose down` (add -v to wipe Langfuse data)
+  #
+  # Frontend build args are inlined at build time (the browser talks to
+  # Supabase directly). For a local smoke test, the placeholder values below
+  # are fine — the bundle compiles, you just won't be able to log in. To
+  # exercise auth, set VITE_SUPABASE_URL + VITE_SUPABASE_PUBLISHABLE_KEY in
+  # your env before `up --build`.
+  canary-prod:
+    profiles: ["prod"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-https://local-smoke.supabase.co}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-sb_publishable_local_smoke}
+        VITE_CANARY_ENV: production
+        # VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
+    ports:
+      - "8000:8000"
+    environment:
+      # ─── LiteLLM proxy (loopback) ────────────────────────────────────────
+      # LITELLM_BASE_URL points at 127.0.0.1 because the proxy is a subprocess
+      # inside this same container, not the sibling `litellm` service.
+      LITELLM_BASE_URL: http://127.0.0.1:4000
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-local-canary}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:-replace-with-local-dev-secret}
+      LITELLM_API_KEY: ${LITELLM_MASTER_KEY:-sk-local-canary}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      REVE_API_KEY: ${REVE_API_KEY:-}
+      FAL_KEY: ${FAL_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
+      VERTEXAI_PROJECT: ${VERTEXAI_PROJECT:-}
+      VERTEXAI_LOCATION: ${VERTEXAI_LOCATION:-global}
+      GCP_CREDENTIALS_B64: ${GCP_CREDENTIALS_B64:-}
+      # ─── Web app ─────────────────────────────────────────────────────────
+      AI_BILL_FAILED_REQUESTS: ${AI_BILL_FAILED_REQUESTS:-provider_usage_only}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      PULP_CREDITS_PER_PROVIDER_USD: ${PULP_CREDITS_PER_PROVIDER_USD:-100}
+      PULP_MODEL_COST_MARKUP: ${PULP_MODEL_COST_MARKUP:-1.0}
+      PULP_RESERVATION_BUFFER: ${PULP_RESERVATION_BUFFER:-1.25}
+      R2_ENDPOINT: ${R2_ENDPOINT:-}
+      R2_ACCESS_KEY: ${R2_ACCESS_KEY:-}
+      R2_SECRET_KEY: ${R2_SECRET_KEY:-}
+      R2_BUCKET: ${R2_BUCKET:-}
+      R2_PUBLIC_URL: ${R2_PUBLIC_URL:-}
+      CANARY_GENERATION_WORKERS: ${CANARY_GENERATION_WORKERS:-5}
+    volumes:
+      - ./projects:/projects
+    restart: unless-stopped
+
 
   litellm:
     image: docker.litellm.ai/berriai/litellm:main-v1.83.14-stable
@@ -38,6 +72,12 @@ services:
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-local-canary}
       LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:-replace-with-local-dev-secret}
+      # LiteLLM requires a Postgres DB for its key-auth + spend-tracking layer.
+      # Without it, user_api_key_auth() raises a ProxyException ("No connected
+      # db.") on every request and the gateway 400s before reaching any model.
+      # On first boot the proxy auto-creates its tables (Prisma migrations).
+      DATABASE_URL: ${LITELLM_DATABASE_URL:-postgresql://litellm:litellm@litellm-db:5432/litellm}
+      STORE_MODEL_IN_DB: "True"
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
@@ -57,8 +97,29 @@ services:
       - ./litellm_handlers:/app/litellm_handlers:ro
       - ${GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH:-./litellm/gcp-credentials.json}:/app/gcp-credentials.json:ro
     depends_on:
-      langfuse-web:
-        condition: service_started
+      litellm-db:
+        condition: service_healthy
+
+  # ─── LiteLLM's own Postgres ──────────────────────────────────────────────
+  # Dedicated DB for LiteLLM's key-auth + spend-tracking schema. Kept separate
+  # from langfuse-postgres so the two schemas never mix. The proxy runs its
+  # Prisma migrations against this on first boot, so no manual setup is needed.
+  litellm-db:
+    image: docker.io/postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${LITELLM_POSTGRES_USER:-litellm}
+      POSTGRES_PASSWORD: ${LITELLM_POSTGRES_PASSWORD:-litellm}
+      POSTGRES_DB: ${LITELLM_POSTGRES_DB:-litellm}
+      TZ: UTC
+      PGTZ: UTC
+    volumes:
+      - litellm_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
 
   langfuse-worker:
     image: docker.io/langfuse/langfuse-worker:3.172.0
@@ -196,6 +257,7 @@ services:
 
 volumes:
   langfuse_postgres_data:
+  litellm_postgres_data:
   langfuse_clickhouse_data:
   langfuse_clickhouse_logs:
   langfuse_minio_data:

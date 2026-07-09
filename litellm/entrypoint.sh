@@ -21,6 +21,34 @@ set -e
 if [ -n "$GCP_CREDENTIALS_B64" ]; then
   printf '%s' "$GCP_CREDENTIALS_B64" | base64 -d > /app/gcp-credentials.json
   chmod 600 /app/gcp-credentials.json
+  # Point the Google SDK at the file we just materialized. LiteLLM's vertex_ai
+  # provider loads ADC via google.auth, which honors this env var. Without it
+  # the file sits unread and every Vertex request 500s with
+  # "Your default credentials were not found".
+  export GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credentials.json
+fi
+
+# Fail fast with a clear message if Vertex is in use but unreachable — otherwise
+# the LiteLLM proxy boots fine and every extract/panel/image request 500s with
+# a wall of "ModuleNotFoundError: No module named 'google'" tracebacks. The
+# config.yaml routes most text + image stages to vertex_ai/*, so a missing
+# service-account file or a missing google-cloud-aiplatform install breaks the
+# whole pipeline at the first LLM call.
+if [ -n "$VERTEXAI_PROJECT" ]; then
+  if [ ! -f /app/gcp-credentials.json ]; then
+    echo "[entrypoint] VERTEXAI_PROJECT is set ($VERTEXAI_PROJECT) but no GCP" >&2
+    echo "[entrypoint] credentials were provided. Set GCP_CREDENTIALS_B64 to the" >&2
+    echo "[entrypoint] base64 of a service-account JSON. Without it, every Vertex" >&2
+    echo "[entrypoint] model group (extract/panel/prompt/image) 500s at request time." >&2
+    exit 1
+  fi
+  if ! /app/.venv-litellm/bin/python -c "import google.auth, google.cloud.aiplatform" 2>/dev/null; then
+    echo "[entrypoint] Vertex AI is configured but the LiteLLM venv is missing the" >&2
+    echo "[entrypoint] Google deps (google-cloud-aiplatform / google-auth). Vertex" >&2
+    echo "[entrypoint] model groups will 500. Rebuild the image so the Dockerfile's" >&2
+    echo "[entrypoint] google-cloud-aiplatform install line runs." >&2
+    exit 1
+  fi
 fi
 
 # 2. Start LiteLLM proxy in the background.

@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
 from novel_to_comic.assembly.html_renderer import FONTS_DIR
@@ -78,9 +79,11 @@ log = logging.getLogger(__name__)
 def _labs_enabled() -> bool:
     """Feature flag for the Labs experimentation router.
 
-    Defaults ON (dev/unconfigured) so local workflows are unaffected; flip to
-    ``false`` in production to shrink the public attack surface (P2 #11)."""
-    raw = os.environ.get("CANARY_LABS_ENABLED", "true").strip().lower()
+    Defaults OFF: Labs is an image-model experimentation surface that bypasses
+    the credit system (it bills provider quota directly to operator keys), so
+    it must not ship enabled by default. Set ``CANARY_LABS_ENABLED=true`` to
+    mount the router for local development or an internal deployment."""
+    raw = os.environ.get("CANARY_LABS_ENABLED", "false").strip().lower()
     return raw not in {"0", "false", "no", "off"}
 
 
@@ -174,6 +177,21 @@ async def _lifespan(app: FastAPI):
 def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app = FastAPI(title="Scenewright", lifespan=_lifespan)
     app.middleware("http")(request_log_middleware)
+    # Defense-in-depth body-size cap on every non-exempt route. Runs before
+    # route handlers so an oversized JSON POST is rejected before any work.
+    from .body_limit import body_size_limit_middleware
+
+    app.middleware("http")(body_size_limit_middleware)
+    # Trusted host validation — only added when explicitly configured. Set
+    # CANARY_ALLOWED_HOSTS to a comma-separated list (e.g. "scenewright.ink,
+    # www.scenewright.ink"). Without this, the unsanitized Origin header is
+    # used to build Stripe redirect URLs (billing.py), which is a host-header
+    # injection risk.
+    allowed_hosts_raw = os.environ.get("CANARY_ALLOWED_HOSTS", "").strip()
+    if allowed_hosts_raw:
+        allowed_hosts = [h.strip() for h in allowed_hosts_raw.split(",") if h.strip()]
+        if allowed_hosts:
+            app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
     configure_rate_limiting(app)
 
     # Shared state for SSE streaming and concurrency control
@@ -310,14 +328,13 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         prefix="/api/projects/{project_id}",
         tags=["styles"],
     )
-    # Labs is an image-model experimentation surface — useful for development
-    # but extra attack surface for a public launch. Gated behind an env flag so
-    # it can be disabled in production without a code change. Defaults ON to
-    # preserve local/dev behaviour; set CANARY_LABS_ENABLED=false in prod.
+    # Labs is an image-model experimentation surface that bills provider quota
+    # directly and is not credit-gated. It defaults OFF; set
+    # CANARY_LABS_ENABLED=true for local dev or an internal deployment.
     if _labs_enabled():
         app.include_router(labs.router, prefix="/api/labs", tags=["labs"])
     else:
-        log.info("Labs router disabled (CANARY_LABS_ENABLED=false)")
+        log.info("Labs router disabled (CANARY_LABS_ENABLED not set to truthy)")
 
     # Serve bundled fonts
     app.mount("/static/fonts", StaticFiles(directory=str(FONTS_DIR)), name="fonts")

@@ -243,6 +243,23 @@ async def generate_style_samples(
     if not bible:
         raise HTTPException(404, "Story bible not found — run extract first.")
 
+    # Credit pre-check: each sample calls the image model for real and is
+    # debited via ai.client._settle_event_usage on success. Sum the per-sample
+    # estimate so a zero-balance user can't queue free regens.
+    from novel_to_comic.usage import estimate_image_cost
+
+    per_sample = credit_estimate_for_provider_cost(
+        estimate_image_cost(
+            config.effective_image_model(), 1,
+            quality=getattr(config, "image_quality", None),
+        ),
+        "style", reserve=False, zero_cost_estimate=1,
+    )["estimate_credits"]
+    assert_sufficient_credits(
+        get_db(), user_id, max(1, per_sample) * len(indices),
+        action="style_sample_regen",
+    )
+
     jobs = []
     prune_finished_generation_jobs(request.app)
     for idx in indices:

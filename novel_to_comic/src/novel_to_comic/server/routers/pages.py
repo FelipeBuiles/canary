@@ -31,7 +31,7 @@ from novel_to_comic.models.lettering import LetteringStyle
 from novel_to_comic.assembly.lettering_style import load_lettering_style, save_lettering_style
 
 from ..auth import get_current_user
-from ..credits import debit_model_usage
+from ..credits import assert_sufficient_credits, debit_model_usage
 from ..db import get_db
 from ..deps import get_project
 
@@ -71,15 +71,19 @@ STYLE_VAR_ALLOWLIST = {
     "--bubble-border",
     "--bubble-border-width",
     "--bubble-radius",
+    "--bubble-font-size",
     "--bubble-padding",
     "--bubble-max-width",
     "--bubble-center-width",
     "--speaker-color",
+    "--speaker-font-size",
     "--thought-border-style",
     "--thought-radius",
     "--sfx-color",
     "--sfx-shadow",
+    "--sfx-font-size",
     "--page-num-color",
+    "--page-num-font-size",
 }
 
 
@@ -99,10 +103,14 @@ def _sanitize_style_vars(raw: dict) -> dict[str, str]:
     }
     px_ranges = {
         "--panel-border-width": (1, 12),
-        "--caption-font-size": (14, 80),
+        "--caption-font-size": (14, 160),
         "--bubble-border-width": (1, 10),
         "--bubble-radius": (6, 120),
+        "--bubble-font-size": (16, 200),
         "--thought-radius": (18, 180),
+        "--speaker-font-size": (8, 60),
+        "--sfx-font-size": (20, 260),
+        "--page-num-font-size": (10, 80),
     }
     pct_ranges = {
         "--bubble-max-width": (38, 95),
@@ -240,8 +248,10 @@ async def _generate_lettering_style(config: Config, *, reroll: bool = False) -> 
         "generation style, choose a base theme, a font pair, and CSS custom property "
         "values for panel borders, narration captions, speech bubbles, thought "
         "bubbles, SFX, and page numbers. Return JSON only. Use readable lettering "
-        "with strong contrast. Do not set font sizes or font families directly - the "
-        "font pair controls type. Do not use url(), external assets, gradients, or "
+        "with strong contrast. Font sizes are optional and already tuned for a "
+        "hi-res canvas — only override them to nudge legibility (e.g. bigger SFX), "
+        "and keep values within the documented ranges. The font pair controls type "
+        "and must not be changed. Do not use url(), external assets, gradients, or "
         "CSS functions except simple px/% values."
     )
     pairs = "\n".join(f"- {k}: {v}" for k, v in FONT_PAIR_MOODS.items())
@@ -610,6 +620,10 @@ async def generate_lettering_style(
     ):
         return existing.model_dump()
 
+    # Credit pre-check: one short LLM call (debited on success below). Floor at
+    # 1 credit so a zero-balance user is blocked before the call is made.
+    assert_sufficient_credits(get_db(), user_id, 1, action="lettering_style_generate")
+
     with ai_request_context(
         user_id=user_id,
         project_id=project_id,
@@ -734,6 +748,13 @@ async def translate_page_bubbles(
     if not page_paths:
         raise HTTPException(404, "No pages found")
 
+    # Credit pre-check: translating every bubble across every page can be a
+    # large LLM call. Floor at 1 credit/page so the cost scales with book size
+    # and a zero-balance user is blocked before the call.
+    assert_sufficient_credits(
+        get_db(), user_id, max(1, len(page_paths)), action="translate_bubbles",
+    )
+
     pages = [ComicPage.model_validate_json(path.read_text()) for path in page_paths]
     items: list[dict] = []
     for cp in pages:
@@ -806,6 +827,11 @@ async def translate_single_page_bubbles(
 
     cp = _load_page(project_dir, page_num)
     items: list[dict] = []
+
+    # Credit pre-check: one page's worth of translation is a single LLM call;
+    # floor at 1 credit so a zero-balance user is blocked before the call.
+    assert_sufficient_credits(get_db(), user_id, 1, action="translate_bubbles")
+
     for panel in cp.panels:
         for bubble in panel.bubbles:
             text = bubble.text.strip()
