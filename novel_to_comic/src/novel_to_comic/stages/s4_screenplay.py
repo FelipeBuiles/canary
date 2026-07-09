@@ -23,6 +23,57 @@ from novel_to_comic.usage import ApiResult, estimate_text_cost
 
 console = Console()
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "screenplay.txt"
+_MAX_NARRATION_WORDS = 20
+
+
+def _word_count(value: str) -> int:
+    return len(re.findall(r"\S+", value))
+
+
+def _split_at_word_limit(value: str, max_words: int) -> list[str]:
+    """Split prose at word boundaries, retaining every source word in order."""
+    words = value.split()
+    if len(words) <= max_words:
+        return [value]
+    return [" ".join(words[index:index + max_words]) for index in range(0, len(words), max_words)]
+
+
+def _shorten_at_word_limit(value: str, max_words: int) -> str:
+    """Return a visibly shortened caption without splitting a word."""
+    words = value.split()
+    if len(words) <= max_words:
+        return value
+    return f"{' '.join(words[:max_words]).rstrip('…')}…"
+
+
+def enforce_lettering_budgets(screenplay: Screenplay, max_words_per_bubble: int) -> Screenplay:
+    """Keep screenplay text compatible with readable comic lettering.
+
+    Dialogue and thoughts become consecutive beats when they outgrow one
+    bubble. Narration stays a single editorial caption, shortened at a word
+    boundary while its original passage remains in ``source_text``.
+    """
+    bubble_limit = max(1, max_words_per_bubble)
+    narration_limit = min(_MAX_NARRATION_WORDS, bubble_limit)
+    beats = []
+    for beat in screenplay.beats:
+        if beat.type in {"dialogue", "thought"} and _word_count(beat.content) > bubble_limit:
+            beats.extend(
+                beat.model_copy(update={"content": chunk})
+                for chunk in _split_at_word_limit(beat.content, bubble_limit)
+            )
+        elif beat.type == "narration" and _word_count(beat.content) > narration_limit:
+            beats.append(
+                beat.model_copy(
+                    update={
+                        "content": _shorten_at_word_limit(beat.content, narration_limit),
+                        "source_text": beat.source_text or beat.content,
+                    }
+                )
+            )
+        else:
+            beats.append(beat)
+    return screenplay.model_copy(update={"beats": beats})
 
 
 def _is_offscreen_character(char) -> bool:
@@ -40,11 +91,20 @@ def _is_offscreen_character(char) -> bool:
     return has_offscreen_marker(text)
 
 
-def _build_user_content(scene_text: str, story_bible: StoryBible, scene_id: str) -> str:
+def _build_user_content(
+    scene_text: str,
+    story_bible: StoryBible,
+    scene_id: str,
+    max_words_per_bubble: int = 24,
+) -> str:
     """Build the user message with scene text and relevant Story Bible context."""
     scene = next((s for s in story_bible.scenes if s.id == scene_id), None)
     if not scene:
-        return scene_text
+        return (
+            f"{scene_text}\n\nLETTERING BUDGET:\n"
+            f"Keep dialogue and thought bubbles to {max_words_per_bubble} words or fewer. "
+            f"Keep narration captions to {min(_MAX_NARRATION_WORDS, max_words_per_bubble)} words or fewer."
+        )
 
     # Gather character descriptions
     char_info = []
@@ -87,6 +147,11 @@ def _build_user_content(scene_text: str, story_bible: StoryBible, scene_id: str)
         "CHARACTERS IN SCENE:",
         *char_info,
         *boundary_lines,
+        "",
+        "LETTERING BUDGET:",
+        f"Keep each dialogue or thought bubble to {max_words_per_bubble} words or fewer.",
+        f"Keep each narration caption to {min(_MAX_NARRATION_WORDS, max_words_per_bubble)} words or fewer.",
+        "When a passage cannot fit, preserve its source_text but adapt its content as a concise comic caption.",
         "",
         "SCENE TEXT:",
         scene_text,
@@ -391,7 +456,12 @@ async def _process_scene(
         return ApiResult(value=artifacts.read_screenplay(project_dir, scene_id), usage=None)
 
     scene_text = artifacts.read_scene_text(project_dir, scene_id)
-    user_content = _build_user_content(scene_text, story_bible, scene_id)
+    user_content = _build_user_content(
+        scene_text,
+        story_bible,
+        scene_id,
+        config.max_words_per_bubble,
+    )
 
     async with semaphore:
         api_result = await text.generate_json(
@@ -412,6 +482,7 @@ async def _process_scene(
     if boundary_warning:
         console.print(f"[yellow]{boundary_warning}[/yellow]")
     screenplay = _resolve_present_characters(screenplay, story_bible)
+    screenplay = enforce_lettering_budgets(screenplay, config.max_words_per_bubble)
     artifacts.write_screenplay(project_dir, scene_id, screenplay)
     return ApiResult(value=screenplay, usage=api_result.usage)
 

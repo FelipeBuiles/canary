@@ -509,11 +509,13 @@ def project_layout_plan_to_pages(
             sfx_items: list[Sfx]
             image_offset_x: float | None
             image_offset_y: float | None
+            image_scale: float | None
             if existing_panel:
                 bubbles = existing_panel.bubbles
                 sfx_items = existing_panel.sfx
                 image_offset_x = existing_panel.image_offset_x
                 image_offset_y = existing_panel.image_offset_y
+                image_scale = existing_panel.image_scale
             else:
                 bubbles = []
                 show_labels = len(breakdown.characters_present) >= 3
@@ -551,6 +553,7 @@ def project_layout_plan_to_pages(
                 ]
                 image_offset_x = None
                 image_offset_y = None
+                image_scale = None
 
             page_panels.append(
                 PagePanel(
@@ -565,6 +568,7 @@ def project_layout_plan_to_pages(
                     sfx=sfx_items,
                     image_offset_x=image_offset_x,
                     image_offset_y=image_offset_y,
+                    image_scale=image_scale,
                     **_panel_geometry_style(geometry, index),
                 )
             )

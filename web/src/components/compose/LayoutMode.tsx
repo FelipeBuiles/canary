@@ -5,6 +5,7 @@ import { EditorToolbar } from "./EditorToolbar";
 import { PageEditor } from "./PageEditor";
 import { PropertyPanel } from "./PropertyPanel";
 import { useLetteringStyle } from "../../api/queries";
+import type { ComposeIssue } from "../../lib/issueEngine";
 
 interface LayoutModeProps {
   project: string;
@@ -34,6 +35,7 @@ interface LayoutModeProps {
   onResetPanelFrame: (panelId: string) => void;
   onDeleteElement: (panelId: string, type: "bubble" | "sfx", elementId: string) => void;
   onUnpin: (panelId: string, type: "bubble" | "sfx", elementId: string) => void;
+  onLetteringIssues: (pageNumber: number, issues: ComposeIssue[]) => void;
   /** Re-fetch missing page thumbnails while compose is still rendering. */
   shouldRetryThumbs?: boolean;
 }
@@ -58,6 +60,7 @@ export function LayoutMode({
   onDeselect,
   onDragEnd,
   onZoomChange,
+  onUpdatePanel,
   onUpdateBubble,
   onUpdateSfx,
   onPanelReframeStart,
@@ -65,6 +68,7 @@ export function LayoutMode({
   onResetPanelFrame,
   onDeleteElement,
   onUnpin,
+  onLetteringIssues,
   shouldRetryThumbs,
 }: LayoutModeProps) {
   const { data: lettering } = useLetteringStyle(project);
@@ -72,6 +76,7 @@ export function LayoutMode({
   const [floatingPosition, setFloatingPosition] = useState<{ top: number; left: number; shellViewportTop: number } | null>(null);
   const [dragOffset, setDragOffset] = useState({ dx: 0, dy: 0 });
   const dragStartRef = useRef<{ clientX: number; clientY: number; dx: number; dy: number } | null>(null);
+  const [scalePreview, setScalePreview] = useState<{ panelId: string; scale: number } | null>(null);
 
   useEffect(() => {
     setDragOffset({ dx: 0, dy: 0 });
@@ -162,12 +167,35 @@ export function LayoutMode({
         onUpdateSfx={onUpdateSfx}
         onDeleteElement={onDeleteElement}
         onUnpin={onUnpin}
+        onCenterPanelFrame={(panelId) => onUpdatePanel(panelId, {
+          image_offset_x: null,
+          image_offset_y: null,
+        })}
         onResetPanelFrame={onResetPanelFrame}
+        onPreviewPanelScale={(panelId, scale) => setScalePreview({ panelId, scale })}
+        onCommitPanelScale={(panelId, scale) => onUpdatePanel(panelId, {
+          image_scale: scale === 1 ? null : scale,
+        })}
       />
     );
-  }, [page, selection, panelReframeId, onUpdateBubble, onUpdateSfx, onDeleteElement, onUnpin, onResetPanelFrame]);
+  }, [page, selection, panelReframeId, onUpdatePanel, onUpdateBubble, onUpdateSfx, onDeleteElement, onUnpin, onResetPanelFrame]);
 
   const hasInspector = !!selection || !!panelReframeId;
+  const previewedPanel = scalePreview && page?.panels.find((panel) => panel.id === scalePreview.panelId);
+  const hasPendingScalePreview = !!scalePreview && !!previewedPanel &&
+    (previewedPanel.image_scale ?? 1) !== scalePreview.scale;
+  // Render the in-progress crop until its PATCH response supplies the same
+  // scale. This avoids a snap-back without needing state synchronization.
+  const editorPage = !page || !hasPendingScalePreview || !scalePreview
+    ? page
+    : {
+        ...page,
+        panels: page.panels.map((panel) =>
+          panel.id === scalePreview.panelId
+            ? { ...panel, image_scale: scalePreview.scale === 1 ? null : scalePreview.scale }
+            : panel,
+        ),
+      };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -211,7 +239,7 @@ export function LayoutMode({
               </div>
             ) : page ? (
               <PageEditor
-                page={page}
+                page={editorPage ?? page}
                 lettering={lettering}
                 project={project}
                 zoom={zoom}
@@ -224,6 +252,7 @@ export function LayoutMode({
                 onPanelReframeStart={onPanelReframeStart}
                 onPanelReframeDragEnd={onPanelReframeDragEnd}
                 onDragEnd={onDragEnd}
+                onLetteringIssues={onLetteringIssues}
               />
             ) : null}
           </div>

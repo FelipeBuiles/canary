@@ -509,6 +509,8 @@ def _apply_page_patch(cp: ComicPage, body: dict) -> None:
                 panel.image_offset_x = panel_patch["image_offset_x"]
             if "image_offset_y" in panel_patch:
                 panel.image_offset_y = panel_patch["image_offset_y"]
+            if "image_scale" in panel_patch:
+                panel.image_scale = panel_patch["image_scale"]
 
             # ── Remove bubbles ──
             remove_ids = panel_patch.get("remove_bubble_ids", [])

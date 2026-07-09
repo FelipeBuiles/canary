@@ -15,6 +15,9 @@ const TYPE_LABELS: Record<string, string> = {
   bubble_outside_safe_area: "OUTSIDE SAFE AREA",
   text_too_long: "TEXT TOO LONG",
   low_contrast: "LOW CONTRAST",
+  lettering_overflow: "LETTERING CLIPPED",
+  lettering_obscures_art: "LETTERING COVERS ART",
+  lettering_stack_too_tall: "LETTERING STACK TOO TALL",
 };
 
 function IssueRow({

@@ -31,7 +31,7 @@ Novel (EPUB / TXT / PDF)
   │   ► CHECKPOINT: review refs/ and plates/ before continuing
   │
   ▼ Stage 4 — Adapt (configurable screenplay alias)
-  │   Per-scene: prose → observable actions, compressed dialogue (≤35 words/bubble)
+  │   Per-scene: prose → observable actions, compressed dialogue (≤24 words/bubble)
   │   Removes interiority; adds SFX annotations
   │
   ▼ Stage 5 — Plan (configurable panel alias)

@@ -46,7 +46,7 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `style_template` | `str` | `'High quality visual storytelling. Dramatic natural light...` |  |
 | `max_panels_per_scene` | `int` | `8` |  |
 | `max_panels_per_page` | `int` | `6` | how many panels appear on each assembled page |
-| `max_words_per_bubble` | `int` | `35` |  |
+| `max_words_per_bubble` | `int` | `24` | maximum dialogue/thought words before adaptation splits the beat |
 | `parallel_batch_size` | `int` | `5` |  |
 | `max_concurrent_requests` | `int` | `5` |  |
 | `cost_limit_usd` | `Optional[float]` | `None` |  |

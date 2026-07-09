@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   usePages,
@@ -47,6 +47,8 @@ export function ComposeRoom() {
   const [tab, setTab] = useState<ComposeTab>("pages");
   const [issuesOpen, setIssuesOpen] = useState(false);
   const [panelReframeId, setPanelReframeId] = useState<string | null>(null);
+  const [letteringIssuesByPage, setLetteringIssuesByPage] = useState<Record<number, ComposeIssue[]>>({});
+  const [exportError, setExportError] = useState<string | null>(null);
 
   // ── Page state ────────────────────────────────────────────────────────────
   const [searchParams, setSearchParams] = useSearchParams();
@@ -64,8 +66,12 @@ export function ComposeRoom() {
   // Wait for the images query before checking — running against an empty map
   // would flag every panel as a missing-image error while loading.
   const issues = useMemo(
-    () => (images ? detectIssues(allPages.filter((p): p is ComicPage => p !== undefined), images) : []),
-    [allPages, images],
+    () => {
+      const detected = images ? detectIssues(allPages.filter((p): p is ComicPage => p !== undefined), images) : [];
+      const live = Object.values(letteringIssuesByPage).flat();
+      return [...detected, ...live];
+    },
+    [allPages, images, letteringIssuesByPage],
   );
 
   const pageIdx = (safePage ?? 1) - 1;
@@ -98,6 +104,10 @@ export function ComposeRoom() {
   // ── Zoom ─────────────────────────────────────────────────────────────────
   const [zoom, setZoom] = useState(1);
   const clampZoom = (v: number) => Math.max(0.5, Math.min(2.5, Number(v.toFixed(2))));
+
+  const handleLetteringIssues = useCallback((pageNumber: number, nextIssues: ComposeIssue[]) => {
+    setLetteringIssuesByPage((current) => ({ ...current, [pageNumber]: nextIssues }));
+  }, []);
 
   // ── Page navigation ──────────────────────────────────────────────────────
   function setPageNum(p: number, opts?: { preserveSelection?: boolean }) {
@@ -154,7 +164,11 @@ export function ComposeRoom() {
   }
 
   function handleResetPanelFrame(panelId: string) {
-    handleUpdatePanel(panelId, { image_offset_x: null, image_offset_y: null });
+    handleUpdatePanel(panelId, {
+      image_offset_x: null,
+      image_offset_y: null,
+      image_scale: null,
+    });
   }
 
   // ── Selection — also clears panel reframe ────────────────────────────────
@@ -256,9 +270,13 @@ export function ComposeRoom() {
   function handleExport(format: "pdf" | "cbz") {
     if (!id) return;
     setExportSuccess(null);
+    setExportError(null);
     exportMut.mutate(
       { project: id, format },
-      { onSuccess: (result) => { setExportSuccess({ format, url: result.url ?? downloadExportUrl(id, format) }); } },
+      {
+        onSuccess: (result) => { setExportSuccess({ format, url: result.url ?? downloadExportUrl(id, format) }); },
+        onError: (error) => setExportError(error.message.replace(/^API \d+:\s*/, "")),
+      },
     );
   }
 
@@ -454,6 +472,7 @@ export function ComposeRoom() {
               onResetPanelFrame={handleResetPanelFrame}
               onDeleteElement={handleDeleteElement}
               onUnpin={handleUnpin}
+              onLetteringIssues={handleLetteringIssues}
               shouldRetryThumbs={composeStageStatus === "running"}
             />
       )}
@@ -485,9 +504,11 @@ export function ComposeRoom() {
           isExporting={exportMut.isPending}
           outputLanguage={outputLanguage}
           isTranslatingBubbles={translateBubblesMut.isPending}
+          exportError={exportError}
           issues={issues}
           onPageSelect={(idx) => setPageNum(idx + 1)}
           onExport={handleExport}
+          onReviewLettering={() => { setTab("pages"); setIssuesOpen(true); }}
           onOutputLanguageChange={handleOutputLanguageChange}
           onTranslateBubbles={handleTranslateBubbles}
         />

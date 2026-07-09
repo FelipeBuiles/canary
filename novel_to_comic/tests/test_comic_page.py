@@ -12,6 +12,7 @@ from novel_to_comic.models.comic_page import (
     BUBBLE_PRESETS,
     normalize_sfx_text,
 )
+from novel_to_comic.server.routers.pages import _apply_page_patch
 
 
 class TestBubbleDefaults:
@@ -226,6 +227,55 @@ class TestPagePanel:
         )
         assert panel.grid_column == "1 / 3"
         assert panel.grid_row == "2 / 4"
+
+    def test_image_scale_defaults_to_none(self):
+        panel = PagePanel(
+            id="scene_001-001",
+            image_path="draw/scene_001/panel_001.png",
+            scene_id="scene_001",
+            panel_number=1,
+        )
+        assert panel.image_scale is None
+
+    def test_image_scale_accepts_supported_crop_range(self):
+        panel = PagePanel(
+            id="scene_001-001",
+            image_path="draw/scene_001/panel_001.png",
+            scene_id="scene_001",
+            panel_number=1,
+            image_scale=1.75,
+        )
+        assert panel.image_scale == 1.75
+
+    @pytest.mark.parametrize("image_scale", [0.99, 2.51])
+    def test_image_scale_rejects_outside_crop_range(self, image_scale: float):
+        with pytest.raises(ValidationError):
+            PagePanel(
+                id="scene_001-001",
+                image_path="draw/scene_001/panel_001.png",
+                scene_id="scene_001",
+                panel_number=1,
+                image_scale=image_scale,
+            )
+
+    def test_page_patch_updates_and_clears_image_scale(self):
+        page = ComicPage(
+            page_number=1,
+            panels=[
+                PagePanel(
+                    id="scene_001-001",
+                    image_path="draw/scene_001/panel_001.png",
+                    scene_id="scene_001",
+                    panel_number=1,
+                )
+            ],
+        )
+
+        _apply_page_patch(page, {"panels": [{"id": "scene_001-001", "image_scale": 1.5}]})
+        assert page.panels[0].image_scale == 1.5
+
+        _apply_page_patch(page, {"panels": [{"id": "scene_001-001", "image_scale": None}]})
+        assert page.panels[0].image_scale is None
 
 
 class TestComicPageDefaults:

@@ -5,13 +5,15 @@ interface PanelImageProps {
   src: string;
   imageOffsetX: number | null;
   imageOffsetY: number | null;
+  imageScale: number | null;
 }
 
 /** Panel image with object-fit:cover — mirrors .panel-art CSS */
-export function PanelImage({ src, imageOffsetX, imageOffsetY }: PanelImageProps) {
+export function PanelImage({ src, imageOffsetX, imageOffsetY, imageScale }: PanelImageProps) {
   const style = {
     ...(imageOffsetX != null ? { ["--panel-art-offset-x" as const]: `${Math.round(imageOffsetX)}px` } : {}),
     ...(imageOffsetY != null ? { ["--panel-art-offset-y" as const]: `${Math.round(imageOffsetY)}px` } : {}),
+    ...(imageScale != null ? { ["--panel-art-scale" as const]: imageScale } : {}),
   } as React.CSSProperties;
 
   return (

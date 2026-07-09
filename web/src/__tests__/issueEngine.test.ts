@@ -43,6 +43,7 @@ function makePanel(overrides: Partial<PagePanel> = {}): PagePanel {
     sfx: [],
     image_offset_x: null,
     image_offset_y: null,
+    image_scale: null,
     grid_column: null,
     grid_row: null,
     x: null,

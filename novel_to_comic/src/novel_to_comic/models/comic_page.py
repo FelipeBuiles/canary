@@ -264,6 +264,8 @@ class PagePanel(BaseModel):
     # Optional panel image offset in px from the default object-position.
     image_offset_x: float | None = None
     image_offset_y: float | None = None
+    # Optional art scale for crop reframing. None keeps the default 1x crop.
+    image_scale: float | None = Field(default=None, ge=1.0, le=2.5)
     # CSS Grid placement — None = CSS nth-child rules handle it automatically.
     # The web editor sets these when the user rearranges panels on a page.
     grid_column: str | None = None              # e.g. "1 / 3"
