@@ -34,6 +34,8 @@ interface LayoutModeProps {
   onResetPanelFrame: (panelId: string) => void;
   onDeleteElement: (panelId: string, type: "bubble" | "sfx", elementId: string) => void;
   onUnpin: (panelId: string, type: "bubble" | "sfx", elementId: string) => void;
+  /** Re-fetch missing page thumbnails while compose is still rendering. */
+  shouldRetryThumbs?: boolean;
 }
 
 export function LayoutMode({
@@ -63,6 +65,7 @@ export function LayoutMode({
   onResetPanelFrame,
   onDeleteElement,
   onUnpin,
+  shouldRetryThumbs,
 }: LayoutModeProps) {
   const { data: lettering } = useLetteringStyle(project);
   const canvasShellRef = useRef<HTMLElement>(null);
@@ -186,6 +189,7 @@ export function LayoutMode({
             pages={pageList}
             currentPage={pageNumber}
             onSelect={onPageSelect}
+            shouldRetryThumbs={shouldRetryThumbs}
           />
         </aside>
 

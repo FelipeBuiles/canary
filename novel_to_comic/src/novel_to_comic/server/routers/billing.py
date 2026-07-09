@@ -107,7 +107,14 @@ async def create_checkout(
     origin = request.headers.get("origin", "http://localhost:5173")
 
     try:
-        session = stripe.checkout.Session.create(
+        # Build the checkout payload. ToS consent is conditional: only enabled
+        # when SCENEWRIGHT_TERMS_URL is set AND published in the Stripe Dashboard
+        # (dashboard.stripe.com/settings/public). Stripe rejects the consent field
+        # if the Dashboard ToS URL isn't configured — and most sandbox/test accounts
+        # haven't completed their business profile, so requiring ToS consent during
+        # development is impractical. Leaving SCENEWRIGHT_TERMS_URL unset skips
+        # consent collection entirely (browsewrap ToS on signup still applies).
+        kwargs: dict[str, Any] = dict(
             payment_method_types=["card"],
             line_items=[{
                 "price_data": {
@@ -118,15 +125,16 @@ async def create_checkout(
                 "quantity": 1,
             }],
             mode="payment",
-            # Surface the ToS at the moment of payment and require explicit consent.
-            # Stripe records the acceptance; this is the strongest consent signal we
-            # collect (stronger than browsewrap text on signup).
-            terms_of_service_url=branding.terms_url,
-            consent_collection={"terms_of_service": "required"},
             success_url=f"{origin}/credits?success=true",
             cancel_url=f"{origin}/credits",
             metadata={"user_id": user_id, "package": package_id},
         )
+        if branding.terms_url:
+            # Require explicit ToS consent at payment time. Stripe records the
+            # acceptance; this is the strongest consent signal we collect
+            # (stronger than the browsewrap text on signup).
+            kwargs["consent_collection"] = {"terms_of_service": "required"}
+        session = stripe.checkout.Session.create(**kwargs)
     except stripe.error.StripeError as exc:
         raise _wrap_stripe_error(exc) from exc
 

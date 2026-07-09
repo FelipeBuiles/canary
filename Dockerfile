@@ -80,11 +80,20 @@ RUN cd novel_to_comic && uv sync --extra web --frozen --no-dev
 # two-image split but inside one container.
 #
 # `[proxy]` pulls the proxy-server extras (uvicorn, fastapi, gunicorn,
-# websockets, anthropic, vertexai, google-cloud-aiplatform, …) that the
-# docker.litellm.ai prebuilt image ships with. Without it the proxy boots
-# then immediately ModuleNotFoundError-exits.
+# websockets, anthropic, …) that the docker.litellm.ai prebuilt image ships
+# with. Without it the proxy boots then immediately ModuleNotFoundError-exits.
+#
+# Vertex AI support is NOT in [proxy] (the Google provider deps are optional in
+# litellm 1.83.14). Without google-cloud-aiplatform + google-auth the proxy
+# boots cleanly but every vertex_ai/* model group 500s at request time with
+# "ModuleNotFoundError: No module named 'google'" — which silently breaks the
+# whole pipeline (extract/panel/prompt/image stages all route to Vertex). The
+# prebuilt docker.litellm.ai image ships these; we add them explicitly to match.
 RUN python -m venv /app/.venv-litellm \
-    && /app/.venv-litellm/bin/pip install --no-cache-dir 'litellm[proxy]==1.83.14'
+    && /app/.venv-litellm/bin/pip install --no-cache-dir 'litellm[proxy]==1.83.14' \
+    && /app/.venv-litellm/bin/pip install --no-cache-dir \
+        'google-cloud-aiplatform>=1.133' \
+        'google-auth>=2.49'
 
 # LiteLLM config + custom handlers (vertex-multimodal / reve / fal-queue).
 # PYTHONPATH makes the handlers importable; config.yaml's custom_provider_map

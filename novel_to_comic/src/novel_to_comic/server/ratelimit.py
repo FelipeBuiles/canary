@@ -11,6 +11,8 @@ Limits are env-configurable so they can be tuned without a code change:
 - ``CANARY_RATE_LIMIT_CREATE`` (default ``10/minute``) — project creation / upload.
 - ``CANARY_RATE_LIMIT_COST``   (default ``60/minute``) — credit-charged actions
   (run / regen). These are also credit-gated; the limiter is a backstop.
+- ``CANARY_RATE_LIMIT_EXPORT`` (default ``3/minute``) — PDF/CBZ export, which
+  re-renders the whole book on each call and is not credit-charged.
 """
 
 from __future__ import annotations
@@ -68,3 +70,13 @@ def create_limit() -> str:
 def cost_limit() -> str:
     """Per-IP limit for credit-charged actions (run / regen)."""
     return os.environ.get("CANARY_RATE_LIMIT_COST", "60/minute")
+
+
+def export_limit() -> str:
+    """Per-IP limit for PDF/CBZ export (CPU + memory bound, no credit charge).
+
+    Export re-runs the full compose stage on every call; without a cap a script
+    looping export on a large project can saturate the single uvicorn worker.
+    Default is intentionally low (3/min) since each call renders every page.
+    """
+    return os.environ.get("CANARY_RATE_LIMIT_EXPORT", "3/minute")

@@ -207,7 +207,7 @@ function BubbleInspector({
   const isPinned = bubble.x != null && bubble.y != null;
 
   const tv = resolveThemeVars("default");
-  const themeFs = parseInt(tv["--bubble-font-size"] ?? "36");
+  const themeFs = parseInt(tv["--bubble-font-size"] ?? "64");
   const themeRadius = parseInt(tv["--bubble-radius"] ?? "14");
   const themeBorder = parseInt(tv["--bubble-border-width"] ?? "2");
 

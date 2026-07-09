@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { PageSummary } from "../../types/api";
 
 interface PageNavigatorProps {
@@ -5,6 +6,16 @@ interface PageNavigatorProps {
   pages: PageSummary[];
   currentPage: number;
   onSelect: (pageNum: number) => void;
+  /**
+   * While true, thumbnails whose PNG has not loaded yet keep re-fetching on an
+   * interval (cache-busting query param). The compose stage writes page PNGs
+   * in a render phase that runs *after* the page JSON, so on first reach the
+   * PNGs can still be missing — without this, a one-shot onError hides the
+   * thumbnail forever (the page-number placeholder stays, the image never
+   * recovers until a remount). Drive this from the compose stage status
+   * (running → retry, otherwise stop).
+   */
+  shouldRetryThumbs?: boolean;
 }
 
 /**
@@ -13,9 +24,49 @@ interface PageNavigatorProps {
  * full-resolution panel images per thumbnail is far too heavy for a rail.
  * They can lag behind unexported edits; the canvas is the live view.
  */
-function pageThumbUrl(project: string, pageNumber: number): string {
+function pageThumbUrl(project: string, pageNumber: number, tick: number): string {
   const name = `page_${String(pageNumber).padStart(3, "0")}.png`;
-  return `/api/projects/${encodeURIComponent(project)}/files/compose/pages/${name}`;
+  // `t` cache-busts so the browser actually re-requests after a 404 while the
+  // compose renderer is still catching up. t=0 is omitted to keep the common
+  // (PNG already present) path identical to the old behavior.
+  return tick > 0
+    ? `/api/projects/${encodeURIComponent(project)}/files/compose/pages/${name}?t=${tick}`
+    : `/api/projects/${encodeURIComponent(project)}/files/compose/pages/${name}`;
+}
+
+const THUMB_RETRY_MS = 3000;
+
+function Thumb({
+  project,
+  pageNumber,
+  shouldRetry,
+}: {
+  project: string;
+  pageNumber: number;
+  shouldRetry: boolean;
+}) {
+  // `failed` means the last fetch 404'd; `tick` cache-busts the next attempt.
+  const [failed, setFailed] = useState(false);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    // Only poll while the PNG is missing AND we're allowed to retry (compose
+    // still running). Once the stage is complete, stop hammering the server.
+    if (!failed || !shouldRetry) return;
+    const id = window.setInterval(() => setTick((t) => t + 1), THUMB_RETRY_MS);
+    return () => window.clearInterval(id);
+  }, [failed, shouldRetry]);
+
+  return (
+    <img
+      src={pageThumbUrl(project, pageNumber, tick)}
+      alt={`Page ${pageNumber} thumbnail`}
+      className="relative h-full w-full object-contain"
+      loading="lazy"
+      onLoad={() => setFailed(false)}
+      onError={() => setFailed(true)}
+    />
+  );
 }
 
 export function PageNavigator({
@@ -23,6 +74,7 @@ export function PageNavigator({
   pages,
   currentPage,
   onSelect,
+  shouldRetryThumbs = false,
 }: PageNavigatorProps) {
   return (
     <div className="min-h-0 border-[3px] border-ink-black bg-pulp-paper shadow-[3px_3px_0_0_var(--color-ink-black)] md:flex md:max-h-full md:flex-col">
@@ -50,15 +102,10 @@ export function PageNavigator({
                 <span className="absolute inset-0 flex items-center justify-center font-display text-[1.4rem] font-black text-ink-black/15">
                   {p.page_number}
                 </span>
-                <img
-                  src={pageThumbUrl(project, p.page_number)}
-                  alt={`Page ${p.page_number} thumbnail`}
-                  className="relative h-full w-full object-contain"
-                  loading="lazy"
-                  onError={(e) => {
-                    // No PNG rendered yet — leave the page-number placeholder
-                    e.currentTarget.style.display = "none";
-                  }}
+                <Thumb
+                  project={project}
+                  pageNumber={p.page_number}
+                  shouldRetry={shouldRetryThumbs}
                 />
               </div>
               <div className="flex items-center justify-between border-t border-ink-black/15 px-1.5 py-1.5">

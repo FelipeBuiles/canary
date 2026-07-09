@@ -454,6 +454,7 @@ export function ComposeRoom() {
               onResetPanelFrame={handleResetPanelFrame}
               onDeleteElement={handleDeleteElement}
               onUnpin={handleUnpin}
+              shouldRetryThumbs={composeStageStatus === "running"}
             />
       )}
 
