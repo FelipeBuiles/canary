@@ -92,6 +92,7 @@ export function PanelCell({
         src={imageSrc}
         imageOffsetX={panel.image_offset_x}
         imageOffsetY={panel.image_offset_y}
+        imageScale={panel.image_scale}
       />
 
       {Object.entries(narrationByZone).map(([zoneClass, bubbles]) => (

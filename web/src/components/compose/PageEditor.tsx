@@ -3,6 +3,8 @@ import type { ComicPage, LetteringStyle } from "../../types/api";
 import { ScaledContainer } from "./ScaledContainer";
 import { ComicPageCanvas } from "./ComicPageCanvas";
 import { exceedsThreshold } from "./coordinates";
+import { measureLetteringIssues } from "../../lib/letteringMetrics";
+import type { ComposeIssue } from "../../lib/issueEngine";
 
 function parseSfxIndexFromId(elementId: string): number {
   const m = elementId.match(/__sfx__(\d+)$/);
@@ -29,6 +31,7 @@ interface PageEditorProps {
     x: number,
     y: number,
   ) => void;
+  onLetteringIssues?: (pageNumber: number, issues: ComposeIssue[]) => void;
 }
 
 interface ElementDragState {
@@ -76,6 +79,7 @@ export function PageEditor({
   onPanelReframeStart,
   onPanelReframeDragEnd,
   onDragEnd,
+  onLetteringIssues,
 }: PageEditorProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const scaleRef = useRef(0);
@@ -250,6 +254,25 @@ export function PageEditor({
   );
 
   const displayPage = buildDisplayPage(page, dragPreview ?? committedDrag, panelDragPreview ?? committedPanelDrag);
+
+  useEffect(() => {
+    if (!onLetteringIssues) return;
+    let cancelled = false;
+    let frame = 0;
+    const report = () => {
+      if (cancelled || !canvasRef.current) return;
+      onLetteringIssues(displayPage.page_number, measureLetteringIssues(canvasRef.current, displayPage));
+    };
+    frame = requestAnimationFrame(report);
+    const observer = new ResizeObserver(report);
+    if (canvasRef.current) observer.observe(canvasRef.current);
+    document.fonts?.ready.then(report).catch(() => undefined);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [displayPage, lettering, onLetteringIssues]);
 
   const selectedPanelId = selectedId
     ? page.panels.find((panel) =>

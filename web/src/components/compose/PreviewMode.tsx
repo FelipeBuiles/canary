@@ -23,9 +23,11 @@ interface PreviewModeProps {
   isExporting: boolean;
   outputLanguage: "en" | "es" | "fr";
   isTranslatingBubbles: boolean;
+  exportError: string | null;
   issues: ComposeIssue[];
   onPageSelect: (idx: number) => void;
   onExport: (format: "pdf" | "cbz") => void;
+  onReviewLettering: () => void;
   onOutputLanguageChange: (lang: "en" | "es" | "fr") => void;
   onTranslateBubbles: (lang: "en" | "es" | "fr") => void;
 }
@@ -52,16 +54,23 @@ export function PreviewMode({
   isExporting,
   outputLanguage,
   isTranslatingBubbles,
+  exportError,
   issues,
   onPageSelect,
   onExport,
+  onReviewLettering,
   onOutputLanguageChange,
   onTranslateBubbles,
 }: PreviewModeProps) {
   const [exportDrawerFormat, setExportDrawerFormat] = useState<"pdf" | "cbz" | null>(null);
   const blockingIssues = issues.filter((i) => i.severity === "error");
+  const blockingLetteringIssues = blockingIssues.filter((issue) => issue.type.startsWith("lettering_"));
 
   function handleExportClick(format: "pdf" | "cbz") {
+    if (blockingLetteringIssues.length > 0) {
+      onReviewLettering();
+      return;
+    }
     if (blockingIssues.length > 0 || issues.length > 0) {
       setExportDrawerFormat(format);
     } else {
@@ -145,6 +154,11 @@ export function PreviewMode({
               {pageList.length} page{pageList.length !== 1 ? "s" : ""} · {totalPanels} panel{totalPanels !== 1 ? "s" : ""} · {totalLettering} lettering item{totalLettering !== 1 ? "s" : ""}
             </div>
             <div className="space-y-1.5">
+              {exportError && (
+                <p role="alert" className="font-body text-[0.72rem] font-semibold leading-snug text-hero-red">
+                  {exportError}
+                </p>
+              )}
               <Button size="sm" fullWidth onClick={() => handleExportClick("pdf")} disabled={isExporting}>
                 {isExporting ? "EXPORTING…" : "↓ DOWNLOAD PDF"}
               </Button>

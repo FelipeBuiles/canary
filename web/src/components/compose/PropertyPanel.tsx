@@ -56,7 +56,10 @@ interface PropertyPanelProps {
   onUpdateSfx: (panelId: string, sfxIndex: number, patch: Partial<Sfx>) => void;
   onDeleteElement: (panelId: string, type: "bubble" | "sfx", elementId: string) => void;
   onUnpin: (panelId: string, type: "bubble" | "sfx", elementId: string) => void;
+  onCenterPanelFrame: (panelId: string) => void;
   onResetPanelFrame: (panelId: string) => void;
+  onPreviewPanelScale: (panelId: string, scale: number) => void;
+  onCommitPanelScale: (panelId: string, scale: number) => void;
 }
 
 function parseSfxIndexFromId(elementId: string): number {
@@ -132,28 +135,25 @@ export function PropertyPanel({
   onUpdateSfx,
   onDeleteElement,
   onUnpin,
+  onCenterPanelFrame,
   onResetPanelFrame,
+  onPreviewPanelScale,
+  onCommitPanelScale,
 }: PropertyPanelProps) {
   // Panel reframe inspector
   if (!selection && panelReframeId) {
     const panelIdx = page.panels.findIndex((p) => p.id === panelReframeId);
     const panel = page.panels[panelIdx];
-    const hasOffset = panel && (panel.image_offset_x != null || panel.image_offset_y != null);
-    return (
-      <Card className="overflow-hidden shadow-[3px_3px_0_0_var(--color-ink-black)]">
-        <SurfaceHeader kicker="CANVAS" title={`PANEL ${panelIdx + 1} · REFRAME`} />
-        <div className="space-y-3 p-3">
-          <p className="text-[0.72rem] leading-snug text-ink-black/50">
-            Drag on the panel to shift the image. Escape to exit.
-          </p>
-          {hasOffset && (
-            <Button variant="secondary" size="sm" onClick={() => onResetPanelFrame(panelReframeId)}>
-              RESET FRAMING
-            </Button>
-          )}
-        </div>
-      </Card>
-    );
+    if (!panel) return null;
+    return <PanelReframeInspector
+      key={panel.id}
+      panel={panel}
+      panelIndex={panelIdx}
+      onPreviewScale={onPreviewPanelScale}
+      onCommitScale={onCommitPanelScale}
+      onCenter={() => onCenterPanelFrame(panelReframeId)}
+      onReset={() => onResetPanelFrame(panelReframeId)}
+    />;
   }
 
   if (!selection) return null;
@@ -186,6 +186,100 @@ export function PropertyPanel({
       onUnpin={() => onUnpin(selection.panelId, "sfx", selection.elementId)}
       onDelete={() => onDeleteElement(selection.panelId, "sfx", selection.elementId)}
     />
+  );
+}
+
+function PanelReframeInspector({
+  panel,
+  panelIndex,
+  onPreviewScale,
+  onCommitScale,
+  onCenter,
+  onReset,
+}: {
+  panel: PagePanel;
+  panelIndex: number;
+  onPreviewScale: (panelId: string, scale: number) => void;
+  onCommitScale: (panelId: string, scale: number) => void;
+  onCenter: () => void;
+  onReset: () => void;
+}) {
+  const persistedZoom = panel.image_scale ?? 1;
+  const [zoom, setZoom] = useState(persistedZoom);
+  const zoomRef = useRef(persistedZoom);
+  const committedZoomRef = useRef<number | null>(null);
+  const hasOffset = panel.image_offset_x != null || panel.image_offset_y != null;
+  const hasCustomFrame = hasOffset || panel.image_scale != null;
+
+  function previewZoom(raw: number) {
+    const nextZoom = Math.min(2.5, Math.max(1, Number(raw.toFixed(2))));
+    zoomRef.current = nextZoom;
+    setZoom(nextZoom);
+    onPreviewScale(panel.id, nextZoom);
+  }
+
+  function commitZoom() {
+    const nextZoom = zoomRef.current;
+    if (committedZoomRef.current === nextZoom) return;
+    committedZoomRef.current = nextZoom;
+    onCommitScale(panel.id, nextZoom);
+  }
+
+  function resetFrame() {
+    zoomRef.current = 1;
+    setZoom(1);
+    committedZoomRef.current = 1;
+    onPreviewScale(panel.id, 1);
+    onReset();
+  }
+
+  return (
+    <Card className="overflow-hidden shadow-[3px_3px_0_0_var(--color-ink-black)]">
+      <SurfaceHeader kicker="CANVAS" title={`PANEL ${panelIndex + 1} · REFRAME`} />
+      <div className="space-y-4 p-3">
+        <p className="text-[0.72rem] leading-snug text-ink-black/50">
+          Drag on the panel to pan the art. Use zoom to tighten the crop. Escape to exit.
+        </p>
+
+        <div>
+          <FieldLabel htmlFor={`panel-zoom-${panel.id}`}>
+            ZOOM <span className="ml-1 text-ink-black/35">· {Math.round(zoom * 100)}%</span>
+          </FieldLabel>
+          <input
+            id={`panel-zoom-${panel.id}`}
+            type="range"
+            min="1"
+            max="2.5"
+            step="0.05"
+            value={zoom}
+            aria-label="Panel image zoom"
+            onChange={(event) => previewZoom(Number(event.target.value))}
+            onPointerUp={commitZoom}
+            onPointerCancel={commitZoom}
+            onKeyUp={(event) => {
+              if (["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp", "End", "Home", "PageDown", "PageUp"].includes(event.key)) {
+                commitZoom();
+              }
+            }}
+            onBlur={commitZoom}
+            className="mt-2 w-full cursor-pointer accent-hero-red"
+          />
+          <div className="mt-1 flex justify-between font-meta text-[0.48rem] tracking-[0.1em] text-ink-black/35">
+            <span>100%</span>
+            <span>250%</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <Button variant="secondary" size="xs" disabled={!hasOffset} onClick={onCenter}>
+            CENTER IMAGE
+          </Button>
+          <Button variant="outline" size="xs" disabled={!hasCustomFrame} onClick={resetFrame}>
+            RESET FRAMING
+          </Button>
+        </div>
+      </div>
+    </Card>
   );
 }
 

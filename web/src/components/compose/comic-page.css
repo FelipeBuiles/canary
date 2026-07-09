@@ -129,6 +129,7 @@
 .panel {
   position: relative;
   overflow: hidden;
+  container-type: inline-size;
   border: var(--panel-border-width) solid var(--panel-border);
   background: var(--panel-bg);
 }
@@ -192,6 +193,8 @@
     calc(50% + var(--panel-art-offset-x, 0px))
     calc(20% + var(--panel-art-offset-y, 0px));
   display: block;
+  transform: scale(var(--panel-art-scale, 1));
+  transform-origin: center;
   user-select: none;
   pointer-events: none;
 }
@@ -291,6 +294,17 @@
   overflow-wrap: break-word;
   user-select: none;
   -webkit-user-select: none;
+}
+
+/* Keep lettering consistent across a page while easing it down in the
+   narrowest grid panels. Explicit per-bubble sizes still win inline. */
+@supports (width: 1cqw) {
+  .caption {
+    font-size: clamp(40px, 5cqw, max(40px, var(--caption-font-size)));
+  }
+  .bubble {
+    font-size: clamp(44px, 5.5cqw, max(44px, var(--bubble-font-size)));
+  }
 }
 .bubble.right  { align-self: flex-end; }
 .bubble.center { align-self: center; max-width: var(--bubble-center-width); }

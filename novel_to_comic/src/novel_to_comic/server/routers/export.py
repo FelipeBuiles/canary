@@ -6,6 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, RedirectResponse
 
 from novel_to_comic.assembly.lettering_style import lettering_style_path
+from novel_to_comic.assembly.lettering_preflight import (
+    has_blocking_lettering_issues,
+    inspect_project_lettering,
+)
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.stages import s8_compose
 from novel_to_comic.storage import export_url, r2_configured, upload_export
@@ -30,6 +34,17 @@ async def trigger_export(
     fmt = format.lower()
     if fmt not in ("pdf", "cbz"):
         raise HTTPException(400, "Format must be 'pdf' or 'cbz'")
+
+    lettering_issues = await inspect_project_lettering(project_dir)
+    if has_blocking_lettering_issues(lettering_issues):
+        blocking = [issue.as_dict() for issue in lettering_issues if issue.severity == "error"]
+        raise HTTPException(
+            422,
+            {
+                "message": "Fix the clipped or art-obscuring lettering before export.",
+                "issues": blocking,
+            },
+        )
 
     export_path = project_dir / "exports" / f"comic.{fmt}"
 

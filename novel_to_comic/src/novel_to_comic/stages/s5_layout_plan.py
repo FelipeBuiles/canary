@@ -21,6 +21,7 @@ import hashlib
 import json
 import logging
 import math
+import re
 from pathlib import Path
 
 from rich.console import Console
@@ -85,6 +86,8 @@ logger = logging.getLogger("canary.plan")
 # a last resort.
 _MAX_VISUAL_PER_PANEL = 7
 _MAX_DIALOGUE_PER_PANEL = 4
+_MAX_DIALOGUE_WORDS_PER_PANEL = 30
+_MAX_NARRATION_WORDS_PER_PANEL = 20
 
 # Average beats per panel used to derive a concrete target panel count.
 _BEATS_PER_PANEL_AVG = 3.0
@@ -275,6 +278,18 @@ def _is_dialogue_beat(beat: ScreenplayBeat) -> bool:
     return beat.type in ("dialogue", "thought")
 
 
+def _word_count(value: str | None) -> int:
+    return len(re.findall(r"\S+", value or ""))
+
+
+def _dialogue_word_count(beat: ScreenplayBeat) -> int:
+    return _word_count(beat.content) if _is_dialogue_beat(beat) else 0
+
+
+def _narration_word_count(beat: ScreenplayBeat) -> int:
+    return _word_count(beat.content) if beat.type == "narration" else 0
+
+
 def _dialogue_line(beat: ScreenplayBeat) -> list[dict[str, str | None]]:
     if _is_dialogue_beat(beat):
         return [DialogueLine(
@@ -451,6 +466,20 @@ def _validate_llm_specs(specs: list[LLMPanelSpec], beats: list[ScreenplayBeat]) 
             raise ValueError(
                 f"panel {panel_number} covers {dialogue_count} dialogue beats; "
                 f"maximum is {_MAX_DIALOGUE_PER_PANEL}"
+            )
+
+        dialogue_words = sum(_dialogue_word_count(beats[idx - 1]) for idx in spec.beat_indices)
+        if dialogue_words > _MAX_DIALOGUE_WORDS_PER_PANEL:
+            raise ValueError(
+                f"panel {panel_number} contains {dialogue_words} dialogue words; "
+                f"maximum is {_MAX_DIALOGUE_WORDS_PER_PANEL}"
+            )
+
+        narration_words = sum(_narration_word_count(beats[idx - 1]) for idx in spec.beat_indices)
+        if narration_words > _MAX_NARRATION_WORDS_PER_PANEL:
+            raise ValueError(
+                f"panel {panel_number} contains {narration_words} narration words; "
+                f"maximum is {_MAX_NARRATION_WORDS_PER_PANEL}"
             )
 
         for idx in covered_visual:
@@ -682,24 +711,36 @@ def _split_panel_to_caps(
     chunks: list[list[int]] = [[]]
     visual_in_chunk = 0
     dialogue_in_chunk = 0
+    dialogue_words_in_chunk = 0
+    narration_words_in_chunk = 0
     for idx in spec.beat_indices:
         if 1 <= idx <= len(beats):
             beat = beats[idx - 1]
             adds_visual = 1 if beat.type != "narration" else 0
             adds_dialogue = 1 if _is_dialogue_beat(beat) else 0
+            adds_dialogue_words = _dialogue_word_count(beat)
+            adds_narration_words = _narration_word_count(beat)
         else:
             adds_visual = 0
             adds_dialogue = 0
+            adds_dialogue_words = 0
+            adds_narration_words = 0
         if chunks[-1] and (
             visual_in_chunk + adds_visual > _MAX_VISUAL_PER_PANEL
             or dialogue_in_chunk + adds_dialogue > _MAX_DIALOGUE_PER_PANEL
+            or dialogue_words_in_chunk + adds_dialogue_words > _MAX_DIALOGUE_WORDS_PER_PANEL
+            or narration_words_in_chunk + adds_narration_words > _MAX_NARRATION_WORDS_PER_PANEL
         ):
             chunks.append([])
             visual_in_chunk = 0
             dialogue_in_chunk = 0
+            dialogue_words_in_chunk = 0
+            narration_words_in_chunk = 0
         chunks[-1].append(idx)
         visual_in_chunk += adds_visual
         dialogue_in_chunk += adds_dialogue
+        dialogue_words_in_chunk += adds_dialogue_words
+        narration_words_in_chunk += adds_narration_words
     return [spec.model_copy(update={"beat_indices": chunk}) for chunk in chunks]
 
 
@@ -727,9 +768,21 @@ def _autosplit_overflow_panels(
             1 for idx in spec.beat_indices
             if 1 <= idx <= len(beats) and _is_dialogue_beat(beats[idx - 1])
         )
+        dialogue_words = sum(
+            _dialogue_word_count(beats[idx - 1])
+            for idx in spec.beat_indices
+            if 1 <= idx <= len(beats)
+        )
+        narration_words = sum(
+            _narration_word_count(beats[idx - 1])
+            for idx in spec.beat_indices
+            if 1 <= idx <= len(beats)
+        )
         if (
             visual_count > _MAX_VISUAL_PER_PANEL
             or dialogue_count > _MAX_DIALOGUE_PER_PANEL
+            or dialogue_words > _MAX_DIALOGUE_WORDS_PER_PANEL
+            or narration_words > _MAX_NARRATION_WORDS_PER_PANEL
         ):
             chunks = _split_panel_to_caps(spec, beats)
             new_specs.extend(chunks)
@@ -1125,6 +1178,13 @@ def _panels_are_visually_duplicate(a: PlannedPanel, b: PlannedPanel) -> bool:
         if line.get("type") != "narration"
     )
     if spoken > _MAX_DIALOGUE_PER_PANEL:
+        return False
+    spoken_words = sum(
+        _word_count(str(line.get("text") or ""))
+        for line in list(a.dialogue) + list(b.dialogue)
+        if line.get("type") != "narration"
+    )
+    if spoken_words > _MAX_DIALOGUE_WORDS_PER_PANEL:
         return False
     return True
 

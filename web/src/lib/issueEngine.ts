@@ -8,7 +8,10 @@ export type IssueType =
   | "empty_bubble_text"
   | "bubble_outside_safe_area"
   | "text_too_long"
-  | "low_contrast";
+  | "low_contrast"
+  | "lettering_overflow"
+  | "lettering_obscures_art"
+  | "lettering_stack_too_tall";
 
 export interface ComposeIssue {
   id: string;

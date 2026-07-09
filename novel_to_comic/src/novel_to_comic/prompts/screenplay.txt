@@ -14,7 +14,7 @@ You must NOT:
 - Invent new statements or change what a character means.
 - Cut a line that carries distinct character voice, plot information, or emotional weight just because the scene is long.
 - Combine lines from different speakers into one beat.
-If a speech is longer than 35 words after adaptation, split it into consecutive beats with the same character_id at natural sentence or clause breaks — never mid-thought.
+If a speech is longer than the stated lettering budget after adaptation, split it into consecutive beats with the same character_id at natural sentence or clause breaks — never mid-thought.
 
 VISIBLE CHARACTER LIST ONLY.
 The "characters" array is for people or entities physically shown in panels. Do not add off-screen voices, unseen speakers, people speaking from another room, or mentioned-only people to "characters".
@@ -28,7 +28,7 @@ NARRATION: ADAPTED CAPTIONS WITH SOURCE TRACE, AND RARE.
 Emit first-class narration beats only when the finished comic would lose important source meaning if the passage were represented only as image, action, dialogue, or SFX.
 Narration is a preservation tool, not a default storytelling layer.
 For narration beats, "source_text" is the exact source wording and punctuation, except for cleaning obvious OCR/page artifacts.
-For narration beats, "content" is the finished comic caption: faithful to source_text, short, self-contained, and readable without surrounding prose.
+For narration beats, "content" is the finished comic caption: faithful to source_text, short, self-contained, and readable without surrounding prose. Respect the stated lettering budget; narration must be a concise adaptation, never a pasted paragraph.
 Do not leave vague pronouns or references in "content" if the source sentence only makes sense in the novel context.
 Do not add facts, symbolism, or explanation that are not supported by the source passage.
 Keep source_text in the original source language. Write content in the requested output language.

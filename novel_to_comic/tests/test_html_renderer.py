@@ -61,3 +61,22 @@ def test_pinned_narration_keeps_caption_style(tmp_path: Path):
 
     assert 'class="caption narration pinned"' in html
     assert '<svg class="tail-svg"' not in html
+
+
+def test_panel_image_scale_is_emitted_for_web_rendering(tmp_path: Path):
+    page = ComicPage(
+        page_number=1,
+        panels=[
+            PagePanel(
+                id="scene_001-001",
+                image_path="draw/panel.png",
+                scene_id="scene_001",
+                panel_number=1,
+                image_scale=1.5,
+            )
+        ],
+    )
+
+    html = build_page_html(page, tmp_path, image_url_fn=lambda path: f"https://example.test/{path}")
+
+    assert "--panel-art-scale: 1.50" in html

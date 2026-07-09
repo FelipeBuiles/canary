@@ -109,6 +109,7 @@ body {
 .panel {
   position: relative;
   overflow: hidden;
+  container-type: inline-size;
   border: var(--panel-border-width) solid var(--panel-border);
   background: var(--panel-bg);
 }
@@ -122,6 +123,8 @@ body {
     calc(50% + var(--panel-art-offset-x, 0px))
     calc(20% + var(--panel-art-offset-y, 0px));
   display: block;
+  transform: scale(var(--panel-art-scale, 1));
+  transform-origin: center;
 }
 
 /* ── Narration captions — auto (top of panel) ── */
@@ -219,6 +222,17 @@ body {
   overflow-wrap: break-word;
   user-select: none;
   -webkit-user-select: none;
+}
+
+/* Keep lettering consistent across a page while easing it down in the
+   narrowest grid panels. Explicit per-bubble sizes still win inline. */
+@supports (width: 1cqw) {
+  .caption {
+    font-size: clamp(40px, 5cqw, max(40px, var(--caption-font-size)));
+  }
+  .bubble {
+    font-size: clamp(44px, 5.5cqw, max(44px, var(--bubble-font-size)));
+  }
 }
 .bubble.right  { align-self: flex-end; }
 .bubble.center { align-self: center; max-width: var(--bubble-center-width); }
@@ -446,21 +460,21 @@ _THEME_HEADER = """\
  *    --caption-bg              background (#F7F0DC)
  *    --caption-border          border (#9B8A5A)
  *    --caption-color           text colour (#3A2A10)
- *    --caption-font-size       (52px)
+ *    --caption-font-size       (44px)
  *
  *  Speech / thought bubbles
  *    --bubble-bg               background (#FFFFFF)
  *    --bubble-border           border colour (#1A1A1A)
  *    --bubble-border-width     (2px)
  *    --bubble-radius           corner radius (14px)
- *    --bubble-font-size        (64px)
+ *    --bubble-font-size        (48px)
  *    --bubble-padding          (7px 11px)
  *    --bubble-max-width        max % of panel width (52%)
  *    --bubble-center-width     max % for centred bubbles (68%)
  *
  *  Speaker name labels (shown when 3+ characters in a panel)
  *    --speaker-color           (#664400)
- *    --speaker-font-size       (22px)
+ *    --speaker-font-size       (20px)
  *
  *  Thought bubbles
  *    --thought-border-style    "dashed" | "solid" | "dotted" (dashed)
@@ -495,7 +509,7 @@ def write_theme_css(project_dir: Path, theme_name: str) -> Path:
         if theme_vars:
             var_lines = "\n".join(f"  {k}: {v};" for k, v in theme_vars.items())
         else:
-            var_lines = "  /* base defaults active — uncomment to override: */\n  /* --bubble-font-size: 64px; */"
+            var_lines = "  /* base defaults active — uncomment to override: */\n  /* --bubble-font-size: 48px; */"
         path.write_text(_THEME_HEADER.format(theme_name=theme_name, var_lines=var_lines))
     return path
 
@@ -782,6 +796,8 @@ def _panel_html(
             style_parts.append(f"--panel-art-offset-x: {panel.image_offset_x:.0f}px")
         if panel.image_offset_y is not None:
             style_parts.append(f"--panel-art-offset-y: {panel.image_offset_y:.0f}px")
+        if panel.image_scale is not None:
+            style_parts.append(f"--panel-art-scale: {panel.image_scale:.2f}")
         art_style_attr = f' style="{_e("; ".join(style_parts))}"' if style_parts else ""
         art_html = f'  <img class="panel-art" src="{_e(image_url_fn(panel.image_path))}" alt=""{art_style_attr}>'
     else:
@@ -791,6 +807,8 @@ def _panel_html(
             style_parts.append(f"--panel-art-offset-x: {panel.image_offset_x:.0f}px")
         if panel.image_offset_y is not None:
             style_parts.append(f"--panel-art-offset-y: {panel.image_offset_y:.0f}px")
+        if panel.image_scale is not None:
+            style_parts.append(f"--panel-art-scale: {panel.image_scale:.2f}")
         art_style_attr = f' style="{_e("; ".join(style_parts))}"' if style_parts else ""
         art_html = (
             f'  <img class="panel-art" src="{img_path.as_uri()}" alt=""{art_style_attr}>'
@@ -969,6 +987,109 @@ async def browser_context():
             yield browser
         finally:
             await browser.close()
+
+
+async def inspect_html_lettering_metrics(
+    html_content: str,
+    *,
+    browser=None,
+) -> list[dict[str, object]]:
+    """Return rendered lettering coverage and bounds for each panel.
+
+    The inspection deliberately uses the same file-origin Chromium rendering
+    path as PNG export so local fonts, word wrapping, and the final CSS are all
+    represented in the measurement.  It does not mutate the HTML or project.
+    """
+
+    async def _inspect(b) -> list[dict[str, object]]:
+        ctx = await b.new_context(
+            viewport={"width": PAGE_W, "height": PAGE_H},
+            device_scale_factor=1,
+        )
+        page = await ctx.new_page()
+        with tempfile.NamedTemporaryFile(
+            suffix=".html", mode="w", encoding="utf-8", delete=False
+        ) as tf:
+            tf.write(html_content)
+            tmp = Path(tf.name)
+        try:
+            await page.goto(tmp.as_uri(), wait_until="networkidle")
+            await page.evaluate("document.fonts.ready")
+            metrics = await page.evaluate(
+                """() => {
+                  const rect = (element) => {
+                    const value = element.getBoundingClientRect();
+                    return { left: value.left, top: value.top, right: value.right, bottom: value.bottom,
+                      width: value.width, height: value.height };
+                  };
+                  const unionArea = (rects) => {
+                    const xs = [...new Set(rects.flatMap((r) => [r.left, r.right]))].sort((a, b) => a - b);
+                    let area = 0;
+                    for (let i = 0; i < xs.length - 1; i += 1) {
+                      const left = xs[i];
+                      const right = xs[i + 1];
+                      if (right <= left) continue;
+                      const ranges = rects
+                        .filter((r) => r.left < right && r.right > left)
+                        .map((r) => [r.top, r.bottom])
+                        .sort((a, b) => a[0] - b[0]);
+                      let covered = 0;
+                      let start = null;
+                      let end = null;
+                      for (const [top, bottom] of ranges) {
+                        if (start === null) { start = top; end = bottom; continue; }
+                        if (top > end) { covered += end - start; start = top; end = bottom; }
+                        else { end = Math.max(end, bottom); }
+                      }
+                      if (start !== null && end !== null) covered += end - start;
+                      area += (right - left) * covered;
+                    }
+                    return area;
+                  };
+                  const stackRatio = (group, panelRect) => {
+                    const children = [...group.children]
+                      .filter((child) => child.matches(".bubble, .caption"))
+                      .map(rect)
+                      .filter((child) => child.width > 0 && child.height > 0);
+                    if (children.length === 0 || panelRect.height <= 0) return 0;
+                    const top = Math.min(...children.map((child) => child.top));
+                    const bottom = Math.max(...children.map((child) => child.bottom));
+                    return Math.max(0, bottom - top) / panelRect.height;
+                  };
+                  return [...document.querySelectorAll(".panel[data-panel-id]")].map((panel) => {
+                    const panelRect = rect(panel);
+                    const lettering = [...panel.querySelectorAll(".bubble[data-id], .caption[data-id]")]
+                      .map((element) => ({ id: element.dataset.id, rect: rect(element) }))
+                      .filter(({ rect: value }) => value.width > 0 && value.height > 0);
+                    const overflow = lettering
+                      .filter(({ rect: value }) => (
+                        value.left < panelRect.left - 0.5 || value.top < panelRect.top - 0.5 ||
+                        value.right > panelRect.right + 0.5 || value.bottom > panelRect.bottom + 0.5
+                      ))
+                      .map(({ id }) => id);
+                    const coverage = panelRect.width > 0 && panelRect.height > 0
+                      ? unionArea(lettering.map(({ rect: value }) => value)) / (panelRect.width * panelRect.height)
+                      : 0;
+                    const stacks = [...panel.querySelectorAll(":scope > .captions, :scope > .bubble-auto")]
+                      .map((group) => stackRatio(group, panelRect));
+                    return {
+                      panel_id: panel.dataset.panelId,
+                      coverage_ratio: coverage,
+                      max_auto_stack_ratio: stacks.length ? Math.max(...stacks) : 0,
+                      overflowing_bubble_ids: overflow,
+                    };
+                  });
+                }"""
+            )
+            return metrics
+        finally:
+            tmp.unlink(missing_ok=True)
+            await ctx.close()
+
+    if browser is not None:
+        return await _inspect(browser)
+    async with browser_context() as b:
+        return await _inspect(b)
 
 
 async def render_html_to_png(

@@ -61,6 +61,10 @@ export async function apiFetch<T>(
       const parsed = JSON.parse(body) as { detail?: unknown };
       detail = parsed.detail;
       if (typeof parsed.detail === "string") message = parsed.detail;
+      if (parsed.detail && typeof parsed.detail === "object") {
+        const detailMessage = (parsed.detail as { message?: unknown }).message;
+        if (typeof detailMessage === "string") message = detailMessage;
+      }
     } catch {
       // Keep the raw response body when the server did not return JSON.
     }

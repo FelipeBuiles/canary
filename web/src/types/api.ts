@@ -631,6 +631,7 @@ export interface PagePanel {
   sfx: Sfx[];
   image_offset_x: number | null;
   image_offset_y: number | null;
+  image_scale: number | null;
   grid_column: string | null;
   grid_row: string | null;
   x: number | null;
