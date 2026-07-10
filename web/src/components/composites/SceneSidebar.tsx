@@ -54,7 +54,7 @@ export function SceneSidebar({
                     {s.label}
                   </span>
                   {s.isComplete && (
-                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-archive-sage" aria-label="Complete" />
+                    <span className="h-1.5 w-1.5 shrink-0 bg-archive-sage" aria-label="Complete" />
                   )}
                 </span>
                 {s.sceneTitle && (

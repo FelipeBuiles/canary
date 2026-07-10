@@ -1,7 +1,13 @@
 import { render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { StageRunning } from "../components/composites/StagePlaceholder";
 import { usePipelineStore } from "../store/pipeline";
+import { I18nProvider } from "../i18n";
+
+function renderStage(stage: ReactElement) {
+  return render(<I18nProvider>{stage}</I18nProvider>);
+}
 
 afterEach(() => {
   usePipelineStore.setState({ events: [] });
@@ -9,7 +15,7 @@ afterEach(() => {
 
 describe("StageRunning log ticker", () => {
   it("renders fine with zero events", () => {
-    render(<StageRunning stage="cast" itemsDone={1} itemsTotal={4} />);
+    renderStage(<StageRunning stage="cast" itemsDone={1} itemsTotal={4} />);
     expect(screen.getByText("RUNNING")).toBeTruthy();
     expect(screen.getByText("1 / 4")).toBeTruthy();
   });
@@ -26,7 +32,7 @@ describe("StageRunning log ticker", () => {
       ],
     });
 
-    render(<StageRunning stage="cast" itemsDone={2} itemsTotal={4} />);
+    renderStage(<StageRunning stage="cast" itemsDone={2} itemsTotal={4} />);
 
     expect(screen.getByText("Generating character reference sheets...")).toBeTruthy();
     expect(screen.getByText("Using existing ref sheet for Marlow")).toBeTruthy();
@@ -46,7 +52,7 @@ describe("StageRunning log ticker", () => {
       })),
     });
 
-    render(<StageRunning stage="extract" />);
+    renderStage(<StageRunning stage="extract" />);
 
     expect(screen.queryByText("Step 1")).toBeNull();
     expect(screen.queryByText("Step 2")).toBeNull();

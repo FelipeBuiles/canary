@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../hooks/useAuth";
-import { SettingsLayout } from "../components/ui/SettingsLayout";
+import { SettingsLayout, SettingsRow } from "../components/ui/SettingsLayout";
 import { Card } from "../components/ui/Card";
 import { TextField } from "../components/ui/Field";
 import { Button } from "../components/ui/Button";
@@ -10,20 +10,6 @@ const TABS = [
   { id: "email", label: "Email" },
   { id: "password", label: "Password" },
 ];
-
-function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <div className="grid gap-3 border-b border-ink-black/10 py-4 last:border-b-0 md:grid-cols-[220px_1fr] md:items-start md:gap-6">
-      <div>
-        <div className="font-meta text-[0.56rem] tracking-[0.18em] text-ink-black/55">{label}</div>
-        {hint && (
-          <p className="mt-1.5 text-[0.72rem] leading-5 text-ink-black/55">{hint}</p>
-        )}
-      </div>
-      <div className="min-w-0">{children}</div>
-    </div>
-  );
-}
 
 export function AccountPage() {
   const { user } = useAuth();
@@ -65,11 +51,11 @@ function EmailTab({ email }: { email: string }) {
   }
 
   return (
-    <Card className="px-5">
-      <Row label="CURRENT EMAIL">
+    <Card>
+      <SettingsRow label="CURRENT EMAIL">
         <span className="font-body text-[0.88rem] font-semibold">{email}</span>
-      </Row>
-      <Row label="CHANGE EMAIL" hint="You'll need to confirm the new address via email.">
+      </SettingsRow>
+      <SettingsRow label="CHANGE EMAIL" hint="You'll need to confirm the new address via email.">
         <form onSubmit={handleSubmit} className="flex flex-col gap-3 max-w-sm">
           <TextField
             type="email"
@@ -83,12 +69,12 @@ function EmailTab({ email }: { email: string }) {
             {busy ? "Updating…" : "Update Email"}
           </Button>
           {message && (
-            <p className={message.type === "ok" ? "text-archive-sage" : "text-hero-red"}>
+            <p role="alert" className={message.type === "ok" ? "border-[2px] border-archive-sage bg-chip-sage px-3 py-2 text-archive-sage" : "border-[2px] border-hero-red bg-chip-red/40 px-3 py-2 text-hero-red"}>
               {message.text}
             </p>
           )}
         </form>
-      </Row>
+      </SettingsRow>
     </Card>
   );
 }
@@ -128,8 +114,8 @@ function PasswordTab() {
   const canSubmit = password && confirm && password === confirm && password.length >= 6;
 
   return (
-    <Card className="px-5">
-      <Row label="CURRENT PASSWORD" hint="Enter your current password to authorize the change.">
+    <Card>
+      <SettingsRow label="CURRENT PASSWORD" hint="Enter your current password to authorize the change.">
         <TextField
           type="password"
           value={current}
@@ -137,8 +123,8 @@ function PasswordTab() {
           placeholder="Current password"
           className="max-w-sm bg-bristol"
         />
-      </Row>
-      <Row label="NEW PASSWORD" hint="Minimum 6 characters.">
+      </SettingsRow>
+      <SettingsRow label="NEW PASSWORD" hint="Minimum 6 characters.">
         <TextField
           type="password"
           value={password}
@@ -146,8 +132,8 @@ function PasswordTab() {
           placeholder="New password"
           className="max-w-sm bg-bristol"
         />
-      </Row>
-      <Row label="CONFIRM PASSWORD">
+      </SettingsRow>
+      <SettingsRow label="CONFIRM PASSWORD">
         <form onSubmit={handleSubmit} className="flex flex-col gap-3 max-w-sm">
           <TextField
             type="password"
@@ -161,12 +147,12 @@ function PasswordTab() {
             {busy ? "Updating…" : "Update Password"}
           </Button>
           {message && (
-            <p className={message.type === "ok" ? "text-archive-sage" : "text-hero-red"}>
+            <p role="alert" className={message.type === "ok" ? "border-[2px] border-archive-sage bg-chip-sage px-3 py-2 text-archive-sage" : "border-[2px] border-hero-red bg-chip-red/40 px-3 py-2 text-hero-red"}>
               {message.text}
             </p>
           )}
         </form>
-      </Row>
+      </SettingsRow>
     </Card>
   );
 }

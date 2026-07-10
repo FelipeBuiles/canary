@@ -105,7 +105,7 @@ function StatusStrip({
       <div className="flex items-center gap-3">
         <span className="font-body text-[0.9rem] font-bold text-ink-black">{sentence}</span>
         {allInked && (
-          <span className="animate-comic-pop inline-flex border-[2px] border-ink-black bg-narrator-gold px-2.5 py-1 font-meta text-[0.56rem] tracking-[0.18em] text-ink-black shadow-ink-sm">
+          <span className="animate-register-stamp inline-flex border-[2px] border-ink-black bg-narrator-gold px-2.5 py-1 font-meta text-[0.56rem] font-bold tracking-[0.08em] text-ink-black shadow-ink-sm">
             ALL PANELS INKED
           </span>
         )}
@@ -682,63 +682,67 @@ export function DrawRoom() {
         allInked={allInked}
       />
 
-      <div className="flex flex-wrap items-center gap-3">
-        <RoomTabs
-          ariaLabel="Panel filter"
-          className="max-w-full"
-          tabs={filterChips.map(({ key, label, count }) => ({
-            key,
-            label,
-            count,
-            active: statusFilter === key,
-            onClick: () => setStatusFilter(key),
-          }))}
-        />
-
-        <div className="flex w-full flex-1 items-center justify-end gap-2 sm:w-auto sm:min-w-[14rem]">
-          {scenes.length > 1 && (
-            <Select
-              aria-label="Scene filter"
-              size="sm"
-              value={sceneFilter}
-              onValueChange={setSceneFilter}
-              className="shrink-0"
-              options={[
-                { value: "all", label: "All scenes" },
-                ...scenes.map((s) => ({ value: s, label: s.replace(/_/g, " ").toUpperCase() })),
-              ]}
-            />
-          )}
-          <input
-            type="search"
-            placeholder="Search panels…"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="min-w-0 flex-1 border-[2px] border-ink-black/20 bg-bristol px-3 py-1.5 font-body text-[0.78rem] text-ink-black placeholder:text-ink-black/35 focus:border-ink-black focus:outline-none sm:w-40 sm:flex-none"
+      <section className="border-[2px] border-ink-black bg-bristol shadow-paper-sm">
+        <div className="flex flex-wrap items-center gap-3 p-3 md:p-4">
+          <RoomTabs
+            ariaLabel="Panel filter"
+            className="max-w-full"
+            tabs={filterChips.map(({ key, label, count }) => ({
+              key,
+              label,
+              count,
+              active: statusFilter === key,
+              onClick: () => setStatusFilter(key),
+            }))}
           />
-          <div className="flex border-[2px] border-ink-black/20 overflow-hidden">
-            {(["grid", "list"] as const).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => handleSetViewMode(mode)}
-                className={`px-3 py-1.5 font-meta text-[0.6rem] tracking-[0.12em] transition-colors ${
-                  viewMode === mode ? "bg-ink-black text-bristol" : "bg-bristol text-ink-black/50 hover:text-ink-black"
-                }`}
-              >
-                {mode === "grid" ? "⊞" : "≡"}
-              </button>
-            ))}
+
+          <div className="flex w-full flex-1 items-center justify-end gap-2 sm:w-auto sm:min-w-[14rem]">
+            {scenes.length > 1 && (
+              <Select
+                aria-label="Scene filter"
+                size="sm"
+                value={sceneFilter}
+                onValueChange={setSceneFilter}
+                className="shrink-0"
+                options={[
+                  { value: "all", label: "All scenes" },
+                  ...scenes.map((s) => ({ value: s, label: s.replace(/_/g, " ").toUpperCase() })),
+                ]}
+              />
+            )}
+            <input
+              type="search"
+              aria-label="Search panels"
+              placeholder="Search panels…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="ui-field min-h-9 min-w-0 flex-1 py-1.5 text-[0.78rem] sm:w-44 sm:flex-none"
+            />
+            <div className="flex overflow-hidden border-[2px] border-ink-black/20">
+              {(["grid", "list"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => handleSetViewMode(mode)}
+                  aria-label={`${mode} view`}
+                  aria-pressed={viewMode === mode}
+                  className={`min-h-9 px-3 py-1.5 font-meta text-[0.68rem] font-bold transition-colors ${
+                    viewMode === mode ? "bg-ink-black text-bristol" : "bg-bristol text-ink-muted hover:text-ink-black"
+                  }`}
+                >
+                  {mode === "grid" ? "⊞" : "≡"}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
-      </div>
-
-      <p className="font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/40">
-        CLICK A PANEL TO OPEN IT · ⚑ TO FLAG FOR RE-WORK
-      </p>
+        <p className="border-t-[2px] border-ink-black/10 bg-surface-container px-4 py-2.5 font-meta text-[0.56rem] font-bold tracking-[0.08em] text-ink-muted">
+          OPEN VIEW TO INSPECT · ⚑ TO FLAG FOR RE-WORK
+        </p>
+      </section>
 
       {viewMode === "grid" ? (
-        <div className="grid gap-x-5 gap-y-7 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+        <div className="grid gap-x-5 gap-y-7 border-[2px] border-ink-black/10 bg-surface-container p-4 sm:grid-cols-2 md:p-5 lg:grid-cols-3 2xl:grid-cols-4">
           {displayImages.map((img) => {
             const key = `${img.scene_id}-${img.panel_number}`;
             const bust = id ? bustTimestamps[`${id}/${key}`] : undefined;
@@ -775,7 +779,7 @@ export function DrawRoom() {
           })}
         </div>
       ) : (
-        <div className="divide-y-[2px] divide-ink-black/10 border-[2px] border-ink-black/10">
+        <div className="divide-y-[2px] divide-ink-black/10 border-[2px] border-ink-black/10 bg-bristol">
           {displayImages.map((img) => {
             const key = `${img.scene_id}-${img.panel_number}`;
             const bust = id ? bustTimestamps[`${id}/${key}`] : undefined;
@@ -783,46 +787,48 @@ export function DrawRoom() {
             const state = getPanelDisplayState(img, panelInputsFor(img));
             const prompts = promptDescByKey.get(key);
             return (
-              <div
-                key={key}
-                className="flex cursor-pointer items-center gap-4 px-4 py-3 hover:bg-bristol/60 transition-colors"
-                onClick={() => setSelectedPanel({ sceneId: img.scene_id, panelNumber: img.panel_number })}
-              >
-                <div className="h-14 w-14 shrink-0 overflow-hidden bg-ink-black/10">
-                  {img.image_available && (
-                    <img src={imageUrl} alt={`Panel ${img.panel_number}`} className="h-full w-full object-cover" />
+              <div key={key} className="flex items-center transition-colors hover:bg-surface-container">
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-4 px-4 py-3 text-left"
+                  onClick={() => setSelectedPanel({ sceneId: img.scene_id, panelNumber: img.panel_number })}
+                >
+                  <div className="h-14 w-14 shrink-0 overflow-hidden bg-ink-black/10">
+                    {img.image_available && (
+                      <img src={imageUrl} alt={`Panel ${img.panel_number}`} className="h-full w-full object-contain" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-meta text-[0.56rem] font-bold tracking-[0.08em] text-ink-muted">
+                      {img.scene_id.replace(/_/g, " ").toUpperCase()} · PANEL {String(img.panel_number).padStart(2, "0")}
+                    </div>
+                    <div className="truncate font-body text-[0.82rem] font-semibold text-ink-black">
+                      {prompts?.title ?? `Panel ${String(img.panel_number).padStart(2, "0")}`}
+                    </div>
+                  </div>
+                  {(state === "failed" || state === "generating" || state === "queued" || state === "pending") && (
+                    <span className={`shrink-0 inline-flex h-6 items-center px-2 font-meta text-[0.54rem] font-bold tracking-[0.08em] ${
+                      state === "failed" ? "bg-hero-red text-bristol"
+                      : state === "generating" ? "animate-press-blink bg-narrator-gold text-ink-black"
+                      : state === "queued" ? "bg-chip-gold text-ink-black"
+                      : "bg-surface-variant text-ink-black"
+                    }`}>
+                      {state.toUpperCase()}
+                    </span>
                   )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="font-meta text-[0.52rem] tracking-[0.14em] text-ink-black/40">
-                    {img.scene_id.replace(/_/g, " ").toUpperCase()} · PANEL {String(img.panel_number).padStart(2, "0")}
-                  </div>
-                  <div className="truncate font-body text-[0.82rem] font-semibold text-ink-black">
-                    {prompts?.title ?? `Panel ${String(img.panel_number).padStart(2, "0")}`}
-                  </div>
-                </div>
+                </button>
                 {img.status === "done" && (
                   <button
                     type="button"
                     aria-pressed={!!img.flagged}
                     title={img.flagged ? "Unflag" : "Flag for re-work"}
-                    className={`shrink-0 inline-flex h-6 items-center px-1.5 font-meta text-[0.66rem] transition-colors ${
-                      img.flagged ? "bg-hero-red text-bristol" : "text-ink-black/30 hover:text-hero-red"
+                    className={`mr-3 inline-flex h-11 w-11 shrink-0 items-center justify-center font-meta text-[0.72rem] transition-colors ${
+                      img.flagged ? "bg-hero-red text-bristol" : "text-ink-muted hover:bg-chip-red/40 hover:text-hero-red"
                     }`}
-                    onClick={(e) => { e.stopPropagation(); handleToggleFlag(img); }}
+                    onClick={() => handleToggleFlag(img)}
                   >
                     ⚑
                   </button>
-                )}
-                {(state === "failed" || state === "generating" || state === "queued" || state === "pending") && (
-                  <span className={`shrink-0 inline-flex h-5 items-center px-2 font-meta text-[0.52rem] tracking-[0.1em] ${
-                    state === "failed" ? "bg-hero-red text-bristol"
-                    : state === "generating" ? "bg-narrator-gold text-ink-black animate-pulse"
-                    : state === "queued" ? "bg-narrator-gold/30 text-ink-black"
-                    : "bg-ink-black/15 text-ink-black"
-                  }`}>
-                    {state.toUpperCase()}
-                  </span>
                 )}
               </div>
             );

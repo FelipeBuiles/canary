@@ -23,6 +23,7 @@ import {
 import { useShowDevContent } from "../../lib/devContent";
 import type { Character, Location, StoryBible } from "../../types/api";
 import type { DrawerKind } from "../../lib/stations";
+import { useI18n } from "../../i18n";
 
 function VisualAnchorEditor({
   value,
@@ -35,8 +36,8 @@ function VisualAnchorEditor({
 }) {
   return (
     <div className="mt-5">
-      <span className="block font-meta text-[0.68rem] font-bold tracking-[0.22em] text-ink-black/45">
-        {label} <span className="font-normal text-ink-black/30">✎</span>
+      <span className="block font-meta text-[0.62rem] font-bold tracking-[0.1em] text-ink-muted">
+        {label} <span className="font-normal text-ink-muted">✎</span>
       </span>
       <EditableText
         value={value}
@@ -65,7 +66,7 @@ export function CharacterCard({
         <EditableText
           value={character.name}
           onSave={(v) => update({ name: v })}
-          className="font-display text-[1.55rem] font-black uppercase leading-none tracking-[-0.05em] text-ink-black"
+          className="font-display text-[1.55rem] font-black uppercase leading-none tracking-[-0.03em] text-ink-black"
         />
         {showDevContent && (
           <Tag className="shrink-0 border-transparent bg-surface-container px-4 text-[0.66rem] text-ink-black/48">
@@ -73,17 +74,17 @@ export function CharacterCard({
           </Tag>
         )}
       </div>
-      <div className="mt-3 flex items-center gap-2 font-body text-[1rem] font-semibold text-ink-black/50">
+      <div className="mt-3 flex items-center gap-2 font-body text-[1rem] font-semibold text-ink-muted">
         <EditableText
           value={character.age_range}
           onSave={(v) => update({ age_range: v })}
-          className="text-ink-black/55"
+          className="text-ink-muted"
         />
         <span>&middot;</span>
         <EditableText
           value={character.gender}
           onSave={(v) => update({ gender: v })}
-          className="text-ink-black/55"
+          className="text-ink-muted"
         />
       </div>
       <VisualAnchorEditor
@@ -97,7 +98,7 @@ export function CharacterCard({
           </Tag>
         ))}
         {character.distinguishing_features.length > 0 && (
-          <span className="font-meta text-[0.5rem] tracking-[0.12em] text-ink-black/35">
+          <span className="font-meta text-[0.56rem] font-bold tracking-[0.08em] text-ink-muted">
             → USED IN IMAGE PROMPTS
           </span>
         )}
@@ -123,7 +124,7 @@ export function LocationCard({
         <EditableText
           value={location.name}
           onSave={(v) => update({ name: v })}
-          className="font-display text-[1.55rem] font-black uppercase leading-none tracking-[-0.05em] text-ink-black"
+          className="font-display text-[1.55rem] font-black uppercase leading-none tracking-[-0.03em] text-ink-black"
         />
         {showDevContent && (
           <Tag className="shrink-0 border-transparent bg-surface-container px-4 text-[0.66rem] text-ink-black/48">
@@ -163,17 +164,18 @@ function WhatPulpFound({
   onReadScript: () => void;
   scriptReady: boolean;
 }) {
+  const { t } = useI18n();
   const opening = bible.scenes[0]?.source_start_quote?.trim();
   return (
     <div className="grid gap-6 lg:grid-cols-[1.3fr_1fr]">
       {/* Source card */}
-      <EntityCard>
-        <div className="font-meta text-[0.56rem] tracking-[0.22em] text-ink-black/45">SOURCE</div>
+      <EntityCard className="-rotate-[0.4deg] shadow-paper">
+        <div className="font-meta text-[0.58rem] font-bold tracking-[0.1em] text-ink-muted">{t("SOURCE MANUSCRIPT")}</div>
         <h2 className="mt-2 font-display text-[1.9rem] font-black uppercase leading-[0.95] tracking-[-0.04em] text-ink-black">
           {bible.title}
         </h2>
-        <div className="mt-2 font-meta text-[0.62rem] tracking-[0.14em] text-ink-black/50">
-          BY {bible.author.toUpperCase()}
+        <div className="mt-2 font-meta text-[0.62rem] font-bold tracking-[0.08em] text-ink-muted">
+          {t("BY")} {bible.author.toUpperCase()}
         </div>
         {opening && (
           <p className="mt-4 bg-surface-container px-4 py-3 text-[0.95rem] italic leading-7 text-ink-black/65">
@@ -183,34 +185,70 @@ function WhatPulpFound({
       </EntityCard>
 
       {/* What PULP found card */}
-      <EntityCard>
-        <div className="font-meta text-[0.56rem] tracking-[0.22em] text-ink-black/45">WHAT SCENEWRIGHT FOUND</div>
+      <EntityCard className="lg:translate-y-4">
+        <div className="font-meta text-[0.58rem] font-bold tracking-[0.1em] text-ink-muted">{t("WHAT SCENEWRIGHT FOUND")}</div>
         <dl className="mt-3 space-y-2.5">
           <div className="flex items-baseline justify-between gap-3 border-b border-ink-black/10 pb-2.5">
-            <dt className="text-[0.85rem] text-ink-black/60">Scenes</dt>
+            <dt className="text-[0.85rem] text-ink-black/60">{t("Scenes")}</dt>
             <dd className="font-body text-[0.95rem] font-bold text-ink-black">
-              {bible.total_scenes} · kept in story order
+              {bible.total_scenes} · {t("kept in story order")}
             </dd>
           </div>
           <div className="flex items-baseline justify-between gap-3 border-b border-ink-black/10 pb-2.5">
-            <dt className="text-[0.85rem] text-ink-black/60">Cast</dt>
+            <dt className="text-[0.85rem] text-ink-black/60">{t("Cast")}</dt>
             <dd className="font-body text-[0.95rem] font-bold text-ink-black">
-              {bible.characters.length} character{bible.characters.length !== 1 ? "s" : ""} · {bible.locations.length} place{bible.locations.length !== 1 ? "s" : ""}
+              {bible.characters.length} {t("characters")} · {bible.locations.length} {t("places")}
             </dd>
           </div>
         </dl>
         <button
           type="button"
           onClick={onReadScript}
-          className="mt-4 inline-flex items-center gap-2 border-[2px] border-ink-black/25 bg-bristol px-3 py-1.5 font-meta text-[0.58rem] tracking-[0.14em] text-ink-black/70 transition-colors hover:border-ink-black hover:text-ink-black"
+          className="mt-4 inline-flex min-h-11 items-center gap-2 border-[2px] border-ink-black/25 bg-bristol px-3 py-1.5 font-meta text-[0.6rem] font-bold tracking-[0.08em] text-ink-muted transition-colors hover:border-ink-black hover:text-ink-black"
         >
-          READ THE SCRIPT ▸
+          {t("READ THE SCRIPT")} ▸
           {!scriptReady && (
-            <span className="font-meta text-[0.46rem] tracking-[0.1em] text-ink-black/35">WRITES ITSELF LATER</span>
+            <span className="font-meta text-[0.46rem] tracking-[0.1em] text-ink-black/35">{t("WRITES ITSELF LATER")}</span>
           )}
         </button>
       </EntityCard>
     </div>
+  );
+}
+
+function StorySpine({ bible }: { bible: StoryBible }) {
+  const { t } = useI18n();
+  if (bible.narrative_arcs.length === 0) return null;
+
+  return (
+    <section>
+      <SectionHeader
+        variant="underline"
+        title="STORY SPINE"
+        description="The extracted acts and turning points, kept in the order of your manuscript."
+      />
+      <ol className="flex overflow-x-auto border-[3px] border-ink-black bg-ink-black shadow-paper-sm">
+        {bible.narrative_arcs.map((arc) => (
+          <li
+            key={`${arc.act}-${arc.title}`}
+            className="min-w-[230px] flex-1 border-r-[2px] border-bristol/20 bg-ink-black px-5 py-5 text-bristol last:border-r-0"
+          >
+            <div className="flex items-center justify-between font-meta text-[0.56rem] font-bold tracking-[0.08em] text-bristol/70">
+              <span>{t("ACT")} {String(arc.act).padStart(2, "0")}</span>
+              <span>{arc.scenes.length} {t("SCENES")}</span>
+            </div>
+            <h3 className="mt-3 font-display text-[1.2rem] font-black uppercase leading-[0.95] tracking-[-0.03em] text-bristol">
+              {arc.title}
+            </h3>
+            {arc.turning_point && (
+              <p className="mt-3 border-t-[2px] border-bristol/18 pt-3 font-body text-[0.78rem] font-semibold leading-5 text-bristol/75">
+                {arc.turning_point}
+              </p>
+            )}
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 
@@ -307,6 +345,8 @@ export function StoryBibleRoom() {
         onReadScript={() => setDrawer("script")}
         scriptReady={scriptReady}
       />
+
+      <StorySpine bible={bible} />
 
       <div className="grid gap-10 xl:grid-cols-2">
         <section>

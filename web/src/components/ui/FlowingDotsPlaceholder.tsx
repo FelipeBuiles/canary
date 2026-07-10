@@ -34,12 +34,16 @@ export function FlowingDotsPlaceholder({
   useEffect(() => {
     const canvas = canvasRef.current;
     const wrap = wrapRef.current;
-    const ctx = canvas?.getContext("2d");
-    if (!canvas || !wrap || !ctx) return;
+    if (!canvas || !wrap) return;
+    const rawContext = canvas.getContext("2d");
+    if (!rawContext) return;
+    const context: CanvasRenderingContext2D = rawContext;
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     let width = 0;
     let height = 0;
+    let visible = true;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     const resize = () => {
       const rect = wrap.getBoundingClientRect();
@@ -47,40 +51,46 @@ export function FlowingDotsPlaceholder({
       height = rect.height;
       canvas.width = Math.max(1, Math.floor(width * dpr));
       canvas.height = Math.max(1, Math.floor(height * dpr));
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      context.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
 
     resize();
-    const observer = new ResizeObserver(resize);
+    const observer = new ResizeObserver(() => {
+      resize();
+      if (reducedMotion) draw(performance.now());
+    });
     observer.observe(wrap);
 
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    function requestDraw() {
+      if (rafRef.current == null && visible) {
+        rafRef.current = requestAnimationFrame(draw);
+      }
+    }
 
-    const draw = (now: number) => {
+    function draw(now: number) {
+      rafRef.current = null;
       if (!startRef.current) startRef.current = now;
       // Seconds since start; frozen at a representative frame when the user
       // prefers reduced motion.
       const elapsed = reducedMotion ? 0.6 : (now - startRef.current) / 1000;
 
       // 1. Pulp-paper ground
-      ctx.fillStyle = "#fcfaed";
-      ctx.fillRect(0, 0, width, height);
+      context.fillStyle = "#fcfaed";
+      context.fillRect(0, 0, width, height);
 
-      // 2. Gold "develop" band — a soft narrator-gold glow drifting slowly
-      //    down and back up the page, like ink developing line by line.
+      // 2. Gold develop band — a single mechanical ink pass moving down and
+      //    back up the page, like a proof traveling through the press.
       const sweep = 0.5 + 0.62 * Math.sin(elapsed * 0.5); // normalized Y center
       const c = Math.max(0, Math.min(1, sweep));
-      const band = ctx.createLinearGradient(0, 0, 0, height);
+      const band = context.createLinearGradient(0, 0, 0, height);
       band.addColorStop(Math.max(0, c - 0.35), "rgba(250, 227, 97, 0)");
       band.addColorStop(c, "rgba(250, 227, 97, 0.18)");
       band.addColorStop(Math.min(1, c + 0.35), "rgba(250, 227, 97, 0)");
-      ctx.fillStyle = band;
-      ctx.fillRect(0, 0, width, height);
+      context.fillStyle = band;
+      context.fillRect(0, 0, width, height);
 
-      // 3. Benday halftone dots — ink-black, swelling and darkening as the
-      //    gold band crosses them. glow/radius/alpha depend only on the row,
-      //    so they are hoisted out of the inner loop; the micro-pulse adds a
-      //    faint per-cell shimmer.
+      // 3. Benday halftone dots — ink-black, registering as the pass reaches
+      //    each row. The dots stay still; only the meaningful press pass moves.
       const cellSize = 12;
       const baseRadius = 1.5;
       for (let py = cellSize * 0.5; py < height; py += cellSize) {
@@ -89,27 +99,40 @@ export function FlowingDotsPlaceholder({
         const radius = baseRadius * (1 + glow * 0.6);
         const alpha = 0.07 + glow * 0.18;
         for (let px = cellSize * 0.5; px < width; px += cellSize) {
-          const pulse = 0.92 + 0.08 * Math.sin(elapsed * 1.6 + (px + py) * 0.05);
-          ctx.beginPath();
-          ctx.fillStyle = `rgba(27, 28, 21, ${alpha})`;
-          ctx.arc(px, py, radius * pulse, 0, Math.PI * 2);
-          ctx.fill();
+          context.beginPath();
+          context.fillStyle = `rgba(27, 28, 21, ${alpha})`;
+          context.arc(px, py, radius, 0, Math.PI * 2);
+          context.fill();
         }
       }
 
       // 4. Thick tactile neobrutalist border
-      ctx.strokeStyle = "#1b1c15";
-      ctx.lineWidth = 4;
-      ctx.strokeRect(0, 0, width, height);
+      context.strokeStyle = "#1b1c15";
+      context.lineWidth = 4;
+      context.strokeRect(0, 0, width, height);
 
-      rafRef.current = requestAnimationFrame(draw);
-    };
+      if (!reducedMotion) requestDraw();
+    }
 
-    rafRef.current = requestAnimationFrame(draw);
+    const visibilityObserver = "IntersectionObserver" in window
+      ? new IntersectionObserver(([entry]) => {
+          visible = entry?.isIntersecting ?? true;
+          if (visible && !reducedMotion) requestDraw();
+          else if (rafRef.current != null) {
+            cancelAnimationFrame(rafRef.current);
+            rafRef.current = null;
+          }
+        })
+      : null;
+    visibilityObserver?.observe(wrap);
+
+    if (reducedMotion) draw(performance.now());
+    else requestDraw();
 
     return () => {
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
       observer.disconnect();
+      visibilityObserver?.disconnect();
     };
   }, []);
 
@@ -141,7 +164,7 @@ export function FlowingDotsPlaceholder({
                 "border-ink-black bg-bristol text-ink-black font-display font-black uppercase leading-none",
                 compact
                   ? "border-[2px] px-1.5 py-1 text-[0.5rem] tracking-[0.08em]"
-                  : "border-[3px] px-5 py-2.5 text-[clamp(1rem,8vw,1.38rem)] shadow-ink tracking-tight",
+                  : "border-[3px] px-5 py-2.5 text-[clamp(1rem,8vw,1.38rem)] shadow-ink tracking-[-0.03em]",
               )}
             >
               {displayLabel}

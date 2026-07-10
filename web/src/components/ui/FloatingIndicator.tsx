@@ -43,10 +43,10 @@ export function FloatingIndicator() {
     >
       <div className="flex items-center gap-3 border-b-[2px] border-ink-black bg-pulp-paper px-3 py-2">
         <div className="flex h-7 w-7 items-center justify-center border border-ink-black bg-bristol">
-          <Icon name="loader" size={14} className="animate-spin text-narrator-gold" />
+          <span aria-hidden="true" className="animate-press-blink h-2.5 w-2.5 bg-hero-red" />
         </div>
         <div>
-          <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black animate-pulse">
+          <div className="font-meta text-[0.56rem] font-bold tracking-[0.1em] text-ink-muted">
             RUNNING
           </div>
           <div className="font-display text-[0.82rem] font-bold tracking-[-0.03em]">

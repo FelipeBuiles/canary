@@ -70,7 +70,7 @@ export function RerunDrawer({
 
   return (
     <div
-      className="fixed inset-0 z-[120] flex items-end justify-center bg-ink-black/55 backdrop-blur-[2px]"
+      className="fixed inset-0 z-[120] flex items-end justify-center bg-ink-black/70"
       onClick={onClose}
       role="presentation"
     >
@@ -159,13 +159,13 @@ export function RerunDrawer({
                     Estimated
                   </span>
                   <span className="font-display text-[1.1rem] font-bold">
-                    {cost.estimate_credits.toLocaleString()} credits
+                    ~{cost.estimate_credits.toLocaleString()} credits
                   </span>
                 </div>
                 {cost.reserved_credits > 0 && (
                   <div className="mt-1 flex items-baseline gap-3">
                     <span className="font-meta text-[0.58rem] tracking-[0.16em] uppercase text-ink-black/60">
-                      Reserved
+                      Held
                     </span>
                     <span className="font-display text-[1.0rem]">
                       {cost.reserved_credits.toLocaleString()} credits
@@ -176,10 +176,10 @@ export function RerunDrawer({
             ) : (
               <div className="mt-3 flex items-baseline gap-3">
                 <span className="font-meta text-[0.58rem] tracking-[0.16em] uppercase text-ink-black/60">
-                  Credit hold (est.)
+                  Expected use
                 </span>
                 <span className={cn(
-                  "font-display text-[1.1rem] font-bold animate-pulse text-ink-black/40",
+                  "font-display text-[1.1rem] font-bold text-ink-muted",
                 )}>
                   …
                 </span>

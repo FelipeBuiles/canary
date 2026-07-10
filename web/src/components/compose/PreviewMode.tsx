@@ -96,7 +96,7 @@ export function PreviewMode({
       {/* Spread nav header */}
       <div className="flex shrink-0 items-center justify-between border-b-[2px] border-ink-black bg-pulp-paper px-6 py-3">
         <div className="flex items-center gap-4">
-          <div className="font-display text-[1.4rem] font-black uppercase leading-none tracking-[-0.04em] [font-stretch:75%]">
+          <div className="font-display text-[1.4rem] font-black uppercase leading-none tracking-[-0.035em]">
             SPREAD {spreadIdx + 1} / {totalSpreads}
           </div>
           <div className="flex items-center gap-1">
@@ -143,63 +143,62 @@ export function PreviewMode({
           onClose={() => setExportDrawerFormat(null)}
         />
 
-        {/* Right rail: Your book + Translate — nothing else. */}
-        <aside className="w-full shrink-0 space-y-4 border-t-[2px] border-ink-black bg-pulp-paper p-3 md:w-[240px] md:overflow-y-auto md:border-l-[2px] md:border-t-0">
+        {/* Right rail: one compact colophon for shipping and translation. */}
+        <aside className="w-full shrink-0 border-t-[2px] border-ink-black bg-pulp-paper p-3 md:w-[250px] md:overflow-y-auto md:border-l-[2px] md:border-t-0">
+          <div className="border-[3px] border-ink-black bg-bristol shadow-paper-sm">
+            <section className="p-4">
+              <div className="mb-1 bg-narrator-gold px-2 py-1 font-meta text-[0.56rem] font-bold tracking-[0.08em] text-ink-black">READY TO PRINT</div>
+              <div className="mb-1 font-display text-[1.2rem] font-black uppercase leading-none tracking-[-0.02em]">Ship your issue</div>
+              <div className="mb-4 font-body text-[0.82rem] font-semibold leading-5 text-ink-muted">
+                {pageList.length} page{pageList.length !== 1 ? "s" : ""} · {totalPanels} panel{totalPanels !== 1 ? "s" : ""} · {totalLettering} lettering item{totalLettering !== 1 ? "s" : ""}
+              </div>
+              <div className="space-y-2">
+                {exportError && (
+                  <p role="alert" className="border-[2px] border-hero-red bg-chip-red/40 px-2 py-1.5 font-body text-[0.72rem] font-semibold leading-snug text-hero-red">
+                    {exportError}
+                  </p>
+                )}
+                <Button size="sm" fullWidth onClick={() => handleExportClick("pdf")} disabled={isExporting}>
+                  {isExporting ? "EXPORTING…" : "↓ DOWNLOAD PDF"}
+                </Button>
+                <Button size="sm" variant="secondary" fullWidth onClick={() => handleExportClick("cbz")} disabled={isExporting}>
+                  ↓ CBZ
+                </Button>
+              </div>
+            </section>
 
-          {/* Your book */}
-          <div className="border-[2px] border-ink-black bg-surface-container p-3 shadow-ink-sm">
-            <div className="mb-1 font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/50">READY TO PRINT</div>
-            <div className="mb-1 font-display text-[1.15rem] font-black uppercase leading-none tracking-[-0.02em] [font-stretch:75%]">Ship your issue</div>
-            <div className="mb-3 font-body text-[0.82rem] font-semibold leading-5 text-ink-black/70">
-              {pageList.length} page{pageList.length !== 1 ? "s" : ""} · {totalPanels} panel{totalPanels !== 1 ? "s" : ""} · {totalLettering} lettering item{totalLettering !== 1 ? "s" : ""}
-            </div>
-            <div className="space-y-1.5">
-              {exportError && (
-                <p role="alert" className="font-body text-[0.72rem] font-semibold leading-snug text-hero-red">
-                  {exportError}
-                </p>
-              )}
-              <Button size="sm" fullWidth onClick={() => handleExportClick("pdf")} disabled={isExporting}>
-                {isExporting ? "EXPORTING…" : "↓ DOWNLOAD PDF"}
+            <section className="border-t-[3px] border-ink-black bg-surface-container p-4">
+              <div className="mb-3 font-meta text-[0.58rem] font-bold tracking-[0.08em] text-ink-muted">TRANSLATE THE BOOK</div>
+              <div className="mb-3 flex flex-wrap gap-1.5">
+                {LANGUAGES.map((lang) => (
+                  <button
+                    key={lang.value}
+                    onClick={() => onOutputLanguageChange(lang.value)}
+                    disabled={isTranslatingBubbles}
+                    className={cn(
+                      "min-h-9 border-[2px] border-ink-black px-2 py-1 font-meta text-[0.54rem] font-bold tracking-[0.06em] transition-colors disabled:opacity-50",
+                      outputLanguage === lang.value
+                        ? "bg-ink-black text-pulp-paper"
+                        : "bg-pulp-paper hover:bg-bristol",
+                    )}
+                  >
+                    {lang.label}
+                  </button>
+                ))}
+              </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                fullWidth
+                onClick={() => onTranslateBubbles(outputLanguage)}
+                disabled={isTranslatingBubbles}
+              >
+                {isTranslatingBubbles ? "TRANSLATING…" : "TRANSLATE ALL"}
               </Button>
-              <Button size="sm" variant="secondary" fullWidth onClick={() => handleExportClick("cbz")} disabled={isExporting}>
-                ↓ CBZ
-              </Button>
-            </div>
-          </div>
-
-          {/* Translate the book — the only home for translation. */}
-          <div className="border-[2px] border-ink-black bg-surface-container p-3 shadow-ink-sm">
-            <div className="mb-2 font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/50">TRANSLATE THE BOOK</div>
-            <div className="mb-2 flex flex-wrap gap-1.5">
-              {LANGUAGES.map((lang) => (
-                <button
-                  key={lang.value}
-                  onClick={() => onOutputLanguageChange(lang.value)}
-                  disabled={isTranslatingBubbles}
-                  className={cn(
-                    "border-[2px] border-ink-black px-2 py-1 font-meta text-[0.52rem] tracking-[0.08em] transition-colors disabled:opacity-50",
-                    outputLanguage === lang.value
-                      ? "bg-ink-black text-pulp-paper"
-                      : "bg-pulp-paper hover:bg-surface-container",
-                  )}
-                >
-                  {lang.label}
-                </button>
-              ))}
-            </div>
-            <Button
-              size="sm"
-              variant="secondary"
-              fullWidth
-              onClick={() => onTranslateBubbles(outputLanguage)}
-              disabled={isTranslatingBubbles}
-            >
-              {isTranslatingBubbles ? "TRANSLATING…" : "TRANSLATE ALL"}
-            </Button>
-            <p className="mt-2 font-meta text-[0.46rem] leading-4 tracking-[0.08em] text-ink-black/40">
-              VISUAL STYLE LIVES AT THE LOOK STATION — CHANGING IT RE-RENDERS THE BOOK.
-            </p>
+              <p className="mt-3 font-body text-[0.68rem] font-semibold leading-4 text-ink-muted">
+                Visual style lives at the Look station. Changing it re-renders the book.
+              </p>
+            </section>
           </div>
         </aside>
       </div>

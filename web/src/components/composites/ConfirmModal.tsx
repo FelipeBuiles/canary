@@ -73,7 +73,7 @@ export function ConfirmModal({
 
   return (
     <div
-      className="fixed inset-0 z-[120] flex items-center justify-center bg-ink-black/55 backdrop-blur-[2px]"
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-ink-black/70"
       onClick={handleClose}
       role="presentation"
     >

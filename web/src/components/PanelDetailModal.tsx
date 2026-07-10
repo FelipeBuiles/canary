@@ -611,7 +611,7 @@ export function PanelDetailModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink-black/80 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink-black/80 p-4"
       onClick={onClose}
       role="dialog"
       aria-modal="true"

@@ -127,7 +127,7 @@ export function AdaptRoom() {
                     <div className="font-meta text-[0.62rem] tracking-[0.22em] text-ink-black/45">
                       LOCATION
                     </div>
-                    <div className="mt-0.5 font-display text-[1.1rem] font-black uppercase tracking-[-0.02em] text-ink-black [font-stretch:75%]">
+                    <div className="mt-0.5 font-display text-[1.1rem] font-black uppercase tracking-[-0.02em] text-ink-black">
                       {resolveName(screenplay.location_id)}
                     </div>
                   </div>

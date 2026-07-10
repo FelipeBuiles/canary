@@ -195,11 +195,11 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
       <Card className="p-5 md:p-6">
         <div className="flex items-center justify-between gap-3">
           <SectionLabel tone="red">{t("NEW PRODUCTION")}</SectionLabel>
-          <span className="font-meta text-[0.54rem] uppercase tracking-[0.16em] text-ink-black/45">
+          <span className="font-meta text-[0.58rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
             {step === "source" ? t("STEP 1 OF 2") : t("STEP 2 OF 2")}
           </span>
         </div>
-        <h1 className="mt-4 display-headline">
+        <h1 className="mt-4 font-display text-[2.4rem] font-black uppercase leading-[0.9] tracking-[-0.035em] text-ink-black sm:text-[3rem]">
           {step === "source" ? t("CHOOSE A STARTING POINT") : t("NAME AND START")}
         </h1>
         <p className="mt-4 lead-pulp max-w-[52ch]">
@@ -212,10 +212,10 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
           <button
             type="button"
             onClick={() => setTab("library")}
-            className={`min-h-11 px-4 py-2 font-display text-xs font-bold uppercase tracking-wider transition-colors ${
+            className={`min-h-11 px-4 py-2 font-body text-[0.76rem] font-bold transition-colors ${
               tab === "library"
                 ? "border-b-[3px] border-hero-red text-ink-black"
-                : "text-ink-black/40 hover:text-ink-black/70"
+                : "text-ink-muted hover:text-ink-black"
             }`}
           >
             {t("TRY A SAMPLE")}
@@ -223,10 +223,10 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
           <button
             type="button"
             onClick={() => setTab("file")}
-            className={`min-h-11 px-4 py-2 font-display text-xs font-bold uppercase tracking-wider transition-colors ${
+            className={`min-h-11 px-4 py-2 font-body text-[0.76rem] font-bold transition-colors ${
               tab === "file"
                 ? "border-b-[3px] border-hero-red text-ink-black"
-                : "text-ink-black/40 hover:text-ink-black/70"
+                : "text-ink-muted hover:text-ink-black"
             }`}
           >
             {t("UPLOAD MANUSCRIPT")}
@@ -237,7 +237,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
           {step === "details" && (
             <div className="flex items-center justify-between gap-4 bg-surface-container px-4 py-3">
               <div className="min-w-0">
-                <div className="font-meta text-[0.48rem] uppercase tracking-[0.16em] text-ink-black/45">{t("SOURCE")}</div>
+                <div className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.08em] text-ink-muted">{t("SOURCE")}</div>
                 <div className="truncate font-body text-[0.85rem] font-bold text-ink-black">
                   {tab === "file" ? file?.name : selectedStory?.title ?? pastedUrlOrCode}
                 </div>
@@ -292,7 +292,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                 {file ? (
                   <>
                     {extOk && (
-                      <div className="mb-2 inline-flex h-7 w-7 items-center justify-center rounded-full bg-archive-sage text-bristol">
+                      <div className="mb-2 inline-flex h-8 w-8 items-center justify-center border-[2px] border-ink-black bg-archive-sage text-bristol shadow-paper-sm">
                         <Icon name="check" size={14} />
                       </div>
                     )}
@@ -350,8 +350,8 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                       placeholder={t("Search stories by title, author, or genre...")}
                       className="pl-8"
                     />
-                    <div className="absolute left-2.5 top-3.5 text-ink-black/40">
-                      <Icon name="sparkles" size={14} />
+                    <div className="absolute left-2.5 top-3.5 text-ink-muted">
+                      <Icon name="search" size={14} />
                     </div>
                   </div>
                   <Select
@@ -559,11 +559,11 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
           return (
             <div className="mt-3 flex items-center justify-between gap-3 border-[2px] border-ink-black bg-chip-gold px-4 py-2 shadow-ink-sm">
               <div>
-                <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60">
-                  {t("ESTIMATED CREDITS")}
+                <div className="font-meta text-[0.56rem] font-bold tracking-[0.08em] text-ink-muted">
+                  {t("PROJECT RANGE")}
                 </div>
                 <div className="mt-0.5 font-display text-[1.05rem] font-bold leading-none tracking-[-0.03em] text-ink-black tabular-nums">
-                  {estimate ? formatCreditRange(estimate) : t("Upload a file or select a story to estimate")}
+                  {estimate ? `${formatCreditRange(estimate)} ${t("credits")}` : t("Upload a file or select a story to estimate")}
                 </div>
               </div>
               <div className="text-right font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/55">

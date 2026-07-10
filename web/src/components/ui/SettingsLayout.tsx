@@ -18,6 +18,30 @@ interface SettingsLayoutProps {
   children: React.ReactNode;
 }
 
+export function SettingsRow({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="grid gap-4 border-b-[2px] border-ink-black/10 px-5 py-5 last:border-b-0 md:grid-cols-[210px_1fr] md:items-start md:gap-7 md:px-6">
+      <div>
+        <h3 className="font-meta text-[0.62rem] font-bold uppercase tracking-[0.1em] text-ink-black">
+          {label}
+        </h3>
+        {hint && (
+          <p className="mt-2 font-body text-[0.76rem] font-medium leading-5 text-ink-muted">{hint}</p>
+        )}
+      </div>
+      <div className="min-w-0">{children}</div>
+    </section>
+  );
+}
+
 export function SettingsLayout({
   kicker,
   title,
@@ -29,13 +53,18 @@ export function SettingsLayout({
   children,
 }: SettingsLayoutProps) {
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 pb-10">
       {hero && (
-        <section>
+        <section className="relative overflow-hidden border-[3px] border-ink-black bg-ink-black px-6 py-8 text-bristol shadow-paper md:px-9 md:py-10">
+          <div aria-hidden="true" className="absolute inset-y-0 right-0 w-24 benday-paper opacity-20 sm:w-40" />
           <SectionLabel tone="red">{kicker}</SectionLabel>
-          <h1 className="mt-4 max-w-[14ch] display-impact">{title}</h1>
+          <h1 className="relative mt-4 max-w-[14ch] font-display text-[2.7rem] font-black uppercase leading-[0.9] tracking-[-0.035em] text-bristol sm:text-[3.25rem]">
+            {title}
+          </h1>
           {subtitle && (
-            <p className="mt-5 lead-pulp max-w-[44rem]">{subtitle}</p>
+            <p className="relative mt-5 max-w-[44rem] font-body text-[0.95rem] font-semibold leading-7 text-bristol/72">
+              {subtitle}
+            </p>
           )}
         </section>
       )}
@@ -43,19 +72,23 @@ export function SettingsLayout({
       <div className="flex flex-col gap-6 md:flex-row md:gap-8">
         {/* Desktop sidebar tabs */}
         <nav className="hidden md:block">
-          <div className="w-[200px] border-[2px] border-ink-black bg-bristol">
+          <div className="w-[210px] border-[2px] border-ink-black bg-bristol shadow-paper-sm">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
                 type="button"
                 onClick={() => onTabChange(tab.id)}
                 className={cn(
-                  "w-full border-l-[3px] px-4 py-3 text-left font-meta text-[0.68rem] tracking-[0.14em] transition-colors",
+                  "flex min-h-12 w-full items-center gap-3 border-b border-ink-black/10 px-4 py-3 text-left font-body text-[0.82rem] font-bold transition-colors last:border-b-0",
                   activeTab === tab.id
-                    ? "border-l-hero-red bg-pulp-paper text-ink-black font-bold"
-                    : "border-transparent text-ink-black/55 hover:bg-pulp-paper/50",
+                    ? "bg-ink-black text-bristol"
+                    : "text-ink-black/65 hover:bg-surface-container hover:text-ink-black",
                 )}
               >
+                <span
+                  aria-hidden="true"
+                  className={cn("h-2 w-2 shrink-0", activeTab === tab.id ? "bg-hero-red" : "bg-ink-black/18")}
+                />
                 {tab.label}
               </button>
             ))}
