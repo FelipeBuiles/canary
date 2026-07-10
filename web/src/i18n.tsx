@@ -39,6 +39,31 @@ const TEXT: Record<LanguageCode, Record<string, string>> = {
     "Export": "Exportar",
     "NEW PRODUCTION": "NUEVA PRODUCCIÓN",
     "CREATE PROJECT": "CREAR PROYECTO",
+    "STEP 1 OF 2": "PASO 1 DE 2",
+    "STEP 2 OF 2": "PASO 2 DE 2",
+    "CHOOSE A STARTING POINT": "ELIGE CÓMO EMPEZAR",
+    "NAME AND START": "NOMBRA Y EMPIEZA",
+    "Try a sample for the fastest tour, or bring your own manuscript.": "Prueba un cuento para ver el recorrido más rápido o trae tu propio manuscrito.",
+    "Scenewright starts by finding the people, places, and shape of your story.": "Scenewright empieza identificando las personas, los lugares y la estructura de tu historia.",
+    "TRY A SAMPLE": "PROBAR UN CUENTO",
+    "UPLOAD MANUSCRIPT": "SUBIR MANUSCRITO",
+    "SOURCE": "ORIGEN",
+    "CHANGE": "CAMBIAR",
+    "USE ANOTHER SOURCE": "USAR OTRA FUENTE",
+    "PRODUCTION SETTINGS": "AJUSTES DE PRODUCCIÓN",
+    "Balanced by default": "Equilibrado por defecto",
+    "CONTINUE": "CONTINUAR",
+    "BACK": "ATRÁS",
+    "START PRODUCTION": "INICIAR PRODUCCIÓN",
+    "How this was made": "Cómo se hizo",
+    "Story draft": "Borrador de la historia",
+    "Panel plan": "Plan de viñetas",
+    "Image instructions": "Instrucciones de imagen",
+    "CONFIRM THE STORY": "CONFIRMA LA HISTORIA",
+    "CHOOSE THE LOOK": "ELIGE EL ESTILO",
+    "CONFIRM CHARACTERS & PLACES": "CONFIRMA PERSONAJES Y LUGARES",
+    "FIX FLAGGED PANELS": "CORRIGE LAS VIÑETAS MARCADAS",
+    "REVIEW PANELS": "REVISA LAS VIÑETAS",
     "Upload your novel file and the pipeline will take it from there — extracting characters, drawing panels, and assembling pages.": "Sube el archivo de tu novela y el pipeline se encargará del resto: extraer personajes, dibujar paneles y montar páginas.",
     "PROJECT NAME": "NOMBRE DEL PROYECTO",
     "NOVEL FILE": "ARCHIVO DE NOVELA",
@@ -263,6 +288,31 @@ const TEXT: Record<LanguageCode, Record<string, string>> = {
     "Export": "Exporter",
     "NEW PRODUCTION": "NOUVELLE PRODUCTION",
     "CREATE PROJECT": "CRÉER UN PROJET",
+    "STEP 1 OF 2": "ÉTAPE 1 SUR 2",
+    "STEP 2 OF 2": "ÉTAPE 2 SUR 2",
+    "CHOOSE A STARTING POINT": "CHOISIS TON POINT DE DÉPART",
+    "NAME AND START": "NOMME ET COMMENCE",
+    "Try a sample for the fastest tour, or bring your own manuscript.": "Essaie une nouvelle pour découvrir rapidement le parcours, ou importe ton propre manuscrit.",
+    "Scenewright starts by finding the people, places, and shape of your story.": "Scenewright commence par repérer les personnages, les lieux et la structure de ton histoire.",
+    "TRY A SAMPLE": "ESSAYER UNE NOUVELLE",
+    "UPLOAD MANUSCRIPT": "IMPORTER LE MANUSCRIT",
+    "SOURCE": "SOURCE",
+    "CHANGE": "MODIFIER",
+    "USE ANOTHER SOURCE": "UTILISER UNE AUTRE SOURCE",
+    "PRODUCTION SETTINGS": "RÉGLAGES DE PRODUCTION",
+    "Balanced by default": "Équilibré par défaut",
+    "CONTINUE": "CONTINUER",
+    "BACK": "RETOUR",
+    "START PRODUCTION": "LANCER LA PRODUCTION",
+    "How this was made": "Comment cela a été fait",
+    "Story draft": "Brouillon de l’histoire",
+    "Panel plan": "Plan des cases",
+    "Image instructions": "Instructions d’image",
+    "CONFIRM THE STORY": "CONFIRME L’HISTOIRE",
+    "CHOOSE THE LOOK": "CHOISIS LE STYLE",
+    "CONFIRM CHARACTERS & PLACES": "CONFIRME LES PERSONNAGES ET LES LIEUX",
+    "FIX FLAGGED PANELS": "CORRIGE LES CASES SIGNALÉES",
+    "REVIEW PANELS": "VÉRIFIE LES CASES",
     "Upload your novel file and the pipeline will take it from there — extracting characters, drawing panels, and assembling pages.": "Importe le fichier de ton roman et le pipeline prend la suite : extraction des personnages, dessin des cases et assemblage des pages.",
     "PROJECT NAME": "NOM DU PROJET",
     "NOVEL FILE": "FICHIER DU ROMAN",
@@ -536,7 +586,7 @@ interface I18nValue {
 const I18nContext = createContext<I18nValue | null>(null);
 
 function readStoredLanguage(): LanguageCode {
-  const stored = localStorage.getItem(STORAGE_KEY);
+  const stored = globalThis.localStorage?.getItem(STORAGE_KEY);
   return stored === "es" || stored === "fr" ? stored : "en";
 }
 
@@ -544,7 +594,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const [language, setLanguage] = useState<LanguageCode>(() => readStoredLanguage());
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, language);
+    globalThis.localStorage?.setItem(STORAGE_KEY, language);
     document.documentElement.lang = language;
   }, [language]);
 

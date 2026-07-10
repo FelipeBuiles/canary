@@ -4,8 +4,8 @@ import { cn } from "../../lib/cn";
 type Size = "xs" | "sm" | "md";
 
 const SIZE_STYLES: Record<Size, string> = {
-  xs: "min-h-8 px-2.5 py-1.5 font-meta text-[0.62rem] tracking-[0.12em]",
-  sm: "min-h-9 px-3.5 py-2 font-meta text-[0.72rem] tracking-[0.14em]",
+  xs: "min-h-9 px-2.5 py-1.5 font-meta text-[0.62rem] tracking-[0.12em]",
+  sm: "min-h-11 px-3.5 py-2 font-meta text-[0.72rem] tracking-[0.14em]",
   md: "min-h-11 px-4.5 py-2.5 font-meta text-[0.82rem] tracking-[0.14em]",
 };
 

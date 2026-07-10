@@ -20,7 +20,7 @@ import { GenerationDetailsModal } from "../../components/ui/GenerationDetailsMod
 import { LazyImage } from "../../components/ui/LazyImage";
 import { StateBlock } from "../../components/ui/StateBlock";
 import { Surface } from "../../components/ui/Surface";
-import { ApprovalBar, EntityCard, RoomHeader, ConfirmDrawer, RoomShell } from "../../components/composites";
+import { ApprovalBar, EntityCard, RoomHeader, ConfirmDrawer, RerunStageAction, RoomShell } from "../../components/composites";
 import { useApproveStage, useStageEstimate } from "../../api/queries";
 import { useRunAction } from "../../hooks/useRunAction";
 import { useI18n } from "../../i18n";
@@ -380,9 +380,9 @@ export function StyleRoom() {
   return (
     <RoomShell project={id}>
       <RoomHeader
-        kicker="STYLES"
-        title="LOOK & STYLE"
-        lead="Choose the visual style that defines your comic. Generate samples to compare, then select one to lock it in."
+        kicker="LOOK"
+        title="CHOOSE THE LOOK"
+        lead="Choose one visual direction. Scenewright carries it through characters, places, and panels."
         actions={
           <div className="flex items-center gap-3">
             {anyGenerating && (
@@ -511,6 +511,14 @@ export function StyleRoom() {
         onPrimary={handleContinueToCast}
         primaryDisabled={!styleSelected || approveStage.isPending || isPipelineRunning || isStageGenerating || isSuggesting}
         busy={approveStage.isPending}
+        secondary={suggestions.length > 0 && (styleStage?.status === "complete" || styleStage?.status === "awaiting_review") ? (
+          <RerunStageAction
+            project={id}
+            stage="style"
+            label="styles"
+            disabled={isPipelineRunning || isStageGenerating || isSuggesting}
+          />
+        ) : undefined}
       />
 
       <ConfirmDrawer

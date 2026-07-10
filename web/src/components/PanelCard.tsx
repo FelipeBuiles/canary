@@ -175,7 +175,7 @@ export function PanelCard({
             {onPanelClick && (
               <button
                 type="button"
-                className="pointer-events-auto border border-bristol bg-bristol px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-ink-black transition-colors hover:bg-pulp-paper"
+                className="pointer-events-auto inline-flex min-h-11 items-center border border-bristol bg-bristol px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-ink-black transition-colors hover:bg-pulp-paper"
                 onClick={(e) => { e.stopPropagation(); onPanelClick(); }}
               >
                 Preview
@@ -185,7 +185,7 @@ export function PanelCard({
               <a
                 href={imageDownloadUrl}
                 download={`panel-${panelNum}.png`}
-                className="pointer-events-auto border border-bristol/45 bg-transparent px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-bristol transition-colors hover:border-bristol hover:bg-bristol/10"
+                className="pointer-events-auto inline-flex min-h-11 items-center border border-bristol/45 bg-transparent px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-bristol transition-colors hover:border-bristol hover:bg-bristol/10"
                 onClick={(e) => e.stopPropagation()}
               >
                 Download
@@ -231,7 +231,7 @@ export function PanelCard({
               aria-pressed={isFlagged}
               aria-label={isFlagged ? "Unflag panel" : "Flag panel for re-work"}
               title={isFlagged ? "Unflag" : "Flag for re-work"}
-              className={`inline-flex h-6 items-center gap-1 px-1.5 font-meta text-[0.62rem] tracking-[0.08em] transition-colors ${
+              className={`inline-flex h-11 w-11 items-center justify-center font-meta text-[0.78rem] tracking-[0.08em] transition-colors ${
                 isFlagged
                   ? "bg-hero-red text-bristol hover:bg-hero-red/85"
                   : "text-ink-black/30 hover:text-hero-red"
@@ -250,7 +250,7 @@ export function PanelCard({
         {onPanelClick && isInteractive && (
           <button
             type="button"
-            className="font-meta text-[0.58rem] tracking-[0.1em] text-ink-black/40 transition-colors hover:text-ink-black"
+            className="inline-flex min-h-11 items-center px-2 font-meta text-[0.58rem] tracking-[0.1em] text-ink-black/40 transition-colors hover:text-ink-black"
             onClick={onPanelClick}
           >
             VIEW →

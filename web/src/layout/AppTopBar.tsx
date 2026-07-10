@@ -43,7 +43,7 @@ export function AppTopBar() {
     <header
       className={cn(
         "relative z-40 flex shrink-0 items-stretch border-b-[2px] border-ink-black bg-bristol text-ink-black",
-        inProject ? "h-[4.5rem]" : "h-14",
+        inProject ? "h-shell-top" : "h-14",
       )}
     >
       {inProject ? (
@@ -81,7 +81,7 @@ export function AppTopBar() {
         <Link
           to="/credits"
           className={cn(
-            "hidden h-8 items-center gap-2 border px-3 font-meta text-[0.62rem] font-bold tracking-[0.08em] sm:flex",
+            "hidden h-11 items-center gap-2 border px-3 font-meta text-[0.62rem] font-bold tracking-[0.08em] sm:flex",
             isLow
               ? "border-narrator-gold/60 bg-chip-gold text-warn-orange"
               : "border-ink-black/8 bg-surface-container text-ink-black/76",
@@ -99,7 +99,7 @@ export function AppTopBar() {
             onClick={() => setOpen((value) => !value)}
             aria-expanded={open}
             aria-label="Account menu"
-            className="flex h-9 w-9 items-center justify-center bg-hero-red font-meta text-[0.72rem] font-bold tracking-[0.08em] text-bristol"
+            className="flex h-11 w-11 items-center justify-center bg-hero-red font-meta text-[0.72rem] font-bold tracking-[0.08em] text-bristol"
           >
             {initials(email)}
           </button>

@@ -8,6 +8,7 @@ import { LANGUAGES, useI18n } from "../../i18n";
 import type { LanguageCode } from "../../i18n";
 import { useShortStories } from "../../api/queries";
 import { Select } from "../ui/Select";
+import { FieldLabel, TextField } from "../ui/Field";
 import { browseStories, deriveGenres, genreLabel, SORT_OPTIONS, type SortKey } from "../../lib/storyBrowser";
 
 interface UploadStepProps {
@@ -84,7 +85,8 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
   const [file, setFile] = useState<File | null>(null);
   const [targetLanguage, setTargetLanguage] = useState<LanguageCode>(language);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [devMode, setDevMode] = useState(false);
+  const [step, setStep] = useState<"source" | "details">("source");
+  const devMode = false;
   const [renderPreset, setRenderPreset] = useState<RenderPreset>("balanced");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -123,13 +125,25 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
     setSelectedGenres([]);
   }
 
+  function chooseFile(nextFile: File) {
+    setFile(nextFile);
+    if (!name.trim()) setName(nextFile.name.replace(/\.[^.]+$/, ""));
+  }
+
   const ext = file ? "." + file.name.split(".").pop()?.toLowerCase() : "";
   const extOk = !file || ACCEPTED.includes(ext);
   const presetPanelsPerScene =
     devMode || renderPreset === "fast_draft" ? 6 : renderPreset === "high_quality" ? 10 : 8;
+  const sourceReady = tab === "file"
+    ? Boolean(file && extOk)
+    : Boolean(selectedStory || pastedUrlOrCode.trim());
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (step === "source") {
+      if (sourceReady) setStep("details");
+      return;
+    }
     if (tab === "file") {
       if (!file || !name.trim() || !extOk) return;
     } else {
@@ -179,55 +193,80 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       <Card className="p-5 md:p-6">
-        <SectionLabel tone="red">{t("NEW PRODUCTION")}</SectionLabel>
-        <h1 className="mt-4 display-headline">{t("CREATE PROJECT")}</h1>
+        <div className="flex items-center justify-between gap-3">
+          <SectionLabel tone="red">{t("NEW PRODUCTION")}</SectionLabel>
+          <span className="font-meta text-[0.54rem] uppercase tracking-[0.16em] text-ink-black/45">
+            {step === "source" ? t("STEP 1 OF 2") : t("STEP 2 OF 2")}
+          </span>
+        </div>
+        <h1 className="mt-4 display-headline">
+          {step === "source" ? t("CHOOSE A STARTING POINT") : t("NAME AND START")}
+        </h1>
         <p className="mt-4 lead-pulp max-w-[52ch]">
-          {t("Upload your novel file and the pipeline will take it from there — extracting characters, drawing panels, and assembling pages.")}
+          {step === "source"
+            ? t("Try a sample for the fastest tour, or bring your own manuscript.")
+            : t("Scenewright starts by finding the people, places, and shape of your story.")}
         </p>
 
-        <div className="mt-6 flex border-b border-ink-black/20">
+        {step === "source" && <div className="mt-6 flex border-b-[2px] border-ink-black/12">
           <button
             type="button"
             onClick={() => setTab("library")}
-            className={`px-4 py-2 font-display text-xs font-bold uppercase tracking-wider transition-colors ${
+            className={`min-h-11 px-4 py-2 font-display text-xs font-bold uppercase tracking-wider transition-colors ${
               tab === "library"
                 ? "border-b-[3px] border-hero-red text-ink-black"
                 : "text-ink-black/40 hover:text-ink-black/70"
             }`}
           >
-            {t("SHORT STORY LIBRARY")}
+            {t("TRY A SAMPLE")}
           </button>
           <button
             type="button"
             onClick={() => setTab("file")}
-            className={`px-4 py-2 font-display text-xs font-bold uppercase tracking-wider transition-colors ${
+            className={`min-h-11 px-4 py-2 font-display text-xs font-bold uppercase tracking-wider transition-colors ${
               tab === "file"
                 ? "border-b-[3px] border-hero-red text-ink-black"
                 : "text-ink-black/40 hover:text-ink-black/70"
             }`}
           >
-            {t("UPLOAD FILE")}
+            {t("UPLOAD MANUSCRIPT")}
           </button>
-        </div>
+        </div>}
 
         <div className="mt-6 space-y-4">
-          <div>
-            <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-              {t("PROJECT NAME")}
-            </label>
-            <input
+          {step === "details" && (
+            <div className="flex items-center justify-between gap-4 bg-surface-container px-4 py-3">
+              <div className="min-w-0">
+                <div className="font-meta text-[0.48rem] uppercase tracking-[0.16em] text-ink-black/45">{t("SOURCE")}</div>
+                <div className="truncate font-body text-[0.85rem] font-bold text-ink-black">
+                  {tab === "file" ? file?.name : selectedStory?.title ?? pastedUrlOrCode}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStep("source")}
+                className="min-h-9 shrink-0 font-meta text-[0.56rem] uppercase tracking-[0.14em] text-hero-red hover:underline"
+              >
+                {t("CHANGE")}
+              </button>
+            </div>
+          )}
+
+          {step === "details" && <div>
+            <FieldLabel htmlFor="project-name">{t("PROJECT NAME")}</FieldLabel>
+            <TextField
+              id="project-name"
               name="projectName"
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. The Last Question"
               autoComplete="off"
-              className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm font-body focus:outline-none focus:ring-2 focus:ring-hero-red"
               required
             />
-          </div>
+          </div>}
 
-          {tab === "file" ? (
+          {step === "source" && (tab === "file" ? (
             <div>
               <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
                 {t("NOVEL FILE")}
@@ -239,7 +278,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                 onDrop={(e) => {
                   e.preventDefault();
                   const dropped = e.dataTransfer.files[0];
-                  if (dropped) setFile(dropped);
+                  if (dropped) chooseFile(dropped);
                 }}
                 aria-label={t("DROP FILE OR CLICK TO BROWSE")}
                 className={`flex min-h-[120px] w-full cursor-pointer flex-col items-center justify-center border-[2px] border-dashed px-4 py-6 transition-colors ${
@@ -289,7 +328,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                 className="hidden"
                 onChange={(e) => {
                   const f = e.target.files?.[0];
-                  if (f) setFile(f);
+                  if (f) chooseFile(f);
                 }}
               />
             </div>
@@ -304,12 +343,12 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                 </p>
                 <div className="flex gap-2">
                   <div className="relative flex-1">
-                    <input
+                    <TextField
                       type="text"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder={t("Search stories by title, author, or genre...")}
-                      className="w-full border-[2px] border-ink-black bg-bristol pl-8 pr-3 py-2 text-sm font-body focus:outline-none focus:ring-2 focus:ring-hero-red"
+                      className="pl-8"
                     />
                     <div className="absolute left-2.5 top-3.5 text-ink-black/40">
                       <Icon name="sparkles" size={14} />
@@ -337,7 +376,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                           type="button"
                           onClick={() => toggleGenre(genre)}
                           aria-pressed={active}
-                          className={`rounded border px-2 py-0.5 font-meta text-[10px] uppercase tracking-wide transition-colors ${
+                      className={`border px-2 py-1 font-meta text-[10px] uppercase tracking-wide transition-colors ${
                             active
                               ? "border-ink-black bg-ink-black text-bristol"
                               : "border-transparent bg-ink-black/5 text-ink-black/55 hover:border-ink-black/30"
@@ -398,7 +437,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                             </div>
                             <div className="mt-1 flex flex-wrap gap-1">
                               {story.genres.map((g: string) => (
-                                <span key={g} className="px-1.5 py-0.5 bg-ink-black/5 text-ink-black/60 rounded text-[9px] font-meta uppercase">
+                                <span key={g} className="bg-ink-black/5 px-1.5 py-0.5 font-meta text-[9px] uppercase text-ink-black/60">
                                   {g}
                                 </span>
                               ))}
@@ -429,37 +468,39 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                 </div>
               </div>
 
-              <div>
-                <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
-                  {t("PASTE URL OR CODE")}
-                </label>
-                <input
-                  type="text"
-                  value={pastedUrlOrCode}
-                  onChange={(e) => {
-                    setPastedUrlOrCode(e.target.value);
-                    setSelectedStory(null);
-                    const codeMatch = e.target.value.match(/onlinereader\/([a-zA-Z0-9_-]+)/);
-                    const code = codeMatch ? codeMatch[1] : e.target.value.split("/").pop() || "";
-                    if (code && code.trim()) {
-                      const nameSug = code
-                        .replace(/[^a-zA-Z0-9]+/g, " ")
-                        .trim()
-                        .replace(/\b\w/g, (c: string) => c.toUpperCase());
-                      if (nameSug) setName(nameSug);
-                    }
-                  }}
-                  placeholder="e.g. https://www.libraryofshortstories.com/onlinereader/2br02b"
-                  className="w-full border-[2px] border-ink-black bg-bristol px-3 py-2 text-sm"
-                />
-              </div>
+              <details className="bg-surface-container px-4 py-3">
+                <summary className="cursor-pointer font-meta text-[0.56rem] uppercase tracking-[0.14em] text-ink-black/65">
+                  {t("USE ANOTHER SOURCE")}
+                </summary>
+                <div className="mt-3">
+                  <FieldLabel>{t("PASTE URL OR CODE")}</FieldLabel>
+                  <TextField
+                    type="text"
+                    value={pastedUrlOrCode}
+                    onChange={(e) => {
+                      setPastedUrlOrCode(e.target.value);
+                      setSelectedStory(null);
+                      const codeMatch = e.target.value.match(/onlinereader\/([a-zA-Z0-9_-]+)/);
+                      const code = codeMatch ? codeMatch[1] : e.target.value.split("/").pop() || "";
+                      if (code && code.trim()) {
+                        const nameSug = code
+                          .replace(/[^a-zA-Z0-9]+/g, " ")
+                          .trim()
+                          .replace(/\b\w/g, (c: string) => c.toUpperCase());
+                        if (nameSug) setName(nameSug);
+                      }
+                    }}
+                    placeholder="e.g. story URL or library code"
+                  />
+                </div>
+              </details>
             </div>
-          )}
+          ))}
 
-          <div>
-            <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
+          {step === "details" && showAdvanced && <div>
+            <FieldLabel>
               {t("OUTPUT LANGUAGE")}
-            </label>
+            </FieldLabel>
             <Select
               aria-label={t("OUTPUT LANGUAGE")}
               value={targetLanguage}
@@ -470,12 +511,12 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
             <p className="mt-1 text-[0.72rem] leading-relaxed text-ink-black/45">
               {t("Controls generated dialogue, narration, style suggestions, and prompt artifacts.")}
             </p>
-          </div>
+          </div>}
 
         </div>
 
         {/* Advanced config disclosure */}
-        <button
+        {step === "details" && <button
           type="button"
           onClick={() => setShowAdvanced(!showAdvanced)}
           aria-expanded={showAdvanced}
@@ -483,19 +524,19 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
         >
           <div>
             <div className="font-display text-[0.95rem] font-bold uppercase leading-none tracking-[-0.02em] text-ink-black">
-              {t("ADVANCED CONFIGURATION")}
+              {t("PRODUCTION SETTINGS")}
             </div>
             <div className="mt-1 font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/55">
-              {t("Generation quality")}
+              {targetLanguage.toUpperCase()} · {t("Balanced by default")}
             </div>
           </div>
           <span aria-hidden="true" className="font-meta text-[0.7rem] text-ink-black/60">
             {showAdvanced ? "▼" : "▶"}
           </span>
-        </button>
+        </button>}
 
         {/* Credit preview strip */}
-        {(() => {
+        {step === "details" && (() => {
           const estimate = file || (tab === "library" && (selectedStory || pastedUrlOrCode.trim()))
             ? estimateProjectCredits({
                 fileSizeBytes: file
@@ -540,25 +581,8 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
           );
         })()}
 
-        {showAdvanced && (
+        {step === "details" && showAdvanced && (
           <div className="mt-4 space-y-3 border-t-[2px] border-ink-black pt-4">
-            {/* Dev mode — an expert escape hatch, kept out of the happy path. */}
-            <label className="flex items-center gap-3 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={devMode}
-                onChange={(e) => setDevMode(e.target.checked)}
-                className="h-4 w-4 accent-hero-red"
-              />
-              <div>
-                <div className="font-display text-[0.9rem] font-bold uppercase leading-none tracking-[-0.02em] text-ink-black">
-                  Dev mode
-                </div>
-                <div className="mt-0.5 font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/55">
-                  Process only the first scene for rapid iteration. Forces fast quality preset.
-                </div>
-              </div>
-            </label>
             <div>
               <label className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/60 block mb-1">
                 {t("GENERATION QUALITY")}
@@ -588,18 +612,21 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
           <div className="mt-4 text-[0.82rem] text-hero-red" role="alert">{error}</div>
         )}
 
-        <div className="mt-6 flex items-center gap-3">
-          <Button
-            type="submit"
-            size="lg"
-            disabled={
-              isPending ||
-              !name.trim() ||
-              (tab === "file" ? (!file || !extOk) : (!selectedStory && !pastedUrlOrCode.trim()))
-            }
-          >
-            {isPending ? t("CREATING…") : t("CREATE PROJECT")}
-          </Button>
+        <div className="mt-6 flex flex-wrap items-center gap-3">
+          {step === "source" ? (
+            <Button type="submit" size="lg" disabled={!sourceReady}>
+              {t("CONTINUE")} →
+            </Button>
+          ) : (
+            <>
+              <Button type="submit" size="lg" disabled={isPending || !name.trim() || !sourceReady}>
+                {isPending ? t("CREATING…") : t("START PRODUCTION")}
+              </Button>
+              <Button type="button" size="lg" variant="outline" onClick={() => setStep("source")}>
+                ← {t("BACK")}
+              </Button>
+            </>
+          )}
           {onCancel && (
             <Button
               type="button"

@@ -43,7 +43,7 @@ export const STATIONS: Station[] = [
     primaryRoute: "extract",
     substeps: [
       { key: "extract", label: "What Scenewright found", kind: "gated", backendStages: ["extract"], route: "extract" },
-      { key: "script", label: "Script", kind: "auto", backendStages: ["adapt"], drawer: "script" },
+      { key: "script", label: "Story draft", kind: "auto", backendStages: ["adapt"], drawer: "script" },
     ],
   },
   {
@@ -64,8 +64,8 @@ export const STATIONS: Station[] = [
     routes: ["draw", "shot-plan", "direct"],
     primaryRoute: "draw",
     substeps: [
-      { key: "shot-plan", label: "Shot plan", kind: "auto", backendStages: ["plan", "storyboard"], drawer: "shot-plan" },
-      { key: "prompts", label: "Prompts", kind: "auto", backendStages: ["direct"], drawer: "prompts" },
+      { key: "shot-plan", label: "Panel plan", kind: "auto", backendStages: ["plan", "storyboard"], drawer: "shot-plan" },
+      { key: "prompts", label: "Image instructions", kind: "auto", backendStages: ["direct"], drawer: "prompts" },
       { key: "draw", label: "Draw panels", kind: "gated", backendStages: ["draw"], route: "draw" },
     ],
   },
@@ -121,6 +121,34 @@ export function getSubstepState(substep: StationSubstep, status: ProjectStatus |
 
 export function stationForRoute(route: string): Station | undefined {
   return STATIONS.find((station) => station.routes.includes(route));
+}
+
+/**
+ * Land on the decision that currently needs the user, not blindly on the
+ * station's first route. This lets the sidebar stay at four stations without
+ * making the user understand the gated backend steps inside Look.
+ */
+export function stationDestination(
+  station: Station,
+  status: ProjectStatus | undefined,
+): string {
+  const gated = station.substeps.filter(
+    (substep): substep is StationSubstep & { route: string } =>
+      substep.kind === "gated" && Boolean(substep.route),
+  );
+
+  const active = gated.find((substep) =>
+    substep.backendStages.some((stage) => {
+      const stageStatus = stageStatusOf(status, stage);
+      return stageStatus === "awaiting_review" || stageStatus === "running" || stageStatus === "failed";
+    }),
+  );
+  if (active) return active.route;
+
+  const next = gated.find((substep) =>
+    substep.backendStages.some((stage) => stageStatusOf(status, stage) !== "complete"),
+  );
+  return next?.route ?? station.primaryRoute;
 }
 
 /**

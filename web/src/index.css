@@ -26,7 +26,7 @@
   --font-body: "Be Vietnam Pro", sans-serif;
   --font-meta: "Lexend", sans-serif;
 
-  --spacing-shell-top: 70px;
+  --spacing-shell-top: 96px;
   --spacing-shell-side: 162px;
   --spacing-shell-footer: 34px;
 
@@ -201,9 +201,9 @@
   .display-impact {
     font-family: var(--font-display);
     font-weight: 700;
-    font-size: clamp(3.5rem, 8vw, 6.25rem);
-    line-height: 0.82;
-    letter-spacing: -0.045em;
+    font-size: 6rem;
+    line-height: 0.86;
+    letter-spacing: -0.04em;
     color: var(--color-ink-black);
     text-wrap: balance;
   }
@@ -212,9 +212,9 @@
     font-family: var(--font-display);
     font-weight: 900;
     font-stretch: 75%;
-    font-size: clamp(2.75rem, 5vw, 4.5rem);
-    line-height: 0.82;
-    letter-spacing: -0.055em;
+    font-size: 4rem;
+    line-height: 0.86;
+    letter-spacing: -0.04em;
     text-wrap: balance;
   }
 
@@ -234,10 +234,10 @@
     color: color-mix(in srgb, var(--color-ink-black) 55%, transparent);
   }
 
-  /* Lead paragraph — pulp style with red left bar. */
+  /* Lead paragraph — a quiet inset sheet, not a decorative side stripe. */
   .lead-pulp {
-    border-left: 4px solid var(--color-hero-red);
-    padding-left: 1rem;
+    background: var(--color-surface-container);
+    padding: 0.9rem 1rem;
     font-size: 0.95rem;
     line-height: 1.6;
     color: color-mix(in srgb, var(--color-ink-black) 74%, transparent);
@@ -360,18 +360,27 @@
 
 @keyframes comic-pop {
   0% {
-    transform: scale(0.85);
-  }
-  50% {
-    transform: scale(1.15);
+    transform: scale(0.96);
+    opacity: 0;
   }
   100% {
     transform: scale(1);
+    opacity: 1;
   }
 }
 
 .animate-comic-pop {
-  animation: comic-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: comic-pop 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (max-width: 640px) {
+  .display-impact {
+    font-size: 3.5rem;
+  }
+
+  .display-headline {
+    font-size: 2.75rem;
+  }
 }
 
 /* New pipeline log lines slide up 4px as they arrive (stage-running ticker). */

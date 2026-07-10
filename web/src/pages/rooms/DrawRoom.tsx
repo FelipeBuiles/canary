@@ -21,8 +21,10 @@ import {
   ApprovalBar,
   RoomHeader,
   RoomShell,
+  RoomTabs,
   StagePlaceholder,
   ConfirmDrawer,
+  RerunStageAction,
 } from "../../components/composites";
 import { StyleCallout } from "../../components/wizard/StyleCallout";
 import { useActiveRegens, useRegenStore } from "../../store/regen";
@@ -137,6 +139,7 @@ export function DrawRoom() {
   const fail = useRegenStore((s) => s.fail);
 
   const [statusFilter, setStatusFilter] = useState<PanelFilterBucket>("all");
+  const didChooseInitialReviewFilter = useRef(false);
   const [sceneFilter, setSceneFilter] = useState<string | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">(() => {
@@ -405,6 +408,15 @@ export function DrawRoom() {
     if (statusFilter === "failed" && panelCounts.failed === 0) setStatusFilter("all");
   }, [statusFilter, panelCounts.flagged, panelCounts.failed]);
 
+  // When review first becomes available, lead with exceptions. The user's
+  // job is to resolve outliers, not prove that every successful panel is fine.
+  useEffect(() => {
+    if (didChooseInitialReviewFilter.current || isDrawRunning || panelCounts.pending > 0) return;
+    didChooseInitialReviewFilter.current = true;
+    if (panelCounts.flagged > 0) setStatusFilter("flagged");
+    else if (panelCounts.failed > 0) setStatusFilter("failed");
+  }, [isDrawRunning, panelCounts.failed, panelCounts.flagged, panelCounts.pending]);
+
   function handleSetViewMode(mode: "grid" | "list") {
     setViewMode(mode);
     try { localStorage.setItem("drawRoom.viewMode", mode); } catch { /* localStorage may be unavailable */ }
@@ -509,7 +521,7 @@ export function DrawRoom() {
         )}
         {id && !isDrawRunning && !upstreamReady && (
           <ApprovalBar
-            next="Waiting for shot plan and prompts — open SHOT PLAN above to retry"
+            next="Scenewright is preparing the panel plan and image instructions"
             primaryLabel="▶ DRAW ALL PANELS"
             onPrimary={() => {}}
             primaryDisabled
@@ -564,6 +576,26 @@ export function DrawRoom() {
   ];
 
   const drawApproved = drawStageStatus === "complete";
+  const reviewActions = id && (drawStageStatus === "complete" || drawStageStatus === "awaiting_review") ? (
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      {panelCounts.flagged > 0 && (
+        <button
+          type="button"
+          onClick={handleReviewFlagged}
+          className="inline-flex min-h-11 items-center px-2 font-meta text-[0.62rem] tracking-[0.14em] text-hero-red transition-colors hover:underline"
+        >
+          ⚑ REVIEW {panelCounts.flagged} FLAGGED
+        </button>
+      )}
+      <RerunStageAction
+        project={id}
+        stage="draw"
+        label="panels"
+        disabled={isPipelineRunning}
+        itemsAtRisk="Generated panel images and the assembled book will be rebuilt."
+      />
+    </div>
+  ) : undefined;
 
   const approvalBar = isDrawRunning ? (
     <ApprovalBar
@@ -606,19 +638,15 @@ export function DrawRoom() {
     <ApprovalBar
       next={drawApproved ? "Letter and export your book" : "Scenewright assembles your comic-book pages"}
       estimateCredits={drawApproved ? null : composeEstimate?.estimate_credits}
-      primaryLabel={drawApproved ? "GO TO BOOK →" : "ACCEPT ALL — CONTINUE →"}
+      primaryLabel={drawApproved
+        ? "GO TO BOOK →"
+        : panelCounts.flagged > 0
+          ? `CONTINUE WITH ${panelCounts.flagged} FLAGGED →`
+          : "ACCEPT ALL — CONTINUE →"}
       onPrimary={handleAcceptAllContinue}
       primaryDisabled={approveStage.isPending || isPipelineRunning}
       busy={approveStage.isPending}
-      secondary={panelCounts.flagged > 0 ? (
-        <button
-          type="button"
-          onClick={handleReviewFlagged}
-          className="font-meta text-[0.62rem] tracking-[0.14em] text-hero-red transition-colors hover:underline"
-        >
-          ⚑ REVIEW {panelCounts.flagged} FLAGGED
-        </button>
-      ) : undefined}
+      secondary={reviewActions}
     />
   );
 
@@ -626,8 +654,10 @@ export function DrawRoom() {
     <RoomShell project={id}>
       <RoomHeader
         kicker="PANELS"
-        title="DRAW PANELS"
-        lead="Panels are accepted by default — flag the ones that need re-work."
+        title={panelCounts.flagged > 0 ? "FIX FLAGGED PANELS" : panelCounts.pending > 0 ? "DRAW PANELS" : "REVIEW PANELS"}
+        lead={panelCounts.flagged > 0
+          ? `Review the ${panelCounts.flagged} exception${panelCounts.flagged === 1 ? "" : "s"}. The other panels are ready.`
+          : "Panels are accepted by default — flag only the ones that need re-work."}
       />
       <StyleCallout project={id} />
 
@@ -653,26 +683,17 @@ export function DrawRoom() {
       />
 
       <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-1.5" role="tablist" aria-label="Panel filter">
-          {filterChips.map(({ key, label, count }) => (
-            <button
-              key={key}
-              type="button"
-              role="tab"
-              aria-selected={statusFilter === key}
-              onClick={() => setStatusFilter(key)}
-              className={`inline-flex h-8 items-center gap-1.5 border-[2px] px-3 font-meta text-[0.6rem] tracking-[0.12em] transition-colors ${
-                statusFilter === key
-                  ? key === "flagged" || key === "failed"
-                    ? "border-hero-red bg-hero-red text-bristol"
-                    : "border-ink-black bg-ink-black text-bristol"
-                  : "border-ink-black/20 bg-bristol text-ink-black/60 hover:text-ink-black"
-              }`}
-            >
-              {label} · {count}
-            </button>
-          ))}
-        </div>
+        <RoomTabs
+          ariaLabel="Panel filter"
+          className="max-w-full"
+          tabs={filterChips.map(({ key, label, count }) => ({
+            key,
+            label,
+            count,
+            active: statusFilter === key,
+            onClick: () => setStatusFilter(key),
+          }))}
+        />
 
         <div className="flex w-full flex-1 items-center justify-end gap-2 sm:w-auto sm:min-w-[14rem]">
           {scenes.length > 1 && (

@@ -429,8 +429,8 @@ export function ComposeRoom() {
           <RerunStageAction
             project={id}
             stage="compose"
-            label="Compose"
-            className="min-h-7 border border-ink-black/20 px-3 py-1 text-[0.5rem] tracking-[0.16em] text-ink-black/50 hover:text-ink-black"
+            label="book"
+            className="border-ink-black/20 text-[0.5rem] tracking-[0.16em] text-ink-black/50 hover:text-ink-black"
           />
         }
         pageCount={pageList.length}

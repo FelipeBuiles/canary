@@ -45,9 +45,9 @@ export function LetteringChooser({
       </p>
 
       <div className="mt-4 grid gap-5 md:grid-cols-[260px_minmax(0,1fr)]">
-        <div className="border-[2px] border-ink-black bg-bristol p-1.5 shadow-ink-sm">
+        <div className="flex items-center justify-center border-[2px] border-ink-black bg-bristol p-1.5 shadow-ink-sm">
           {isGenerating ? (
-            <FlowingDotsPlaceholder aspect="3 / 2" className="h-full w-full" label="TUNING LETTERING…" />
+            <FlowingDotsPlaceholder aspect="36 / 32" className="h-full w-full" label="TUNING LETTERING…" />
           ) : (
             <LetteringPreview lettering={lettering} />
           )}
@@ -71,7 +71,7 @@ export function LetteringChooser({
                 onClick={() => (p.id === "auto" ? onMatchMyStyle() : onSelectPreset(p.id))}
                 disabled={disabled || isGenerating}
                 className={cn(
-                  "border-[2px] border-ink-black px-3 py-1.5 font-meta text-[0.52rem] tracking-[0.14em] transition-colors disabled:opacity-50",
+                  "min-h-11 border-[2px] border-ink-black px-3 py-1.5 font-meta text-[0.52rem] tracking-[0.14em] transition-colors disabled:opacity-50",
                   activeId === p.id ? "bg-ink-black text-bristol" : "bg-bristol hover:bg-surface-container",
                 )}
               >
@@ -83,7 +83,7 @@ export function LetteringChooser({
                 type="button"
                 onClick={onReroll}
                 disabled={disabled}
-                className="border-[2px] border-ink-black/30 px-3 py-1.5 font-meta text-[0.52rem] tracking-[0.14em] text-ink-black/60 transition-colors hover:border-ink-black hover:text-ink-black disabled:opacity-50"
+                className="min-h-11 border-[2px] border-ink-black/30 px-3 py-1.5 font-meta text-[0.52rem] tracking-[0.14em] text-ink-black/60 transition-colors hover:border-ink-black hover:text-ink-black disabled:opacity-50"
               >
                 ↺ ANOTHER TAKE
               </button>

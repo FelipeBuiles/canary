@@ -81,10 +81,7 @@ export function CreditsGate({
           </p>
 
           {/* Balance / Needed / Shortfall */}
-          <div
-            className="mt-4 grid grid-cols-3 gap-4 bg-bristol p-4"
-            style={{ borderLeft: "3px solid var(--color-narrator-gold)" }}
-          >
+          <div className="mt-4 grid grid-cols-3 gap-4 border-[2px] border-narrator-gold/35 bg-chip-gold/20 p-4">
             <div>
               <div className="font-meta text-[0.54rem] tracking-[0.16em] uppercase text-ink-black/50">
                 Balance

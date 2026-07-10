@@ -48,7 +48,7 @@ export function ApprovalBar({
 
   return (
     <BottomBarPortal>
-      <footer className="flex min-h-[64px] flex-wrap items-center gap-x-4 gap-y-2 border-t-[2px] border-ink-black bg-bristol px-4 py-3 md:px-8">
+      <footer className="flex min-h-16 flex-wrap items-center gap-x-4 gap-y-2 border-t-[2px] border-ink-black bg-bristol px-4 py-3 md:h-16 md:py-0 md:px-8">
         <div className="w-full min-w-0 md:w-auto md:flex-1">
           <div className="font-body text-[0.85rem] font-bold leading-snug text-ink-black md:truncate md:text-[0.9rem]">
             {t("Next:")} {next}

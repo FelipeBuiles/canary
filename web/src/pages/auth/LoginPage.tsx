@@ -118,8 +118,8 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
             <h1 className="mt-[6vh] max-w-[10ch] font-display text-[clamp(3.4rem,6.8vw,7rem)] font-black uppercase leading-[0.84] tracking-[-0.04em] text-pulp-paper">
               Your novel, scene by scene.
             </h1>
-            <p className="mt-8 max-w-[32rem] border-l-[4px] border-hero-red pl-7 text-[1.05rem] font-semibold leading-8 text-pulp-paper/65">
-              Upload your manuscript. Scenewright drafts characters, storyboards each chapter, and lays out every panel — you direct every page, and the work stays yours.
+            <p className="mt-8 max-w-[32rem] bg-bristol/8 px-5 py-4 text-[1.05rem] font-semibold leading-8 text-pulp-paper/70">
+              Upload your manuscript. Scenewright drafts characters, storyboards each chapter, and lays out every panel — you direct every page, and we claim no ownership over what you make.
             </p>
           </div>
           <div className="relative mt-12 font-meta text-[0.62rem] uppercase tracking-[0.22em] text-pulp-paper/40">
@@ -215,8 +215,8 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
                   </button>
                 ) : (
                   <p className="pt-1 text-center font-body text-[0.8rem] font-semibold text-ink-black/60">
-                    500 free credits on signup. By creating an account you agree
-                    to our{" "}
+                    No subscription. Credits never expire. By creating an
+                    account you agree to our{" "}
                     <Link to="/legal/terms" className="text-ink-black underline underline-offset-2">
                       Terms
                     </Link>{" "}

@@ -29,7 +29,7 @@ function NewProjectCard({ onClick }: { onClick: () => void }) {
           <Icon name="plus" size={30} />
         </div>
         <div className="text-center">
-          <h3 className="font-display text-[1.42rem] font-black uppercase leading-none tracking-[-0.055em] text-ink-black">
+          <h3 className="font-display text-[1.42rem] font-black uppercase leading-none tracking-[-0.04em] text-ink-black">
             {t("NEW PRODUCTION")}
           </h3>
           <p className="mt-3 font-body text-[0.96rem] font-semibold text-ink-black/45">
@@ -49,7 +49,7 @@ function FirstIssueInvitation({ onStart }: { onStart: () => void }) {
       <div className="inline-flex bg-hero-red px-3.5 py-1.5 font-meta text-[0.6rem] tracking-[0.24em] text-bristol uppercase">
         {t("ISSUE #0")}
       </div>
-      <p className="mt-6 max-w-[36rem] font-display text-[clamp(1.7rem,3.4vw,2.4rem)] font-black uppercase leading-[0.95] tracking-[-0.045em] text-ink-black">
+      <p className="mt-6 max-w-[36rem] font-display text-[1.8rem] font-black uppercase leading-[0.95] tracking-[-0.04em] text-ink-black sm:text-[2.4rem]">
         {t("Every production starts with a manuscript.")}
       </p>
       <div className="mt-10">
@@ -259,16 +259,15 @@ export function Library() {
   }
 
   return (
-    <div className="relative space-y-20">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_1px_1px,rgba(27,28,21,0.1)_1px,transparent_0)] [background-size:28px_28px]" />
-      <section className="relative">
+    <div className="space-y-16 md:space-y-20">
+      <section>
         <div className="inline-flex bg-hero-red px-4 py-1.5 font-meta text-[0.56rem] tracking-[0.22em] text-bristol uppercase">
           {t("STUDIO // ACTIVE PRODUCTIONS")}
         </div>
-        <h1 className="mt-5 max-w-[10ch] font-display text-[clamp(5.25rem,11vw,9rem)] font-black uppercase leading-[0.78] tracking-[-0.065em] text-ink-black">
+        <h1 className="mt-5 max-w-[12ch] display-impact uppercase">
           {t("LIBRARY")}
         </h1>
-        <p className="mt-9 max-w-[49rem] border-l-[4px] border-hero-red pl-8 text-[1.28rem] font-semibold leading-10 text-ink-black/68">
+        <p className="mt-7 max-w-[49rem] lead-pulp text-[1rem] font-semibold md:text-[1.1rem]">
           {t("Your productions — pick up where you left off, or start a new one.")}
         </p>
       </section>
