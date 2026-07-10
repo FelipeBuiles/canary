@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useProjectConfig, useProjectStatus, useUpdateProjectConfig, useDeleteProject } from "../api/queries";
-import { SettingsLayout } from "../components/ui/SettingsLayout";
+import { SettingsLayout, SettingsRow } from "../components/ui/SettingsLayout";
 import { ConfirmModal, RoomHeader } from "../components/composites";
 import { Card } from "../components/ui/Card";
 import { SelectField, SwitchField } from "../components/ui/Field";
@@ -25,20 +25,6 @@ const TABS = [
   { id: "models", label: "Generation" },
   { id: "delete", label: "Delete Project" },
 ];
-
-function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <div className="grid gap-3 border-b border-ink-black/10 py-4 last:border-b-0 md:grid-cols-[220px_1fr] md:items-start md:gap-6">
-      <div>
-        <div className="font-meta text-[0.56rem] tracking-[0.18em] text-ink-black/55">{label}</div>
-        {hint && (
-          <p className="mt-1.5 text-[0.72rem] leading-5 text-ink-black/55">{hint}</p>
-        )}
-      </div>
-      <div className="min-w-0">{children}</div>
-    </div>
-  );
-}
 
 export function ProjectSettingsPage() {
   const { id } = useParams();
@@ -84,8 +70,8 @@ export function ProjectSettingsPage() {
         onTabChange={setActiveTab}
       >
         {activeTab === "language" && (
-          <Card className="px-5">
-            <Row label={t("UI LANGUAGE")} hint={t("Controls the studio interface language. Stored locally.")}>
+          <Card>
+            <SettingsRow label={t("UI LANGUAGE")} hint={t("Controls the studio interface language. Stored locally.")}>
               <SelectField
                 value={language}
                 onChange={(e) => setLanguage(e.target.value as LanguageCode)}
@@ -95,9 +81,9 @@ export function ProjectSettingsPage() {
                   <option key={l.code} value={l.code}>{l.label}</option>
                 ))}
               </SelectField>
-            </Row>
+            </SettingsRow>
 
-            <Row
+            <SettingsRow
               label={t("OUTPUT LANGUAGE")}
               hint={t("Controls generated dialogue, narration, style suggestions, and prompt artifacts for this project.")}
             >
@@ -111,13 +97,13 @@ export function ProjectSettingsPage() {
                   <option key={l.code} value={l.code}>{l.label}</option>
                 ))}
               </SelectField>
-            </Row>
+            </SettingsRow>
           </Card>
         )}
 
         {activeTab === "dev" && (
-          <Card className="px-5">
-            <Row
+          <Card>
+            <SettingsRow
               label={t("SHOW DEV CONTENT")}
               hint={t("Shows raw file paths, model names, SHA hashes, and generation parameters for debugging.")}
             >
@@ -126,9 +112,9 @@ export function ProjectSettingsPage() {
                 onCheckedChange={setShowDevContent}
                 label={t("SHOW DEV CONTENT")}
               />
-            </Row>
+            </SettingsRow>
 
-            <Row
+            <SettingsRow
               label={t("DEV / DEMO MODE")}
               hint={t("Runs a smaller, faster generation path for quick testing.")}
             >
@@ -138,13 +124,13 @@ export function ProjectSettingsPage() {
                 disabled={!config || updating}
                 label={t("DEV / DEMO MODE")}
               />
-            </Row>
+            </SettingsRow>
           </Card>
         )}
 
         {activeTab === "models" && (
-          <Card className="px-5">
-            <Row
+          <Card>
+            <SettingsRow
               label={t("GENERATION QUALITY")}
               hint={t("Controls speed, fidelity, and cost across the whole pipeline. DEV mode forces Fast.")}
             >
@@ -160,7 +146,7 @@ export function ProjectSettingsPage() {
                   <option key={option.value} value={option.value}>{option.label} — {option.desc}</option>
                 ))}
               </SelectField>
-            </Row>
+            </SettingsRow>
           </Card>
         )}
 

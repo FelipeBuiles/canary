@@ -107,7 +107,7 @@ export function InsufficientCreditsDialog() {
 
   return (
     <div
-      className="fixed inset-0 z-[140] flex items-end justify-center bg-ink-black/60 backdrop-blur-[2px] sm:items-center"
+      className="fixed inset-0 z-[140] flex items-end justify-center bg-ink-black/70 sm:items-center"
       onClick={close}
       role="presentation"
     >
@@ -212,7 +212,7 @@ export function InsufficientCreditsDialog() {
                           {pkg.credits.toLocaleString()}
                         </span>
                         {isThisPending ? (
-                          <Icon name="loader" size={12} className="animate-spin text-ink-black/60" />
+                          <span aria-hidden="true" className="animate-press-blink h-3 w-3 bg-hero-red" />
                         ) : isRecommended ? (
                           <span className="bg-hero-red px-1.5 py-0.5 font-meta text-[0.48rem] font-bold tracking-[0.14em] uppercase text-bristol">
                             Pick

@@ -132,7 +132,7 @@ export function CreditsGate({
                   </div>
                 </div>
                 {buyCredits.isPending && buyCredits.variables?.packageId === pkg.id ? (
-                  <Icon name="loader" size={14} className="animate-spin text-ink-black/60" />
+                  <span aria-hidden="true" className="animate-press-blink h-3 w-3 bg-hero-red" />
                 ) : (
                   <span className="bg-hero-red px-2 py-1 font-meta text-[0.5rem] font-bold tracking-[0.14em] uppercase text-bristol">
                     Buy

@@ -20,7 +20,7 @@ import { GenerationDetailsModal } from "../../components/ui/GenerationDetailsMod
 import { LazyImage } from "../../components/ui/LazyImage";
 import { StateBlock } from "../../components/ui/StateBlock";
 import { Surface } from "../../components/ui/Surface";
-import { ApprovalBar, EntityCard, RoomHeader, ConfirmDrawer, RerunStageAction, RoomShell } from "../../components/composites";
+import { ApprovalBar, EntityCard, RoomHeader, ConfirmDrawer, RerunStageAction, RoomShell, SectionHeader } from "../../components/composites";
 import { useApproveStage, useStageEstimate } from "../../api/queries";
 import { useRunAction } from "../../hooks/useRunAction";
 import { useI18n } from "../../i18n";
@@ -63,6 +63,7 @@ function StyleCard({
   queueState,
   fallbackPrompt,
   fallbackParameters,
+  featured = false,
 }: {
   suggestion: StyleSuggestion;
   projectName: string;
@@ -71,6 +72,7 @@ function StyleCard({
   queueState: "queued" | "running" | null;
   fallbackPrompt: string;
   fallbackParameters: Record<string, unknown>;
+  featured?: boolean;
 }) {
   const { t } = useI18n();
   const sampleUrl = `/api/projects/${encodeURIComponent(projectName)}/files/samples/style_${suggestion.index}.png`;
@@ -131,8 +133,10 @@ function StyleCard({
       <EntityCard
         active={isActive}
         interactive={canSelect}
-        onClick={handleCardClick}
-        className={`min-h-[460px] ${isActive ? "!border-hero-red shadow-[4px_4px_0_0_var(--color-hero-red)]" : ""}`}
+        onClick={canSelect ? handleCardClick : undefined}
+        ariaLabel={canSelect ? `${t("SELECT")} ${suggestion.label}` : undefined}
+        ariaPressed={isActive}
+        className={`${featured ? "min-h-[420px] md:grid md:grid-cols-[minmax(260px,0.9fr)_minmax(0,1.1fr)]" : "min-h-[440px]"} ${isActive ? "!border-ink-black" : ""}`}
         media={
           <div className="relative bg-surface-container">
             {showLoading ? (
@@ -143,7 +147,7 @@ function StyleCard({
               />
             ) : imgFailed ? (
               <div className="flex aspect-[4/5] w-full flex-col items-center justify-center">
-                <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">
+                <div className="font-meta text-[0.58rem] font-bold tracking-[0.1em] text-ink-muted">
                   {t("NO STYLE SUGGESTIONS YET")}
                 </div>
               </div>
@@ -162,7 +166,7 @@ function StyleCard({
             )}
 
             {isActive && (
-              <div className="absolute left-0 top-0 bg-hero-red px-3 py-1.5 font-meta text-[0.56rem] tracking-[0.18em] text-bristol">
+              <div className="animate-register-stamp absolute left-0 top-0 bg-narrator-gold px-3 py-1.5 font-meta text-[0.58rem] font-bold tracking-[0.1em] text-ink-black shadow-ink-sm">
                 ✓ {t("YOUR STYLE")}
               </div>
             )}
@@ -172,7 +176,7 @@ function StyleCard({
                 type="button"
                 onClick={(e) => { e.stopPropagation(); setIsDetailsOpen(true); }}
                 title="View sample details"
-                className="flex h-9 w-9 items-center justify-center bg-ink-black/55 text-bristol transition-colors hover:bg-ink-black"
+                className="flex h-10 w-10 items-center justify-center border-[2px] border-bristol bg-ink-black text-bristol transition-colors hover:bg-hero-red"
               >
                 <span className="font-meta text-[0.78rem]">⌕</span>
               </button>
@@ -181,7 +185,7 @@ function StyleCard({
                 onClick={(e) => { e.stopPropagation(); handleGenerate(e); }}
                 disabled={isGenerating || actionsDisabled}
                 title={suggestion.has_sample ? "Regenerate sample" : "Generate sample"}
-                className="flex h-9 w-9 items-center justify-center bg-ink-black/55 text-bristol transition-colors hover:bg-ink-black disabled:opacity-40"
+                className="flex h-10 w-10 items-center justify-center border-[2px] border-bristol bg-ink-black text-bristol transition-colors hover:bg-hero-red disabled:opacity-40"
               >
                 <span className="font-meta text-[0.78rem]">↺</span>
               </button>
@@ -189,13 +193,16 @@ function StyleCard({
           </div>
         }
       >
-        <div className="font-display text-[1.35rem] font-bold leading-tight tracking-[-0.04em] text-ink-black">
+        <div className={featured
+          ? "font-display text-[2rem] font-black uppercase leading-[0.92] tracking-[-0.035em] text-ink-black"
+          : "font-display text-[1.35rem] font-black leading-tight tracking-[-0.03em] text-ink-black"}
+        >
           {suggestion.label}
         </div>
-        <p className="mt-2 flex-1 font-body text-[0.92rem] font-semibold leading-relaxed text-ink-black/68 line-clamp-2">
+        <p className={`mt-3 flex-1 font-body text-[0.92rem] font-semibold leading-relaxed text-ink-muted ${featured ? "line-clamp-6" : "line-clamp-3"}`}>
           {suggestion.template}
         </p>
-        <div className="mt-3 font-meta text-[0.52rem] tracking-[0.14em] text-ink-black/35">
+        <div className="mt-4 font-meta text-[0.58rem] font-bold tracking-[0.08em] text-ink-muted">
           {isActive ? `✓ ${t("YOUR STYLE")}` : t("CLICK TO SELECT")}
         </div>
       </EntityCard>
@@ -376,6 +383,10 @@ export function StyleRoom() {
   const effectiveSteps = projectConfig?.dev_mode
      ? Math.min(projectConfig?.image_steps ?? 0, projectConfig?.dev_image_steps ?? 0)
      : projectConfig?.image_steps;
+  const selectedSuggestion = suggestions.find((suggestion) => suggestion.is_active);
+  const candidateSuggestions = selectedSuggestion
+    ? suggestions.filter((suggestion) => suggestion.index !== selectedSuggestion.index)
+    : suggestions;
 
   return (
     <RoomShell project={id}>
@@ -423,8 +434,8 @@ export function StyleRoom() {
           suggestionStatus === "failed" ? "bg-hero-red text-bristol" : "bg-narrator-gold text-ink-black"
         }`}>
           <div className="flex items-center gap-2">
-            {(isSuggesting || isStageGenerating) && <span className="h-2.5 w-2.5 animate-pulse bg-hero-red" />}
-            <span className="font-meta text-[0.48rem] tracking-[0.16em]">
+            {(isSuggesting || isStageGenerating) && <span className="animate-press-blink h-2.5 w-2.5 bg-hero-red" />}
+            <span className="font-meta text-[0.58rem] font-bold tracking-[0.1em]">
               {suggestionStatus === "failed"
                 ? "STYLE SUGGESTION FAILED"
                 : isStageGenerating
@@ -455,32 +466,71 @@ export function StyleRoom() {
         </Surface>
       ) : (
         <>
-          <section className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-            {suggestions.map((s) => (
+          {selectedSuggestion && (
+            <section className="mt-6">
+              <SectionHeader
+                variant="underline"
+                kicker="SELECTED DIRECTION"
+                title="YOUR STORY'S LOOK"
+                description="This proof is now the visual reference for every character, place, and panel."
+              />
               <StyleCard
-                key={s.index}
-                suggestion={s}
+                key={selectedSuggestion.index}
+                suggestion={selectedSuggestion}
                 projectName={id}
-                isGenerating={pendingSet.has(s.index)}
+                isGenerating={pendingSet.has(selectedSuggestion.index)}
                 actionsDisabled={styleActionsDisabled}
                 queueState={
-                  pendingSet.has(s.index)
-                    ? styleJobStatuses[s.index] ?? "queued"
+                  pendingSet.has(selectedSuggestion.index)
+                    ? styleJobStatuses[selectedSuggestion.index] ?? "queued"
                     : null
                 }
-                fallbackPrompt={buildFallbackStyleSamplePrompt(s, storyBible)}
+                fallbackPrompt={buildFallbackStyleSamplePrompt(selectedSuggestion, storyBible)}
                 fallbackParameters={{
                   width: projectConfig?.image_width,
                   height: projectConfig?.image_height,
                   steps: effectiveSteps,
                   guidance_scale: projectConfig?.flux_guidance_scale,
-                  style_template: s.template,
+                  style_template: selectedSuggestion.template,
                 }}
+                featured
               />
-            ))}
-          </section>
+            </section>
+          )}
+
+          {candidateSuggestions.length > 0 && (
+            <section className="mt-10">
+              <SectionHeader
+                variant="underline"
+                title={selectedSuggestion ? "OTHER DIRECTIONS" : "STYLE PROOFS"}
+                description={selectedSuggestion
+                  ? "Choose another proof at any time; nothing changes until you continue."
+                  : "Each direction is previewed against your story, not a generic demo image."}
+              />
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-5">
+                {candidateSuggestions.map((s) => (
+                  <StyleCard
+                    key={s.index}
+                    suggestion={s}
+                    projectName={id}
+                    isGenerating={pendingSet.has(s.index)}
+                    actionsDisabled={styleActionsDisabled}
+                    queueState={pendingSet.has(s.index) ? styleJobStatuses[s.index] ?? "queued" : null}
+                    fallbackPrompt={buildFallbackStyleSamplePrompt(s, storyBible)}
+                    fallbackParameters={{
+                      width: projectConfig?.image_width,
+                      height: projectConfig?.image_height,
+                      steps: effectiveSteps,
+                      guidance_scale: projectConfig?.flux_guidance_scale,
+                      style_template: s.template,
+                    }}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
           {suggestions.some((s) => s.has_sample) && (
-            <p className="mt-4 font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/45">
+            <p className="mt-4 font-meta text-[0.58rem] font-bold tracking-[0.08em] text-ink-muted">
               ✓ EVERY SAMPLE ABOVE WAS PREVIEWED ON YOUR STORY&apos;S OPENING SCENE
             </p>
           )}

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { STAGE_ORDER, type StageName, type StageStatus } from "../../types/api";
 import { usePipelineStore } from "../../store/pipeline";
 import { useNeedsCredits } from "../../hooks/useNeedsCredits";
@@ -6,6 +6,7 @@ import { useRunAction } from "../../hooks/useRunAction";
 import { Icon } from "../ui/Icon";
 import { Button } from "../ui/Button";
 import { CreditsGate } from "./CreditsGate";
+import { useI18n } from "../../i18n";
 
 // ── Stage metadata ────────────────────────────────────────────────────────────
 
@@ -15,7 +16,6 @@ interface StageMeta {
   description: string;
   inputs: string[];
   outputs: string[];
-  icon: React.ComponentType<{ size?: number; className?: string }>;
 }
 
 const STAGE_META: Record<StageName, StageMeta> = {
@@ -25,7 +25,6 @@ const STAGE_META: Record<StageName, StageMeta> = {
     description: "Parses the source text into a structured bible — characters, locations, scenes, arcs, and props.",
     inputs: ["Source text"],
     outputs: ["Characters", "Locations", "Scenes", "Arcs"],
-    icon: () => <span className="font-display text-lg font-black">01</span>,
   },
   style: {
     label: "LOOK & FEEL",
@@ -33,7 +32,6 @@ const STAGE_META: Record<StageName, StageMeta> = {
     description: "Creates visual direction options and sample artwork so the comic has a consistent look before casting.",
     inputs: ["Story bible"],
     outputs: ["Style options", "Sample art"],
-    icon: () => <span className="font-display text-lg font-black">02</span>,
   },
   cast: {
     label: "CAST",
@@ -41,7 +39,6 @@ const STAGE_META: Record<StageName, StageMeta> = {
     description: "Generates reference images for each character and location extracted from the story bible.",
     inputs: ["Story bible"],
     outputs: ["Character refs", "Location plates"],
-    icon: () => <span className="font-display text-lg font-black">03</span>,
   },
   adapt: {
     label: "ADAPT",
@@ -49,7 +46,6 @@ const STAGE_META: Record<StageName, StageMeta> = {
     description: "Transforms prose scenes into screenplay beats — action, dialogue, sfx, and stage direction.",
     inputs: ["Story bible", "Scenes"],
     outputs: ["Screenplay beats"],
-    icon: () => <span className="font-display text-lg font-black">04</span>,
   },
   plan: {
     label: "PLAN",
@@ -57,7 +53,6 @@ const STAGE_META: Record<StageName, StageMeta> = {
     description: "Groups beats into panels and pages, deciding panel count, importance, and page rhythm.",
     inputs: ["Screenplay"],
     outputs: ["Planned panels", "Planned pages"],
-    icon: () => <span className="font-display text-lg font-black">05</span>,
   },
   storyboard: {
     label: "STORYBOARD",
@@ -65,7 +60,6 @@ const STAGE_META: Record<StageName, StageMeta> = {
     description: "Details each planned panel — shot type, camera angle, character poses, expressions, and mood.",
     inputs: ["Screenplay", "Layout plan"],
     outputs: ["Panel breakdowns"],
-    icon: () => <span className="font-display text-lg font-black">06</span>,
   },
   direct: {
     label: "DIRECT",
@@ -73,7 +67,6 @@ const STAGE_META: Record<StageName, StageMeta> = {
     description: "Assembles fully-baked image prompts with style, composition, character refs, and continuity notes.",
     inputs: ["Panel breakdowns", "Character refs"],
     outputs: ["Image prompts"],
-    icon: () => <span className="font-display text-lg font-black">07</span>,
   },
   draw: {
     label: "DRAW",
@@ -81,7 +74,6 @@ const STAGE_META: Record<StageName, StageMeta> = {
     description: "Sends each prompt to the image model and collects generated panel artwork.",
     inputs: ["Image prompts", "Style"],
     outputs: ["Panel images"],
-    icon: () => <span className="font-display text-lg font-black">08</span>,
   },
   compose: {
     label: "COMPOSE",
@@ -89,9 +81,60 @@ const STAGE_META: Record<StageName, StageMeta> = {
     description: "Assembles panels, bubbles, sfx, and lettering onto final comic page layouts.",
     inputs: ["Panel images", "Layout plan"],
     outputs: ["Comic pages"],
-    icon: () => <span className="font-display text-lg font-black">09</span>,
   },
 };
+
+function StageDocket({
+  stage,
+  state,
+  tone,
+  children,
+}: {
+  stage: StageName;
+  state: string;
+  tone: "muted" | "running" | "failed";
+  children?: ReactNode;
+}) {
+  const { t } = useI18n();
+  const meta = STAGE_META[stage];
+  const stageNumber = String(STAGE_ORDER.indexOf(stage) + 1).padStart(2, "0");
+  const plateClass = tone === "running"
+    ? "bg-narrator-gold text-ink-black"
+    : tone === "failed"
+      ? "bg-hero-red text-bristol"
+      : "bg-ink-black text-bristol";
+
+  return (
+    <div className="flex min-h-[50vh] items-center justify-center px-2 py-8 sm:px-6">
+      <article className="grid w-full max-w-[760px] overflow-hidden border-[3px] border-ink-black bg-bristol shadow-paper md:grid-cols-[150px_minmax(0,1fr)]">
+        <div className={`relative flex min-h-32 flex-col items-center justify-center px-5 py-6 text-center md:min-h-full ${plateClass}`}>
+          <div className="font-display text-[2.5rem] font-black leading-none tracking-[-0.03em]">
+            {stageNumber}
+          </div>
+          <div className="mt-3 font-meta text-[0.58rem] font-bold uppercase tracking-[0.12em] opacity-75">
+            {t(meta.label)}
+          </div>
+          {tone === "running" && (
+            <span aria-hidden="true" className="animate-press-blink absolute right-3 top-3 h-3 w-3 bg-hero-red" />
+          )}
+        </div>
+
+        <div className="p-6 sm:p-8">
+          <div className="font-meta text-[0.58rem] font-bold uppercase tracking-[0.1em] text-hero-red">
+            {t(state)}
+          </div>
+          <h2 className="mt-2 font-display text-[2rem] font-black uppercase leading-[0.92] tracking-[-0.035em] text-ink-black">
+            {t(meta.title)}
+          </h2>
+          <p className="mt-4 max-w-[58ch] font-body text-[0.9rem] font-semibold leading-7 text-ink-muted">
+            {t(meta.description)}
+          </p>
+          {children}
+        </div>
+      </article>
+    </div>
+  );
+}
 
 // ── Pending state ─────────────────────────────────────────────────────────────
 
@@ -100,60 +143,33 @@ interface StagePendingProps {
 }
 
 export function StagePending({ stage }: StagePendingProps) {
+  const { t } = useI18n();
   const meta = STAGE_META[stage];
-  const StageIcon = meta.icon;
 
   return (
-    <div className="flex min-h-[50vh] items-center justify-center px-6">
-      <div className="w-full max-w-md">
-        {/* Stage number badge */}
-        <div className="mx-auto mb-6 flex h-14 w-14 items-center justify-center border-[2px] border-ink-black/12 bg-pulp-paper text-ink-black/25">
-          <StageIcon />
-        </div>
-
-        {/* Title block */}
-        <div className="mb-2 text-center font-meta text-[0.68rem] font-bold tracking-[0.28em] text-ink-black/30">
-          {meta.label}
-        </div>
-        <div className="text-center font-display text-[1.6rem] font-black uppercase tracking-[-0.04em] text-ink-black/22">
-          {meta.title}
-        </div>
-
-        {/* Description */}
-        <p className="mx-auto mt-4 max-w-xs text-center text-[0.88rem] leading-7 text-ink-black/38">
-          {meta.description}
-        </p>
-
-        {/* Input → Output flow */}
-        <div className="mt-8 flex items-start justify-center gap-3">
-          <div className="text-right">
+    <StageDocket stage={stage} state="WAITING IN THE PRODUCTION LINE" tone="muted">
+      <div className="mt-6 grid gap-3 bg-surface-container p-4 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+          <div>
+            <div className="mb-2 font-meta text-[0.54rem] font-bold uppercase tracking-[0.08em] text-ink-muted">{t("Receives")}</div>
             {meta.inputs.map((input) => (
-              <div key={input} className="font-meta text-[0.62rem] font-bold tracking-[0.18em] text-ink-black/28">
-                {input.toUpperCase()}
+              <div key={input} className="font-body text-[0.8rem] font-bold text-ink-black">
+                {t(input)}
               </div>
             ))}
           </div>
-          <div className="mt-1 flex flex-col items-center gap-1">
-            <div className="h-px w-8 bg-ink-black/12" />
-            <Icon name="arrow-right" size={12} className="text-ink-black/18" />
+          <div className="hidden h-9 w-9 items-center justify-center bg-narrator-gold sm:flex">
+            <Icon name="arrow-right" size={16} className="text-ink-black" />
           </div>
           <div>
+            <div className="mb-2 font-meta text-[0.54rem] font-bold uppercase tracking-[0.08em] text-ink-muted">{t("Produces")}</div>
             {meta.outputs.map((output) => (
-              <div key={output} className="font-meta text-[0.62rem] font-bold tracking-[0.18em] text-ink-black/28">
-                {output.toUpperCase()}
+              <div key={output} className="font-body text-[0.8rem] font-bold text-ink-black">
+                {t(output)}
               </div>
             ))}
           </div>
-        </div>
-
-        {/* Status pill */}
-        <div className="mt-8 flex justify-center">
-          <div className="border border-ink-black/8 bg-surface-container px-4 py-1.5 font-meta text-[0.58rem] font-bold tracking-[0.22em] text-ink-black/28">
-            WAITING FOR PIPELINE
-          </div>
-        </div>
       </div>
-    </div>
+    </StageDocket>
   );
 }
 
@@ -166,8 +182,8 @@ interface StageRunningProps {
 }
 
 export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0 }: StageRunningProps) {
+  const { t } = useI18n();
   const meta = STAGE_META[stage];
-  const StageIcon = meta.icon;
   const hasProgress = itemsTotal > 0;
   const pct = hasProgress ? Math.round((itemsDone / itemsTotal) * 100) : 0;
 
@@ -192,37 +208,22 @@ export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0 }: StageRunn
   }, [events, stage]);
 
   return (
-    <div className="flex min-h-[50vh] items-center justify-center px-6">
-      <div className="w-full max-w-sm">
-        {/* Animated stage badge */}
-        <div className="mx-auto mb-6 flex h-14 w-14 items-center justify-center border-[2px] border-ink-black bg-pulp-paper shadow-ink-sm">
-          <div className="animate-pulse">
-            <StageIcon />
-          </div>
-        </div>
-
-        {/* Title */}
-        <div className="mb-1 text-center font-meta text-[0.68rem] font-bold tracking-[0.28em] text-narrator-gold">
-          RUNNING
-        </div>
-        <div className="text-center font-display text-[1.6rem] font-black uppercase tracking-[-0.04em] text-ink-black">
-          {meta.title}
-        </div>
-
-        {/* Description */}
-        <p className="mx-auto mt-3 max-w-xs text-center text-[0.88rem] leading-7 text-ink-black/50">
-          {meta.description}
-        </p>
-
-        {/* Progress bar */}
-        <div className="mt-8">
-          <div className="mb-2 flex items-center justify-between font-meta text-[0.6rem] font-bold tracking-[0.18em] text-ink-black/45">
-            <span>{hasProgress ? `${itemsDone} / ${itemsTotal}` : "STARTING…"}</span>
+    <StageDocket stage={stage} state="RUNNING" tone="running">
+        <div className="mt-7">
+          <div className="mb-2 flex items-center justify-between font-meta text-[0.62rem] font-bold tracking-[0.08em] text-ink-muted">
+            <span>{hasProgress ? `${itemsDone} / ${itemsTotal}` : t("STARTING…")}</span>
             {hasProgress && <span>{pct}%</span>}
           </div>
-          <div className="h-2.5 w-full overflow-hidden border-[2px] border-ink-black bg-pulp-paper">
+          <div
+            className="h-3 w-full overflow-hidden border-[2px] border-ink-black bg-pulp-paper"
+            role="progressbar"
+            aria-label={`${t(meta.title)} ${t("progress")}`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={hasProgress ? pct : undefined}
+          >
             <div
-              className="h-full bg-narrator-gold transition-all duration-500 ease-out"
+              className="h-full bg-hero-red transition-[width] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]"
               style={{ width: hasProgress ? `${Math.max(4, pct)}%` : "0%" }}
             />
           </div>
@@ -231,8 +232,8 @@ export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0 }: StageRunn
               {logLines.map((line, index) => (
                 <div
                   key={line.key}
-                  className={`animate-ticker-rise truncate font-meta text-[0.6rem] tracking-[0.06em] ${
-                    index === logLines.length - 1 ? "text-ink-black/45" : "text-ink-black/25"
+                  className={`animate-ticker-rise truncate font-body text-[0.75rem] font-semibold ${
+                    index === logLines.length - 1 ? "text-ink-black" : "text-ink-muted"
                   }`}
                 >
                   {line.message}
@@ -242,19 +243,17 @@ export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0 }: StageRunn
           )}
         </div>
 
-        {/* Output hints */}
-        <div className="mt-6 flex justify-center gap-2">
+        <div className="mt-6 flex flex-wrap gap-2">
           {meta.outputs.map((output) => (
             <div
               key={output}
-              className="border border-ink-black/10 bg-surface-container px-3 py-1 font-meta text-[0.56rem] font-bold tracking-[0.18em] text-ink-black/35"
+              className="border-[2px] border-ink-black/12 bg-surface-container px-3 py-1.5 font-meta text-[0.56rem] font-bold tracking-[0.08em] text-ink-muted"
             >
-              {output.toUpperCase()}
+              {t(output).toUpperCase()}
             </div>
           ))}
         </div>
-      </div>
-    </div>
+    </StageDocket>
   );
 }
 
@@ -266,33 +265,23 @@ interface StageFailedProps {
 }
 
 function StageFailed({ project, stage }: StageFailedProps) {
-  const meta = STAGE_META[stage];
+  const { t } = useI18n();
   const { handleRun, isPending } = useRunAction();
   return (
-    <div className="flex min-h-[40vh] items-center justify-center px-6">
-      <div className="w-full max-w-sm text-center">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center border-[2px] border-ink-black/12 bg-surface-container text-ink-black/25">
-          <span className="font-display text-lg font-black">
-            {String(STAGE_ORDER.indexOf(stage) + 1).padStart(2, "0")}
-          </span>
-        </div>
-        <div className="font-display text-[1.5rem] font-bold tracking-[-0.05em] text-ink-black/30">
-          {meta.title.toUpperCase()} FAILED
-        </div>
-        <p className="mt-2 text-[0.82rem] leading-6 text-ink-black/50">
-          This stage didn't complete. Try running it again.
+    <StageDocket stage={stage} state="PRESS STOPPED" tone="failed">
+        <p className="mt-5 font-body text-[0.86rem] font-semibold leading-6 text-ink-muted">
+          {t("This stage didn't complete. Try running it again.")}
         </p>
-        <div className="mt-5 flex justify-center">
+        <div className="mt-5 flex">
           <Button
             size="md"
             disabled={isPending}
             onClick={() => handleRun(project, stage)}
           >
-            {isPending ? "Starting…" : "Retry stage"}
+            {isPending ? t("Starting…") : t("Retry stage")}
           </Button>
         </div>
-      </div>
-    </div>
+    </StageDocket>
   );
 }
 
@@ -307,6 +296,7 @@ interface StagePlaceholderProps {
 }
 
 export function StagePlaceholder({ project, stage, status, itemsDone, itemsTotal }: StagePlaceholderProps) {
+  const { t } = useI18n();
   // Credit gate takes priority over every other placeholder state — a user
   // blocked on credits should never see "WAITING FOR PIPELINE" or a fake
   // running flash. Covers both the persisted credit-failure case (survives
@@ -317,7 +307,7 @@ export function StagePlaceholder({ project, stage, status, itemsDone, itemsTotal
       <CreditsGate
         project={project}
         stage={stage}
-        stageLabel={STAGE_META[stage].title}
+        stageLabel={t(STAGE_META[stage].title)}
         balance={needsCredits.balance}
         required={needsCredits.required}
         shortfall={needsCredits.shortfall}
@@ -337,22 +327,11 @@ export function StagePlaceholder({ project, stage, status, itemsDone, itemsTotal
   }
   // Stage completed but no data — shouldn't normally happen; show a minimal
   // state while the data loads.
-  const meta = STAGE_META[stage];
   return (
-    <div className="flex min-h-[40vh] items-center justify-center px-6">
-      <div className="w-full max-w-sm text-center">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center border-[2px] border-ink-black/12 bg-surface-container text-ink-black/25">
-          <span className="font-display text-lg font-black">
-            {String(STAGE_ORDER.indexOf(stage) + 1).padStart(2, "0")}
-          </span>
-        </div>
-        <div className="font-display text-[1.5rem] font-bold tracking-[-0.05em] text-ink-black/30">
-          {meta.title.toUpperCase()} NOT AVAILABLE
-        </div>
-        <p className="mt-2 text-[0.82rem] leading-6 text-ink-black/50">
-          Data for this stage could not be loaded.
+    <StageDocket stage={stage} state="PROOF UNAVAILABLE" tone="muted">
+        <p className="mt-5 font-body text-[0.86rem] font-semibold leading-6 text-ink-muted">
+          {t("Data for this stage could not be loaded.")}
         </p>
-      </div>
-    </div>
+    </StageDocket>
   );
 }

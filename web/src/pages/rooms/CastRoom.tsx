@@ -1323,33 +1323,39 @@ export function CastRoom() {
       />
 
       <section className="space-y-10">
-        <div className="grid gap-10 xl:grid-cols-2">
-          <div>
-            <SectionHeader variant="underline" title="CHARACTER REFS" />
-            <div className="grid gap-5 sm:grid-cols-2">
-              {bible.characters.map((char) => (
-                <CharacterCastCard
-                  key={char.id}
-                  character={char}
-                  projectName={id}
-                  stageRegenerating={stageRegenerating}
-                />
-              ))}
-            </div>
+        <div>
+          <SectionHeader
+            variant="underline"
+            title="CHARACTER REFS"
+            description="Portrait proofs keep faces, clothing, and silhouettes consistent from scene to scene."
+          />
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+            {bible.characters.map((char) => (
+              <CharacterCastCard
+                key={char.id}
+                character={char}
+                projectName={id}
+                stageRegenerating={stageRegenerating}
+              />
+            ))}
           </div>
+        </div>
 
-          <div>
-            <SectionHeader variant="underline" title="LOCATION PLATES" />
-            <div className="grid gap-5 sm:grid-cols-2">
-              {bible.locations.map((loc) => (
-                <LocationPlateCard
-                  key={loc.id}
-                  location={loc}
-                  projectName={id}
-                  stageRegenerating={stageRegenerating}
-                />
-              ))}
-            </div>
+        <div>
+          <SectionHeader
+            variant="underline"
+            title="LOCATION PLATES"
+            description="Wide environment plates anchor geography, architecture, light, and atmosphere."
+          />
+          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+            {bible.locations.map((loc) => (
+              <LocationPlateCard
+                key={loc.id}
+                location={loc}
+                projectName={id}
+                stageRegenerating={stageRegenerating}
+              />
+            ))}
           </div>
         </div>
 

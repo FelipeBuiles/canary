@@ -28,7 +28,7 @@ export function LiveSpecPill({
       <span
         className={cn(
           "block h-[7px] w-[7px] border border-ink-black",
-          active ? "bg-bristol animate-pulse" : "bg-ink-black/20",
+          active ? "animate-press-blink bg-bristol" : "bg-ink-black/20",
         )}
       />
       {label}

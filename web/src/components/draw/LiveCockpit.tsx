@@ -67,7 +67,7 @@ export function PanelProgressDonut({
 function Legend({ dot, label, value }: { dot: string; label: string; value: number }) {
   return (
     <div className="flex items-center gap-2">
-      <span className={`h-2.5 w-2.5 rounded-full ${dot}`} />
+      <span className={`h-2.5 w-2.5 ${dot}`} />
       <span className="text-ink-black/60">{label}</span>
       <span className="ml-auto font-bold text-ink-black">{value}</span>
     </div>
@@ -179,7 +179,7 @@ export function InFlightCard({ project }: { project: string }) {
       <ul className="space-y-1.5 text-[0.72rem]">
         {sorted.map((p) => (
           <li key={`${p.sceneId}-${p.panelNumber}`} className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-narrator-gold animate-pulse" />
+            <span className="animate-press-blink h-2 w-2 bg-narrator-gold" />
             <span className="truncate text-ink-black/85">
               {formatPanelLabel(p.sceneId, p.panelNumber)}
             </span>

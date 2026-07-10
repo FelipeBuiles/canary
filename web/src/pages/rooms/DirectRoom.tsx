@@ -290,7 +290,7 @@ function PanelTabStrip({
               Panel {String(prompt.panel_number).padStart(2, "0")}
               {hasWarnings && (
                 <span
-                  className="absolute right-1.5 top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[var(--color-warn-orange)] font-meta text-[0.5rem] font-bold text-white"
+                  className="absolute right-1.5 top-1.5 flex h-3.5 w-3.5 items-center justify-center bg-[var(--color-warn-orange)] font-meta text-[0.5rem] font-bold text-white"
                   aria-label={`${panelWarnings.length} warning${panelWarnings.length !== 1 ? "s" : ""}`}
                 >
                   {panelWarnings.length}

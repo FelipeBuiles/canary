@@ -25,20 +25,21 @@ export function SectionHeader({
 
   if (variant === "rule") {
     return (
-      <header className={cn("mb-6", className)}>
-        <div className="section-rule">
+      <header className={cn("mb-6 border-b-[2px] border-ink-black pb-3", className)}>
+        <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
           {kicker && (
-            <>
-              <span className="font-meta text-ink-black">{t(kicker)}</span>
-              <span className="text-ink-black/45">//</span>
-            </>
+            <span className="bg-narrator-gold px-2 py-1 font-meta text-[0.58rem] font-bold uppercase tracking-[0.12em] text-ink-black">
+              {t(kicker)}
+            </span>
           )}
-          <span className="font-meta text-ink-black/80">{t(title)}</span>
+          <h2 className="font-display text-[1.35rem] font-black uppercase leading-none tracking-[-0.03em] text-ink-black">
+            {t(title)}
+          </h2>
           {actions && <span className="ml-auto flex items-center gap-2">{actions}</span>}
         </div>
         {description && (
-          <p className="mt-2 max-w-[72ch] font-body text-[0.9rem] leading-6 text-ink-black/62">
-            {description}
+          <p className="mt-2 max-w-[72ch] font-body text-[0.9rem] leading-6 text-ink-black/70">
+            {typeof description === "string" ? t(description) : description}
           </p>
         )}
       </header>
@@ -46,25 +47,26 @@ export function SectionHeader({
   }
 
   return (
-    <header className={cn("mb-7 border-b-[2px] border-ink-black pb-4", className)}>
+    <header className={cn("relative mb-7 border-b-[3px] border-ink-black pb-4", className)}>
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
         <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
           {kicker && (
-            <div className="font-meta text-[0.82rem] tracking-[0.24em] text-ink-black/52">
+            <div className="font-meta text-[0.68rem] font-bold tracking-[0.12em] text-ink-black/65">
               {t(kicker)}
             </div>
           )}
-          <h2 className="font-display text-[2.25rem] font-bold uppercase leading-none tracking-[-0.06em] text-ink-black">
+          <h2 className="font-display text-[1.9rem] font-black uppercase leading-none tracking-[-0.035em] text-ink-black">
             {t(title)}
           </h2>
         </div>
         {actions && <div className="flex items-center gap-2">{actions}</div>}
       </div>
       {description && (
-        <p className="mt-2 max-w-[72ch] font-body text-[0.9rem] leading-6 text-ink-black/62">
-          {description}
+        <p className="mt-2 max-w-[72ch] font-body text-[0.9rem] leading-6 text-ink-black/70">
+          {typeof description === "string" ? t(description) : description}
         </p>
       )}
+      <span aria-hidden="true" className="absolute -bottom-[3px] left-0 h-[3px] w-14 bg-hero-red" />
     </header>
   );
 }

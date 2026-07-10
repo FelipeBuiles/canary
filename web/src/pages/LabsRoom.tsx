@@ -653,7 +653,7 @@ function Lightbox({ target, panels, columns, rowKeys, modelMap, onClose, onNavig
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink-black/80 p-6 backdrop-blur-[3px]"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink-black/80 p-6"
       onClick={onClose}
       role="dialog"
       aria-modal="true"

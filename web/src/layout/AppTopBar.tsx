@@ -56,11 +56,11 @@ export function AppTopBar() {
       ) : (
         <div className="flex min-w-0 flex-1 items-center gap-4 px-4">
           <Link to="/" className="flex items-center gap-2.5">
-            <BrandMark className="h-7 w-7 shrink-0" />
+            <BrandMark className="h-7 w-7 shrink-0 text-hero-red" />
             <span className="font-display text-[1.05rem] font-black uppercase leading-none tracking-[-0.03em]">
               Scenewright
             </span>
-            <span className="bg-hero-red px-2.5 py-1 font-meta text-[0.54rem] font-bold tracking-[0.16em] text-bristol">
+            <span className="bg-narrator-gold px-2.5 py-1 font-meta text-[0.54rem] font-bold tracking-[0.12em] text-ink-black">
               BETA
             </span>
           </Link>
@@ -77,20 +77,20 @@ export function AppTopBar() {
         </div>
       )}
 
-      <div className="flex shrink-0 items-center gap-3 pl-3 pr-4">
+      <div className="flex shrink-0 items-center gap-3 border-l-[2px] border-ink-black/10 pl-3 pr-4">
         <Link
           to="/credits"
           className={cn(
-            "hidden h-11 items-center gap-2 border px-3 font-meta text-[0.62rem] font-bold tracking-[0.08em] sm:flex",
+            "hidden h-11 items-center gap-2 border-[2px] px-3 font-meta text-[0.62rem] font-bold tracking-[0.06em] transition-colors sm:flex",
             isLow
-              ? "border-narrator-gold/60 bg-chip-gold text-warn-orange"
-              : "border-ink-black/8 bg-surface-container text-ink-black/76",
+              ? "border-ink-black bg-narrator-gold text-ink-black"
+              : "border-ink-black/18 bg-surface-container text-ink-black hover:border-ink-black",
           )}
           aria-label={isLow ? "Credits low — top up" : `Credits: ${credits}`}
         >
           <span>◆</span>
           <span className="tabular-nums">{displayCredits.toLocaleString()}</span>
-          <span className="text-ink-black/42">credits{isLow ? " · top up" : ""}</span>
+          <span className="text-ink-muted">credits{isLow ? " · top up" : ""}</span>
         </Link>
 
         <div ref={menuRef} className="relative flex items-center">
@@ -99,7 +99,7 @@ export function AppTopBar() {
             onClick={() => setOpen((value) => !value)}
             aria-expanded={open}
             aria-label="Account menu"
-            className="flex h-11 w-11 items-center justify-center bg-hero-red font-meta text-[0.72rem] font-bold tracking-[0.08em] text-bristol"
+            className="flex h-11 w-11 items-center justify-center border-[2px] border-ink-black bg-hero-red font-meta text-[0.72rem] font-bold tracking-[0.08em] text-bristol shadow-paper-sm transition-[box-shadow,transform] duration-150 hover:-translate-x-px hover:-translate-y-px hover:shadow-ink-sm active:translate-x-[3px] active:translate-y-[3px] active:shadow-none"
           >
             {initials(email)}
           </button>

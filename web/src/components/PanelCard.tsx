@@ -7,7 +7,7 @@ import { getPanelDisplayState, type PanelDisplayState } from "../lib/panelState"
 // Review-by-exception: only non-default states get a badge. A plain
 // generated panel is the default good state and carries no status chrome.
 const STATE_BADGE: Partial<Record<PanelDisplayState, { label: string; className: string }>> = {
-  generating: { label: "DRAWING…", className: "bg-narrator-gold text-ink-black animate-pulse" },
+  generating: { label: "DRAWING…", className: "bg-narrator-gold text-ink-black animate-press-blink" },
   queued: { label: "QUEUED", className: "bg-narrator-gold/30 text-ink-black" },
   pending: { label: "PENDING", className: "bg-ink-black/15 text-ink-black/80" },
   failed: { label: "FAILED", className: "bg-hero-red text-bristol" },
@@ -90,15 +90,8 @@ export function PanelCard({
     <div
       className={`group/panel-media relative shrink-0 aspect-[4/5] bg-surface-container ${
         displayState === "queued" ? "outline outline-2 outline-dashed outline-narrator-gold/70 -outline-offset-2" : ""
-      } ${isInteractive ? "cursor-pointer" : ""}`}
-      onClick={isInteractive ? onPanelClick : undefined}
+      }`}
     >
-      <style>{`
-        @keyframes panel-finish-flash {
-          0%   { box-shadow: 0 0 0 0 var(--flash-color); opacity: 1; }
-          100% { box-shadow: 0 0 0 8px transparent;       opacity: 0; }
-        }
-      `}</style>
       {finishFlashAt != null && (
         <span
           key={finishFlashAt}
@@ -121,16 +114,16 @@ export function PanelCard({
         />
       ) : displayState === "queued" ? (
         <div className="flex h-full flex-col items-center justify-center bg-ink-black/8">
-          <div className="font-display text-[1.1rem] font-bold leading-none tracking-[-0.05em] text-narrator-gold">
+          <div className="font-display text-[1.1rem] font-bold leading-none tracking-[-0.03em] text-warn-orange">
             QUEUED
           </div>
-          <div className="mt-2 font-meta text-[0.52rem] tracking-[0.18em] text-ink-black/45">
+          <div className="mt-2 font-meta text-[0.58rem] font-bold tracking-[0.1em] text-ink-muted">
             IN THIS RUN
           </div>
         </div>
       ) : displayState === "pending" ? (
         <div className="flex h-full flex-col items-center justify-center bg-ink-black/10">
-          <div className="font-meta text-[0.62rem] tracking-[0.22em] text-ink-black/35">
+          <div className="font-meta text-[0.62rem] font-bold tracking-[0.1em] text-ink-muted">
             NOT YET GENERATED
           </div>
         </div>
@@ -144,7 +137,7 @@ export function PanelCard({
               width={400}
               height={500}
               containerClassName="absolute inset-0 h-full w-full"
-              className="h-full w-full object-cover opacity-55 grayscale"
+              className="h-full w-full object-contain opacity-55 grayscale"
             />
           )}
           <div className="absolute inset-0 bg-hero-red/15" />
@@ -152,7 +145,7 @@ export function PanelCard({
             <div className="flex h-12 w-12 items-center justify-center border-[2px] border-hero-red bg-bristol/80 text-[1.25rem] font-bold text-hero-red">
               △
             </div>
-            <div className="mt-3 text-center font-display text-[1.1rem] font-bold leading-none tracking-[-0.05em] text-hero-red">
+            <div className="mt-3 text-center font-display text-[1.1rem] font-bold leading-none tracking-[-0.03em] text-hero-red">
               {failureClassification === "provider_blocked" ? "PROVIDER BLOCKED" : "GENERATION FAILED"}
             </div>
             <div className="mt-2 max-w-[22ch] text-center text-[0.68rem] leading-5 text-hero-red/85">
@@ -169,13 +162,13 @@ export function PanelCard({
             width={400}
             height={500}
             containerClassName="absolute inset-0 h-full w-full"
-            className="h-full w-full object-cover transition-transform duration-300 group-hover/panel-media:scale-[1.02]"
+            className="h-full w-full object-contain"
           />
-          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 bg-ink-black/62 opacity-0 transition-opacity duration-150 group-hover/panel-media:opacity-100">
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 bg-ink-black/62 opacity-0 transition-opacity duration-150 group-hover/panel-media:opacity-100 group-focus-within/panel-media:opacity-100">
             {onPanelClick && (
               <button
                 type="button"
-                className="pointer-events-auto inline-flex min-h-11 items-center border border-bristol bg-bristol px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-ink-black transition-colors hover:bg-pulp-paper"
+                className="pointer-events-auto inline-flex min-h-11 items-center border-[2px] border-bristol bg-bristol px-5 py-2 font-meta text-[0.72rem] font-bold tracking-[0.08em] text-ink-black transition-colors hover:bg-pulp-paper"
                 onClick={(e) => { e.stopPropagation(); onPanelClick(); }}
               >
                 Preview
@@ -185,7 +178,7 @@ export function PanelCard({
               <a
                 href={imageDownloadUrl}
                 download={`panel-${panelNum}.png`}
-                className="pointer-events-auto inline-flex min-h-11 items-center border border-bristol/45 bg-transparent px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-bristol transition-colors hover:border-bristol hover:bg-bristol/10"
+                className="pointer-events-auto inline-flex min-h-11 items-center border-[2px] border-bristol/60 bg-transparent px-5 py-2 font-meta text-[0.72rem] font-bold tracking-[0.08em] text-bristol transition-colors hover:border-bristol hover:bg-bristol/10"
                 onClick={(e) => e.stopPropagation()}
               >
                 Download
@@ -214,13 +207,13 @@ export function PanelCard({
       padding="cozy"
       media={media}
     >
-      <div className={`mb-1 truncate font-meta text-[0.48rem] tracking-[0.18em] ${isFlagged ? "text-hero-red" : "text-ink-black/40"}`}>
+      <div className={`mb-1 truncate font-meta text-[0.56rem] font-bold tracking-[0.08em] ${isFlagged ? "text-hero-red" : "text-ink-muted"}`}>
         SHOT {panelNum} · {sceneLabel}
       </div>
       <div className="truncate font-body text-[0.82rem] font-semibold leading-5 text-ink-black">
         {cardTitle}
       </div>
-      <div className="mt-0.5 truncate text-[0.72rem] leading-5 text-ink-black/55">
+      <div className="mt-0.5 truncate text-[0.72rem] leading-5 text-ink-muted">
         {description || <span className="opacity-0 select-none">-</span>}
       </div>
       <div className="mt-auto pt-2 flex items-center justify-between gap-2">
@@ -234,7 +227,7 @@ export function PanelCard({
               className={`inline-flex h-11 w-11 items-center justify-center font-meta text-[0.78rem] tracking-[0.08em] transition-colors ${
                 isFlagged
                   ? "bg-hero-red text-bristol hover:bg-hero-red/85"
-                  : "text-ink-black/30 hover:text-hero-red"
+                  : "text-ink-muted hover:bg-chip-red/35 hover:text-hero-red"
               }`}
               onClick={(e) => { e.stopPropagation(); onToggleFlag?.(); }}
             >
@@ -242,7 +235,7 @@ export function PanelCard({
             </button>
           )}
           {badge && (
-            <span className={`inline-flex h-5 items-center px-2 font-meta text-[0.52rem] tracking-[0.1em] ${badge.className}`}>
+            <span className={`inline-flex h-6 items-center px-2 font-meta text-[0.54rem] font-bold tracking-[0.08em] ${badge.className}`}>
               {badge.label}
             </span>
           )}
@@ -250,7 +243,7 @@ export function PanelCard({
         {onPanelClick && isInteractive && (
           <button
             type="button"
-            className="inline-flex min-h-11 items-center px-2 font-meta text-[0.58rem] tracking-[0.1em] text-ink-black/40 transition-colors hover:text-ink-black"
+            className="inline-flex min-h-11 items-center px-2 font-meta text-[0.58rem] font-bold tracking-[0.08em] text-ink-muted transition-colors hover:text-ink-black"
             onClick={onPanelClick}
           >
             VIEW →

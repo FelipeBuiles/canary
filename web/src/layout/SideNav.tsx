@@ -5,6 +5,7 @@ import { useProjectStatus, useProjects } from "../api/queries";
 import { InspectDrawer } from "../components/InspectDrawer";
 import { useI18n } from "../i18n";
 import { cn } from "../lib/cn";
+import { Icon } from "../components/ui/Icon";
 import {
   STATIONS,
   getSubstepState,
@@ -23,7 +24,7 @@ interface SideNavProps {
 const STATE_TAG: Record<StationState, { label: string; className: string }> = {
   done: { label: "✓ DONE", className: "text-archive-sage" },
   review: { label: "● REVIEW", className: "text-hero-red" },
-  running: { label: "RUNNING", className: "text-narrator-gold animate-pulse" },
+  running: { label: "RUNNING", className: "text-narrator-gold" },
   failed: { label: "! FAILED", className: "text-hero-red" },
   wait: { label: "WAIT", className: "text-bristol/28" },
 };
@@ -65,31 +66,43 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     );
 
     return (
-      <div key={station.key} className={cn(isActive && "border-y border-bristol/12 bg-bristol/6")}>
+      <div key={station.key} className={cn("py-1", isActive && "bg-bristol/6")}>
         <button
           type="button"
           onClick={() => goTo(stationDestination(station, status))}
           aria-label={`Station ${station.number} ${station.label}: ${tag.label}`}
           aria-current={isActive ? "true" : undefined}
           className={cn(
-            "flex min-h-12 w-full items-baseline gap-3 px-5 py-3 text-left transition-colors xl:px-6 2xl:py-4",
-            isActive ? "bg-bristol/5" : "hover:bg-bristol/5",
+            "flex min-h-14 items-center gap-3 px-3 py-2 text-left transition-[background-color,box-shadow,color,transform] duration-180 ease-[cubic-bezier(0.22,1,0.36,1)]",
+            isActive
+              ? "mx-3 w-[calc(100%-1.5rem)] bg-bristol text-ink-black shadow-[4px_4px_0_0_var(--color-hero-red)]"
+              : "w-full px-5 hover:bg-bristol/6 xl:px-6",
           )}
         >
-          <span className="font-meta text-[0.56rem] tracking-[0.14em] text-bristol/35">{station.number}</span>
+          <span className={cn(
+            "flex h-8 w-8 shrink-0 items-center justify-center border-[2px] font-meta text-[0.58rem] font-bold tracking-[0.08em]",
+            isActive ? "border-ink-black bg-narrator-gold text-ink-black" : "border-bristol/20 text-bristol/60",
+          )}>
+            {station.number}
+          </span>
           <span className={cn(
             "font-display text-[1.02rem] font-black uppercase leading-none tracking-[-0.02em] 2xl:text-[1.15rem]",
-            isActive ? "text-bristol" : "text-bristol/72",
+            isActive ? "text-ink-black" : "text-bristol/78",
           )}>
             {t(station.label)}
           </span>
-          <span className={cn("ml-auto font-meta text-[0.5rem] leading-none tracking-[0.12em]", tag.className)}>
+          <span className={cn(
+            "ml-auto font-meta text-[0.52rem] font-bold leading-none tracking-[0.08em]",
+            tag.className,
+            isActive && state === "wait" && "text-ink-black/50",
+            isActive && state === "running" && "text-warn-orange",
+          )}>
             {tag.label}
           </span>
         </button>
 
         {isActive && decisionItems.length > 1 && (
-          <ul className="space-y-1 px-5 pb-2 xl:px-6" aria-label={`${station.label} decisions`}>
+          <ul className="space-y-1 px-3 pb-2" aria-label={`${station.label} decisions`}>
             {decisionItems.map((substep) => {
               const substepState = getSubstepState(substep, status);
               const isCurrentRoute = activeRoute === substep.route;
@@ -100,10 +113,10 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
                     onClick={() => goTo(substep.route)}
                     aria-current={isCurrentRoute ? "page" : undefined}
                     className={cn(
-                      "flex min-h-11 w-full items-center gap-2 px-3 text-left font-meta text-[0.52rem] uppercase tracking-[0.12em] transition-colors",
+                      "flex min-h-11 w-full items-center gap-2 px-3 text-left font-body text-[0.75rem] font-bold transition-colors",
                       isCurrentRoute
                         ? "bg-bristol text-ink-black"
-                        : "bg-bristol/5 text-bristol/58 hover:bg-bristol/10 hover:text-bristol",
+                        : "bg-bristol/5 text-bristol/70 hover:bg-bristol/10 hover:text-bristol",
                     )}
                   >
                     <span aria-hidden className={cn(
@@ -121,12 +134,12 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
         )}
 
         {isActive && inspectItems.length > 0 && (
-          <div className="px-5 pb-3 xl:px-6">
+          <div className="px-3 pb-3">
             <button
               type="button"
               aria-expanded={detailsOpen}
               onClick={() => setDetailsOpen((open) => !open)}
-              className="flex min-h-11 w-full items-center justify-between font-meta text-[0.52rem] uppercase tracking-[0.14em] text-bristol/48 transition-colors hover:text-bristol/80"
+              className="flex min-h-11 w-full items-center justify-between px-3 font-body text-[0.72rem] font-bold text-bristol/68 transition-colors hover:text-bristol"
             >
               <span>{t("How this was made")}</span>
               <span aria-hidden>{detailsOpen ? "−" : "+"}</span>
@@ -138,7 +151,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
                     <button
                       type="button"
                       onClick={() => setDrawer(substep.drawer)}
-                      className="flex min-h-11 w-full items-center gap-2 bg-bristol/5 px-3 text-left font-meta text-[0.52rem] uppercase tracking-[0.12em] text-bristol/58 transition-colors hover:bg-bristol/10 hover:text-bristol"
+                      className="flex min-h-11 w-full items-center gap-2 bg-bristol/5 px-3 text-left font-body text-[0.72rem] font-bold text-bristol/70 transition-colors hover:bg-bristol/10 hover:text-bristol"
                     >
                       <span aria-hidden className="h-1.5 w-1.5 bg-bristol/35" />
                       {t(substep.label)}
@@ -161,7 +174,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
 
   const mobileNav = projectId == null ? null : (
     <>
-      <header className="flex h-shell-top shrink-0 items-center gap-2 border-b-[2px] border-ink-black bg-ink-black px-3 text-bristol md:hidden">
+      <header className="pressroom-sidebar flex h-shell-top shrink-0 items-center gap-2 border-b-[2px] border-ink-black bg-ink-black px-3 text-bristol md:hidden">
         <Link to="/" className="flex min-w-0 flex-1 items-center gap-2">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center bg-pulp-paper font-display text-[0.72rem] font-black text-ink-black">
             {projectTitle.charAt(0)}
@@ -170,7 +183,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
             <span className="block truncate font-display text-[0.88rem] font-bold uppercase leading-none tracking-[-0.02em]">
               {projectTitle}
             </span>
-            <span className="mt-1 block font-meta text-[0.48rem] tracking-[0.16em] text-bristol/45">
+            <span className="mt-1 block font-meta text-[0.5rem] font-semibold tracking-[0.1em] text-bristol/65">
               ← {t("LIBRARY")}
             </span>
           </span>
@@ -201,7 +214,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
               aria-current={activeRoute === substep.route ? "page" : undefined}
               className={cn(
                 "min-h-11 flex-1 border-r border-ink-black/12 px-3 font-meta text-[0.52rem] uppercase tracking-[0.12em] last:border-r-0",
-                activeRoute === substep.route ? "bg-ink-black text-bristol" : "text-ink-black/55",
+                activeRoute === substep.route ? "bg-ink-black text-bristol" : "text-ink-muted",
               )}
             >
               {t(substep.label)}
@@ -217,20 +230,21 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   return (
     <>
       {mobileNav}
-      <aside className="hidden h-full w-[240px] shrink-0 flex-col bg-ink-black text-bristol md:flex xl:w-[270px] 2xl:w-[320px]">
+      <aside className="pressroom-sidebar hidden h-full w-[240px] shrink-0 flex-col bg-ink-black text-bristol md:flex xl:w-[270px] 2xl:w-[320px]">
         <Link
           to="/"
           className="flex h-shell-top shrink-0 items-center gap-3 border-b-[2px] border-bristol/10 px-5 xl:px-6"
           aria-label={t("LIBRARY")}
         >
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center bg-pulp-paper font-display text-[0.86rem] font-black text-ink-black">
+          <span className="relative flex h-11 w-11 shrink-0 items-center justify-center border-[2px] border-bristol/20 bg-pulp-paper font-display text-[0.86rem] font-black text-ink-black shadow-[3px_3px_0_0_var(--color-hero-red)]">
             {projectTitle.charAt(0)}
+            <span aria-hidden="true" className="absolute right-0 top-0 h-2.5 w-2.5 bg-narrator-gold [clip-path:polygon(100%_0,100%_100%,0_0)]" />
           </span>
           <span className="min-w-0">
             <span className="line-clamp-2 font-display text-[0.92rem] font-black uppercase leading-[1.08] tracking-[-0.02em] 2xl:text-[1.05rem]" title={projectTitle}>
               {projectTitle}
             </span>
-            <span className="mt-1.5 block font-meta text-[0.56rem] tracking-[0.16em] text-bristol/38 2xl:text-[0.64rem]">
+            <span className="mt-1.5 block font-meta text-[0.56rem] font-semibold tracking-[0.1em] text-bristol/65 2xl:text-[0.64rem]">
               ← {t("LIBRARY")}
             </span>
           </span>
@@ -252,11 +266,11 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
             className={cn(
               "flex h-full w-full items-center gap-3 px-5 font-meta text-[0.62rem] tracking-[0.14em] transition-colors xl:px-6 2xl:text-[0.68rem]",
               isSettingsActive
-                ? "bg-bristol/8 text-bristol"
-                : "text-bristol/45 hover:bg-bristol/5 hover:text-bristol/70",
+                ? "bg-bristol text-ink-black"
+                : "text-bristol/70 hover:bg-bristol/8 hover:text-bristol",
             )}
           >
-            <span className="text-[0.48rem] 2xl:text-[0.52rem]">⊙</span>
+            <Icon name="settings" size={15} />
             {t("Settings")}
           </Link>
         </div>

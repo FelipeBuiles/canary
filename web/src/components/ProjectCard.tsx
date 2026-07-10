@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { ProjectSummary, StageName } from "../types/api";
 import { LazyImage } from "./ui/LazyImage";
@@ -16,29 +15,6 @@ const STAGE_COVER_STYLE: Partial<Record<StageName, { bg: string }>> = {
 };
 const FALLBACK_BG = "#111827";
 
-type ShapeKind = "chevron" | "diamond" | "triangle" | "circle";
-
-const STAGE_SHAPE: Partial<Record<StageName, ShapeKind>> = {
-  extract:   "chevron",
-  cast:      "circle",
-  plan:      "diamond",
-  direct:    "triangle",
-  draw:      "diamond",
-  compose:   "chevron",
-};
-
-function CoverShape({ kind }: { kind: ShapeKind }) {
-  const cls = "h-24 w-24 text-white/12";
-  const stroke = { stroke: "currentColor", fill: "none", strokeWidth: "1.5" };
-  if (kind === "circle")
-    return <svg viewBox="0 0 100 100" className={cls} {...stroke}><circle cx="50" cy="50" r="34"/></svg>;
-  if (kind === "diamond")
-    return <svg viewBox="0 0 100 100" className={cls} {...stroke}><polygon points="50,14 86,50 50,86 14,50"/></svg>;
-  if (kind === "triangle")
-    return <svg viewBox="0 0 100 100" className={cls} {...stroke}><polygon points="50,16 84,82 16,82"/></svg>;
-  return <svg viewBox="0 0 100 100" className={cls} {...stroke}><polyline points="22,52 42,68 78,34"/></svg>;
-}
-
 interface Props {
   project: ProjectSummary;
   coverPending?: boolean;
@@ -55,44 +31,33 @@ function statusLine(project: ProjectSummary, t: (s: string) => string): { label:
   if (project.is_running) {
     return {
       label: stationLabel ? `${t("In progress")} — ${stationLabel}` : t("In progress"),
-      className: "bg-surface-container text-ink-black",
+      className: "bg-narrator-gold text-ink-black",
     };
   }
   if (project.furthest_stage === "compose") {
-    return { label: t("Complete"), className: "bg-surface-container text-ink-black/70" };
+    return { label: t("Complete"), className: "bg-chip-sage text-archive-sage" };
   }
   if (project.furthest_stage) {
     return {
       label: stationLabel ? `${t("Needs your review")} — ${stationLabel}` : t("Needs your review"),
-      className: "bg-surface-container text-ink-black",
+      className: "bg-chip-gold text-ink-black",
     };
   }
-  return { label: t("New"), className: "bg-surface-container text-ink-black/60" };
+  return { label: t("New"), className: "bg-surface-container text-ink-muted" };
 }
 
 export function ProjectCard({ project, coverPending = false }: Props) {
   const { t } = useI18n();
   const card = statusLine(project, t);
   const coverUrl = `/api/projects/${encodeURIComponent(project.id)}/files/cover/cover.png`;
-
-  // Pop the card once when a cover that was generating lands. Cards that
-  // mount already-covered never fire; LazyImage handles the opacity fade.
-  const [coverArrival, setCoverArrival] = useState<"idle" | "pending" | "revealed">(
-    coverPending && !project.has_cover ? "pending" : "idle",
-  );
-  if (coverArrival === "idle" && coverPending && !project.has_cover) {
-    setCoverArrival("pending");
-  }
-  if (coverArrival === "pending" && project.has_cover) {
-    setCoverArrival("revealed");
-  }
-  const coverRevealed = coverArrival === "revealed";
+  const coverRevealed = coverPending && project.has_cover;
 
   const stageKey = project.furthest_stage as StageName | null;
   const coverStyle = stageKey ? STAGE_COVER_STYLE[stageKey] : undefined;
   const coverBg = coverStyle?.bg ?? FALLBACK_BG;
-  const shapeKind: ShapeKind = (stageKey ? STAGE_SHAPE[stageKey] : undefined) ?? "circle";
   const byline = project.author ? `by ${project.author}` : "author pending";
+  const stationRoute = stageKey ? BACKEND_STAGE_TO_STATION_ROUTE[stageKey] : null;
+  const station = stationRoute ? stationForRoute(stationRoute) : null;
 
   return (
     <Link
@@ -100,7 +65,7 @@ export function ProjectCard({ project, coverPending = false }: Props) {
       aria-label={`${t("OPEN FILE")}: ${project.project_name}`}
       className="group block h-full focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
     >
-      <article className={`h-full overflow-hidden border-[3px] border-ink-black/12 bg-bristol shadow-paper-sm transition-[border-color,box-shadow,transform] duration-200 ease-out group-hover:border-ink-black group-hover:-translate-x-[2px] group-hover:-translate-y-[2px] group-hover:shadow-ink group-focus-visible:border-ink-black group-focus-visible:-translate-x-[2px] group-focus-visible:-translate-y-[2px] group-focus-visible:shadow-ink${coverRevealed ? " animate-comic-pop" : ""}`}>
+      <article className={`h-full overflow-hidden border-[3px] border-ink-black/12 bg-bristol shadow-paper-sm transition-[border-color,box-shadow,transform] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:border-ink-black group-hover:-translate-x-[2px] group-hover:-translate-y-[2px] group-hover:shadow-ink group-focus-visible:border-ink-black group-focus-visible:-translate-x-[2px] group-focus-visible:-translate-y-[2px] group-focus-visible:shadow-ink${coverRevealed ? " animate-comic-pop" : ""}`}>
         <div className="relative border-b-[2px] border-ink-black/12 transition-colors duration-200 group-hover:border-ink-black group-focus-visible:border-ink-black">
           {project.has_cover ? (
             <LazyImage
@@ -115,15 +80,28 @@ export function ProjectCard({ project, coverPending = false }: Props) {
             <Skeleton aspect="6 / 5" />
           ) : (
             <div
-              className="relative flex aspect-[6/5] items-center justify-center bg-[radial-gradient(circle_at_1px_1px,rgba(255,255,255,0.08)_1px,transparent_0)] [background-size:24px_24px]"
+              className="relative flex aspect-[6/5] flex-col justify-between overflow-hidden p-5 text-bristol"
               style={{ backgroundColor: coverBg }}
             >
-              <CoverShape kind={shapeKind} />
+              <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_1px_1px,rgba(255,255,255,0.1)_1px,transparent_0)] [background-size:20px_20px]" />
+              <div className="relative flex items-center justify-between border-b-[2px] border-bristol/35 pb-2 font-meta text-[0.5rem] font-bold tracking-[0.12em] text-bristol/75">
+                <span>SCENEWRIGHT</span>
+                <span>{station?.number ?? "00"}</span>
+              </div>
+              <div className="relative">
+                <div
+                  aria-hidden="true"
+                  data-cover-title={project.project_name}
+                  className="font-display text-[1.65rem] font-black uppercase leading-[0.9] tracking-[-0.03em] before:content-[attr(data-cover-title)]"
+                />
+                <div className="mt-2 font-body text-[0.72rem] font-semibold text-bristol/70">{byline}</div>
+              </div>
             </div>
           )}
 
           {project.is_running && (
-            <div className="absolute bottom-0 left-0 z-10 animate-pulse bg-ink-black/70 px-5 py-3 font-meta text-[0.82rem] tracking-[0.22em] text-bristol">
+            <div className="absolute bottom-0 left-0 z-10 bg-narrator-gold px-4 py-2.5 font-meta text-[0.68rem] font-bold tracking-[0.12em] text-ink-black">
+              <span className="animate-press-blink mr-2 inline-block h-2 w-2 bg-hero-red" />
               {t("DRAWING…")}
             </div>
           )}
@@ -132,11 +110,11 @@ export function ProjectCard({ project, coverPending = false }: Props) {
         <div className="p-4">
           <h3
             title={project.project_name}
-            className="truncate font-display text-[1.34rem] font-black uppercase leading-none tracking-[-0.055em] text-ink-black"
+            className="truncate font-display text-[1.34rem] font-black uppercase leading-none tracking-[-0.03em] text-ink-black"
           >
             {project.project_name}
           </h3>
-          <p className="mt-2 truncate font-body text-[0.86rem] font-semibold leading-tight text-ink-black/55">
+          <p className="mt-2 truncate font-body text-[0.86rem] font-semibold leading-tight text-ink-muted">
             {byline}
           </p>
 
@@ -146,6 +124,10 @@ export function ProjectCard({ project, coverPending = false }: Props) {
             >
               {card.label}
             </span>
+          </div>
+          <div className="mt-4 flex items-center justify-between border-t-[2px] border-ink-black/10 pt-3 font-meta text-[0.58rem] font-bold tracking-[0.1em] text-ink-muted transition-colors group-hover:text-ink-black">
+            <span>{t("OPEN FILE")}</span>
+            <span aria-hidden="true" className="text-hero-red transition-transform duration-150 group-hover:translate-x-1">→</span>
           </div>
         </div>
       </article>

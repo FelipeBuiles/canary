@@ -6,6 +6,9 @@ import type { CreditPackage, CreditTransaction } from "../types/api";
 import { cn } from "../lib/cn";
 import { Icon } from "../components/ui/Icon";
 import { Select } from "../components/ui/Select";
+import { Button } from "../components/ui/Button";
+import { Skeleton } from "../components/ui/Skeleton";
+import { SectionHeader } from "../components/composites";
 import { stageLabel } from "../lib/stageLabels";
 
 interface LedgerGroup {
@@ -110,20 +113,20 @@ function childRowLabel(tx: CreditTransaction): string {
 function StatusBadge({ status }: { status: LedgerGroup["status"] }) {
   if (status === "in_flight") {
     return (
-      <span className="bg-narrator-gold px-1.5 py-0.5 font-meta text-[0.44rem] font-bold tracking-[0.14em] text-ink-black">
+      <span className="bg-narrator-gold px-2 py-1 font-meta text-[0.5rem] font-bold tracking-[0.08em] text-ink-black">
         IN FLIGHT
       </span>
     );
   }
   if (status === "complete") {
     return (
-      <span className="bg-archive-sage px-1.5 py-0.5 font-meta text-[0.44rem] font-bold tracking-[0.14em] text-bristol">
+      <span className="bg-archive-sage px-2 py-1 font-meta text-[0.5rem] font-bold tracking-[0.08em] text-bristol">
         COMPLETE
       </span>
     );
   }
   return (
-    <span className="bg-hero-red px-1.5 py-0.5 font-meta text-[0.44rem] font-bold tracking-[0.14em] text-bristol">
+    <span className="bg-hero-red px-2 py-1 font-meta text-[0.5rem] font-bold tracking-[0.08em] text-bristol">
       FAILED
     </span>
   );
@@ -147,11 +150,11 @@ function LedgerGroupRow({
     const isCredit = tx.amount_credits > 0;
     const amount = Math.abs(tx.amount_credits).toLocaleString();
     return (
-      <div className="flex items-center gap-3 border-b border-ink-black/10 bg-bristol/45 px-5 py-3 odd:bg-bristol">
+      <div className="flex flex-wrap items-center gap-3 border-b border-ink-black/10 bg-bristol/45 px-5 py-3 odd:bg-bristol">
         <div className="min-w-0 flex-1 font-body text-[0.9rem] font-semibold text-ink-black/82">
           {tx.description ?? (tx.stage ? `Model call: ${tx.stage}` : "Credit transaction")}
         </div>
-        <div className="shrink-0 font-body text-[0.78rem] font-semibold text-ink-black/46">
+        <div className="shrink-0 font-body text-[0.78rem] font-semibold text-ink-muted">
           {formatWhen(tx.created_at)}
         </div>
         <div
@@ -172,10 +175,10 @@ function LedgerGroupRow({
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-start gap-3 bg-bristol/45 px-5 py-3 text-left transition-colors hover:bg-bristol"
+        className="flex w-full flex-wrap items-start gap-3 bg-bristol/45 px-4 py-4 text-left transition-colors hover:bg-bristol sm:flex-nowrap sm:px-5"
       >
         {/* Chevron */}
-        <span className="mt-0.5 shrink-0 text-ink-black/40">
+        <span className="mt-0.5 shrink-0 text-ink-muted">
           {expanded ? "▼" : "▶"}
         </span>
 
@@ -184,13 +187,13 @@ function LedgerGroupRow({
           <div className="font-body text-[0.9rem] font-semibold text-ink-black/82">
             {stageLabel(group.stage)}
             {projectName && (
-              <span className="ml-2 font-body text-[0.78rem] font-semibold text-ink-black/46">
+              <span className="ml-2 font-body text-[0.78rem] font-semibold text-ink-muted">
                 · {projectName}
               </span>
             )}
           </div>
           <div className="mt-0.5 flex items-center gap-2">
-            <span className="font-body text-[0.72rem] text-ink-black/40">
+            <span className="font-body text-[0.72rem] font-semibold text-ink-muted">
               {formatWhen(group.startedAt)}
             </span>
             <StatusBadge status={group.status} />
@@ -198,26 +201,26 @@ function LedgerGroupRow({
         </div>
 
         {/* Credit columns */}
-        <div className="flex shrink-0 items-center gap-4 font-meta text-[0.72rem] tabular-nums text-ink-black/60">
+        <div className="flex w-full shrink-0 items-center justify-between gap-3 border-t border-ink-black/10 pt-3 font-meta text-[0.7rem] tabular-nums text-ink-muted sm:w-auto sm:justify-start sm:border-0 sm:pt-0">
           {group.estimate_credits > 0 && (
             <span>
-              <span className="text-[0.56rem] tracking-[0.1em] text-ink-black/40">EST </span>
+              <span className="text-[0.54rem] font-bold tracking-[0.06em] text-ink-muted">HELD </span>
               {group.estimate_credits.toLocaleString()}
             </span>
           )}
           {group.status !== "in_flight" ? (
-            <span className={cn(group.actual_credits > 0 ? "text-ink-black/80 font-bold" : "text-ink-black/40")}>
-              <span className="text-[0.56rem] tracking-[0.1em] text-ink-black/40">ACT </span>
+            <span className={cn(group.actual_credits > 0 ? "font-bold text-ink-black" : "text-ink-muted")}>
+              <span className="text-[0.54rem] font-bold tracking-[0.06em] text-ink-muted">USED </span>
               {group.actual_credits > 0 ? group.actual_credits.toLocaleString() : "—"}
             </span>
           ) : (
-            <span className="text-ink-black/30">
-              <span className="text-[0.56rem] tracking-[0.1em]">ACT </span>—
+            <span className="text-ink-muted">
+              <span className="text-[0.54rem] font-bold tracking-[0.06em]">USED </span>—
             </span>
           )}
           {group.returned_credits > 0 && (
             <span className="text-archive-sage">
-              <span className="text-[0.56rem] tracking-[0.1em]">RET </span>
+              <span className="text-[0.54rem] font-bold tracking-[0.06em]">RETURNED </span>
               {group.returned_credits.toLocaleString()}
             </span>
           )}
@@ -235,13 +238,13 @@ function LedgerGroupRow({
                 i === settled.length - 1 ? "border-b-0" : "",
               )}
             >
-              <span className="ml-6 font-mono text-[0.6rem] text-ink-black/30">
+              <span className="ml-6 font-mono text-[0.6rem] text-ink-muted">
                 {i < settled.length - 1 ? "├" : "└"}
               </span>
-              <div className="min-w-0 flex-1 font-body text-[0.78rem] text-ink-black/60">
+              <div className="min-w-0 flex-1 font-body text-[0.78rem] text-ink-muted">
                 {childRowLabel(tx)}
               </div>
-              <div className="shrink-0 font-meta text-[0.72rem] font-bold tabular-nums text-ink-black/60">
+              <div className="shrink-0 font-meta text-[0.72rem] font-bold tabular-nums text-ink-muted">
                 {Math.abs(tx.amount_credits).toLocaleString()} ◆
               </div>
             </div>
@@ -320,54 +323,60 @@ export function CreditsPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[880px] pb-16 pt-6">
+    <div className="mx-auto w-full max-w-[1040px] pb-16 pt-2">
       {successParam === "true" && (
-        <div className="mb-8 flex items-center justify-between border-[2px] border-archive-sage bg-chip-sage px-4 py-3">
+        <div role="status" className="animate-register-stamp mb-8 flex items-center justify-between border-[3px] border-ink-black bg-chip-sage px-4 py-3 shadow-paper-sm">
           <div className="flex items-center gap-3">
             <Icon name="check" size={16} className="text-archive-sage" />
-            <span className="font-meta text-[0.72rem] font-bold tracking-[0.08em] text-ink-black/80">
+            <span className="font-body text-[0.84rem] font-bold text-ink-black">
               Payment received -- credits will appear shortly.
             </span>
           </div>
-          <button type="button" onClick={dismissSuccess} className="font-meta text-[0.58rem] tracking-[0.12em] text-ink-black/45 hover:text-ink-black">
+          <button type="button" onClick={dismissSuccess} className="min-h-11 px-2 font-meta text-[0.58rem] font-bold tracking-[0.08em] text-ink-muted hover:text-ink-black">
             DISMISS
           </button>
         </div>
       )}
 
-      <section>
-        <div className="font-meta text-[0.66rem] font-bold uppercase tracking-[0.24em] text-ink-black/42">
-          Balance
-        </div>
-        <div className="mt-3 flex items-end gap-5">
-          <span className="font-display text-[5.2rem] font-black leading-[0.78] tracking-[-0.04em] text-ink-black">
-            {balanceLoading ? "..." : credits.toLocaleString()}
-          </span>
-          <span className="pb-2 font-meta text-[1rem] font-bold uppercase tracking-[0.18em] text-ink-black/45">
-            Credits
-          </span>
-        </div>
-        <p className="mt-6 max-w-[42rem] text-[1rem] font-semibold leading-7 text-ink-black/54">
-          Credits power your production pipeline. Each paid stage shows an estimate before you commit. Reserved credits are held while the stage runs and released once it finishes — you're only charged for actual model usage.
-        </p>
-        <div className="mt-8 flex items-center gap-5">
-          <div className="font-meta text-[0.66rem] font-bold uppercase tracking-[0.22em] text-ink-black/42">
-            This month
+      <section className="grid overflow-hidden border-[3px] border-ink-black bg-ink-black shadow-paper md:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="px-6 py-8 text-bristol sm:px-9 sm:py-10">
+          <div className="inline-flex bg-hero-red px-3 py-1.5 font-meta text-[0.58rem] font-bold uppercase tracking-[0.12em] text-bristol">
+            Credits & billing
           </div>
-          <div className="h-2 flex-1 bg-surface-variant">
-            <div className="h-full bg-hero-red" style={{ width: `${usageWidth}%` }} />
+          <h1 className="mt-5 font-display text-[3.2rem] font-black uppercase leading-[0.88] tracking-[-0.035em] text-bristol">
+            Credit ledger
+          </h1>
+          <p className="mt-5 max-w-[42rem] font-body text-[0.95rem] font-semibold leading-7 text-bristol/75">
+            Every paid action shows its cost before it runs. A temporary hold covers the work in progress; the ledger settles only the credits actually used.
+          </p>
+        </div>
+
+        <div className="relative flex flex-col justify-between bg-narrator-gold px-6 py-8 text-ink-black sm:px-8">
+          <div aria-hidden="true" className="absolute right-0 top-0 h-6 w-6 bg-ink-black [clip-path:polygon(100%_0,100%_100%,0_0)]" />
+          <div>
+            <div className="font-meta text-[0.58rem] font-bold uppercase tracking-[0.12em] text-ink-muted">Available now</div>
+            <div className="mt-3 font-display text-[3.3rem] font-black leading-[0.82] tracking-[-0.035em]">
+              {balanceLoading ? "—" : credits.toLocaleString()}
+            </div>
+            <div className="mt-2 font-meta text-[0.68rem] font-bold uppercase tracking-[0.1em]">Credits</div>
           </div>
-          <div className="font-body text-[0.8rem] font-bold text-ink-black/68">
-            {totalUsed.toLocaleString()} credits used
+          <div className="mt-8 border-t-[2px] border-ink-black pt-4">
+            <div className="flex items-center justify-between font-body text-[0.78rem] font-bold">
+              <span>This month</span>
+              <span>{totalUsed.toLocaleString()} used</span>
+            </div>
+            <div className="mt-2 h-2 border-[2px] border-ink-black bg-pulp-paper">
+              <div className="h-full bg-hero-red" style={{ width: `${usageWidth}%` }} />
+            </div>
           </div>
         </div>
       </section>
 
-      <section className="mt-14 border-l-[4px] border-ink-black/45 bg-surface-container px-7 py-5">
-        <div className="mb-3 font-meta text-[0.66rem] font-bold uppercase tracking-[0.22em] text-ink-black/45">
+      <section className="mt-10 border-[2px] border-ink-black bg-surface-container shadow-paper-sm">
+        <div className="bg-narrator-gold px-5 py-3 font-meta text-[0.62rem] font-bold uppercase tracking-[0.1em] text-ink-black">
           How credits work
         </div>
-        <ul className="space-y-2 font-body text-[0.92rem] font-bold leading-6 text-ink-black/68">
+        <ul className="grid gap-x-8 gap-y-3 px-5 py-5 font-body text-[0.88rem] font-semibold leading-6 text-ink-muted md:grid-cols-2 md:px-7">
           {(pricingRef?.notes ?? [
             "Estimated credits are projected before an action starts, based on your project's current inputs.",
             "Reserved credits are a temporary hold made when a paid stage begins — not a final charge.",
@@ -375,26 +384,27 @@ export function CreditsPage() {
             "Deterministic steps like Shot Plan layout and prompt assembly have no credit hold.",
             "Panel regeneration is charged from model usage after it completes — no separate hold is made.",
           ]).map((note) => (
-            <li key={note}>{note}</li>
+            <li key={note} className="flex gap-3">
+              <span aria-hidden="true" className="mt-2 h-2 w-2 shrink-0 bg-hero-red" />
+              <span>{note}</span>
+            </li>
           ))}
         </ul>
       </section>
 
       <section className="mt-12">
-        <div className="mb-5 font-meta text-[0.66rem] font-bold uppercase tracking-[0.22em] text-ink-black/42">
-          Add Credits
-        </div>
+        <SectionHeader variant="underline" title="Add credits" description="One-time packs. No subscription, and your credits do not expire." />
         <div className="grid gap-6 md:grid-cols-3">
           {packagesLoading
-            ? [1, 2, 3].map((i) => <div key={i} className="h-52 animate-pulse bg-ink-black/5" />)
+            ? [1, 2, 3].map((i) => <Skeleton key={i} className="h-60" />)
             : (packagesData?.packages ?? []).map((pkg) => {
                 const popular = pkg.credits === 3000;
                 return (
                   <article
                     key={pkg.id}
                     className={cn(
-                      "relative border-[2px] bg-bristol p-6",
-                      popular ? "border-hero-red" : "border-ink-black/12",
+                      "relative flex min-h-64 flex-col border-[2px] bg-bristol p-6 shadow-paper-sm",
+                      popular ? "-translate-y-1 border-ink-black shadow-ink" : "border-ink-black/18",
                     )}
                   >
                     {popular && (
@@ -402,31 +412,33 @@ export function CreditsPage() {
                         Most Popular
                       </div>
                     )}
-                    <div className="font-meta text-[0.68rem] font-bold uppercase tracking-[0.18em] text-ink-black/42">
+                    <div className="font-meta text-[0.64rem] font-bold uppercase tracking-[0.1em] text-ink-muted">
                       {packageName(pkg)}
                     </div>
                     <div className="mt-2 font-display text-[3rem] font-black leading-[0.8] tracking-[-0.04em] text-ink-black">
                       {pkg.credits.toLocaleString()}
                     </div>
-                    <div className="mt-1 font-meta text-[0.64rem] font-bold uppercase tracking-[0.16em] text-ink-black/42">
+                    <div className="mt-1 font-meta text-[0.64rem] font-bold uppercase tracking-[0.1em] text-ink-muted">
                       Credits
                     </div>
-                    <div className="mt-5 font-body text-[0.9rem] font-bold text-ink-black/54">
+                    <div className="mt-5 font-body text-[0.9rem] font-bold text-ink-muted">
                       {perThousand(pkg)}
                     </div>
-                    <button
-                      type="button"
+                    <Button
+                      variant={popular ? "primary" : "outline"}
+                      size="sm"
+                      fullWidth
                       disabled={checkout.isPending}
                       onClick={() => checkout.mutate({ packageId: pkg.id })}
-                      className="mt-5 flex h-11 w-full items-center justify-center bg-ink-black px-4 font-meta text-[0.68rem] font-bold uppercase tracking-[0.2em] text-bristol hover:bg-hero-red disabled:cursor-not-allowed disabled:opacity-50"
+                      className="mt-auto"
                     >
                       Buy ${(pkg.price_cents / 100).toLocaleString()}
-                    </button>
+                    </Button>
                   </article>
                 );
               })}
         </div>
-        <p className="mt-4 font-body text-[0.86rem] font-semibold text-ink-black/46">
+        <p className="mt-5 font-body text-[0.86rem] font-semibold text-ink-muted">
           Payments processed securely by Stripe. Credits never expire. Purchases
           are subject to our{" "}
           <Link to="/legal/terms" className="text-ink-black underline underline-offset-2">
@@ -437,10 +449,10 @@ export function CreditsPage() {
       </section>
 
       <section className="mt-14">
-        <div className="mb-4 flex items-center justify-between">
-          <div className="font-meta text-[0.66rem] font-bold uppercase tracking-[0.22em] text-ink-black/42">
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3 border-b-[3px] border-ink-black pb-4">
+          <h2 className="font-display text-[1.9rem] font-black uppercase leading-none tracking-[-0.035em] text-ink-black">
             History
-          </div>
+          </h2>
           {filterProjectIds.length > 0 && (
             <Select
               aria-label="Filter history by project"
@@ -456,10 +468,12 @@ export function CreditsPage() {
         </div>
         {historyLoading ? (
           <div className="space-y-2">
-            {[1, 2, 3].map((i) => <div key={i} className="h-12 animate-pulse bg-ink-black/5" />)}
+            {[1, 2, 3].map((i) => <Skeleton key={i} className="h-14" />)}
           </div>
         ) : visibleGroups.length === 0 ? (
-          <p className="font-body text-[0.9rem] font-semibold text-ink-black/42">No transactions yet.</p>
+          <div className="border-[2px] border-ink-black/12 bg-surface-container px-5 py-8 font-body text-[0.9rem] font-semibold text-ink-muted">
+            No transactions yet. Your first hold and final charge will appear here after you run a paid stage.
+          </div>
         ) : (
           <div className="border-[2px] border-ink-black/10">
             {visibleGroups.map((g) => {

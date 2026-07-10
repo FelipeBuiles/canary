@@ -13,7 +13,7 @@ export function LetteringReveal({
   onDismiss: () => void;
 }) {
   return (
-    <div className="relative border-[2px] border-ink-black bg-narrator-gold px-4 py-3 shadow-ink-sm">
+    <div className="animate-register-stamp relative border-[2px] border-ink-black bg-narrator-gold px-4 py-3 shadow-ink-sm">
       <button
         type="button"
         onClick={onDismiss}
@@ -22,10 +22,11 @@ export function LetteringReveal({
       >
         ✕
       </button>
-      <div className="font-meta text-[0.5rem] tracking-[0.2em] text-ink-black/60">
-        ✦ YOUR PAGES ARE LETTERED TO MATCH
+      <div className="flex items-center gap-2 font-meta text-[0.56rem] font-bold tracking-[0.08em] text-ink-muted">
+        <span aria-hidden="true" className="h-2 w-2 bg-hero-red" />
+        YOUR PAGES ARE LETTERED TO MATCH
       </div>
-      <div className="mt-1 font-display text-[1.3rem] font-black uppercase leading-[0.9] tracking-[-0.03em] text-ink-black [font-stretch:75%]">
+      <div className="mt-1 font-display text-[1.3rem] font-black uppercase leading-[0.9] tracking-[-0.03em] text-ink-black">
         {lettering.label || "Matched lettering"}
       </div>
       {lettering.rationale && (

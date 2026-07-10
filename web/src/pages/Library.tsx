@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCreateProject, useGenerateProjectCover, useProjects, useImportStory } from "../api/queries";
 import { usePipelineStore } from "../store/pipeline";
@@ -7,39 +7,14 @@ import { useRunAction } from "../hooks/useRunAction";
 import { ProjectCard } from "../components/ProjectCard";
 import { Icon } from "../components/ui/Icon";
 import { Button } from "../components/ui/Button";
+import { LoadingBlock, StateBlock } from "../components/ui/StateBlock";
+import { SectionHeader } from "../components/composites";
 import { STATIONS } from "../lib/stations";
 import { UploadStep } from "../components/wizard/UploadStep";
 import type { ConfigOverrides } from "../types/api";
 import { useI18n } from "../i18n";
 
 const coverRequestedProjects = new Set<string>();
-
-function NewProjectCard({ onClick }: { onClick: () => void }) {
-  const { t } = useI18n();
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={t("START NEW PROJECT")}
-      className="group block h-full w-full text-left focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
-    >
-      <div className="flex h-full min-h-[390px] flex-col items-center justify-center gap-6 border-[3px] border-dashed border-ink-black/10 bg-transparent p-6 transition-colors duration-150 group-hover:border-ink-black/35 group-hover:bg-bristol/35 group-focus-visible:border-ink-black">
-        <div className="flex h-20 w-20 items-center justify-center border-[3px] border-ink-black/38 text-ink-black/55 transition-[background-color,border-color,color,transform,box-shadow] duration-300 ease-out group-hover:scale-105 group-hover:rotate-90 group-hover:border-ink-black group-hover:bg-narrator-gold group-hover:text-ink-black group-hover:shadow-paper-sm group-focus-visible:border-ink-black">
-          <Icon name="plus" size={30} />
-        </div>
-        <div className="text-center">
-          <h3 className="font-display text-[1.42rem] font-black uppercase leading-none tracking-[-0.04em] text-ink-black">
-            {t("NEW PRODUCTION")}
-          </h3>
-          <p className="mt-3 font-body text-[0.96rem] font-semibold text-ink-black/45">
-            {t("Upload a novel to start")}
-          </p>
-        </div>
-      </div>
-    </button>
-  );
-}
 
 function FirstIssueInvitation({ onStart }: { onStart: () => void }) {
   const { t } = useI18n();
@@ -148,14 +123,14 @@ function NewProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-ink-black/80 p-4 pt-[8vh] backdrop-blur-[3px]"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-ink-black/80 p-4 pt-[8vh]"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-label={t("NEW PRODUCTION")}
     >
       <div
-        className="w-full max-w-[640px] pb-8"
+        className="animate-comic-pop w-full max-w-[640px] pb-8"
         onClick={(e) => e.stopPropagation()}
       >
         <UploadStep
@@ -176,6 +151,7 @@ export function Library() {
   const generateCover = useGenerateProjectCover();
   const [pendingCovers, setPendingCovers] = useState<Set<string>>(new Set());
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const coverRevealTimers = useRef<Map<string, number>>(new Map());
   const isEmpty = (projects?.length ?? 0) === 0;
 
   useEffect(() => {
@@ -228,57 +204,102 @@ export function Library() {
             .map((project) => project.id),
         );
         if (!covered.size) return;
-        setPendingCovers((current) => {
-          const next = new Set(current);
-          for (const name of covered) next.delete(name);
-          return next;
-        });
+        for (const name of covered) {
+          if (coverRevealTimers.current.has(name)) continue;
+          const timer = window.setTimeout(() => {
+            setPendingCovers((current) => {
+              const next = new Set(current);
+              next.delete(name);
+              return next;
+            });
+            coverRevealTimers.current.delete(name);
+          }, 700);
+          coverRevealTimers.current.set(name, timer);
+        }
       });
     }, 3000);
     return () => window.clearInterval(timer);
   }, [pendingCovers, refetch]);
 
+  useEffect(() => () => {
+    for (const timer of coverRevealTimers.current.values()) window.clearTimeout(timer);
+    coverRevealTimers.current.clear();
+  }, []);
+
   if (isLoading) {
-    return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
-          {t("WARMING UP THE DRAWING TABLE…")}
-        </p>
-      </div>
-    );
+    return <LoadingBlock label={t("WARMING UP THE DRAWING TABLE…")} />;
   }
 
   if (error) {
     return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <p className="font-meta text-sm tracking-[0.28em] text-hero-red">
-          ERROR: {error.message}
-        </p>
-      </div>
+      <StateBlock
+        tone="danger"
+        icon="alert"
+        title={t("THE LIBRARY COULD NOT OPEN")}
+        description={error.message}
+        action={<Button variant="outline" size="sm" onClick={() => refetch()}>{t("TRY AGAIN")}</Button>}
+      />
     );
   }
 
   return (
-    <div className="space-y-16 md:space-y-20">
-      <section>
-        <div className="inline-flex bg-hero-red px-4 py-1.5 font-meta text-[0.56rem] tracking-[0.22em] text-bristol uppercase">
-          {t("STUDIO // ACTIVE PRODUCTIONS")}
+    <div className="mx-auto w-full max-w-[1540px] space-y-12 pb-10 md:space-y-14">
+      <section className="relative grid overflow-hidden border-[3px] border-ink-black bg-ink-black text-bristol shadow-paper lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="relative z-10 px-6 py-9 sm:px-9 sm:py-11 lg:px-12">
+          <div className="inline-flex bg-hero-red px-3 py-1.5 font-meta text-[0.58rem] font-bold tracking-[0.14em] text-bristol uppercase">
+            {t("STUDIO // ACTIVE PRODUCTIONS")}
+          </div>
+          <h1 className="mt-5 max-w-[11ch] font-display text-[3.25rem] font-black uppercase leading-[0.88] tracking-[-0.035em] text-bristol sm:text-[4rem]">
+            {t("LIBRARY")}
+          </h1>
+          <p className="mt-6 max-w-[42rem] font-body text-[1rem] font-semibold leading-7 text-bristol/75">
+            {t("Your productions — pick up where you left off, or start a new one.")}
+          </p>
+          <div className="mt-8">
+            <Button variant="onInk" size="lg" onClick={() => setNewProjectOpen(true)}>
+              <Icon name="plus" size={16} />
+              {t("NEW PRODUCTION")}
+            </Button>
+          </div>
         </div>
-        <h1 className="mt-5 max-w-[12ch] display-impact uppercase">
-          {t("LIBRARY")}
-        </h1>
-        <p className="mt-7 max-w-[49rem] lead-pulp text-[1rem] font-semibold md:text-[1.1rem]">
-          {t("Your productions — pick up where you left off, or start a new one.")}
-        </p>
+
+        <div className="relative hidden place-items-center overflow-hidden bg-hero-red px-8 py-9 lg:grid">
+          <div aria-hidden="true" className="absolute inset-y-8 left-8 right-0 bg-[radial-gradient(circle_at_1px_1px,rgba(27,28,21,0.2)_1.5px,transparent_1.7px)] [background-size:16px_16px]" />
+          <div className="relative w-full -rotate-1 border-[3px] border-ink-black bg-pulp-paper p-5 text-ink-black shadow-[8px_8px_0_0_rgba(27,28,21,0.35)]">
+            <div className="flex items-center justify-between border-b-[2px] border-ink-black pb-3 font-meta text-[0.56rem] font-bold tracking-[0.1em]">
+              <span>{t("PRESS ROUTE")}</span>
+              <span>{String(projects?.length ?? 0).padStart(2, "0")}</span>
+            </div>
+            <ol className="mt-4 space-y-2">
+              {STATIONS.map((station) => (
+                <li key={station.key} className="flex items-center gap-3 bg-surface-container px-3 py-2.5">
+                  <span className="flex h-7 w-7 items-center justify-center bg-ink-black font-meta text-[0.54rem] font-bold text-bristol">
+                    {station.number}
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    data-station-label={t(station.label)}
+                    className="font-body text-[0.78rem] font-bold before:content-[attr(data-station-label)]"
+                  />
+                </li>
+              ))}
+            </ol>
+          </div>
+        </div>
       </section>
 
       <section className="relative">
+        {!isEmpty && (
+          <SectionHeader
+            variant="underline"
+            title={t("ACTIVE PRODUCTIONS")}
+            description={t("Pick up at the next decision, with every finished stage kept in place.")}
+          />
+        )}
         {isEmpty ? (
           <FirstIssueInvitation onStart={() => setNewProjectOpen(true)} />
         ) : (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-7">
-            <NewProjectCard onClick={() => setNewProjectOpen(true)} />
-
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(270px,1fr))] gap-7">
             {projects?.map((project) => (
               <ProjectCard
                 key={project.id}

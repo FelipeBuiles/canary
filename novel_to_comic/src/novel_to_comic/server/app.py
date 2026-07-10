@@ -14,6 +14,25 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
 from novel_to_comic.assembly.html_renderer import FONTS_DIR
+from novel_to_comic.model_costs import DEFAULT_COST_MAP_PATH, refresh_litellm_cost_cache
+from novel_to_comic.usage import audit_pricing
+
+from .generation_jobs import generation_worker
+from .logging import request_log_middleware
+from .ratelimit import configure_rate_limiting
+from .sentry import configure_sentry
+from .routers import (
+    billing,
+    config,
+    credits,
+    export,
+    labs,
+    pages,
+    pipeline,
+    projects,
+    stages,
+    styles,
+)
 
 
 class SPAStaticFiles(StaticFiles):
@@ -53,26 +72,6 @@ class SPAStaticFiles(StaticFiles):
             # Looks like a client-side route — serve the SPA shell so the
             # browser's history/router can render it.
             return await super().get_response("index.html", scope)
-from novel_to_comic.model_costs import DEFAULT_COST_MAP_PATH, refresh_litellm_cost_cache
-from novel_to_comic.usage import audit_pricing
-
-from .generation_jobs import generation_worker
-from .logging import request_log_middleware
-from .ratelimit import configure_rate_limiting
-from .sentry import configure_sentry
-from .routers import (
-    billing,
-    config,
-    credits,
-    export,
-    labs,
-    pages,
-    pipeline,
-    projects,
-    stages,
-    styles,
-)
-
 log = logging.getLogger(__name__)
 
 

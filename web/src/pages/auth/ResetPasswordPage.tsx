@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
 import { useAuth } from "../../hooks/useAuth";
 import { Button } from "../../components/ui/Button";
@@ -49,16 +49,22 @@ export function ResetPasswordPage() {
   return (
     <div className="flex min-h-svh flex-col bg-ink-black text-pulp-paper">
       <header className="flex h-14 shrink-0 items-center border-b-[2px] border-ink-black bg-bristol px-4 text-ink-black">
-        <div className="font-display text-[1.05rem] font-black uppercase leading-none tracking-[-0.03em]">
-          Scenewright
-        </div>
+        <Link to="/" className="flex items-center gap-2.5">
+          <BrandMark className="h-7 w-7 text-hero-red" />
+          <span className="font-display text-[1.05rem] font-black uppercase leading-none tracking-[-0.03em]">
+            Scenewright
+          </span>
+        </Link>
       </header>
 
-      <main className="flex flex-1 items-center justify-center px-6 py-12">
-        <form
-          onSubmit={handleSubmit}
-          className="w-full max-w-sm space-y-5 rounded-lg border-[2px] border-ink-black/15 bg-surface-container p-8"
-        >
+      <main className="relative flex flex-1 items-center justify-center overflow-hidden px-6 py-12">
+        <div aria-hidden="true" className="absolute inset-y-[8%] right-0 w-[45%] bg-[radial-gradient(circle_at_1px_1px,rgba(252,250,237,0.1)_1px,transparent_0)] [background-size:22px_22px]" />
+        <div className="relative w-full max-w-sm">
+          <div aria-hidden="true" className="absolute inset-0 translate-x-2 translate-y-2 bg-hero-red" />
+          <form
+            onSubmit={handleSubmit}
+            className="relative w-full space-y-5 border-[3px] border-ink-black bg-bristol p-8 text-ink-black"
+          >
           <div className="flex flex-col items-center gap-3 pb-2 text-center">
             <BrandMark className="h-10 w-10" />
             <h1 className="font-display text-[1.4rem] font-black uppercase tracking-[-0.02em] text-ink-black">
@@ -67,12 +73,12 @@ export function ResetPasswordPage() {
           </div>
 
           {error && (
-            <p className="rounded bg-hero-red/15 px-3 py-2 text-center font-body text-[0.85rem] font-semibold text-hero-red">
+            <p role="alert" className="border-[2px] border-hero-red bg-chip-red/50 px-3 py-2 text-center font-body text-[0.85rem] font-semibold text-hero-red">
               {error}
             </p>
           )}
           {message && (
-            <p className="rounded bg-emerald-600/15 px-3 py-2 text-center font-body text-[0.85rem] font-semibold text-emerald-700">
+            <p role="status" className="animate-register-stamp border-[2px] border-archive-sage bg-chip-sage px-3 py-2 text-center font-body text-[0.85rem] font-semibold text-archive-sage">
               {message}
             </p>
           )}
@@ -89,14 +95,15 @@ export function ResetPasswordPage() {
               required
               minLength={6}
               placeholder="••••••••"
-              className="mt-2 h-12 w-full border-b-[2px] border-ink-black/30 bg-surface-container px-4 font-body text-[0.95rem] text-ink-black outline-none transition-colors placeholder:text-ink-black/38 focus:border-hero-red"
+              className="ui-field mt-2 h-12"
             />
           </label>
 
           <Button type="submit" className="w-full" disabled={submitting}>
             {submitting ? "WORKING…" : "UPDATE PASSWORD"}
           </Button>
-        </form>
+          </form>
+        </div>
       </main>
     </div>
   );
