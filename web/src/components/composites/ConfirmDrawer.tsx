@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/Button";
 import { CostBreakdown } from "../cost/CostBreakdown";
+import { ShortcutHint } from "../ui/ShortcutHint";
 import type { CostEstimate } from "../../types/api";
 
 export interface ConfirmDrawerProps {
@@ -102,9 +103,9 @@ export function ConfirmDrawer({
               type="button"
               onClick={onClose}
               aria-label="Cancel"
-              className="shrink-0 border-[2px] border-ink-black/20 px-2 py-1 font-meta text-[0.65rem] tracking-[0.14em] uppercase text-ink-black/60 hover:border-ink-black hover:text-ink-black"
+              className="inline-flex min-h-11 shrink-0 items-center gap-2 border-[2px] border-ink-black/20 px-3 font-meta text-[0.62rem] tracking-[0.12em] uppercase text-ink-black/60 hover:border-ink-black hover:text-ink-black"
             >
-              Esc
+              Close <ShortcutHint>Esc</ShortcutHint>
             </button>
           </div>
 

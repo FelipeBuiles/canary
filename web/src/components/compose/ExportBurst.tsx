@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { ShortcutHint } from "../ui/ShortcutHint";
 
 interface ExportBurstProps {
   pageCount: number;
@@ -40,9 +41,9 @@ export function ExportBurst({ pageCount, format, downloadUrl, onDismiss }: Expor
             type="button"
             onClick={onDismiss}
             aria-label="Dismiss"
-            className="shrink-0 border-[2px] border-ink-black/25 px-2 py-1 font-meta text-[0.6rem] tracking-[0.14em] uppercase text-ink-black/60 hover:border-ink-black hover:text-ink-black"
+            className="inline-flex min-h-11 shrink-0 items-center gap-2 border-[2px] border-ink-black/25 px-3 font-meta text-[0.6rem] tracking-[0.12em] uppercase text-ink-black/60 hover:border-ink-black hover:text-ink-black"
           >
-            Esc
+            Close <ShortcutHint>Esc</ShortcutHint>
           </button>
         </div>
 

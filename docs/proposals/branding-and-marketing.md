@@ -12,6 +12,87 @@
 > - **Budget tier:** lean / pre-revenue (under ~$2k/mo). Channel mix is
 >   community-led growth, not paid acquisition.
 
+## Validation update — 2026-07-10
+
+This document remains useful for its **audience, human-direction, source-
+fidelity, pay-as-you-go, and trust strategy**, but it is no longer reliable as
+a current competitive or naming-clearance snapshot. Treat it as roughly
+**6/10 current**: the strategic direction is strong; several market facts and
+launch hypotheses below have already moved.
+
+### Still valid and supported by the product
+
+- Lead with the outcome: a graphic-novel edition of an author's existing book.
+- Position Scenewright as an instrument the author directs, not a black-box
+  replacement for the author.
+- Whole-manuscript ingestion, four creative checkpoints, reference-guided
+  continuity, per-panel correction, final lettering, and PDF/CBZ export are
+  implemented product truths.
+- The rights posture is real but must stay precise: the author retains the
+  manuscript; Scenewright makes no ownership claim over generated output;
+  copyrightability of purely generated material remains case-specific.
+- One-off credit packs, pre-run estimates, and non-expiring credits are
+  implemented. There is no subscription.
+
+### Material corrections to the original research
+
+1. **Name clearance is unresolved and now higher risk.** Exact federal knockout
+   searches remain encouraging, but an active, phonetically identical product,
+   [SceneWrite](https://www.scenewrite.app/features/), launched in the adjacent
+   AI storytelling/storyboarding category. Pause major brand spend until a
+   practitioner reviews federal, state, common-law, domain, and international
+   confusion risk. Domain availability in §1.4 was point-in-time; the primary
+   `.ink` domain was registered on 2026-07-02.
+2. **The competitive wedge narrowed.** [ComicInk](https://www.comicink.ai/) now
+   offers whole-book PDF ingestion, recurring cast/world references, printable
+   export, ownership language, no-expiry credits, and a creator storefront.
+   Whole-book ingestion, consistency, export, rights, and pay-as-you-go are now
+   category expectations, not unique claims. Scenewright's strongest current
+   difference is the depth and visibility of author control: inspectable
+   checkpoints, source-faithful adaptation, focused panel revision, lettering,
+   and explicit per-step cost.
+3. **Pricing references are stale.** ComicInk currently advertises roughly 30
+   pages for $9.99 and 240 for $54.99; LlamaGen's current plans start at $18/mo.
+   The `$10 / 8-page` and `$80–200 / book` suggestions below should not guide
+   launch copy. `pricing-and-margin.md` supersedes the internal model, but a
+   fixed per-book marketing promise still requires real production usage data.
+4. **Author sentiment is bifurcated, not uniformly hostile.** A 2025
+   [BookBub survey](https://insights.bookbub.com/how-authors-are-thinking-about-ai-survey/)
+   found substantial use and substantial rejection of generative AI.
+   The attainable audience is AI-open but protective of authorship, consent,
+   privacy, and disclosure. Keep AI out of the headline if useful, but disclose
+   the AI-assisted workflow clearly on the page rather than hiding it in a tiny
+   footer.
+5. **Several GTM claims remain experiments.** The “top 20%” buyer profile,
+   “80% from community,” free-Chapter-1 flywheel, influencer conversion, and
+   mandatory watermark are hypotheses without product or cohort evidence.
+   Test them. Facebook, Instagram, author newsletters/podcasts, design partners,
+   and high-intent search deserve weight alongside Reddit.
+
+### Application audit at this review
+
+The product applies the internal strategy well: Scenewright naming and visual
+identity, four author gates, reference-guided generation, review-by-exception,
+page finishing, cautious rights terms, credit estimates, and no-expiry packages
+are live. The major gap was acquisition: there was no public homepage, public
+workflow explanation, proof reel, pricing story, case study, or responsible-use
+explanation. This review adds the public homepage and corrects the unsupported
+“500 free credits” signup claim. Still missing are a verified trial/grant,
+authorized author case studies, a measured 30–50-panel continuity proof, and
+the proposed authorship log.
+
+Homepage claims should stay within what the product can prove:
+
+- “Turn your novel into a graphic novel you direct.”
+- “Choose the look. Approve the cast. Review and revise individual panels.”
+- “AI-assisted visual adaptation, directed by you.”
+- “Export PDF and CBZ.”
+- “Your manuscript stays yours. We claim no ownership over generated output.”
+
+Avoid “perfect consistency,” “copyright-safe,” “publish-ready,” “full novel in
+minutes,” fixed savings, fixed per-book cost, or compatibility with a
+human-authored seal until each is independently substantiated.
+
 ## TL;DR
 
 **Recommended name: `Scenewright`** — a real dictionary word

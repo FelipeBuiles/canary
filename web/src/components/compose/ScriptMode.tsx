@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { cn } from "../../lib/cn";
+import { ShortcutHint } from "../ui/ShortcutHint";
 import { useStoryBible } from "../../api/queries";
 import type { ComicPage, Bubble, PagePanel } from "../../types/api";
 
@@ -169,7 +170,7 @@ export function ScriptMode({
                   className="flex shrink-0 items-center gap-2 border border-ink-black/30 bg-bristol px-2.5 py-1 font-meta text-[0.52rem] tracking-[0.1em] whitespace-nowrap transition-colors hover:bg-surface-container"
                 >
                   Find &amp; replace
-                  <kbd className="font-meta text-[0.46rem] text-ink-black/50">⌘F</kbd>
+                  <ShortcutHint>⌘F</ShortcutHint>
                 </button>
                 <div className="flex flex-wrap items-center gap-1.5">
                   {showFilters && [{ id: "all" as FilterType, label: "All" }, ...activeTypeFilters].map((f) => (

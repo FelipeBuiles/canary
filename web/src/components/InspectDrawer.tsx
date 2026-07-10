@@ -269,7 +269,7 @@ function InspectDrawerRerun({ project, kind }: { project: string; kind: DrawerKi
   const stage = rerunStageForDrawer(kind);
   if (status?.stages[stage]?.status !== "complete") return null;
   return (
-    <div className="flex items-center justify-between gap-3 border-t-[2px] border-ink-black bg-bristol px-4 py-3">
+    <div className="flex min-h-16 items-center justify-between gap-3 border-t-[2px] border-ink-black bg-bristol px-4 py-2">
       <p className="max-w-[22ch] text-[0.7rem] leading-5 text-ink-black/55">
         Regenerate this step and everything after it.
       </p>
@@ -295,7 +295,7 @@ export function InspectDrawer({ project, kind, onClose }: InspectDrawerProps) {
     <div className="fixed inset-0 z-40" role="dialog" aria-modal="true" aria-label={meta.title}>
       <div className="absolute inset-0 bg-ink-black/35" onClick={onClose} />
       <aside className="absolute right-0 top-0 flex h-full w-[460px] max-w-[94vw] flex-col border-l-[2px] border-ink-black bg-pulp-paper">
-        <div className="flex items-center justify-between border-b-[2px] border-ink-black bg-bristol px-4 py-3">
+        <div className="flex h-shell-top shrink-0 items-center justify-between border-b-[2px] border-ink-black bg-bristol px-4">
           <div>
             <div className="font-meta text-[0.5rem] tracking-[0.2em] text-ink-black/45">{meta.kicker}</div>
             <div className="font-display text-[1.25rem] font-bold uppercase leading-tight tracking-[-0.03em]">
@@ -306,7 +306,7 @@ export function InspectDrawer({ project, kind, onClose }: InspectDrawerProps) {
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="p-2 text-ink-black/50 transition-colors hover:text-hero-red"
+            className="flex h-11 w-11 items-center justify-center text-ink-black/50 transition-colors hover:text-hero-red"
           >
             ✕
           </button>

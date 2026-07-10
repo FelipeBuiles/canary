@@ -7,7 +7,7 @@ import "./comic-page.css";
 // padding, and the thought-bubble puffs — so everything must scale together for
 // the preview to match the actual composed page.
 const NATIVE_W = 720;
-const NATIVE_H = 520;
+const NATIVE_H = 640;
 const SCALE = 0.34;
 
 /**
@@ -37,29 +37,27 @@ export function LetteringPreview({ lettering }: { lettering: LetteringStyle | un
         <div
           style={{
             position: "relative",
-            display: "flex",
-            flexDirection: "column",
-            gap: 18,
             width: "100%",
             height: "100%",
             padding: 22,
             boxSizing: "border-box",
             border: "var(--panel-border-width) solid var(--panel-border)",
             background: vars["--panel-bg"],
+            overflow: "hidden",
           }}
         >
-          <div className="caption" style={{ position: "static", alignSelf: "flex-start" }}>
+          <div className="caption" style={{ position: "absolute", left: 28, top: 28, maxWidth: 620 }}>
             A quiet street, just past midnight.
           </div>
-          <div className="bubble speech left tail-up" style={{ alignSelf: "flex-start", marginTop: 22 }}>
+          <div className="bubble speech left tail-up" style={{ position: "absolute", left: 34, top: 225 }}>
             Who&apos;s there?
           </div>
-          <div className="bubble thought" style={{ alignSelf: "flex-end" }}>
+          <div className="bubble thought" style={{ position: "absolute", right: 32, top: 350, maxWidth: 350 }}>
             …something is wrong.
           </div>
           <div
             className="sfx"
-            style={{ position: "static", alignSelf: "center", marginTop: "auto", transform: "rotate(-4deg)" }}
+            style={{ left: "50%", bottom: 28, transform: "translateX(-50%) rotate(-4deg)" }}
           >
             KRAK!
           </div>

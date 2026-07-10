@@ -1318,8 +1318,8 @@ export function CastRoom() {
     <RoomShell project={id}>
       <RoomHeader
         kicker="LOOK"
-        title="CHARACTERS & PLACES"
-        lead="How your cast and settings will look in every panel. Re-roll any one of them, or open it to request a fix."
+        title="CONFIRM CHARACTERS & PLACES"
+        lead="These references guide every panel. Open only the people or places that need a fix."
       />
 
       <section className="space-y-10">
@@ -1381,7 +1381,7 @@ export function CastRoom() {
         onPrimary={handleContinueToPanels}
         primaryDisabled={approveStage.isPending || isPipelineRunning || isCastStageRunning || stageStatus === "pending"}
         busy={approveStage.isPending}
-        secondary={<RerunStageAction project={id} stage="cast" label="Re-cast" disabled={stageRegenerating} />}
+        secondary={<RerunStageAction project={id} stage="cast" label="cast" disabled={stageRegenerating} />}
       />
     </RoomShell>
   );

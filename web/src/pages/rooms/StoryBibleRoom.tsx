@@ -176,7 +176,7 @@ function WhatPulpFound({
           BY {bible.author.toUpperCase()}
         </div>
         {opening && (
-          <p className="mt-4 border-l-[3px] border-narrator-gold pl-4 text-[0.95rem] italic leading-7 text-ink-black/65">
+          <p className="mt-4 bg-surface-container px-4 py-3 text-[0.95rem] italic leading-7 text-ink-black/65">
             “{opening}”
           </p>
         )}
@@ -298,8 +298,8 @@ export function StoryBibleRoom() {
     <RoomShell project={id}>
       <RoomHeader
         kicker="STORY"
-        title={bible.title}
-        lead="Check what Scenewright read out of your story — fix names, looks, and details before anything is drawn."
+        title="CONFIRM THE STORY"
+        lead="Check the people, places, and turning points Scenewright found. Edit only what needs correction."
       />
 
       <WhatPulpFound
@@ -355,7 +355,7 @@ export function StoryBibleRoom() {
         onPrimary={handleLooksRight}
         primaryDisabled={approveStage.isPending || isPipelineRunning || stageStatus === "running"}
         busy={approveStage.isPending}
-        secondary={<RerunStageAction project={id} stage="extract" label="Re-extract" />}
+        secondary={<RerunStageAction project={id} stage="extract" label="story" />}
       />
     </RoomShell>
   );

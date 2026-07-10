@@ -19,10 +19,7 @@ export function CostBreakdown({ cost }: CostBreakdownProps) {
 
   if (isZeroCost) {
     return (
-      <div
-        className="mt-4 bg-bristol p-4"
-        style={{ borderLeft: "3px solid var(--color-narrator-gold)" }}
-      >
+      <div className="mt-4 border-[2px] border-narrator-gold/35 bg-chip-gold/20 p-4">
         <p className="font-meta text-[0.72rem] leading-5 tracking-[0.06em] text-ink-black/60">
           {ZERO_COST_COPY}
         </p>
@@ -31,10 +28,7 @@ export function CostBreakdown({ cost }: CostBreakdownProps) {
   }
 
   return (
-    <div
-      className="mt-4 bg-bristol p-4"
-      style={{ borderLeft: "3px solid var(--color-narrator-gold)" }}
-    >
+    <div className="mt-4 border-[2px] border-narrator-gold/35 bg-chip-gold/20 p-4">
       {estimate_credits > 0 && (
         <div className="flex items-baseline gap-3">
           <span className="font-meta text-[0.58rem] tracking-[0.16em] uppercase text-ink-black/60">

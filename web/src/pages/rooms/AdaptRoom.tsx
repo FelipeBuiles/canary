@@ -171,7 +171,7 @@ export function AdaptRoom() {
                 <div className="min-h-0 flex-1 overflow-y-auto px-8 pb-8">
                   {/* Scene summary */}
                   {sceneSummary && (
-                    <div className="mb-5 mt-5 border-l-[3px] border-hero-red pl-4 text-[0.82rem] leading-6 text-ink-black/62">
+                    <div className="mb-5 mt-5 bg-chip-red/25 px-4 py-3 text-[0.82rem] leading-6 text-ink-black/68">
                       {sceneSummary}
                     </div>
                   )}
@@ -228,7 +228,7 @@ export function AdaptRoom() {
                             </div>
                           )}
                           {beat.narration_reason && (
-                            <div className="mt-3 border-l-[3px] border-narrator-gold/60 pl-4 text-[0.78rem] leading-6 text-ink-fade">
+                            <div className="mt-3 bg-chip-gold/25 px-4 py-3 text-[0.78rem] leading-6 text-ink-fade">
                               {beat.narration_reason}
                             </div>
                           )}

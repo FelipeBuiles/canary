@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/Button";
 import { TextField } from "../ui/Field";
+import { ShortcutHint } from "../ui/ShortcutHint";
 
 export interface ConfirmModalProps {
   open: boolean;
@@ -30,17 +31,20 @@ export function ConfirmModal({
   const [input, setInput] = useState("");
 
   const inputMatches = !confirmInput || input === confirmInput;
+  const handleClose = useCallback(() => {
+    setInput("");
+    onClose();
+  }, [onClose]);
 
   useEffect(() => {
     if (!open) return;
-    setInput("");
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         e.stopPropagation();
-        onClose();
+        handleClose();
         return;
       }
       if (e.key !== "Tab" || !modalRef.current) return;
@@ -63,14 +67,14 @@ export function ConfirmModal({
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevOverflow;
     };
-  }, [open, onClose]);
+  }, [handleClose, open]);
 
   if (!open) return null;
 
   return (
     <div
       className="fixed inset-0 z-[120] flex items-center justify-center bg-ink-black/55 backdrop-blur-[2px]"
-      onClick={onClose}
+      onClick={handleClose}
       role="presentation"
     >
       <div
@@ -82,7 +86,16 @@ export function ConfirmModal({
         onClick={(e) => e.stopPropagation()}
         className="w-full max-w-[500px] border-[2px] border-ink-black bg-pulp-paper text-ink-black shadow-ink"
       >
-        <div className="px-6 pt-5 pb-6 sm:px-8">
+        <form
+          className="px-6 pt-5 pb-6 sm:px-8"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!busy && inputMatches) {
+              setInput("");
+              onConfirm();
+            }
+          }}
+        >
           <div className="flex items-start justify-between gap-4">
             <h2
               id="confirm-modal-title"
@@ -92,11 +105,11 @@ export function ConfirmModal({
             </h2>
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               aria-label="Cancel"
-              className="shrink-0 border-[2px] border-ink-black/20 px-2 py-1 font-meta text-[0.65rem] tracking-[0.14em] uppercase text-ink-black/60 hover:border-ink-black hover:text-ink-black"
+              className="inline-flex min-h-11 shrink-0 items-center gap-2 border-[2px] border-ink-black/20 px-3 font-meta text-[0.62rem] tracking-[0.12em] uppercase text-ink-black/60 hover:border-ink-black hover:text-ink-black"
             >
-              Esc
+              Close <ShortcutHint>Esc</ShortcutHint>
             </button>
           </div>
 
@@ -123,12 +136,12 @@ export function ConfirmModal({
           )}
 
           <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
-            <Button variant="outline" size="md" onClick={onClose} disabled={busy}>
+            <Button type="button" variant="outline" size="md" onClick={handleClose} disabled={busy}>
               Cancel
             </Button>
             <Button
               size="md"
-              onClick={onConfirm}
+              type="submit"
               disabled={busy || !inputMatches}
               className={cn(
                 destructive &&
@@ -138,7 +151,7 @@ export function ConfirmModal({
               {busy ? "Deleting…" : confirmLabel}
             </Button>
           </div>
-        </div>
+        </form>
       </div>
     </div>
   );

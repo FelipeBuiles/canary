@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { cn } from "../../lib/cn";
 import { TopBarPortal } from "../../layout/TopBarSlot";
+import { ShortcutHint } from "../ui/ShortcutHint";
 import type { ComposeTab } from "./compose-types";
 
-const TABS: { id: ComposeTab; label: string }[] = [
-  { id: "pages", label: "PAGES" },
-  { id: "script", label: "SCRIPT" },
-  { id: "export", label: "EXPORT" },
+const TABS: { id: ComposeTab; label: string; shortcut: string }[] = [
+  { id: "pages", label: "PAGES", shortcut: "1" },
+  { id: "script", label: "TEXT", shortcut: "2" },
+  { id: "export", label: "DOWNLOAD", shortcut: "3" },
 ];
 
 const LETTERING_PRESETS: { id: string; label: string }[] = [
@@ -39,8 +40,15 @@ function useDismissOnOutside(open: boolean, onClose: () => void) {
     function onPointerDown(e: PointerEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose();
     }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
     window.addEventListener("pointerdown", onPointerDown);
-    return () => window.removeEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
   }, [open, onClose]);
   return ref;
 }
@@ -52,12 +60,14 @@ function LetteringMenu({
   onReroll,
   onSetPreset,
   onEditAtLook,
+  rerunAction,
 }: {
   label?: string;
   isLettering: boolean;
   onReroll: () => void;
   onSetPreset: (preset: string) => void;
   onEditAtLook: () => void;
+  rerunAction?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useDismissOnOutside(open, () => setOpen(false));
@@ -68,18 +78,21 @@ function LetteringMenu({
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="flex h-8 max-w-[11rem] items-center gap-1.5 border-[1.5px] border-ink-black/30 px-3 font-meta text-[0.5rem] tracking-[0.14em] text-ink-black/60 transition-colors hover:border-ink-black hover:text-ink-black"
+        className="flex min-h-11 max-w-[12rem] items-center gap-1.5 border-[2px] border-ink-black/25 px-3 font-meta text-[0.5rem] tracking-[0.14em] text-ink-black/60 transition-colors hover:border-ink-black hover:text-ink-black"
       >
-        <span className="truncate">✦ {isLettering ? "MATCHING…" : label || "LETTERING"}</span>
+        <span className="truncate">{isLettering ? "MATCHING…" : "BOOK OPTIONS"}</span>
         <span aria-hidden>▾</span>
       </button>
       {open && (
         <div className="absolute right-0 top-full z-30 mt-1 flex w-60 flex-col gap-2 border-[2px] border-ink-black bg-bristol p-3 shadow-ink-sm">
+          <div className="font-meta text-[0.46rem] tracking-[0.16em] text-ink-black/40">
+            LETTERING · {label || "DEFAULT"}
+          </div>
           <button
             type="button"
             onClick={() => { setOpen(false); onReroll(); }}
             disabled={isLettering}
-            className="flex h-8 items-center justify-center gap-1.5 bg-hero-red px-4 font-meta text-[0.5rem] tracking-[0.18em] text-bristol transition-opacity hover:opacity-90 disabled:opacity-60"
+            className="flex min-h-11 items-center justify-center gap-1.5 bg-hero-red px-4 font-meta text-[0.5rem] tracking-[0.18em] text-bristol transition-opacity hover:opacity-90 disabled:opacity-60"
           >
             ↺ {isLettering ? "MATCHING…" : "ANOTHER TAKE"}
           </button>
@@ -91,7 +104,7 @@ function LetteringMenu({
                 type="button"
                 onClick={() => { setOpen(false); onSetPreset(p.id); }}
                 disabled={isLettering}
-                className="border-[2px] border-ink-black bg-bristol px-2 py-1 font-meta text-[0.48rem] tracking-[0.1em] transition-colors hover:bg-surface-container disabled:opacity-50"
+                className="min-h-9 border-[2px] border-ink-black bg-bristol px-2 py-1 font-meta text-[0.48rem] tracking-[0.1em] transition-colors hover:bg-surface-container disabled:opacity-50"
               >
                 {p.label}
               </button>
@@ -107,31 +120,12 @@ function LetteringMenu({
           <p className="font-meta text-[0.44rem] leading-4 tracking-[0.08em] text-ink-black/35">
             PER-BUBBLE TWEAKS STAY PUT WHEN YOU CHANGE THE BOOK&apos;S LETTERING.
           </p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** ⟳ Regenerate ▾ — whole-book compose re-run. */
-function RegenerateMenu({ rerunAction }: { rerunAction?: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
-  const ref = useDismissOnOutside(open, () => setOpen(false));
-  if (!rerunAction) return null;
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="flex h-8 items-center gap-1.5 border-[1.5px] border-ink-black/30 px-3 font-meta text-[0.5rem] tracking-[0.16em] text-ink-black/60 transition-colors hover:border-ink-black hover:text-ink-black"
-      >
-        ⟳ REGENERATE ▾
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full z-30 mt-1 flex w-56 flex-col gap-2 border-[2px] border-ink-black bg-bristol p-3 shadow-ink-sm">
-          {rerunAction}
+          {rerunAction && (
+            <div className="mt-1 border-t-[2px] border-ink-black/10 pt-3">
+              <div className="mb-2 font-meta text-[0.46rem] tracking-[0.16em] text-ink-black/40">REBUILD BOOK</div>
+              {rerunAction}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -158,20 +152,23 @@ export function ComposeHeader({
   ].filter(Boolean).join(" · ");
 
   const tabRow = (
-    <div className="flex min-w-0 flex-1 items-stretch border-l-[2px] border-ink-black/10">
+    <div className="flex min-w-0 flex-1 items-stretch border-x-[2px] border-ink-black/10" role="tablist" aria-label="Book workspace">
       {TABS.map((t) => (
         <button
           key={t.id}
           type="button"
+          role="tab"
+          aria-selected={t.id === tab}
           onClick={() => onTabChange(t.id)}
           className={cn(
-            "flex shrink-0 items-center px-5 font-meta text-[0.56rem] tracking-[0.2em] transition-colors",
+            "flex min-h-11 shrink-0 items-center gap-2 px-5 font-meta text-[0.56rem] tracking-[0.2em] transition-colors",
             t.id === tab
               ? "bg-ink-black text-bristol"
               : "text-ink-black/38 hover:text-ink-black/70",
           )}
         >
           {t.label}
+          <ShortcutHint>{t.shortcut}</ShortcutHint>
         </button>
       ))}
     </div>
@@ -189,7 +186,7 @@ export function ComposeHeader({
           type="button"
           onClick={onOpenIssues}
           className={cn(
-            "flex h-8 items-center gap-1.5 border-[1.5px] px-3 font-meta text-[0.5rem] tracking-[0.14em] transition-colors",
+            "flex min-h-11 items-center gap-1.5 border-[2px] px-3 font-meta text-[0.5rem] tracking-[0.14em] transition-colors",
             errorCount > 0
               ? "border-hero-red text-hero-red hover:bg-hero-red hover:text-bristol"
               : "border-ink-black/30 text-ink-black/60 hover:border-ink-black hover:text-ink-black",
@@ -204,8 +201,8 @@ export function ComposeHeader({
         onReroll={onRerollLettering}
         onSetPreset={onSetLetteringPreset}
         onEditAtLook={onEditLetteringAtLook}
+        rerunAction={rerunAction}
       />
-      <RegenerateMenu rerunAction={rerunAction} />
     </div>
   );
 
@@ -219,7 +216,7 @@ export function ComposeHeader({
             BOOK
           </span>
           <h1 className="font-display text-[1.55rem] font-black uppercase leading-[0.85] tracking-[-0.04em] text-ink-black [font-stretch:75%]">
-            COMIC PAGES
+            FINISH &amp; EXPORT
           </h1>
         </div>
         <div className="hidden min-w-0 flex-1 items-stretch md:flex">

@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/Button";
 import { DestructiveButton } from "../ui/DestructiveButton";
+import { ShortcutHint } from "../ui/ShortcutHint";
 import type { StageName, StageCostEstimate } from "../../types/api";
 import { STAGE_DISPLAY_NAMES } from "../../types/api";
 
@@ -112,9 +113,9 @@ export function RerunDrawer({
               type="button"
               onClick={onClose}
               aria-label="Cancel"
-              className="shrink-0 border-[2px] border-ink-black/20 px-2 py-1 font-meta text-[0.65rem] tracking-[0.14em] uppercase text-ink-black/60 hover:border-ink-black hover:text-ink-black"
+              className="inline-flex min-h-11 shrink-0 items-center gap-2 border-[2px] border-ink-black/20 px-3 font-meta text-[0.62rem] tracking-[0.12em] uppercase text-ink-black/60 hover:border-ink-black hover:text-ink-black"
             >
-              Esc
+              Close <ShortcutHint>Esc</ShortcutHint>
             </button>
           </div>
 
@@ -126,10 +127,7 @@ export function RerunDrawer({
             Outputs below will be lost and need to be regenerated.
           </p>
 
-          <div
-            className="mt-4 bg-bristol p-4"
-            style={{ borderLeft: "3px solid var(--color-warn-orange)" }}
-          >
+          <div className="mt-4 border-[2px] border-warn-orange/35 bg-bristol p-4">
             <div className="font-meta text-[0.58rem] tracking-[0.16em] uppercase text-ink-black/60">
               Impact
             </div>

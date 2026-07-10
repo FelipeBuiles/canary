@@ -7,8 +7,9 @@ import { useI18n } from "../i18n";
 import { cn } from "../lib/cn";
 import {
   STATIONS,
-  getStationState,
   getSubstepState,
+  getStationState,
+  stationDestination,
   stationForRoute,
   type DrawerKind,
   type Station,
@@ -35,6 +36,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   const { data: status } = useProjectStatus(projectId);
   const { data: projects } = useProjects();
   const [drawer, setDrawer] = useState<DrawerKind | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const current = projects?.find((p) => p.id === projectId);
   const projectTitle = current?.project_name ?? projectId ?? t("PROJECT INDEX");
@@ -53,17 +55,25 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     const state = getStationState(station, status);
     const tag = STATE_TAG[state];
     const isActive = activeStation?.key === station.key;
+    const inspectItems = station.substeps.filter(
+      (substep): substep is typeof substep & { drawer: DrawerKind } =>
+        substep.kind === "auto" && Boolean(substep.drawer),
+    );
+    const decisionItems = station.substeps.filter(
+      (substep): substep is typeof substep & { route: string } =>
+        substep.kind === "gated" && Boolean(substep.route),
+    );
 
     return (
       <div key={station.key} className={cn(isActive && "border-y border-bristol/12 bg-bristol/6")}>
         <button
           type="button"
-          onClick={() => goTo(station.primaryRoute)}
+          onClick={() => goTo(stationDestination(station, status))}
           aria-label={`Station ${station.number} ${station.label}: ${tag.label}`}
           aria-current={isActive ? "true" : undefined}
           className={cn(
-            "flex w-full items-baseline gap-3 border-l-[3px] px-5 py-3 text-left transition-colors xl:px-6 2xl:py-4",
-            isActive ? "border-hero-red" : "border-transparent hover:bg-bristol/5",
+            "flex min-h-12 w-full items-baseline gap-3 px-5 py-3 text-left transition-colors xl:px-6 2xl:py-4",
+            isActive ? "bg-bristol/5" : "hover:bg-bristol/5",
           )}
         >
           <span className="font-meta text-[0.56rem] tracking-[0.14em] text-bristol/35">{station.number}</span>
@@ -78,88 +88,128 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           </span>
         </button>
 
-        {/* Substeps — only the current station expands. */}
-        {isActive && (
-          <ul className="pb-2 pl-[3px]">
-            {station.substeps.map((substep) => {
-              const subState = getSubstepState(substep, status);
-              const isSubActive = substep.route === activeRoute;
+        {isActive && decisionItems.length > 1 && (
+          <ul className="space-y-1 px-5 pb-2 xl:px-6" aria-label={`${station.label} decisions`}>
+            {decisionItems.map((substep) => {
+              const substepState = getSubstepState(substep, status);
+              const isCurrentRoute = activeRoute === substep.route;
               return (
                 <li key={substep.key}>
                   <button
                     type="button"
-                    onClick={() =>
-                      substep.kind === "auto" && substep.drawer
-                        ? setDrawer(substep.drawer)
-                        : substep.route && goTo(substep.route)
-                    }
+                    onClick={() => goTo(substep.route)}
+                    aria-current={isCurrentRoute ? "page" : undefined}
                     className={cn(
-                      "flex w-full items-center gap-2.5 px-6 py-1.5 text-left font-meta text-[0.56rem] tracking-[0.14em] transition-colors xl:px-7",
-                      isSubActive ? "text-bristol" : "text-bristol/48 hover:text-bristol/80",
+                      "flex min-h-11 w-full items-center gap-2 px-3 text-left font-meta text-[0.52rem] uppercase tracking-[0.12em] transition-colors",
+                      isCurrentRoute
+                        ? "bg-bristol text-ink-black"
+                        : "bg-bristol/5 text-bristol/58 hover:bg-bristol/10 hover:text-bristol",
                     )}
                   >
-                    <span
-                      aria-hidden
-                      className={cn(
-                        "h-[7px] w-[7px] shrink-0",
-                        subState === "done" && "bg-archive-sage",
-                        subState === "current" && "bg-hero-red",
-                        subState === "pending" && "border border-bristol/30",
-                      )}
-                    />
-                    <span className="uppercase">{t(substep.label)}</span>
-                    {substep.kind === "auto" && (
-                      <span className="ml-auto border border-bristol/25 px-1.5 py-0.5 font-meta text-[0.44rem] tracking-[0.12em] text-bristol/45">
-                        {t("AUTO · VIEW")}
-                      </span>
-                    )}
+                    <span aria-hidden className={cn(
+                      "flex h-4 w-4 shrink-0 items-center justify-center border text-[0.44rem]",
+                      isCurrentRoute ? "border-ink-black/20" : "border-bristol/20",
+                    )}>
+                      {substepState === "done" ? "✓" : substepState === "current" ? "•" : ""}
+                    </span>
+                    <span>{t(substep.label)}</span>
                   </button>
                 </li>
               );
             })}
           </ul>
         )}
+
+        {isActive && inspectItems.length > 0 && (
+          <div className="px-5 pb-3 xl:px-6">
+            <button
+              type="button"
+              aria-expanded={detailsOpen}
+              onClick={() => setDetailsOpen((open) => !open)}
+              className="flex min-h-11 w-full items-center justify-between font-meta text-[0.52rem] uppercase tracking-[0.14em] text-bristol/48 transition-colors hover:text-bristol/80"
+            >
+              <span>{t("How this was made")}</span>
+              <span aria-hidden>{detailsOpen ? "−" : "+"}</span>
+            </button>
+            {detailsOpen && (
+              <ul className="space-y-1 pb-1">
+                {inspectItems.map((substep) => (
+                  <li key={substep.key}>
+                    <button
+                      type="button"
+                      onClick={() => setDrawer(substep.drawer)}
+                      className="flex min-h-11 w-full items-center gap-2 bg-bristol/5 px-3 text-left font-meta text-[0.52rem] uppercase tracking-[0.12em] text-bristol/58 transition-colors hover:bg-bristol/10 hover:text-bristol"
+                    >
+                      <span aria-hidden className="h-1.5 w-1.5 bg-bristol/35" />
+                      {t(substep.label)}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
     );
   }
 
   // Only meaningful inside a project — non-project pages keep just the brand bar.
+  const activeDecisions = activeStation?.substeps.filter(
+    (substep): substep is typeof substep & { route: string } =>
+      substep.kind === "gated" && Boolean(substep.route),
+  ) ?? [];
+
   const mobileNav = projectId == null ? null : (
-    <header className="flex shrink-0 items-center gap-2 border-b-[2px] border-ink-black bg-ink-black px-3 py-2 text-bristol md:hidden">
-      <Link to="/" className="flex min-w-0 flex-1 items-center gap-2">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center bg-pulp-paper font-display text-[0.72rem] font-black text-ink-black">
-          {projectTitle.charAt(0)}
-        </span>
-        <span className="min-w-0">
-          <span className="block truncate font-display text-[0.88rem] font-bold uppercase leading-none tracking-[-0.02em]">
-            {projectTitle}
+    <>
+      <header className="flex h-shell-top shrink-0 items-center gap-2 border-b-[2px] border-ink-black bg-ink-black px-3 text-bristol md:hidden">
+        <Link to="/" className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center bg-pulp-paper font-display text-[0.72rem] font-black text-ink-black">
+            {projectTitle.charAt(0)}
           </span>
-          <span className="mt-1 block font-meta text-[0.48rem] tracking-[0.16em] text-bristol/45">
-            ← {t("LIBRARY")}
+          <span className="min-w-0">
+            <span className="block truncate font-display text-[0.88rem] font-bold uppercase leading-none tracking-[-0.02em]">
+              {projectTitle}
+            </span>
+            <span className="mt-1 block font-meta text-[0.48rem] tracking-[0.16em] text-bristol/45">
+              ← {t("LIBRARY")}
+            </span>
           </span>
-        </span>
-      </Link>
-      {projectId && (
+        </Link>
         <Select
           aria-label={t("STATION")}
           tone="dark"
           size="sm"
-          value={isSettingsActive ? "settings" : (activeStation?.primaryRoute ?? STATIONS[0].primaryRoute)}
+          value={isSettingsActive ? "settings" : (activeStation ? stationDestination(activeStation, status) : STATIONS[0].primaryRoute)}
           onValueChange={goTo}
           options={[
             ...STATIONS.map((station) => ({
-              value: station.primaryRoute,
+              value: stationDestination(station, status),
               label: `${station.number} ${t(station.label)}`,
             })),
-            // Settings isn't a station, but the mobile nav has no other way to
-            // reach it — surface it here so the selector also never falsely
-            // highlights a station while the user is on Settings.
             { value: "settings", label: `⚙ ${t("Settings")}` },
           ]}
           className="max-w-[9.5rem]"
         />
+      </header>
+      {!isSettingsActive && activeDecisions.length > 1 && (
+        <nav className="flex shrink-0 border-b-[2px] border-ink-black bg-bristol md:hidden" aria-label={`${activeStation?.label} decisions`}>
+          {activeDecisions.map((substep) => (
+            <button
+              key={substep.key}
+              type="button"
+              onClick={() => goTo(substep.route)}
+              aria-current={activeRoute === substep.route ? "page" : undefined}
+              className={cn(
+                "min-h-11 flex-1 border-r border-ink-black/12 px-3 font-meta text-[0.52rem] uppercase tracking-[0.12em] last:border-r-0",
+                activeRoute === substep.route ? "bg-ink-black text-bristol" : "text-ink-black/55",
+              )}
+            >
+              {t(substep.label)}
+            </button>
+          ))}
+        </nav>
       )}
-    </header>
+    </>
   );
 
   if (!showDesktop) return <>{mobileNav}</>;
@@ -170,10 +220,10 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
       <aside className="hidden h-full w-[240px] shrink-0 flex-col bg-ink-black text-bristol md:flex xl:w-[270px] 2xl:w-[320px]">
         <Link
           to="/"
-          className="flex items-center gap-4 border-b border-bristol/10 px-5 py-5 xl:px-6 xl:py-6"
+          className="flex h-shell-top shrink-0 items-center gap-3 border-b-[2px] border-bristol/10 px-5 xl:px-6"
           aria-label={t("LIBRARY")}
         >
-          <span className="flex h-12 w-12 shrink-0 items-center justify-center bg-pulp-paper font-display text-[0.92rem] font-black text-ink-black 2xl:h-14 2xl:w-14 2xl:text-[1rem]">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center bg-pulp-paper font-display text-[0.86rem] font-black text-ink-black">
             {projectTitle.charAt(0)}
           </span>
           <span className="min-w-0">
@@ -196,14 +246,14 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           )}
         </nav>
 
-        <div className="border-t border-bristol/10">
+        <div className="h-16 shrink-0 border-t-[2px] border-bristol/10">
           <Link
             to={settingsPath}
             className={cn(
-              "flex w-full items-center gap-3 border-l-[3px] px-5 py-3 font-meta text-[0.62rem] tracking-[0.14em] transition-colors xl:px-6 2xl:text-[0.68rem]",
+              "flex h-full w-full items-center gap-3 px-5 font-meta text-[0.62rem] tracking-[0.14em] transition-colors xl:px-6 2xl:text-[0.68rem]",
               isSettingsActive
-                ? "border-l-narrator-gold bg-bristol/8 text-bristol"
-                : "border-transparent text-bristol/45 hover:bg-bristol/5 hover:text-bristol/70",
+                ? "bg-bristol/8 text-bristol"
+                : "text-bristol/45 hover:bg-bristol/5 hover:text-bristol/70",
             )}
           >
             <span className="text-[0.48rem] 2xl:text-[0.52rem]">⊙</span>

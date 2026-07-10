@@ -17,7 +17,7 @@ function SourcePassage({ bubble }: { bubble: Bubble }) {
   const [expanded, setExpanded] = useState(false);
   const [showDevContent] = useShowDevContent();
   return (
-    <div className="border-l-[3px] border-narrator-gold bg-narrator-gold/10 px-3 py-2">
+    <div className="border-[2px] border-narrator-gold/35 bg-chip-gold/20 px-3 py-2">
       <div className="font-meta text-[0.55rem] font-bold tracking-[0.14em] text-narrator-gold uppercase">
         Source passage
       </div>

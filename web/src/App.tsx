@@ -2,6 +2,7 @@ import { lazy, Suspense, type ComponentType, type ReactElement } from "react";
 import { Navigate, Routes, Route } from "react-router-dom";
 import { AuthGuard } from "./components/AuthGuard";
 import { LoadingBlock } from "./components/ui/StateBlock";
+import { useAuth } from "./hooks/useAuth";
 import { I18nProvider } from "./i18n";
 import { useShowDevContent } from "./lib/devContent";
 
@@ -24,6 +25,7 @@ const SignupPage = lazy(() => import("./pages/auth/SignupPage").then(({ SignupPa
 const ResetPasswordPage = lazy(() =>
   import("./pages/auth/ResetPasswordPage").then(({ ResetPasswordPage }) => ({ default: ResetPasswordPage })),
 );
+const HomePage = lazy(() => import("./pages/HomePage").then(({ HomePage }) => ({ default: HomePage })));
 const TermsPage = lazy(() => import("./pages/legal/TermsPage").then(({ TermsPage }) => ({ default: TermsPage })));
 const PrivacyPage = lazy(() => import("./pages/legal/PrivacyPage").then(({ PrivacyPage }) => ({ default: PrivacyPage })));
 const AcceptableUsePage = lazy(() =>
@@ -66,6 +68,21 @@ function lazyRoute(Component: ComponentType): ReactElement {
   );
 }
 
+/**
+ * Keep `/` as the signed-in Library destination while giving signed-out
+ * visitors a real public homepage. Existing in-app links can keep pointing to
+ * `/`, and the Library remains the first screen after authentication.
+ */
+function RootRoute() {
+  const { session, loading } = useAuth();
+
+  if (loading) {
+    return <LoadingBlock label="OPENING SCENEWRIGHT…" />;
+  }
+
+  return session ? lazyRoute(Shell) : lazyRoute(HomePage);
+}
+
 export function App() {
   return (
     <I18nProvider>
@@ -74,6 +91,11 @@ export function App() {
         <Route path="/login" element={lazyRoute(LoginPage)} />
         <Route path="/signup" element={lazyRoute(SignupPage)} />
         <Route path="/reset-password" element={lazyRoute(ResetPasswordPage)} />
+
+        {/* Public homepage for visitors; signed-in users keep `/` as Library. */}
+        <Route path="/" element={<RootRoute />}>
+          <Route index element={lazyRoute(Library)} />
+        </Route>
 
         {/* Public legal routes */}
         <Route path="/legal/terms" element={lazyRoute(TermsPage)} />
@@ -88,7 +110,6 @@ export function App() {
             </AuthGuard>
           }
         >
-          <Route index element={lazyRoute(Library)} />
           <Route path="labs" element={lazyRoute(LabsRoom)} />
           <Route
             path="dev/primitives"

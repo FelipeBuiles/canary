@@ -37,7 +37,7 @@ export function RoomHeader({
           </div>
 
           {lead && (
-            <span className="hidden min-w-0 max-w-[46rem] border-l-[3px] border-hero-red pl-3 font-body text-[0.8rem] leading-snug text-ink-black/62 line-clamp-2 lg:[display:-webkit-box]">
+            <span className="hidden min-w-0 max-w-[46rem] bg-surface-container px-3 py-2 font-body text-[0.8rem] font-medium leading-snug text-ink-black/68 line-clamp-2 lg:[display:-webkit-box]">
               {typeof lead === "string" ? t(lead) : lead}
             </span>
           )}
