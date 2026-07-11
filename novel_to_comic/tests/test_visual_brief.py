@@ -38,7 +38,7 @@ def _prompt(**overrides) -> ImagePrompt:
         mood="quiet desperation",
         props=["bourbon bottle: unlabeled amber glass, half-empty"],
         visual_requirements=["visible hand tremor"],
-        constraints="exactly 1 character; one body per listed character; no text",
+        constraints="avoid showing the label on the bottle",
         width=768,
         height=1344,
         steps=8,
@@ -52,16 +52,22 @@ def test_visual_brief_source_spec_includes_all_fields():
         _prompt(has_narration_caption=True, preferred_caption_zone="top")
     )
 
+    # Slice 02: the LLM brief owns ONLY scene direction. Protected anchors
+    # (identity), system constraints, and reference instructions are excluded.
     assert "Framing: medium vertical panel, low angle camera" in spec
-    assert "Character — Carl: appearance: 40-year-old dentist" in spec
-    assert "action: pours bourbon into a glass" in spec
+    assert "Character — Carl: action: pours bourbon into a glass" in spec
+    # The verbatim identity anchor is NOT in the spec (protected source).
+    assert "40-year-old dentist" not in spec
     assert "Setting: sparse modern kitchen" in spec
     assert "Lighting: warm tungsten, deep shadows" in spec
     assert "Mood: quiet desperation" in spec
-    assert "Props (with their fixed appearance): bourbon bottle" in spec
     assert "Must clearly show: visible hand tremor" in spec
     assert "Caption space: keep quiet, uncluttered negative space near the top" in spec
-    assert "Hard constraints: exactly 1 character" in spec
+    # System constraints are NOT in the spec (generated separately).
+    assert "one body per listed character" not in spec
+    assert "single frozen instant" not in spec
+    # User-authored constraint addenda ARE included (editable scene direction).
+    assert "User constraint notes: avoid showing the label on the bottle" in spec
 
 
 def test_normalize_prose_brief_accepts_prose_and_strips_wrapping():

@@ -11,7 +11,7 @@ from novel_to_comic.config import Config
 from novel_to_comic.image_ref_strategy import RefStrategy
 from novel_to_comic.models.appearance import StoryPosition
 from novel_to_comic.models.layout_plan import PlannedPanel
-from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
+from novel_to_comic.models.prompt import ImagePrompt, PromptAnchor, PromptSubject
 from novel_to_comic.models.story_bible import Character, StoryBible
 from novel_to_comic.panel_aspect import dimensions_for_generation_shape, frame_phrase
 from novel_to_comic.text_utils import clean, shorten
@@ -163,7 +163,7 @@ def _labels(config: Config | None = None) -> dict[str, str]:
 
 _clean = clean
 _shorten = shorten
-IMAGE_PROMPT_VERSION = 20  # 20: active visually-significant states lock appearance (brief + constraints)
+IMAGE_PROMPT_VERSION = 21  # 21: canonical prompt IR — verbatim anchors, system/user constraint split
 _SOFT_CONTINUITY = {"smooth_continuation", "match_cut"}
 
 # Generic interior/exterior vocabulary for anchor filtering. All matching is
@@ -299,26 +299,22 @@ def _appearance_lock_clause(name: str, guard: str | None) -> str:
 
 
 def _character_identity(character: Character, resolved: ResolvedAppearance) -> str:
-    """Assemble the identity blob for one subject.
+    """Resolve exactly one self-contained appearance anchor for a subject.
 
-    For the base look, keeps the full visual_anchor verbatim (permanent
-    identity — face, build, hair, marks — plus the character's default
-    wardrobe). When an appearance state is active, its SELF-CONTAINED anchor
-    fully replaces the base look: it already carries the state's wardrobe and
-    the changed body, so we never append the default outfit or blend the two.
-    That blending is exactly what painted silver hands onto a peasant girl who
-    still had her real hands.
+    Slice 02: returns the verbatim visual_anchor — the base anchor when no
+    state is active, or the active state's self-contained anchor otherwise.
+    Never concatenated, never shortened, never cleaned: this is immutable
+    source material. The ``default_outfit`` is no longer injected beside an
+    active state, and is folded into the identity only for the base look when
+    the Story Bible anchor omits it.
+
+    Before Slice 02 this ran anchors through ``_clean``/``_shorten`` (220/180
+    caps), which amputated long sentinel anchors and leaked base clothing
+    beside an active state. Both are gone.
     """
     if resolved.state is not None:
-        return _shorten(_clean(resolved.anchor), 220)
-
-    _NULL_OUTFIT = {"none", "n/a", "-", "null", ""}
-    anchor = _clean(character.visual_anchor)
-    default_outfit = _clean(character.default_outfit)
-    parts: list[str] = [anchor] if anchor else []
-    if default_outfit and default_outfit.lower() not in _NULL_OUTFIT:
-        parts.append(_shorten(default_outfit, 180))
-    return "; ".join(part for part in parts if part)
+        return resolved.anchor
+    return character.visual_anchor
 
 
 def _pose_crops_in(ref_dir: Path, project_dir: Path, character_count: int) -> list[str]:
@@ -638,6 +634,7 @@ def build_planned_panel_prompt_spec(
                 ),
                 expression=_clean(panel.character_expressions.get(character_id, "")),
                 position=_clean(panel.character_positions.get(character_id, "")),
+                appearance_state_id=(resolved.state_id if resolved.state is not None else None),
                 appearance_locked=locked,
                 appearance_guard=(guard or None),
             )
@@ -729,28 +726,54 @@ def build_planned_panel_prompt_spec(
     if camera_note:
         composition = f"{composition}. {camera_note}"
 
-    setting_parts = []
+    # ── Protected anchors (Slice 02) ─────────────────────────────────────────
+    # Location and prop anchors are verbatim immutable source material. They
+    # live in ``anchors`` and reach the canonical projection unchanged — never
+    # in the editable ``setting`` (which is now background_description only).
+    anchors: list[PromptAnchor] = []
     bg_description = _clean(panel.background_description)
-    # Prefer the location's active state anchor (clean per-state tags) when
-    # the bible defines location states; fall back to the location's default
-    # visual_anchor when no state resolves.
-    anchor_source = active_state_anchor or (location.visual_anchor if location else None)
-    if anchor_source:
-        anchor = _shorten(anchor_source, 180).rstrip(" .,;")
-        anchor = _filter_location_anchor_for_panel(anchor, bg_description)
-        if anchor:
-            setting_parts.append(anchor)
-    if bg_description:
-        setting_parts.append(_shorten(bg_description, 160).rstrip(" .,;"))
+    if location:
+        anchor_text = active_state_anchor or location.visual_anchor
+        # ``_filter_location_anchor_for_panel`` drops concrete-object tags that
+        # contradict the panel's background (e.g. outdoor props in a bedroom
+        # flashback). This is a semantic correction, not a mutation of the
+        # anchor's identity — the removed tags belong to a different location
+        # state, not this one.
+        filtered = _filter_location_anchor_for_panel(anchor_text, bg_description)
+        if filtered:
+            anchors.append(
+                PromptAnchor(
+                    kind="location",
+                    entity_id=location.id,
+                    name=location.name,
+                    appearance_state_id=location_state_id,
+                    text=filtered,
+                )
+            )
 
-    width, height = dimensions_for_panel(panel)
-    setting = "; ".join(setting_parts)
-    lighting = _strip_text_render_sentences(_clean(panel.lighting))
-    mood = _clean(panel.mood)
-    visual_requirements = _clean_list(getattr(panel, "visual_requirements", []) or [], limit=12)
     matched_props = _props_present_in_panel(
         panel, story_bible, position=position, scene_order=scene_order
     )
+    for prop in matched_props:
+        anchors.append(
+            PromptAnchor(
+                kind="prop",
+                entity_id=prop.id,
+                name=prop.name,
+                text=prop.visual_anchor,
+            )
+        )
+
+    # Character anchors are carried verbatim on subjects[].identity; the
+    # canonical projection (generation_prompt.py) emits them from there.
+
+    width, height = dimensions_for_panel(panel)
+    # ``setting`` is now background_description only — the location anchor moved
+    # to ``anchors``. It is editable scene direction (background delta).
+    setting = bg_description
+    lighting = _strip_text_render_sentences(_clean(panel.lighting))
+    mood = _clean(panel.mood)
+    visual_requirements = _clean_list(getattr(panel, "visual_requirements", []) or [], limit=12)
     key_objects = _clean_list(
         _filtered_key_objects(
             getattr(panel, "key_objects", []) or [],
@@ -758,26 +781,15 @@ def build_planned_panel_prompt_spec(
             matched_props,
         )
     )
-    props = [
-        f"{prop.name}: {_shorten(prop.visual_anchor, 120)}"
-        for prop in matched_props
-    ]
+    # ``props`` display list kept for backward-compat full_prompt rendering;
+    # canonical projection uses the verbatim ``anchors`` entries instead.
+    props = [prop.name for prop in matched_props]
     ref_paths.extend(_prop_reference_paths(project_dir, [p.id for p in matched_props if p.id]))
-    character_label = labels["character"] if character_count == 1 else labels["characters"]
-    constraints = (
-        f"exactly {character_count} {character_label}; "
-        f"{labels['one_body']}; {labels['single_instant']}; {labels['no_lettering']}"
-    )
-    if panel.has_narration_caption:
-        constraints = (
-            f"{constraints}; narration caption will be lettered in post-production only; "
-            "do not draw caption boxes, speech bubbles, labels, signs, or readable text"
-        )
-    if panel.crop_policy:
-        constraints = f"{constraints}; crop policy: {panel.crop_policy}"
-    if appearance_locks:
-        constraints = f"{constraints}; " + "; ".join(appearance_locks)
 
+    # System constraints (count, one-body, single-instant, no-lettering, crop
+    # policy, appearance locks) are generated at render time by
+    # generation_prompt.py — they are NOT stored in ``constraints``. The stored
+    # ``constraints`` field is now user addenda only (None on a fresh build).
     full_prompt = _render_panel_prompt_body_parts(
         labels=labels,
         subjects=subjects,
@@ -788,7 +800,8 @@ def build_planned_panel_prompt_spec(
         key_objects=key_objects,
         visual_requirements=visual_requirements,
         props=props,
-        constraints=constraints,
+        anchors=anchors,
+        constraints=None,
     )
 
     return ImagePrompt(
@@ -806,7 +819,9 @@ def build_planned_panel_prompt_spec(
         crop_policy=panel.crop_policy,
         transition_in=panel.transition_in,
         transition_out=panel.transition_out,
+        location_id=(location.id if location else None),
         location_state_id=location_state_id,
+        anchors=anchors,
         has_narration_caption=panel.has_narration_caption,
         narration_mode=panel.narration_mode,
         preferred_caption_zone=panel.preferred_caption_zone,
@@ -820,7 +835,7 @@ def build_planned_panel_prompt_spec(
         visual_requirements=visual_requirements,
         subjects=subjects,
         props=props,
-        constraints=constraints,
+        constraints=None,
         reference_image_paths=ref_paths,
         width=width,
         height=height,
@@ -844,6 +859,7 @@ def _render_panel_prompt_body_parts(
     key_objects: list[str] | None = None,
     visual_requirements: list[str] | None = None,
     props: list[str] | None = None,
+    anchors: list[PromptAnchor] | None = None,
     constraints: str | None = None,
 ) -> str:
     label_set = labels or _PROMPT_LABELS["en"]
@@ -859,8 +875,14 @@ def _render_panel_prompt_body_parts(
                 f"{label_set['expression']}: {subject.expression}" if subject.expression else "",
                 f"{label_set['position']}: {subject.position}" if subject.position else "",
             ]
-            rendered_subjects.append(", ".join(_clean(part) for part in details if _clean(part)))
+            rendered_subjects.append(", ".join(part for part in details if part))
         sentences.append("; ".join(rendered_subjects))
+
+    # Protected anchors (location, prop) emitted verbatim — no _clean, no shorten.
+    if anchors:
+        anchor_parts = [f"{a.name}: {a.text}" for a in anchors if a.text]
+        if anchor_parts:
+            sentences.append("; ".join(anchor_parts))
 
     if composition:
         sentences.append(f"{label_set['composition']}: {_clean(composition)}")
@@ -896,14 +918,14 @@ def _render_panel_prompt_body_parts(
 
 
 def render_panel_prompt_body(prompt: ImagePrompt) -> str:
-    """Render the compact panel-specific prompt body, excluding global style."""
-    constraints = getattr(prompt, "constraints", None)
-    if getattr(prompt, "has_narration_caption", False):
-        note = (
-            "narration caption will be lettered in post-production only; "
-            "do not draw caption boxes, speech bubbles, labels, signs, or readable text"
-        )
-        constraints = f"{constraints}; {note}" if constraints else note
+    """Render the compact panel-specific prompt body from structured fields.
+
+    Slice 02: emits protected anchors verbatim and the stored user-addenda
+    constraints. System constraints (count, one-body, single-instant,
+    no-lettering, crop policy, appearance locks) are generated by
+    ``generation_prompt.render_canonical_body`` and are NOT part of this
+    structured-field rendering.
+    """
     return _render_panel_prompt_body_parts(
         subjects=getattr(prompt, "subjects", []) or [],
         composition=getattr(prompt, "composition", None),
@@ -913,7 +935,8 @@ def render_panel_prompt_body(prompt: ImagePrompt) -> str:
         key_objects=getattr(prompt, "key_objects", []) or [],
         visual_requirements=getattr(prompt, "visual_requirements", []) or [],
         props=getattr(prompt, "props", []) or [],
-        constraints=constraints,
+        anchors=getattr(prompt, "anchors", []) or [],
+        constraints=getattr(prompt, "constraints", None),
     )
 
 
@@ -1231,11 +1254,15 @@ def ensure_distilled_prompt(config: Config, prompt: ImagePrompt) -> ImagePrompt:
 
 
 def visual_brief_source_spec(prompt: ImagePrompt) -> str:
-    """Render the structured panel fields as a labeled spec for the LLM
-    visual-brief pass (see prompt_assembly.generate_visual_brief).
+    """Render the scene-direction spec for the LLM visual-brief pass.
 
-    Fields are emitted verbatim and untruncated — the brief writer decides
-    emphasis and phrasing, not string surgery.
+    Slice 02: the LLM owns ONLY scene direction — framing, action, expression,
+    position, panel-specific setting delta, lighting, mood, spatial
+    relationships, caption-space composition. Protected anchors (character,
+    location, prop ``visual_anchor`` text), reference instructions, and
+    generated system constraints are EXCLUDED: the canonical projection
+    (``generation_prompt.render_canonical_body``) emits them verbatim from the
+    owned sections, so the brief cannot rewrite or drop them.
     """
     lines: list[str] = []
 
@@ -1244,7 +1271,9 @@ def visual_brief_source_spec(prompt: ImagePrompt) -> str:
         lines.append(f"Framing: {framing}")
 
     for subject in getattr(prompt, "subjects", []) or []:
-        identity = _readable_prompt_text(subject.identity)
+        # Scene direction per subject: action, expression, position. The
+        # verbatim identity anchor is NOT included — it is protected source
+        # material owned by the canonical IR.
         action = _readable_prompt_text(subject.action)
         expression = _readable_prompt_text(subject.expression)
         position = _readable_prompt_text(subject.position)
@@ -1255,29 +1284,27 @@ def visual_brief_source_spec(prompt: ImagePrompt) -> str:
             tail_bits.append(f"expression: {expression}")
         if position:
             tail_bits.append(f"position: {position}")
-        tail = ("; " + "; ".join(tail_bits)) if tail_bits else ""
 
-        if getattr(subject, "appearance_locked", False) and identity:
-            # A locked appearance is NOT one fact among many — it is fixed. Tell
-            # the brief writer to stage actions around it so the prose never asks
-            # for something the look forbids (which is what the image model then
-            # hallucinates, e.g. a hand to hold a pear when she has stumps).
-            head = f"Character — {subject.name} [APPEARANCE LOCKED — fixed for this panel]: {identity}"
+        if getattr(subject, "appearance_locked", False):
+            # A locked appearance is fixed for this panel. The brief must stage
+            # actions around it, but it never sees the verbatim anchor text —
+            # the canonical projection carries that. The continuity guard tells
+            # the brief what the look forbids (staging, not identity).
+            head = f"Character — {subject.name} [APPEARANCE LOCKED — fixed for this panel]"
             guard = (getattr(subject, "appearance_guard", None) or "").strip().rstrip(".")
             if guard:
                 head += f". Continuity rule: {guard}"
             head += (
-                f". Describe every action so it stays consistent with this exact look; never write "
-                f"{subject.name} doing anything that requires features they do not have, and never "
-                f"revert {subject.name} to a default appearance"
+                f". Describe every action so it stays consistent with this locked look; "
+                f"never write {subject.name} doing anything that requires features they do "
+                f"not have"
             )
+            tail = ("; " + "; ".join(tail_bits)) if tail_bits else ""
             lines.append(head + tail)
         else:
-            details: list[str] = []
-            if identity:
-                details.append(f"appearance: {identity}")
-            details.extend(tail_bits)
-            lines.append(f"Character — {subject.name}: {'; '.join(details) if details else 'present'}")
+            tail = ("; " + "; ".join(tail_bits)) if tail_bits else ""
+            presence = tail[2:] if tail else "present"
+            lines.append(f"Character — {subject.name}: {presence}")
 
     setting = _readable_prompt_text(getattr(prompt, "setting", None))
     if setting:
@@ -1289,10 +1316,6 @@ def visual_brief_source_spec(prompt: ImagePrompt) -> str:
     if mood:
         lines.append(f"Mood: {mood}")
 
-    props = [_readable_prompt_text(value) for value in getattr(prompt, "props", []) or []]
-    props = [p for p in props if p]
-    if props:
-        lines.append(f"Props (with their fixed appearance): {'; '.join(props)}")
     key_objects = [_readable_prompt_text(value) for value in getattr(prompt, "key_objects", []) or []]
     key_objects = [o for o in key_objects if o]
     if key_objects:
@@ -1317,9 +1340,13 @@ def visual_brief_source_spec(prompt: ImagePrompt) -> str:
     if continuity_note:
         lines.append(f"Continuity with previous panel: {continuity_note}")
 
-    constraints = _clean(getattr(prompt, "constraints", None))
-    if constraints:
-        lines.append(f"Hard constraints: {constraints}")
+    # User-authored constraint addenda are editable scene direction (e.g.
+    # "non-graphic implied action"). Generated system constraints (count,
+    # one-body, no-lettering, crop policy, appearance locks) are NOT emitted
+    # here — the canonical projection generates them from typed fields.
+    user_constraints = _clean(getattr(prompt, "constraints", None))
+    if user_constraints:
+        lines.append(f"User constraint notes: {user_constraints}")
 
     return "\n".join(lines)
 
@@ -1447,19 +1474,23 @@ def render_generation_prompt(
         if ref_instructions:
             _append_section(sections, "Reference images", "\n".join(ref_instructions))
 
-    constraints = _clean(getattr(prompt, "constraints", None))
-    if getattr(prompt, "has_narration_caption", False):
-        note = (
-            "narration caption will be lettered in post-production only; "
-            "do not draw caption boxes, speech bubbles, labels, signs, or readable text"
-        )
-        constraints = f"{constraints}; {note}" if constraints else note
-    # Emit every per-panel constraint verbatim. (A keyword filter here once
-    # silently dropped "one body per listed character" and "single frozen
-    # instant" — the exact guards against duplicate-figure and multi-moment
-    # artifacts.)
-    constraint_lines = [f"- {part.strip()}" for part in constraints.split(";") if part.strip()]
-    constraint_lines.append(f"- {_LAYOUT_CONSTRAINT_LINE}")
+    # System constraints are generated from typed fields; user addenda come from
+    # the stored ``constraints`` field. The canonical constraint surface
+    # combines both (see generation_prompt.generate_system_constraints).
+    from novel_to_comic.generation_prompt import generate_system_constraints
+
+    system_lines = generate_system_constraints(prompt)
+    user_addenda = _clean(getattr(prompt, "constraints", None))
+    # Build the constraint bullet list: system constraints first (generated,
+    # non-editable), then user addenda.
+    constraint_lines: list[str] = []
+    for line in system_lines:
+        constraint_lines.append(f"- {line.strip()}")
+    if user_addenda:
+        for part in user_addenda.split(";"):
+            part = part.strip()
+            if part:
+                constraint_lines.append(f"- {part}")
     if refs:
         constraint_lines.append(f"- {_REFERENCE_CONSTRAINT_LINE}")
     _append_section(sections, "Constraints", constraint_lines)
