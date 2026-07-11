@@ -5,15 +5,25 @@ used to call separate functions, risking drift in how the narration-caption
 constraint note is applied.  This module is the single owner of that logic:
 callers get one function for the build path and one for the re-render path, both
 backed by the same constraint normalisation.
+
+Slice 03 adds deterministic source lineage. ``compute_source_sha256`` projects a
+sorted, stable view of the Story Bible + PlannedPanel + appearance-state inputs
+that feed the canonical prompt, and ``prompt_is_current`` is now content-based:
+a stored prompt is current when its recorded ``source_sha256`` matches a fresh
+build from the current inputs. User corrections are stored as overlays
+(``ImagePrompt.user_overlays``) and replayed over a fresh canonical build, so a
+rebuild preserves valid edits instead of being suppressed.
 """
 
+import hashlib
+import json
 import logging
 import re
 from pathlib import Path
 
 from novel_to_comic.config import Config
 from novel_to_comic.models.layout_plan import PlannedPanel
-from novel_to_comic.models.prompt import ImagePrompt, PromptLayout
+from novel_to_comic.models.prompt import ImagePrompt, OverlayWarning, PromptLayout, PromptOverlayOp
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.prompting import (
     IMAGE_PROMPT_VERSION,
@@ -52,19 +62,412 @@ def assemble_panel_prompt(
 ) -> ImagePrompt:
     """Build an ImagePrompt from a PlannedPanel.
 
-    Calls through to ``build_planned_panel_prompt_spec`` in prompting.py.
-    The returned prompt has ``full_prompt`` set; call ``ensure_distilled_prompt``
-    afterwards if a distilled version is needed before saving.
+    Calls through to ``build_planned_panel_prompt_spec`` in prompting.py and
+    records the deterministic ``source_sha256``. The returned prompt has
+    ``full_prompt`` set; call ``ensure_distilled_prompt`` afterwards if a
+    distilled version is needed before saving.
     """
-    return build_planned_panel_prompt_spec(config, project_dir, panel, story_bible, prev_panel)
-
-
-def prompt_is_current(prompt: ImagePrompt, panel: PlannedPanel) -> bool:
-    """True when a stored ImagePrompt still matches its planned panel and schema."""
-    return (
-        getattr(prompt, "planned_panel_id", None) == panel.panel_id
-        and getattr(prompt, "prompt_version", 1) >= IMAGE_PROMPT_VERSION
+    prompt = build_planned_panel_prompt_spec(config, project_dir, panel, story_bible, prev_panel)
+    prompt.source_sha256 = compute_source_sha256(
+        config, project_dir, panel, story_bible, prev_panel
     )
+    return prompt
+
+
+def compute_source_sha256(
+    config: Config,
+    project_dir: Path,
+    panel: PlannedPanel,
+    story_bible: StoryBible,
+    prev_panel: PlannedPanel | None = None,
+) -> str:
+    """Public source-hash for one panel's canonical prompt inputs.
+
+    Excludes generation-time-only inputs (active style text) and reference
+    materialization (owned by Slice 04). See ``_source_inputs_hash``.
+    """
+    return _source_inputs_hash(config, project_dir, panel, story_bible, prev_panel)
+
+
+# ── Slice 03: deterministic source lineage ───────────────────────────────────
+
+
+def _source_inputs_hash(
+    config: Config,
+    project_dir: Path,
+    panel: PlannedPanel,
+    story_bible: StoryBible,
+    prev_panel: PlannedPanel | None,
+) -> str:
+    """SHA-256 of the canonical source projection for one panel.
+
+    The projection is the sorted, stable JSON view of every input
+    ``build_planned_panel_prompt_spec`` consumes: the relevant PlannedPanel
+    visual fields, prior-panel continuity inputs, referenced character records
+    and appearance timelines, the active location record and timeline, matched
+    prop records, the canonical prompt schema/version, target language, and
+    continuity mode. Two builds from identical inputs yield the same hash.
+
+    Generation-time-only inputs (active style text) are deliberately excluded:
+    changing the selected style must not rebuild stored panel structure. Matched
+    prop/character presence is derived inside the projection from the Story
+    Bible, so it is covered indirectly through the entity records plus the panel
+    text that drives matching.
+    """
+    projection = _source_projection(config, panel, story_bible, prev_panel)
+    payload = json.dumps(projection, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _source_projection(
+    config: Config,
+    panel: PlannedPanel,
+    story_bible: StoryBible,
+    prev_panel: PlannedPanel | None,
+) -> dict:
+    """Sorted, stable dict of the canonical source inputs for one panel.
+
+    Field order within dicts is fixed; keys are sorted at hash time. Only
+    inputs that affect the canonical compiled prompt are included — derived
+    fields (``full_prompt``, ``distilled_prompt``, ``visual_brief``, layout,
+    dimensions emitted by ``panel_aspect``) and generation-time overlays
+    (active style text) are excluded.
+    """
+    scene_order = [s.id for s in story_bible.scenes]
+    scene = next((s for s in story_bible.scenes if s.id == panel.scene_id), None)
+    location = None
+    if scene:
+        location = next(
+            (loc for loc in story_bible.locations if loc.id == scene.location_id), None
+        )
+
+    characters_present = [
+        c for c in story_bible.characters
+        if c.id in set(getattr(panel, "characters_present", []) or [])
+    ]
+    # Sort by id for determinism independent of list order in the Story Bible.
+    characters_present.sort(key=lambda c: c.id)
+
+    # Matched props: recompute the same presence test the builder uses so a
+    # prop record change (or the panel text that drives a match) is covered.
+    matched_prop_ids = _matched_prop_ids_for_panel(panel, story_bible, scene_order)
+    matched_props = [p for p in (story_bible.props or []) if p.id in matched_prop_ids]
+    matched_props.sort(key=lambda p: p.id)
+
+    character_projections = [
+        {
+            "id": c.id,
+            "name": c.name,
+            "visual_anchor": c.visual_anchor,
+            "default_outfit": c.default_outfit,
+            "distinguishing_features": list(c.distinguishing_features or []),
+            "appearance_states": [
+                {
+                    "id": s.id,
+                    "label": s.label,
+                    "visual_anchor": s.visual_anchor,
+                    "visually_significant": s.visually_significant,
+                    "continuity_guard": s.continuity_guard,
+                }
+                for s in (c.appearance_states or [])
+            ],
+            "appearance_timeline": [
+                {
+                    "state_id": a.state_id,
+                    "scene_id": a.at.scene_id,
+                    "beat": a.at.beat,
+                }
+                for a in (c.appearance_timeline or [])
+            ],
+        }
+        for c in characters_present
+    ]
+
+    location_projection = None
+    if location is not None:
+        location_projection = {
+            "id": location.id,
+            "name": location.name,
+            "visual_anchor": location.visual_anchor,
+            "time_of_day": location.time_of_day,
+            "mood": location.mood,
+            "appearance_states": [
+                {
+                    "id": s.id,
+                    "label": s.label,
+                    "visual_anchor": s.visual_anchor,
+                    "visually_significant": s.visually_significant,
+                    "continuity_guard": s.continuity_guard,
+                }
+                for s in (location.appearance_states or [])
+            ],
+            "appearance_timeline": [
+                {
+                    "state_id": a.state_id,
+                    "scene_id": a.at.scene_id,
+                    "beat": a.at.beat,
+                }
+                for a in (location.appearance_timeline or [])
+            ],
+        }
+
+    prop_projections = [
+        {
+            "id": p.id,
+            "name": p.name,
+            "visual_anchor": p.visual_anchor,
+            "first_appearance_scene": p.first_appearance_scene,
+        }
+        for p in matched_props
+    ]
+
+    return {
+        "schema_version": IMAGE_PROMPT_VERSION,
+        "target_language": config.language_code(),
+        "continuity_mode": getattr(config, "continuity_mode", "hybrid"),
+        "panel": {
+            "panel_id": panel.panel_id,
+            "scene_id": panel.scene_id,
+            "panel_number": panel.panel_number,
+            "beat_ids": list(getattr(panel, "beat_ids", []) or []),
+            "importance": panel.importance,
+            "shape_intent": panel.shape_intent,
+            "crop_policy": panel.crop_policy,
+            "generation_mode": panel.generation_mode,
+            "shot_type": panel.shot_type,
+            "camera_angle": panel.camera_angle,
+            "camera_note": panel.camera_note,
+            "background_description": panel.background_description,
+            "lighting": panel.lighting,
+            "mood": panel.mood,
+            "has_narration_caption": panel.has_narration_caption,
+            "narration_mode": panel.narration_mode,
+            "preferred_caption_zone": panel.preferred_caption_zone,
+            "transition_in": panel.transition_in,
+            "transition_out": panel.transition_out,
+            "characters_present": sorted(set(panel.characters_present or [])),
+            "character_actions": _sorted_str_dict(panel.character_actions),
+            "character_expressions": _sorted_str_dict(panel.character_expressions),
+            "character_positions": _sorted_str_dict(panel.character_positions),
+            "key_objects": list(panel.key_objects or []),
+            "visual_requirements": list(panel.visual_requirements or []),
+            "dialogue_text": _dialogue_texts(panel),
+            "sfx_text": [s.text for s in (panel.sfx or [])],
+            "aspect_preference": panel.aspect_preference,
+        },
+        "prev_continuity": _prev_continuity_projection(prev_panel, story_bible),
+        "characters": character_projections,
+        "location": location_projection,
+        "scene_location_id": (scene.location_id if scene else None),
+        "scene_order": list(scene_order),
+        "matched_props": prop_projections,
+    }
+
+
+def _sorted_str_dict(values: dict[str, str] | None) -> list[tuple[str, str]]:
+    """Deterministic list-of-pairs for a string→string dict."""
+    return sorted(
+        ((str(k), str(v)) for k, v in (values or {}).items()),
+        key=lambda kv: kv[0],
+    )
+
+
+def _dialogue_texts(panel: PlannedPanel) -> list[str]:
+    return [
+        str(line.get("text", ""))
+        for line in (panel.dialogue or [])
+        if line.get("text")
+    ]
+
+
+def _prev_continuity_projection(
+    prev_panel: PlannedPanel | None, story_bible: StoryBible
+) -> dict | None:
+    """Project the prior-panel continuity inputs.
+
+    The builder only synthesizes a continuity note for smooth/match-cut
+    transitions; its content derives from the previous panel's transition type
+    plus the action/expression/position state of its present characters. Those
+    are the only prev-panel fields that affect the canonical prompt.
+    """
+    if prev_panel is None:
+        return None
+    soft_continuity = {"smooth_continuation", "match_cut"}
+    transition_type = (prev_panel.transition_out or "").strip().lower()
+    if transition_type not in soft_continuity:
+        return None
+    character_names = {c.id: c.name for c in story_bible.characters}
+    present = sorted(set(prev_panel.characters_present or []))
+    actions = {
+        cid: prev_panel.character_actions.get(cid, "")
+        for cid in present
+    }
+    expressions = {
+        cid: prev_panel.character_expressions.get(cid, "")
+        for cid in present
+    }
+    positions = {
+        cid: prev_panel.character_positions.get(cid, "")
+        for cid in present
+    }
+    return {
+        "transition_out": transition_type,
+        "characters_present": present,
+        "character_names": {cid: character_names.get(cid, cid) for cid in present},
+        "character_actions": actions,
+        "character_expressions": expressions,
+        "character_positions": positions,
+    }
+
+
+def _matched_prop_ids_for_panel(
+    panel: PlannedPanel, story_bible: StoryBible, scene_order
+) -> set[str]:
+    """Recompute the matched prop ids the builder would select for this panel."""
+    from novel_to_comic.prompting import _props_present_in_panel
+
+    matched = _props_present_in_panel(
+        panel, story_bible, scene_order=scene_order,
+    )
+    return {p.id for p in matched if p.id}
+
+
+def reapply_overlays(
+    prompt: ImagePrompt, overlays: list[PromptOverlayOp]
+) -> list[OverlayWarning]:
+    """Reapply user overlay ops onto ``prompt`` in place; return drop warnings.
+
+    Each op is keyed to the entity id and appearance/location state in which it
+    was authored. Subject-scoped ops reapply only to the matching subject AND a
+    compatible state (``None`` state is state-neutral and always re-apes when
+    the subject is present). Ops whose target subject disappeared or whose state
+    is incompatible are dropped with a structured warning rather than misapplied
+    to a different subject index or state.
+
+    Returns the list of warnings so callers can log/report them. Overlays that
+    reapplly successfully are also recorded on ``prompt.user_overlays`` so the
+    lineage is preserved across the rebuild.
+    """
+    warnings: list[OverlayWarning] = []
+    reapplied: list[PromptOverlayOp] = []
+    subject_fields = {"action", "expression", "position"}
+
+    for op in overlays:
+        value = (op.value or "").strip()
+        if not value:
+            warnings.append(OverlayWarning(
+                code="value_empty",
+                reason="Overlay value is empty after trimming; nothing to apply.",
+                operation=op,
+            ))
+            continue
+
+        if op.field in subject_fields:
+            subject = _find_subject_for_overlay(prompt, op)
+            if subject is None:
+                warnings.append(OverlayWarning(
+                    code="subject_missing",
+                    reason=(
+                        f"Overlay targets character {op.subject_character_id!r} which is "
+                        "no longer present in this panel."
+                    ),
+                    operation=op,
+                ))
+                continue
+            if not _subject_state_compatible(subject, op):
+                warnings.append(OverlayWarning(
+                    code="state_incompatible",
+                    reason=(
+                        f"Overlay was authored in appearance state {op.appearance_state_id!r} "
+                        f"but character {op.subject_character_id!r} is now in state "
+                        f"{subject.appearance_state_id!r}; dropping to avoid misapplication."
+                    ),
+                    operation=op,
+                ))
+                continue
+            setattr(subject, op.field, value)
+            reapplied.append(op)
+            continue
+
+        # Panel-scoped op. A location-sensitive correction revalidates against
+        # the panel's active location state.
+        if op.location_state_id is not None:
+            current_location_state = getattr(prompt, "location_state_id", None)
+            if current_location_state != op.location_state_id:
+                warnings.append(OverlayWarning(
+                    code="location_state_incompatible",
+                    reason=(
+                        f"Overlay was authored in location state {op.location_state_id!r} "
+                        f"but the panel is now in location state {current_location_state!r}."
+                    ),
+                    operation=op,
+                ))
+                continue
+        setattr(prompt, op.field, value)
+        reapplied.append(op)
+
+    prompt.user_overlays = reapplied
+    return warnings
+
+
+def _find_subject_for_overlay(prompt: ImagePrompt, op: PromptOverlayOp):
+    """Locate the subject an op targets, by character id (never by index)."""
+    target_id = (op.subject_character_id or "").strip()
+    if not target_id:
+        return None
+    for subject in getattr(prompt, "subjects", []) or []:
+        if (getattr(subject, "character_id", None) or "") == target_id:
+            return subject
+    return None
+
+
+def _subject_state_compatible(subject, op: PromptOverlayOp) -> bool:
+    """True when an op authored in ``op.appearance_state_id`` can apply to ``subject``.
+
+    A state-neutral op (``appearance_state_id`` is None) applies whenever the
+    subject is present. A state-specific op applies only when the subject's
+    active state matches the op's authored state. This is what drops a
+    "uses both hands" correction when the character enters a no-hands state.
+    """
+    if op.appearance_state_id is None:
+        return True
+    return (
+        getattr(subject, "appearance_state_id", None) == op.appearance_state_id
+    )
+
+
+def prompt_is_current(
+    prompt: ImagePrompt,
+    panel: PlannedPanel,
+    *,
+    story_bible: StoryBible | None = None,
+    project_dir: Path | None = None,
+    prev_panel: PlannedPanel | None = None,
+    config: Config | None = None,
+) -> bool:
+    """True when a stored ImagePrompt still matches its canonical source.
+
+    Slice 03: currency is content-based, not ID/version-based. A prompt is
+    current when (a) it is on the current prompt schema version, (b) it is
+    still bound to ``panel``, and (c) its recorded ``source_sha256`` equals the
+    source hash of a fresh build from the current Story Bible + PlannedPanel.
+
+    When ``story_bible``/``project_dir``/``config`` are supplied, the content
+    check recomputes the candidate hash; otherwise the call falls back to the
+    legacy schema/panel-id identity check (used by tests that build prompts in
+    isolation without a Story Bible). A mismatch on the recorded hash means an
+    upstream change altered the canonical content and the prompt must be rebuilt.
+    """
+    if getattr(prompt, "prompt_version", 1) < IMAGE_PROMPT_VERSION:
+        return False
+    if getattr(prompt, "planned_panel_id", None) != panel.panel_id:
+        return False
+    if story_bible is None or project_dir is None or config is None:
+        return True
+    candidate = _source_inputs_hash(
+        config, project_dir, panel, story_bible, prev_panel
+    )
+    return (getattr(prompt, "source_sha256", None) or "") == candidate
 
 
 def ensure_current_panel_prompt(
@@ -79,22 +482,48 @@ def ensure_current_panel_prompt(
 
     Single owner of the "is this prompt up to date?" decision — the direct
     stage, the draw stage's pre-pass, and single-panel regeneration all call
-    this instead of re-implementing the version/panel-id check.
+    this instead of re-implementing the check.
+
+    Slice 03: a rebuild recompiles canonical source, then reapplies every valid
+    user overlay, then invalidates the derived visual brief/layout, then
+    persists the new lineage. A stale prompt whose source hash changed is
+    rebuilt; a current prompt is returned as-is. Overlay warnings (a dropped
+    correction for a removed subject or an incompatible state) are logged.
     """
     from novel_to_comic.layout_planning import prompt_path_for_panel
 
     prompt_path = prompt_path_for_panel(project_dir, panel)
+    existing: ImagePrompt | None = None
     if prompt_path.exists():
         try:
             existing = ImagePrompt.model_validate_json(prompt_path.read_text())
         except Exception:
             existing = None
-        if existing is not None and prompt_is_current(existing, panel):
-            return existing
-    prompt = build_planned_panel_prompt_spec(config, project_dir, panel, story_bible, prev_panel)
+
+    if existing is not None and prompt_is_current(
+        existing,
+        panel,
+        story_bible=story_bible,
+        project_dir=project_dir,
+        prev_panel=prev_panel,
+        config=config,
+    ):
+        return existing
+
+    fresh = build_planned_panel_prompt_spec(config, project_dir, panel, story_bible, prev_panel)
+    fresh.source_sha256 = compute_source_sha256(
+        config, project_dir, panel, story_bible, prev_panel
+    )
+    if existing is not None and existing.user_overlays:
+        warnings = reapply_overlays(fresh, existing.user_overlays)
+        for warning in warnings:
+            logger.warning(
+                "Dropped stale overlay for panel %s/%s: code=%s reason=%s",
+                panel.scene_id, panel.panel_number, warning.code, warning.reason,
+            )
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
-    prompt_path.write_text(prompt.model_dump_json(indent=2))
-    return prompt
+    prompt_path.write_text(fresh.model_dump_json(indent=2))
+    return fresh
 
 
 def rerender_prompt_body(prompt: ImagePrompt) -> str:
@@ -419,6 +848,7 @@ __all__ = [
     "LAYOUT_SYSTEM_PROMPT",
     "VISUAL_BRIEF_SYSTEM_PROMPT",
     "assemble_panel_prompt",
+    "compute_source_sha256",
     "ensure_current_panel_prompt",
     "ensure_distilled_prompt",
     "ensure_layout",
@@ -428,5 +858,6 @@ __all__ = [
     "layout_pass_applies",
     "normalize_prose_brief",
     "prompt_is_current",
+    "reapply_overlays",
     "rerender_prompt_body",
 ]

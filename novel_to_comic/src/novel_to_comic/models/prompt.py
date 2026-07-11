@@ -5,6 +5,70 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+# Slice 03 — prompt source lineage and freshness.
+#
+# A user correction is an OVERLAY, not a mutation of the canonical source
+# material (anchors, scene direction compiled from the Story Bible). When a
+# canonical rebuild happens (upstream change → new source_sha256), the rebuild
+# recompiles canonical source, then reapplies every valid overlay, then
+# invalidates derived brief/layout. Overlays are keyed to the entity id and
+# appearance/location state in which they were authored, so a correction for a
+# removed character or an incompatible state is dropped with a structured
+# warning rather than silently misapplied.
+
+OverlayField = Literal[
+    "composition",
+    "setting",
+    "lighting",
+    "mood",
+    "constraints",
+    "continuity_note",
+    # Subject-scoped editable scene direction:
+    "action",
+    "expression",
+    "position",
+]
+
+
+class PromptOverlayOp(BaseModel):
+    """One user-authored correction stored as an overlay on a canonical prompt.
+
+    Overlays are replayed after a canonical rebuild. ``field`` is an editable
+    scene-direction field (never an identity anchor or system constraint).
+    Subject-scoped ops (``action``/``expression``/``position``) carry
+    ``subject_character_id`` to bind the correction to one subject rather than
+    a positional index, and ``appearance_state_id`` to bind it to one
+    appearance state.
+
+    State keying: an op authored while a character is in state ``stumps`` only
+    re-apes when that subject is in the ``stumps`` state. ``None`` state id
+    means the op is state-neutral (e.g. a framing note) and re-apes whenever
+    the subject is present in any state.
+
+    Location-sensitive ops carry ``location_state_id`` so a correction bound to
+    a damaged/weathered location state is revalidated when that state activates.
+    """
+
+    field: OverlayField
+    value: str
+    subject_character_id: str | None = None
+    appearance_state_id: str | None = None
+    location_state_id: str | None = None
+
+
+class OverlayWarning(BaseModel):
+    """Structured warning emitted when a stored overlay cannot be reapplied."""
+
+    code: Literal[
+        "subject_missing",
+        "state_incompatible",
+        "location_state_incompatible",
+        "value_empty",
+    ]
+    reason: str
+    operation: PromptOverlayOp
+
+
 class LayoutBbox(BaseModel):
     """Normalized bounding box, top-left origin, values in [0, 1].
 
@@ -166,3 +230,14 @@ class ImagePrompt(BaseModel):
     height: int
     steps: int
     continuity_note: str | None = None
+    # Slice 03 — deterministic source lineage. The prompt is current when its
+    # stored ``source_sha256`` matches the canonical projection of its inputs.
+    # Computed by ``prompt_assembly.compute_source_sha256`` from a sorted,
+    # stable projection of the Story Bible + PlannedPanel + appearance state.
+    # Generation-time-only inputs (active style text) are excluded: changing
+    # style must not rebuild stored panel structure.
+    source_sha256: str | None = None
+    # User-authored corrections stored as overlays, replayed after a canonical
+    # rebuild. Each op is keyed to the entity id + state in which it was
+    # authored; see ``PromptOverlayOp``.
+    user_overlays: list[PromptOverlayOp] = Field(default_factory=list)

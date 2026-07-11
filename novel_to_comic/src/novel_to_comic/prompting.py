@@ -163,7 +163,7 @@ def _labels(config: Config | None = None) -> dict[str, str]:
 
 _clean = clean
 _shorten = shorten
-IMAGE_PROMPT_VERSION = 21  # 21: canonical prompt IR — verbatim anchors, system/user constraint split
+IMAGE_PROMPT_VERSION = 22  # 22: prompt source lineage — content-based source_sha256 + state-aware overlays
 _SOFT_CONTINUITY = {"smooth_continuation", "match_cut"}
 
 # Generic interior/exterior vocabulary for anchor filtering. All matching is

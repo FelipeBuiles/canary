@@ -30,7 +30,7 @@ from typing import Any
 
 from novel_to_comic import artifacts
 from novel_to_comic.models.panel import PanelBreakdown
-from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
+from novel_to_comic.models.prompt import ImagePrompt, PromptOverlayOp, PromptSubject
 from novel_to_comic.prompt_assembly import rerender_prompt_body
 from novel_to_comic.prompting import generate_distilled_prompt
 
@@ -116,6 +116,11 @@ def apply_prompt_patch(prompt: ImagePrompt, patch: dict[str, Any]) -> ImagePromp
     left ``None`` when invalidated — callers (draw/rerender) hydrate it through
     the shared ``ensure_visual_brief`` path.
 
+    Slice 03: semantic edits are also recorded as overlay ops on
+    ``user_overlays`` (keyed to entity id + appearance/location state), so a
+    later canonical rebuild reappies the correction instead of silently dropping
+    the user's intent.
+
     Returns a new ``ImagePrompt``; the input is not mutated.
     """
     unknown = set(patch) - AUTHORITATIVE_PROMPT_FIELDS - {"subjects", "layout"}
@@ -131,13 +136,21 @@ def apply_prompt_patch(prompt: ImagePrompt, patch: dict[str, Any]) -> ImagePromp
 
     semantic_changed = bool(set(patch) & _SEMANTIC_FIELD_KEYS)
 
+    new_overlays: list[PromptOverlayOp] = []
     for key, value in patch.items():
         if key == "subjects":
-            updated.subjects = _coerce_subjects(value)
+            new_subjects = _coerce_subjects(value)
+            new_overlays.extend(_subject_overlay_ops(prompt.subjects, new_subjects))
+            updated.subjects = new_subjects
         elif key == "layout":
             updated.layout = value
         else:
             setattr(updated, key, value)
+            new_overlays.append(PromptOverlayOp(
+                field=key,  # type: ignore[arg-type]
+                value=str(value),
+                location_state_id=getattr(prompt, "location_state_id", None),
+            ))
 
     # Centralized derived-field invalidation.
     if semantic_changed:
@@ -147,7 +160,65 @@ def apply_prompt_patch(prompt: ImagePrompt, patch: dict[str, Any]) -> ImagePromp
 
     updated.full_prompt = rerender_prompt_body(updated)
     updated.distilled_prompt = generate_distilled_prompt(updated)
+    if new_overlays:
+        updated.user_overlays = _merge_overlays(updated.user_overlays, new_overlays)
     return updated
+
+
+def _subject_overlay_ops(
+    original: list[PromptSubject], patched: list[PromptSubject]
+) -> list[PromptOverlayOp]:
+    """Build overlay ops from a subject patch, keyed to character id + state.
+
+    Matches patched subjects to originals by index (the patch replaces the whole
+    subject list in order) so each changed scene-direction field is recorded as
+    an overlay bound to that character's id and active appearance state. This is
+    what lets a rebuild reapply a per-character correction to the right subject
+    instead of a positional index.
+    """
+    ops: list[PromptOverlayOp] = []
+    subject_fields = ("action", "expression", "position")
+    for index, new_subject in enumerate(patched):
+        if index >= len(original):
+            continue
+        old = original[index]
+        for field in subject_fields:
+            new_value = getattr(new_subject, field, "") or ""
+            old_value = getattr(old, field, "") or ""
+            if new_value != old_value and new_value:
+                ops.append(PromptOverlayOp(
+                    field=field,  # type: ignore[arg-type]
+                    value=new_value,
+                    subject_character_id=getattr(old, "character_id", None),
+                    appearance_state_id=getattr(old, "appearance_state_id", None),
+                ))
+    return ops
+
+
+def _merge_overlays(
+    existing: list[PromptOverlayOp], additions: list[PromptOverlayOp]
+) -> list[PromptOverlayOp]:
+    """Merge new overlay ops onto the existing list, deduplicating by key.
+
+    An op's key is (field, subject_character_id, appearance_state_id,
+    location_state_id): a new correction for the same field+entity+state
+    supersedes the older one. Different fields on the same entity coexist.
+    """
+    merged: list[PromptOverlayOp] = []
+    keys: set[tuple] = set()
+
+    def _key(op: PromptOverlayOp) -> tuple:
+        return (op.field, op.subject_character_id, op.appearance_state_id, op.location_state_id)
+
+    for op in additions:
+        merged.append(op)
+        keys.add(_key(op))
+    for op in existing or []:
+        if _key(op) in keys:
+            continue
+        merged.append(op)
+        keys.add(_key(op))
+    return merged
 
 
 def _coerce_subjects(value: Any) -> list[PromptSubject]:
