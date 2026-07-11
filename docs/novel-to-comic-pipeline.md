@@ -100,8 +100,8 @@ fallback_image_model: "image-fast"
 ```
 
 Available image aliases: `image-fast`, `image-balanced`, `image-quality`, `image-reve`.
-The LiteLLM proxy resolves them to provider/model routes. `image-balanced` routes
-to Gemini Pro Image. `image-quality` and `image-reve` both route to Reve
+The LiteLLM proxy resolves them to provider/model routes. `image-fast` and
+`image-balanced` both route to Gemini 3.1 Flash Lite Image. `image-quality` and `image-reve` both route to Reve
 (`REVE_ALIASES`). Draw selects refs via `_reve_refs()` for Reve: up to 3 subject
 crops plus continuity/prop/style/location up to 4 total. GPT Image 2 is no longer
 a default gateway alias (`GPT_IMAGE_2_ALIASES` is empty).

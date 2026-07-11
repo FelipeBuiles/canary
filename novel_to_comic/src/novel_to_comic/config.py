@@ -7,7 +7,17 @@ from typing import Literal, Optional
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, PrivateAttr
+
+from novel_to_comic.image_models import (
+    GATEWAY_IMAGE_BALANCED,
+    GATEWAY_IMAGE_FAST,
+    GATEWAY_IMAGE_QUALITY,
+    GATEWAY_IMAGE_REVE as GATEWAY_IMAGE_REVE,
+    IMAGE_MODEL_ALIASES,
+    ImageRoute,
+    describe_image_model,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -34,23 +44,17 @@ GATEWAY_PANEL_QUALITY = "panel-quality"
 GATEWAY_PROMPT_FAST = "prompt-fast"
 GATEWAY_PROMPT_BALANCED = "prompt-balanced"
 GATEWAY_PROMPT_QUALITY = "prompt-quality"
-GATEWAY_IMAGE_FAST = "image-fast"
-GATEWAY_IMAGE_BALANCED = "image-balanced"
-GATEWAY_IMAGE_QUALITY = "image-quality"
-GATEWAY_IMAGE_REVE = "image-reve"
-IMAGE_MODEL_ALIASES = (
-    GATEWAY_IMAGE_FAST,
-    GATEWAY_IMAGE_BALANCED,
-    GATEWAY_IMAGE_QUALITY,
-    GATEWAY_IMAGE_REVE,
+# Compatibility inventories derived from the route-description seam.
+GPT_IMAGE_2_ALIASES: frozenset[str] = frozenset(
+    alias
+    for alias in IMAGE_MODEL_ALIASES
+    if describe_image_model(alias).route is ImageRoute.GPT_IMAGE_2
 )
-
-# image-quality is the only alias that resolves to OpenAI gpt-image-2. Used by
-# stage code that needs to enable the OpenAI image-edit / reference workflow.
-GPT_IMAGE_2_ALIASES: frozenset[str] = frozenset()
-
-# Reve aliases pointing to the custom Reve provider.
-REVE_ALIASES: frozenset[str] = frozenset({GATEWAY_IMAGE_REVE, GATEWAY_IMAGE_QUALITY})
+REVE_ALIASES: frozenset[str] = frozenset(
+    alias
+    for alias in IMAGE_MODEL_ALIASES
+    if describe_image_model(alias).route is ImageRoute.REVE
+)
 
 # Default parallel image generations for Gemini/Vertex routes when
 # image_concurrency is unset. Vertex preview image models carry tight RPM
@@ -60,19 +64,13 @@ GEMINI_IMAGE_CONCURRENCY_DEFAULT = 3
 
 
 def is_gpt_image_2(model: str) -> bool:
-    """True if `model` resolves to OpenAI gpt-image-2 via the gateway or directly."""
-    normalized = (model or "").strip().lower()
-    return normalized in {"gpt-image-2", "openai/gpt-image-2"} or normalized in GPT_IMAGE_2_ALIASES
+    """True if `model` is classified as the GPT Image 2 route."""
+    return describe_image_model(model).route is ImageRoute.GPT_IMAGE_2
 
 
 def is_reve_model(model: str) -> bool:
-    """True if `model` resolves to Reve via the gateway or directly."""
-    normalized = (model or "").strip().lower()
-    return (
-        normalized in {"image-reve", "reve/create", "reve/remix"}
-        or normalized.startswith("reve/")
-        or normalized in REVE_ALIASES
-    )
+    """True if `model` is classified as a Reve route."""
+    return describe_image_model(model).route is ImageRoute.REVE
 
 
 def image_model_aliases() -> tuple[str, ...]:
@@ -97,10 +95,9 @@ def config_for_image_model_alias(config: "Config", alias: str | None) -> "Config
     normalized = validate_image_model_alias(alias)
     if normalized is None:
         return config
-    updates = {"image_model": normalized}
-    if config.dev_mode and normalized == Config.model_fields["image_model"].default:
-        updates["fallback_image_model"] = normalized
-    return config.model_copy(update=updates)
+    copied = config.model_copy(update={"image_model": normalized})
+    copied._one_shot_image_model_alias = normalized
+    return copied
 
 
 _QUALITY_PRESETS: dict[QualityPreset, dict[str, str]] = {
@@ -149,6 +146,7 @@ class Config(BaseModel):
     """Pipeline configuration. Loaded from config.yaml in the project directory."""
 
     model_config = ConfigDict(validate_assignment=True)
+    _one_shot_image_model_alias: str | None = PrivateAttr(default=None)
 
     # AI gateway settings — load from .env or environment variables instead of hardcoding here.
     litellm_base_url: str = "http://localhost:4000"
@@ -258,6 +256,8 @@ class Config(BaseModel):
     cost_limit_usd: Optional[float] = None
 
     def effective_image_model(self) -> str:
+        if self._one_shot_image_model_alias is not None:
+            return self._one_shot_image_model_alias
         # In dev_mode an explicit user override wins. Only fall back to
         # fallback_image_model when image_model is still at its default.
         if self.dev_mode:
@@ -454,7 +454,8 @@ target_language: "{config.language_code()}"
 
 # Dev/demo mode trades image fidelity for iteration speed.
 # When enabled, generated images use scaled-down dimensions, fewer diffusion
-# steps where supported, and Gemini Flash Image instead of Gemini Pro Image
+# steps where supported, and the fast Gemini Flash Lite alias instead of the
+# balanced alias
 # unless a custom image_model is explicitly configured.
 dev_mode: {str(config.dev_mode).lower()}
 dev_image_scale: {config.dev_image_scale}

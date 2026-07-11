@@ -3,6 +3,7 @@
 import tempfile
 from pathlib import Path
 
+import pytest
 import yaml
 
 from novel_to_comic.config import (
@@ -149,6 +150,25 @@ class TestImageModelAliases:
 
         assert copied.effective_image_model() == GATEWAY_IMAGE_BALANCED
         assert cfg.effective_image_model() == GATEWAY_IMAGE_FAST
+
+    @pytest.mark.parametrize("alias", image_model_aliases())
+    @pytest.mark.parametrize("quality_preset", [None, "fast", "balanced", "quality"])
+    @pytest.mark.parametrize("dev_mode", [False, True])
+    def test_one_shot_alias_wins_over_presets_and_dev_mode(
+        self,
+        alias: str,
+        quality_preset: str | None,
+        dev_mode: bool,
+    ):
+        cfg = Config(quality_preset=quality_preset, dev_mode=dev_mode)
+        original_data = cfg.model_dump()
+        original_effective_model = cfg.effective_image_model()
+
+        copied = config_for_image_model_alias(cfg, alias)
+
+        assert copied.effective_image_model() == alias
+        assert cfg.model_dump() == original_data
+        assert cfg.effective_image_model() == original_effective_model
 
 
 class TestUsesGeminiImageProvider:
