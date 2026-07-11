@@ -481,6 +481,18 @@ export interface PromptSubject {
   action: string;
   expression: string;
   position: string;
+  appearance_state_id?: string | null;
+  appearance_state_canonical_equivalent?: boolean;
+  appearance_locked?: boolean;
+  appearance_guard?: string | null;
+}
+
+export interface PromptAnchor {
+  kind: "character" | "location" | "prop";
+  entity_id: string;
+  name: string;
+  appearance_state_id?: string | null;
+  text: string;
 }
 
 export interface LayoutBbox {
@@ -523,10 +535,14 @@ export interface ImagePrompt {
   lighting?: string | null;
   mood?: string | null;
   subjects?: PromptSubject[];
+  anchors?: PromptAnchor[];
+  location_id?: string | null;
+  location_state_id?: string | null;
   props?: string[];
+  key_objects?: string[];
+  visual_requirements?: string[];
   constraints?: string | null;
   layout?: PromptLayout | null;
-  reference_image_paths: string[];
   width: number;
   height: number;
   steps: number;

@@ -446,6 +446,55 @@ class TestStateAwareOverlayDrops:
         assert warnings == []
         assert "wide environmental shot" in (prompt.composition or "")
 
+    def test_recorded_framing_overlay_is_not_bound_to_location_state(self, tmp_path):
+        prompt = ImagePrompt(
+            prompt_version=IMAGE_PROMPT_VERSION,
+            planned_panel_id="p1",
+            scene_id="scene_001",
+            panel_number=1,
+            width=768,
+            height=1024,
+            steps=8,
+            composition="medium shot",
+            location_state_id="rain",
+        )
+        edited = apply_prompt_patch(prompt, {"composition": "wide environmental shot"})
+        assert edited.user_overlays[0].location_state_id is None
+
+        rebuilt = prompt.model_copy(update={"location_state_id": "damaged"}, deep=True)
+        warnings = reapply_overlays(rebuilt, edited.user_overlays)
+        assert warnings == []
+        assert rebuilt.composition == "wide environmental shot"
+
+    def test_rebuild_rerenders_prompt_bodies_after_overlay(self, tmp_path):
+        config = Config()
+        panel = _panel()
+        bible = _bible()
+        stored = _build_stored(config, tmp_path, panel, bible)
+        edited = apply_prompt_patch(stored, {"composition": "dramatic low-angle hero shot"})
+        _write_prompt(tmp_path, edited)
+
+        changed_panel = panel.model_copy(update={"mood": "elated"})
+        rebuilt = ensure_current_panel_prompt(config, tmp_path, changed_panel, bible)
+
+        assert "dramatic low-angle hero shot" in rebuilt.full_prompt
+        assert "dramatic low-angle hero shot" in (rebuilt.distilled_prompt or "")
+
+    def test_list_overlay_reapplies_after_rebuild(self):
+        prompt = ImagePrompt(
+            prompt_version=IMAGE_PROMPT_VERSION,
+            planned_panel_id="p1",
+            scene_id="scene_001",
+            panel_number=1,
+            width=768,
+            height=1024,
+            steps=8,
+        )
+        overlay = PromptOverlayOp(field="key_objects", value=["red umbrella"])
+        warnings = reapply_overlays(prompt, [overlay])
+        assert warnings == []
+        assert prompt.key_objects == ["red umbrella"]
+
     def test_location_sensitive_overlay_revalidated_on_state_change(self):
         """A location-material correction is revalidated when a damage/weather
         state activates: it is dropped if bound to a different location state."""

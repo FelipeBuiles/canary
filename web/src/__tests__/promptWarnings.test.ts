@@ -13,50 +13,12 @@ function makePrompt(overrides: Partial<ImagePrompt> = {}): ImagePrompt {
     lighting: "Soft golden light",
     mood: "Tense",
     subjects: [],
-    reference_image_paths: [],
     width: 1024,
     height: 1536,
     steps: 30,
     ...overrides,
   };
 }
-
-// ── missing_character_ref ────────────────────────────────────────────────────
-
-describe("missing_character_ref", () => {
-  it("warns when subjects have character_id but no reference images", () => {
-    const prompt = makePrompt({
-      subjects: [{ character_id: "char_01", name: "Hero", identity: "", action: "", expression: "", position: "" }],
-      reference_image_paths: [],
-    });
-    const warnings = detectPromptWarnings(prompt);
-    expect(warnings.some((w) => w.code === "missing_character_ref")).toBe(true);
-  });
-
-  it("does not warn when reference images are attached", () => {
-    const prompt = makePrompt({
-      subjects: [{ character_id: "char_01", name: "Hero", identity: "", action: "", expression: "", position: "" }],
-      reference_image_paths: ["refs/char_01.png"],
-    });
-    const warnings = detectPromptWarnings(prompt);
-    expect(warnings.some((w) => w.code === "missing_character_ref")).toBe(false);
-  });
-
-  it("does not warn when subjects have no character_id", () => {
-    const prompt = makePrompt({
-      subjects: [{ character_id: null, name: "Background figure", identity: "", action: "", expression: "", position: "" }],
-      reference_image_paths: [],
-    });
-    const warnings = detectPromptWarnings(prompt);
-    expect(warnings.some((w) => w.code === "missing_character_ref")).toBe(false);
-  });
-
-  it("does not warn when subjects array is empty", () => {
-    const prompt = makePrompt({ subjects: [], reference_image_paths: [] });
-    const warnings = detectPromptWarnings(prompt);
-    expect(warnings.some((w) => w.code === "missing_character_ref")).toBe(false);
-  });
-});
 
 // ── thin_composition ─────────────────────────────────────────────────────────
 
@@ -138,25 +100,16 @@ describe("text_in_prompt", () => {
 // ── missing_style ────────────────────────────────────────────────────────────
 
 describe("missing_style", () => {
-  it("warns when style is null and no reference images", () => {
-    const prompt = makePrompt({ style: null, reference_image_paths: [] });
+  it("warns when style is null", () => {
+    const prompt = makePrompt({ style: null });
     expect(detectPromptWarnings(prompt).some((w) => w.code === "missing_style")).toBe(true);
   });
 
   it("does not warn when style is set", () => {
-    const prompt = makePrompt({ style: "pulp noir", reference_image_paths: [] });
+    const prompt = makePrompt({ style: "pulp noir" });
     expect(detectPromptWarnings(prompt).some((w) => w.code === "missing_style")).toBe(false);
   });
 
-  it("does not warn when reference images are provided", () => {
-    const prompt = makePrompt({ style: null, reference_image_paths: ["style_ref.png"] });
-    expect(detectPromptWarnings(prompt).some((w) => w.code === "missing_style")).toBe(false);
-  });
-
-  it("does not warn when style is empty string but reference image attached", () => {
-    const prompt = makePrompt({ style: "", reference_image_paths: ["style_ref.png"] });
-    expect(detectPromptWarnings(prompt).some((w) => w.code === "missing_style")).toBe(false);
-  });
 });
 
 // ── inconsistent_dimensions ──────────────────────────────────────────────────

@@ -15,7 +15,7 @@ from novel_to_comic.models.prompt import ImagePrompt, PromptAnchor, PromptSubjec
 from novel_to_comic.models.story_bible import Character, StoryBible
 from novel_to_comic.panel_aspect import dimensions_for_generation_shape, frame_phrase
 from novel_to_comic.text_utils import clean, shorten
-from novel_to_comic.ai.providers.base import RefImage, order_refs_for_upload
+from novel_to_comic.ai.providers.base import RefImage
 
 
 _SHOT_DIMENSIONS: dict[str, tuple[int, int]] = {
@@ -163,7 +163,7 @@ def _labels(config: Config | None = None) -> dict[str, str]:
 
 _clean = clean
 _shorten = shorten
-IMAGE_PROMPT_VERSION = 22  # 22: prompt source lineage — content-based source_sha256 + state-aware overlays
+IMAGE_PROMPT_VERSION = 23  # 23: semantic ReferencePlan owns all reference selection
 _SOFT_CONTINUITY = {"smooth_continuation", "match_cut"}
 
 # Generic interior/exterior vocabulary for anchor filtering. All matching is
@@ -597,7 +597,6 @@ def build_planned_panel_prompt_spec(
 ) -> ImagePrompt:
     character_count = len(panel.characters_present)
     subjects: list[PromptSubject] = []
-    ref_paths: list[str] = []
     # Hard-constraint clauses for any entity in a non-base, visually-significant
     # appearance state (characters and the location). These flow into both the
     # image prompt and the brief pass (visual_brief_source_spec reads constraints).
@@ -635,21 +634,17 @@ def build_planned_panel_prompt_spec(
                 expression=_clean(panel.character_expressions.get(character_id, "")),
                 position=_clean(panel.character_positions.get(character_id, "")),
                 appearance_state_id=(resolved.state_id if resolved.state is not None else None),
+                appearance_state_canonical_equivalent=(
+                    resolved.state.canonical_equivalent
+                    if resolved.state is not None
+                    else False
+                ),
                 appearance_locked=locked,
                 appearance_guard=(guard or None),
             )
         )
         if locked:
             appearance_locks.append(_appearance_lock_clause(character.name, guard))
-        # A flagged state with its own generated refs replaces the canonical
-        # ones (so a normal-hands sheet never fights "silver hands" text). If
-        # those refs do not exist yet, fall back to canonical + state anchor.
-        state_refs: list[str] = []
-        if locked and resolved.state_id:
-            state_refs = _state_reference_paths(
-                project_dir, character_id, resolved.state_id, character_count
-            )
-        ref_paths.extend(state_refs or _reference_paths(project_dir, character_id, character_count))
 
     location = None
     if scene:
@@ -734,20 +729,14 @@ def build_planned_panel_prompt_spec(
     bg_description = _clean(panel.background_description)
     if location:
         anchor_text = active_state_anchor or location.visual_anchor
-        # ``_filter_location_anchor_for_panel`` drops concrete-object tags that
-        # contradict the panel's background (e.g. outdoor props in a bedroom
-        # flashback). This is a semantic correction, not a mutation of the
-        # anchor's identity — the removed tags belong to a different location
-        # state, not this one.
-        filtered = _filter_location_anchor_for_panel(anchor_text, bg_description)
-        if filtered:
+        if anchor_text:
             anchors.append(
                 PromptAnchor(
                     kind="location",
                     entity_id=location.id,
                     name=location.name,
                     appearance_state_id=location_state_id,
-                    text=filtered,
+                    text=anchor_text,
                 )
             )
 
@@ -784,7 +773,6 @@ def build_planned_panel_prompt_spec(
     # ``props`` display list kept for backward-compat full_prompt rendering;
     # canonical projection uses the verbatim ``anchors`` entries instead.
     props = [prop.name for prop in matched_props]
-    ref_paths.extend(_prop_reference_paths(project_dir, [p.id for p in matched_props if p.id]))
 
     # System constraints (count, one-body, single-instant, no-lettering, crop
     # policy, appearance locks) are generated at render time by
@@ -836,7 +824,6 @@ def build_planned_panel_prompt_spec(
         subjects=subjects,
         props=props,
         constraints=None,
-        reference_image_paths=ref_paths,
         width=width,
         height=height,
         steps=config.effective_image_steps(),
@@ -1448,10 +1435,9 @@ def render_generation_prompt(
         _append_section(sections, "Continuity", prompt.continuity_note)
 
     if strategy.use_indexed_ref_instructions() and refs:
-        # <img>N</img> indices follow the canonical upload order shared with
-        # _flatten_refs in litellm_http.py via order_refs_for_upload.
+        # <img>N</img> indices follow the finalized ReferencePlan order.
         ref_instructions = []
-        for idx, ref in enumerate(order_refs_for_upload(refs)):
+        for idx, ref in enumerate(refs):
             role = ref.role
             label = ref.label
             if role == "subject":

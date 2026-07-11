@@ -23,6 +23,9 @@ OverlayField = Literal[
     "mood",
     "constraints",
     "continuity_note",
+    "props",
+    "key_objects",
+    "visual_requirements",
     # Subject-scoped editable scene direction:
     "action",
     "expression",
@@ -50,7 +53,7 @@ class PromptOverlayOp(BaseModel):
     """
 
     field: OverlayField
-    value: str
+    value: str | list[str]
     subject_character_id: str | None = None
     appearance_state_id: str | None = None
     location_state_id: str | None = None
@@ -172,6 +175,7 @@ class PromptSubject(BaseModel):
     # Set by the canonical builder from the appearance resolver; the brief and
     # provider paths key off it for per-state reference selection.
     appearance_state_id: str | None = None
+    appearance_state_canonical_equivalent: bool = False
     # True when ``identity`` is a non-base, visually-significant appearance state
     # (e.g. stumps, silver hands). The brief pass treats it as a fixed, immutable
     # look and stages actions around it rather than as one fact among many.
@@ -225,7 +229,6 @@ class ImagePrompt(BaseModel):
     # Flat layout-aware region map. Only used when the image model supports
     # regional prompting (Reve v2); other models ignore it.
     layout: PromptLayout | None = None
-    reference_image_paths: list[str] = Field(default_factory=list)  # Project-relative paths to character ref images
     width: int
     height: int
     steps: int

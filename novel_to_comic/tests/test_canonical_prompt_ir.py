@@ -156,6 +156,12 @@ class TestPromptAnchorModel:
         )
         assert anchor.appearance_state_id == "stumps"
 
+    def test_prompt_json_has_no_persisted_reference_path_source(self, tmp_path):
+        prompt = build_planned_panel_prompt_spec(
+            Config(), tmp_path, _base_panel(), _bible_with_sentinels()
+        )
+        assert "reference_image_paths" not in prompt.model_dump()
+
 
 # ── Sentinel anchors reach the projection verbatim ─────────────────────────
 
@@ -206,6 +212,20 @@ class TestSentinelAnchorsPreservedVerbatim:
         )
         loc = [a for a in prompt.anchors if a.kind == "location"][0]
         assert len(loc.text) >= len(_LOC_SENTINEL)
+
+    def test_location_anchor_is_not_context_filtered(self, tmp_path):
+        bible = _bible_with_sentinels()
+        bible.locations[0].visual_anchor = (
+            "night, outdoors, parked cars, sidewalk, exact immutable sentinel"
+        )
+        panel = _base_panel().model_copy(
+            update={"background_description": "inside a small bedroom"}
+        )
+
+        prompt = build_planned_panel_prompt_spec(Config(), tmp_path, panel, bible)
+
+        location_anchor = next(a for a in prompt.anchors if a.kind == "location")
+        assert location_anchor.text == bible.locations[0].visual_anchor
 
     def test_sentinels_appear_in_canonical_projection(self, tmp_path):
         """The canonical prompt-body projection must contain every sentinel

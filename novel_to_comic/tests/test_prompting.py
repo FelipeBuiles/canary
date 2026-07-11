@@ -604,16 +604,14 @@ def test_prompt_does_not_promote_ambient_flowers_to_carried_bundle_prop(tmp_path
     assert "Knobby Stick" in prompt.key_objects
     assert "prop_002" not in prompt.key_objects
     assert "Bundle of Flowers" not in prompt.key_objects
-    assert "refs/props/prop_001/ref.png" in prompt.reference_image_paths
-    assert "refs/props/prop_002/ref.png" not in prompt.reference_image_paths
+    assert any(a.kind == "prop" and a.entity_id == "prop_001" for a in prompt.anchors)
+    assert not any(a.kind == "prop" and a.entity_id == "prop_002" for a in prompt.anchors)
     assert "Knobby Stick" in generation_prompt
     assert "Key props:\n" not in generation_prompt
     assert "Bundle of Flowers:" not in generation_prompt
 
 
-def test_interior_panel_drops_outdoor_tokens_from_location_anchor(tmp_path):
-    """A bedroom-flashback panel must not inherit 'bike rack, moped, snow' from
-    the scene's outdoor location anchor."""
+def test_interior_panel_preserves_protected_location_anchor(tmp_path):
     story_bible = StoryBible(
         title="DCC",
         author="Matt Dinniman",
@@ -685,13 +683,7 @@ def test_interior_panel_drops_outdoor_tokens_from_location_anchor(tmp_path):
     loc_anchors = [a for a in prompt.anchors if a.kind == "location"]
     assert len(loc_anchors) == 1
     anchor_lower = loc_anchors[0].text.lower()
-    # Outdoor-only concrete objects must not appear in the indoor panel's
-    # location anchor (the anchor is filtered for the panel context).
-    assert "bicycle rack" not in anchor_lower
-    assert "moped" not in anchor_lower
-    assert "rubble" not in anchor_lower
-    assert "debris" not in anchor_lower
-    assert "stop sign" not in anchor_lower
+    assert loc_anchors[0].text == story_bible.locations[0].visual_anchor
     # Background description still carries the actual interior cues.
     setting_lower = (prompt.setting or "").lower()
     assert "rumpled bed" in setting_lower
@@ -989,7 +981,7 @@ def test_prompt_keeps_bundle_prop_when_character_carries_flowers(tmp_path):
 
     assert "Bundle of Flowers" in prompt.key_objects
     assert "Bundle of Flowers: A large, messy armful" in prompt.full_prompt
-    assert "refs/props/prop_002/ref.png" in prompt.reference_image_paths
+    assert any(a.kind == "prop" and a.entity_id == "prop_002" for a in prompt.anchors)
 
 
 def test_reve_prompt_injection():
@@ -1343,7 +1335,5 @@ def test_prop_is_gated_by_its_debut_scene(tmp_path):
 
     assert all("Forged Letters" not in p for p in before_prompt.props)
     assert any("Forged Letters" in p for p in after_prompt.props)
-
-
 
 

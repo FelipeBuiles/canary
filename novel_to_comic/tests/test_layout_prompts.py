@@ -290,9 +290,8 @@ class TestReveLayoutProvider:
         style_ref = tmp_path / "style.png"
         style_ref.write_bytes(_PNG_BYTES)
         refs = [
-            # Style listed first on purpose — upload order must put subject first.
-            RefImage(path=style_ref, role="style", label="selected style"),
             RefImage(path=char_ref, role="subject", label="Carl"),
+            RefImage(path=style_ref, role="style", label="selected style"),
         ]
         captured, _ = _run_provider(monkeypatch, tmp_path, _ok_response(), refs=refs)
         payload = captured["payload"]

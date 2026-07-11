@@ -35,7 +35,6 @@ def _prompt() -> ImagePrompt:
             )
         ],
         constraints="exactly 1 character; no text, captions, speech balloons, or lettering anywhere in the image",
-        reference_image_paths=["refs/ada/front.png"],
         width=768,
         height=1344,
         steps=8,
@@ -68,7 +67,6 @@ def test_apply_instruction_patch_updates_allowlisted_subject_field_and_renders_b
     assert updated.subjects[0].expression == "angry expression, tense brows, clenched jaw"
     assert "angry expression" in updated.full_prompt
     assert updated.subjects[0].identity == "short black bob haircut, blue jacket"
-    assert updated.reference_image_paths == ["refs/ada/front.png"]
     assert updated.distilled_prompt is None
 
 

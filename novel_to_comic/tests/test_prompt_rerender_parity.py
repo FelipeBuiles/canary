@@ -60,7 +60,6 @@ def _base_prompt(tmp_path: Path) -> ImagePrompt:
                 )
             ],
         ),
-        reference_image_paths=["refs/ada/front.png"],
         width=1024,
         height=576,
         steps=20,
@@ -108,6 +107,33 @@ class TestSemanticPatchClearsDerivedState:
         assert updated.subjects[0].action == "running hard"
         assert updated.visual_brief is None
         assert updated.layout is None
+
+    def test_wire_subject_patch_preserves_protected_identity_fields(self, tmp_path: Path):
+        prompt = _base_prompt(tmp_path)
+        wire_subject = prompt.subjects[0].model_dump()
+        wire_subject["action"] = "running hard"
+
+        updated = apply_prompt_patch(prompt, {"subjects": [wire_subject]})
+
+        assert updated.subjects[0].action == "running hard"
+        assert updated.subjects[0].identity == prompt.subjects[0].identity
+        assert updated.subjects[0].character_id == "ada"
+
+    def test_wire_subject_patch_rejects_changed_identity(self, tmp_path: Path):
+        prompt = _base_prompt(tmp_path)
+        wire_subject = prompt.subjects[0].model_dump()
+        wire_subject["identity"] = "attacker-controlled replacement"
+
+        with pytest.raises(ValueError, match="protected subject field"):
+            apply_prompt_patch(prompt, {"subjects": [wire_subject]})
+
+    @pytest.mark.parametrize("field", ["props", "key_objects", "visual_requirements"])
+    def test_list_field_edits_are_recorded_as_overlays(self, tmp_path: Path, field: str):
+        prompt = _base_prompt(tmp_path)
+        updated = apply_prompt_patch(prompt, {field: ["user correction"]})
+
+        assert getattr(updated, field) == ["user correction"]
+        assert any(op.field == field and op.value == ["user correction"] for op in updated.user_overlays)
 
     def test_constraints_edit_clears_visual_brief(self, tmp_path: Path):
         prompt = _base_prompt(tmp_path)
@@ -157,7 +183,6 @@ class TestPatchContractRejectsForbiddenFields:
 
     def test_reference_paths_cannot_be_overwritten(self, tmp_path: Path):
         prompt = _base_prompt(tmp_path)
-        assert prompt.reference_image_paths == ["refs/ada/front.png"]
         with pytest.raises(ValueError):
             apply_prompt_patch(prompt, {"reference_image_paths": ["refs/evil/hijack.png"]})
 
