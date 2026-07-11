@@ -30,6 +30,7 @@ from novel_to_comic.prompting import (
     _render_panel_prompt_body_parts,
     build_planned_panel_prompt_spec,
     ensure_distilled_prompt,
+    generate_distilled_prompt,
     visual_brief_source_spec,
 )
 
@@ -167,6 +168,7 @@ def _source_projection(
                     "label": s.label,
                     "visual_anchor": s.visual_anchor,
                     "visually_significant": s.visually_significant,
+                    "canonical_equivalent": s.canonical_equivalent,
                     "continuity_guard": s.continuity_guard,
                 }
                 for s in (c.appearance_states or [])
@@ -197,6 +199,7 @@ def _source_projection(
                     "label": s.label,
                     "visual_anchor": s.visual_anchor,
                     "visually_significant": s.visually_significant,
+                    "canonical_equivalent": s.canonical_equivalent,
                     "continuity_guard": s.continuity_guard,
                 }
                 for s in (location.appearance_states or [])
@@ -353,7 +356,11 @@ def reapply_overlays(
     subject_fields = {"action", "expression", "position"}
 
     for op in overlays:
-        value = (op.value or "").strip()
+        value = op.value
+        if isinstance(value, list):
+            value = [item.strip() for item in value if item.strip()]
+        else:
+            value = (value or "").strip()
         if not value:
             warnings.append(OverlayWarning(
                 code="value_empty",
@@ -521,6 +528,10 @@ def ensure_current_panel_prompt(
                 "Dropped stale overlay for panel %s/%s: code=%s reason=%s",
                 panel.scene_id, panel.panel_number, warning.code, warning.reason,
             )
+        fresh.full_prompt = rerender_prompt_body(fresh)
+        fresh.distilled_prompt = generate_distilled_prompt(fresh)
+        fresh.visual_brief = None
+        fresh.layout = None
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_path.write_text(fresh.model_dump_json(indent=2))
     return fresh

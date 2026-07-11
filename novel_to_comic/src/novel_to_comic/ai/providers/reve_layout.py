@@ -32,7 +32,7 @@ from typing import Any
 import httpx
 
 from novel_to_comic.ai.errors import AIRefusalError
-from novel_to_comic.ai.providers.base import ProviderRawResult, RefImage, order_refs_for_upload
+from novel_to_comic.ai.providers.base import ProviderRawResult, RefImage
 from novel_to_comic.config import Config
 from novel_to_comic.models.prompt import PromptLayout
 
@@ -212,14 +212,16 @@ class ReveLayoutProvider:
         self, refs: list[RefImage],
     ) -> tuple[list[dict[str, Any]], dict[str, int]]:
         """Encode refs in canonical upload order; map binding keys to indices."""
+        if len(refs) > _MAX_REFERENCES:
+            raise ValueError(
+                f"Finalized reference plan exceeds Reve cap: {len(refs)} > {_MAX_REFERENCES}"
+            )
         references: list[dict[str, Any]] = []
         index_by_key: dict[str, int] = {}
-        for ref in order_refs_for_upload(refs):
-            if len(references) >= _MAX_REFERENCES:
-                break
+        for ref in refs:
             data = _read_ref_bytes(ref.path)
             if data is None:
-                continue
+                raise ValueError(f"Finalized reference became unreadable: {ref.path}")
             index = len(references)
             references.append({
                 "image": {"data": base64.b64encode(data).decode("ascii")},

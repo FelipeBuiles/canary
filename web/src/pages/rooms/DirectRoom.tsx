@@ -121,13 +121,6 @@ function DirectPromptDetail({
                   <span className="bg-ink-black/8 px-2.5 py-1 font-meta text-[0.68rem] font-bold leading-none tracking-[0.08em] text-ink-black">
                     {s.name || resolveName(s.character_id ?? "")}
                   </span>
-                  {prompt.reference_image_paths.some((p) =>
-                    p.includes(s.character_id ?? "__none__"),
-                  ) && (
-                    <span className="font-meta text-[0.58rem] tracking-[0.06em] text-archive-sage">
-                      ref attached
-                    </span>
-                  )}
                 </span>
               ))}
             </div>

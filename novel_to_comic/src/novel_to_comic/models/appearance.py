@@ -57,6 +57,9 @@ class AppearanceState(BaseModel):
     label: str  # human label, e.g. "Silver hands"
     visual_anchor: str
     visually_significant: bool = False
+    # True only when this state explicitly matches the canonical visual look.
+    # Reference selection must never infer equivalence from an id or label.
+    canonical_equivalent: bool = False
     # Optional authored continuity rule for this state: what the image model
     # must preserve and must NOT revert to its default prior, plus how scenes
     # should be staged to stay consistent. Generic across entities — e.g. a lost

@@ -7,6 +7,7 @@ images for multi-reference consistency.
 import asyncio
 import hashlib
 import json
+import logging
 import time
 import uuid
 from datetime import UTC, datetime
@@ -16,7 +17,8 @@ from PIL import Image as PILImage
 from rich.console import Console
 
 from novel_to_comic import artifacts
-from novel_to_comic.ai.providers.base import RefImage, order_refs_for_upload
+from novel_to_comic.ai.providers.base import RefImage
+from novel_to_comic.image_references import ReferencePlan, build_reference_plan
 from novel_to_comic.prompt_assembly import (
     ensure_current_panel_prompt,
     ensure_layout,
@@ -26,7 +28,7 @@ from novel_to_comic.prompt_assembly import (
 from novel_to_comic.clients import flux
 from novel_to_comic.config import Config
 from novel_to_comic.events import make_progress
-from novel_to_comic.image_ref_strategy import RefStrategy, is_prop_ref
+from novel_to_comic.image_ref_strategy import RefStrategy
 from novel_to_comic.layout_planning import load_layout_plan, prompt_path_for_panel, scene_panel_map
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.panel_versions import record_current_panel_version
@@ -38,6 +40,8 @@ from novel_to_comic.prompting import (
 )
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.usage import ApiResult, estimate_image_cost
+
+log = logging.getLogger(__name__)
 
 console = Console()
 
@@ -58,6 +62,24 @@ def _write_generation_meta(image_path: Path, payload: dict) -> None:
 
 def _write_failure_meta(image_path: Path, payload: dict) -> None:
     artifacts.write_asset_failure(image_path, payload)
+
+
+def _cache_meta_projection(payload: dict) -> dict:
+    projected = dict(payload)
+    parameters = dict(projected.get("parameters") or {})
+    parameters.pop("reference_diagnostics", None)
+    projected["parameters"] = parameters
+    return projected
+
+
+def _asset_matches_generation_meta(output_path: Path, expected: dict) -> bool:
+    if not output_path.exists():
+        return False
+    try:
+        actual = artifacts.read_asset_meta(output_path)
+    except Exception:
+        return False
+    return _cache_meta_projection(actual) == _cache_meta_projection(expected)
 
 
 def _image_dimensions(path: Path) -> tuple[int | None, int | None]:
@@ -107,37 +129,6 @@ def _raise_if_aspect_mismatch(meta_payload: dict) -> None:
 
 def _use_continuity_refs(config: Config) -> bool:
     return getattr(config, "continuity_mode", "hybrid") in {"ref_only", "hybrid"}
-
-
-def _ordered_refs(refs: list[RefImage]) -> list[RefImage]:
-    # Canonical upload order shared with litellm_http._flatten_refs and the
-    # <img>N</img> rendering in prompting.render_generation_prompt.
-    return order_refs_for_upload(refs)
-
-
-def _subject_reference_labels(prompt: ImagePrompt) -> dict[str, str]:
-    labels: dict[str, str] = {}
-    for subject in getattr(prompt, "subjects", []) or []:
-        character_id = (getattr(subject, "character_id", None) or "").strip()
-        name = (getattr(subject, "name", "") or "").strip()
-        if character_id and name:
-            labels[character_id] = name
-    return labels
-
-
-def _character_id_from_ref(path: Path) -> str | None:
-    for part in reversed(path.parts):
-        lowered = part.lower()
-        if lowered.startswith(("char_", "character_", "chara_")):
-            return part
-    return None
-
-
-def _prop_label_from_ref(path: Path) -> str | None:
-    parts = path.parts
-    if len(parts) >= 3 and parts[-3] == "props":
-        return parts[-2]
-    return None
 
 
 def _plate_ref_path(project_dir: Path, loc_id: str, state_id: str | None) -> Path | None:
@@ -209,6 +200,161 @@ def _find_style_sample(project_dir: Path, style_template: str) -> Path | None:
     return None
 
 
+def _prop_ids_from_prompt(prompt: ImagePrompt) -> list[str]:
+    """Derive prop ids from a prompt's matched props.
+
+    Slice 04: reference selection is semantic, not path-based. The prop ids
+    come from the props the prompt actually matched (not stored paths). We
+    recover ids from any prop ref paths the prompt carries (legacy) plus the
+    props/ directory on disk keyed by the prompt's prop names.
+    """
+    return list(dict.fromkeys(
+        anchor.entity_id
+        for anchor in getattr(prompt, "anchors", []) or []
+        if anchor.kind == "prop" and anchor.entity_id
+    ))
+
+
+def _critical_prop_ids_from_prompt(prompt: ImagePrompt) -> set[str]:
+    explicit_text = " ".join([
+        *(getattr(prompt, "key_objects", []) or []),
+        *(getattr(prompt, "visual_requirements", []) or []),
+    ]).lower()
+    return {
+        anchor.entity_id
+        for anchor in getattr(prompt, "anchors", []) or []
+        if anchor.kind == "prop"
+        and anchor.entity_id
+        and (
+            anchor.entity_id.lower() in explicit_text
+            or anchor.name.lower() in explicit_text
+        )
+    }
+
+
+def _read_prev_panel_prompt(
+    project_dir: Path, prompt: ImagePrompt, prompt_path: Path | None
+) -> ImagePrompt | None:
+    if prompt.panel_number <= 1:
+        return None
+    prev_prompt_path = (
+        prompt_path.parent / f"panel_{prompt.panel_number - 1:03d}.json"
+        if prompt_path is not None
+        else project_dir / "direct" / prompt.scene_id / f"panel_{prompt.panel_number - 1:03d}.json"
+    )
+    if not prev_prompt_path.exists():
+        return None
+    try:
+        return ImagePrompt.model_validate_json(prev_prompt_path.read_text())
+    except Exception:
+        return None
+
+
+def _prev_subject_states(prev_prompt: ImagePrompt | None) -> dict[str, str | None]:
+    """Map character_id → appearance_state_id for the previous panel's subjects."""
+    if prev_prompt is None:
+        return {}
+    return {
+        s.character_id: s.appearance_state_id
+        for s in getattr(prev_prompt, "subjects", []) or []
+        if s.character_id
+    }
+
+
+def build_panel_reference_plan(
+    config: Config,
+    project_dir: Path,
+    prompt: ImagePrompt,
+    *,
+    prompt_path: Path | None = None,
+    style_sample: Path | None = None,
+    scene_to_location: dict[str, str] | None = None,
+    output_dir: Path | None = None,
+    location_labels: dict[str, str] | None = None,
+) -> ReferencePlan:
+    """Build the one final, capability-aware ReferencePlan for a panel.
+
+    Slice 04: this is the single selection owner. Candidates are resolved from
+    semantic entity/state ids + the filesystem (not stored paths), the route's
+    hard cap and role restrictions are applied here, and selected content
+    hashes drive the selection fingerprint. No later layer selects, caps, or
+    reorders references.
+    """
+    from novel_to_comic.image_models import image_model_profile_for_config
+
+    route_profile = image_model_profile_for_config(config)
+    prop_ids = _prop_ids_from_prompt(prompt)
+    critical_prop_ids = _critical_prop_ids_from_prompt(prompt)
+    primary_poses = artifacts.read_primary_refs(project_dir)
+    strategy = RefStrategy.for_config(config)
+
+    # Continuity: resolve the previous panel's subject/location state so the
+    # plan can suppress an incompatible continuity ref across a state change.
+    # The continuity ref is gated by the config continuity_mode AND the route's
+    # capability (GPT Image 2 never uses prev-panel continuity).
+    prev_prompt = _read_prev_panel_prompt(project_dir, prompt, prompt_path)
+    prev_states = _prev_subject_states(prev_prompt)
+    prev_loc_state = getattr(prev_prompt, "location_state_id", None) if prev_prompt else None
+    continuity_enabled = (
+        _use_continuity_refs(config)
+        and strategy.use_prev_panel_image(getattr(prev_prompt, "transition_out", None))
+    )
+
+    # Location id: prefer the prompt's resolved location_id, fall back to the
+    # scene→location map. Pass location labels through as the resolved plate's
+    # label so prompts stay readable.
+    loc_id = getattr(prompt, "location_id", None) or (scene_to_location or {}).get(prompt.scene_id)
+    effective_scene_to_location = {prompt.scene_id: loc_id} if loc_id else {}
+    plan = build_reference_plan(
+        route_profile=route_profile,
+        project_dir=project_dir,
+        prompt=prompt,
+        style_sample=style_sample,
+        scene_to_location=effective_scene_to_location,
+        prop_ids=prop_ids,
+        critical_prop_ids=critical_prop_ids,
+        primary_poses=primary_poses,
+        prev_subject_states=prev_states,
+        prev_location_state_id=prev_loc_state,
+        continuity_enabled=continuity_enabled,
+    )
+
+    # Attach human-readable location labels to selected location plates.
+    if location_labels and loc_id:
+        label = location_labels.get(loc_id) or loc_id
+        plan = _with_location_labels(plan, label)
+    return plan
+
+
+def _with_location_labels(plan: ReferencePlan, label: str) -> ReferencePlan:
+    """Return a copy of the plan with location-plate assets labeled."""
+    if not any(a.role == "location_plate" for a in plan.selected):
+        return plan
+    from novel_to_comic.image_references import ReferenceAsset
+
+    selected = tuple(
+        ReferenceAsset(
+            path=a.path, role=a.role, entity_id=a.entity_id,
+            appearance_state_id=a.appearance_state_id,
+            authority_scope=a.authority_scope,
+            preserve_facets=a.preserve_facets, ignore_facets=a.ignore_facets,
+            pose=a.pose, content_sha256=a.content_sha256,
+            lineage_parent_sha256=a.lineage_parent_sha256,
+            label=label if a.role == "location_plate" else a.label,
+        )
+        for a in plan.selected
+    )
+    from novel_to_comic.image_references import selection_fingerprint_hex
+
+    return ReferencePlan(
+        expected_route=plan.expected_route,
+        selected=selected,
+        dropped=plan.dropped,
+        selection_fingerprint=selection_fingerprint_hex(selected),
+        warnings=plan.warnings,
+    )
+
+
 def resolve_panel_references(
     config: Config,
     project_dir: Path,
@@ -220,67 +366,41 @@ def resolve_panel_references(
     output_dir: Path | None = None,
     location_labels: dict[str, str] | None = None,
 ) -> list[RefImage]:
-    """Return ordered, role-aware refs that a panel image request will upload."""
-    subject_refs: list[RefImage] = []
-    subject_labels = _subject_reference_labels(prompt)
-    for p in prompt.reference_image_paths:
-        resolved = (project_dir / p) if not Path(p).is_absolute() else Path(p)
-        if not resolved.exists():
-            continue
-        role = "prop" if is_prop_ref(resolved) else "subject"
-        label = (
-            _prop_label_from_ref(resolved)
-            if role == "prop"
-            else subject_labels.get(_character_id_from_ref(resolved) or "")
-        )
-        subject_refs.append(RefImage(
-            path=resolved,
-            role=role,
-            label=label,
-        ))
+    """Return ordered, role-aware refs that a panel image request will upload.
 
-    strategy = RefStrategy.for_config(config)
-    contextual_refs: list[RefImage] = []
-    resolved_output_dir = output_dir or project_dir / "draw" / prompt.scene_id
-    if _use_continuity_refs(config) and prompt.panel_number > 1:
-        prev_image = resolved_output_dir / f"panel_{prompt.panel_number - 1:03d}.png"
-        prev_prompt_path = (
-            prompt_path.parent / f"panel_{prompt.panel_number - 1:03d}.json"
-            if prompt_path is not None
-            else project_dir / "direct" / prompt.scene_id / f"panel_{prompt.panel_number - 1:03d}.json"
-        )
-        prev_prompt = None
-        if prev_prompt_path.exists():
-            try:
-                prev_prompt = ImagePrompt.model_validate_json(prev_prompt_path.read_text())
-            except Exception:
-                prev_prompt = None
-        if prev_image.exists() and strategy.use_prev_panel_image(getattr(prev_prompt, "transition_out", None)):
-            contextual_refs.append(RefImage(path=prev_image, role="continuity"))
-
-    if not contextual_refs:
-        if style_sample and style_sample.exists() and strategy.use_style_sample_refs():
-            contextual_refs.append(RefImage(path=style_sample, role="style", label="selected style"))
-        loc_id = (scene_to_location or {}).get(prompt.scene_id)
-        if loc_id and strategy.use_location_plate_refs():
-            plate = _plate_ref_path(
-                project_dir, loc_id, getattr(prompt, "location_state_id", None)
-            )
-            if plate is not None:
-                contextual_refs.append(RefImage(
-                    path=plate,
-                    role="location_plate",
-                    label=(location_labels or {}).get(loc_id) or loc_id,
-                ))
-
-    # The strategy returns refs in canonical upload order — the returned list
-    # IS the upload order assumed by render_generation_prompt.
-    refs = _ordered_refs([*subject_refs, *contextual_refs])
-    return RefStrategy.for_config(config).select_panel_refs(
-        refs,
-        getattr(prompt, "composition", None),
-        primary_poses=artifacts.read_primary_refs(project_dir),
+    Slice 04: delegates to :func:`build_panel_reference_plan` (the single
+    selection owner) and projects the finalized plan's selected assets into
+    provider ``RefImage`` objects. No selection, capping, or reordering happens
+    here.
+    """
+    plan = build_panel_reference_plan(
+        config,
+        project_dir,
+        prompt,
+        prompt_path=prompt_path,
+        style_sample=style_sample,
+        scene_to_location=scene_to_location,
+        output_dir=output_dir,
+        location_labels=location_labels,
     )
+    _surface_plan_warnings(plan)
+    return plan.to_ref_images()
+
+
+def _surface_plan_warnings(plan: ReferencePlan) -> None:
+    """Log dropped-reference diagnostics so the backend surfaces them.
+
+    UI presentation stays minimal until Slice 13; for now the diagnostics are
+    visible in server logs and (via the plan) in generation metadata.
+    """
+    for drop in plan.dropped:
+        log.warning(
+            "reference_plan drop: reason=%s detail=%s",
+            drop.reason.value,
+            drop.detail,
+        )
+    for warning in plan.warnings:
+        log.warning("reference_plan warning: %s", warning)
 
 
 def estimate_panel_image_cost_usd(
@@ -306,7 +426,7 @@ def estimate_panel_image_cost_usd(
             location_labels = {loc.id: loc.name for loc in story_bible.locations}
         except Exception:
             scene_to_location = {}
-    refs = resolve_panel_references(
+    plan = build_panel_reference_plan(
         config,
         project_dir,
         prompt,
@@ -315,6 +435,8 @@ def estimate_panel_image_cost_usd(
         scene_to_location=scene_to_location,
         location_labels=location_labels,
     )
+    _surface_plan_warnings(plan)
+    refs = plan.to_ref_images()
     generation_prompt = render_generation_prompt(
         prompt,
         config.style_template,
@@ -325,9 +447,39 @@ def estimate_panel_image_cost_usd(
         config.effective_image_model(),
         1,
         quality=getattr(config, "image_quality", None),
-        ref_count=len(refs),
+        ref_count=plan.ref_count,
         prompt_text=generation_prompt,
     )
+
+
+def _estimate_prompt_files_cost(
+    config: Config,
+    project_dir: Path,
+    prompt_files: list[Path],
+    *,
+    style_sample: Path | None,
+    scene_to_location: dict[str, str],
+) -> float:
+    """Estimate exactly the prompts selected for this run.
+
+    This deliberately ignores output existence: retry-failed runs may target a
+    panel whose previous image still exists beside failure metadata.
+    """
+    total = 0.0
+    model = config.effective_image_model()
+    quality = getattr(config, "image_quality", None)
+    for prompt_path in prompt_files:
+        try:
+            total += estimate_panel_image_cost_usd(
+                config,
+                project_dir,
+                prompt_path,
+                style_sample=style_sample,
+                scene_to_location=scene_to_location,
+            )
+        except Exception:
+            total += estimate_image_cost(model, 1, quality=quality)
+    return total
 
 
 def _fmt_error(exc: BaseException) -> str:
@@ -498,7 +650,7 @@ async def _generate_panel(
         output_dir = project_dir / "draw" / prompt.scene_id
         output_path = output_dir / f"panel_{prompt.panel_number:03d}.png"
 
-        refs = resolve_panel_references(
+        reference_plan = build_panel_reference_plan(
             config,
             project_dir,
             prompt,
@@ -512,6 +664,8 @@ async def _generate_panel(
             ),
             output_dir=output_dir,
         )
+        _surface_plan_warnings(reference_plan)
+        refs = reference_plan.to_ref_images()
 
         generation_path = output_path
         if force:
@@ -543,14 +697,34 @@ async def _generate_panel(
                 "generation_aspect_source": getattr(prompt, "generation_aspect_source", None),
                 "steps": prompt.steps,
                 "style_template": config.style_template,
+                "reference_selection_fingerprint": reference_plan.selection_fingerprint,
                 "refs": [
                     {
-                        "path": _relative_to_project(ref.path, project_dir),
-                        "role": ref.role,
-                        "label": ref.label,
+                        "path": _relative_to_project(asset.path, project_dir),
+                        "role": asset.role,
+                        "label": asset.label,
+                        "entity_id": asset.entity_id,
+                        "appearance_state_id": asset.appearance_state_id,
+                        "authority_scope": asset.authority_scope.value,
+                        "preserve_facets": list(asset.preserve_facets),
+                        "ignore_facets": list(asset.ignore_facets),
+                        "content_sha256": asset.content_sha256,
+                        "lineage_parent_sha256": asset.lineage_parent_sha256,
                     }
-                    for ref in refs
+                    for asset in reference_plan.selected
                 ],
+                "reference_diagnostics": {
+                    "dropped": [
+                        {
+                            "path": _relative_to_project(drop.candidate.path, project_dir),
+                            "role": drop.candidate.role,
+                            "reason": drop.reason.value,
+                            "detail": drop.detail,
+                        }
+                        for drop in reference_plan.dropped
+                    ],
+                    "warnings": list(reference_plan.warnings),
+                },
                 "continuity_note": prompt.continuity_note,
                 "layout": (
                     prompt.layout.sanitized().model_dump()
@@ -563,7 +737,10 @@ async def _generate_panel(
             output_path.exists()
             and not force
             and not artifacts.asset_failure_path(output_path).exists()
-            and artifacts.asset_matches_meta(output_path, _meta_with_output_aspect(output_path, meta_payload, prompt))
+            and _asset_matches_generation_meta(
+                output_path,
+                _meta_with_output_aspect(output_path, meta_payload, prompt),
+            )
         ):
             return ApiResult(value=output_path, usage=None)
 
@@ -823,7 +1000,13 @@ async def run(
         console.print(f"[yellow]{drift_msg}[/yellow]")
         ctx.log(drift_msg, level="warning")
 
-    estimated = estimate_image_cost(config.effective_image_model(), len(prompt_files), quality=getattr(config, "image_quality", None))
+    estimated = _estimate_prompt_files_cost(
+        config,
+        project_dir,
+        prompt_files,
+        style_sample=style_sample,
+        scene_to_location=scene_to_location,
+    )
     batch_size = config.effective_image_concurrency()
     semaphore = asyncio.Semaphore(batch_size)
 

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from novel_to_comic.config import Config
-from novel_to_comic.models.prompt import ImagePrompt
+from novel_to_comic.models.prompt import ImagePrompt, PromptAnchor, PromptSubject
 from novel_to_comic.models.story_bible import Location, Scene, StoryBible
 from novel_to_comic.server.routers.labs import (
     _project_scene_reference_payload,
@@ -64,10 +64,22 @@ def test_project_scene_import_collects_draw_stage_reference_images(tmp_path: Pat
         scene_id="scene_001",
         panel_number=1,
         full_prompt="A library panel.",
-        reference_image_paths=[
-            "refs/char_001/sheet.png",
-            "refs/props/prop_001/ref.png",
+        subjects=[
+            PromptSubject(
+                character_id="char_001",
+                name="Character",
+                identity="a character",
+            )
         ],
+        anchors=[
+            PromptAnchor(
+                kind="prop",
+                entity_id="prop_001",
+                name="Prop",
+                text="a prop",
+            )
+        ],
+        location_id="loc_001",
         width=768,
         height=1024,
         steps=28,

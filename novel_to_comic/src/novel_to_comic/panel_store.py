@@ -139,7 +139,7 @@ def apply_prompt_patch(prompt: ImagePrompt, patch: dict[str, Any]) -> ImagePromp
     new_overlays: list[PromptOverlayOp] = []
     for key, value in patch.items():
         if key == "subjects":
-            new_subjects = _coerce_subjects(value)
+            new_subjects = _coerce_subjects(value, prompt.subjects)
             new_overlays.extend(_subject_overlay_ops(prompt.subjects, new_subjects))
             updated.subjects = new_subjects
         elif key == "layout":
@@ -148,8 +148,12 @@ def apply_prompt_patch(prompt: ImagePrompt, patch: dict[str, Any]) -> ImagePromp
             setattr(updated, key, value)
             new_overlays.append(PromptOverlayOp(
                 field=key,  # type: ignore[arg-type]
-                value=str(value),
-                location_state_id=getattr(prompt, "location_state_id", None),
+                value=value,
+                location_state_id=(
+                    getattr(prompt, "location_state_id", None)
+                    if key == "setting"
+                    else None
+                ),
             ))
 
     # Centralized derived-field invalidation.
@@ -221,7 +225,9 @@ def _merge_overlays(
     return merged
 
 
-def _coerce_subjects(value: Any) -> list[PromptSubject]:
+def _coerce_subjects(
+    value: Any, existing_subjects: list[PromptSubject]
+) -> list[PromptSubject]:
     """Coerce a patch ``subjects`` value into validated PromptSubject models.
 
     Rejects any attempt to mutate ``identity``/``appearance_locked``/``appearance_guard``
@@ -230,13 +236,19 @@ def _coerce_subjects(value: Any) -> list[PromptSubject]:
     """
     if not isinstance(value, list):
         raise ValueError("subjects patch must be a list")
-    forbidden_subject_keys = {
+    protected_subject_keys = {
         "identity",
         "appearance_locked",
         "appearance_guard",
         "appearance_state_id",
+        "appearance_state_canonical_equivalent",
         "character_id",
         "name",
+    }
+    existing_by_id = {
+        subject.character_id: subject
+        for subject in existing_subjects
+        if subject.character_id
     }
     out: list[PromptSubject] = []
     for index, item in enumerate(value):
@@ -247,13 +259,22 @@ def _coerce_subjects(value: Any) -> list[PromptSubject]:
             continue
         if not isinstance(item, dict):
             raise ValueError(f"subjects[{index}] must be an object")
-        forbidden_subject = set(item) & forbidden_subject_keys
-        if forbidden_subject:
-            raise ValueError(
-                "subjects patch rejects identity/anchor fields: "
-                + ", ".join(sorted(forbidden_subject))
-            )
-        out.append(PromptSubject.model_validate(item))
+        incoming_id = item.get("character_id")
+        existing = existing_by_id.get(incoming_id) if incoming_id else None
+        if existing is None and index < len(existing_subjects):
+            existing = existing_subjects[index]
+        if existing is None:
+            raise ValueError(f"subjects[{index}] does not match an existing subject")
+        for key in protected_subject_keys & set(item):
+            if item[key] != getattr(existing, key):
+                raise ValueError(f"subjects[{index}] changes protected subject field: {key}")
+        updated = existing.model_copy(deep=True)
+        for key in ("action", "expression", "position"):
+            if key in item:
+                setattr(updated, key, item[key])
+        out.append(updated)
+    if len(out) != len(existing_subjects):
+        raise ValueError("subjects patch must include every existing subject")
     return out
 
 

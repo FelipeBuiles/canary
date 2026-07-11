@@ -8,7 +8,7 @@ from PIL import Image as PILImage
 from novel_to_comic import artifacts
 from novel_to_comic.config import Config
 from novel_to_comic.models.story_bible import Character, Location, Prop, StoryBible
-from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
+from novel_to_comic.models.prompt import ImagePrompt, PromptAnchor, PromptSubject
 from novel_to_comic.prompting import IMAGE_PROMPT_VERSION
 from novel_to_comic.server.routers.stages import list_images
 from novel_to_comic.state import create_initial_state
@@ -175,6 +175,62 @@ def test_generate_panel_regenerates_stale_existing_image(tmp_path, monkeypatch):
     assert meta["prompt_sha256"] != "old"
 
 
+def test_selected_reference_byte_change_invalidates_panel_cache(tmp_path, monkeypatch):
+    prompt_dir = tmp_path / "direct" / "scene_001"
+    prompt_dir.mkdir(parents=True)
+    prompt_path = prompt_dir / "panel_001.json"
+    prompt_path.write_text(ImagePrompt(
+        prompt_version=IMAGE_PROMPT_VERSION,
+        planned_panel_id="scene_001:panel_001",
+        scene_id="scene_001",
+        panel_number=1,
+        full_prompt="A portrait.",
+        subjects=[PromptSubject(
+            character_id="char_001",
+            name="Hero",
+            identity="a hero",
+        )],
+        width=768,
+        height=1024,
+        steps=8,
+    ).model_dump_json())
+    ref = tmp_path / "refs" / "char_001" / "front.png"
+    ref.parent.mkdir(parents=True)
+    ref.write_bytes(b"reference-v1")
+
+    calls: list[dict] = []
+
+    async def fake_generate_image_multi_ref(**kwargs):
+        calls.append(kwargs)
+        kwargs["output_path"].parent.mkdir(parents=True, exist_ok=True)
+        kwargs["output_path"].write_bytes(b"panel")
+        return ApiResult(value=kwargs["output_path"])
+
+    monkeypatch.setattr(s7_draw.flux, "generate_image_multi_ref", fake_generate_image_multi_ref)
+    config = Config(
+        image_model="image-balanced",
+        visual_brief_enabled=False,
+        layout_prompts_enabled=False,
+    )
+
+    args = (
+        config, tmp_path, prompt_path, asyncio.Semaphore(1), None, {}, None, None,
+    )
+    asyncio.run(s7_draw._generate_panel(*args))
+    meta = artifacts.read_asset_meta(
+        tmp_path / "draw" / "scene_001" / "panel_001.png"
+    )
+    assert len(meta["parameters"]["reference_selection_fingerprint"]) == 64
+    assert meta["parameters"]["refs"][0]["content_sha256"]
+    assert "reference_diagnostics" in meta["parameters"]
+    asyncio.run(s7_draw._generate_panel(*args))
+    assert len(calls) == 1
+
+    ref.write_bytes(b"reference-v2")
+    asyncio.run(s7_draw._generate_panel(*args))
+    assert len(calls) == 2
+
+
 def test_panel_estimate_counts_actual_uploaded_references(tmp_path):
     ref_dir = tmp_path / "refs" / "hero"
     ref_dir.mkdir(parents=True)
@@ -198,7 +254,8 @@ def test_panel_estimate_counts_actual_uploaded_references(tmp_path):
         scene_id="scene_001",
         panel_number=1,
         full_prompt="A panel.",
-        reference_image_paths=["refs/hero/sheet.png", "refs/missing/sheet.png"],
+        subjects=[PromptSubject(name="Hero", character_id="hero", identity="hero")],
+        location_id="loc_001",
         width=768,
         height=1024,
         steps=28,
@@ -217,6 +274,21 @@ def test_panel_estimate_counts_actual_uploaded_references(tmp_path):
     # 3 uploaded refs (hero subject + style + plate) x 0.00028 input each.
     # The missing `refs/missing/sheet.png` must be ignored, not counted.
     assert cost == pytest.approx(0.03444)
+
+
+def test_run_estimate_uses_only_selected_prompt_files(tmp_path, monkeypatch):
+    selected = tmp_path / "direct" / "scene_001" / "panel_001.json"
+    unrelated = tmp_path / "direct" / "scene_002" / "panel_001.json"
+
+    def fake_panel_estimate(_config, _project_dir, prompt_path, **_kwargs):
+        return 1.25 if prompt_path == selected else 99.0
+
+    monkeypatch.setattr(s7_draw, "estimate_panel_image_cost_usd", fake_panel_estimate)
+    total = s7_draw._estimate_prompt_files_cost(
+        Config(), tmp_path, [selected], style_sample=None, scene_to_location={}
+    )
+    assert total == 1.25
+    assert unrelated not in [selected]
 
 
 def test_output_aspect_meta_flags_shape_mismatch(tmp_path):
@@ -315,11 +387,13 @@ def test_gpt_image_2_reference_resolution_uses_minimal_subject_refs(tmp_path):
                 identity="elderly man in a waistcoat",
             )
         ],
-        reference_image_paths=[
-            "refs/char_001/front.png",
-            "refs/char_001/three_quarter.png",
-            "refs/char_001/gesture.png",
-            "refs/props/prop_001/ref.png",
+        anchors=[
+            PromptAnchor(
+                kind="prop",
+                entity_id="prop_001",
+                name="The Paw",
+                text="a preserved monkey paw",
+            )
         ],
         width=768,
         height=1024,
@@ -338,9 +412,9 @@ def test_gpt_image_2_reference_resolution_uses_minimal_subject_refs(tmp_path):
     )
 
     assert [ref.path for ref in gpt_refs] == [front]
-    assert [ref.path for ref in gemini_refs] == [front, three_quarter, gesture, prop_ref]
-    assert [ref.role for ref in gemini_refs] == ["subject", "subject", "subject", "prop"]
-    assert [ref.label for ref in gemini_refs] == ["Mr. White", "Mr. White", "Mr. White", "prop_001"]
+    assert [ref.path for ref in gemini_refs] == [three_quarter, prop_ref]
+    assert [ref.role for ref in gemini_refs] == ["subject", "prop"]
+    assert [ref.label for ref in gemini_refs] == ["Mr. White", "prop_001"]
 
 
 def test_gpt_image_2_cast_assets_skip_style_sample(tmp_path):

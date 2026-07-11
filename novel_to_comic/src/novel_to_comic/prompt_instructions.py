@@ -145,7 +145,11 @@ def apply_instruction_patch(prompt: ImagePrompt, patch: PromptInstructionPatch) 
             new_overlays.append(PromptOverlayOp(
                 field=operation.field,
                 value=value,
-                location_state_id=getattr(prompt, "location_state_id", None),
+                location_state_id=(
+                    getattr(prompt, "location_state_id", None)
+                    if operation.field == "setting"
+                    else None
+                ),
             ))
             changed = True
             continue

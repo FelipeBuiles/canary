@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 
 from novel_to_comic.ai.errors import AIRefusalError
-from novel_to_comic.ai.providers.base import ProviderRawResult, RefImage, order_refs_for_upload
+from novel_to_comic.ai.providers.base import ProviderRawResult, RefImage
 from novel_to_comic.config import Config, is_gpt_image_2
 from novel_to_comic.panel_aspect import aspect_for_dimensions, generation_shape_for_aspect
 
@@ -177,8 +177,8 @@ def _load_refs(refs: list[RefImage]) -> list[tuple[RefImage, bytes]]:
     for ref in _flatten_refs(refs):
         try:
             loaded.append((ref, ref.path.read_bytes()))
-        except OSError:
-            continue
+        except OSError as exc:
+            raise ValueError(f"Finalized reference became unreadable: {ref.path}") from exc
     return loaded
 
 
@@ -220,9 +220,7 @@ def _label_slug(label: str | None) -> str:
 
 
 def _flatten_refs(refs: list[RefImage]) -> list[RefImage]:
-    # Single source of truth shared with prompting.render_generation_prompt,
-    # which renders <img>N</img> indices assuming this exact upload order.
-    return order_refs_for_upload(refs)
+    return list(refs)
 
 
 def _valid_gpt_image_2_size(width: int, height: int) -> bool:

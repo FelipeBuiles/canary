@@ -3,7 +3,6 @@ import type { ImagePrompt, PromptSubject } from "../types/api";
 import { CollapsibleSection } from "./ui/CollapsibleSection";
 import { EditableText } from "./ui/EditableText";
 import { Tag } from "./ui/Tag";
-import { ImageModal } from "./ui/ImageModal";
 import { StatusPill } from "./ui/StatusPill";
 import { cn } from "../lib/cn";
 import { renderPanelPromptBody } from "../lib/prompting";
@@ -243,11 +242,9 @@ export function PromptLineageCard({
   onSave,
   mode = "review",
   showAdvanced,
-  project,
 }: PromptLineageCardProps) {
   const editable = mode === "edit";
   const [showAdvancedState, setShowAdvancedState] = useState(false);
-  const [selectedRefImage, setSelectedRefImage] = useState<string | null>(null);
   const [highlightedFields, setHighlightedFields] = useState<string[]>([]);
   const [highlightFromMap, setHighlightFromMap] = useState<Record<string, string>>({});
   const highlightTimersRef = useRef(new Map<string, number>());
@@ -439,24 +436,9 @@ export function PromptLineageCard({
           />
 
           <CollapsibleSection title="REFERENCE IMAGES" defaultExpanded storageKey="refimages">
-            <div className="flex flex-wrap gap-1">
-              {prompt.reference_image_paths.map((path, i) => {
-                const fileName = path.split("/").pop() ?? path;
-                const refUrl = project
-                  ? `/api/projects/${encodeURIComponent(project)}/files/${path}`
-                  : path;
-                return (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => setSelectedRefImage(refUrl)}
-                    className="cursor-pointer hover:opacity-70 transition-opacity"
-                  >
-                    <Tag>{fileName}</Tag>
-                  </button>
-                );
-              })}
-            </div>
+            <p className="text-[0.82rem] leading-6 text-ink-black/65">
+              References are resolved from the active character and location states when the panel is generated.
+            </p>
           </CollapsibleSection>
         </>
       )}
@@ -492,14 +474,6 @@ export function PromptLineageCard({
             {prompt.continuity_note}
           </p>
         </CollapsibleSection>
-      )}
-      {selectedRefImage && (
-        <ImageModal
-          isOpen={!!selectedRefImage}
-          onClose={() => setSelectedRefImage(null)}
-          src={selectedRefImage}
-          alt={selectedRefImage.split("/").pop() ?? "Reference image"}
-        />
       )}
     </div>
   );

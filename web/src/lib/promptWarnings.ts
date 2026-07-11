@@ -15,16 +15,6 @@ export function detectPromptWarnings(prompt: ImagePrompt): PromptWarning[] {
     warnings.push({ code, label, detail, scene_id, panel_number });
   }
 
-  // missing_character_ref
-  const hasCharacterSubject = (prompt.subjects ?? []).some((s) => s.character_id != null);
-  if (hasCharacterSubject && prompt.reference_image_paths.length === 0) {
-    warn(
-      "missing_character_ref",
-      "Missing character reference",
-      "No reference image is attached. The model will invent the character's appearance.",
-    );
-  }
-
   // thin_composition
   const comp = prompt.composition ?? "";
   if (comp.trim().length < 20) {
@@ -58,7 +48,7 @@ export function detectPromptWarnings(prompt: ImagePrompt): PromptWarning[] {
   }
 
   // missing_style
-  if (!prompt.style && prompt.reference_image_paths.length === 0) {
+  if (!prompt.style) {
     warn(
       "missing_style",
       "No style or reference",
