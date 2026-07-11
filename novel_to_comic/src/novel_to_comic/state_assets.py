@@ -24,6 +24,10 @@ STATE_ASSET_SPEC_VERSION = 1
 class LineageMode(StrEnum):
     UNCONDITIONED = "unconditioned"
     CONDITIONED = "conditioned"
+    #: Total transformation/destruction with no compatible canonical facets. The
+    #: canonical parent hash is retained as semantic lineage but not sent; the
+    #: request generates from the self-contained state anchor.
+    STATE_ONLY = "state_only"
 
 
 class LineageStatus(StrEnum):
@@ -35,6 +39,8 @@ class LineageStatus(StrEnum):
 _FACET_PATTERNS: dict[str, tuple[str, ...]] = {
     "age": (r"\bage[sd]?\b", r"\byears? old\b", r"\b(?:young|old|elderly|teen)\b"),
     "hair": (r"\bhair\b", r"\bbald\b", r"\bbraids?\b"),
+    "face": (r"\bface\b", r"\b(?:visage|countenance|features)\b", r"\bno human face\b"),
+    "build": (r"\b(?:build|physique|frame|stature|muscular|slender|stocky|hulking|scaled body)\b",),
     "anatomy": (r"\b(?:hand|limb|arm|leg|stump|prosthe|wing|tail|body)\w*\b",),
     "clothing": (r"\b(?:wear|coat|tunic|dress|shirt|trouser|robe|outfit|jacket|armor|clothing)\w*\b",),
     "damage": (r"\b(?:damage|ruin|collapse|crack|burn|broken|destroy|wound|scar|blood)\w*\b",),
@@ -80,6 +86,49 @@ def _stable_clauses(anchor: str, overridden: set[str]) -> list[str]:
     return [clause for clause in clauses if not (set(_facets(clause)) & overridden)]
 
 
+def _facet_clauses(anchor: str) -> dict[str, list[str]]:
+    """Map each facet → its clauses in the anchor.
+
+    Used to compare which facet-bearing clauses changed between a canonical
+    anchor and a state anchor. A facet is "changed" only when the state anchor's
+    clause text for that facet differs from (or is absent in) the canonical
+    anchor — not merely when the facet keyword appears (self-contained state
+    anchors restate unchanged identity).
+    """
+    out: dict[str, list[str]] = {}
+    for clause in (part.strip() for part in re.split(r"[,;]", anchor) if part.strip()):
+        for facet in _facets(clause):
+            out.setdefault(facet, []).append(clause.lower())
+    return out
+
+
+def _changed_facets(canonical_anchor: str, state_anchor: str) -> set[str]:
+    """Facets whose clause content differs between canonical and state.
+
+    A state anchor is self-contained: it restates identity (age, hair) even when
+    unchanged. Comparing clause text — not keyword presence — distinguishes a
+    restated compatible facet from an actual override. Returns the set of facet
+    names whose state clauses differ from or extend the canonical clauses.
+    """
+    canon = _facet_clauses(canonical_anchor)
+    state = _facet_clauses(state_anchor)
+    changed: set[str] = set()
+    for facet, state_clauses in state.items():
+        canon_clauses = canon.get(facet, [])
+        # Normalize for comparison: the facet changed if any state clause is not
+        # a restatement of a canonical clause.
+        if not canon_clauses:
+            # Facet appears in state but not canonical → new/changed.
+            changed.add(facet)
+            continue
+        canon_set = {c for c in canon_clauses}
+        for sc in state_clauses:
+            if sc not in canon_set:
+                changed.add(facet)
+                break
+    return changed
+
+
 class StateAssetGenerationSpec(BaseModel):
     spec_version: int = STATE_ASSET_SPEC_VERSION
     asset_kind: Literal["character_state_ref", "location_state_plate"]
@@ -103,6 +152,13 @@ class StateAssetGenerationSpec(BaseModel):
     lineage_mode: LineageMode = LineageMode.UNCONDITIONED
     lineage_status: LineageStatus
     rendered_prompt: str
+    #: Reference roles + content hashes from the conditioning plan (Slice 09).
+    #: Populated by ``build_state_reference_plan``; empty for pre-Slice-09 specs.
+    reference_summary: tuple[dict, ...] = ()
+    #: Compiled/wire request identity hashes (Slice 09). Populated when the state
+    #: request is compiled; remain ``None`` placeholders until provenance slices.
+    compiled_request_sha256: str | None = None
+    execution_fingerprint: str | None = None
 
     def lineage_metadata(self) -> dict:
         return {
@@ -122,6 +178,9 @@ class StateAssetGenerationSpec(BaseModel):
             "state_addendum_revision": self.state_addendum_revision,
             "lineage_mode": self.lineage_mode,
             "lineage_status": self.lineage_status,
+            "reference_summary": [dict(item) for item in self.reference_summary],
+            "compiled_request_sha256": self.compiled_request_sha256,
+            "execution_fingerprint": self.execution_fingerprint,
             "generated_request_link": None,
             "provenance_link": None,
             "preserved_facets": list(self.preserved_facets),
@@ -234,7 +293,12 @@ def mark_dependent_states_stale(
 
 
 def revalidate_state_asset_lineage(state_path: Path, parent_path: Path) -> dict | None:
-    """Revalidate restored/current state metadata against canonical bytes."""
+    """Revalidate restored/current state metadata against canonical bytes.
+
+    Slice 09: conditioned and state-only assets whose parent hash still matches
+    are current; only unconditioned assets remain unverified (they were never
+    conditioned on the canonical parent).
+    """
     meta = artifacts.read_asset_meta(state_path)
     if not meta:
         return None
@@ -249,16 +313,427 @@ def revalidate_state_asset_lineage(state_path: Path, parent_path: Path) -> dict 
             "current_parent_sha256": parent_hash,
         }
         artifacts.write_asset_meta(state_path, meta)
-    elif meta.get("lineage_mode") == LineageMode.UNCONDITIONED:
-        meta["lineage_status"] = LineageStatus.UNVERIFIED
-        meta.pop("lineage_warning", None)
-        artifacts.write_asset_meta(state_path, meta)
+    else:
+        mode = meta.get("lineage_mode")
+        if mode == LineageMode.UNCONDITIONED:
+            meta["lineage_status"] = LineageStatus.UNVERIFIED
+            meta.pop("lineage_warning", None)
+            artifacts.write_asset_meta(state_path, meta)
+        elif mode in (LineageMode.CONDITIONED, LineageMode.STATE_ONLY):
+            # Parent hash matches: a conditioned/state-only asset is current.
+            meta["lineage_status"] = LineageStatus.CURRENT
+            meta.pop("lineage_warning", None)
+            artifacts.write_asset_meta(state_path, meta)
     return meta
+
+
+# ---------------------------------------------------------------------------
+# Slice 09 — canonical-conditioned reference plan for state assets
+# ---------------------------------------------------------------------------
+
+#: Character identity facets the canonical parent can safely condition even when
+#: a state overrides mutable facets (clothing, anatomy, age, hair). A dedicated
+#: state ref carries full appearance authority; the canonical parent used as a
+#: compatible identity reference preserves only these facets.
+_CHARACTER_IDENTITY_FACETS: tuple[str, ...] = ("face", "hair", "build")
+
+#: Facets that a character state anchor may override. When overridden, the
+#: canonical parent ignores them (it must not reassert the canonical version).
+_CHARACTER_OVERRIDABLE_FACETS: dict[str, tuple[str, ...]] = {
+    "age": ("age",),
+    "hair": ("hair",),
+    "face": ("face",),
+    "build": ("build",),
+    "anatomy": ("anatomy",),
+    "clothing": ("wardrobe",),
+}
+
+#: Location identity facets the canonical plate can safely condition.
+_LOCATION_IDENTITY_FACETS: tuple[str, ...] = ("architecture", "landmarks", "materials")
+
+#: Facets that a location state anchor may override. When overridden, the
+#: canonical plate defers to the active state's version of that facet.
+_LOCATION_OVERRIDABLE_FACETS: dict[str, tuple[str, ...]] = {
+    "architecture": ("architecture",),
+    "damage": ("damage",),
+    "water_level": ("water_level",),
+    "weather": ("weather",),
+    "light": ("light",),
+    "atmosphere": ("atmosphere",),
+}
+
+#: State-anchor facets that represent a TOTAL transformation: when every one of
+#: a parent's identity facets is overridden, the parent is contradictory and is
+#: omitted rather than sent. Identity facets are face, hair, build — when all
+#: three are changed, the canonical parent has nothing compatible to offer.
+_CHARACTER_TOTAL_FACETS = {"face", "hair", "build", "age", "anatomy", "clothing"}
+_LOCATION_TOTAL_FACETS = {"architecture", "damage", "water_level", "weather", "light", "atmosphere"}
+
+#: Patterns that signal a total identity replacement (human → non-human form),
+#: even when not every identity facet keyword appears. Used as an additional
+#: total-transformation signal beyond facet-keyword comparison.
+_TOTAL_IDENTITY_NEGATION = (
+    re.compile(r"\bno\s+(?:human\s+)?face\b"),
+    re.compile(r"\b(?:transformed?|metamorphos\w+|became?\w*)\s+(?:into|to)\b"),
+    re.compile(r"\b(?:serpent|beast|creature|monster|dragon|wolf|animal|insect)\b"),
+)
+
+
+class StateConditioningError(ValueError):
+    """A state asset cannot be safely conditioned on its canonical parent."""
+
+
+def _map_overridden_facets(
+    overridden_facets: tuple[str, ...], table: dict[str, tuple[str, ...]]
+) -> tuple[str, ...]:
+    """Map state-anchor facet names to the identity-facet vocabulary the
+    reference plan uses (e.g. state ``clothing`` → plan ``wardrobe``)."""
+    out: list[str] = []
+    for facet in overridden_facets:
+        out.extend(table.get(facet, (facet,)))
+    return tuple(dict.fromkeys(out))  # dedupe preserving order
+
+
+def _build_character_conditioning_assets(
+    spec: StateAssetGenerationSpec,
+    project_dir: Path,
+    parent_path: Path,
+    parent_hash: str,
+    *,
+    route_profile,
+) -> tuple[list, list, bool]:
+    """Resolve the canonical character identity reference + style for a state.
+
+    Returns (assets, dropped, is_total_transformation).
+    """
+    from novel_to_comic.image_references import (
+        AuthorityScope,
+        DroppedReference,
+        DropReason,
+        ReferenceAsset,
+        SemanticCandidate,
+    )
+
+    # Use clause-level comparison to find facets that actually CHANGED (a
+    # self-contained state anchor restates unchanged identity for completeness).
+    changed = _changed_facets(spec.canonical_parent_identity, spec.active_state_anchor)
+    # Map changed state-anchor facets to the identity-facet vocabulary.
+    changed_mapped = _map_overridden_facets(
+        tuple(sorted(changed & _CHARACTER_TOTAL_FACETS)), _CHARACTER_OVERRIDABLE_FACETS
+    )
+    # A total transformation replaces every useful identity facet (face, hair,
+    # build). Additionally, explicit identity-negation language ("no human
+    # face", "transformed into a beast") signals a total replacement even when
+    # not every keyword surfaces.
+    lowered_anchor = spec.active_state_anchor.lower()
+    identity_negated = any(p.search(lowered_anchor) for p in _TOTAL_IDENTITY_NEGATION)
+    identity_replaced = set(changed_mapped) >= set(_CHARACTER_IDENTITY_FACETS)
+    is_total = identity_replaced or (
+        identity_negated and "face" in changed_mapped
+    )
+    # A total transformation replaces every useful identity facet — face is the
+    # only thing the canonical parent could still offer, but a winged serpent
+    # with no human face has nothing compatible left.
+    if is_total:
+        dropped = [DroppedReference(
+            candidate=SemanticCandidate(
+                path=parent_path, role="subject", entity_id=spec.entity_id,
+                appearance_state_id=spec.state_id, label=spec.entity_id,
+            ),
+            reason=DropReason.STATE_CONFLICT,
+            detail=(
+                f"state {spec.state_id} is a total transformation; every "
+                "identity facet is overridden — the canonical parent is "
+                "contradictory and omitted"
+            ),
+        )]
+        return [], dropped, True
+
+    ignore_facets = changed_mapped
+    # Identity facets not overridden are what the parent can still condition.
+    preserve_facets = tuple(
+        f for f in _CHARACTER_IDENTITY_FACETS if f not in set(ignore_facets)
+    )
+    asset = ReferenceAsset(
+        path=parent_path,
+        role="subject",
+        entity_id=spec.entity_id,
+        appearance_state_id=spec.state_id,
+        authority_scope=AuthorityScope.IDENTITY_ONLY,
+        preserve_facets=preserve_facets,
+        ignore_facets=ignore_facets,
+        pose="sheet",
+        content_sha256=parent_hash,
+        lineage_parent_sha256=parent_hash,
+        label=spec.entity_id,
+    )
+    return [asset], [], False
+
+
+def _build_location_conditioning_assets(
+    spec: StateAssetGenerationSpec,
+    project_dir: Path,
+    parent_path: Path,
+    parent_hash: str,
+    *,
+    route_profile,
+) -> tuple[list, list, bool]:
+    """Resolve the canonical location identity reference + style for a state.
+
+    Returns (assets, dropped, is_total_transformation).
+    """
+    from novel_to_comic.image_references import (
+        AuthorityScope,
+        DroppedReference,
+        DropReason,
+        ReferenceAsset,
+        SemanticCandidate,
+    )
+
+    changed = _changed_facets(spec.canonical_parent_identity, spec.active_state_anchor)
+    changed_loc = changed & _LOCATION_TOTAL_FACETS
+    lowered_anchor = spec.active_state_anchor.lower()
+    # A total location destruction explicitly negates core structure and is
+    # irrecoverable. When the anchor removes the primary landmark AND signals
+    # annihilation, the canonical plate is contradictory and omitted.
+    structure_negated = bool(re.search(
+        r"\b(?:no\s+(?:walls?|roof|building|house|tower|bridge)|crater|annihilat\w+|"
+        r"everything\s+destroy\w+|nothing\s+(?:remains|left)|leveled|flattened)\b",
+        lowered_anchor,
+    ))
+    is_total = changed_loc == _LOCATION_TOTAL_FACETS or (
+        structure_negated and "architecture" in changed_loc
+    )
+    if is_total:
+        dropped = [DroppedReference(
+            candidate=SemanticCandidate(
+                path=parent_path, role="location_plate", entity_id=spec.entity_id,
+                appearance_state_id=spec.state_id, label=spec.entity_id,
+            ),
+            reason=DropReason.STATE_CONFLICT,
+            detail=(
+                f"state {spec.state_id} is a total destruction; every location "
+                "facet is overridden — the canonical plate is contradictory "
+                "and omitted"
+            ),
+        )]
+        return [], dropped, True
+
+    asset = ReferenceAsset(
+        path=parent_path,
+        role="location_plate",
+        entity_id=spec.entity_id,
+        appearance_state_id=spec.state_id,
+        authority_scope=AuthorityScope.CONTEXTUAL,
+        preserve_facets=_LOCATION_IDENTITY_FACETS,
+        ignore_facets=(),
+        pose=None,
+        content_sha256=parent_hash,
+        lineage_parent_sha256=parent_hash,
+        label=spec.entity_id,
+    )
+    return [asset], [], False
+
+
+def _maybe_style_asset(
+    spec: StateAssetGenerationSpec, project_dir: Path
+) -> object | None:
+    """Build a style reference asset from the spec's style path, if present.
+
+    The spec stores a project-relative style path; resolve it against
+    ``project_dir``.
+    """
+    if not spec.style_path:
+        return None
+    style_path = Path(spec.style_path)
+    if not style_path.is_absolute():
+        style_path = project_dir / style_path
+    if not style_path.exists():
+        return None
+    from novel_to_comic.image_references import (
+        AuthorityScope, ReferenceAsset, _file_sha256,
+    )
+    content_hash = _file_sha256(style_path)
+    if content_hash is None:
+        return None
+    return ReferenceAsset(
+        path=style_path, role="style", entity_id=None, appearance_state_id=None,
+        authority_scope=AuthorityScope.CONTEXTUAL,
+        preserve_facets=(), ignore_facets=(), pose=None,
+        content_sha256=content_hash, lineage_parent_sha256=None,
+        label="selected style",
+    )
+
+
+def build_state_reference_plan(
+    spec: StateAssetGenerationSpec,
+    project_dir: Path,
+    *,
+    route_profile=None,
+):
+    """Build the canonical-conditioned reference plan for a state asset.
+
+    The plan reuses the Slice 04 ``ReferencePlan`` type and route caps: the
+    canonical parent (character sheet / location plate) is selected as a
+    compatible identity reference whose ``ignore_facets`` cover every facet the
+    active state overrides. Style is added when the route cap has room.
+
+    - When the state spec records a canonical parent hash, the parent bytes on
+      disk are verified against it. A missing or digest-mismatched parent fails
+      with :class:`StateConditioningError` before any provider I/O.
+    - A total transformation/destruction (no compatible identity facets) omits
+      the contradictory parent, records a ``state_conflict`` drop, and sets
+      ``lineage_mode=state_only``.
+
+    The spec's ``lineage_mode``/``lineage_status`` and ``reference_summary`` are
+    updated as a side effect so the persisted metadata reflects the plan.
+    """
+    from novel_to_comic.image_references import (
+        DroppedReference,
+        DropReason,
+        ReferencePlan,
+        selection_fingerprint_hex,
+        _SELECTION_ORDER,
+    )
+
+    if route_profile is None:
+        # Derive the route profile from the spec's recorded route/model. Re-load
+        # a minimal config-like object: the spec already carries the route name.
+        from novel_to_comic.image_models import ImageRoute
+        route_name = spec.configured_route
+        route = next(
+            (r for r in ImageRoute if r.value == route_name), ImageRoute.UNKNOWN
+        )
+        route_profile = image_model_profile_for_route(route)
+
+    is_character = spec.asset_kind == "character_state_ref"
+    parent_path = (
+        artifacts.character_ref_sheet_path(project_dir, spec.entity_id)
+        if is_character else artifacts.location_plate_path(project_dir, spec.entity_id)
+    )
+
+    # ── 1. Verify canonical parent exists and matches the recorded digest. ──
+    if not parent_path.exists():
+        raise StateConditioningError(
+            f"canonical parent for state {spec.entity_id}:{spec.state_id} is "
+            f"missing at {parent_path} — cannot condition state asset without a "
+            "canonical parent"
+        )
+    parent_hash = _file_sha256_for_state(parent_path)
+    recorded_hash = spec.canonical_parent_sha256
+    if recorded_hash is not None and parent_hash != recorded_hash:
+        raise StateConditioningError(
+            f"canonical parent for state {spec.entity_id}:{spec.state_id} has "
+            f"changed (expected {recorded_hash[:12]}…, got {parent_hash[:12]}…) "
+            "— regenerate the canonical asset before conditioning the state"
+        )
+
+    # ── 2. Resolve canonical identity candidate (compatibility-checked). ─────
+    if is_character:
+        assets, dropped, is_total = _build_character_conditioning_assets(
+            spec, project_dir, parent_path, parent_hash, route_profile=route_profile,
+        )
+    else:
+        assets, dropped, is_total = _build_location_conditioning_assets(
+            spec, project_dir, parent_path, parent_hash, route_profile=route_profile,
+        )
+
+    # ── 3. Add style where space permits (lower priority than identity). ─────
+    style_asset = None
+    if not is_total:
+        style_asset = _maybe_style_asset(spec, project_dir)
+
+    cap = route_profile.max_references
+
+    # Identity assets claim slots first; canonical identity has priority over
+    # redundant style under a tight cap.
+    selected: list = []
+    for asset in assets:
+        if len(selected) >= cap:
+            dropped.append(DroppedReference(
+                candidate=asset,
+                reason=DropReason.PROVIDER_CAP,
+                detail=f"{asset.role} dropped: route cap {cap} reached",
+            ))
+        else:
+            selected.append(asset)
+
+    # Style fills a remaining slot only if the route accepts it.
+    if style_asset is not None:
+        if "style" in route_profile.supported_roles:
+            if len(selected) < cap:
+                selected.append(style_asset)
+            else:
+                dropped.append(DroppedReference(
+                    candidate=style_asset,
+                    reason=DropReason.PROVIDER_CAP,
+                    detail=(
+                        "style dropped: route cap reached — canonical identity "
+                        "kept; style is redundant"
+                    ),
+                ))
+        else:
+            dropped.append(DroppedReference(
+                candidate=style_asset,
+                reason=DropReason.UNSUPPORTED_ROLE,
+                detail=f"route {route_profile.route.value} does not accept style refs",
+            ))
+
+    # ── 4. Final ordering (subjects before contextual). ─────────────────────
+    selected.sort(key=lambda a: _SELECTION_ORDER.get(a.role, 99))
+    fingerprint = selection_fingerprint_hex(selected)
+
+    # ── 5. Update the spec's lineage mode/status + reference summary. ───────
+    if is_total:
+        spec.lineage_mode = LineageMode.STATE_ONLY
+        spec.lineage_status = LineageStatus.CURRENT
+    else:
+        spec.lineage_mode = LineageMode.CONDITIONED
+        spec.lineage_status = LineageStatus.CURRENT
+    spec.reference_summary = tuple(
+        {
+            "role": a.role,
+            "entity_id": a.entity_id,
+            "content_sha256": a.content_sha256,
+            "authority_scope": a.authority_scope.value,
+            "ignore_facets": list(a.ignore_facets),
+            "preserve_facets": list(a.preserve_facets),
+        }
+        for a in selected
+    )
+
+    return ReferencePlan(
+        expected_route=route_profile.route,
+        selected=tuple(selected),
+        dropped=tuple(dropped),
+        selection_fingerprint=fingerprint,
+        warnings=(),
+    )
+
+
+def _file_sha256_for_state(path: Path) -> str:
+    """Streaming SHA-256 for a state-asset parent file."""
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def image_model_profile_for_route(route) -> object:
+    """Resolve an :class:`ImageModelProfile` from an :class:`ImageRoute`.
+
+    Thin wrapper so state conditioning can derive the cap/roles from the spec's
+    recorded route without a full ``Config``.
+    """
+    from novel_to_comic.image_models import _profile_for_route
+    return _profile_for_route(route)
 
 
 __all__ = [
     "LineageMode", "LineageStatus", "STATE_ASSET_SPEC_VERSION",
-    "StateAssetGenerationSpec", "build_character_state_spec",
-    "build_location_state_spec", "mark_dependent_states_stale",
+    "StateAssetGenerationSpec", "StateConditioningError",
+    "build_character_state_spec", "build_location_state_spec",
+    "build_state_reference_plan", "mark_dependent_states_stale",
     "revalidate_state_asset_lineage",
 ]

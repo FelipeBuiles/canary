@@ -167,11 +167,22 @@ def test_explicit_state_routes_are_registered():
     assert "/location-plate-versions/restore" in paths
 
 
-def test_state_generation_uses_compiled_wire_without_canonical_reference(
+def test_state_generation_uses_compiled_wire_with_canonical_conditioning(
     tmp_path: Path, monkeypatch,
 ):
+    """Slice 08→09: state generation now conditions on the canonical parent.
+
+    Slice 08 built the wire with an empty ReferencePlan (unconditioned). Slice 09
+    adds compatible canonical identity conditioning, so the wire carries the
+    canonical parent as an identity-only subject reference.
+    """
     from novel_to_comic.stages.s3_cast import _generate_state_asset_wire
     from novel_to_comic.usage import ApiResult
+
+    # The canonical parent must exist for conditioning.
+    parent = artifacts.character_ref_sheet_path(tmp_path, "char_001")
+    parent.parent.mkdir(parents=True)
+    parent.write_bytes(b"canonical-sheet")
 
     spec = build_character_state_spec(
         Config(), tmp_path, _character(),
@@ -187,11 +198,13 @@ def test_state_generation_uses_compiled_wire_without_canonical_reference(
     monkeypatch.setattr("novel_to_comic.ai.generate_wire_image", fake_generate_wire_image)
     import asyncio
     asyncio.run(_generate_state_asset_wire(
-        Config(), spec, tmp_path / "state.png", feature="test"
+        Config(), spec, tmp_path / "state.png", tmp_path, feature="test"
     ))
 
     wire = captured["wire"]
     assert "SENTINEL silver hands" in wire.prompt_parts[0]
-    assert wire.references == ()
+    # Slice 09: the canonical parent is now a conditioned identity reference.
+    assert len(wire.references) >= 1
+    assert wire.references[0].role == "subject"
     assert wire.compiled_request_sha256
     assert wire.execution_fingerprint
