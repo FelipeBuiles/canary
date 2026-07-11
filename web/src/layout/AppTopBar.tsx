@@ -27,7 +27,6 @@ export function AppTopBar() {
   const displayCredits = useCountUp(credits);
   const isLow = credits < 150;
   const inProject = location.pathname.startsWith("/project/");
-  const studioName = String(user?.user_metadata?.studio_name || "Inkwell Studio");
   const email = user?.email ?? "hello@scenewright.ink";
 
   useEffect(() => {
@@ -63,16 +62,6 @@ export function AppTopBar() {
             <span className="bg-narrator-gold px-2.5 py-1 font-meta text-[0.54rem] font-bold tracking-[0.12em] text-ink-black">
               BETA
             </span>
-          </Link>
-          <span className="h-5 w-px bg-ink-black/14" />
-          <Link
-            to="/labs"
-            className={cn(
-              "font-meta text-[0.62rem] font-bold uppercase tracking-[0.16em] hover:text-hero-red",
-              location.pathname.startsWith("/labs") ? "text-ink-black" : "text-ink-black/62",
-            )}
-          >
-            Labs
           </Link>
         </div>
       )}
@@ -111,12 +100,6 @@ export function AppTopBar() {
                 </div>
                 <div className="mt-1 truncate font-body text-[0.82rem] font-semibold text-ink-black/52">
                   {email}
-                </div>
-                <div className="mt-4 flex items-center gap-2 font-body text-[0.78rem] font-semibold text-ink-black/54">
-                  Studio:
-                  <span className="bg-ink-black px-3 py-1 font-meta text-[0.56rem] uppercase tracking-[0.16em] text-bristol">
-                    {studioName}
-                  </span>
                 </div>
               </div>
               {[

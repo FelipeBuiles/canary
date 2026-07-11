@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useEffectEvent } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "./Icon";
 import { LazyImage } from "./LazyImage";
@@ -16,20 +16,22 @@ interface ImageModalProps {
 }
 
 export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar }: ImageModalProps) {
+  const closeModal = useEffectEvent(onClose);
+
   useEffect(() => {
     if (!isOpen) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") closeModal();
     }
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = prev;
     };
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 

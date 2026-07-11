@@ -155,8 +155,8 @@
 }
 
 .panel.panel-reframe {
-  outline: 7px solid rgba(22, 130, 220, 0.45);
-  outline-offset: -7px;
+  outline: 6px solid color-mix(in srgb, var(--color-narrator-gold) 78%, transparent);
+  outline-offset: -6px;
   cursor: grab;
 }
 
@@ -165,17 +165,21 @@
 }
 
 .panel.panel-reframe::before {
-  content: 'REFRAME';
+  content: 'REFRAME MODE';
   position: absolute;
-  top: 0;
-  right: 0;
+  top: 10px;
+  right: 10px;
   z-index: 8;
-  background: #1682dc;
-  color: #fff;
-  padding: 5px 8px;
-  font-family: var(--display-font, 'Bangers', 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif);
-  font-size: 16px;
-  letter-spacing: 0.08em;
+  border: 2px solid var(--color-ink-black);
+  background: var(--color-narrator-gold);
+  color: var(--color-ink-black);
+  padding: 6px 9px 5px;
+  box-shadow: 3px 3px 0 var(--color-ink-black);
+  font-family: var(--font-meta, 'Lexend', sans-serif);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.12em;
   pointer-events: none;
 }
 
