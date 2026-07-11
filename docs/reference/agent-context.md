@@ -445,8 +445,8 @@ Two new config fields control LLM pre-processing passes before image generation:
 - `style_sample_brief_enabled` (default `True`): composes a shared subject/setting prose block for Stage 2 style proof images, cached per project.
 
 Current image aliases:
-- `image-fast`: Gemini Flash Image route, also used by dev mode.
-- `image-balanced`: Gemini Pro Image route and the normal default.
+- `image-fast`: Gemini 3.1 Flash Lite Image route, also used by dev mode.
+- `image-balanced`: Gemini 3.1 Flash Lite Image route and the normal default.
 - `image-quality`: Reve image generation (high-fidelity). `REVE_ALIASES` includes both `image-quality` and `image-reve`.
 - `image-reve`: Reve image generation (same provider as `image-quality`).
 

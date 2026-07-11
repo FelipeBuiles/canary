@@ -186,8 +186,9 @@ class TestGenerateLayout:
 
 
 class TestSelector:
-    def test_layout_on_reve_picks_layout_provider(self):
-        provider = pick("image-reve", Config(image_model="image-reve"), layout=_layout())
+    @pytest.mark.parametrize("model", ["image-reve", "image-quality", "reve/create"])
+    def test_layout_on_reve_picks_layout_provider(self, model: str):
+        provider = pick(model, Config(image_model=model), layout=_layout())
         assert isinstance(provider, ReveLayoutProvider)
 
     def test_layout_on_non_reve_stays_on_gateway(self):

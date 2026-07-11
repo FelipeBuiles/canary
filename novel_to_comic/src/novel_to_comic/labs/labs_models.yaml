@@ -91,29 +91,29 @@ models:
       only.
 
   # ── Production Gemini models (native Vertex multimodal path) ─────────────────
-  - id: gemini-3-flash-vertex-native-proxy
-    label: "Gemini 3 Flash (production fast)"
+  - id: gemini-flash-lite-production-fast
+    label: "Gemini 3.1 Flash Lite Image (production fast)"
     provider: litellm
     endpoint: image-fast
     tier: fast
     multi_ref: true
     max_refs: 8
-    approx_cost: 0.067
+    approx_cost: 0.034
     notes: >-
-      Production image-fast tier. Gemini 3.1 Flash routed through the
+      Production image-fast tier. Gemini 3.1 Flash Lite Image routed through the
       vertex-multimodal custom provider — native Vertex multimodal shape,
       role-labeled reference images.
 
-  - id: gemini-3-pro-vertex-native-proxy
-    label: "Gemini 3 Pro (production balanced)"
+  - id: gemini-flash-lite-production-balanced
+    label: "Gemini 3.1 Flash Lite Image (production balanced)"
     provider: litellm
     endpoint: image-balanced
     tier: balanced
     multi_ref: true
     max_refs: 8
-    approx_cost: 0.134
+    approx_cost: 0.034
     notes: >-
-      Production image-balanced tier. Gemini 3 Pro routed through the
+      Production image-balanced tier. Gemini 3.1 Flash Lite Image routed through the
       vertex-multimodal custom provider — native Vertex multimodal shape,
       role-labeled reference images.
 
@@ -130,15 +130,15 @@ models:
       verify built-in fal_ai routing preserves multi-reference conditioning
       before promoting image-balanced.
 
-  - id: gpt-image-2-current
-    label: "GPT Image 2 (current)"
+  - id: reve-quality-current
+    label: "Reve (production quality)"
     provider: litellm
     endpoint: image-quality
     tier: premium
     multi_ref: true
     max_refs: 4
-    approx_cost: 0.19
-    notes: "Existing production premium tier — for baseline comparison."
+    approx_cost: 0.04
+    notes: "Existing production quality tier routed to Reve — for baseline comparison."
 
   - id: reve-proxy
     label: "Reve (LiteLLM Proxy)"
@@ -165,4 +165,3 @@ models:
     notes: >-
       Reve model calling the api.reve.com endpoints directly from the Canary
       backend, bypassing the LiteLLM proxy.
-

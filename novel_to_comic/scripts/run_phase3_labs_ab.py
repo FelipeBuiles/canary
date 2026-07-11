@@ -23,7 +23,11 @@ from novel_to_comic.labs.providers.litellm import LitellmProvider
 from novel_to_comic.labs.registry import get_entry, load_registry
 
 
-DEFAULT_MODELS = ["gemini-3-flash-vertex-native-proxy", "gemini-3-pro-vertex-native-proxy", "nano-banana-2-edit"]
+DEFAULT_MODELS = [
+    "gemini-flash-lite-production-fast",
+    "gemini-flash-lite-production-balanced",
+    "nano-banana-2-edit",
+]
 DEFAULT_PROMPT = (
     "Painterly comic panel. A young woman and a wary man stand inside the "
     "referenced tavern. Preserve the two referenced character identities, use "

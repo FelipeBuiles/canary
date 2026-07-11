@@ -9,6 +9,7 @@ from typing import Any, Literal, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
+from novel_to_comic.config import config_for_image_model_alias
 from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
 from novel_to_comic.prompting import render_panel_prompt_body
 
@@ -361,9 +362,7 @@ async def apply_asset_instruction(
             raise HTTPException(400, "panel_number must be an integer")
 
         # Resolve image model configuration for panels
-        regen_config = config
-        if image_model_alias:
-            regen_config = config.model_copy(update={"image_model": image_model_alias})
+        regen_config = config_for_image_model_alias(config, image_model_alias)
 
         existing_regen = find_active_generation_job(
             app,
@@ -715,4 +714,3 @@ async def apply_asset_instruction(
         }
         response[payload_key] = asset_id
         return response
-

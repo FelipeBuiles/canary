@@ -1,8 +1,13 @@
+import asyncio
+
 import pytest
 
+from novel_to_comic.config import Config
 from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
+from novel_to_comic import prompt_instructions
 from novel_to_comic.prompt_instructions import (
     PromptInstructionError,
+    apply_asset_instruction,
     apply_instruction_patch,
     parse_instruction_patch,
     validate_user_instruction,
@@ -104,3 +109,37 @@ def test_apply_instruction_patch_preserves_no_lettering_constraint():
 
     assert "non-graphic implied action" in updated.constraints
     assert "no text, captions, speech balloons, or lettering anywhere in the image" in updated.constraints
+
+
+def test_instructed_panel_rerender_uses_validated_one_shot_alias(monkeypatch, tmp_path):
+    class AliasResolved(Exception):
+        pass
+
+    cfg = Config(quality_preset="fast", dev_mode=True)
+
+    def resolve_alias(config: Config, alias: str | None) -> Config:
+        assert config is cfg
+        assert alias == "image-quality"
+        raise AliasResolved
+
+    monkeypatch.setattr(
+        prompt_instructions,
+        "config_for_image_model_alias",
+        resolve_alias,
+        raising=False,
+    )
+
+    with pytest.raises(AliasResolved):
+        asyncio.run(
+            apply_asset_instruction(
+                db=None,
+                user_id="user-1",
+                project_id="project-1",
+                project_dir=tmp_path,
+                config=cfg,
+                asset_type="panel",
+                asset_id="scene_001:1",
+                instruction="Make the lighting warmer.",
+                image_model_alias="image-quality",
+            )
+        )

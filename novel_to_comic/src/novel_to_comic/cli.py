@@ -14,14 +14,15 @@ from novel_to_comic.config import (
     load_config,
     save_config,
 )
+from novel_to_comic.image_models import describe_image_model
 from novel_to_comic.state import create_initial_state, save_state
 
 console = Console()
 
 _INIT_IMAGE_MODEL_CHOICES: list[tuple[str, str]] = [
-    (GATEWAY_IMAGE_FAST, "Fast image model (Gemini Flash Image)"),
-    (GATEWAY_IMAGE_BALANCED, "Balanced image model (Gemini Pro Image)"),
-    (GATEWAY_IMAGE_QUALITY, "Quality image model (gpt-image-2)"),
+    (GATEWAY_IMAGE_FAST, describe_image_model(GATEWAY_IMAGE_FAST).display_name),
+    (GATEWAY_IMAGE_BALANCED, describe_image_model(GATEWAY_IMAGE_BALANCED).display_name),
+    (GATEWAY_IMAGE_QUALITY, describe_image_model(GATEWAY_IMAGE_QUALITY).display_name),
 ]
 
 
