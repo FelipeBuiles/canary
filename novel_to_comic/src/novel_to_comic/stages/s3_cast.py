@@ -496,15 +496,23 @@ async def _generate_state_asset_wire(
     config: Config,
     spec: StateAssetGenerationSpec,
     output_path: Path,
+    project_dir: Path,
     *,
     feature: str,
 ) -> ApiResult[Path]:
-    """Compile and submit an unconditioned state asset through the shared wire seam."""
+    """Compile and submit a canonical-conditioned state asset through the shared wire seam.
+
+    Slice 09: the state request now carries a ReferencePlan that conditions the
+    active state on compatible canonical identity (character sheet / location
+    plate) plus style where the route cap has room. A total transformation
+    omits the contradictory parent (``lineage_mode=state_only``). The spec's
+    lineage metadata is updated with the compiled/wire request hashes.
+    """
     from novel_to_comic.ai import generate_wire_image
     from novel_to_comic.compiled_request import compile_generation_request
     from novel_to_comic.image_models import image_model_profile_for_config
-    from novel_to_comic.image_references import ReferencePlan, selection_fingerprint_hex
     from novel_to_comic.provider_wire import compile_provider_wire_request
+    from novel_to_comic.state_assets import build_state_reference_plan
 
     if spec.asset_kind == "character_state_ref":
         subjects = [PromptSubject(
@@ -537,10 +545,7 @@ async def _generate_state_asset_wire(
         generation_shape=spec.requested_shape,
     )
     profile = image_model_profile_for_config(config)
-    plan = ReferencePlan(
-        expected_route=profile.route, selected=(), dropped=(),
-        selection_fingerprint=selection_fingerprint_hex(()), warnings=(),
-    )
+    plan = build_state_reference_plan(spec, project_dir, route_profile=profile)
     compiled = compile_generation_request(
         prompt=prompt, reference_plan=plan, route_profile=profile,
         requested_alias=config.effective_image_model(),
@@ -551,6 +556,9 @@ async def _generate_state_asset_wire(
         asset_identity=f"{spec.entity_id}:{spec.state_id}",
     )
     wire = compile_provider_wire_request(compiled)
+    # Record the request identity hashes on the spec for provenance metadata.
+    spec.compiled_request_sha256 = compiled.compiled_request_sha256
+    spec.execution_fingerprint = wire.execution_fingerprint
     return await generate_wire_image(
         config=config, wire=wire, output_path=output_path, feature=feature
     )
@@ -631,13 +639,16 @@ async def regenerate_character_state_ref(
     )
     style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
     spec = build_character_state_spec(config, project_dir, char, state, style_path=style_ref)
-    meta = spec.lineage_metadata()
 
     try:
         async with sem:
             flux_result = await _generate_state_asset_wire(
-                config, spec, tmp_path, feature="cast.character_state_ref"
+                config, spec, tmp_path, project_dir,
+                feature="cast.character_state_ref",
             )
+        # Capture metadata AFTER the wire mutates the spec (lineage mode,
+        # reference summary, request hashes are set during conditioning).
+        meta = spec.lineage_metadata()
         record_asset_version(output_path, project_dir, reason="before_regenerate")
         tmp_path.replace(output_path)
         await asyncio.to_thread(_crop_sheet_to_poses, output_path)
@@ -721,27 +732,34 @@ async def regenerate_location_plate(
     if state_id:
         spec = build_location_state_spec(config, project_dir, loc, state, style_path=style_ref)
         prompt = spec.rendered_prompt
-        meta = spec.lineage_metadata()
     else:
         addendum = _read_location_plate_addendum(project_dir, loc.id)
         prompt = _location_plate_prompt(config, loc, addendum, anchor=anchor)
-        meta = _location_plate_meta(
-            config, project_dir, style_ref, loc, prompt, width, height, addendum,
-            state_id=state_id, anchor=anchor,
-        )
+        spec = None
 
     try:
         flux_result = None
         async with sem:
             flux_result = (
                 await _generate_state_asset_wire(
-                    config, spec, tmp_path, feature="cast.location_state_plate"
+                    config, spec, tmp_path, project_dir,
+                    feature="cast.location_state_plate",
                 )
                 if state_id else await flux.generate_image(
                     config, prompt, tmp_path, width=width, height=height,
                     reference_image_path=style_ref, ref_type="style",
                     feature="cast.location_plate",
                 )
+            )
+        # Capture metadata AFTER the wire mutates the state spec (lineage mode,
+        # reference summary, request hashes are set during conditioning).
+        if state_id:
+            meta = spec.lineage_metadata()
+        else:
+            meta = _location_plate_meta(
+                config, project_dir, style_ref, loc, prompt, width, height,
+                _read_location_plate_addendum(project_dir, loc.id),
+                state_id=state_id, anchor=anchor,
             )
         record_asset_version(output_path, project_dir, reason="before_regenerate")
         tmp_path.replace(output_path)
@@ -874,6 +892,11 @@ async def _generate_character_state_refs(
             spec = build_character_state_spec(
                 config, project_dir, char, state_obj, style_path=style_ref
             )
+            # Build the conditioning plan up front so the lineage metadata
+            # (mode, reference summary, status) is available for the cache check.
+            # Canonical-first scheduling guarantees the parent exists here.
+            from novel_to_comic.state_assets import build_state_reference_plan
+            build_state_reference_plan(spec, project_dir)
             meta = spec.lineage_metadata()
 
             if artifacts.asset_matches_meta(output_path, meta):
@@ -889,9 +912,11 @@ async def _generate_character_state_refs(
                     ctx.log(f"Generating {state_id} ref for {char.name}")
                     async with semaphore:
                         flux_result = await _generate_state_asset_wire(
-                            config, spec, output_path,
+                            config, spec, output_path, project_dir,
                             feature="cast.character_state_ref",
                         )
+                    # Re-capture metadata after the wire sets request hashes.
+                    meta = spec.lineage_metadata()
                     await asyncio.to_thread(_crop_sheet_to_poses, output_path)
                     artifacts.write_asset_meta(output_path, meta)
                     ctx.record_item_done(usage=flux_result.usage)
@@ -942,10 +967,16 @@ async def _generate_location_plates(
                     config, project_dir, loc, state, style_path=style_ref
                 )
                 prompt = spec.rendered_prompt
+                # Build the conditioning plan up front so lineage metadata is
+                # available for the cache check. Canonical-first scheduling
+                # guarantees the parent plate exists here.
+                from novel_to_comic.state_assets import build_state_reference_plan
+                build_state_reference_plan(spec, project_dir)
                 meta = spec.lineage_metadata()
             else:
                 addendum = _read_location_plate_addendum(project_dir, loc.id)
                 prompt = _location_plate_prompt(config, loc, addendum, anchor=anchor)
+                spec = None
                 meta = _location_plate_meta(
                     config, project_dir, style_ref, loc, prompt, width, height,
                     addendum, state_id=state_id, anchor=anchor,
@@ -959,7 +990,7 @@ async def _generate_location_plates(
                     async with semaphore:
                         flux_result = (
                             await _generate_state_asset_wire(
-                                config, spec, output_path,
+                                config, spec, output_path, project_dir,
                                 feature="cast.location_state_plate",
                             )
                             if state_id else await flux.generate_image(
@@ -968,6 +999,9 @@ async def _generate_location_plates(
                                 feature="cast.location_plate",
                             )
                         )
+                    # Re-capture metadata after the wire sets request hashes.
+                    if state_id:
+                        meta = spec.lineage_metadata()
                     artifacts.write_asset_meta(output_path, meta)
                     if state_id is None:
                         mark_dependent_states_stale(project_dir, "location", loc.id)
