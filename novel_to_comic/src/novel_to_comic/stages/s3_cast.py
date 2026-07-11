@@ -394,7 +394,7 @@ def _location_plate_prompt(config: Config, loc, addendum: str = "", anchor: str 
             f"If the setting contains dense woods, underbrush, leaves, ferns, grass, debris, or bark, "
             f"summarize them as a few grouped shapes with calm gaps between them. "
             f"Leave broad quiet areas of sky, ground, water, or shadow; do not fill every surface. "
-            f"Use broad opaque gouache color blocks and clean edges with minimal brush texture. "
+            f"Render with clean edges and minimal surface texture in the selected medium. "
             f"Do not render leaf-by-leaf, grass-blade-by-grass-blade, bark-chip-by-bark-chip, "
             f"or fern-frond-by-fern-frond. "
             f"No repeated stamps, pattern tiling, wallpaper texture, speckled dappling, "

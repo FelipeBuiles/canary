@@ -66,7 +66,8 @@ def test_generate_panel_writes_failure_metadata(tmp_path, monkeypatch):
     assert payload["recoverable"] is True
     assert "recovery" not in payload
     assert payload["parameters"]["planned_panel_id"] == "scene_001:panel_001"
-    assert "Visual brief:\nA panel with difficult content." in payload["prompt"]
+    assert "A panel with difficult content." in payload["prompt"]
+    assert "Output dimensions: 768x1024" in payload["prompt"]
     assert payload["error"]["type"] == "ValueError"
     assert "IMAGE_PROHIBITED_CONTENT" in payload["error"]["message"]
 
@@ -171,8 +172,51 @@ def test_generate_panel_regenerates_stale_existing_image(tmp_path, monkeypatch):
     assert result.value == image_path
     assert len(calls) == 1
     assert image_path.read_bytes() == b"new image"
-    assert "Rendering discipline:\nGPT-image-2 material discipline" in meta["prompt"]
+    assert "Matte gouache, broad opaque shapes." in meta["prompt"]
+    assert '"quality":"medium"' in meta["prompt"]
     assert meta["prompt_sha256"] != "old"
+
+
+def test_generate_panel_submits_compiled_prompt(tmp_path, monkeypatch):
+    prompt_dir = tmp_path / "direct" / "scene_001"
+    prompt_dir.mkdir(parents=True)
+    prompt_path = prompt_dir / "panel_001.json"
+    prompt_path.write_text(ImagePrompt(
+        prompt_version=IMAGE_PROMPT_VERSION,
+        planned_panel_id="scene_001:panel_001",
+        scene_id="scene_001",
+        panel_number=1,
+        composition="medium shot with glowing text saying DANGER",
+        full_prompt="legacy prompt with glowing text saying DANGER",
+        width=768,
+        height=1024,
+        steps=8,
+    ).model_dump_json())
+    calls: list[dict] = []
+
+    async def fake_generate_image_multi_ref(**kwargs):
+        calls.append(kwargs)
+        kwargs["output_path"].parent.mkdir(parents=True, exist_ok=True)
+        kwargs["output_path"].write_bytes(b"panel")
+        return ApiResult(value=kwargs["output_path"])
+
+    monkeypatch.setattr(s7_draw.flux, "generate_image_multi_ref", fake_generate_image_multi_ref)
+    asyncio.run(s7_draw._generate_panel(
+        Config(image_model="image-balanced", layout_prompts_enabled=False),
+        tmp_path,
+        prompt_path,
+        asyncio.Semaphore(1),
+        None,
+        {},
+        None,
+        None,
+    ))
+
+    submitted = calls[0]["prompt"]
+    meta = artifacts.read_asset_meta(tmp_path / "draw" / "scene_001" / "panel_001.png")
+    assert "DANGER" not in submitted
+    assert submitted == meta["prompt"]
+    assert "Generation geometry" not in submitted  # section bodies, not titles, are canonical
 
 
 def test_selected_reference_byte_change_invalidates_panel_cache(tmp_path, monkeypatch):
@@ -274,6 +318,38 @@ def test_panel_estimate_counts_actual_uploaded_references(tmp_path):
     # 3 uploaded refs (hero subject + style + plate) x 0.00028 input each.
     # The missing `refs/missing/sheet.png` must be ignored, not counted.
     assert cost == pytest.approx(0.03444)
+
+
+def test_panel_estimate_prices_compiled_prompt(tmp_path, monkeypatch):
+    prompt_dir = tmp_path / "direct" / "scene_001"
+    prompt_dir.mkdir(parents=True)
+    prompt_path = prompt_dir / "panel_001.json"
+    prompt_path.write_text(ImagePrompt(
+        scene_id="scene_001",
+        panel_number=1,
+        composition="wide shot with a caption saying DANGER",
+        full_prompt="legacy caption saying DANGER",
+        width=1024,
+        height=768,
+        steps=8,
+    ).model_dump_json())
+    captured: dict[str, object] = {}
+
+    def fake_estimate(*args, **kwargs):
+        captured.update(kwargs)
+        return 1.0
+
+    monkeypatch.setattr(s7_draw, "estimate_image_cost", fake_estimate)
+    cost = s7_draw.estimate_panel_image_cost_usd(
+        Config(image_model="image-balanced"),
+        tmp_path,
+        prompt_path,
+        scene_to_location={},
+    )
+
+    assert cost == 1.0
+    assert "DANGER" not in captured["prompt_text"]
+    assert "Output dimensions: 1024x768" in captured["prompt_text"]
 
 
 def test_run_estimate_uses_only_selected_prompt_files(tmp_path, monkeypatch):
@@ -526,21 +602,14 @@ def test_non_gpt_location_plate_prompt_keeps_existing_shape(tmp_path):
 
     prompt = s3_cast._location_plate_prompt(config, loc)
     width, height = s3_cast._location_plate_dimensions(config)
-    meta = s3_cast._location_plate_meta(
-        config,
-        tmp_path,
-        None,
-        loc,
-        prompt,
-        width,
-        height,
-    )
 
     assert "LOCATION DESIGN PLATE" not in prompt
     assert "Wide establishing shot" in prompt
-    assert (width, height) == (None, None)
-    assert "width" not in meta
-    assert "height" not in meta
+    # Slice 06: location plates use a verified landscape shape that matches
+    # the "wide environment design plate" the prompt promises (no longer
+    # falling back to square config defaults).
+    assert width is not None and height is not None
+    assert width > height  # landscape
 
 
 def test_regenerate_gpt_location_plate_uses_landscape_text_only(tmp_path, monkeypatch):

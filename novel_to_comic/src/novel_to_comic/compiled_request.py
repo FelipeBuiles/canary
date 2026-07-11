@@ -18,6 +18,26 @@ What the compiler owns
 - A deterministic ``compiled_request_sha256`` over provider-independent
   execution fields (excluding diagnostics, warnings, and timestamps).
 
+Slice 06 — prompt hygiene, budgets, and geometry truth
+-------------------------------------------------------
+
+- Editable/dynamic scene fields are text-sanitized (readable-text cues
+  removed) via :mod:`novel_to_comic.prompt_hygiene`. Protected anchors are
+  never sanitized; anchor/no-lettering conflicts are emitted as structured
+  diagnostics.
+- ``visual_requirements`` are normalized, deduplicated against owned facts,
+  and capped to the planner's intended 1–4 must-show details.
+- Hardcoded medium directives (e.g. unconditional gouache) are stripped;
+  medium guidance derives from the active selected style.
+- Section-aware budgeting: protected sections (anchors, reference
+  instructions, system constraints) are non-truncatable. Lower-priority scene
+  prose is compressed first. A request that cannot fit protected material
+  fails explicitly — no provider may prefix-slice it later.
+- ``GenerationControls`` are verified against the route's supported controls;
+  unsupported (phantom) controls raise before transport.
+- Native aspect is represented structurally when the route has a dedicated
+  aspect parameter.
+
 What the compiler does NOT do
 -----------------------------
 
@@ -55,6 +75,15 @@ from novel_to_comic.panel_aspect import (
     dimensions_for_generation_shape,
     generation_shape_for_aspect,
 )
+from novel_to_comic.prompt_hygiene import (
+    apply_prompt_budget,
+    dedupe_brief_against_continuity,
+    detect_anchor_text_conflicts,
+    dedupe_visual_requirements,
+    sanitize_dynamic_list,
+    sanitize_dynamic_text,
+    strip_hardcoded_mediums,
+)
 from novel_to_comic.text_utils import clean as _clean
 
 #: Compiler/schema version. Bumped when the compiled-request shape changes.
@@ -72,12 +101,13 @@ AssetKind = Literal["panel", "character_ref", "location_plate", "prop_ref", "sty
 class GenerationControls:
     """Typed provider-control intentions.
 
-    Slice 06 verifies which controls each route supports. Until then these are
-    defaults: no negative prompt, no seed pinning, no explicit guidance/steps
-    override. The compiler carries them so the compiled hash already covers
-    control intent for routes that later gain verified support.
+    Slice 06 verifies which controls each route supports via
+    :meth:`ImageModelProfile.supported_controls`. The compiler rejects
+    unsupported (phantom) controls before transport so no UI/config knob
+    implies a provider parameter that is never sent.
     """
 
+    quality: str | None = None
     negative_prompt: str | None = None
     seed: int | None = None
     guidance_scale: float | None = None
@@ -86,13 +116,29 @@ class GenerationControls:
     def is_default(self) -> bool:
         return all(
             getattr(self, f) is None
-            for f in ("negative_prompt", "seed", "guidance_scale", "steps_override")
+            for f in ("quality", "negative_prompt", "seed", "guidance_scale", "steps_override")
         )
+
+    def active_controls(self) -> dict[str, object]:
+        """Map of control name → value for non-None (active) controls."""
+        out: dict[str, object] = {}
+        if self.quality is not None:
+            out["quality"] = self.quality
+        if self.negative_prompt is not None:
+            out["negative_prompt"] = self.negative_prompt
+        if self.seed is not None:
+            out["seed"] = self.seed
+        if self.guidance_scale is not None:
+            out["guidance_scale"] = self.guidance_scale
+        if self.steps_override is not None:
+            out["steps_override"] = self.steps_override
+        return out
 
     def to_hash_projection(self) -> str:
         """Stable string projection for the compiled-request hash."""
         return json.dumps(
             {
+                "quality": self.quality,
                 "negative_prompt": self.negative_prompt,
                 "seed": self.seed,
                 "guidance_scale": self.guidance_scale,
@@ -529,26 +575,22 @@ def _build_sections(
     controls: GenerationControls,
     dimensions: tuple[int, int],
     shape: GenerationShape | None,
+    native_aspect: str | None,
 ) -> tuple[tuple[CompiledPromptSection, ...], str]:
     """Assemble prompt sections in one stable order and the final prompt.
 
-    Section order:
-    1. Protected anchors (character identity + location/prop) — verbatim.
-    2. Scene direction (canonical body minus anchors/constraints, i.e. the
-       editable scene-direction fields).
-    3. Selected style text.
-    4. Reference instructions (one per selected reference, final order).
-    5. System constraints (generated from typed fields).
-    6. User constraint addenda.
-    7. Generation geometry.
+    Slice 06 — prompt hygiene applied here:
 
-    The final semantic prompt string concatenates every section body. Protected
-    anchors appear byte-for-byte because ``render_canonical_body`` emits them
-    unchanged and this function extracts them into their own section.
+    - Editable scene fields (composition, setting, lighting, mood, key objects,
+      visual requirements, continuity, user addenda) are text-sanitized.
+    - ``visual_requirements`` are deduplicated against owned facts and capped.
+    - Hardcoded medium directives (gouache/oil/etc.) are stripped from scene
+      direction; medium guidance derives from the selected style.
+    - Native aspect is recorded structurally in the geometry section.
     """
     sections: list[CompiledPromptSection] = []
 
-    # ── 1. Protected anchors (verbatim) ───────────────────────────────────
+    # ── 1. Protected anchors (verbatim — NEVER sanitized) ────────────────
     anchor_lines: list[str] = []
     for subject in getattr(prompt, "subjects", []) or []:
         identity = (subject.identity or "").strip()
@@ -565,7 +607,7 @@ def _build_sections(
             lines=tuple(anchor_lines),
         ))
 
-    # ── 2. Scene direction (editable fields, NO anchors/constraints) ─────
+    # ── 2. Scene direction (sanitized editable fields) ───────────────────
     direction_lines: list[str] = []
     for field_name, label in (
         ("composition", "Composition"),
@@ -573,27 +615,37 @@ def _build_sections(
         ("lighting", "Lighting"),
         ("mood", "Mood"),
     ):
-        value = _clean(getattr(prompt, field_name, None))
+        # Dynamic fields are sanitized; protected anchors are emitted above
+        # verbatim and never reach this path.
+        value = sanitize_dynamic_text(getattr(prompt, field_name, None))
+        # Strip any hardcoded medium directive that contradicts the style.
+        value = strip_hardcoded_mediums(value)
         if value:
             direction_lines.append(f"{label}: {value}")
     props = getattr(prompt, "props", []) or []
     if props:
-        cleaned = [_clean(p) for p in props if _clean(p)]
+        cleaned = [sanitize_dynamic_text(p) for p in props if sanitize_dynamic_text(p)]
         if cleaned:
             direction_lines.append(f"Key props: {'; '.join(cleaned)}")
-    key_objects = [_clean(v) for v in (getattr(prompt, "key_objects", []) or []) if _clean(v)]
+    key_objects = sanitize_dynamic_list(getattr(prompt, "key_objects", []) or [])
     if key_objects:
         direction_lines.append(f"Key objects: {'; '.join(key_objects)}")
-    requirements = [_clean(v) for v in (getattr(prompt, "visual_requirements", []) or []) if _clean(v)]
-    if requirements:
-        direction_lines.append(f"Must show: {'; '.join(requirements)}")
-    continuity = _clean(getattr(prompt, "continuity_note", None))
+    # Visual requirements are deduplicated against owned facts and capped.
+    deduped_reqs, _ = dedupe_visual_requirements(prompt)
+    if deduped_reqs:
+        direction_lines.append(f"Must show: {'; '.join(deduped_reqs)}")
+    continuity = sanitize_dynamic_text(getattr(prompt, "continuity_note", None))
     if continuity:
         direction_lines.append(f"Continuity: {continuity}")
     # The visual brief / distilled prompt is the scene-direction prose body.
-    brief = _clean(getattr(prompt, "visual_brief", None)) or _clean(
-        getattr(prompt, "distilled_prompt", None)
+    # Single-owner: strip continuity content from the brief so it appears once.
+    brief = (
+        sanitize_dynamic_text(getattr(prompt, "visual_brief", None))
+        or sanitize_dynamic_text(getattr(prompt, "distilled_prompt", None))
+        or sanitize_dynamic_text(getattr(prompt, "full_prompt", None))
     )
+    brief = dedupe_brief_against_continuity(brief, continuity)
+    brief = strip_hardcoded_mediums(brief)
     if brief:
         direction_lines.append(f"Visual brief: {brief}")
     if direction_lines:
@@ -603,7 +655,7 @@ def _build_sections(
             lines=tuple(direction_lines),
         ))
 
-    # ── 3. Selected style ────────────────────────────────────────────────
+    # ── 3. Selected style (medium guidance owner — appears once) ─────────
     cleaned_style = _clean(style_text or getattr(prompt, "style", None))
     if cleaned_style:
         sections.append(CompiledPromptSection(
@@ -635,8 +687,8 @@ def _build_sections(
             lines=tuple(f"- {line.strip()}" for line in system_lines),
         ))
 
-    # ── 6. User constraint addenda ───────────────────────────────────────
-    user_constraints = _clean(getattr(prompt, "constraints", None))
+    # ── 6. User constraint addenda (sanitized) ───────────────────────────
+    user_constraints = sanitize_dynamic_text(getattr(prompt, "constraints", None))
     if user_constraints:
         sections.append(CompiledPromptSection(
             kind="user_addenda",
@@ -649,7 +701,10 @@ def _build_sections(
     geo_lines = [f"Output dimensions: {width}x{height}"]
     if shape:
         geo_lines.append(f"Output shape: {shape}")
-    if not controls.is_default():
+    if native_aspect:
+        geo_lines.append(f"Native aspect: {native_aspect}")
+    active = controls.active_controls()
+    if active:
         geo_lines.append(f"Controls: {controls.to_hash_projection()}")
     sections.append(CompiledPromptSection(
         kind="geometry",
@@ -686,14 +741,23 @@ def compile_generation_request(
     profile, generation shape, and explicit control intentions. No file
     discovery, LLM call, persistence, or provider call occurs inside it.
 
-    Raises :class:`CompiledRequestError` when a selected reference's authority
-    scope contradicts the prompt's active state (fail before transport).
+    Raises :class:`CompiledRequestError` when:
+
+    - A selected reference's authority scope contradicts the prompt's active
+      state (fail before transport).
+    - A control intention is not supported by the route (phantom control).
+    - Protected material alone exceeds the route's prompt character budget
+      (cannot be trimmed safely; no provider may prefix-slice it).
     """
     # Validate active-state authority before building anything.
     _validate_active_state_authority(prompt, reference_plan)
 
     controls = controls or GenerationControls()
+    # Slice 06: reject phantom controls the route does not support.
+    _validate_control_support(controls, route_profile)
+
     shape, dimensions = _effective_geometry(prompt)
+    native_aspect = _native_aspect_for(prompt, route_profile, shape, dimensions)
 
     # Compile one semantic instruction per selected reference (final order).
     reference_instructions = tuple(
@@ -702,11 +766,43 @@ def compile_generation_request(
     )
 
     sections, final_prompt = _build_sections(
-        prompt, selected_style_text, reference_instructions, controls, dimensions, shape
+        prompt, selected_style_text, reference_instructions, controls,
+        dimensions, shape, native_aspect,
     )
+
+    # Slice 06: section-aware budget. Protected sections (anchors, reference
+    # instructions, system constraints) are non-truncatable; lower-priority
+    # scene prose is compressed first. If protected material alone exceeds the
+    # budget, fail explicitly so no provider prefix-slices it later.
+    char_limit = route_profile.prompt_char_limit
+    budget = apply_prompt_budget(
+        [(s.kind, s.body) for s in sections], char_limit=char_limit,
+    )
+    if budget.overshoot > 0:
+        raise CompiledRequestError(
+            f"protected prompt material exceeds the {route_profile.route.value} "
+            f"character budget by {budget.overshoot} characters; cannot trim "
+            "protected sections — reduce protected anchor count or length"
+        )
+    if budget.budgeted:
+        final_prompt = budget.final_prompt
+        retained_kinds = {kind for kind, _body in budget.retained_sections}
+        sections = tuple(section for section in sections if section.kind in retained_kinds)
 
     protected = _protected_anchors_from_prompt(prompt)
     identity = asset_identity or _default_asset_identity(prompt, asset_kind)
+
+    # Slice 06: structured diagnostics for protected-anchor/no-lettering
+    # conflicts. The anchor is preserved verbatim; the no-lettering constraint
+    # is retained. These are warnings (non-blocking) surfaced for upstream
+    # correction — diagnostics do not affect the compiled hash.
+    anchor_conflicts = detect_anchor_text_conflicts(prompt)
+    warnings = list(reference_plan.warnings)
+    for conflict in anchor_conflicts:
+        warnings.append(
+            f"anchor_text_conflict: {conflict.name} anchor contains '{conflict.cue}' "
+            f"(no-lettering policy) — preserved verbatim; correct upstream"
+        )
 
     # Build the request without the hash first, then compute it.
     req = CompiledGenerationRequest(
@@ -729,13 +825,51 @@ def compile_generation_request(
         prompt_source_sha256=getattr(prompt, "source_sha256", None),
         reference_selection_fingerprint=reference_plan.selection_fingerprint,
         compiled_request_sha256="",  # placeholder; computed below
-        warnings=reference_plan.warnings,
+        warnings=tuple(warnings),
     )
     # Recompute with the real hash. ``object.__setattr__`` because the
     # dataclass is frozen.
     compiled_hash = _compiled_hash_projection(req)
     object.__setattr__(req, "compiled_request_sha256", compiled_hash)
     return req
+
+
+def _validate_control_support(controls: GenerationControls, profile: ImageModelProfile) -> None:
+    """Reject control intentions the route does not support.
+
+    A phantom control is a UI/config knob that implies a provider parameter the
+    route never sends. Failing here prevents a control from silently having no
+    effect (or, worse, implying a parameter that a later provider change might
+    misinterpret).
+    """
+    active = controls.active_controls()
+    for name in active:
+        if not profile.supports_control(name):
+            raise CompiledRequestError(
+                f"control '{name}' is not supported by route "
+                f"{profile.route.value} — supported: "
+                f"{sorted(profile.supported_controls) or 'none'}"
+            )
+
+
+def _native_aspect_for(
+    prompt: ImagePrompt,
+    profile: ImageModelProfile,
+    shape: GenerationShape | None,
+    dimensions: tuple[int, int],
+) -> str | None:
+    """Resolve the structural native aspect mode for the geometry section.
+
+    Represents aspect structurally when the route has a dedicated aspect
+    parameter. Returns ``None`` when the route derives aspect from width/height
+    only. A short prose aspect cue is emitted by the compiler (here) — never
+    added later by a handler (global invariant: handlers serialize, they do not
+    add semantic prose).
+    """
+    aspect_ratio = getattr(prompt, "generation_aspect_ratio", None)
+    if aspect_ratio is None:
+        aspect_ratio = aspect_for_dimensions(*dimensions)
+    return profile.native_aspect_for(aspect_ratio)
 
 
 def _default_asset_identity(prompt: ImagePrompt, asset_kind: AssetKind) -> str:

@@ -36,7 +36,6 @@ from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.panel_aspect import aspect_for_dimensions, aspect_within_tolerance, generation_shape_for_aspect
 from novel_to_comic.prompting import (
     ensure_distilled_prompt,
-    render_generation_prompt,
 )
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.usage import ApiResult, estimate_image_cost
@@ -436,10 +435,9 @@ def estimate_panel_image_cost_usd(
         location_labels=location_labels,
     )
     _surface_plan_warnings(plan)
-    refs = plan.to_ref_images()
     # Slice 05: estimate with the same compiled role-aware instructions the
     # draw path uses, so the estimate prompt matches the submitted request.
-    from novel_to_comic.compiled_request import compile_generation_request
+    from novel_to_comic.compiled_request import GenerationControls, compile_generation_request
     from novel_to_comic.image_models import describe_image_model, image_model_profile_for_config
 
     _route_profile = image_model_profile_for_config(config)
@@ -452,15 +450,12 @@ def estimate_panel_image_cost_usd(
         requested_alias=_effective_model,
         configured_provider_model=_desc.provider_model,
         selected_style_text=config.style_template,
+        controls=GenerationControls(
+            quality=config.image_quality if _route_profile.supports_control("quality") else None
+        ),
         asset_kind="panel",
     )
-    generation_prompt = render_generation_prompt(
-        prompt,
-        config.style_template,
-        _effective_model,
-        refs=refs,
-        reference_instructions=compiled.reference_instructions,
-    )
+    generation_prompt = compiled.final_prompt
     return estimate_image_cost(
         _effective_model,
         1,
@@ -695,7 +690,7 @@ async def _generate_panel(
         # all-reference guard. The compiled instructions are passed to the
         # renderer so it serializes them into the provider wire format without
         # re-selecting references or re-capping.
-        from novel_to_comic.compiled_request import compile_generation_request
+        from novel_to_comic.compiled_request import GenerationControls, compile_generation_request
         from novel_to_comic.image_models import (
             describe_image_model,
             image_model_profile_for_config,
@@ -711,15 +706,14 @@ async def _generate_panel(
             requested_alias=_effective_model,
             configured_provider_model=_desc.provider_model,
             selected_style_text=config.style_template,
+            controls=GenerationControls(
+                quality=config.image_quality
+                if _route_profile.supports_control("quality")
+                else None
+            ),
             asset_kind="panel",
         )
-        generation_prompt = render_generation_prompt(
-            prompt,
-            config.style_template,
-            config.effective_image_model(),
-            refs=refs,
-            reference_instructions=compiled.reference_instructions,
-        )
+        generation_prompt = compiled.final_prompt
         meta_payload = {
             "version": 1,
             "kind": "panel_image",
@@ -730,8 +724,8 @@ async def _generate_panel(
                 "scene_id": prompt.scene_id,
                 "panel_number": prompt.panel_number,
                 "image_model": config.effective_image_model(),
-                "width": prompt.width,
-                "height": prompt.height,
+                "width": compiled.effective_dimensions[0],
+                "height": compiled.effective_dimensions[1],
                 "generation_aspect_ratio": getattr(prompt, "generation_aspect_ratio", None),
                 "generation_width": getattr(prompt, "generation_width", None),
                 "generation_height": getattr(prompt, "generation_height", None),
@@ -797,8 +791,8 @@ async def _generate_panel(
                     prompt=generation_prompt,
                     output_path=generation_path,
                     refs=refs,
-                    width=prompt.width,
-                    height=prompt.height,
+                    width=compiled.effective_dimensions[0],
+                    height=compiled.effective_dimensions[1],
                     steps=prompt.steps,
                     layout=prompt.layout if layout_pass_applies(config) else None,
                     feature="draw.panel_image",

@@ -53,6 +53,9 @@ class ProviderRawResult:
     # Layout the model actually generated (Reve v2 description echo) — persisted
     # as a sidecar next to the output image when present.
     layout_echo: dict[str, Any] | None = None
+    # Observed response identity only. Never substitutes for configured route
+    # identity carried by the compiled/wire request.
+    actual_provider_model: str | None = None
 
 
 class ImageProvider(Protocol):

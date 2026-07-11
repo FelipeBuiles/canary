@@ -116,6 +116,7 @@ async def finalise_image_success(
         "image_bytes": len(raw.image_bytes),
         "image_sha256": hashlib.sha256(raw.image_bytes).hexdigest(),
         "size": ctx.params.get("size"),
+        "actual_provider_model": raw.actual_provider_model,
     }
     ai_client._finalize_event(
         event_id=ctx.event_id,

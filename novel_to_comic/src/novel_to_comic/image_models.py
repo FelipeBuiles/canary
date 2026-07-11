@@ -101,8 +101,10 @@ def describe_image_model(model: str) -> ImageModelDescription:
 # provider layer may select, cap, or reorder references, so these capability
 # numbers must be the final word on how many references can be uploaded.
 #
-# Deliberately scoped: prompt-length, aspect, and generation-control fields are
-# added in later slices (05/06). Only what reference selection needs lives here.
+# Slice 06 extends the profile with verified prompt-character limits, native
+# aspect modes, and supported generation controls. The compiler budgets and
+# trims prompt sections against ``prompt_char_limit`` and rejects unsupported
+# controls; no provider may prefix-slice protected material later.
 
 # Reference roles a route can accept. Mirrors the provider RefRole literal so
 # prompt-domain code can ask capability questions without importing HTTP types.
@@ -114,15 +116,87 @@ _ALL_REFERENCE_ROLES: tuple[str, ...] = (
     "location_plate",
 )
 
+#: Verified generation controls the application understands. Each route enables
+#: a subset; controls outside ``supported_controls`` are rejected by the
+#: compiler before they reach transport (no phantom parameter that is silently
+#: dropped or, worse, implies a parameter the provider never receives).
+_ALL_CONTROLS: tuple[str, ...] = (
+    "quality",
+    "seed",
+    "negative_prompt",
+    "guidance_scale",
+    "steps_override",
+)
+
+#: Verified prompt-character limits per route.
+#
+# - REVE: the ``instruction`` field is capped at 4000 chars by
+#   ``reve_layout._INSTRUCTION_MAX_CHARS``; longer prompts are prefix-sliced at
+#   transport, which can discard critical tail constraints. The compiler
+#   budgets against this so protected material never enters the slice window.
+# - GEMINI_FLASH_LITE / GPT_IMAGE_2: the OpenAI-compatible ``prompt`` field has
+#   no hard provider cap below the model context window, but a generous budget
+#   keeps prompts focused. ``None`` means no compiler-applied character budget
+#   (the route has no provider-side prefix slice that threatens protected
+#   content).
+_PROMPT_CHAR_LIMITS: dict[ImageRoute, int | None] = {
+    ImageRoute.REVE: 4000,
+    ImageRoute.GEMINI_FLASH_LITE: None,
+    ImageRoute.GPT_IMAGE_2: None,
+    ImageRoute.UNKNOWN: None,
+}
+
+#: Native aspect modes a route accepts. Used to represent the aspect intent
+#: structurally rather than as prose. Empty tuple means the route has no
+#: dedicated aspect parameter (it derives aspect from width/height only).
+_NATIVE_ASPECTS: dict[ImageRoute, tuple[str, ...]] = {
+    ImageRoute.REVE: ("1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16"),
+    ImageRoute.GEMINI_FLASH_LITE: (),
+    ImageRoute.GPT_IMAGE_2: (),
+    ImageRoute.UNKNOWN: (),
+}
+
+#: Verified per-route control support.
+#
+# - quality: the OpenAI-compatible ``quality`` parameter (litellm_http forwards
+#   ``config.image_quality`` for GEMINI_FLASH_LITE / GPT_IMAGE_2).
+# - seed / negative_prompt / guidance_scale / steps_override: no production
+#   route forwards these today, so they are unsupported (phantom) until a route
+#   is verified to send them.
+_SUPPORTED_CONTROLS: dict[ImageRoute, frozenset[str]] = {
+    ImageRoute.REVE: frozenset(),
+    ImageRoute.GEMINI_FLASH_LITE: frozenset({"quality"}),
+    ImageRoute.GPT_IMAGE_2: frozenset({"quality"}),
+    ImageRoute.UNKNOWN: frozenset(),
+}
+
 
 @dataclass(frozen=True, slots=True)
 class ImageModelProfile:
-    """Verified reference capabilities for one image route.
+    """Verified reference, prompt-budget, aspect, and control capabilities.
 
-    ``max_references`` is the route's HARD reference cap: the reference plan
-    must never select more references than this. ``supported_roles`` is the set
-    of reference roles the route accepts; roles outside it are dropped with
-    ``unsupported_role`` before final ordering.
+    Reference fields (Slice 04):
+        ``max_references`` is the route's HARD reference cap; the reference plan
+        must never select more. ``supported_roles`` is the set of reference
+        roles the route accepts.
+
+    Prompt-budget fields (Slice 06):
+        ``prompt_char_limit`` is the verified character budget the compiler
+        enforces. Protected anchors, active-state locks, reference instructions,
+        and system constraints are non-truncatable; lower-priority scene prose
+        is compressed first. ``None`` means no provider-side prefix slice
+        threatens protected content (no compiler budget applied).
+
+    Native-aspect fields (Slice 06):
+        ``native_aspect_modes`` is the route's dedicated aspect parameter
+        vocabulary. Empty tuple means the route derives aspect from
+        width/height only.
+
+    Control fields (Slice 06):
+        ``supported_controls`` is the verified subset of generation controls the
+        route actually forwards. Controls outside it are phantom: the compiler
+        rejects them before transport so no UI/config knob implies a provider
+        parameter that is never sent.
 
     Construct via :func:`image_model_profile` (or :func:`image_model_profile_for`),
     never inline — the numbers live in one place so characterization tests can
@@ -132,12 +206,36 @@ class ImageModelProfile:
     route: ImageRoute
     max_references: int
     supported_roles: frozenset[str]
+    prompt_char_limit: int | None
+    native_aspect_modes: tuple[str, ...]
+    supported_controls: frozenset[str]
 
     @property
     def accepts_contextual_refs(self) -> bool:
         """True when non-subject roles (style/location/prop/continuity) are
         usable at all on this route. Some routes keep everything text-only."""
         return any(r != "subject" for r in self.supported_roles)
+
+    def supports_control(self, name: str) -> bool:
+        """True when the route forwards this generation control to the provider."""
+        return name in self.supported_controls
+
+    def native_aspect_for(self, aspect_ratio: float | None) -> str | None:
+        """Map a numeric aspect ratio to the closest native aspect mode.
+
+        Returns ``None`` when the route has no dedicated aspect parameter or
+        no mode is close enough. Used to represent aspect structurally instead
+        of as prose added by a handler.
+        """
+        if not self.native_aspect_modes or aspect_ratio is None or aspect_ratio <= 0:
+            return None
+        def _ratio(mode: str) -> float:
+            w_s, h_s = mode.split(":")
+            return int(w_s) / int(h_s)
+        return min(
+            self.native_aspect_modes,
+            key=lambda m: abs(_ratio(m) - aspect_ratio),
+        )
 
 
 # Hard reference caps per route. Reve accepts at most 4 reference images; the
@@ -161,11 +259,17 @@ def _profile_for_route(route: ImageRoute) -> ImageModelProfile:
             route=route,
             max_references=_ROUTE_REFERENCE_CAPS[route],
             supported_roles=frozenset({"subject", "prop"}),
+            prompt_char_limit=_PROMPT_CHAR_LIMITS[route],
+            native_aspect_modes=_NATIVE_ASPECTS[route],
+            supported_controls=_SUPPORTED_CONTROLS[route],
         )
     return ImageModelProfile(
         route=route,
         max_references=_ROUTE_REFERENCE_CAPS[route],
         supported_roles=frozenset(_ALL_REFERENCE_ROLES),
+        prompt_char_limit=_PROMPT_CHAR_LIMITS[route],
+        native_aspect_modes=_NATIVE_ASPECTS[route],
+        supported_controls=_SUPPORTED_CONTROLS[route],
     )
 
 

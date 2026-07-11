@@ -146,6 +146,12 @@ class ReveLLM(CustomLLM):
         client: Any | None = None,  # noqa: ARG002
         **kwargs: Any,
     ) -> ImageResponse:
+        wire_manifest = None
+        wire_payload = optional_params.get("canary_wire_request")
+        if wire_payload:
+            from litellm_handlers.provider_wire import parse_provider_wire
+
+            wire_manifest = parse_provider_wire(wire_payload)
         size = optional_params.get("size") or kwargs.get("size")
         aspect_ratio = _map_aspect_ratio(size)
 
@@ -154,7 +160,9 @@ class ReveLLM(CustomLLM):
         # OpenAI-bucketed `size`). Reve has no exact-pixel sizing knob.
         width = optional_params.get("canary_requested_width") or kwargs.get("canary_requested_width")
         height = optional_params.get("canary_requested_height") or kwargs.get("canary_requested_height")
-        if width and height:
+        if wire_manifest:
+            aspect_ratio = wire_manifest.get("structured_aspect") or aspect_ratio
+        elif width and height:
             aspect_ratio = _map_aspect_ratio(f"{int(width)}x{int(height)}")
 
         # v1 create. The v2 layout-aware endpoint is gated behind the Reve
@@ -162,24 +170,26 @@ class ReveLLM(CustomLLM):
         # without it), so the gateway stays on v1. Note v1 has no exact-pixel
         # sizing — width/height are rejected as UNRECOGNIZED_PARAMETER;
         # aspect_ratio is the only sizing knob.
-        final_prompt = prompt or ""
+        final_prompt = wire_manifest["prompt_parts"][0] if wire_manifest else (prompt or "")
         # Reve accepts very long prompts; only truncate as a last resort
-        if len(final_prompt) > 8000:
+        if not wire_manifest and len(final_prompt) > 8000:
             final_prompt = final_prompt[:8000]
         payload: dict[str, Any] = {
             "prompt": final_prompt,
             "aspect_ratio": aspect_ratio,
         }
-        seed = optional_params.get("seed") or kwargs.get("seed")
+        seed = None if wire_manifest else (optional_params.get("seed") or kwargs.get("seed"))
         if seed is not None:
             payload["seed"] = seed
-        steps = optional_params.get("steps") or kwargs.get("steps")
+        steps = None if wire_manifest else (optional_params.get("steps") or kwargs.get("steps"))
         if steps is not None:
             payload["steps"] = int(steps)
-        quality = optional_params.get("quality") or kwargs.get("quality")
+        quality = None if wire_manifest else (optional_params.get("quality") or kwargs.get("quality"))
         if quality is not None:
             payload["quality"] = quality
-        negative_prompt = optional_params.get("negative_prompt") or kwargs.get("negative_prompt")
+        negative_prompt = None if wire_manifest else (
+            optional_params.get("negative_prompt") or kwargs.get("negative_prompt")
+        )
         if negative_prompt is not None:
             payload["negative_prompt"] = negative_prompt
 
@@ -208,8 +218,9 @@ class ReveLLM(CustomLLM):
 
         model_response.created = int(time.time())
         model_response.data = [ImageObject(b64_json=b64)]
-        model_response.model = model
-        model_response._hidden_params["model"] = model
+        actual_model = data.get("model") if isinstance(data.get("model"), str) else model
+        model_response.model = actual_model
+        model_response._hidden_params["model"] = actual_model
         model_response._hidden_params["custom_llm_provider"] = "reve"
         model_response._hidden_params["response_cost"] = 0.04
         return model_response
@@ -256,19 +267,34 @@ class ReveLLM(CustomLLM):
         client: Any | None = None,  # noqa: ARG002
         **kwargs: Any,
     ) -> ImageResponse:
-        size = (optional_params or {}).get("size") or kwargs.get("size")
+        optional_params = optional_params or {}
+        size = optional_params.get("size") or kwargs.get("size")
         aspect_ratio = _map_aspect_ratio(size)
+
+        wire_payload = optional_params.get("canary_wire_request")
+        wire_manifest = None
+        if wire_payload:
+            from litellm_handlers.provider_wire import parse_provider_wire, verify_wire_images
+
+            wire_manifest = parse_provider_wire(wire_payload)
+            verify_wire_images(wire_manifest, image)
+            aspect_ratio = wire_manifest.get("structured_aspect") or aspect_ratio
 
         # v1 remix (the v2 layout endpoint is feature-gated, see
         # aimage_generation). References upload as a flat base64 list and the
         # prompt references them positionally via <img>N</img> instructions.
         reference_images: list[str] = []
         prompt_injections: list[str] = []
-        for idx, item in enumerate(image[:4]):
+        wire_items = image if wire_manifest else image[:4]
+        for idx, item in enumerate(wire_items):
             b64_str = _image_to_base64(item)
             if not b64_str:
+                if wire_manifest:
+                    raise ValueError(f"ProviderWireRequest reference {idx} is unreadable")
                 continue
             reference_images.append(b64_str)
+            if wire_manifest:
+                continue
             filename = _item_filename(item)
             role, bare = _parse_role_and_name(filename)
             if role is None:
@@ -276,14 +302,14 @@ class ReveLLM(CustomLLM):
             label = _extract_label_from_bare(role, bare)
             prompt_injections.append(f"Use <img>{idx}</img>: {_role_reference_prompt(role, label)}")
 
-        final_prompt = prompt or ""
-        if "<img>" not in final_prompt and prompt_injections:
+        final_prompt = wire_manifest["prompt_parts"][0] if wire_manifest else (prompt or "")
+        if not wire_manifest and "<img>" not in final_prompt and prompt_injections:
             ref_block = "Reference images:\n" + "\n".join(prompt_injections) + "\n\n"
             final_prompt = ref_block + final_prompt
 
         # Reve accepts very long prompts; only truncate as a last resort,
         # preserving the reference block when present.
-        if len(final_prompt) > 8000:
+        if not wire_manifest and len(final_prompt) > 8000:
             parts = final_prompt.split("\n\n", 1)
             if len(parts) == 2 and parts[0].startswith("Reference images:"):
                 suffix = parts[0] + "\n\n"
@@ -296,7 +322,7 @@ class ReveLLM(CustomLLM):
             "reference_images": reference_images,
             "aspect_ratio": aspect_ratio,
         }
-        seed = (optional_params or {}).get("seed") or kwargs.get("seed")
+        seed = None if wire_manifest else (optional_params.get("seed") or kwargs.get("seed"))
         if seed is not None:
             payload["seed"] = seed
 
@@ -325,8 +351,9 @@ class ReveLLM(CustomLLM):
 
         model_response.created = int(time.time())
         model_response.data = [ImageObject(b64_json=b64)]
-        model_response.model = model
-        model_response._hidden_params["model"] = model
+        actual_model = data.get("model") if isinstance(data.get("model"), str) else model
+        model_response.model = actual_model
+        model_response._hidden_params["model"] = actual_model
         model_response._hidden_params["custom_llm_provider"] = "reve"
         model_response._hidden_params["response_cost"] = 0.04
         return model_response
