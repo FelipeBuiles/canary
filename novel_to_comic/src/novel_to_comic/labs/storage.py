@@ -22,9 +22,12 @@ from __future__ import annotations
 
 import json
 import shutil
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from novel_to_comic.provider_wire import ProviderWireRequest, materialize_wire_references
 
 
 def labs_root(projects_dir: Path) -> Path:
@@ -149,6 +152,26 @@ def stage_reference_images(projects_dir: Path, run_id: str, sources: list[Path])
         dest = target / f"{i:02d}{src.suffix or '.png'}"
         shutil.copyfile(src, dest)
         staged.append(dest)
+    return staged
+
+
+def stage_provider_wire_request(
+    projects_dir: Path, run_id: str, wire: ProviderWireRequest,
+) -> ProviderWireRequest:
+    """Stage wire refs with their complete semantic manifest intact."""
+    blobs = materialize_wire_references(wire)
+    target = ref_dir(projects_dir, run_id)
+    target.mkdir(parents=True, exist_ok=True)
+    staged_refs = []
+    for ref, data in zip(wire.references, blobs, strict=True):
+        suffix = Path(ref.source_path).suffix or ".png"
+        dest = target / f"wire-{ref.index:02d}{suffix}"
+        dest.write_bytes(data)
+        staged_refs.append(replace(ref, source_path=str(dest)))
+    staged = replace(wire, references=tuple(staged_refs), execution_fingerprint="")
+    staged = replace(staged, execution_fingerprint=staged.recompute_execution_fingerprint())
+    # Fingerprint is unchanged because paths are deliberately excluded.
+    (target / "provider-wire.json").write_text(staged.to_json())
     return staged
 
 

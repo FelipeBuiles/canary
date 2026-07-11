@@ -29,6 +29,7 @@ from novel_to_comic.ai.finalisation import (
 )
 from novel_to_comic.ai.providers.base import RefImage
 from novel_to_comic.config import Config
+from novel_to_comic.provider_wire import ProviderWireRequest
 from novel_to_comic.usage import (
     ApiResult,
     UsageRecord,
@@ -1048,22 +1049,53 @@ async def generate_image(
         raise
     except AIRefusalError as exc:
         finalise_image_refusal(
-            ctx=ctx,
-            config=config,
-            model=model,
-            feature=feature,
-            error=exc,
+            ctx=ctx, config=config, model=model, feature=feature, error=exc,
         )
         raise
     except Exception as exc:
-        error_response = getattr(exc, "response", None)
         finalise_image_failure(
-            ctx=ctx,
-            config=config,
-            model=model,
-            feature=feature,
-            error=exc,
-            error_response=error_response,
+            ctx=ctx, config=config, model=model, feature=feature, error=exc,
+            error_response=getattr(exc, "response", None),
+        )
+        raise
+
+
+async def generate_wire_image(
+    *, config: Config, wire: "ProviderWireRequest", output_path: Path,
+    feature: str = "image.generate_wire",
+) -> ApiResult[Path]:
+    """Reachable exact-wire transport entry; caller migration is Slices 11–12."""
+    from novel_to_comic.ai.providers import selector
+    from novel_to_comic.ai.providers.litellm_http import LitellmHttpProvider
+    from novel_to_comic.provider_wire import materialize_wire_references
+
+    blobs = materialize_wire_references(wire)
+    ref_reads = [
+        (Path(ref.source_path), data)
+        for ref, data in zip(wire.references, blobs, strict=True)
+    ]
+    provider = selector.pick(wire.requested_alias or "", config, layout=None)
+    if not isinstance(provider, LitellmHttpProvider):
+        raise ValueError(f"wire transport is not implemented for adapter {provider.name}")
+    params, _files = provider.prepare_wire_request(wire)
+    ctx = begin_image_call(
+        config=config, model=wire.requested_alias or wire.configured_provider_model,
+        feature=feature, prompt=wire.prompt_parts[0], params=params, ref_reads=ref_reads,
+    )
+    try:
+        raw = await provider.generate_wire(
+            wire=wire, config=config, event_id=ctx.event_id, metadata=ctx.metadata,
+        )
+        return await finalise_image_success(
+            ctx=ctx, config=config,
+            model=wire.requested_alias or wire.configured_provider_model,
+            feature=feature, output_path=output_path, raw=raw,
+        )
+    except Exception as exc:
+        finalise_image_failure(
+            ctx=ctx, config=config,
+            model=wire.requested_alias or wire.configured_provider_model,
+            feature=feature, error=exc, error_response=getattr(exc, "response", None),
         )
         raise
 

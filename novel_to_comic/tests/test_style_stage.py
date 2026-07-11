@@ -216,8 +216,9 @@ def test_ensure_style_sample_brief_fails_soft(tmp_path):
 def test_generate_sample_image_uses_brief_and_writes_meta(tmp_path):
     captured: dict = {}
 
-    async def _fake_generate_image(*, config, prompt, output_path, feature):
+    async def _fake_generate_image(*, config, prompt, output_path, feature, **kwargs):
         captured["prompt"] = prompt
+        captured["kwargs"] = kwargs
         return ApiResult(value=str(output_path), usage=None)
 
     sample_path = tmp_path / "samples" / "style_1.png"
@@ -238,3 +239,6 @@ def test_generate_sample_image_uses_brief_and_writes_meta(tmp_path):
     meta = json.loads((tmp_path / "samples" / "style_1.png.meta.json").read_text())
     assert meta["prompt"] == captured["prompt"]
     assert meta["parameters"]["style_template"] == "Clinical, desaturated visual language."
+    # Slice 06: style proof images use a portrait 4:5 frame.
+    assert meta["parameters"]["width"] == 819
+    assert meta["parameters"]["height"] == 1024

@@ -353,7 +353,7 @@ def _sample_meta_path(sample_path: Path) -> Path:
     return sample_path.with_suffix(f"{sample_path.suffix}.meta.json")
 
 
-def _sample_meta(config: Config, prompt: str) -> dict:
+def _sample_meta(config: Config, prompt: str, width: int, height: int) -> dict:
     return {
         "version": 1,
         "kind": "style_sample",
@@ -361,8 +361,8 @@ def _sample_meta(config: Config, prompt: str) -> dict:
         "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
         "parameters": {
             "image_model": config.effective_image_model(),
-            "width": config.image_width,
-            "height": config.image_height,
+            "width": width,
+            "height": height,
             "steps": config.effective_image_steps(),
             "guidance_scale": config.flux_guidance_scale,
             "style_template": config.style_template,
@@ -381,14 +381,24 @@ async def generate_sample_image(
 
     *brief* is the shared prose body from ``ensure_style_sample_brief``;
     when None the prompt falls back to its deterministic body.
+
+    Slice 06: style proof images use a portrait 4:5 frame — the style-sample
+    prompt promises "Portrait 4:5 frame, filled edge to edge." The generation
+    dimensions must agree with that promised composition instead of the
+    (default square) panel config dimensions.
     """
+    from novel_to_comic.panel_aspect import style_proof_dimensions
+
     prompt = build_style_sample_prompt(config, bible, brief=brief)
-    meta = _sample_meta(config, prompt)
+    width, height = style_proof_dimensions()
+    meta = _sample_meta(config, prompt, width, height)
     sample_path.parent.mkdir(parents=True, exist_ok=True)
     result = await flux.generate_image(
         config=config,
         prompt=prompt,
         output_path=sample_path,
+        width=width,
+        height=height,
         feature="style.sample",
     )
     _sample_meta_path(sample_path).write_text(json.dumps(meta, indent=2, sort_keys=True))

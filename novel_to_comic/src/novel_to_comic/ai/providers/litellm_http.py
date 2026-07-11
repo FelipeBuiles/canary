@@ -15,10 +15,70 @@ from novel_to_comic.ai.errors import AIRefusalError
 from novel_to_comic.ai.providers.base import ProviderRawResult, RefImage
 from novel_to_comic.config import Config, is_gpt_image_2
 from novel_to_comic.panel_aspect import aspect_for_dimensions, generation_shape_for_aspect
+from novel_to_comic.provider_wire import ProviderWireRequest, materialize_wire_references
 
 
 class LitellmHttpProvider:
     name = "litellm_http"
+
+    def prepare_wire_request(
+        self, wire: ProviderWireRequest,
+    ) -> tuple[dict[str, Any], list[tuple[str, tuple[str, bytes, str]]]]:
+        """Consume the schema-discriminated exact path.
+
+        Slices 11–12 will move callers onto this entry point. ``generate``
+        below is the frozen deprecated legacy raw-prompt/raw-path branch.
+        """
+        return serialize_wire_request(wire)
+
+    async def generate_wire(
+        self,
+        *,
+        wire: ProviderWireRequest,
+        config: Config,
+        event_id: str,
+        metadata: dict[str, Any],
+    ) -> ProviderRawResult:
+        """Submit the exact wire payload; never enters ``generate`` legacy logic."""
+        from novel_to_comic.ai import client as ai_client
+
+        params, files = self.prepare_wire_request(wire)
+        prompt = str(params.pop("prompt"))
+        endpoint = "/v1/images/edits" if files else "/v1/images/generations"
+        url = f"{ai_client._base_url(config)}{endpoint}"
+        headers = ai_client._headers(config, event_id)
+        started = time.perf_counter()
+        if files:
+            response = await ai_client._post_with_retry(
+                url, headers=headers,
+                data={"prompt": prompt, "metadata": ai_client._json_dumps(metadata), **{
+                    key: str(value) for key, value in params.items() if value is not None
+                }},
+                files=files,
+            )
+        else:
+            response = await ai_client._post_with_retry(
+                url, headers=headers,
+                json={"prompt": prompt, "metadata": metadata, **{
+                    key: value for key, value in params.items() if value is not None
+                }},
+            )
+        if response.status_code >= 400:
+            response.raise_for_status()
+        data = response.json()
+        if ai_client._is_refusal(data):
+            raise AIRefusalError(
+                "AI image request was refused by gateway/provider",
+                response_data=data, response_headers=response.headers, response=response,
+            )
+        return ProviderRawResult(
+            image_bytes=await ai_client._decode_image_response(data),
+            mime="image/png",
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            provider_request_id=data.get("id"), raw_response=data,
+            response_headers=response.headers, request_params=params,
+            actual_provider_model=(data.get("model") if isinstance(data.get("model"), str) else None),
+        )
 
     def request_params(
         self,
@@ -54,6 +114,7 @@ class LitellmHttpProvider:
         event_id: str,
         metadata: dict[str, Any],
     ) -> ProviderRawResult:
+        """Deprecated legacy request branch; new callers must use wire requests."""
         from novel_to_comic.ai import client as ai_client
 
         request_params = params or self.request_params(
@@ -169,7 +230,30 @@ class LitellmHttpProvider:
             response_headers=response.headers,
             provider_request_id=data.get("id"),
             request_params=request_params,
+            actual_provider_model=(data.get("model") if isinstance(data.get("model"), str) else None),
         )
+
+
+def serialize_wire_request(
+    wire: ProviderWireRequest,
+) -> tuple[dict[str, Any], list[tuple[str, tuple[str, bytes, str]]]]:
+    """Serialize an exact wire manifest without invoking the legacy transforms."""
+    blobs = materialize_wire_references(wire)
+    params: dict[str, Any] = {
+        "model": wire.requested_alias,
+        "prompt": wire.prompt_parts[0],
+        "canary_wire_request": wire.to_json(),
+        "canary_requested_width": wire.width,
+        "canary_requested_height": wire.height,
+    }
+    if wire.structured_aspect is not None:
+        params["aspect_ratio"] = wire.structured_aspect
+    params.update(dict(wire.controls))
+    files = [
+        ("image", (f"wire-ref-{ref.index}", data, _mime_type(Path(ref.source_path))))
+        for ref, data in zip(wire.references, blobs, strict=True)
+    ]
+    return params, files
 
 
 def _load_refs(refs: list[RefImage]) -> list[tuple[RefImage, bytes]]:

@@ -27,6 +27,7 @@ except (ModuleNotFoundError, ImportError):
     types.SafetySetting = DummyClass
     types.Part = DummyClass
     types.GenerateContentConfig = DummyClass
+    types.ImageConfig = DummyClass
     types.GenerateContentResponse = DummyClass
 try:
     import litellm
@@ -205,12 +206,9 @@ class VertexMultimodalLLM(CustomLLM):
         location = _vertex_location(optional_params)
         requested_aspect = _requested_aspect(optional_params)
         requested_shape = _shape_for_aspect(requested_aspect)
-        contents: list[str | types.Part] = []
-        if requested_shape:
-            contents.append(_aspect_instruction(requested_shape, requested_aspect))
-        contents.append(prompt)
         ref_count = 0
-        labeled: list[tuple[str, str, types.Part]] = []  # (role, bare_name, Part)
+        labeled: list[tuple[str, str, types.Part]] = []  # legacy only
+        parts: list[types.Part] = []
         for item in image:
             filename = _item_filename(item)
             role, bare = _parse_role_and_name(filename)
@@ -219,8 +217,25 @@ class VertexMultimodalLLM(CustomLLM):
             part = _part(item)
             if part is not None:
                 labeled.append((role, bare, part))
+                parts.append(part)
                 ref_count += 1
-        if labeled:
+        wire_payload = optional_params.get("canary_wire_request")
+        if wire_payload:
+            from litellm_handlers.provider_wire import (
+                exact_vertex_contents,
+                parse_provider_wire,
+                verify_wire_images,
+            )
+
+            manifest = parse_provider_wire(wire_payload)
+            verify_wire_images(manifest, image)
+            contents = exact_vertex_contents(manifest, parts)
+        else:
+            contents: list[str | types.Part] = []
+            if requested_shape:
+                contents.append(_aspect_instruction(requested_shape, requested_aspect))
+            contents.append(prompt)
+        if labeled and not wire_payload:
             from collections import Counter
             role_totals: Counter[str] = Counter(role for role, _, _ in labeled)
             role_seen: Counter[str] = Counter()
@@ -231,14 +246,25 @@ class VertexMultimodalLLM(CustomLLM):
                 contents.append(part)
         client = genai.Client(vertexai=True, project=project, location=location)
         try:
+            config_kwargs: dict[str, Any] = {
+                "response_modalities": ["IMAGE"],
+                "safety_settings": _SAFETY_OFF,
+            }
+            if wire_payload:
+                controls = dict(manifest.get("controls", []))
+                quality = controls.get("quality")
+                if quality is not None:
+                    image_size = {"low": "1K", "medium": "2K", "high": "4K", "auto": "2K"}.get(
+                        str(quality).lower()
+                    )
+                    if image_size is None:
+                        raise ValueError(f"unsupported wire quality: {quality}")
+                    config_kwargs["image_config"] = types.ImageConfig(image_size=image_size)
             response = await asyncio.to_thread(
                 client.models.generate_content,
                 model=vertex_model,
                 contents=contents,
-                config=types.GenerateContentConfig(
-                    response_modalities=["IMAGE"],
-                    safety_settings=_SAFETY_OFF,
-                ),
+                config=types.GenerateContentConfig(**config_kwargs),
             )
         except Exception as exc:  # noqa: BLE001 — re-raised as a typed LiteLLM error
             translated = _translate_vertex_error(exc, vertex_model)
