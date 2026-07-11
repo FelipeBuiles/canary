@@ -1366,11 +1366,6 @@ _GPT_IMAGE_2_RENDERING_DISCIPLINE = (
     "show only the story-critical cracks, tears, stains, and corrosion accents."
 )
 
-_REFERENCE_CONSTRAINT_LINE = (
-    "Use reference images for identity, palette, and continuity only — do not "
-    "copy their borders, layout grids, backgrounds, or framing."
-)
-
 _LAYOUT_CONSTRAINT_LINE = (
     "One unified scene filling the entire canvas — no sub-panels, gutters, "
     "internal borders, page layouts, or split-screen compositions."
@@ -1410,7 +1405,20 @@ def render_generation_prompt(
     style_template: str,
     image_model: str | None = None,
     refs: list[RefImage] | None = None,
+    *,
+    reference_instructions: tuple | None = None,
 ) -> str:
+    """Render the final provider-bound generation prompt.
+
+    Slice 05: per-reference instructions are owned by the compiled request
+    (:func:`novel_to_comic.compiled_request.compile_generation_request`).
+    When ``reference_instructions`` (compiled
+    ``CompiledReferenceInstruction`` objects) are supplied, they are
+    serialized here in the final plan order — this layer does NOT re-derive
+    compatibility, select references, or re-cap. When they are absent (direct
+    callers without a compiled request), the provider-tagged fallback block
+    below renders from the ``refs`` list.
+    """
     style = _clean(style_template or getattr(prompt, "style", None))
     # Prefer the LLM-composed prose brief; fall back to the deterministic
     # distilled brief for prompts generated before the brief existed.
@@ -1434,31 +1442,57 @@ def render_generation_prompt(
     if getattr(prompt, "continuity_note", None):
         _append_section(sections, "Continuity", prompt.continuity_note)
 
-    if strategy.use_indexed_ref_instructions() and refs:
-        # <img>N</img> indices follow the finalized ReferencePlan order.
-        ref_instructions = []
+    # ── Reference instructions (Slice 05) ──────────────────────────────────
+    # The compiled request owns the semantic per-reference instruction text
+    # (role-aware, facet-precise). This layer serializes it into the
+    # provider-tagged wire format (Reve ``<img>N</img>``) without re-selecting
+    # references or re-capping. No generic "ignore all backgrounds" guard is
+    # emitted — each instruction names its exact preserved/ignored facets.
+    use_indexed = strategy.use_indexed_ref_instructions()
+    if reference_instructions and use_indexed:
+        lines = []
+        for instr in reference_instructions:
+            idx = instr.index
+            marker = f"<img>{idx}</img>"
+            lines.append(f"Use {marker} as {instr.semantic_instruction}.")
+        if lines:
+            _append_section(sections, "Reference images", "\n".join(lines))
+    elif reference_instructions and not use_indexed:
+        # Non-indexed routes (Gemini/GPT Image 2): emit the semantic
+        # instructions without positional tags so the provider still sees the
+        # role-aware facet guidance.
+        lines = [
+            f"Reference: {instr.semantic_instruction}."
+            for instr in reference_instructions
+        ]
+        if lines:
+            _append_section(sections, "Reference images", "\n".join(lines))
+    elif refs and use_indexed:
+        # Fallback: direct caller without a compiled request. Render the
+        # legacy provider-tagged instructions from the refs list.
+        ref_lines = []
         for idx, ref in enumerate(refs):
             role = ref.role
             label = ref.label
             if role == "subject":
-                instr = (
+                instr_line = (
                     f"Use <img>{idx}</img> as the identity reference for {label} — match face, hair, build, and wardrobe; do not copy its pose or background."
                     if label
                     else f"Use <img>{idx}</img> as the character identity reference; do not copy its pose or background."
                 )
             elif role == "style":
-                instr = f"Use <img>{idx}</img> as the style reference for {label}." if label else f"Use <img>{idx}</img> as the style reference."
+                instr_line = f"Use <img>{idx}</img> as the style reference for {label}." if label else f"Use <img>{idx}</img> as the style reference."
             elif role == "location_plate":
-                instr = f"Use <img>{idx}</img> as the location reference for {label}." if label else f"Use <img>{idx}</img> as the location reference."
+                instr_line = f"Use <img>{idx}</img> as the location reference for {label}." if label else f"Use <img>{idx}</img> as the location reference."
             elif role == "prop":
-                instr = f"Use <img>{idx}</img> as the object reference for {label}." if label else f"Use <img>{idx}</img> as the object reference."
+                instr_line = f"Use <img>{idx}</img> as the object reference for {label}." if label else f"Use <img>{idx}</img> as the object reference."
             elif role == "continuity":
-                instr = f"Use <img>{idx}</img> for visual continuity."
+                instr_line = f"Use <img>{idx}</img> for visual continuity."
             else:
-                instr = f"Use <img>{idx}</img> as a reference."
-            ref_instructions.append(instr)
-        if ref_instructions:
-            _append_section(sections, "Reference images", "\n".join(ref_instructions))
+                instr_line = f"Use <img>{idx}</img> as a reference."
+            ref_lines.append(instr_line)
+        if ref_lines:
+            _append_section(sections, "Reference images", "\n".join(ref_lines))
 
     # System constraints are generated from typed fields; user addenda come from
     # the stored ``constraints`` field. The canonical constraint surface
@@ -1477,8 +1511,6 @@ def render_generation_prompt(
             part = part.strip()
             if part:
                 constraint_lines.append(f"- {part}")
-    if refs:
-        constraint_lines.append(f"- {_REFERENCE_CONSTRAINT_LINE}")
     _append_section(sections, "Constraints", constraint_lines)
 
     return "\n\n".join(sections)
