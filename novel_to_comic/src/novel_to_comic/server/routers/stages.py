@@ -10,6 +10,7 @@ from novel_to_comic import artifacts
 
 from novel_to_comic.models.panel import PanelBreakdown
 from novel_to_comic.models.prompt import ImagePrompt
+from novel_to_comic import panel_store
 from novel_to_comic.panel_store import save_breakdown, save_prompt
 from novel_to_comic.panel_versions import archived_panel_version_count, list_panel_versions, restore_panel_version
 from novel_to_comic.models.story_bible import StoryBible
@@ -207,11 +208,31 @@ def get_prompts_for_scene(scene_id: str, project=Depends(get_project)):
 
 @router.put("/prompts/{scene_id}/{panel_number}")
 async def update_prompt(scene_id: str, panel_number: int, body: dict, project=Depends(get_project)):
+    """Apply an explicit patch of authoritative prompt fields.
+
+    Body contract (Slice 01): ``{"fields": {<authoritative field>: <value>}}``.
+    The server loads the existing prompt and applies the patch through
+    ``apply_prompt_patch``, which centralizes derived-field invalidation and
+    rejects forbidden keys (derived fields, reference paths, identity anchors,
+    system constraints).  A full client-supplied ``ImagePrompt`` is no longer
+    trusted as authoritative state.
+    """
     project_dir, _config, _state = project
     if not artifacts.panel_prompt_path(project_dir, scene_id, panel_number).exists():
         raise HTTPException(404, f"Prompt {scene_id}/{panel_number} not found")
+
+    fields = body.get("fields") if isinstance(body, dict) else None
+    if not isinstance(fields, dict) or not fields:
+        raise HTTPException(400, "Request body must be a JSON object with a non-empty 'fields' mapping.")
+
+    existing = panel_store.load_prompt(project_dir, scene_id, panel_number)
+    if existing is None:
+        raise HTTPException(404, f"Prompt {scene_id}/{panel_number} not found")
     try:
-        updated = save_prompt(project_dir, scene_id, panel_number, body)
+        patched = panel_store.apply_prompt_patch(existing, fields)
+        updated = save_prompt(project_dir, scene_id, panel_number, patched.model_dump())
+    except ValueError as e:
+        raise HTTPException(400, f"Invalid prompt patch: {e}")
     except Exception as e:
         raise HTTPException(400, f"Invalid prompt data: {e}")
     return updated.model_dump()

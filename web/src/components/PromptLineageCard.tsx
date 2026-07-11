@@ -301,14 +301,20 @@ export function PromptLineageCard({
       !Object.prototype.hasOwnProperty.call(patch, "full_prompt") &&
       bodyFieldKeys.some((key) => Object.prototype.hasOwnProperty.call(patch, key));
 
-    const next = { ...prompt, ...patch };
-    const outgoing = shouldRebuildBody
-      ? { ...patch, full_prompt: renderPanelPromptBody(next) }
-      : patch;
-    const highlightKeys = shouldRebuildBody ? [...changedKeys, "full_prompt"] : changedKeys;
-    const mergedFromValues = shouldRebuildBody
-      ? { ...fromValues, full_prompt: prompt.full_prompt ?? "" }
-      : fromValues;
+    // The outgoing patch carries ONLY authoritative fields — the server owns
+    // full_prompt/distilled_prompt/visual_brief and rejects them if sent.
+    const outgoing = { ...patch };
+    const highlightKeys = [...changedKeys];
+    const mergedFromValues = { ...fromValues };
+    if (shouldRebuildBody) {
+      // Keep a local preview of the rebuilt body for highlight feedback, but
+      // never include full_prompt in the outgoing patch.
+      const next = { ...prompt, ...patch };
+      highlightKeys.push("full_prompt");
+      mergedFromValues.full_prompt = prompt.full_prompt ?? "";
+      // Apply to local state only so the assembled-prompt preview updates.
+      outgoing.full_prompt = renderPanelPromptBody(next);
+    }
     flashFields(highlightKeys, mergedFromValues);
     onSave?.(outgoing);
   };
@@ -474,20 +480,11 @@ export function PromptLineageCard({
       )}
 
       <CollapsibleSection title="ASSEMBLED PROMPT" defaultExpanded>
-        {editable ? (
-          <EditableText
-            value={prompt.full_prompt}
-            onSave={handleSave("full_prompt")}
-            multiline
-            className="w-full text-[0.82rem] leading-6"
-            highlightActive={isHighlighted("full_prompt")}
-            highlightFrom={highlightFrom("full_prompt")}
-          />
-        ) : (
-          <p className="text-[0.82rem] leading-6 text-ink-black/75 whitespace-pre-wrap">
-            {prompt.full_prompt}
-          </p>
-        )}
+        {/* Derived preview — read-only. The server rebuilds this from the
+            structured fields above; editing it directly is not authoritative. */}
+        <p className="text-[0.82rem] leading-6 text-ink-black/75 whitespace-pre-wrap">
+          {prompt.full_prompt}
+        </p>
       </CollapsibleSection>
       {prompt.continuity_note && (
         <CollapsibleSection title="CONTINUITY NOTE" defaultExpanded>

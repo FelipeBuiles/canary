@@ -158,8 +158,13 @@ def apply_instruction_patch(prompt: ImagePrompt, patch: PromptInstructionPatch) 
 
     _enforce_prompt_invariants(updated)
     updated.full_prompt = render_panel_prompt_body(updated)
+    # An accepted instructed semantic change invalidates every derived body:
+    # the distilled prompt, the LLM-composed visual brief, AND the region
+    # layout (position/composition intent changed).  Callers rehydrate them
+    # through the shared ensure_* path before generation.
     updated.distilled_prompt = None
     updated.visual_brief = None
+    updated.layout = None
     return updated
 
 

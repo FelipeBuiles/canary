@@ -119,11 +119,11 @@ export function updatePrompt(
   project: string,
   sceneId: string,
   panelNumber: number,
-  data: ImagePrompt,
+  fields: Partial<ImagePrompt>,
 ): Promise<ImagePrompt> {
   return apiFetch(
     `/projects/${encodeURIComponent(project)}/prompts/${encodeURIComponent(sceneId)}/${panelNumber}`,
-    { method: "PUT", body: JSON.stringify(data) },
+    { method: "PUT", body: JSON.stringify({ fields }) },
   );
 }
 

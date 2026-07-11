@@ -26,6 +26,41 @@ import { Select } from "./ui/Select";
 type TabId = "panel" | "prompt";
 const DEFAULT_IMAGE_MODEL_ALIASES = ["image-fast", "image-balanced", "image-quality"];
 
+// Authoritative editable prompt fields (must mirror the backend
+// AUTHORITATIVE_PROMPT_FIELDS ∪ {subjects, layout} in panel_store.py). Only
+// these are sent to the server; derived/protected fields are rebuilt server-side.
+const AUTHORITATIVE_PROMPT_FIELDS = [
+  "composition",
+  "setting",
+  "lighting",
+  "mood",
+  "constraints",
+  "continuity_note",
+  "props",
+  "subjects",
+  "layout",
+] as const;
+
+// Compute a patch of only the authoritative fields that changed between the
+// original prompt and the draft. The server rejects derived/protected keys, so
+// the client must never send them.
+function diffAuthoritativeFields(
+  original: ImagePrompt | undefined,
+  draft: ImagePrompt,
+): Partial<ImagePrompt> {
+  if (!original) return {};
+  const patch: Partial<ImagePrompt> = {};
+  for (const key of AUTHORITATIVE_PROMPT_FIELDS) {
+    const oldVal = original[key] as unknown;
+    const newVal = draft[key] as unknown;
+    if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (patch as any)[key] = newVal;
+    }
+  }
+  return patch;
+}
+
 interface PanelDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -377,7 +412,8 @@ function PromptTabContent({
     const key = `${sceneId}-${panelNumber}`;
     let startedRegen = false;
     try {
-      await updatePrompt.mutateAsync({ project, sceneId, data: draft });
+      const fields = diffAuthoritativeFields(originalPrompt, draft);
+      await updatePrompt.mutateAsync({ project, sceneId, panelNumber, fields });
       queryClient.invalidateQueries({ queryKey: ["project", project, "direct", sceneId] });
       begin(project, key);
       startedRegen = true;
