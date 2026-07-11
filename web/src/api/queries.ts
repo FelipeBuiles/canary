@@ -561,8 +561,8 @@ export function usePromptsForScene(
 export function useUpdatePrompt() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ project, sceneId, data }: { project: string; sceneId: string; data: import("../types/api").ImagePrompt }) =>
-      updatePrompt(project, sceneId, data.panel_number, data),
+    mutationFn: ({ project, sceneId, panelNumber, fields }: { project: string; sceneId: string; panelNumber: number; fields: Partial<import("../types/api").ImagePrompt> }) =>
+      updatePrompt(project, sceneId, panelNumber, fields),
     onSuccess: (_data, { project, sceneId }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "direct", sceneId] });
     },

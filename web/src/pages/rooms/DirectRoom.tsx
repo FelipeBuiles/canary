@@ -25,7 +25,6 @@ import {
   WarningOverrideDrawer,
 } from "../../components/composites";
 import { useCharacterName } from "../../hooks/useCharacterName";
-import { renderPanelPromptBody } from "../../lib/prompting";
 import { detectAllWarnings } from "../../lib/promptWarnings";
 import { useRunAction } from "../../hooks/useRunAction";
 import type { ImagePrompt, PromptWarning } from "../../types/api";
@@ -67,8 +66,9 @@ function DirectPromptDetail({
   styleLabel?: string;
 }) {
   function saveStructuredPatch(patch: Partial<ImagePrompt>) {
-    const next = { ...prompt, ...patch };
-    onSave({ ...patch, full_prompt: renderPanelPromptBody(next) });
+    // Send only authoritative fields — the server rebuilds full_prompt and
+    // rejects derived/protected keys (full_prompt, visual_brief, ...).
+    onSave({ ...patch });
   }
 
   const hasSubjects = (prompt.subjects ?? []).length > 0;
@@ -192,14 +192,12 @@ function DirectPromptDetail({
           storageKey="direct.assembledPrompt"
           defaultExpanded={false}
         >
+          {/* Derived preview — read-only. The server rebuilds this from the
+              structured fields above; editing it directly is not authoritative. */}
           <div className="pt-2">
-            <EditableText
-              value={prompt.full_prompt}
-              onSave={(full_prompt) => onSave({ full_prompt })}
-              multiline
-              className="block min-h-[200px] whitespace-pre-wrap bg-ink-black px-7 py-7 font-meta text-[11px] font-medium leading-6 text-bristol"
-              inputClassName="min-h-[200px] bg-ink-black text-bristol font-mono text-xs"
-            />
+            <p className="block min-h-[200px] whitespace-pre-wrap bg-ink-black px-7 py-7 font-meta text-[11px] font-medium leading-6 text-bristol">
+              {prompt.full_prompt}
+            </p>
           </div>
         </CollapsibleSection>
       </div>
@@ -449,10 +447,14 @@ export function DirectRoom() {
 
   const handleSavePrompt = (prompt: ImagePrompt, patch: Partial<ImagePrompt>) => {
     if (!id || !activeScene) return;
+    // Send only the changed authoritative fields — the server rebuilds derived
+    // fields and rejects derived/protected keys (full_prompt, visual_brief,
+    // reference_image_paths, identity anchors, ...).
     updatePrompt.mutate({
       project: id,
       sceneId: activeScene,
-      data: { ...prompt, ...patch },
+      panelNumber: prompt.panel_number,
+      fields: patch,
     });
   };
 
