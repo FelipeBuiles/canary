@@ -1,6 +1,27 @@
 import { describe, it, expect } from "vitest";
-import { detectIssues, contrastRatio } from "../lib/issueEngine";
+import { areComposeIssuesEqual, detectIssues, contrastRatio } from "../lib/issueEngine";
 import type { ComicPage, ImageStatus, PagePanel, Bubble } from "../types/api";
+
+describe("areComposeIssuesEqual", () => {
+  const issue = {
+    id: "lettering_overflow:1:panel-1:b1",
+    type: "lettering_overflow" as const,
+    severity: "warning" as const,
+    message: "Text overflows its bubble.",
+    pageNumber: 1,
+    panelId: "panel-1",
+    bubbleId: "b1",
+  };
+
+  it("treats repeated measurements with identical values as unchanged", () => {
+    expect(areComposeIssuesEqual([issue], [{ ...issue }])).toBe(true);
+  });
+
+  it("detects a changed measurement", () => {
+    expect(areComposeIssuesEqual([issue], [{ ...issue, message: "Changed" }])).toBe(false);
+    expect(areComposeIssuesEqual(undefined, [])).toBe(false);
+  });
+});
 
 // ── Factories ────────────────────────────────────────────────────────────────
 

@@ -503,7 +503,6 @@ function CharacterCastCard({
   return (
     <>
       <EntityCard
-        interactive={!isGenerating && !imgFailed}
         padding="tight"
         className="group/cast-card"
         media={
@@ -825,7 +824,6 @@ function LocationPlateCard({
   return (
     <>
       <EntityCard
-        interactive={!isGenerating && !imgFailed}
         padding="tight"
         className="group/cast-card"
         media={
@@ -1104,7 +1102,6 @@ function PropRefCard({
   return (
     <>
       <EntityCard
-        interactive={!isGenerating && !imgFailed}
         padding="tight"
         className="group/cast-card"
         media={

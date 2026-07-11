@@ -28,7 +28,7 @@ import { useAllPages } from "../../hooks/useAllPages";
 import { useComposeStore } from "../../store/compose";
 import type { ComicPage, Bubble, Sfx, PagePanel } from "../../types/api";
 import type { ComposeTab } from "../../components/compose/compose-types";
-import { detectIssues } from "../../lib/issueEngine";
+import { areComposeIssuesEqual, detectIssues } from "../../lib/issueEngine";
 import type { ComposeIssue } from "../../lib/issueEngine";
 import "../../components/compose/comic-page.css";
 
@@ -106,7 +106,13 @@ export function ComposeRoom() {
   const clampZoom = (v: number) => Math.max(0.5, Math.min(2.5, Number(v.toFixed(2))));
 
   const handleLetteringIssues = useCallback((pageNumber: number, nextIssues: ComposeIssue[]) => {
-    setLetteringIssuesByPage((current) => ({ ...current, [pageNumber]: nextIssues }));
+    setLetteringIssuesByPage((current) => {
+      const previousIssues = current[pageNumber];
+      if (areComposeIssuesEqual(previousIssues, nextIssues)) {
+        return current;
+      }
+      return { ...current, [pageNumber]: nextIssues };
+    });
   }, []);
 
   // ── Page navigation ──────────────────────────────────────────────────────

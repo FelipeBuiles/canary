@@ -1,0 +1,7 @@
+[agents]
+# Keep the initial prototype conservative. Increase only after measuring useful
+# parallelism, token usage, and write-conflict frequency on real tasks.
+max_threads = 4
+max_depth = 1
+interrupt_message = true
+

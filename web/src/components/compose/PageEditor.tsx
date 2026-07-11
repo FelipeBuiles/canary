@@ -94,7 +94,10 @@ export function PageEditor({
 
   useEffect(() => {
     setCommittedDrag(null);
-    setCommittedPanelDrag(null);
+    setCommittedPanelDrag((committed) => {
+      if (!committed) return null;
+      return panelReframeHasSettled(page, committed) ? null : committed;
+    });
   }, [page]);
 
   const imageBaseUrl = `/api/projects/${encodeURIComponent(project)}/files`;
@@ -335,6 +338,17 @@ function getVisualPanelPosition(element: HTMLElement, panelEl: HTMLElement, scal
     x: (elementRect.left - panelRect.left) / scale - panelEl.clientLeft,
     y: (elementRect.top - panelRect.top) / scale - panelEl.clientTop,
   };
+}
+
+export function panelReframeHasSettled(
+  page: ComicPage,
+  committed: Pick<PanelReframeDrag, "panelId" | "startOffsetX" | "startOffsetY" | "dx" | "dy" | "scale">,
+): boolean {
+  const panel = page.panels.find((candidate) => candidate.id === committed.panelId);
+  if (!panel) return true;
+  const expectedX = Math.round(committed.startOffsetX + committed.dx / committed.scale);
+  const expectedY = Math.round(committed.startOffsetY + committed.dy / committed.scale);
+  return (panel.image_offset_x ?? 0) === expectedX && (panel.image_offset_y ?? 0) === expectedY;
 }
 
 function buildDisplayPage(

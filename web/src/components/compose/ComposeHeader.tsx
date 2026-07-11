@@ -211,7 +211,7 @@ export function ComposeHeader({
   return (
     <>
       <TopBarPortal>
-        <div className="relative flex min-w-0 flex-1 items-stretch overflow-hidden">
+        <div className="relative flex min-w-0 flex-1 items-stretch overflow-visible">
           <div className="hidden w-[68px] shrink-0 flex-col items-center justify-center bg-ink-black text-bristol lg:flex">
             <span className="font-meta text-[0.46rem] font-bold tracking-[0.14em] text-bristol/65">STATION</span>
             <strong className="mt-1 font-display text-[1.5rem] font-black leading-none tracking-[-0.03em]">04</strong>

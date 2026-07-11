@@ -269,7 +269,7 @@ function InspectDrawerRerun({ project, kind }: { project: string; kind: DrawerKi
   const stage = rerunStageForDrawer(kind);
   if (status?.stages[stage]?.status !== "complete") return null;
   return (
-    <div className="flex min-h-16 items-center justify-between gap-3 border-t-[2px] border-ink-black bg-bristol px-4 py-2">
+    <div className="flex min-h-[76px] items-center justify-between gap-3 border-t-[3px] border-ink-black bg-bristol px-4 py-2">
       <p className="max-w-[22ch] text-[0.7rem] leading-5 text-ink-black/55">
         Regenerate this step and everything after it.
       </p>

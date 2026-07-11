@@ -23,6 +23,19 @@ export interface ComposeIssue {
   bubbleId?: string;
 }
 
+export function areComposeIssuesEqual(a: ComposeIssue[] | undefined, b: ComposeIssue[]): boolean {
+  return a?.length === b.length && a.every((issue, index) => {
+    const next = b[index];
+    return issue.id === next.id &&
+      issue.type === next.type &&
+      issue.severity === next.severity &&
+      issue.message === next.message &&
+      issue.pageNumber === next.pageNumber &&
+      issue.panelId === next.panelId &&
+      issue.bubbleId === next.bubbleId;
+  });
+}
+
 const PAGE_W = 2480;
 const PAGE_H = 3508;
 const SAFE_X = PAGE_W * 0.05; // 124
