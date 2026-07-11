@@ -437,14 +437,32 @@ def estimate_panel_image_cost_usd(
     )
     _surface_plan_warnings(plan)
     refs = plan.to_ref_images()
+    # Slice 05: estimate with the same compiled role-aware instructions the
+    # draw path uses, so the estimate prompt matches the submitted request.
+    from novel_to_comic.compiled_request import compile_generation_request
+    from novel_to_comic.image_models import describe_image_model, image_model_profile_for_config
+
+    _route_profile = image_model_profile_for_config(config)
+    _effective_model = config.effective_image_model()
+    _desc = describe_image_model(_effective_model)
+    compiled = compile_generation_request(
+        prompt=prompt,
+        reference_plan=plan,
+        route_profile=_route_profile,
+        requested_alias=_effective_model,
+        configured_provider_model=_desc.provider_model,
+        selected_style_text=config.style_template,
+        asset_kind="panel",
+    )
     generation_prompt = render_generation_prompt(
         prompt,
         config.style_template,
-        config.effective_image_model(),
+        _effective_model,
         refs=refs,
+        reference_instructions=compiled.reference_instructions,
     )
     return estimate_image_cost(
-        config.effective_image_model(),
+        _effective_model,
         1,
         quality=getattr(config, "image_quality", None),
         ref_count=plan.ref_count,
@@ -672,11 +690,35 @@ async def _generate_panel(
             generation_path = output_path.with_name(
                 f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
             )
+        # Slice 05: compile the provider-independent request so role-aware,
+        # facet-precise per-reference instructions replace the deleted generic
+        # all-reference guard. The compiled instructions are passed to the
+        # renderer so it serializes them into the provider wire format without
+        # re-selecting references or re-capping.
+        from novel_to_comic.compiled_request import compile_generation_request
+        from novel_to_comic.image_models import (
+            describe_image_model,
+            image_model_profile_for_config,
+        )
+
+        _route_profile = image_model_profile_for_config(config)
+        _effective_model = config.effective_image_model()
+        _desc = describe_image_model(_effective_model)
+        compiled = compile_generation_request(
+            prompt=prompt,
+            reference_plan=reference_plan,
+            route_profile=_route_profile,
+            requested_alias=_effective_model,
+            configured_provider_model=_desc.provider_model,
+            selected_style_text=config.style_template,
+            asset_kind="panel",
+        )
         generation_prompt = render_generation_prompt(
             prompt,
             config.style_template,
             config.effective_image_model(),
             refs=refs,
+            reference_instructions=compiled.reference_instructions,
         )
         meta_payload = {
             "version": 1,

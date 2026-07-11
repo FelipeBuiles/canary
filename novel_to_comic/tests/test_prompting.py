@@ -1010,8 +1010,9 @@ def test_reve_prompt_injection():
         "and wardrobe; do not copy its pose or background." in generation_prompt
     )
     assert "Use <img>1</img> as the style reference for selected style." in generation_prompt
-    # Refs present → the reference-handling constraint line is emitted.
-    assert "- Use reference images for identity, palette, and continuity only" in generation_prompt
+    # Slice 05: the generic all-reference guard is deleted; per-reference
+    # instructions name exact preserved/ignored facets instead.
+    assert "identity, palette, and continuity only" not in generation_prompt
 
 
 def test_non_reve_models_do_not_get_img_tags():
