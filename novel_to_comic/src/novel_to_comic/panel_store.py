@@ -80,7 +80,9 @@ APPLY_PROMPT_PATCH_FORBIDDEN_KEYS: frozenset[str] = frozenset(
         "has_narration_caption",
         "narration_mode",
         "preferred_caption_zone",
+        "location_id",
         "location_state_id",
+        "anchors",
         "generation_mode",
         "shape_intent",
         "generation_aspect_ratio",
@@ -161,6 +163,7 @@ def _coerce_subjects(value: Any) -> list[PromptSubject]:
         "identity",
         "appearance_locked",
         "appearance_guard",
+        "appearance_state_id",
         "character_id",
         "name",
     }

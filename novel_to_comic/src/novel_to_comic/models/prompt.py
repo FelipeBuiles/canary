@@ -1,5 +1,6 @@
 """Pydantic models for image prompts."""
 
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -77,6 +78,25 @@ class PromptLayout(BaseModel):
         return PromptLayout(prompt=(self.prompt or "").strip() or None, regions=regions)
 
 
+class PromptAnchor(BaseModel):
+    """A protected, verbatim visual anchor for one entity in a panel.
+
+    Immutable source material (Slice 02): ``text`` is the exact, self-contained
+    ``visual_anchor`` from the Story Bible — for a character, the base anchor
+    when no state is active, or the active state's anchor otherwise. Never
+    shortened, filtered, underscore-replaced, translated, or LLM-rewritten.
+
+    Anchors are owned by the canonical IR and are NOT part of the editable
+    scene-direction surface (the LLM visual-brief pass never sees them).
+    """
+
+    kind: Literal["character", "location", "prop"]
+    entity_id: str
+    name: str
+    appearance_state_id: str | None = None
+    text: str
+
+
 class PromptSubject(BaseModel):
     character_id: str | None = None
     name: str
@@ -84,6 +104,10 @@ class PromptSubject(BaseModel):
     action: str = ""
     expression: str = ""
     position: str = ""
+    # The active character appearance state id for this panel (None = base look).
+    # Set by the canonical builder from the appearance resolver; the brief and
+    # provider paths key off it for per-state reference selection.
+    appearance_state_id: str | None = None
     # True when ``identity`` is a non-base, visually-significant appearance state
     # (e.g. stumps, silver hands). The brief pass treats it as a fixed, immutable
     # look and stages actions around it rather than as one fact among many.
@@ -107,9 +131,15 @@ class ImagePrompt(BaseModel):
     crop_policy: str | None = None
     transition_in: str | None = None
     transition_out: str | None = None
+    # The scene's location id for this panel (resolved from the Story Bible).
+    location_id: str | None = None
     # Effective location state for this panel (panel override, else scene
     # default). Draw uses it to pick the matching per-state location plate.
     location_state_id: str | None = None
+    # Protected verbatim visual anchors (Slice 02). Location and prop anchors
+    # live here; character anchors live on ``subjects[].identity``. These are
+    # immutable source material, never part of the editable scene direction.
+    anchors: list[PromptAnchor] = Field(default_factory=list)
     has_narration_caption: bool = False
     narration_mode: str | None = None
     preferred_caption_zone: str | None = None
