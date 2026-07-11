@@ -321,6 +321,16 @@ def character_ref_instructions_path(project_dir: Path, char_id: str) -> Path:
     return project_dir / "refs" / char_id / "instructions.jsonl"
 
 
+def character_state_ref_sheet_path(project_dir: Path, char_id: str, state_id: str) -> Path:
+    return project_dir / "refs" / char_id / "states" / state_id / "sheet.png"
+
+
+def character_state_ref_instructions_path(
+    project_dir: Path, char_id: str, state_id: str
+) -> Path:
+    return project_dir / "refs" / char_id / "states" / state_id / "instructions.jsonl"
+
+
 CHARACTER_REF_POSES = ("front", "three_quarter", "profile", "gesture")
 
 
@@ -360,6 +370,18 @@ def location_plate_meta_path(project_dir: Path, loc_id: str) -> Path:
 
 def location_plate_instructions_path(project_dir: Path, loc_id: str) -> Path:
     return project_dir / "plates" / f"{loc_id}.instructions.jsonl"
+
+
+def location_state_plate_path(project_dir: Path, loc_id: str, state_id: str) -> Path:
+    # State ids are globally prefixed by their parent location id; retain the
+    # established plate path consumed by ReferencePlan.
+    return project_dir / "plates" / f"{state_id}.png"
+
+
+def location_state_plate_instructions_path(
+    project_dir: Path, loc_id: str, state_id: str
+) -> Path:
+    return project_dir / "plates" / loc_id / "states" / f"{state_id}.instructions.jsonl"
 
 
 # ---------------------------------------------------------------------------

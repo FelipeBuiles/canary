@@ -363,6 +363,7 @@ async def apply_asset_instruction(
     instruction: str,
     app: Any | None = None,
     image_model_alias: str | None = None,
+    state_id: str | None = None,
 ) -> dict[str, Any]:
     """Unified orchestrator to apply user visual editing instructions, rewrite prompts,
     debit credits, and enqueue regeneration jobs. Supports panels and cast assets.
@@ -404,6 +405,7 @@ async def apply_asset_instruction(
         # Resolve image model configuration for panels
         regen_config = config_for_image_model_alias(config, image_model_alias)
 
+        job_asset_id = f"{asset_id}:{state_id}" if state_id else asset_id
         existing_regen = find_active_generation_job(
             app,
             project_name=pkey,
@@ -579,7 +581,7 @@ async def apply_asset_instruction(
             app,
             project_name=pkey,
             kind=job_kind,
-            payload={payload_key: asset_id},
+            payload={payload_key: job_asset_id},
         )
         if existing_regen:
             raise HTTPException(409, f"A regeneration is already queued or running for this {asset_type}")
@@ -611,22 +613,34 @@ async def apply_asset_instruction(
         if asset_obj is None:
             raise HTTPException(404, f"{asset_type.capitalize()} not found: {asset_id}")
 
+        state_obj = None
+        if state_id and asset_type in {"character", "location"}:
+            state_obj = next((s for s in asset_obj.appearance_states if s.id == state_id), None)
+            if state_obj is None:
+                raise HTTPException(404, f"State not found: {asset_id}/{state_id}")
+
         # Build rewrite context — asset_obj is guaranteed non-None here.
         if asset_type == "character":
-            instructions_path = artifacts.character_ref_instructions_path(project_dir, asset_id)
+            instructions_path = (
+                artifacts.character_state_ref_instructions_path(project_dir, asset_id, state_id)
+                if state_id else artifacts.character_ref_instructions_path(project_dir, asset_id)
+            )
             rewrite_context: dict[str, object] = {
                 "character_name": asset_obj.name,
-                "visual_anchor": asset_obj.visual_anchor,
-                "default_outfit": asset_obj.default_outfit,
-                "distinguishing_features": asset_obj.distinguishing_features,
+                "visual_anchor": state_obj.visual_anchor if state_obj else asset_obj.visual_anchor,
+                "default_outfit": "" if state_obj else asset_obj.default_outfit,
+                "distinguishing_features": [] if state_obj else asset_obj.distinguishing_features,
             }
         elif asset_type == "location":
-            instructions_path = artifacts.location_plate_instructions_path(project_dir, asset_id)
+            instructions_path = (
+                artifacts.location_state_plate_instructions_path(project_dir, asset_id, state_id)
+                if state_id else artifacts.location_plate_instructions_path(project_dir, asset_id)
+            )
             rewrite_context = {
                 "location_name": asset_obj.name,
-                "visual_anchor": asset_obj.visual_anchor,
-                "time_of_day": asset_obj.time_of_day,
-                "mood": asset_obj.mood,
+                "visual_anchor": state_obj.visual_anchor if state_obj else asset_obj.visual_anchor,
+                "time_of_day": None if state_obj else asset_obj.time_of_day,
+                "mood": "" if state_obj else asset_obj.mood,
             }
         else:  # prop
             instructions_path = artifacts.prop_ref_instructions_path(project_dir, asset_id)
@@ -705,9 +719,14 @@ async def apply_asset_instruction(
                 job_id=job_id,
             ):
                 if asset_type == "character":
-                    result = await s3_cast.regenerate_character_ref(config, project_dir, asset_id)
+                    result = (
+                        await s3_cast.regenerate_character_state_ref(config, project_dir, asset_id, state_id)
+                        if state_id else await s3_cast.regenerate_character_ref(config, project_dir, asset_id)
+                    )
                 elif asset_type == "location":
-                    result = await s3_cast.regenerate_location_plate(config, project_dir, asset_id)
+                    result = await s3_cast.regenerate_location_plate(
+                        config, project_dir, asset_id, state_id=state_id
+                    )
                 else:  # prop
                     result = await s3_cast.regenerate_prop_ref(config, project_dir, asset_id)
             # Remove successfully regenerated item from items_failed if it exists
@@ -740,7 +759,7 @@ async def apply_asset_instruction(
             project_name=pkey,
             kind=job_kind,
             label=f"{asset_type.capitalize()} ref / {asset_id}" if asset_type != "location" else f"Location plate / {asset_id}",
-            payload={payload_key: asset_id},
+            payload={payload_key: job_asset_id},
             runner=_runner,
             semaphore=generation_semaphore_for_config(app, config),
         )

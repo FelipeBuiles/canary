@@ -270,9 +270,8 @@ def _file_sha256(path: Path) -> str | None:
 def _read_lineage_parent(state_meta_path: Path) -> str | None:
     """Return the recorded canonical-parent SHA-256 for a state asset, or None.
 
-    State ref assets may carry a ``lineage_parent_sha256`` in their sidecar
-    meta. Until Slice 08 makes writing this mandatory, absent metadata returns
-    None (interpreted as ``unverified_lineage``).
+    Slice 08 state assets carry ``canonical_parent_sha256`` and an explicit
+    lineage status. Pre-contract metadata remains unverified.
     """
     if not state_meta_path.exists():
         return None
@@ -280,7 +279,14 @@ def _read_lineage_parent(state_meta_path: Path) -> str | None:
         data = json.loads(state_meta_path.read_text())
     except (OSError, ValueError):
         return None
-    value = data.get("lineage_parent_sha256") if isinstance(data, dict) else None
+    if isinstance(data, dict) and data.get("lineage_status") == "stale":
+        return "stale"
+    if isinstance(data, dict) and data.get("lineage_mode") == "unconditioned":
+        return None
+    value = (
+        data.get("canonical_parent_sha256") or data.get("lineage_parent_sha256")
+        if isinstance(data, dict) else None
+    )
     return value if isinstance(value, str) and value else None
 
 
