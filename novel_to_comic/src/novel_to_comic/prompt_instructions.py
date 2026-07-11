@@ -10,7 +10,7 @@ from typing import Any, Literal, TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from novel_to_comic.config import config_for_image_model_alias
-from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
+from novel_to_comic.models.prompt import ImagePrompt, PromptOverlayOp, PromptSubject
 from novel_to_comic.prompting import render_panel_prompt_body
 
 if TYPE_CHECKING:
@@ -134,6 +134,7 @@ def apply_instruction_patch(prompt: ImagePrompt, patch: PromptInstructionPatch) 
     """Apply allowlisted patch operations and re-render the final prompt body."""
     updated = prompt.model_copy(deep=True)
     changed = False
+    new_overlays: list[PromptOverlayOp] = []
 
     for operation in patch.operations:
         if isinstance(operation, PanelPatchOperation):
@@ -141,6 +142,11 @@ def apply_instruction_patch(prompt: ImagePrompt, patch: PromptInstructionPatch) 
             if not value:
                 continue
             setattr(updated, operation.field, value)
+            new_overlays.append(PromptOverlayOp(
+                field=operation.field,
+                value=value,
+                location_state_id=getattr(prompt, "location_state_id", None),
+            ))
             changed = True
             continue
 
@@ -151,6 +157,12 @@ def apply_instruction_patch(prompt: ImagePrompt, patch: PromptInstructionPatch) 
         if not value:
             continue
         setattr(subject, operation.field, value)
+        new_overlays.append(PromptOverlayOp(
+            field=operation.field,
+            value=value,
+            subject_character_id=getattr(subject, "character_id", None),
+            appearance_state_id=getattr(subject, "appearance_state_id", None),
+        ))
         changed = True
 
     if not changed:
@@ -165,7 +177,18 @@ def apply_instruction_patch(prompt: ImagePrompt, patch: PromptInstructionPatch) 
     updated.distilled_prompt = None
     updated.visual_brief = None
     updated.layout = None
+    if new_overlays:
+        updated.user_overlays = _merge_instruction_overlays(updated.user_overlays, new_overlays)
     return updated
+
+
+def _merge_instruction_overlays(
+    existing: list[PromptOverlayOp], additions: list[PromptOverlayOp]
+) -> list[PromptOverlayOp]:
+    """Merge instructed-edit overlay ops onto the existing list (dedup by key)."""
+    from novel_to_comic.panel_store import _merge_overlays
+
+    return _merge_overlays(existing, additions)
 
 
 def instruction_rewrite_system_prompt() -> str:
