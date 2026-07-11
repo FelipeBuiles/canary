@@ -81,6 +81,10 @@ class InstructedPlateRegenRequest(BaseModel):
     instruction: str = Field(min_length=1, max_length=500)
 
 
+class InstructedStateRegenRequest(BaseModel):
+    instruction: str = Field(min_length=1, max_length=500)
+
+
 class InstructedPropRegenRequest(BaseModel):
     prop_id: str = Field(min_length=1)
     instruction: str = Field(min_length=1, max_length=500)
@@ -904,6 +908,9 @@ def restore_character_ref_version(
     # The single-pose crops (front/three_quarter/profile/gesture) are derived
     # from the sheet, so re-crop after restoring so they match.
     s3_cast._crop_sheet_to_poses(sheet)
+    if state_id is None:
+        from novel_to_comic.state_assets import mark_dependent_states_stale
+        mark_dependent_states_stale(project_dir, "character", char_id)
     return {
         "char_id": char_id,
         "state_id": state_id,
@@ -935,6 +942,162 @@ async def regen_plate(
         work=lambda: s3_cast.regenerate_location_plate(config, _project_dir, loc_id),
         debit_description=f"Model call: regenerate location plate {loc_id}",
     )
+
+
+@router.get("/location-plate-versions")
+def get_location_plate_versions(
+    loc_id: str = Query(...), project=Depends(get_project),
+):
+    from novel_to_comic.panel_versions import list_asset_versions
+    project_dir, _config, _state = project
+    plate = artifacts.location_plate_path(project_dir, loc_id)
+    return {"loc_id": loc_id, "versions": list_asset_versions(plate, project_dir)}
+
+
+@router.post("/location-plate-versions/restore")
+def restore_location_plate_version(
+    loc_id: str = Query(...), version: int = Query(...),
+    project=Depends(get_project),
+):
+    from novel_to_comic.panel_versions import list_asset_versions, restore_asset_version
+    from novel_to_comic.state_assets import mark_dependent_states_stale
+    project_dir, _config, _state = project
+    plate = artifacts.location_plate_path(project_dir, loc_id)
+    try:
+        restore_asset_version(plate, project_dir, version)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    warnings = mark_dependent_states_stale(project_dir, "location", loc_id)
+    return {"loc_id": loc_id, "versions": list_asset_versions(plate, project_dir), "lineage_warnings": warnings}
+
+
+@router.post("/locations/{loc_id}/states/{state_id}/regenerate")
+@limiter.limit(cost_limit)
+async def regenerate_location_state(
+    request: Request, project_id: str, loc_id: str, state_id: str,
+    project=Depends(get_project), user_id: str = Depends(get_current_user),
+):
+    from novel_to_comic.stages import s3_cast
+    project_dir, config, _state = project
+    return _enqueue_cast_asset_regen(
+        request, project_id, user_id, project, kind="location_plate_regen",
+        asset_id_key="loc_id", asset_id=f"{loc_id}:{state_id}",
+        label=f"Location state / {loc_id} · {state_id}",
+        work=lambda: s3_cast.regenerate_location_plate(
+            config, project_dir, loc_id, state_id=state_id
+        ),
+        debit_description=f"Model call: regenerate location state {loc_id}/{state_id}",
+    )
+
+
+@router.post("/characters/{char_id}/states/{state_id}/regenerate")
+@limiter.limit(cost_limit)
+async def regenerate_character_state(
+    request: Request, project_id: str, char_id: str, state_id: str,
+    project=Depends(get_project), user_id: str = Depends(get_current_user),
+):
+    from novel_to_comic.stages import s3_cast
+    project_dir, config, _state = project
+    return _enqueue_cast_asset_regen(
+        request, project_id, user_id, project, kind="character_ref_regen",
+        asset_id_key="char_id", asset_id=f"{char_id}:{state_id}",
+        label=f"Appearance state / {char_id} · {state_id}",
+        work=lambda: s3_cast.regenerate_character_state_ref(
+            config, project_dir, char_id, state_id
+        ),
+        debit_description=f"Model call: regenerate appearance state {char_id}/{state_id}",
+    )
+
+
+@router.post("/characters/{char_id}/states/{state_id}/regenerate-instructed")
+@limiter.limit(cost_limit)
+async def regenerate_character_state_instructed(
+    request: Request, project_id: str, char_id: str, state_id: str,
+    body: InstructedStateRegenRequest, project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
+    from novel_to_comic.prompt_instructions import apply_asset_instruction
+    project_dir, config, _state = project
+    return await apply_asset_instruction(
+        config=config, project_dir=project_dir, db=get_db(), user_id=user_id,
+        project_id=project_id, asset_type="character", asset_id=char_id,
+        state_id=state_id, instruction=body.instruction, app=request.app,
+    )
+
+
+@router.post("/locations/{loc_id}/states/{state_id}/regenerate-instructed")
+@limiter.limit(cost_limit)
+async def regenerate_location_state_instructed(
+    request: Request, project_id: str, loc_id: str, state_id: str,
+    body: InstructedStateRegenRequest, project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
+    from novel_to_comic.prompt_instructions import apply_asset_instruction
+    project_dir, config, _state = project
+    return await apply_asset_instruction(
+        config=config, project_dir=project_dir, db=get_db(), user_id=user_id,
+        project_id=project_id, asset_type="location", asset_id=loc_id,
+        state_id=state_id, instruction=body.instruction, app=request.app,
+    )
+
+
+def _state_asset_path(project_dir, kind: str, entity_id: str, state_id: str):
+    return (
+        artifacts.character_state_ref_sheet_path(project_dir, entity_id, state_id)
+        if kind == "character" else artifacts.location_state_plate_path(project_dir, entity_id, state_id)
+    )
+
+
+@router.get("/{kind}s/{entity_id}/states/{state_id}/versions")
+def get_state_asset_versions(
+    kind: str, entity_id: str, state_id: str, project=Depends(get_project),
+):
+    from novel_to_comic.panel_versions import list_asset_versions
+    if kind not in {"character", "location"}:
+        raise HTTPException(404, "Unknown state asset kind")
+    project_dir, _config, _state = project
+    path = _state_asset_path(project_dir, kind, entity_id, state_id)
+    return {"entity_id": entity_id, "state_id": state_id, "versions": list_asset_versions(path, project_dir)}
+
+
+@router.post("/{kind}s/{entity_id}/states/{state_id}/versions/{version}/restore")
+def restore_state_asset_version(
+    kind: str, entity_id: str, state_id: str, version: int,
+    project=Depends(get_project),
+):
+    from novel_to_comic.panel_versions import list_asset_versions, restore_asset_version
+    if kind not in {"character", "location"}:
+        raise HTTPException(404, "Unknown state asset kind")
+    project_dir, _config, _state = project
+    path = _state_asset_path(project_dir, kind, entity_id, state_id)
+    try:
+        restore_asset_version(path, project_dir, version)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    if kind == "character":
+        from novel_to_comic.stages import s3_cast
+        s3_cast._crop_sheet_to_poses(path)
+    from novel_to_comic.state_assets import revalidate_state_asset_lineage
+    parent = (
+        artifacts.character_ref_sheet_path(project_dir, entity_id)
+        if kind == "character" else artifacts.location_plate_path(project_dir, entity_id)
+    )
+    revalidate_state_asset_lineage(path, parent)
+    return {"entity_id": entity_id, "state_id": state_id, "versions": list_asset_versions(path, project_dir)}
+
+
+@router.get("/{kind}s/{entity_id}/states/{state_id}/metadata")
+def get_state_asset_metadata(
+    kind: str, entity_id: str, state_id: str, project=Depends(get_project),
+):
+    if kind not in {"character", "location"}:
+        raise HTTPException(404, "Unknown state asset kind")
+    project_dir, _config, _state = project
+    path = _state_asset_path(project_dir, kind, entity_id, state_id)
+    meta = artifacts.read_asset_meta(path)
+    if not meta:
+        raise HTTPException(404, "State asset metadata not found")
+    return meta
 
 
 @router.post("/regen-ref-instructed")
