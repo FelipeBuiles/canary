@@ -214,17 +214,15 @@ def test_ensure_style_sample_brief_fails_soft(tmp_path):
 
 
 def test_generate_sample_image_uses_brief_and_writes_meta(tmp_path):
-    captured: dict = {}
-
-    async def _fake_generate_image(*, config, prompt, output_path, feature, **kwargs):
-        captured["prompt"] = prompt
-        captured["kwargs"] = kwargs
-        return ApiResult(value=str(output_path), usage=None)
+    async def _fake_execute_frozen_request(*, project_dir, request_id, config, output_path, feature):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"image")
+        return ApiResult(value=output_path, usage=None)
 
     sample_path = tmp_path / "samples" / "style_1.png"
     with patch(
-        "novel_to_comic.clients.flux.generate_image",
-        new=AsyncMock(side_effect=_fake_generate_image),
+        "novel_to_comic.non_panel_generation.execute_frozen_request",
+        new=AsyncMock(side_effect=_fake_execute_frozen_request),
     ):
         asyncio.run(
             generate_sample_image(
@@ -235,10 +233,10 @@ def test_generate_sample_image_uses_brief_and_writes_meta(tmp_path):
             )
         )
 
-    assert BRIEF in captured["prompt"]
     meta = json.loads((tmp_path / "samples" / "style_1.png.meta.json").read_text())
-    assert meta["prompt"] == captured["prompt"]
-    assert meta["parameters"]["style_template"] == "Clinical, desaturated visual language."
+    assert BRIEF in meta["prompt"]
+    assert meta["provenance"]["asset_kind"] == "style_sample"
+    assert meta["provenance"]["asset_identity"] == "style_sample:style_1"
     # Slice 06: style proof images use a portrait 4:5 frame.
     assert meta["parameters"]["width"] == 819
     assert meta["parameters"]["height"] == 1024

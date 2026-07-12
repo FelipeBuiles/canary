@@ -13,11 +13,18 @@ import re
 from pathlib import Path
 
 from novel_to_comic import artifacts
-from novel_to_comic.clients import flux, text as text_client
+from novel_to_comic.clients import text as text_client
 from novel_to_comic.config import Config
+from novel_to_comic.generation_input import GenerationPromptInput
+from novel_to_comic.non_panel_generation import (
+    AbstractStyleProofInput,
+    compile_non_panel_request,
+    estimate_non_panel_request,
+    submit_non_panel_request,
+)
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.prompt_assembly import normalize_prose_brief
-from novel_to_comic.prompting import build_style_sample_prompt
+from novel_to_comic.prompting import style_sample_fallback_brief
 from novel_to_comic.stage_runtime import StageRuntime
 
 logger = logging.getLogger(__name__)
@@ -349,27 +356,6 @@ async def ensure_style_sample_brief(
     return brief
 
 
-def _sample_meta_path(sample_path: Path) -> Path:
-    return sample_path.with_suffix(f"{sample_path.suffix}.meta.json")
-
-
-def _sample_meta(config: Config, prompt: str, width: int, height: int) -> dict:
-    return {
-        "version": 1,
-        "kind": "style_sample",
-        "prompt": prompt,
-        "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-        "parameters": {
-            "image_model": config.effective_image_model(),
-            "width": width,
-            "height": height,
-            "steps": config.effective_image_steps(),
-            "guidance_scale": config.flux_guidance_scale,
-            "style_template": config.style_template,
-        },
-    }
-
-
 async def generate_sample_image(
     config: Config,
     bible: StoryBible,
@@ -389,20 +375,36 @@ async def generate_sample_image(
     """
     from novel_to_comic.panel_aspect import style_proof_dimensions
 
-    prompt = build_style_sample_prompt(config, bible, brief=brief)
+    scene_brief = brief or style_sample_fallback_brief(bible)
     width, height = style_proof_dimensions()
-    meta = _sample_meta(config, prompt, width, height)
     sample_path.parent.mkdir(parents=True, exist_ok=True)
-    result = await flux.generate_image(
-        config=config,
-        prompt=prompt,
-        output_path=sample_path,
-        width=width,
-        height=height,
-        feature="style.sample",
+    input_data = AbstractStyleProofInput(
+        asset_identity=f"style_sample:{sample_path.stem}",
+        prompt=GenerationPromptInput(
+            visual_brief=scene_brief,
+            composition="Portrait style proof frame filled edge to edge.",
+            constraints="Wordless artwork with no lettering or borders.",
+            width=width,
+            height=height,
+            generation_width=width,
+            generation_height=height,
+            generation_shape="portrait",
+        ),
+        selected_style_text=config.style_template,
+        selected_style_source_hash=hashlib.sha256(
+            config.style_template.encode("utf-8")
+        ).hexdigest(),
     )
-    _sample_meta_path(sample_path).write_text(json.dumps(meta, indent=2, sort_keys=True))
-    return result
+    request = compile_non_panel_request(config, input_data)
+    submission = await submit_non_panel_request(
+        config=config,
+        project_dir=sample_path.parents[1],
+        request=request,
+        output_path=sample_path,
+        feature="style.sample",
+        kind="style_sample",
+    )
+    return submission.result
 
 
 def load_suggestions(project_dir: Path) -> list[dict]:
@@ -521,8 +523,39 @@ from novel_to_comic.stages import Stage, clean_cascade  # noqa: E402
 from novel_to_comic.state import PipelineState  # noqa: E402
 
 
+def _style_sample_estimate(config: Config, project_dir: Path, bible: StoryBible, template: str, identity: str):
+    from novel_to_comic.panel_aspect import style_proof_dimensions
+
+    brief = None
+    brief_path = artifacts.style_sample_brief_path(project_dir)
+    if brief_path.exists():
+        try:
+            cached = json.loads(brief_path.read_text())
+            brief = cached.get("brief") if isinstance(cached, dict) else None
+        except (OSError, ValueError):
+            brief = None
+    width, height = style_proof_dimensions()
+    input_data = AbstractStyleProofInput(
+        asset_identity=identity,
+        prompt=GenerationPromptInput(
+            visual_brief=brief or style_sample_fallback_brief(bible),
+            composition="Portrait style proof frame filled edge to edge.",
+            constraints="Wordless artwork with no lettering or borders.",
+            width=width,
+            height=height,
+            generation_width=width,
+            generation_height=height,
+            generation_shape="portrait",
+        ),
+        selected_style_text=template,
+    )
+    return estimate_non_panel_request(
+        config.model_copy(update={"style_template": template}), input_data,
+    )
+
+
 def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
-    from novel_to_comic.usage import estimate_text_cost, estimate_image_cost
+    from novel_to_comic.usage import estimate_image_cost, estimate_text_cost
 
     suggestions = load_suggestions(project_dir)
     needs_suggestions = not suggestions
@@ -543,17 +576,28 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
         text_cost = 0.0
         sample_count = len(missing_sample_indices(project_dir, suggestions))
 
-    image_cost = estimate_image_cost(
-        config.effective_image_model(),
-        sample_count,
-        quality=getattr(config, "image_quality", None),
-    )
+    bible = artifacts.read_story_bible_safe(project_dir)
+    if bible is not None:
+        templates = (
+            [s.get("template", config.style_template) for s in suggestions]
+            if suggestions else [config.style_template] * sample_count
+        )
+        missing = set(missing_sample_indices(project_dir, suggestions)) if suggestions else set(range(1, sample_count + 1))
+        image_cost = sum(
+            _style_sample_estimate(config, project_dir, bible, template, f"style_sample:{idx}").cost_usd
+            for idx, template in enumerate(templates, 1) if idx in missing
+        )
+    else:
+        image_cost = estimate_image_cost(
+            config.effective_image_model(), sample_count,
+            quality=getattr(config, "image_quality", None),
+        )
     return text_cost + image_cost
 
 
 def estimate_style_batch_cost_usd(config: Config, project_dir: Path) -> float:
     """Estimate provider cost for one 'Suggest More Styles' batch (text + samples)."""
-    from novel_to_comic.usage import estimate_text_cost, estimate_image_cost
+    from novel_to_comic.usage import estimate_image_cost, estimate_text_cost
 
     story_bible_text = ""
     sb_path = artifacts.story_bible_path(project_dir)
@@ -567,11 +611,20 @@ def estimate_style_batch_cost_usd(config: Config, project_dir: Path) -> float:
         config.effective_prompt_model(),
         story_bible_text,
     )
-    image_cost = estimate_image_cost(
-        config.effective_image_model(),
-        SAMPLE_COUNT,
-        quality=getattr(config, "image_quality", None),
-    )
+    bible = artifacts.read_story_bible_safe(project_dir)
+    if bible is not None:
+        image_cost = sum(
+            _style_sample_estimate(
+                config, project_dir, bible, config.style_template,
+                f"style_sample:batch:{index}",
+            ).cost_usd
+            for index in range(1, SAMPLE_COUNT + 1)
+        )
+    else:
+        image_cost = estimate_image_cost(
+            config.effective_image_model(), SAMPLE_COUNT,
+            quality=getattr(config, "image_quality", None),
+        )
     return text_cost + image_cost
 
 

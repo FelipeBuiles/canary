@@ -99,7 +99,7 @@ def _appearance_lock_clauses(prompt: ImagePrompt) -> list[str]:
     # already carries the per-state tags; the lock clause forbids reverting to
     # the base location.
     loc_anchors = [a for a in (getattr(prompt, "anchors", []) or []) if a.kind == "location"]
-    if prompt.location_state_id:
+    if getattr(prompt, "location_state_id", None):
         for loc in loc_anchors:
             if loc.appearance_state_id:
                 name = loc.name

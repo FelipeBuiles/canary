@@ -22,16 +22,9 @@ from novel_to_comic.panel_aspect import aspect_for_dimensions
 PROVIDER_WIRE_SCHEMA_VERSION = 1
 PROVIDER_WIRE_DISCRIMINATOR = "canary.provider-wire/1"
 
-# Frozen migration ledger. Slices 11–12 remove entries as callers adopt
-# ``ai.generate_wire_image``; adding a raw caller requires an explicit change
-# to this reviewed inventory.
-LEGACY_IMAGE_CALLER_INVENTORY = (
-    "stages/s2_style.py:style proof",
-    "stages/s3_cast.py:character/location/prop/state assets",
-    "server/routers/projects.py:project cover",
-    "labs/providers/litellm.py:explicit experimental mode",
-    "labs/providers/reve.py:explicit experimental mode",
-)
+# Slice 12 completes the non-panel migration. Keep this as an explicit empty
+# ledger so architecture tests fail loudly if a raw caller is reintroduced.
+LEGACY_IMAGE_CALLER_INVENTORY = ()
 
 
 class ProviderWireError(ValueError):

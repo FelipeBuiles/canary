@@ -118,6 +118,53 @@ async def _run_cell(
         reference_image_paths=refs,
     )
 
+    experimental_wire = None
+    experimental_plan = None
+    if not state.spec.production_equivalent and entry.provider in {"litellm", "reve"}:
+        from novel_to_comic.generation_input import GenerationPromptInput
+        from novel_to_comic.image_references import AuthorityScope, ReferenceAsset
+        from novel_to_comic.non_panel_generation import (
+            AssetGenerationInput,
+            compile_non_panel_request,
+            reference_plan_for_assets,
+        )
+        from novel_to_comic.panel_aspect import generation_shape_for_aspect
+        from .providers.litellm import _config_for_model
+
+        reference_roles = list(inp.extra.get("reference_roles") or [])
+        assets = []
+        for index, path in enumerate(refs):
+            role = reference_roles[index] if index < len(reference_roles) else "subject"
+            content_sha256 = __import__("hashlib").sha256(path.read_bytes()).hexdigest()
+            assets.append(ReferenceAsset(
+                path=path, role=role, entity_id=None, appearance_state_id=None,
+                authority_scope=AuthorityScope.CONTEXTUAL,
+                preserve_facets=(), ignore_facets=(), pose=None,
+                content_sha256=content_sha256, lineage_parent_sha256=None,
+                label=f"reference {index}",
+            ))
+        wire_alias = "image-reve" if entry.provider == "reve" else entry.endpoint
+        wire_config = _config_for_model(wire_alias)
+        experimental_input = AssetGenerationInput(
+            asset_kind="panel",
+            asset_identity=f"labs:{state.run_id}:panel:{panel.idx}:{variant}",
+            prompt=GenerationPromptInput(
+                visual_brief=inp.prompt,
+                width=inp.width,
+                height=inp.height,
+                generation_width=inp.width,
+                generation_height=inp.height,
+                generation_shape=generation_shape_for_aspect(inp.width / inp.height),
+            ),
+            selected_style_text=inp.style_template,
+        )
+        experimental_plan = reference_plan_for_assets(wire_config, assets)
+        experimental_request = compile_non_panel_request(
+            wire_config, experimental_input, reference_plan=experimental_plan,
+        )
+        experimental_wire = experimental_request.wire
+        inp.extra["provider_wire_json"] = experimental_wire.to_json()
+
     started = datetime.now(UTC)
     production_wire = None
     production_request_id: str | None = None
@@ -184,6 +231,24 @@ async def _run_cell(
                 actual_provider_model=result.provider_model,
                 provider_request_id=result.provider_request_id,
                 cost_usd=cost.cost_usd,
+                asset_identity=f"labs:{state.run_id}:panel:{panel.idx}:{variant}",
+            )
+        elif experimental_wire is not None:
+            from novel_to_comic.image_provenance import common_image_provenance
+
+            provenance = common_image_provenance(
+                asset_kind="panel",
+                asset_identity=f"labs:{state.run_id}:panel:{panel.idx}:{variant}",
+                compiled_sha256=experimental_wire.compiled_request_sha256,
+                prompt_source_sha256=None,
+                wire=experimental_wire,
+                reference_plan=experimental_plan,
+                request_id=None,
+                actual_provider_model=result.provider_model,
+                provider_request_id=result.provider_request_id,
+                latency_ms=result.latency_ms,
+                cost_usd=cost.cost_usd,
+                project_dir=projects_dir,
             )
         storage.write_cell(
             projects_dir,
@@ -223,6 +288,21 @@ async def _run_cell(
                 production_wire,
                 request_id=production_request_id,
                 failure={"type": type(exc).__name__, "message": str(exc)},
+                asset_identity=f"labs:{state.run_id}:panel:{panel.idx}:{variant}",
+            )
+        elif experimental_wire is not None:
+            from novel_to_comic.image_provenance import common_image_provenance
+
+            failure_provenance = common_image_provenance(
+                asset_kind="panel",
+                asset_identity=f"labs:{state.run_id}:panel:{panel.idx}:{variant}",
+                compiled_sha256=experimental_wire.compiled_request_sha256,
+                prompt_source_sha256=None,
+                wire=experimental_wire,
+                reference_plan=experimental_plan,
+                request_id=None,
+                failure={"type": type(exc).__name__, "message": str(exc)},
+                project_dir=projects_dir,
             )
         storage.write_cell(
             projects_dir,

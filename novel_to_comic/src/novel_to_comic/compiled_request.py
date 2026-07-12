@@ -68,6 +68,7 @@ from novel_to_comic.image_references import (
     ReferenceAsset,
     ReferencePlan,
 )
+from novel_to_comic.generation_input import GenerationPromptInput
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.panel_aspect import (
     GenerationShape,
@@ -89,7 +90,10 @@ from novel_to_comic.text_utils import clean as _clean
 #: Compiler/schema version. Bumped when the compiled-request shape changes.
 COMPILED_REQUEST_SCHEMA_VERSION = 1
 
-AssetKind = Literal["panel", "character_ref", "location_plate", "prop_ref", "style_sample"]
+AssetKind = Literal[
+    "panel", "character_ref", "location_plate", "prop_ref", "style_sample",
+    "project_cover",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -448,7 +452,9 @@ class CompiledRequestError(ValueError):
 # ---------------------------------------------------------------------------
 
 
-def _protected_anchors_from_prompt(prompt: ImagePrompt) -> tuple[ProtectedAnchor, ...]:
+def _protected_anchors_from_prompt(
+    prompt: ImagePrompt | GenerationPromptInput,
+) -> tuple[ProtectedAnchor, ...]:
     """Collect every protected anchor from the prompt (character + location/prop)."""
     out: list[ProtectedAnchor] = []
     for subject in getattr(prompt, "subjects", []) or []:
@@ -480,7 +486,7 @@ def _protected_anchors_from_prompt(prompt: ImagePrompt) -> tuple[ProtectedAnchor
 
 
 def _validate_active_state_authority(
-    prompt: ImagePrompt, plan: ReferencePlan
+    prompt: ImagePrompt | GenerationPromptInput, plan: ReferencePlan
 ) -> None:
     """Fail before transport when a selected reference contradicts active state.
 
@@ -597,7 +603,17 @@ def _effective_geometry(prompt: ImagePrompt) -> tuple[GenerationShape | None, tu
     gen_shape = getattr(prompt, "generation_shape", None)
     gen_width = getattr(prompt, "generation_width", None)
     gen_height = getattr(prompt, "generation_height", None)
-    if gen_shape:
+    # Non-panel inputs carry verified asset geometry explicitly.  Preserve it
+    # instead of replacing a 4:5 style proof with the panel portrait default.
+    if isinstance(prompt, GenerationPromptInput):
+        shape: GenerationShape | None = gen_shape or generation_shape_for_aspect(
+            aspect_for_dimensions(prompt.width, prompt.height)
+        )
+        dimensions = (
+            int(gen_width or prompt.width),
+            int(gen_height or prompt.height),
+        )
+    elif gen_shape:
         shape: GenerationShape | None = gen_shape
         dimensions = dimensions_for_generation_shape(gen_shape)
     elif gen_width and gen_height:
@@ -619,7 +635,7 @@ def _effective_geometry(prompt: ImagePrompt) -> tuple[GenerationShape | None, tu
 
 
 def _build_sections(
-    prompt: ImagePrompt,
+    prompt: ImagePrompt | GenerationPromptInput,
     style_text: str | None,
     reference_instructions: tuple[CompiledReferenceInstruction, ...],
     controls: GenerationControls,
@@ -774,7 +790,7 @@ def _build_sections(
 
 def compile_generation_request(
     *,
-    prompt: ImagePrompt,
+    prompt: ImagePrompt | GenerationPromptInput,
     reference_plan: ReferencePlan,
     route_profile: ImageModelProfile,
     requested_alias: str | None = None,
@@ -903,7 +919,7 @@ def _validate_control_support(controls: GenerationControls, profile: ImageModelP
 
 
 def _native_aspect_for(
-    prompt: ImagePrompt,
+    prompt: ImagePrompt | GenerationPromptInput,
     profile: ImageModelProfile,
     shape: GenerationShape | None,
     dimensions: tuple[int, int],
@@ -922,7 +938,10 @@ def _native_aspect_for(
     return profile.native_aspect_for(aspect_ratio)
 
 
-def _default_asset_identity(prompt: ImagePrompt, asset_kind: AssetKind) -> str:
+def _default_asset_identity(
+    prompt: ImagePrompt | GenerationPromptInput,
+    asset_kind: AssetKind,
+) -> str:
     if asset_kind == "panel":
         return f"{prompt.scene_id}:panel_{prompt.panel_number:03d}"
     return asset_kind
