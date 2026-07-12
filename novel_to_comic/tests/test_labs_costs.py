@@ -6,7 +6,7 @@ from pytest import approx
 
 from novel_to_comic.labs.costs import estimate_labs_image_cost
 from novel_to_comic.labs.providers.base import LabsImageInput
-from novel_to_comic.labs.providers.litellm import LitellmProvider
+from novel_to_comic.labs.providers.litellm import LitellmProvider, _canonical_temp_path
 from novel_to_comic.config import Config
 from novel_to_comic.generation_input import GenerationPromptInput
 from novel_to_comic.non_panel_generation import AssetGenerationInput, compile_non_panel_request
@@ -109,3 +109,13 @@ def test_litellm_provider_returns_calculated_usage_cost(monkeypatch):
     assert result.cost_usd == approx(0.03168)
     assert result.cost_source == "litellm_cost_map+canary_pricing_override"
     assert result.provider_model == "openai/gpt-image-2"
+
+
+def test_litellm_temp_output_canonicalizes_symlinked_ancestor(tmp_path):
+    real = tmp_path / "private" / "var"
+    real.mkdir(parents=True)
+    alias = tmp_path / "var"
+    alias.symlink_to(real, target_is_directory=True)
+    output = alias / "result.png"
+
+    assert _canonical_temp_path(output) == real / "result.png"

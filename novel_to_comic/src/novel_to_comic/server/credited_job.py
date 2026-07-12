@@ -239,6 +239,7 @@ def enqueue_frozen_generation_job(
     feature: str = "image.frozen_request",
     semaphore: asyncio.Semaphore | None = None,
     estimate_credits: int = 0,
+    request_context: dict[str, Any] | None = None,
     on_complete: Callable[[ApiResult[Any], Any], Awaitable[None] | None] | None = None,
     on_failure: Callable[[BaseException, Any], Awaitable[None] | None] | None = None,
 ) -> tuple[GenerationJob, bool]:
@@ -263,7 +264,10 @@ def enqueue_frozen_generation_job(
     )
 
     frozen = submit_frozen_request(
-        project_dir, wire, idempotency_key=effective_idempotency_key,
+        project_dir,
+        wire,
+        idempotency_key=effective_idempotency_key,
+        request_context=request_context,
     )
     job_payload = {
         **payload,

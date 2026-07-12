@@ -1,0 +1,57 @@
+{
+  "compiled_request_sha256": "8f8a61c9d5c4eac96d182306b61664b55860d0de5462537ced3dd7e197b53f56",
+  "configured_provider_model": "reve/create",
+  "controls": [],
+  "discriminator": "canary.provider-wire/1",
+  "execution_fingerprint": "8d66d991c380c72686d2b0cc94086dcf426754960abff5e1338787c5c37e08f2",
+  "expected_route": "reve",
+  "height": 1344,
+  "prompt_parts": [
+    "Mara: CHAR_MARA_CANONICAL_SENTINEL\nTavern: LOC_TAVERN_CANONICAL_SENTINEL\n\nComposition: medium shot\n\nink wash\n\n<img>0</img>: identity reference for char_mara — match face, hair and build; do not copy its pose or background\n<img>1</img>: object reference for prop_key — preserve object; ignore reference backdrop\n<img>2</img>: location reference for loc_tavern — preserve architecture, landmarks and materials\n\n- exactly 1 character\n- one body per listed character\n- single frozen instant, not a sequence or split-screen\n- no text, captions, speech balloons, or lettering anywhere in the image\n- One unified scene filling the entire canvas — no sub-panels, gutters, internal borders, page layouts, or split-screen compositions.\n\nOutput dimensions: 768x1344\nOutput shape: portrait\nNative aspect: 9:16"
+  ],
+  "references": [
+    {
+      "appearance_state_id": null,
+      "authority_scope": "full_appearance",
+      "content_sha256": "c8b6c061e8591dfeaabefdbad7cdacc0ece53900f0bb02160860a0e3ef7d2acc",
+      "entity_id": "char_mara",
+      "ignore_facets": [],
+      "index": 0,
+      "instruction": "identity reference for char_mara — match face, hair and build; do not copy its pose or background",
+      "preserve_facets": ["face", "hair", "build"],
+      "provider_binding": "0",
+      "role": "subject",
+      "role_label": "subject:char_mara"
+    },
+    {
+      "appearance_state_id": null,
+      "authority_scope": "contextual",
+      "content_sha256": "2c70e12b7a0646f92279f427c7b38e7334d8e5389cff167a1dc30e73f826b683",
+      "entity_id": "prop_key",
+      "ignore_facets": [],
+      "index": 1,
+      "instruction": "object reference for prop_key — preserve object; ignore reference backdrop",
+      "preserve_facets": [],
+      "provider_binding": "1",
+      "role": "prop",
+      "role_label": "prop:prop_key"
+    },
+    {
+      "appearance_state_id": null,
+      "authority_scope": "contextual",
+      "content_sha256": "34a7065a2e12eb81ff2bafc89c2fa7d3aaabbd9cfce83dcef67b375f7bccc8be",
+      "entity_id": "loc_tavern",
+      "ignore_facets": [],
+      "index": 2,
+      "instruction": "location reference for loc_tavern — preserve architecture, landmarks and materials",
+      "preserve_facets": [],
+      "provider_binding": "2",
+      "role": "location_plate",
+      "role_label": "location_plate:loc_tavern"
+    }
+  ],
+  "requested_alias": "image-reve",
+  "schema_version": 1,
+  "structured_aspect": "9:16",
+  "width": 768
+}

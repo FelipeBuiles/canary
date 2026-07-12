@@ -22,12 +22,9 @@ from novel_to_comic.ai.context import current_ai_request_context
 from novel_to_comic.ai.errors import AIRefusalError
 from novel_to_comic.ai.finalisation import (
     begin_image_call,
-    finalise_image_cancelled,
     finalise_image_failure,
-    finalise_image_refusal,
     finalise_image_success,
 )
-from novel_to_comic.ai.providers.base import RefImage
 from novel_to_comic.config import Config
 from novel_to_comic.provider_wire import ProviderWireRequest
 from novel_to_comic.usage import (
@@ -967,104 +964,11 @@ async def _chat_completion(
         raise
 
 
-async def generate_image(
-    *,
-    config: Config,
-    model: str,
-    prompt: str,
-    output_path: Path,
-    width: int,
-    height: int,
-    steps: int | None = None,
-    refs: list[RefImage] | None = None,
-    layout: Any | None = None,
-    feature: str = "image.generate",
-) -> ApiResult[Path]:
-    from novel_to_comic.ai.providers import selector
-
-    image_refs = refs or []
-    ref_paths = [ref.path for ref in image_refs if ref.path]
-
-    # Read reference files for audit and cost summaries before the provider call.
-    ref_reads: list[tuple[Path, bytes | None]] = []
-    for ref in ref_paths:
-        try:
-            data = await asyncio.to_thread(ref.read_bytes)
-            ref_reads.append((ref, data))
-        except OSError:
-            ref_reads.append((ref, None))
-
-    provider = selector.pick(model, config, layout=layout)
-    # Provider-specific controls such as diffusion steps belong in LiteLLM
-    # config; passing them through gateway aliases can make the proxy fail
-    # before the provider responds.
-    params = provider.request_params(
-        model_alias=model,
-        width=width,
-        height=height,
-        config=config,
-    )
-    # The layout rides in params only for the layout-aware provider — the
-    # LiteLLM provider serialises params into request fields and must never
-    # see it.
-    if layout is not None and provider.name == "reve_layout":
-        params["layout"] = layout.model_dump() if hasattr(layout, "model_dump") else layout
-    ctx = begin_image_call(
-        config=config,
-        model=model,
-        feature=feature,
-        prompt=prompt,
-        params=params,
-        ref_reads=ref_reads,
-    )
-    try:
-        raw = await provider.generate(
-            model_alias=model,
-            prompt=prompt,
-            refs=image_refs,
-            width=width,
-            height=height,
-            params=params,
-            config=config,
-            event_id=ctx.event_id,
-            metadata=ctx.metadata,
-        )
-        return await finalise_image_success(
-            ctx=ctx,
-            config=config,
-            model=model,
-            feature=feature,
-            output_path=output_path,
-            raw=raw,
-        )
-    except asyncio.CancelledError as exc:
-        finalise_image_cancelled(
-            ctx=ctx,
-            config=config,
-            model=model,
-            feature=feature,
-            error=exc,
-            error_response=getattr(exc, "response", None),
-        )
-        raise
-    except AIRefusalError as exc:
-        finalise_image_refusal(
-            ctx=ctx, config=config, model=model, feature=feature, error=exc,
-        )
-        raise
-    except Exception as exc:
-        finalise_image_failure(
-            ctx=ctx, config=config, model=model, feature=feature, error=exc,
-            error_response=getattr(exc, "response", None),
-        )
-        raise
-
-
 async def generate_wire_image(
     *, config: Config, wire: "ProviderWireRequest", output_path: Path,
     feature: str = "image.generate_wire",
 ) -> ApiResult[Path]:
-    """Reachable exact-wire transport entry; caller migration is Slices 11–12."""
+    """Submit an immutable exact-wire request through the isolated adapter."""
     from novel_to_comic.ai.providers import selector
     from novel_to_comic.ai.providers.litellm_http import LitellmHttpProvider
     from novel_to_comic.provider_wire import materialize_wire_references

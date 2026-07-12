@@ -29,6 +29,8 @@ from typing import Any
 
 from novel_to_comic.provider_wire import ProviderWireRequest, materialize_wire_references
 
+from .visual_evaluation import LabsVisualExperimentRecord
+
 
 def labs_root(projects_dir: Path) -> Path:
     return projects_dir / "_labs" / "runs"
@@ -40,6 +42,18 @@ def run_dir(projects_dir: Path, run_id: str) -> Path:
 
 def manifest_path(projects_dir: Path, run_id: str) -> Path:
     return run_dir(projects_dir, run_id) / "manifest.json"
+
+
+def visual_experiment_dir(projects_dir: Path, experiment_id: str) -> Path:
+    return projects_dir / "_labs" / "visual_experiments" / experiment_id
+
+
+def visual_experiment_path(projects_dir: Path, experiment_id: str) -> Path:
+    return visual_experiment_dir(projects_dir, experiment_id) / "experiment.json"
+
+
+def visual_report_path(projects_dir: Path, experiment_id: str) -> Path:
+    return visual_experiment_dir(projects_dir, experiment_id) / "report.json"
 
 
 def panel_dir(projects_dir: Path, run_id: str, panel_idx: int, variant: str = "A") -> Path:
@@ -69,6 +83,44 @@ def read_manifest(projects_dir: Path, run_id: str) -> dict[str, Any] | None:
     if not path.exists():
         return None
     return json.loads(path.read_text())
+
+
+def _write_json(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, indent=2, sort_keys=True))
+
+
+def _read_json(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    return json.loads(path.read_text())
+
+
+def write_visual_experiment(
+    projects_dir: Path, experiment: LabsVisualExperimentRecord,
+) -> None:
+    """Persist a Labs-only paired experiment with request/result provenance."""
+    _write_json(
+        visual_experiment_path(projects_dir, experiment.experiment_id),
+        experiment.model_dump(mode="json"),
+    )
+
+
+def read_visual_experiment(
+    projects_dir: Path, experiment_id: str,
+) -> LabsVisualExperimentRecord | None:
+    value = _read_json(visual_experiment_path(projects_dir, experiment_id))
+    return LabsVisualExperimentRecord.model_validate(value) if value is not None else None
+
+
+def write_visual_report(
+    projects_dir: Path, experiment_id: str, report: dict[str, Any],
+) -> None:
+    _write_json(visual_report_path(projects_dir, experiment_id), report)
+
+
+def read_visual_report(projects_dir: Path, experiment_id: str) -> dict[str, Any] | None:
+    return _read_json(visual_report_path(projects_dir, experiment_id))
 
 
 def delete_run(projects_dir: Path, run_id: str) -> bool:

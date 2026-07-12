@@ -19,6 +19,7 @@ from ..auth import get_current_user
 from ..narration_editor import apply_patch as apply_narration_patch, estimate_patch_impact
 from ..deps import get_project, project_key
 from ..generation_jobs import find_active_generation_job
+from novel_to_comic.frozen_requests import invalidate_prepared_requests
 from ..panel_acceptance import accept_panel, clear_panel_acceptance, is_panel_accepted
 from ..panel_flags import clear_panel_flag, flag_panel, is_panel_flagged
 
@@ -235,6 +236,10 @@ async def update_prompt(scene_id: str, panel_number: int, body: dict, project=De
         raise HTTPException(400, f"Invalid prompt patch: {e}")
     except Exception as e:
         raise HTTPException(400, f"Invalid prompt data: {e}")
+    invalidate_prepared_requests(
+        project_dir,
+        f"{scene_id}:panel_{panel_number:03d}",
+    )
     return updated.model_dump()
 
 

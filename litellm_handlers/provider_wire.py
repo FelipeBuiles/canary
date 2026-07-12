@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,9 @@ def parse_provider_wire(payload: str) -> dict[str, Any]:
     if manifest.get("schema_version") != SCHEMA_VERSION:
         raise ValueError("unsupported ProviderWireRequest schema")
     supplied = manifest.get("execution_fingerprint")
-    projection = dict(manifest)
+    # Fingerprint projection must not mutate the parsed request that the
+    # adapter subsequently consumes (references are nested dictionaries).
+    projection = deepcopy(manifest)
     projection.pop("execution_fingerprint", None)
     for ref in projection.get("references", []):
         ref.pop("source_path", None)

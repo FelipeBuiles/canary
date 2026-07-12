@@ -52,6 +52,12 @@ jobs:
       - name: Pytest
         run: uv run pytest -x -q
 
+      - name: Deterministic image-prompt golden gates
+        # Keep the release-blocker corpus visible as its own CI check. These
+        # tests use explicit local fixtures and never require provider
+        # credentials or credits.
+        run: uv run pytest -q tests/test_golden_corpus.py
+
   web:
     name: Web (vitest + build)
     runs-on: ubuntu-latest

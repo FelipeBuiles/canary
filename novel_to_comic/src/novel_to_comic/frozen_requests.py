@@ -89,6 +89,7 @@ class FrozenGenerationRequest:
     result_link: str | None = None
     provenance_link: str | None = None
     job_id: str | None = None
+    request_context: dict[str, Any] | None = None
 
 
 def requests_root(project_dir: Path) -> Path:
@@ -565,6 +566,7 @@ def _manifest_payload(
     wire: ProviderWireRequest,
     snapshots: tuple[FrozenReferenceSnapshot, ...],
     idempotency_key: str | None,
+    request_context: dict[str, Any] | None,
 ) -> dict[str, Any]:
     return {
         "discriminator": FROZEN_REQUEST_DISCRIMINATOR,
@@ -582,6 +584,7 @@ def _manifest_payload(
         "execution_fingerprint": wire.execution_fingerprint,
         "wire_request": json.loads(wire.to_json()),
         "reference_snapshots": [_snapshot_payload(snapshot) for snapshot in snapshots],
+        "request_context": request_context,
     }
 
 
@@ -762,7 +765,7 @@ def _load_frozen_request_at(
         if status_override.get("request_id") != request_id:
             raise FrozenRequestIntegrityError("frozen request status id mismatch")
         status = status_override.get("status", status)
-        if status not in {"submitted", "queued", "running", "complete", "failed", "retained"}:
+        if status not in {"prepared", "submitted", "queued", "running", "complete", "failed", "retained", "invalidated"}:
             raise FrozenRequestIntegrityError("invalid frozen request status")
         result_link = _safe_record_link(status_override.get("result_link", result_link))
         provenance_link = _safe_record_link(status_override.get("provenance_link", provenance_link))
@@ -784,6 +787,11 @@ def _load_frozen_request_at(
         result_link=result_link,
         provenance_link=provenance_link,
         job_id=job_id,
+        request_context=(
+            dict(raw["request_context"])
+            if isinstance(raw.get("request_context"), dict)
+            else None
+        ),
     )
 
 
@@ -860,6 +868,21 @@ def find_frozen_request_by_idempotency_key(
         )
 
 
+def invalidate_prepared_requests(project_dir: Path, asset_identity: str) -> list[str]:
+    """Invalidate prepared requests whose authoritative asset source changed."""
+    invalidated: list[str] = []
+    for request_id in _iter_request_ids(project_dir):
+        try:
+            request = load_frozen_request(project_dir, request_id)
+        except FrozenRequestError:
+            continue
+        context = request.request_context or {}
+        if request.status == "prepared" and context.get("asset_identity") == asset_identity:
+            update_frozen_request_status(project_dir, request_id, "invalidated")
+            invalidated.append(request_id)
+    return invalidated
+
+
 def submit_frozen_request(
     project_dir: Path,
     wire: ProviderWireRequest,
@@ -869,9 +892,13 @@ def submit_frozen_request(
     preparation_version: str = FROZEN_REQUEST_PREPARATION_VERSION,
     source_version: str = FROZEN_REQUEST_SOURCE_VERSION,
     request_version: str = FROZEN_REQUEST_VERSION,
+    status: str = "submitted",
+    request_context: dict[str, Any] | None = None,
 ) -> FrozenGenerationRequest:
     """Stage selected bytes and atomically publish an immutable request manifest."""
     _validate_idempotency_key(idempotency_key)
+    if status not in {"prepared", "submitted"}:
+        raise FrozenRequestError(f"invalid initial frozen request status: {status!r}")
     if wire.execution_fingerprint != wire.recompute_execution_fingerprint():
         raise FrozenRequestIntegrityError("ProviderWireRequest execution fingerprint mismatch")
 
@@ -930,10 +957,11 @@ def submit_frozen_request(
             preparation_version=preparation_version,
             source_version=source_version,
             request_version=request_version,
-            status="submitted",
+            status=status,
             wire=portable_wire,
             snapshots=snapshot_tuple,
             idempotency_key=idempotency_key,
+            request_context=request_context,
         )
         manifest = {
             **unsigned,
@@ -1035,7 +1063,7 @@ def update_frozen_request_status(
                     request_store_fd,
                     request_fd,
                 )
-                if status not in {"submitted", "queued", "running", "complete", "failed", "retained"}:
+                if status not in {"prepared", "submitted", "queued", "running", "complete", "failed", "retained", "invalidated"}:
                     raise FrozenRequestError(f"invalid frozen request status: {status!r}")
                 payload = {
                     "schema_version": FROZEN_REQUEST_SCHEMA_VERSION,
@@ -1071,6 +1099,8 @@ async def execute_frozen_request(
     except ValueError as exc:
         raise FrozenRequestError("frozen generation output must stay project-scoped") from exc
     request = load_frozen_request(project_dir, request_id)
+    if request.status == "invalidated":
+        raise FrozenRequestError("cannot execute an invalidated frozen request")
     update_frozen_request_status(project_dir, request_id, "running")
     try:
         from novel_to_comic.ai import generate_wire_image
@@ -1153,6 +1183,7 @@ __all__ = [
     "execute_frozen_request",
     "find_frozen_request_by_idempotency_key",
     "gc_unreferenced_blobs",
+    "invalidate_prepared_requests",
     "load_frozen_request",
     "manifest_path",
     "request_blob_path",

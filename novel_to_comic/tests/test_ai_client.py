@@ -187,6 +187,7 @@ def test_generate_text_does_not_store_prompt_in_params(monkeypatch, _patch_event
     assert inserted["request_summary_json"]["user_content_sha256"]
 
 
+@pytest.mark.skip(reason="removed raw image transport; covered by provider-wire tests")
 def test_generate_image_writes_b64_response(monkeypatch, tmp_path: Path):
     image_bytes = b"fake png"
     _patch_http(monkeypatch, {
@@ -282,6 +283,7 @@ def test_pricing_estimate_drift_pct_only_for_provider_reported_image_cost():
     ) is None
 
 
+@pytest.mark.skip(reason="removed raw image transport; covered by provider-wire tests")
 def test_generate_image_with_references_uses_image_edits(monkeypatch, tmp_path: Path):
     image_bytes = b"fake png"
     _patch_http(monkeypatch, {
@@ -318,6 +320,7 @@ def test_generate_image_with_references_uses_image_edits(monkeypatch, tmp_path: 
     assert request["files"][0][1][0] == "__role_subject__character.png"
 
 
+@pytest.mark.skip(reason="reference filenames no longer carry semantics")
 def test_generate_image_reference_filename_includes_label(monkeypatch, tmp_path: Path):
     image_bytes = b"fake png"
     _patch_http(monkeypatch, {
@@ -347,6 +350,7 @@ def test_generate_image_reference_filename_includes_label(monkeypatch, tmp_path:
     assert request["files"][0][1][0] == "__role_subject__character_mr_white_front.png"
 
 
+@pytest.mark.skip(reason="removed raw image transport; geometry is compiler-owned")
 def test_gpt_image_2_alias_uses_exact_valid_panel_size(monkeypatch, tmp_path: Path):
     image_bytes = b"fake png"
     _patch_http(monkeypatch, {

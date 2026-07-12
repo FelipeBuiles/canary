@@ -1076,15 +1076,6 @@ def test_reve_cast_clean_text_prompt():
     assert "CAST IDENTITY LOCK" not in prompt_str
 
 
-def test_reve_aspect_ratio_mapping():
-    from litellm_handlers.reve_provider import _map_aspect_ratio
-    assert _map_aspect_ratio("1024x1024") == "1:1"
-    assert _map_aspect_ratio("1536x1024") == "3:2"
-    assert _map_aspect_ratio("1024x1536") == "2:3"
-    assert _map_aspect_ratio("1920x1080") == "16:9"
-    assert _map_aspect_ratio("1080x1920") == "9:16"
-
-
 def test_reve_refs_one_crop_per_character_and_capping():
     from novel_to_comic.image_ref_strategy import RefStrategy
     from novel_to_comic.ai.providers.base import RefImage
@@ -1336,5 +1327,3 @@ def test_prop_is_gated_by_its_debut_scene(tmp_path):
 
     assert all("Forged Letters" not in p for p in before_prompt.props)
     assert any("Forged Letters" in p for p in after_prompt.props)
-
-

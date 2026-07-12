@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "rubric_version": "visual-evaluation-rubric-v1",
+  "experiment_kind": "current_pipeline_absolute_benchmark",
+  "status": "complete_limited_scope",
+  "scenario_id": "default-tavern-scene",
+  "route": "image-balanced",
+  "run_id": "8100d7c21026",
+  "run_manifest": "projects/63f06b92-a5c6-4f5b-b0e5-c330abe49982/_labs/runs/8100d7c21026/manifest.json",
+  "evaluator": {
+    "kind": "human",
+    "reviewer_id": "codex-primary",
+    "blinded": false,
+    "notes": "Prompt and fixture references were visible for attributable rubric scoring. No paid model evaluator was used."
+  },
+  "scope": {
+    "supported": [
+      "canonical_character_identity",
+      "canonical_appearance",
+      "location_identity",
+      "prop_and_action_adherence",
+      "style_consistency",
+      "composition_adherence",
+      "subject_completeness",
+      "unwanted_readable_text"
+    ],
+    "not_tested": [
+      "alternate_character_state",
+      "restored_character_state",
+      "location_state",
+      "paired_old_vs_new_regression",
+      "provider_nondeterminism_repeats"
+    ]
+  },
+  "generation": {
+    "successful_cells": 8,
+    "failed_cells": 0,
+    "run_cost_usd": 0.27552,
+    "benchmark_window_successful_calls": 21,
+    "benchmark_window_cost_usd": 0.72324,
+    "authorized_ceiling_calls": 20,
+    "ceiling_overrun_calls": 1,
+    "ceiling_overrun_usd": 0.03444,
+    "latency_ms_mean": 50499,
+    "latency_ms_min": 7974,
+    "latency_ms_max": 191179,
+    "configured_model": "vertex-multimodal/gemini-3.1-flash-lite-image",
+    "actual_model": "vertex_ai/gemini-3.1-flash-lite-image"
+  },
+  "panels": [
+    {
+      "panel": 1,
+      "artifact": "projects/63f06b92-a5c6-4f5b-b0e5-c330abe49982/_labs/runs/8100d7c21026/panels/1/A/gemini-flash-lite-production-balanced.png",
+      "metadata": "projects/63f06b92-a5c6-4f5b-b0e5-c330abe49982/_labs/runs/8100d7c21026/panels/1/A/gemini-flash-lite-production-balanced.json",
+      "scores": {"location_identity": 0.75, "style_consistency": 0.95, "composition_adherence": 0.90},
+      "subject_errors": {"missing": [], "merged": [], "duplicated": [], "extra": 0},
+      "unwanted_readable_text": false,
+      "evidence": ["Wet cobbles, timber/stone tavern, warm lantern windows, and empty street match the request; exterior cannot directly prove the interior plate identity."]
+    },
+    {
+      "panel": 2,
+      "artifact": "projects/63f06b92-a5c6-4f5b-b0e5-c330abe49982/_labs/runs/8100d7c21026/panels/2/A/gemini-flash-lite-production-balanced.png",
+      "metadata": "projects/63f06b92-a5c6-4f5b-b0e5-c330abe49982/_labs/runs/8100d7c21026/panels/2/A/gemini-flash-lite-production-balanced.json",
+      "scores": {"character_identity": 0.92, "canonical_appearance": 0.95, "location_identity": 0.78, "style_consistency": 0.94, "composition_adherence": 0.93},
+      "subject_errors": {"missing": [], "merged": [], "duplicated": [], "extra": 0},
+      "unwanted_readable_text": false,
+      "evidence": ["Anya retains dark hair, eyebrow scar, face shape, and leather coat; close-up and off-camera gaze adhere."]
+    },
+    {
+      "panel": 3,
+      "artifact": "projects/63f06b92-a5c6-4f5b-b0e5-c330abe49982/_labs/runs/8100d7c21026/panels/3/A/gemini-flash-lite-production-balanced.png",
+      "metadata": "projects/63f06b92-a5c6-4f5b-b0e5-c330abe49982/_labs/runs/8100d7c21026/panels/3/A/gemini-flash-lite-production-balanced.json",
+      "scores": {"character_identity": 0.90, "canonical_appearance": 0.95, "location_identity": 0.76, "style_consistency": 0.95, "composition_adherence": 0.95},
+      "subject_errors": {"missing": [], "merged": [], "duplicated": [], "extra": 0},
+      "unwanted_readable_text": false,
+      "evidence": ["Anya remains recognizable with matching scar/hair; cold fury, tear, tight crop, and split lantern shadow are present."]
+    },
+    {
+      "panel": 4,
+      "artifact": "projects/63f06b92-a5c6-4f5b-b0e5-c330abe49982/_labs/runs/8100d7c21026/panels/4/A/gemini-flash-lite-production-balanced.png",
+      "metadata": "projects/63f06b92-a5c6-4f5b-b0e5-c330abe49982/_labs/runs/8100d7c21026/panels/4/A/gemini-flash-lite-production-balanced.json",
+      "scores": {"character_identity": 0.89, "canonical_appearance": 0.92, "location_identity": 0.90, "prop_identity": 0.95, "style_consistency": 0.93, "composition_adherence": 0.94},
+      "subject_errors": {"missing": [], "merged": [], "duplicated": [], "extra": 0},
+      "unwanted_readable_text": false,
+      "evidence": ["Anya and Rurik are distinct and match references; left/right staging, bar lean, tankard, patrons, beams, and warm light adhere."]
+    },
+    {
+      "panel": 5,
+      "artifact": "projects/63f06b92-a5c6-4f5b-b0e5-c330abe49982/_labs/runs/8100d7c21026/panels/5/A/gemini-flash-lite-production-balanced.png",
+      "metadata": "projects/63f06b92-a5c6-4f5b-b0e5-c330abe49982/_labs/runs/8100d7c21026/panels/5/A/gemini-flash-lite-production-balanced.json",
+      "scores": {"character_identity": 0.86, "canonical_appearance": 0.90, "location_identity": 0.88, "prop_identity": 0.70, "style_consistency": 0.93, "composition_adherence": 0.82},
+      "subject_errors": {"missing": [], "merged": [], "duplicated": [], "extra": 0},
+      "unwanted_readable_text": false,
+      "evidence": ["Anya, right-hand short dagger draw, flaring coat, kicked stool, airborne beer, and low angle are visible; an unrequested long sword appears in her left hand and weakens prop/action and composition adherence."]
+    },
+    {
+      "panel": 6,
+      "artifact": "projects/63f06b92-a5c6-4f5b-b0e5-c330abe49982/_labs/runs/8100d7c21026/panels/6/A/gemini-flash-lite-production-balanced.png",
+      "metadata": "projects/63f06b92-a5c6-4f5b-b0e5-c330abe49982/_labs/runs/8100d7c21026/panels/6/A/gemini-flash-lite-production-balanced.json",
+      "scores": {"character_identity": 0.82, "canonical_appearance": 0.72, "location_identity": 0.86, "prop_identity": 0.90, "style_consistency": 0.92, "composition_adherence": 0.96},
+      "subject_errors": {"missing": [], "merged": [], "duplicated": [], "extra": 0},
+      "unwanted_readable_text": false,
+      "evidence": ["All three required foreground figures are distinct and correctly staged with blade, surrender, and crossbow; Anya loses the leather coat and Rurik loses the fur mantle, causing canonical wardrobe drift."]
+    },
+    {
+      "panel": 7,
+      "artifact": "projects/63f06b92-a5c6-4f5b-b0e5-c330abe49982/_labs/runs/8100d7c21026/panels/7/A/gemini-flash-lite-production-balanced.png",
+      "metadata": "projects/63f06b92-a5c6-4f5b-b0e5-c330abe49982/_labs/runs/8100d7c21026/panels/7/A/gemini-flash-lite-production-balanced.json",
+      "scores": {"character_identity": 0.82, "canonical_appearance": 0.72, "location_identity": 0.82, "prop_identity": 0.75, "style_consistency": 0.94, "composition_adherence": 0.92},
+      "subject_errors": {"missing": [], "merged": [], "duplicated": [], "extra": 0},
+      "unwanted_readable_text": false,
+      "evidence": ["Anya, folded letter, overturned ink, spill, candle, table, and overhead pool of light adhere; the wax seal remains visibly intact instead of already broken, and the canonical leather coat is omitted."]
+    },
+    {
+      "panel": 8,
+      "artifact": "projects/63f06b92-a5c6-4f5b-b0e5-c330abe49982/_labs/runs/8100d7c21026/panels/8/A/gemini-flash-lite-production-balanced.png",
+      "metadata": "projects/63f06b92-a5c6-4f5b-b0e5-c330abe49982/_labs/runs/8100d7c21026/panels/8/A/gemini-flash-lite-production-balanced.json",
+      "scores": {"character_identity": 0.91, "canonical_appearance": 0.90, "location_identity": 0.78, "style_consistency": 0.94, "composition_adherence": 0.94},
+      "subject_errors": {"missing": [], "merged": [], "duplicated": [], "extra": 0},
+      "unwanted_readable_text": false,
+      "evidence": ["Rurik retains bald head, beard, brow scar, broad face, and shocked reaction; sweat and blade-like eye reflection are present."]
+    }
+  ],
+  "aggregate": {
+    "character_identity_mean": 0.87,
+    "canonical_appearance_mean": 0.87,
+    "location_identity_mean": 0.82,
+    "prop_identity_mean": 0.83,
+    "style_consistency_mean": 0.94,
+    "composition_adherence_mean": 0.92,
+    "subject_error_incidence": 0.0,
+    "unwanted_readable_text_incidence": 0.0,
+    "uncertainty": "Single generated sample per panel; descriptive means only. No inferential or provider-nondeterminism claim."
+  },
+  "decision": {
+    "fixture_supported_dimensions": "pass_with_wardrobe_drift",
+    "slice_15_full_visual_acceptance": "pending",
+    "reason": "The absolute fixture benchmark passes identity, location, style, composition, subject completeness, prop/action, and text checks, but does not test alternate/restored/location states or paired regression."
+  }
+}

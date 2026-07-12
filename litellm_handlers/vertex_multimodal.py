@@ -205,61 +205,39 @@ class VertexMultimodalLLM(CustomLLM):
         project = _vertex_project(optional_params)
         location = _vertex_location(optional_params)
         requested_aspect = _requested_aspect(optional_params)
-        requested_shape = _shape_for_aspect(requested_aspect)
-        ref_count = 0
-        labeled: list[tuple[str, str, types.Part]] = []  # legacy only
+        wire_payload = optional_params.get("canary_wire_request")
+        if not wire_payload:
+            raise ValueError("Vertex image requests require canary_wire_request")
+        from litellm_handlers.provider_wire import (
+            exact_vertex_contents,
+            parse_provider_wire,
+            verify_wire_images,
+        )
+
+        manifest = parse_provider_wire(wire_payload)
+        verify_wire_images(manifest, image)
         parts: list[types.Part] = []
         for item in image:
-            filename = _item_filename(item)
-            role, bare = _parse_role_and_name(filename)
-            if role is None:
-                role = _heuristic_role(bare)
             part = _part(item)
             if part is not None:
-                labeled.append((role, bare, part))
                 parts.append(part)
-                ref_count += 1
-        wire_payload = optional_params.get("canary_wire_request")
-        if wire_payload:
-            from litellm_handlers.provider_wire import (
-                exact_vertex_contents,
-                parse_provider_wire,
-                verify_wire_images,
-            )
-
-            manifest = parse_provider_wire(wire_payload)
-            verify_wire_images(manifest, image)
-            contents = exact_vertex_contents(manifest, parts)
-        else:
-            contents: list[str | types.Part] = []
-            if requested_shape:
-                contents.append(_aspect_instruction(requested_shape, requested_aspect))
-            contents.append(prompt)
-        if labeled and not wire_payload:
-            from collections import Counter
-            role_totals: Counter[str] = Counter(role for role, _, _ in labeled)
-            role_seen: Counter[str] = Counter()
-            contents.append("\n\nThe following reference images guide this illustration:")
-            for role, bare, part in labeled:
-                role_seen[role] += 1
-                contents.append(_role_label(role, bare, index=role_seen[role], total=role_totals[role]))
-                contents.append(part)
+        ref_count = len(parts)
+        contents = exact_vertex_contents(manifest, parts)
         client = genai.Client(vertexai=True, project=project, location=location)
         try:
             config_kwargs: dict[str, Any] = {
                 "response_modalities": ["IMAGE"],
                 "safety_settings": _SAFETY_OFF,
             }
-            if wire_payload:
-                controls = dict(manifest.get("controls", []))
-                quality = controls.get("quality")
-                if quality is not None:
-                    image_size = {"low": "1K", "medium": "2K", "high": "4K", "auto": "2K"}.get(
-                        str(quality).lower()
-                    )
-                    if image_size is None:
-                        raise ValueError(f"unsupported wire quality: {quality}")
-                    config_kwargs["image_config"] = types.ImageConfig(image_size=image_size)
+            controls = dict(manifest.get("controls", []))
+            quality = controls.get("quality")
+            if quality is not None:
+                image_size = {"low": "1K", "medium": "2K", "high": "4K", "auto": "2K"}.get(
+                    str(quality).lower()
+                )
+                if image_size is None:
+                    raise ValueError(f"unsupported wire quality: {quality}")
+                config_kwargs["image_config"] = types.ImageConfig(image_size=image_size)
             response = await asyncio.to_thread(
                 client.models.generate_content,
                 model=vertex_model,
