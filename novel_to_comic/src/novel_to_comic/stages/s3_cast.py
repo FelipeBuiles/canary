@@ -8,18 +8,18 @@ import asyncio
 import hashlib
 import json
 import re
-import uuid
+from dataclasses import replace
 from pathlib import Path
 
 from rich.console import Console
 
 from novel_to_comic import artifacts
-from novel_to_comic.clients import flux
 from novel_to_comic.config import Config
+from novel_to_comic.generation_input import GenerationPromptInput
 from novel_to_comic.image_ref_strategy import RefStrategy
 from novel_to_comic.events import make_progress
 from novel_to_comic.models.appearance import AppearanceState
-from novel_to_comic.models.prompt import ImagePrompt, PromptAnchor, PromptSubject
+from novel_to_comic.models.prompt import PromptAnchor, PromptSubject
 from novel_to_comic.models.story_bible import Character, Prop, StoryBible
 from novel_to_comic.panel_versions import record_asset_version
 from novel_to_comic.stage_runtime import StageRuntime
@@ -28,6 +28,17 @@ from novel_to_comic.state_assets import (
     build_character_state_spec,
     build_location_state_spec,
     mark_dependent_states_stale,
+)
+from novel_to_comic.non_panel_generation import (
+    CanonicalCharacterReferenceInput,
+    CanonicalLocationPlateInput,
+    CharacterStateReferenceInput,
+    LocationStatePlateInput,
+    PropReferenceInput,
+    asset_matches_request,
+    compile_non_panel_request,
+    style_reference_plan,
+    submit_non_panel_request,
 )
 from novel_to_comic.text_utils import clean, shorten
 from novel_to_comic.usage import ApiResult
@@ -474,6 +485,94 @@ def _prop_ref_prompt(config: Config, prop: Prop, addendum: str = "") -> str:
     )
 
 
+def _character_generation_input(
+    config: Config, story_bible: StoryBible, char: Character, addendum: str = "",
+) -> CanonicalCharacterReferenceInput:
+    direction = (
+        "Square 2x2 reference sheet with front, three-quarter, profile, and neutral action views. "
+        "Keep every figure fully visible on a plain uncluttered background with no scenery."
+    )
+    if addendum.strip():
+        direction += f" User fix note: {addendum.strip()}"
+    return CanonicalCharacterReferenceInput(
+        asset_identity=f"character_ref:{char.id}",
+        prompt=GenerationPromptInput(
+            subjects=(PromptSubject(
+                character_id=char.id, name=char.name, identity=char.visual_anchor,
+            ),),
+            visual_brief=direction,
+            composition="Square character reference sheet, full body, no cropping.",
+            constraints="No text, labels, grid lines, scenery, or other characters.",
+            width=1024,
+            height=1024,
+            generation_width=1024,
+            generation_height=1024,
+            generation_shape="square",
+        ),
+        selected_style_text=config.style_template,
+        selected_style_source_hash=hashlib.sha256(config.style_template.encode()).hexdigest(),
+    )
+
+
+def _location_generation_input(
+    config: Config, loc, addendum: str = "", anchor: str | None = None,
+) -> CanonicalLocationPlateInput:
+    direction = (
+        "Clean wide environment design plate with large readable masses, clear silhouettes, "
+        "quiet areas of sky, ground, water, or shadow, and no characters."
+    )
+    if addendum.strip():
+        direction += f" User fix note: {addendum.strip()}"
+    return CanonicalLocationPlateInput(
+        asset_identity=f"location_plate:{loc.id}",
+        prompt=GenerationPromptInput(
+            anchors=(PromptAnchor(
+                kind="location", entity_id=loc.id, name=loc.name,
+                text=anchor or loc.visual_anchor,
+            ),),
+            visual_brief=direction,
+            composition="Wide environment design plate with no characters or text.",
+            constraints="No text, noisy grain, repeated texture fields, or muddy micro-detail.",
+            width=1344,
+            height=768,
+            generation_width=1344,
+            generation_height=768,
+            generation_shape="landscape",
+        ),
+        selected_style_text=config.style_template,
+        selected_style_source_hash=hashlib.sha256(config.style_template.encode()).hexdigest(),
+    )
+
+
+def _prop_generation_input(
+    config: Config, prop: Prop, addendum: str = "",
+) -> PropReferenceInput:
+    direction = (
+        "Single object isolated on a neutral mid-grey background, three-quarter view, evenly lit, "
+        "centered and fully visible with generous margin."
+    )
+    if addendum.strip():
+        direction += f" User fix note: {addendum.strip()}"
+    return PropReferenceInput(
+        asset_identity=f"prop_ref:{prop.id}",
+        prompt=GenerationPromptInput(
+            anchors=(PromptAnchor(
+                kind="prop", entity_id=prop.id, name=prop.name, text=prop.visual_anchor,
+            ),),
+            visual_brief=direction,
+            composition="Single centered prop reference, no cropping.",
+            constraints="No characters, hands, scenery, other objects, text, labels, or captions.",
+            width=1024,
+            height=1024,
+            generation_width=1024,
+            generation_height=1024,
+            generation_shape="square",
+        ),
+        selected_style_text=config.style_template,
+        selected_style_source_hash=hashlib.sha256(config.style_template.encode()).hexdigest(),
+    )
+
+
 def _read_character_ref_addendum(project_dir: Path, char_id: str) -> str:
     return artifacts.read_active_addendum(
         artifacts.character_ref_instructions_path(project_dir, char_id)
@@ -492,7 +591,7 @@ def _read_prop_ref_addendum(project_dir: Path, prop_id: str) -> str:
     )
 
 
-def _state_asset_prompt(spec: StateAssetGenerationSpec) -> ImagePrompt:
+def _state_asset_prompt(spec: StateAssetGenerationSpec) -> GenerationPromptInput:
     """Build the canonical prompt IR for a state asset.
 
     The active state anchor remains protected on the subject/location field;
@@ -520,12 +619,11 @@ def _state_asset_prompt(spec: StateAssetGenerationSpec) -> ImagePrompt:
             appearance_state_id=spec.state_id, text=spec.active_state_anchor,
         )]
         composition = "Wide environment design plate with no characters or text."
-    return ImagePrompt(
-        scene_id=f"state:{spec.entity_id}:{spec.state_id}", panel_number=1,
-        anchors=anchors, subjects=subjects, composition=composition,
+    return GenerationPromptInput(
+        anchors=tuple(anchors), subjects=tuple(subjects), composition=composition,
         visual_brief=spec.state_direction or None,
         constraints="The active-state anchor wins over canonical mutable facts.",
-        width=spec.effective_width, height=spec.effective_height, steps=1,
+        width=spec.effective_width, height=spec.effective_height,
         generation_width=spec.effective_width, generation_height=spec.effective_height,
         generation_shape=spec.requested_shape,
     )
@@ -537,27 +635,30 @@ def _compile_state_asset_wire(
     project_dir: Path,
 ):
     """Compile one state request and update metadata before transport/cache checks."""
-    from novel_to_comic.compiled_request import compile_generation_request
-    from novel_to_comic.image_models import image_model_profile_for_config
-    from novel_to_comic.provider_wire import compile_provider_wire_request
     from novel_to_comic.state_assets import build_state_reference_plan
 
     prompt = _state_asset_prompt(spec)
+    from novel_to_comic.image_models import image_model_profile_for_config
+
     profile = image_model_profile_for_config(config)
     plan = build_state_reference_plan(spec, project_dir, route_profile=profile)
-    compiled = compile_generation_request(
-        prompt=prompt, reference_plan=plan, route_profile=profile,
-        requested_alias=config.effective_image_model(),
-        configured_provider_model=config.effective_image_model(),
+    input_data = (
+        CharacterStateReferenceInput if spec.asset_kind == "character_state_ref"
+        else LocationStatePlateInput
+    )(
+        asset_identity=f"{spec.entity_id}:{spec.state_id}",
+        prompt=prompt,
         selected_style_text=config.style_template,
         selected_style_source_hash=spec.style_sha256,
-        asset_kind="character_ref" if spec.asset_kind == "character_state_ref" else "location_plate",
-        asset_identity=f"{spec.entity_id}:{spec.state_id}",
+        lineage=spec.lineage_metadata(),
     )
-    wire = compile_provider_wire_request(compiled)
-    spec.compiled_request_sha256 = compiled.compiled_request_sha256
-    spec.execution_fingerprint = wire.execution_fingerprint
-    return wire
+    request = compile_non_panel_request(config, input_data, reference_plan=plan)
+    spec.compiled_request_sha256 = request.compiled.compiled_request_sha256
+    spec.execution_fingerprint = request.wire.execution_fingerprint
+    return replace(
+        request,
+        input=replace(request.input, lineage=spec.lineage_metadata()),
+    )
 
 
 async def _generate_state_asset_wire(
@@ -567,7 +668,7 @@ async def _generate_state_asset_wire(
     project_dir: Path,
     *,
     feature: str,
-    wire=None,
+    request=None,
 ) -> ApiResult[Path]:
     """Compile and submit a canonical-conditioned state asset through the shared wire seam.
 
@@ -577,13 +678,13 @@ async def _generate_state_asset_wire(
     omits the contradictory parent (``lineage_mode=state_only``). The spec's
     lineage metadata is updated with the compiled/wire request hashes.
     """
-    from novel_to_comic.ai import generate_wire_image
-
-    if wire is None:
-        wire = _compile_state_asset_wire(config, spec, project_dir)
-    return await generate_wire_image(
-        config=config, wire=wire, output_path=output_path, feature=feature
+    if request is None:
+        request = _compile_state_asset_wire(config, spec, project_dir)
+    submission = await submit_non_panel_request(
+        config=config, project_dir=project_dir, request=request,
+        output_path=output_path, feature=feature, kind="state_asset_regen",
     )
+    return submission.result
 
 
 async def regenerate_character_ref(
@@ -600,36 +701,25 @@ async def regenerate_character_ref(
     sem = semaphore or asyncio.Semaphore(1)
     output_path = project_dir / "refs" / char.id / "sheet.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = output_path.with_name(
-        f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
-    )
     style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
     addendum = _read_character_ref_addendum(project_dir, char.id)
-    prompt = _character_sheet_prompt(config, story_bible, char, addendum)
-    meta = _character_ref_meta(config, project_dir, style_ref, char, prompt, addendum)
+    input_data = _character_generation_input(config, story_bible, char, addendum)
+    request = compile_non_panel_request(
+        config, input_data, reference_plan=style_reference_plan(config, style_ref)
+    )
 
-    try:
-        flux_result = None
-        async with sem:
-            flux_result = await flux.generate_image(
-                config,
-                prompt,
-                tmp_path,
-                width=1024,
-                height=1024,
-                reference_image_path=style_ref,
-                ref_type="style",
-                feature="cast.character_ref",
-            )
-        record_asset_version(output_path, project_dir, reason="before_regenerate")
-        tmp_path.replace(output_path)
-        await asyncio.to_thread(_crop_sheet_to_poses, output_path)
-        artifacts.write_asset_meta(output_path, meta)
-        mark_dependent_states_stale(project_dir, "character", char.id)
-        return ApiResult(value=output_path, usage=flux_result.usage)
-    finally:
-        if tmp_path.exists():
-            tmp_path.unlink()
+    record_asset_version(output_path, project_dir, reason="before_regenerate")
+    async with sem:
+        submission = await submit_non_panel_request(
+            config=config, project_dir=project_dir, request=request,
+            output_path=output_path, feature="cast.character_ref",
+            kind="character_ref_regen",
+        )
+    result = submission.result
+    assert result is not None
+    await asyncio.to_thread(_crop_sheet_to_poses, output_path)
+    mark_dependent_states_stale(project_dir, "character", char.id)
+    return result
 
 
 async def regenerate_character_state_ref(
@@ -656,29 +746,17 @@ async def regenerate_character_state_ref(
     sem = semaphore or asyncio.Semaphore(1)
     output_path = project_dir / "refs" / char.id / "states" / state.id / "sheet.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = output_path.with_name(
-        f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
-    )
     style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
     spec = build_character_state_spec(config, project_dir, char, state, style_path=style_ref)
 
-    try:
-        async with sem:
-            flux_result = await _generate_state_asset_wire(
-                config, spec, tmp_path, project_dir,
-                feature="cast.character_state_ref",
-            )
-        # Capture metadata AFTER the wire mutates the spec (lineage mode,
-        # reference summary, request hashes are set during conditioning).
-        meta = spec.lineage_metadata()
-        record_asset_version(output_path, project_dir, reason="before_regenerate")
-        tmp_path.replace(output_path)
-        await asyncio.to_thread(_crop_sheet_to_poses, output_path)
-        artifacts.write_asset_meta(output_path, meta)
-        return ApiResult(value=output_path, usage=flux_result.usage)
-    finally:
-        if tmp_path.exists():
-            tmp_path.unlink()
+    record_asset_version(output_path, project_dir, reason="before_regenerate")
+    async with sem:
+        result = await _generate_state_asset_wire(
+            config, spec, output_path, project_dir,
+            feature="cast.character_state_ref",
+        )
+    await asyncio.to_thread(_crop_sheet_to_poses, output_path)
+    return result
 
 
 async def regenerate_prop_ref(
@@ -695,32 +773,21 @@ async def regenerate_prop_ref(
     sem = semaphore or asyncio.Semaphore(1)
     output_path = artifacts.prop_ref_path(project_dir, prop.id)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = output_path.with_name(
-        f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
-    )
     style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
     addendum = _read_prop_ref_addendum(project_dir, prop.id)
-    prompt = _prop_ref_prompt(config, prop, addendum)
-    meta = _prop_ref_meta(config, project_dir, style_ref, prop, prompt, addendum)
+    input_data = _prop_generation_input(config, prop, addendum)
+    request = compile_non_panel_request(
+        config, input_data, reference_plan=style_reference_plan(config, style_ref)
+    )
 
-    try:
-        async with sem:
-            flux_result = await flux.generate_image(
-                config,
-                prompt,
-                tmp_path,
-                width=1024,
-                height=1024,
-                reference_image_path=style_ref,
-                ref_type="style",
-                feature="cast.prop_ref",
-            )
-        tmp_path.replace(output_path)
-        artifacts.write_asset_meta(output_path, meta)
-        return ApiResult(value=output_path, usage=flux_result.usage)
-    finally:
-        if tmp_path.exists():
-            tmp_path.unlink()
+    async with sem:
+        submission = await submit_non_panel_request(
+            config=config, project_dir=project_dir, request=request,
+            output_path=output_path, feature="cast.prop_ref", kind="prop_ref_regen",
+        )
+    result = submission.result
+    assert result is not None
+    return result
 
 
 async def regenerate_location_plate(
@@ -746,52 +813,31 @@ async def regenerate_location_plate(
     sem = semaphore or asyncio.Semaphore(1)
     output_path = project_dir / "plates" / f"{plate_stem}.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = output_path.with_name(
-        f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
-    )
     style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
-    width, height = _location_plate_dimensions(config)
     if state_id:
         spec = build_location_state_spec(config, project_dir, loc, state, style_path=style_ref)
-        prompt = spec.rendered_prompt
+        request = _compile_state_asset_wire(config, spec, project_dir)
     else:
         addendum = _read_location_plate_addendum(project_dir, loc.id)
-        prompt = _location_plate_prompt(config, loc, addendum, anchor=anchor)
+        input_data = _location_generation_input(config, loc, addendum, anchor=anchor)
+        request = compile_non_panel_request(
+            config, input_data, reference_plan=style_reference_plan(config, style_ref)
+        )
         spec = None
 
-    try:
-        flux_result = None
-        async with sem:
-            flux_result = (
-                await _generate_state_asset_wire(
-                    config, spec, tmp_path, project_dir,
-                    feature="cast.location_state_plate",
-                )
-                if state_id else await flux.generate_image(
-                    config, prompt, tmp_path, width=width, height=height,
-                    reference_image_path=style_ref, ref_type="style",
-                    feature="cast.location_plate",
-                )
-            )
-        # Capture metadata AFTER the wire mutates the state spec (lineage mode,
-        # reference summary, request hashes are set during conditioning).
-        if state_id:
-            meta = spec.lineage_metadata()
-        else:
-            meta = _location_plate_meta(
-                config, project_dir, style_ref, loc, prompt, width, height,
-                _read_location_plate_addendum(project_dir, loc.id),
-                state_id=state_id, anchor=anchor,
-            )
-        record_asset_version(output_path, project_dir, reason="before_regenerate")
-        tmp_path.replace(output_path)
-        artifacts.write_asset_meta(output_path, meta)
-        if not state_id:
-            mark_dependent_states_stale(project_dir, "location", loc.id)
-        return ApiResult(value=output_path, usage=flux_result.usage)
-    finally:
-        if tmp_path.exists():
-            tmp_path.unlink()
+    record_asset_version(output_path, project_dir, reason="before_regenerate")
+    async with sem:
+        submission = await submit_non_panel_request(
+            config=config, project_dir=project_dir, request=request,
+            output_path=output_path,
+            feature=("cast.location_state_plate" if state_id else "cast.location_plate"),
+            kind="location_plate_regen",
+        )
+    result = submission.result
+    assert result is not None
+    if not state_id:
+        mark_dependent_states_stale(project_dir, "location", loc.id)
+    return result
 
 
 async def _generate_character_refs(
@@ -838,10 +884,12 @@ async def _generate_character_refs(
             char_dir.mkdir(parents=True, exist_ok=True)
             output_path = char_dir / "sheet.png"
             addendum = _read_character_ref_addendum(project_dir, char.id)
-            prompt = _character_sheet_prompt(config, story_bible, char, addendum)
-            meta = _character_ref_meta(config, project_dir, style_ref, char, prompt, addendum)
+            input_data = _character_generation_input(config, story_bible, char, addendum)
+            request = compile_non_panel_request(
+                config, input_data, reference_plan=style_reference_plan(config, style_ref)
+            )
 
-            if artifacts.asset_matches_meta(output_path, meta):
+            if asset_matches_request(output_path, request):
                 # Migrate older sheets that pre-date cropped-pose references.
                 if not (char_dir / "front.png").exists():
                     try:
@@ -858,15 +906,14 @@ async def _generate_character_refs(
                     # Pass the style sample when the active image model handles
                     # references reliably; gpt-image-2 cast refs stay text-driven.
                     async with semaphore:
-                        flux_result = await flux.generate_image(
-                            config, prompt, output_path,
-                            width=1024, height=1024,
-                            reference_image_path=style_ref,
-                            ref_type="style",
-                            feature="cast.character_ref",
+                        submission = await submit_non_panel_request(
+                            config=config, project_dir=project_dir, request=request,
+                            output_path=output_path, feature="cast.character_ref",
+                            kind="character_ref", semaphore=semaphore,
                         )
+                    flux_result = submission.result
+                    assert flux_result is not None
                     await asyncio.to_thread(_crop_sheet_to_poses, output_path)
-                    artifacts.write_asset_meta(output_path, meta)
                     mark_dependent_states_stale(project_dir, "character", char.id)
                     ctx.record_item_done(usage=flux_result.usage)
                 except Exception as e:
@@ -919,9 +966,8 @@ async def _generate_character_state_refs(
             # the cache check. The exact compiled wire is reused on a miss.
             # Canonical-first scheduling guarantees the parent exists here.
             wire = _compile_state_asset_wire(config, spec, project_dir)
-            meta = spec.lineage_metadata()
 
-            if artifacts.asset_matches_meta(output_path, meta):
+            if asset_matches_request(output_path, wire):
                 if not (out_dir / "front.png").exists():
                     try:
                         await asyncio.to_thread(_crop_sheet_to_poses, output_path)
@@ -935,12 +981,9 @@ async def _generate_character_state_refs(
                     async with semaphore:
                         flux_result = await _generate_state_asset_wire(
                             config, spec, output_path, project_dir,
-                            feature="cast.character_state_ref", wire=wire,
+                            feature="cast.character_state_ref", request=wire,
                         )
-                    # Re-capture metadata after the wire sets request hashes.
-                    meta = spec.lineage_metadata()
                     await asyncio.to_thread(_crop_sheet_to_poses, output_path)
-                    artifacts.write_asset_meta(output_path, meta)
                     ctx.record_item_done(usage=flux_result.usage)
                 except Exception as e:
                     cause = e.last_attempt.exception() if hasattr(e, "last_attempt") else e
@@ -974,7 +1017,6 @@ async def _generate_location_plates(
         config,
         _find_style_ref(project_dir, config.style_template),
     )
-    width, height = _location_plate_dimensions(config)
     semaphore = _cast_semaphore(config)
 
     with make_progress(ctx.on_event) as progress:
@@ -988,43 +1030,38 @@ async def _generate_location_plates(
                 spec = build_location_state_spec(
                     config, project_dir, loc, state, style_path=style_ref
                 )
-                prompt = spec.rendered_prompt
                 # Build the conditioning plan up front so lineage metadata is
                 # (including request hashes) is available for the cache check.
                 # Canonical-first scheduling guarantees the parent plate exists
                 # here, and the exact compiled wire is reused on a miss.
                 wire = _compile_state_asset_wire(config, spec, project_dir)
-                meta = spec.lineage_metadata()
             else:
                 addendum = _read_location_plate_addendum(project_dir, loc.id)
-                prompt = _location_plate_prompt(config, loc, addendum, anchor=anchor)
-                spec = None
-                meta = _location_plate_meta(
-                    config, project_dir, style_ref, loc, prompt, width, height,
-                    addendum, state_id=state_id, anchor=anchor,
+                input_data = _location_generation_input(config, loc, addendum, anchor=anchor)
+                wire = compile_non_panel_request(
+                    config, input_data, reference_plan=style_reference_plan(config, style_ref)
                 )
-            if artifacts.asset_matches_meta(output_path, meta):
+                spec = None
+            if asset_matches_request(output_path, wire):
                 ctx.record_item_done(cost=0.0)
                 ctx.log(f"Using existing location plate for {label}", level="dim")
             else:
                 try:
                     ctx.log(f"Generating location plate for {label}")
                     async with semaphore:
-                        flux_result = (
-                            await _generate_state_asset_wire(
+                        if state_id:
+                            flux_result = await _generate_state_asset_wire(
                                 config, spec, output_path, project_dir,
-                                feature="cast.location_state_plate", wire=wire,
+                                feature="cast.location_state_plate", request=wire,
                             )
-                            if state_id else await flux.generate_image(
-                                config, prompt, output_path, width=width, height=height,
-                                reference_image_path=style_ref, ref_type="style",
-                                feature="cast.location_plate",
+                        else:
+                            submission = await submit_non_panel_request(
+                                config=config, project_dir=project_dir, request=wire,
+                                output_path=output_path, feature="cast.location_plate",
+                                kind="location_plate",
                             )
-                        )
-                    # Re-capture metadata after the wire sets request hashes.
-                    if state_id:
-                        meta = spec.lineage_metadata()
-                    artifacts.write_asset_meta(output_path, meta)
+                            flux_result = submission.result
+                            assert flux_result is not None
                     if state_id is None:
                         mark_dependent_states_stale(project_dir, "location", loc.id)
                     ctx.record_item_done(usage=flux_result.usage)
@@ -1073,24 +1110,25 @@ async def _generate_prop_refs(
             output_path = artifacts.prop_ref_path(project_dir, prop.id)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             addendum = _read_prop_ref_addendum(project_dir, prop.id)
-            prompt = _prop_ref_prompt(config, prop, addendum)
-            meta = _prop_ref_meta(config, project_dir, style_ref, prop, prompt, addendum)
+            input_data = _prop_generation_input(config, prop, addendum)
+            request = compile_non_panel_request(
+                config, input_data, reference_plan=style_reference_plan(config, style_ref)
+            )
 
-            if artifacts.asset_matches_meta(output_path, meta):
+            if asset_matches_request(output_path, request):
                 ctx.record_item_done(cost=0.0)
                 ctx.log(f"Using existing prop ref for {prop.name}", level="dim")
             else:
                 try:
                     ctx.log(f"Generating prop ref for {prop.name}")
                     async with semaphore:
-                        flux_result = await flux.generate_image(
-                            config, prompt, output_path,
-                            width=1024, height=1024,
-                            reference_image_path=style_ref,
-                            ref_type="style",
-                            feature="cast.prop_ref",
+                        submission = await submit_non_panel_request(
+                            config=config, project_dir=project_dir, request=request,
+                            output_path=output_path, feature="cast.prop_ref",
+                            kind="prop_ref",
                         )
-                    artifacts.write_asset_meta(output_path, meta)
+                    flux_result = submission.result
+                    assert flux_result is not None
                     ctx.record_item_done(usage=flux_result.usage)
                 except Exception as e:
                     cause = e.last_attempt.exception() if hasattr(e, "last_attempt") else e
@@ -1247,22 +1285,18 @@ def estimate_state_reference_count(
 
 def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
     from novel_to_comic.usage import estimate_image_cost
+    from novel_to_comic.non_panel_generation import estimate_non_panel_request
 
     story_bible = artifacts.read_story_bible_safe(project_dir)
     if story_bible is None:
         return 0.0
 
-    missing_refs = sum(
-        1 for char in story_bible.characters
-        if not (project_dir / "refs" / char.id / "sheet.png").exists()
-    )
     missing_state_refs = [
         (char.id, state_id)
         for char in story_bible.characters
         for state_id, _anchor in _character_state_jobs(char)
         if not (project_dir / "refs" / char.id / "states" / state_id / "sheet.png").exists()
     ]
-    missing_plates = 0
     missing_location_states: list[tuple[str, str]] = []
     for loc in story_bible.locations:
         for stem, _anchor, state_id in _location_plate_jobs(loc):
@@ -1270,16 +1304,30 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
                 continue
             if state_id:
                 missing_location_states.append((loc.id, state_id))
-            else:
-                missing_plates += 1
-    missing_prop_refs = sum(
-        1 for prop in story_bible.props
-        if not artifacts.prop_ref_path(project_dir, prop.id).exists()
-    )
+    style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
+    style_plan = style_reference_plan(config, style_ref)
+    total = 0.0
+    for char in story_bible.characters:
+        if not (project_dir / "refs" / char.id / "sheet.png").exists():
+            total += estimate_non_panel_request(
+                config, _character_generation_input(config, story_bible, char),
+                reference_plan=style_plan,
+            ).cost_usd
+    for loc in story_bible.locations:
+        for stem, anchor, state_id in _location_plate_jobs(loc):
+            if state_id is None and not (project_dir / "plates" / f"{stem}.png").exists():
+                total += estimate_non_panel_request(
+                    config, _location_generation_input(config, loc, anchor=anchor),
+                    reference_plan=style_plan,
+                ).cost_usd
+    for prop in story_bible.props:
+        if not artifacts.prop_ref_path(project_dir, prop.id).exists():
+            total += estimate_non_panel_request(
+                config, _prop_generation_input(config, prop), reference_plan=style_plan,
+            ).cost_usd
+
     model = config.effective_image_model()
     quality = getattr(config, "image_quality", None)
-    base_count = missing_refs + missing_plates + missing_prop_refs
-    total = estimate_image_cost(model, base_count, quality=quality) if base_count else 0.0
     for entity_id, state_id in missing_state_refs:
         total += estimate_image_cost(
             model, 1, quality=quality,

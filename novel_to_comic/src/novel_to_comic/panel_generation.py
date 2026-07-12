@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from types import SimpleNamespace
 
 from novel_to_comic import artifacts
 from novel_to_comic.compiled_request import (
@@ -33,6 +34,7 @@ from novel_to_comic.frozen_requests import (
     submit_frozen_request,
 )
 from novel_to_comic.image_models import describe_image_model, image_model_profile_for_config
+from novel_to_comic.image_provenance import common_image_provenance
 from novel_to_comic.image_references import ReferencePlan
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.provider_wire import (
@@ -354,8 +356,29 @@ def panel_provenance(
     failure: dict[str, Any] | None = None,
     started_at: str | None = None,
     project_dir: Path | None = None,
+    asset_identity: str | None = None,
 ) -> dict[str, Any]:
     """Build the common redaction-safe panel result/failure envelope."""
+    return common_image_provenance(
+        asset_kind="panel",
+        asset_identity=asset_identity or getattr(wire, "asset_identity", "panel"),
+        compiled_sha256=compiled_sha256,
+        prompt_source_sha256=prompt_source_sha256,
+        wire=wire,
+        reference_plan=reference_plan,
+        request_id=request_id,
+        actual_width=actual_width,
+        actual_height=actual_height,
+        actual_provider_model=actual_provider_model,
+        provider_request_id=provider_request_id,
+        latency_ms=latency_ms,
+        cost_usd=cost_usd,
+        failure=failure,
+        project_dir=project_dir,
+    )
+    # The legacy implementation below is retained only as a source reference
+    # for the panel migration and is unreachable; all callers use the common
+    # non-panel-compatible envelope above.
     selected = []
     for index, asset in enumerate(getattr(reference_plan, "selected", ())):
         path = str(asset.path)
@@ -460,8 +483,36 @@ def wire_provenance(
     provider_request_id: str | None = None,
     cost_usd: float | None = None,
     failure: dict[str, Any] | None = None,
+    asset_identity: str = "panel",
 ) -> dict[str, Any]:
     """Build the same provenance envelope for a portable Labs wire."""
+    return common_image_provenance(
+        asset_kind="panel",
+        asset_identity=asset_identity,
+        compiled_sha256=wire.compiled_request_sha256,
+        prompt_source_sha256=None,
+        wire=wire,
+        reference_plan=type("WirePlan", (), {
+            "selected": tuple(SimpleNamespace(
+                path=Path(ref.source_path), role=ref.role, entity_id=ref.entity_id,
+                appearance_state_id=ref.appearance_state_id,
+                authority_scope=ref.authority_scope,
+                preserve_facets=ref.preserve_facets, ignore_facets=ref.ignore_facets,
+                content_sha256=ref.content_sha256, lineage_parent_sha256=None,
+            ) for ref in wire.references),
+            "dropped": tuple(), "warnings": tuple(),
+            "selection_fingerprint": None,
+        })(),
+        request_id=request_id,
+        actual_width=actual_width,
+        actual_height=actual_height,
+        actual_provider_model=actual_provider_model,
+        provider_request_id=provider_request_id,
+        cost_usd=cost_usd,
+        failure=failure,
+    )
+    # Unreachable legacy serialization is left below only to minimize this
+    # migration's diff; callers return through the common helper above.
     record: dict[str, Any] = {
         "schema_version": PANEL_PROVENANCE_SCHEMA_VERSION,
         "compiled_request_schema_version": COMPILED_REQUEST_SCHEMA_VERSION,
@@ -583,6 +634,7 @@ def persist_panel_result_provenance(
             else None
         ),
         project_dir=project_dir,
+        asset_identity=request.compiled.asset_identity,
     )
     params = {
         "execution_fingerprint": request.wire.execution_fingerprint,

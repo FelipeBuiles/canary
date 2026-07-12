@@ -7,6 +7,9 @@ from pytest import approx
 from novel_to_comic.labs.costs import estimate_labs_image_cost
 from novel_to_comic.labs.providers.base import LabsImageInput
 from novel_to_comic.labs.providers.litellm import LitellmProvider
+from novel_to_comic.config import Config
+from novel_to_comic.generation_input import GenerationPromptInput
+from novel_to_comic.non_panel_generation import AssetGenerationInput, compile_non_panel_request
 from novel_to_comic.labs.registry import LabsModelEntry
 from novel_to_comic.usage import ApiResult, UsageRecord
 
@@ -67,7 +70,7 @@ def test_labs_cost_scales_flux_2_edit_by_output_and_reference_megapixels(tmp_pat
 
 
 def test_litellm_provider_returns_calculated_usage_cost(monkeypatch):
-    async def fake_generate_image(**kwargs):
+    async def fake_generate_wire_image(**kwargs):
         output_path = kwargs["output_path"]
         output_path.write_bytes(b"image")
         return ApiResult(
@@ -81,18 +84,28 @@ def test_litellm_provider_returns_calculated_usage_cost(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "novel_to_comic.labs.providers.litellm.ai_generate_image",
-        fake_generate_image,
+        "novel_to_comic.labs.providers.litellm.generate_wire_image",
+        fake_generate_wire_image,
     )
+
+    config = Config(image_model="openai/gpt-image-2")
+    compiled = compile_non_panel_request(
+        config,
+        AssetGenerationInput(
+            asset_kind="panel",
+            asset_identity="labs:test:panel:1",
+            prompt=GenerationPromptInput(width=1024, height=1024),
+        ),
+    )
+    inp = LabsImageInput(prompt="Make a comic panel", extra={"provider_wire_json": compiled.wire.to_json()})
 
     result = asyncio.run(
         LitellmProvider().generate(
             endpoint="openai/gpt-image-2",
-            inp=LabsImageInput(prompt="Make a comic panel"),
+            inp=inp,
         )
     )
 
     assert result.cost_usd == approx(0.03168)
     assert result.cost_source == "litellm_cost_map+canary_pricing_override"
     assert result.provider_model == "openai/gpt-image-2"
-

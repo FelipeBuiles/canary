@@ -1,0 +1,48 @@
+"""Provider-independent prompt inputs shared by panel and asset generation.
+
+Panel prompts are persisted as :class:`ImagePrompt` records.  Non-panel assets
+are requests in their own right and must not acquire panel-only identifiers just
+to use the common compiler, so this module carries only the fields the compiler
+actually projects.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from novel_to_comic.models.prompt import PromptAnchor, PromptSubject
+from novel_to_comic.panel_aspect import GenerationShape
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationPromptInput:
+    """Panel-free canonical prompt input for any image asset."""
+
+    anchors: tuple[PromptAnchor, ...] = ()
+    subjects: tuple[PromptSubject, ...] = ()
+    composition: str | None = None
+    setting: str | None = None
+    lighting: str | None = None
+    mood: str | None = None
+    props: tuple[str, ...] = ()
+    key_objects: tuple[str, ...] = ()
+    visual_requirements: tuple[str, ...] = ()
+    continuity_note: str | None = None
+    visual_brief: str | None = None
+    distilled_prompt: str | None = None
+    full_prompt: str | None = None
+    style: str | None = None
+    constraints: str | None = None
+    crop_policy: str | None = None
+    has_narration_caption: bool = False
+    location_state_id: str | None = None
+    source_sha256: str | None = None
+    width: int = 1024
+    height: int = 1024
+    generation_width: int | None = None
+    generation_height: int | None = None
+    generation_shape: GenerationShape | None = None
+    generation_aspect_ratio: float | None = None
+
+
+__all__ = ["GenerationPromptInput"]

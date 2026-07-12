@@ -635,32 +635,14 @@ def test_regenerate_gpt_location_plate_uses_landscape_text_only(tmp_path, monkey
         json.dumps({"suggestions": [{"template": config.style_template}]})
     )
 
-    captured = {}
-
-    async def fake_generate_image(
-        config,
-        prompt,
-        output_path,
-        width=None,
-        height=None,
-        reference_image_path=None,
-        ref_type="subject",
-        feature="image.generate",
-    ):
-        captured.update(
-            {
-                "prompt": prompt,
-                "width": width,
-                "height": height,
-                "reference_image_path": reference_image_path,
-                "ref_type": ref_type,
-                "feature": feature,
-            }
-        )
+    async def fake_execute_frozen_request(*, project_dir, request_id, config, output_path, feature):
         output_path.write_bytes(b"plate")
         return ApiResult(value=output_path)
 
-    monkeypatch.setattr(s3_cast.flux, "generate_image", fake_generate_image)
+    monkeypatch.setattr(
+        "novel_to_comic.non_panel_generation.execute_frozen_request",
+        fake_execute_frozen_request,
+    )
 
     result = asyncio.run(
         s3_cast.regenerate_location_plate(config, tmp_path, "loc_002")
@@ -668,15 +650,9 @@ def test_regenerate_gpt_location_plate_uses_landscape_text_only(tmp_path, monkey
 
     meta = json.loads(artifacts.location_plate_meta_path(tmp_path, "loc_002").read_text())
     assert result.value == artifacts.location_plate_path(tmp_path, "loc_002")
-    assert captured["width"] == 1536
-    assert captured["height"] == 1024
-    assert captured["reference_image_path"] is None
-    assert captured["ref_type"] == "style"
-    assert captured["feature"] == "cast.location_plate"
-    assert "LOCATION DESIGN PLATE" in captured["prompt"]
-    assert meta["width"] == 1536
-    assert meta["height"] == 1024
-    assert meta["style_ref"] is None
+    assert meta["provenance"]["effective_dimensions"] == {"width": 1344, "height": 768}
+    assert meta["provenance"]["asset_identity"] == "location_plate:loc_002"
+    assert "Output dimensions: 1344x768" in meta["prompt"]
 
 
 def test_gpt_image_continuity_refs_are_text_only(tmp_path):

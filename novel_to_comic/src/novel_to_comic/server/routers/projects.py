@@ -29,8 +29,15 @@ from pydantic import BaseModel
 
 from novel_to_comic.ai import ai_request_context
 from novel_to_comic.config import Config, save_config
-from novel_to_comic.models.prompt import ImagePrompt
+from novel_to_comic.generation_input import GenerationPromptInput
+from novel_to_comic.models.prompt import ImagePrompt, PromptAnchor
 from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.non_panel_generation import (
+    ProjectCoverInput,
+    compile_non_panel_request,
+    style_reference_plan,
+    submit_non_panel_request,
+)
 from novel_to_comic.state import (
     STAGE_NAMES,
     StageStatus,
@@ -292,7 +299,6 @@ async def _generate_project_cover(
     user_id: str,
     project_id: str | None,
 ) -> Path:
-    from novel_to_comic.clients import flux
     from novel_to_comic.state import load_state, record_misc_usage, save_state
 
     bible_path = project_dir / "story_bible.json"
@@ -302,6 +308,35 @@ async def _generate_project_cover(
     bible = StoryBible.model_validate_json(bible_path.read_text())
     output_path = _cover_path(project_dir)
     style_ref = _find_style_ref(project_dir, config.style_template)
+    anchors = tuple(
+        PromptAnchor(kind="character", entity_id=char.id, name=char.name, text=char.visual_anchor)
+        for char in bible.characters[:3]
+    ) + tuple(
+        PromptAnchor(kind="location", entity_id=loc.id, name=loc.name, text=loc.visual_anchor)
+        for loc in bible.locations[:2]
+    )
+    input_data = ProjectCoverInput(
+        asset_identity="project_cover:cover",
+        prompt=GenerationPromptInput(
+            anchors=anchors,
+            visual_brief=(
+                f"Book cover illustration for {bible.title} by {bible.author}. "
+                "Feature the central mood and conflict without text, title, logos, captions, "
+                "or typography. Portrait cover composition, one strong focal image, cinematic "
+                "lighting, finished production art, no words."
+            ),
+            constraints="No lettering, title, logos, captions, typography, or readable words.",
+            width=768,
+            height=1024,
+            generation_width=768,
+            generation_height=1024,
+            generation_shape="portrait",
+        ),
+        selected_style_text=config.style_template,
+    )
+    request = compile_non_panel_request(
+        config, input_data, reference_plan=style_reference_plan(config, style_ref)
+    )
     with ai_request_context(
         user_id=user_id,
         project_id=project_id,
@@ -309,16 +344,13 @@ async def _generate_project_cover(
         workspace_id=str(project_dir.parent),
         stage="cover",
     ):
-        result = await flux.generate_image(
-            config=config,
-            prompt=_cover_prompt(config, bible),
-            output_path=output_path,
-            width=768,
-            height=1024,
-            reference_image_path=style_ref,
-            ref_type="style",
-            feature="project.cover",
+        submission = await submit_non_panel_request(
+            config=config, project_dir=project_dir, request=request,
+            output_path=output_path, feature="project.cover", kind="project_cover",
         )
+    result = submission.result
+    if result is None:
+        raise RuntimeError("project cover request was queued without a result")
     if result.usage:
         state = load_state(project_dir)
         record_misc_usage(state, result.usage)
