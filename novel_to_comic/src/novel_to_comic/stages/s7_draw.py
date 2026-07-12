@@ -17,15 +17,11 @@ from PIL import Image as PILImage
 from rich.console import Console
 
 from novel_to_comic import artifacts
-from novel_to_comic.ai.providers.base import RefImage
 from novel_to_comic.image_references import ReferencePlan, build_reference_plan
 from novel_to_comic.prompt_assembly import (
     ensure_current_panel_prompt,
-    ensure_layout,
-    ensure_visual_brief,
     layout_pass_applies,
 )
-from novel_to_comic.clients import flux
 from novel_to_comic.config import Config
 from novel_to_comic.events import make_progress
 from novel_to_comic.image_ref_strategy import RefStrategy
@@ -34,8 +30,13 @@ from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.panel_versions import record_current_panel_version
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.panel_aspect import aspect_for_dimensions, aspect_within_tolerance, generation_shape_for_aspect
-from novel_to_comic.prompting import (
-    ensure_distilled_prompt,
+from novel_to_comic.panel_generation import (
+    compile_panel_request,
+    estimate_panel_request,
+    panel_failure_provenance,
+    panel_provenance,
+    prepare_panel_prompt,
+    submit_panel_request,
 )
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.usage import ApiResult, estimate_image_cost
@@ -63,14 +64,6 @@ def _write_failure_meta(image_path: Path, payload: dict) -> None:
     artifacts.write_asset_failure(image_path, payload)
 
 
-def _cache_meta_projection(payload: dict) -> dict:
-    projected = dict(payload)
-    parameters = dict(projected.get("parameters") or {})
-    parameters.pop("reference_diagnostics", None)
-    projected["parameters"] = parameters
-    return projected
-
-
 def _asset_matches_generation_meta(output_path: Path, expected: dict) -> bool:
     if not output_path.exists():
         return False
@@ -78,7 +71,9 @@ def _asset_matches_generation_meta(output_path: Path, expected: dict) -> bool:
         actual = artifacts.read_asset_meta(output_path)
     except Exception:
         return False
-    return _cache_meta_projection(actual) == _cache_meta_projection(expected)
+    expected_fingerprint = (expected.get("parameters") or {}).get("execution_fingerprint")
+    actual_fingerprint = (actual.get("parameters") or {}).get("execution_fingerprint")
+    return bool(expected_fingerprint and actual_fingerprint) and actual_fingerprint == expected_fingerprint
 
 
 def _image_dimensions(path: Path) -> tuple[int | None, int | None]:
@@ -354,38 +349,6 @@ def _with_location_labels(plan: ReferencePlan, label: str) -> ReferencePlan:
     )
 
 
-def resolve_panel_references(
-    config: Config,
-    project_dir: Path,
-    prompt: ImagePrompt,
-    *,
-    prompt_path: Path | None = None,
-    style_sample: Path | None = None,
-    scene_to_location: dict[str, str] | None = None,
-    output_dir: Path | None = None,
-    location_labels: dict[str, str] | None = None,
-) -> list[RefImage]:
-    """Return ordered, role-aware refs that a panel image request will upload.
-
-    Slice 04: delegates to :func:`build_panel_reference_plan` (the single
-    selection owner) and projects the finalized plan's selected assets into
-    provider ``RefImage`` objects. No selection, capping, or reordering happens
-    here.
-    """
-    plan = build_panel_reference_plan(
-        config,
-        project_dir,
-        prompt,
-        prompt_path=prompt_path,
-        style_sample=style_sample,
-        scene_to_location=scene_to_location,
-        output_dir=output_dir,
-        location_labels=location_labels,
-    )
-    _surface_plan_warnings(plan)
-    return plan.to_ref_images()
-
-
 def _surface_plan_warnings(plan: ReferencePlan) -> None:
     """Log dropped-reference diagnostics so the backend surfaces them.
 
@@ -402,6 +365,34 @@ def _surface_plan_warnings(plan: ReferencePlan) -> None:
         log.warning("reference_plan warning: %s", warning)
 
 
+def resolve_panel_references(
+    config: Config,
+    project_dir: Path,
+    prompt: ImagePrompt,
+    *,
+    prompt_path: Path | None = None,
+    style_sample: Path | None = None,
+    scene_to_location: dict[str, str] | None = None,
+    output_dir: Path | None = None,
+    location_labels: dict[str, str] | None = None,
+) -> list:
+    """Compatibility projection of the shared plan for read-only callers."""
+    from novel_to_comic.panel_generation import resolve_panel_references as resolve_plan
+
+    plan = resolve_plan(
+        config,
+        project_dir,
+        prompt,
+        prompt_path=prompt_path,
+        style_sample=style_sample,
+        scene_to_location=scene_to_location,
+        output_dir=output_dir,
+        location_labels=location_labels,
+    )
+    _surface_plan_warnings(plan)
+    return plan.to_ref_images()
+
+
 def estimate_panel_image_cost_usd(
     config: Config,
     project_dir: Path,
@@ -416,52 +407,31 @@ def estimate_panel_image_cost_usd(
         style_sample = _find_style_sample(project_dir, config.style_template)
     scene_to_location_from_caller = scene_to_location is not None
     scene_to_location = scene_to_location or {}
-    location_labels: dict[str, str] = {}
     if artifacts.story_bible_path(project_dir).exists():
         try:
             story_bible = artifacts.read_story_bible(project_dir)
             if not scene_to_location_from_caller:
                 scene_to_location = {s.id: s.location_id for s in story_bible.scenes}
-            location_labels = {loc.id: loc.name for loc in story_bible.locations}
         except Exception:
             scene_to_location = {}
-    plan = build_panel_reference_plan(
+    estimate = estimate_panel_request(
         config,
         project_dir,
         prompt,
         prompt_path=prompt_path,
         style_sample=style_sample,
         scene_to_location=scene_to_location,
-        location_labels=location_labels,
-    )
-    _surface_plan_warnings(plan)
-    # Slice 05: estimate with the same compiled role-aware instructions the
-    # draw path uses, so the estimate prompt matches the submitted request.
-    from novel_to_comic.compiled_request import GenerationControls, compile_generation_request
-    from novel_to_comic.image_models import describe_image_model, image_model_profile_for_config
-
-    _route_profile = image_model_profile_for_config(config)
-    _effective_model = config.effective_image_model()
-    _desc = describe_image_model(_effective_model)
-    compiled = compile_generation_request(
-        prompt=prompt,
-        reference_plan=plan,
-        route_profile=_route_profile,
-        requested_alias=_effective_model,
-        configured_provider_model=_desc.provider_model,
-        selected_style_text=config.style_template,
-        controls=GenerationControls(
-            quality=config.image_quality if _route_profile.supports_control("quality") else None
+        prepared=(
+            bool(getattr(prompt, "visual_brief", None))
+            or not getattr(config, "visual_brief_enabled", True)
         ),
-        asset_kind="panel",
     )
-    generation_prompt = compiled.final_prompt
     return estimate_image_cost(
-        _effective_model,
+        config.effective_image_model(),
         1,
         quality=getattr(config, "image_quality", None),
-        ref_count=plan.ref_count,
-        prompt_text=generation_prompt,
+        ref_count=estimate.reference_count,
+        prompt_text=estimate.prompt_text,
     )
 
 
@@ -613,9 +583,9 @@ async def _generate_panel(
     transition would actually feed it as a continuity image ref (match_cut on
     a ref-capable model) — everything else proceeds independently.
 
-    Subject refs (character sheets / pose crops) are always passed first to
-    flux.generate_image_multi_ref so character identity gets the strongest
-    positional weight in the Gemini contents list.
+    Subject refs (character sheets / pose crops) remain first in the frozen
+    provider wire request so character identity gets the strongest positional
+    weight in the provider contents list.
     """
     panel_key: tuple[str, int] | None = None
     panel_started_at: float | None = None
@@ -629,6 +599,7 @@ async def _generate_panel(
 
         raw_prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
         panel_key = (raw_prompt.scene_id, raw_prompt.panel_number)
+        output_path = project_dir / "draw" / raw_prompt.scene_id / f"panel_{raw_prompt.panel_number:03d}.png"
         prev_event: asyncio.Event | None = None
         if panel_events and raw_prompt.panel_number > 1:
             prev_event = panel_events.get((raw_prompt.scene_id, raw_prompt.panel_number - 1))
@@ -642,28 +613,32 @@ async def _generate_panel(
             await prev_event.wait()
 
         prompt = raw_prompt
-        if story_bible is not None:
-            distilled_prompt = ensure_distilled_prompt(config, prompt)
-            if distilled_prompt is not prompt:
-                prompt = distilled_prompt
-                prompt_path.write_text(prompt.model_dump_json(indent=2))
-        # Backfill the prose visual brief for prompts generated before the
-        # brief existed (or after an edit cleared it).
-        briefed_prompt = await ensure_visual_brief(config, prompt)
-        if briefed_prompt is not prompt:
-            prompt = briefed_prompt
-            prompt_path.write_text(prompt.model_dump_json(indent=2))
-        # Backfill the region layout for layout-aware models (Reve) when the
-        # prompt predates the layout pass or an edit cleared it.
-        laid_out_prompt = await ensure_layout(config, prompt)
-        if laid_out_prompt is not prompt:
-            prompt = laid_out_prompt
-            prompt_path.write_text(prompt.model_dump_json(indent=2))
+        planned_panel = None
+        prev_panel = None
+        if story_bible is not None and artifacts.layout_plan_path(project_dir).exists():
+            panel_plan = load_layout_plan(project_dir)
+            for candidate in scene_panel_map(panel_plan).get(raw_prompt.scene_id, []):
+                if candidate.panel_number == raw_prompt.panel_number:
+                    planned_panel = candidate
+                    index = scene_panel_map(panel_plan).get(raw_prompt.scene_id, []).index(candidate)
+                    if index:
+                        prev_panel = scene_panel_map(panel_plan)[raw_prompt.scene_id][index - 1]
+                    break
+        # Preparation is the only caller that may hydrate missing derived
+        # prompt/layout data. The frozen job runner never repeats it.
+        prompt = await prepare_panel_prompt(
+            config,
+            project_dir,
+            prompt_path,
+            story_bible=story_bible,
+            panel=planned_panel,
+            prev_panel=prev_panel,
+        )
 
         output_dir = project_dir / "draw" / prompt.scene_id
         output_path = output_dir / f"panel_{prompt.panel_number:03d}.png"
 
-        reference_plan = build_panel_reference_plan(
+        panel_request = compile_panel_request(
             config,
             project_dir,
             prompt,
@@ -677,42 +652,15 @@ async def _generate_panel(
             ),
             output_dir=output_dir,
         )
+        reference_plan = panel_request.reference_plan
         _surface_plan_warnings(reference_plan)
-        refs = reference_plan.to_ref_images()
 
         generation_path = output_path
         if force:
             generation_path = output_path.with_name(
                 f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
             )
-        # Slice 05: compile the provider-independent request so role-aware,
-        # facet-precise per-reference instructions replace the deleted generic
-        # all-reference guard. The compiled instructions are passed to the
-        # renderer so it serializes them into the provider wire format without
-        # re-selecting references or re-capping.
-        from novel_to_comic.compiled_request import GenerationControls, compile_generation_request
-        from novel_to_comic.image_models import (
-            describe_image_model,
-            image_model_profile_for_config,
-        )
-
-        _route_profile = image_model_profile_for_config(config)
-        _effective_model = config.effective_image_model()
-        _desc = describe_image_model(_effective_model)
-        compiled = compile_generation_request(
-            prompt=prompt,
-            reference_plan=reference_plan,
-            route_profile=_route_profile,
-            requested_alias=_effective_model,
-            configured_provider_model=_desc.provider_model,
-            selected_style_text=config.style_template,
-            controls=GenerationControls(
-                quality=config.image_quality
-                if _route_profile.supports_control("quality")
-                else None
-            ),
-            asset_kind="panel",
-        )
+        compiled = panel_request.compiled
         generation_prompt = compiled.final_prompt
         meta_payload = {
             "version": 1,
@@ -724,6 +672,12 @@ async def _generate_panel(
                 "scene_id": prompt.scene_id,
                 "panel_number": prompt.panel_number,
                 "image_model": config.effective_image_model(),
+                "requested_alias": panel_request.wire.requested_alias,
+                "expected_route": panel_request.wire.expected_route,
+                "configured_provider_model": panel_request.wire.configured_provider_model,
+                "compiled_request_sha256": compiled.compiled_request_sha256,
+                "wire_request_sha256": panel_request.wire.execution_fingerprint,
+                "execution_fingerprint": panel_request.wire.execution_fingerprint,
                 "width": compiled.effective_dimensions[0],
                 "height": compiled.effective_dimensions[1],
                 "generation_aspect_ratio": getattr(prompt, "generation_aspect_ratio", None),
@@ -786,18 +740,33 @@ async def _generate_panel(
 
         try:
             async with semaphore:
-                flux_result = await flux.generate_image_multi_ref(
+                submission = await submit_panel_request(
                     config=config,
-                    prompt=generation_prompt,
+                    project_dir=project_dir,
+                    request=panel_request,
                     output_path=generation_path,
-                    refs=refs,
-                    width=compiled.effective_dimensions[0],
-                    height=compiled.effective_dimensions[1],
-                    steps=prompt.steps,
-                    layout=prompt.layout if layout_pass_applies(config) else None,
                     feature="draw.panel_image",
                 )
+            flux_result = submission.result
+            if flux_result is None:
+                raise RuntimeError("direct panel submission did not return a result")
             result = flux_result.value
+            meta_payload["provenance"] = panel_provenance(
+                compiled_sha256=compiled.compiled_request_sha256,
+                prompt_source_sha256=compiled.prompt_source_sha256,
+                wire=panel_request.wire,
+                reference_plan=reference_plan,
+                request_id=submission.request_id,
+                actual_width=_image_dimensions(result)[0] if result else None,
+                actual_height=_image_dimensions(result)[1] if result else None,
+                actual_provider_model=(
+                    flux_result.actual_provider_model
+                    or (flux_result.usage.provider_model if flux_result.usage else None)
+                ),
+                provider_request_id=getattr(flux_result, "provider_request_id", None),
+                cost_usd=(flux_result.usage.cost_usd if flux_result.usage else None),
+                project_dir=project_dir,
+            )
             if result:
                 meta_payload = _meta_with_output_aspect(result, meta_payload, prompt)
                 _raise_if_aspect_mismatch(meta_payload)
@@ -837,8 +806,51 @@ async def _generate_panel(
             )
         return ApiResult(value=result, usage=flux_result.usage)
     except Exception as exc:
+        if output_path is not None and meta_payload is None:
+            try:
+                _write_failure_meta(
+                    output_path,
+                    {
+                        "version": 1,
+                        "kind": "panel_image_failure",
+                        "prompt": raw_prompt.full_prompt,
+                        "prompt_sha256": hashlib.sha256(
+                            (raw_prompt.full_prompt or "").encode()
+                        ).hexdigest(),
+                        "parameters": {
+                            "planned_panel_id": raw_prompt.planned_panel_id,
+                            "scene_id": raw_prompt.scene_id,
+                            "panel_number": raw_prompt.panel_number,
+                        },
+                        "provenance": panel_failure_provenance(exc, project_dir),
+                        "classification": "generation_error",
+                        "recoverable": True,
+                        "error": {
+                            "type": type(exc).__name__,
+                            "message": _fmt_error(exc),
+                        },
+                    },
+                )
+            except Exception:
+                pass
         if output_path is not None and meta_payload is not None:
             try:
+                if "provenance" not in meta_payload:
+                    meta_payload["provenance"] = panel_provenance(
+                        compiled_sha256=meta_payload["parameters"].get(
+                            "compiled_request_sha256", ""
+                        ),
+                        prompt_source_sha256=compiled.prompt_source_sha256,
+                        wire=panel_request.wire,
+                        reference_plan=reference_plan,
+                        request_id=None,
+                        actual_provider_model=None,
+                        failure={
+                            "type": type(exc).__name__,
+                            "message": _fmt_error(exc),
+                        },
+                        project_dir=project_dir,
+                    )
                 provider_blocked = _is_provider_blocked_error(exc)
                 rate_limited = not provider_blocked and _is_rate_limit_error(exc)
                 failure_payload = {

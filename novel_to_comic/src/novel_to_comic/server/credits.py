@@ -191,6 +191,9 @@ class UnifiedCostResolver:
         from novel_to_comic.stages.s7_draw import estimate_panel_image_cost_usd
         from novel_to_comic.config import config_for_image_model_alias
 
+        if not scene_id or scene_id != Path(scene_id).name or scene_id in {".", ".."}:
+            raise HTTPException(400, "Invalid scene_id")
+
         regen_config = config_for_image_model_alias(config, image_model_alias)
         prompt_path = artifacts.panel_prompt_path(project_dir, scene_id, panel_number)
         if not prompt_path.exists():
@@ -209,10 +212,23 @@ class UnifiedCostResolver:
         asset_id: str,
     ) -> CreditEstimate:
         """Estimate the credits needed to regenerate a single cast asset (character sheet or plate)."""
+        ref_count = 0
+        if asset_type in {"character_ref_regen", "location_plate_regen"} and ":" in asset_id:
+            entity_id, state_id = asset_id.split(":", 1)
+            from novel_to_comic.stages.s3_cast import estimate_state_reference_count
+
+            ref_count = estimate_state_reference_count(
+                config,
+                project_dir,
+                "character" if asset_type == "character_ref_regen" else "location",
+                entity_id,
+                state_id,
+            )
         cost_usd = estimate_image_cost(
             config.effective_image_model(),
             1,
             quality=getattr(config, "image_quality", None),
+            ref_count=ref_count,
         )
         return credit_estimate_for_provider_cost(
             cost_usd, "cast", reserve=False, zero_cost_estimate=1

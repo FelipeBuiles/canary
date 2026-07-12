@@ -146,6 +146,22 @@ def test_restore_revalidation_marks_parent_mismatch_stale(tmp_path: Path):
     assert meta["lineage_status"] == LineageStatus.STALE
 
 
+def test_restore_revalidation_marks_missing_parent_stale(tmp_path: Path):
+    state = artifacts.location_state_plate_path(tmp_path, "loc_001", "loc_001_night")
+    state.parent.mkdir(parents=True)
+    state.write_bytes(b"state")
+    artifacts.write_asset_meta(state, {
+        "entity_id": "loc_001", "state_id": "loc_001_night",
+        "canonical_parent_sha256": None,
+        "lineage_mode": "conditioned", "lineage_status": "current",
+    })
+
+    meta = revalidate_state_asset_lineage(
+        state, artifacts.location_plate_path(tmp_path, "loc_001"),
+    )
+    assert meta["lineage_status"] == LineageStatus.STALE
+
+
 def test_location_spec_dimensions_match_route_strategy(tmp_path: Path):
     config = Config(image_model="gpt-image-2")
     spec = build_location_state_spec(
@@ -165,6 +181,41 @@ def test_explicit_state_routes_are_registered():
     assert "/{kind}s/{entity_id}/states/{state_id}/versions/{version}/restore" in paths
     assert "/{kind}s/{entity_id}/states/{state_id}/metadata" in paths
     assert "/location-plate-versions/restore" in paths
+
+
+def test_legacy_character_state_restore_revalidates_lineage(tmp_path: Path, monkeypatch):
+    from novel_to_comic.server.routers.pipeline import restore_character_ref_version
+
+    calls = {}
+
+    monkeypatch.setattr(
+        "novel_to_comic.panel_versions.restore_asset_version",
+        lambda image_path, project_dir, version: calls.setdefault("restored", image_path),
+    )
+    monkeypatch.setattr(
+        "novel_to_comic.panel_versions.list_asset_versions",
+        lambda image_path, project_dir: [],
+    )
+    monkeypatch.setattr(
+        "novel_to_comic.stages.s3_cast._crop_sheet_to_poses",
+        lambda image_path: None,
+    )
+    monkeypatch.setattr(
+        "novel_to_comic.state_assets.revalidate_state_asset_lineage",
+        lambda state_path, parent_path: calls.update(
+            state_path=state_path, parent_path=parent_path,
+        ) or {},
+    )
+
+    restore_character_ref_version(
+        char_id="char_001", version=1, state_id="silver",
+        project=(tmp_path, Config(), None),
+    )
+
+    assert calls["state_path"] == artifacts.character_state_ref_sheet_path(
+        tmp_path, "char_001", "silver",
+    )
+    assert calls["parent_path"] == artifacts.character_ref_sheet_path(tmp_path, "char_001")
 
 
 def test_state_generation_uses_compiled_wire_with_canonical_conditioning(

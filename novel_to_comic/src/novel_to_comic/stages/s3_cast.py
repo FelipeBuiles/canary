@@ -492,28 +492,14 @@ def _read_prop_ref_addendum(project_dir: Path, prop_id: str) -> str:
     )
 
 
-async def _generate_state_asset_wire(
-    config: Config,
-    spec: StateAssetGenerationSpec,
-    output_path: Path,
-    project_dir: Path,
-    *,
-    feature: str,
-) -> ApiResult[Path]:
-    """Compile and submit a canonical-conditioned state asset through the shared wire seam.
+def _state_asset_prompt(spec: StateAssetGenerationSpec) -> ImagePrompt:
+    """Build the canonical prompt IR for a state asset.
 
-    Slice 09: the state request now carries a ReferencePlan that conditions the
-    active state on compatible canonical identity (character sheet / location
-    plate) plus style where the route cap has room. A total transformation
-    omits the contradictory parent (``lineage_mode=state_only``). The spec's
-    lineage metadata is updated with the compiled/wire request hashes.
+    The active state anchor remains protected on the subject/location field;
+    state-specific direction (including continuity guards and user addenda)
+    travels through ``visual_brief`` so the shared compiler owns its final
+    rendering.
     """
-    from novel_to_comic.ai import generate_wire_image
-    from novel_to_comic.compiled_request import compile_generation_request
-    from novel_to_comic.image_models import image_model_profile_for_config
-    from novel_to_comic.provider_wire import compile_provider_wire_request
-    from novel_to_comic.state_assets import build_state_reference_plan
-
     if spec.asset_kind == "character_state_ref":
         subjects = [PromptSubject(
             character_id=spec.entity_id,
@@ -523,7 +509,6 @@ async def _generate_state_asset_wire(
             appearance_locked=True,
         )]
         anchors = []
-        asset_kind = "character_ref"
         composition = (
             "Square 2x2 reference sheet with front, three-quarter, profile, and "
             "anatomy-compatible neutral action views; no text or labels."
@@ -534,16 +519,30 @@ async def _generate_state_asset_wire(
             kind="location", entity_id=spec.entity_id, name=spec.entity_id,
             appearance_state_id=spec.state_id, text=spec.active_state_anchor,
         )]
-        asset_kind = "location_plate"
         composition = "Wide environment design plate with no characters or text."
-    prompt = ImagePrompt(
+    return ImagePrompt(
         scene_id=f"state:{spec.entity_id}:{spec.state_id}", panel_number=1,
         anchors=anchors, subjects=subjects, composition=composition,
+        visual_brief=spec.state_direction or None,
         constraints="The active-state anchor wins over canonical mutable facts.",
         width=spec.effective_width, height=spec.effective_height, steps=1,
         generation_width=spec.effective_width, generation_height=spec.effective_height,
         generation_shape=spec.requested_shape,
     )
+
+
+def _compile_state_asset_wire(
+    config: Config,
+    spec: StateAssetGenerationSpec,
+    project_dir: Path,
+):
+    """Compile one state request and update metadata before transport/cache checks."""
+    from novel_to_comic.compiled_request import compile_generation_request
+    from novel_to_comic.image_models import image_model_profile_for_config
+    from novel_to_comic.provider_wire import compile_provider_wire_request
+    from novel_to_comic.state_assets import build_state_reference_plan
+
+    prompt = _state_asset_prompt(spec)
     profile = image_model_profile_for_config(config)
     plan = build_state_reference_plan(spec, project_dir, route_profile=profile)
     compiled = compile_generation_request(
@@ -552,13 +551,36 @@ async def _generate_state_asset_wire(
         configured_provider_model=config.effective_image_model(),
         selected_style_text=config.style_template,
         selected_style_source_hash=spec.style_sha256,
-        asset_kind=asset_kind,
+        asset_kind="character_ref" if spec.asset_kind == "character_state_ref" else "location_plate",
         asset_identity=f"{spec.entity_id}:{spec.state_id}",
     )
     wire = compile_provider_wire_request(compiled)
-    # Record the request identity hashes on the spec for provenance metadata.
     spec.compiled_request_sha256 = compiled.compiled_request_sha256
     spec.execution_fingerprint = wire.execution_fingerprint
+    return wire
+
+
+async def _generate_state_asset_wire(
+    config: Config,
+    spec: StateAssetGenerationSpec,
+    output_path: Path,
+    project_dir: Path,
+    *,
+    feature: str,
+    wire=None,
+) -> ApiResult[Path]:
+    """Compile and submit a canonical-conditioned state asset through the shared wire seam.
+
+    Slice 09: the state request now carries a ReferencePlan that conditions the
+    active state on compatible canonical identity (character sheet / location
+    plate) plus style where the route cap has room. A total transformation
+    omits the contradictory parent (``lineage_mode=state_only``). The spec's
+    lineage metadata is updated with the compiled/wire request hashes.
+    """
+    from novel_to_comic.ai import generate_wire_image
+
+    if wire is None:
+        wire = _compile_state_asset_wire(config, spec, project_dir)
     return await generate_wire_image(
         config=config, wire=wire, output_path=output_path, feature=feature
     )
@@ -893,10 +915,10 @@ async def _generate_character_state_refs(
                 config, project_dir, char, state_obj, style_path=style_ref
             )
             # Build the conditioning plan up front so the lineage metadata
-            # (mode, reference summary, status) is available for the cache check.
+            # (mode, reference summary, status, request hashes) is available for
+            # the cache check. The exact compiled wire is reused on a miss.
             # Canonical-first scheduling guarantees the parent exists here.
-            from novel_to_comic.state_assets import build_state_reference_plan
-            build_state_reference_plan(spec, project_dir)
+            wire = _compile_state_asset_wire(config, spec, project_dir)
             meta = spec.lineage_metadata()
 
             if artifacts.asset_matches_meta(output_path, meta):
@@ -913,7 +935,7 @@ async def _generate_character_state_refs(
                     async with semaphore:
                         flux_result = await _generate_state_asset_wire(
                             config, spec, output_path, project_dir,
-                            feature="cast.character_state_ref",
+                            feature="cast.character_state_ref", wire=wire,
                         )
                     # Re-capture metadata after the wire sets request hashes.
                     meta = spec.lineage_metadata()
@@ -968,10 +990,10 @@ async def _generate_location_plates(
                 )
                 prompt = spec.rendered_prompt
                 # Build the conditioning plan up front so lineage metadata is
-                # available for the cache check. Canonical-first scheduling
-                # guarantees the parent plate exists here.
-                from novel_to_comic.state_assets import build_state_reference_plan
-                build_state_reference_plan(spec, project_dir)
+                # (including request hashes) is available for the cache check.
+                # Canonical-first scheduling guarantees the parent plate exists
+                # here, and the exact compiled wire is reused on a miss.
+                wire = _compile_state_asset_wire(config, spec, project_dir)
                 meta = spec.lineage_metadata()
             else:
                 addendum = _read_location_plate_addendum(project_dir, loc.id)
@@ -991,7 +1013,7 @@ async def _generate_location_plates(
                         flux_result = (
                             await _generate_state_asset_wire(
                                 config, spec, output_path, project_dir,
-                                feature="cast.location_state_plate",
+                                feature="cast.location_state_plate", wire=wire,
                             )
                             if state_id else await flux.generate_image(
                                 config, prompt, output_path, width=width, height=height,
@@ -1142,6 +1164,87 @@ from novel_to_comic.stages import Stage, clean_cascade  # noqa: E402
 from novel_to_comic.state import PipelineState  # noqa: E402
 
 
+def estimate_state_reference_count(
+    config: Config,
+    project_dir: Path,
+    asset_kind: str,
+    entity_id: str,
+    state_id: str,
+) -> int:
+    """Return the final selected reference count for one state request.
+
+    This is a local, deterministic estimate path: it may inspect current
+    files, but it never invokes transport. When the canonical parent is also
+    missing during a first cast estimate, conservatively predict the parent
+    plus compatible style slots that canonical-first execution will have.
+    """
+    from novel_to_comic.image_models import image_model_profile_for_config
+    from novel_to_comic.state_assets import (
+        StateConditioningError,
+        build_character_state_spec,
+        build_location_state_spec,
+        build_state_reference_plan,
+        state_is_total_transformation,
+    )
+
+    story_bible = artifacts.read_story_bible(project_dir)
+    style_ref = _cast_asset_style_ref(
+        config, _find_style_ref(project_dir, config.style_template)
+    )
+    profile = image_model_profile_for_config(config)
+    if asset_kind == "character":
+        entity = next((item for item in story_bible.characters if item.id == entity_id), None)
+        if entity is None:
+            raise ValueError(f"Character not found: {entity_id}")
+        state = next((item for item in entity.appearance_states or [] if item.id == state_id), None)
+        if state is None:
+            raise ValueError(f"Appearance state not found: {entity_id}/{state_id}")
+        spec = build_character_state_spec(config, project_dir, entity, state, style_path=style_ref)
+        required_role = "subject"
+    elif asset_kind == "location":
+        entity = next((item for item in story_bible.locations if item.id == entity_id), None)
+        if entity is None:
+            raise ValueError(f"Location not found: {entity_id}")
+        state = next((item for item in entity.appearance_states or [] if item.id == state_id), None)
+        if state is None:
+            raise ValueError(f"Location state not found: {entity_id}/{state_id}")
+        spec = build_location_state_spec(config, project_dir, entity, state, style_path=style_ref)
+        required_role = "location_plate"
+    else:
+        raise ValueError(f"Unknown state asset kind: {asset_kind}")
+
+    if required_role not in profile.supported_roles:
+        raise StateConditioningError(
+            f"route {profile.route.value} does not support {required_role} "
+            f"for state {entity_id}:{state_id}"
+        )
+
+    parent_path = (
+        artifacts.character_ref_sheet_path(project_dir, entity_id)
+        if asset_kind == "character"
+        else artifacts.location_plate_path(project_dir, entity_id)
+    )
+    if not parent_path.exists():
+        # Canonical-first execution may materialize this sibling job immediately
+        # before the state job. Estimate that post-canonical request shape, but
+        # do not hide errors when a parent already exists.
+        count = 0 if state_is_total_transformation(spec) else 1
+        if (
+            style_ref is not None
+            and "style" in profile.supported_roles
+            and count < profile.max_references
+        ):
+            count += 1
+        return count
+
+    # Existing parents must pass the same plan validation as execution. Digest,
+    # unreadable-parent, and route/role errors are real blockers, not estimate
+    # fallbacks.
+    return build_state_reference_plan(
+        spec, project_dir, route_profile=profile,
+    ).ref_count
+
+
 def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
     from novel_to_comic.usage import estimate_image_cost
 
@@ -1153,27 +1256,45 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
         1 for char in story_bible.characters
         if not (project_dir / "refs" / char.id / "sheet.png").exists()
     )
-    missing_state_refs = sum(
-        1
+    missing_state_refs = [
+        (char.id, state_id)
         for char in story_bible.characters
         for state_id, _anchor in _character_state_jobs(char)
         if not (project_dir / "refs" / char.id / "states" / state_id / "sheet.png").exists()
-    )
-    missing_plates = sum(
-        1
-        for loc in story_bible.locations
-        for stem, _anchor, _state_id in _location_plate_jobs(loc)
-        if not (project_dir / "plates" / f"{stem}.png").exists()
-    )
+    ]
+    missing_plates = 0
+    missing_location_states: list[tuple[str, str]] = []
+    for loc in story_bible.locations:
+        for stem, _anchor, state_id in _location_plate_jobs(loc):
+            if (project_dir / "plates" / f"{stem}.png").exists():
+                continue
+            if state_id:
+                missing_location_states.append((loc.id, state_id))
+            else:
+                missing_plates += 1
     missing_prop_refs = sum(
         1 for prop in story_bible.props
         if not artifacts.prop_ref_path(project_dir, prop.id).exists()
     )
-    return estimate_image_cost(
-        config.effective_image_model(),
-        missing_refs + missing_state_refs + missing_plates + missing_prop_refs,
-        quality=getattr(config, "image_quality", None),
-    )
+    model = config.effective_image_model()
+    quality = getattr(config, "image_quality", None)
+    base_count = missing_refs + missing_plates + missing_prop_refs
+    total = estimate_image_cost(model, base_count, quality=quality) if base_count else 0.0
+    for entity_id, state_id in missing_state_refs:
+        total += estimate_image_cost(
+            model, 1, quality=quality,
+            ref_count=estimate_state_reference_count(
+                config, project_dir, "character", entity_id, state_id,
+            ),
+        )
+    for entity_id, state_id in missing_location_states:
+        total += estimate_image_cost(
+            model, 1, quality=quality,
+            ref_count=estimate_state_reference_count(
+                config, project_dir, "location", entity_id, state_id,
+            ),
+        )
+    return total
 
 
 STAGE = Stage(

@@ -397,6 +397,8 @@ async def apply_asset_instruction(
         if len(parts) != 2:
             raise HTTPException(400, "Invalid asset_id format for panel. Expected 'scene_id:panel_number'")
         scene_id, panel_number_str = parts
+        if not scene_id or scene_id != Path(scene_id).name or scene_id in {".", ".."}:
+            raise HTTPException(400, "Invalid scene_id")
         try:
             panel_number = int(panel_number_str)
         except ValueError:
@@ -505,56 +507,38 @@ async def apply_asset_instruction(
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_path.write_text(json.dumps(log_data, indent=2, ensure_ascii=False) + "\n")
 
-        async def _runner() -> None:
-            from novel_to_comic.stages import s7_draw
-            with ai_request_context(
-                user_id=user_id,
-                project_id=project_id,
-                project_name=project_dir.name,
-                workspace_id=str(project_dir.parent),
-                stage="draw",
-                job_id=instructed_job_id,
-            ):
-                result = await s7_draw.regenerate_panel_image(
-                    regen_config,
-                    project_dir,
-                    scene_id,
-                    panel_number,
-                )
-            # Remove successfully regenerated item from items_failed if it exists
-            try:
-                from novel_to_comic.state import load_state, save_state
-                state_obj = load_state(project_dir)
-                draw_state = state_obj.stages.get("draw")
-                if draw_state:
-                    item_id = f"{scene_id}/panel_{panel_number:03d}"
-                    if item_id in draw_state.items_failed:
-                        draw_state.items_failed.remove(item_id)
-                        draw_state.items_done = min(draw_state.items_total, draw_state.items_done + 1)
-                        save_state(state_obj, project_dir)
-            except Exception:
-                logger.exception("Failed to remove regenerated panel from items_failed")
-            if result.usage:
-                debit_model_usage(
-                    db,
-                    user_id,
-                    project_id,
-                    result.usage,
-                    stage="draw",
-                    description=f"Model call: regenerate instructed panel {scene_id}/{panel_number:03d}",
-                    job_id=instructed_job_id,
-                )
+        from novel_to_comic.panel_generation import prepare_panel_request, submit_panel_request
+        from novel_to_comic.stages.s7_draw import _find_style_sample
 
-        prune_finished_generation_jobs(app)
-        job = enqueue_generation_job(
-            app,
+        panel_request = await prepare_panel_request(
+            regen_config,
+            project_dir,
+            prompt_path,
+            style_sample=_find_style_sample(project_dir, regen_config.style_template),
+        )
+        submission = await submit_panel_request(
+            config=regen_config,
+            project_dir=project_dir,
+            request=panel_request,
+            output_path=project_dir / "draw" / scene_id / f"panel_{panel_number:03d}.png",
+            app=app,
             project_name=pkey,
+            user_id=user_id,
+            project_id=project_id,
+            stage="draw",
             kind="panel_regen",
             label=f"{scene_id} / panel {panel_number:03d}",
             payload={"scene_id": scene_id, "panel_number": panel_number},
-            runner=_runner,
+            debit_description=f"Model call: regenerate instructed panel {scene_id}/{panel_number:03d}",
             semaphore=generation_semaphore_for_config(app, regen_config),
+            idempotency_key=(
+                f"panel_regen:{scene_id}:{panel_number}:"
+                f"{panel_request.wire.execution_fingerprint}"
+            ),
         )
+        job = submission.job
+        if job is None:
+            raise HTTPException(500, "Panel generation job was not created")
 
         return {
             "status": "queued",

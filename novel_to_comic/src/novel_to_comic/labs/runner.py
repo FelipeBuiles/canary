@@ -12,7 +12,7 @@ from typing import Any
 
 from .costs import settle_labs_result_cost
 from . import storage
-from .providers.base import LabsImageInput, LabsProvider, ProviderError
+from .providers.base import LabsImageInput, LabsImageResult, LabsProvider, ProviderError
 from .providers.fal import FalProvider
 from .providers.litellm import LitellmProvider
 from .providers.together import TogetherProvider
@@ -48,6 +48,9 @@ class LabsPanelSpec:
     prompt_variant_b: str | None = None
     width: int = 1024
     height: int = 1024
+    production_wire_json: str | None = None
+    experiment_inputs: dict[str, Any] = field(default_factory=dict)
+    production_source: dict[str, str] | None = None
 
 
 @dataclass
@@ -60,6 +63,7 @@ class LabsRunSpec:
     style_template: str = ""
     prompt_compare_mode: bool = False
     reference_image_paths: list[Path] = field(default_factory=list)
+    production_equivalent: bool = False
 
 
 @dataclass
@@ -85,6 +89,7 @@ class LabsRunState:
             "cells_total": self.cells_total,
             "model_ids": list(self.spec.model_ids),
             "panel_count": len(self.spec.panels),
+            "production_equivalent": self.spec.production_equivalent,
             "error": self.error,
         }
 
@@ -114,10 +119,72 @@ async def _run_cell(
     )
 
     started = datetime.now(UTC)
+    production_wire = None
+    production_request_id: str | None = None
     try:
         async with semaphore:
-            result = await provider.generate(endpoint=entry.endpoint, inp=inp, params=entry.params)
+            if state.spec.production_equivalent:
+                if not panel.production_wire_json:
+                    raise ProviderError(
+                        "production-equivalent Labs panels require a compiled production request"
+                    )
+                from novel_to_comic.frozen_requests import (
+                    execute_frozen_request,
+                    submit_frozen_request,
+                )
+                from novel_to_comic.panel_generation import apply_panel_experiment
+                from novel_to_comic.provider_wire import ProviderWireRequest
+                from .providers.litellm import _config_for_model
+
+                production_wire = apply_panel_experiment(
+                    ProviderWireRequest.from_json(panel.production_wire_json),
+                    panel.experiment_inputs,
+                )
+                if production_wire.requested_alias != entry.endpoint:
+                    raise ProviderError(
+                        "production-equivalent wire model does not match the selected Labs model"
+                    )
+                frozen = submit_frozen_request(
+                    projects_dir,
+                    production_wire,
+                    idempotency_key=(
+                        f"labs:{state.run_id}:{panel.idx}:{entry.id}:{variant}:"
+                        f"{production_wire.execution_fingerprint}"
+                    ),
+                )
+                production_request_id = frozen.request_id
+                output_path = storage.cell_image_path(
+                    projects_dir, state.run_id, panel.idx, entry.id, variant
+                )
+                result_path = await execute_frozen_request(
+                    project_dir=projects_dir,
+                    request_id=frozen.request_id,
+                    config=_config_for_model(production_wire.requested_alias or entry.endpoint),
+                    output_path=output_path,
+                    feature="labs.production_equivalent_panel",
+                )
+                result_bytes = result_path.value.read_bytes()
+                result = LabsImageResult(
+                    image_bytes=result_bytes,
+                    mime="image/png",
+                    provider_model=production_wire.configured_provider_model,
+                )
+            else:
+                result = await provider.generate(
+                    endpoint=entry.endpoint, inp=inp, params=entry.params
+                )
         cost = settle_labs_result_cost(entry, inp, result)
+        provenance = None
+        if production_wire is not None:
+            from novel_to_comic.panel_generation import wire_provenance
+
+            provenance = wire_provenance(
+                production_wire,
+                request_id=production_request_id,
+                actual_provider_model=result.provider_model,
+                provider_request_id=result.provider_request_id,
+                cost_usd=cost.cost_usd,
+            )
         storage.write_cell(
             projects_dir,
             state.run_id,
@@ -139,10 +206,24 @@ async def _run_cell(
                 "mime": result.mime,
                 "provider_request_id": result.provider_request_id,
                 "started_at": started.isoformat(),
+                "production_equivalent": production_wire is not None,
+                "execution_fingerprint": (
+                    production_wire.execution_fingerprint if production_wire else None
+                ),
+                "provenance": provenance,
             },
         )
     except (ProviderError, Exception) as exc:
         log.warning("labs cell failed: model=%s panel=%s err=%s", entry.id, panel.idx, exc)
+        failure_provenance = None
+        if production_wire is not None:
+            from novel_to_comic.panel_generation import wire_provenance
+
+            failure_provenance = wire_provenance(
+                production_wire,
+                request_id=production_request_id,
+                failure={"type": type(exc).__name__, "message": str(exc)},
+            )
         storage.write_cell(
             projects_dir,
             state.run_id,
@@ -158,6 +239,11 @@ async def _run_cell(
                 "status": "failed",
                 "error": str(exc),
                 "started_at": started.isoformat(),
+                "production_equivalent": production_wire is not None,
+                "execution_fingerprint": (
+                    production_wire.execution_fingerprint if production_wire else None
+                ),
+                "provenance": failure_provenance,
             },
         )
     finally:
@@ -223,6 +309,7 @@ def start_run(
         style_template=spec.style_template,
         prompt_compare_mode=spec.prompt_compare_mode,
         reference_image_paths=staged_refs,
+        production_equivalent=spec.production_equivalent,
     )
     cells_total = len(spec.model_ids) * sum(len(_panel_variants(spec, p)) for p in spec.panels)
     started_at = datetime.now(UTC)
@@ -239,6 +326,7 @@ def start_run(
         "model_ids": list(spec.model_ids),
         "style_template": spec.style_template,
         "prompt_compare_mode": spec.prompt_compare_mode,
+        "production_equivalent": spec.production_equivalent,
         "reference_image_names": [p.name for p in staged_refs],
         "panels": [
             {
@@ -248,6 +336,8 @@ def start_run(
                 "prompt_variant_b": p.prompt_variant_b,
                 "width": p.width,
                 "height": p.height,
+                "production_wire": p.production_wire_json,
+                "experiment_inputs": p.experiment_inputs,
             }
             for p in spec.panels
         ],

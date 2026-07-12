@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import datetime
 import hashlib
+import json
+import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -29,6 +31,85 @@ class ImageCallContext:
     started: float
     started_at: datetime.datetime
     langfuse_input: dict[str, Any]
+
+
+def _open_output_parent(output_path: Path) -> int:
+    """Open/create the output parent without following directory symlinks."""
+    absolute = Path(os.path.abspath(output_path))
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | nofollow
+    parent = absolute.parent
+    descriptor = os.open(parent.anchor or ".", directory_flags)
+    try:
+        relative_parent = parent.relative_to(Path(parent.anchor or "."))
+        for component in relative_parent.parts:
+            try:
+                os.mkdir(component, dir_fd=descriptor)
+            except FileExistsError:
+                pass
+            child_descriptor = os.open(component, directory_flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child_descriptor
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _atomic_write_output(parent_fd: int, filename: str, data: bytes) -> None:
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    temporary_name = f".{filename}.{uuid.uuid4().hex}.tmp"
+    temporary_fd = -1
+    try:
+        temporary_fd = os.open(
+            temporary_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow,
+            0o600,
+            dir_fd=parent_fd,
+        )
+        with os.fdopen(temporary_fd, "wb") as handle:
+            temporary_fd = -1
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(
+            temporary_name,
+            filename,
+            src_dir_fd=parent_fd,
+            dst_dir_fd=parent_fd,
+        )
+        os.fsync(parent_fd)
+        temporary_name = ""
+    except BaseException:
+        if temporary_fd >= 0:
+            os.close(temporary_fd)
+        if temporary_name:
+            try:
+                os.unlink(temporary_name, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
+        raise
+
+
+def _write_image_outputs(
+    output_path: Path,
+    image_bytes: bytes,
+    layout_echo: dict[str, Any] | None,
+) -> None:
+    parent_fd = _open_output_parent(output_path)
+    try:
+        _atomic_write_output(parent_fd, output_path.name, image_bytes)
+        if layout_echo:
+            layout_name = output_path.with_suffix(
+                f"{output_path.suffix}.layout.json"
+            ).name
+            _atomic_write_output(
+                parent_fd,
+                layout_name,
+                json.dumps(layout_echo, indent=2, sort_keys=True).encode(),
+            )
+    finally:
+        os.close(parent_fd)
 
 
 def begin_image_call(
@@ -98,12 +179,12 @@ async def finalise_image_success(
     from novel_to_comic.ai import client as ai_client
 
     raw_response = raw.raw_response or {}
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    await asyncio.to_thread(output_path.write_bytes, raw.image_bytes)
-    if raw.layout_echo:
-        from novel_to_comic import artifacts
-
-        await asyncio.to_thread(artifacts.write_asset_layout_echo, output_path, raw.layout_echo)
+    await asyncio.to_thread(
+        _write_image_outputs,
+        output_path,
+        raw.image_bytes,
+        raw.layout_echo,
+    )
     usage = ai_client._extract_usage(
         raw_response,
         ctx.event_id,
@@ -134,7 +215,12 @@ async def finalise_image_success(
         langfuse_output=langfuse_output,
         started_at=ctx.started_at,
     )
-    return ApiResult(value=output_path, usage=usage)
+    return ApiResult(
+        value=output_path,
+        usage=usage,
+        provider_request_id=raw.provider_request_id,
+        actual_provider_model=raw.actual_provider_model,
+    )
 
 
 def finalise_image_cancelled(

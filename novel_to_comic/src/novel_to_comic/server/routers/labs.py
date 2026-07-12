@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ from novel_to_comic.labs.runner import (
     LabsRunState,
     start_run,
 )
+from novel_to_comic.models.prompt import ImagePrompt
 
 from ..auth import get_current_user
 from ..db import get_db, reset_db
@@ -222,10 +224,55 @@ def import_project_scene(
 
     panels = []
     from novel_to_comic.prompting import generate_distilled_prompt, render_generation_prompt
+    production_equivalent = bool((body or {}).get("production_equivalent"))
+    production_requests: list[dict[str, Any] | None] = [None] * len(selected_prompts)
+    if production_equivalent:
+        from novel_to_comic.panel_generation import compile_panel_request
+        from novel_to_comic.stages.s7_draw import _find_style_sample, build_panel_reference_plan
+
+        for index, (p, panel_refs) in enumerate(zip(selected_prompts, refs_per_panel)):
+            prompt_path = artifacts.panel_prompt_path(d, p.scene_id, p.panel_number)
+            plan = build_panel_reference_plan(
+                project_config,
+                d,
+                p,
+                prompt_path=prompt_path if prompt_path.exists() else None,
+                style_sample=_find_style_sample(d, project_config.style_template),
+                scene_to_location={p.scene_id: next((s.location_id for s in artifacts.read_story_bible(d).scenes if s.id == p.scene_id), "")},
+            )
+            compiled = compile_panel_request(
+                project_config,
+                d,
+                p,
+                reference_plan=plan,
+                prompt_path=prompt_path if prompt_path.exists() else None,
+            )
+            user_root = _user_labs_dir(projects_dir, user_id).resolve()
+            portable_refs = tuple(
+                replace(
+                    reference,
+                    source_path=str(Path(reference.source_path).resolve().relative_to(user_root)),
+                )
+                for reference in compiled.wire.references
+            )
+            portable_wire = replace(compiled.wire, references=portable_refs)
+            production_requests[index] = {
+                "execution_fingerprint": portable_wire.execution_fingerprint,
+                "wire": portable_wire.to_json(),
+            }
 
     image_model = project_config.effective_image_model()
     for i, (p, panel_refs) in enumerate(zip(selected_prompts, refs_per_panel), start=1):
         distilled_prompt = p.distilled_prompt or generate_distilled_prompt(p)
+        production_prompt = render_generation_prompt(
+            p, style_template, image_model, refs=panel_refs
+        )
+        if production_requests[i - 1] is not None:
+            from novel_to_comic.provider_wire import ProviderWireRequest
+
+            production_prompt = ProviderWireRequest.from_json(
+                production_requests[i - 1]["wire"]
+            ).prompt_parts[0]
         panels.append({
             "idx": i,
             "label": f"Panel {p.panel_number}" + (f" — {p.scene_id}" if p.scene_id else ""),
@@ -234,11 +281,16 @@ def import_project_scene(
             # Exact replay of what S7 sends for this panel (style + brief +
             # refs + constraints). Run it with an EMPTY experiment style
             # template — the style section is already embedded.
-            "production_prompt": render_generation_prompt(
-                p, style_template, image_model, refs=panel_refs
-            ),
+            "production_prompt": production_prompt,
             "width": p.width or 1024,
             "height": p.height or 1024,
+            "production_equivalent": production_equivalent,
+            "production_request": production_requests[i - 1],
+            "production_source": {
+                "project_id": project_id,
+                "scene_id": p.scene_id,
+                "panel_number": str(p.panel_number),
+            } if production_equivalent else None,
         })
 
     return {
@@ -256,7 +308,8 @@ def _resolve_scene_panel_refs(
     prompts: list[Any],
 ) -> list[list[Any]]:
     """Resolve draw-stage-equivalent refs per panel (parallel to prompts)."""
-    from novel_to_comic.stages.s7_draw import _find_style_sample, resolve_panel_references
+    from novel_to_comic.panel_generation import resolve_panel_references
+    from novel_to_comic.stages.s7_draw import _find_style_sample
 
     scene_to_location: dict[str, str] = {}
     location_labels: dict[str, str] = {}
@@ -273,7 +326,7 @@ def _resolve_scene_panel_refs(
     for prompt in prompts:
         prompt_path = artifacts.panel_prompt_path(project_dir, prompt.scene_id, prompt.panel_number)
         output_dir = project_dir / "draw" / prompt.scene_id
-        refs_per_panel.append(resolve_panel_references(
+        plan = resolve_panel_references(
             config,
             project_dir,
             prompt,
@@ -282,7 +335,8 @@ def _resolve_scene_panel_refs(
             scene_to_location=scene_to_location,
             location_labels=location_labels,
             output_dir=output_dir,
-        ))
+        )
+        refs_per_panel.append(plan.to_ref_images())
     return refs_per_panel
 
 
@@ -325,6 +379,7 @@ def _parse_run_body(body: dict) -> tuple[LabsRunSpec, list[str]]:
     """Validate & coerce a POST /runs body. Returns (spec, extra_ref_path_hints)."""
     label = (body.get("label") or "Untitled run").strip()[:MAX_LABEL_LEN]
     prompt_compare_mode = bool(body.get("prompt_compare_mode"))
+    production_equivalent = bool(body.get("production_equivalent"))
 
     model_ids = body.get("model_ids") or []
     if not isinstance(model_ids, list) or not model_ids:
@@ -366,6 +421,17 @@ def _parse_run_body(body: dict) -> tuple[LabsRunSpec, list[str]]:
             prompt_variant_b=prompt_variant_b,
             width=int(raw.get("width") or 1024),
             height=int(raw.get("height") or 1024),
+            production_wire_json=(
+                (raw.get("production_request") or {}).get("wire")
+                if production_equivalent and isinstance(raw.get("production_request"), dict)
+                else None
+            ),
+            experiment_inputs=dict(raw.get("experiment_inputs") or {}),
+            production_source=(
+                dict(raw.get("production_source") or {})
+                if production_equivalent and isinstance(raw.get("production_source"), dict)
+                else None
+            ),
         ))
 
     ref_source = (body.get("reference_source") or "fixture").lower()
@@ -379,6 +445,7 @@ def _parse_run_body(body: dict) -> tuple[LabsRunSpec, list[str]]:
         panels=panels,
         style_template=style_template,
         prompt_compare_mode=prompt_compare_mode,
+        production_equivalent=production_equivalent,
     )
     return spec, [str(p) for p in extra_refs] if ref_source == "imported" else (
         [] if ref_source == "none" else ["__fixture__"]
@@ -411,6 +478,54 @@ def _resolve_references(
     return out
 
 
+def _validated_production_panel_wire(
+    *, user_id: str, projects_dir: Path, panel: LabsPanelSpec,
+) -> str:
+    """Recompile a server-owned source panel and reject client wire edits."""
+    source = panel.production_source or {}
+    project_id = source.get("project_id")
+    scene_id = source.get("scene_id")
+    panel_number = source.get("panel_number")
+    project_dir = _user_project_dirs(projects_dir, user_id).get(project_id or "")
+    if project_dir is None or not scene_id or not panel_number:
+        raise HTTPException(400, "production-equivalent panel source is invalid")
+    if scene_id != Path(scene_id).name or scene_id in {".", ".."}:
+        raise HTTPException(400, "production-equivalent scene id is invalid")
+    try:
+        number = int(panel_number)
+    except ValueError as exc:
+        raise HTTPException(400, "production-equivalent panel number is invalid") from exc
+    prompt_path = artifacts.panel_prompt_path(project_dir, scene_id, number)
+    if not prompt_path.is_file():
+        raise HTTPException(400, "production-equivalent source panel is unavailable")
+    from novel_to_comic.config import load_config
+    from novel_to_comic.panel_generation import compile_panel_request
+    from novel_to_comic.provider_wire import ProviderWireRequest
+    from novel_to_comic.stages.s7_draw import _find_style_sample
+
+    project_config, _ = load_config(project_dir)
+    prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
+    compiled = compile_panel_request(
+        project_config,
+        project_dir,
+        prompt,
+        prompt_path=prompt_path,
+        style_sample=_find_style_sample(project_dir, project_config.style_template),
+    )
+    received = ProviderWireRequest.from_json(panel.production_wire_json or "")
+    if received.execution_fingerprint != compiled.wire.execution_fingerprint:
+        raise HTTPException(400, "production-equivalent request no longer matches the project panel")
+    user_root = _user_labs_dir(projects_dir, user_id).resolve()
+    portable_refs = tuple(
+        replace(
+            reference,
+            source_path=str(Path(reference.source_path).resolve().relative_to(user_root)),
+        )
+        for reference in compiled.wire.references
+    )
+    return replace(compiled.wire, references=portable_refs).to_json()
+
+
 @router.post("/runs")
 async def create_run(
     request: Request,
@@ -420,6 +535,13 @@ async def create_run(
     spec, ref_hints = _parse_run_body(body)
     projects_dir = get_projects_dir(request)
     spec.reference_image_paths = _resolve_references(user_id, projects_dir, ref_hints)
+    if spec.production_equivalent:
+        for panel in spec.panels:
+            panel.production_wire_json = _validated_production_panel_wire(
+                user_id=user_id,
+                projects_dir=projects_dir,
+                panel=panel,
+            )
 
     runs_state = _runs_state(request)
     user_root = _user_labs_dir(projects_dir, user_id)
@@ -500,6 +622,7 @@ def get_run_endpoint(
         "model_ids": model_ids,
         "style_template": manifest.get("style_template"),
         "prompt_compare_mode": prompt_compare_mode,
+        "production_equivalent": bool(manifest.get("production_equivalent")),
         "reference_image_names": manifest.get("reference_image_names", []),
         "error": (in_memory.error if in_memory else manifest.get("error")),
         "panels": panels_out,
