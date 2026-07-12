@@ -6,6 +6,7 @@ import json
 import logging
 import shutil
 import time
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -44,6 +45,11 @@ from ..credited_job import (
     enqueue_credited_job,
     run_credited_stage,
 )
+from novel_to_comic.panel_generation import (
+    estimate_panel_request,
+    prepare_panel_request,
+    submit_panel_request,
+)
 from ..generation_jobs import (
     generation_job_payload,
     generation_semaphore_for_config,
@@ -62,6 +68,11 @@ def _panel_regen_config_for_alias(
         return config_for_image_model_alias(config, image_model_alias)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+def _validate_panel_scene_id(scene_id: str) -> None:
+    if not scene_id or scene_id != Path(scene_id).name or scene_id in {".", ".."}:
+        raise HTTPException(400, "Invalid scene_id")
 
 
 class InstructedPanelRegenRequest(BaseModel):
@@ -440,6 +451,7 @@ async def regen_panel_estimate(
     user_id: str = Depends(get_current_user),
 ):
     """Return the estimated credit cost to regenerate one panel image."""
+    _validate_panel_scene_id(scene_id)
     project_dir, config, _state = project
     breakdown = UnifiedCostResolver.estimate_panel_regen_cost(
         config, project_dir, scene_id, panel_number, image_model_alias
@@ -710,9 +722,8 @@ async def regen_panel(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
-    from novel_to_comic.stages import s7_draw
-
     project_dir, config, state = project
+    _validate_panel_scene_id(scene_id)
     regen_config = _panel_regen_config_for_alias(config, image_model_alias)
     pkey = project_key(user_id, project_id)
 
@@ -734,33 +745,52 @@ async def regen_panel(
     except Exception:
         planned_panel_id = None
 
-    panel_estimate = UnifiedCostResolver.estimate_panel_regen_cost(
-        config, project_dir, scene_id, panel_number, image_model_alias
+    style_sample = None
+    from novel_to_comic.stages.s7_draw import _find_style_sample
+    style_sample = _find_style_sample(project_dir, regen_config.style_template)
+    panel_request = await prepare_panel_request(
+        regen_config,
+        project_dir,
+        prompt_path,
+        style_sample=style_sample,
     )
-    panel_estimate_credits = panel_estimate["estimate_credits"]
-
-    async def _work():
-        clear_panel_acceptance(project_dir, scene_id, panel_number)
-        clear_panel_flag(project_dir, scene_id, panel_number)
-        return await s7_draw.regenerate_panel_image(
-            regen_config, project_dir, scene_id, panel_number
-        )
-
-    job, created = enqueue_credited_job(
-        request.app,
+    panel_estimate = estimate_panel_request(
+        regen_config,
+        project_dir,
+        panel_request.prompt,
+        reference_plan=panel_request.reference_plan,
+        prompt_path=prompt_path,
+        style_sample=style_sample,
+        prepared=True,
+    )
+    from ..credits import credit_estimate_for_provider_cost
+    panel_estimate_credits = credit_estimate_for_provider_cost(
+        panel_estimate.cost_usd, "draw", reserve=False, zero_cost_estimate=1,
+    )["estimate_credits"]
+    clear_panel_acceptance(project_dir, scene_id, panel_number)
+    clear_panel_flag(project_dir, scene_id, panel_number)
+    submission = await submit_panel_request(
+        config=regen_config,
+        project_dir=project_dir,
+        request=panel_request,
+        output_path=project_dir / "draw" / scene_id / f"panel_{panel_number:03d}.png",
+        app=request.app,
         project_name=pkey,
         user_id=user_id,
         project_id=project_id,
-        project_dir=project_dir,
         stage="draw",
         kind="panel_regen",
         label=f"{scene_id} / panel {panel_number:03d}",
         payload={"scene_id": scene_id, "panel_number": panel_number},
-        work=_work,
         debit_description=f"Model call: regenerate panel {scene_id}/{panel_number:03d}",
         semaphore=generation_semaphore_for_config(request.app, regen_config),
         estimate_credits=panel_estimate_credits,
+        idempotency_key=f"panel_regen:{scene_id}:{panel_number}:{panel_request.wire.execution_fingerprint}",
     )
+    job = submission.job
+    created = submission.created
+    if job is None:
+        raise HTTPException(500, "Panel generation job was not created")
     if created:
         # Immediately clear acceptance so the UI shows the panel as pending
         # before the job starts running (the runner clears it again for safety).
@@ -911,6 +941,11 @@ def restore_character_ref_version(
     if state_id is None:
         from novel_to_comic.state_assets import mark_dependent_states_stale
         mark_dependent_states_stale(project_dir, "character", char_id)
+    else:
+        from novel_to_comic.state_assets import revalidate_state_asset_lineage
+        revalidate_state_asset_lineage(
+            sheet, artifacts.character_ref_sheet_path(project_dir, char_id)
+        )
     return {
         "char_id": char_id,
         "state_id": state_id,

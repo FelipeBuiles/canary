@@ -15,13 +15,22 @@ and is always released, so a crash mid-stage loses at most the in-flight call.
 import asyncio
 import uuid as uuid_lib
 from collections.abc import Awaitable, Callable
+from functools import wraps
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 from fastapi import FastAPI
 
 from novel_to_comic.ai import ai_request_context
 from novel_to_comic.config import Config
+from novel_to_comic.frozen_requests import (
+    FrozenRequestError,
+    execute_frozen_request,
+    submit_frozen_request,
+    update_frozen_request_status,
+)
+from novel_to_comic.provider_wire import ProviderWireRequest
 from novel_to_comic.state import PipelineState
 from novel_to_comic.usage import ApiResult
 
@@ -39,6 +48,18 @@ from .generation_jobs import (
     find_active_generation_job,
     prune_finished_generation_jobs,
 )
+
+
+_FROZEN_ENQUEUE_LOCK = RLock()
+
+
+def _serialize_frozen_enqueue(function: Callable[..., Any]) -> Callable[..., Any]:
+    @wraps(function)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        with _FROZEN_ENQUEUE_LOCK:
+            return function(*args, **kwargs)
+
+    return wrapped
 
 
 class CreditReservationDenied(Exception):
@@ -196,3 +217,152 @@ def enqueue_credited_job(
         semaphore=semaphore,
     )
     return job, True
+
+
+@_serialize_frozen_enqueue
+def enqueue_frozen_generation_job(
+    app: FastAPI,
+    *,
+    project_name: str,
+    user_id: str,
+    project_id: str | None,
+    project_dir: Path,
+    config: Config,
+    stage: str,
+    kind: str,
+    label: str,
+    payload: dict[str, Any],
+    wire: ProviderWireRequest,
+    output_path: Path,
+    debit_description: str,
+    idempotency_key: str | None = None,
+    feature: str = "image.frozen_request",
+    semaphore: asyncio.Semaphore | None = None,
+    estimate_credits: int = 0,
+    on_complete: Callable[[ApiResult[Any], Any], Awaitable[None] | None] | None = None,
+    on_failure: Callable[[BaseException, Any], Awaitable[None] | None] | None = None,
+) -> tuple[GenerationJob, bool]:
+    """Freeze a wire request before publishing a credited image job.
+
+    The job payload carries only the frozen request id and the caller's
+    diagnostic payload.  Its runner loads the persisted manifest at execution
+    time; it never receives a prompt builder, reference plan, or mutable asset
+    path as a source of provider input.
+    """
+    try:
+        output_path.resolve(strict=False).relative_to(project_dir.resolve())
+    except ValueError as exc:
+        raise FrozenRequestError("frozen generation output must stay project-scoped") from exc
+
+    try:
+        output_key = str(output_path.resolve().relative_to(project_dir.resolve()))
+    except ValueError:
+        output_key = output_path.name
+    effective_idempotency_key = idempotency_key or (
+        f"{kind}:{output_key}:{wire.execution_fingerprint}"
+    )
+
+    frozen = submit_frozen_request(
+        project_dir, wire, idempotency_key=effective_idempotency_key,
+    )
+    job_payload = {
+        **payload,
+        "frozen_request_id": frozen.request_id,
+        "execution_fingerprint": frozen.execution_fingerprint,
+    }
+
+    existing_job = find_active_generation_job(
+        app, project_name=project_name, kind=kind, payload=job_payload,
+    )
+    if existing_job is not None:
+        return existing_job, False
+
+    if frozen.status in {"complete", "retained", "failed"} and frozen.job_id:
+        existing_jobs = app.state.generation_jobs
+        recorded_job = existing_jobs.get(frozen.job_id)
+        if recorded_job is not None:
+            if (
+                recorded_job.project_name != project_name
+                or recorded_job.kind != kind
+                or recorded_job.payload != job_payload
+            ):
+                raise FrozenRequestError("frozen request job id belongs to another job")
+            return recorded_job, False
+
+        # Finished requests remain idempotent even after the in-memory queue
+        # prunes their GenerationJob object.  Return a read-only completion
+        # record instead of charging the same provider request again.
+        from datetime import UTC, datetime
+
+        from .generation_jobs import GenerationJob
+
+        async def _already_finished() -> ApiResult[Any]:
+            return ApiResult(value=output_path)
+
+        completed = GenerationJob(
+            id=frozen.job_id,
+            project_name=project_name,
+            kind=kind,
+            label=label,
+            payload=job_payload,
+            sequence=0,
+            runner=_already_finished,
+            status="complete" if frozen.status in {"complete", "retained"} else "failed",
+            finished_at=datetime.now(UTC),
+        )
+        existing_jobs[completed.id] = completed
+        return completed, False
+
+    async def _work() -> ApiResult[Any]:
+        try:
+            result = await execute_frozen_request(
+                project_dir=project_dir,
+                request_id=frozen.request_id,
+                config=config,
+                output_path=output_path,
+                feature=feature,
+            )
+        except BaseException as exc:
+            if on_failure is not None:
+                try:
+                    callback_result = on_failure(exc, frozen)
+                    if callback_result is not None:
+                        await callback_result
+                except Exception:
+                    import logging
+                    logging.getLogger("canary.credited_job").exception(
+                        "Panel failure provenance persistence failed"
+                    )
+            raise
+        if on_complete is not None:
+            try:
+                callback_result = on_complete(result, frozen)
+                if callback_result is not None:
+                    await callback_result
+            except Exception:
+                import logging
+                logging.getLogger("canary.credited_job").exception(
+                    "Panel result provenance persistence failed"
+                )
+        return result
+
+    job, created = enqueue_credited_job(
+        app,
+        project_name=project_name,
+        user_id=user_id,
+        project_id=project_id,
+        project_dir=project_dir,
+        stage=stage,
+        kind=kind,
+        label=label,
+        payload=job_payload,
+        work=_work,
+        debit_description=debit_description,
+        semaphore=semaphore,
+        estimate_credits=estimate_credits,
+    )
+    if created:
+        update_frozen_request_status(
+            project_dir, frozen.request_id, "queued", job_id=job.id,
+        )
+    return job, created

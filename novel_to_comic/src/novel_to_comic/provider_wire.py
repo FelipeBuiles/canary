@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -26,10 +28,9 @@ PROVIDER_WIRE_DISCRIMINATOR = "canary.provider-wire/1"
 LEGACY_IMAGE_CALLER_INVENTORY = (
     "stages/s2_style.py:style proof",
     "stages/s3_cast.py:character/location/prop/state assets",
-    "stages/s7_draw.py:panel draw",
     "server/routers/projects.py:project cover",
-    "labs/providers/litellm.py:Labs gateway",
-    "labs/providers/reve.py:Labs direct Reve",
+    "labs/providers/litellm.py:explicit experimental mode",
+    "labs/providers/reve.py:explicit experimental mode",
 )
 
 
@@ -181,11 +182,25 @@ def compile_provider_wire_request(compiled: CompiledGenerationRequest) -> Provid
 def materialize_wire_references(request: ProviderWireRequest) -> tuple[bytes, ...]:
     """Read and digest-check every selected reference without skipping."""
     loaded: list[bytes] = []
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
     for ref in request.references:
+        descriptor = -1
         try:
-            data = Path(ref.source_path).read_bytes()
+            path = Path(ref.source_path)
+            descriptor = os.open(path, os.O_RDONLY | nofollow)
+            file_stat = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(file_stat.st_mode)
+                or file_stat.st_nlink != 1
+            ):
+                raise OSError("selected reference is not an independent regular file")
+            with os.fdopen(os.dup(descriptor), "rb") as handle:
+                data = handle.read()
         except OSError as exc:
             raise ProviderWireError(f"selected reference {ref.index} is unreadable") from exc
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
         actual = hashlib.sha256(data).hexdigest()
         if actual != ref.content_sha256:
             raise ProviderWireError(

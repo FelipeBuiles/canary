@@ -47,15 +47,55 @@ _FACET_PATTERNS: dict[str, tuple[str, ...]] = {
     "weather": (r"\b(?:rain|storm|snow|fog|sunny|wind|weather)\w*\b",),
     "light": (r"\b(?:day|night|dawn|dusk|noon|moon|sun|light|dark)\w*\b",),
     "water_level": (r"\b(?:lake|river|water|flood|drain|dry|mud)\w*\b",),
-    "architecture": (r"\b(?:wall|roof|building|house|tower|bridge|architecture)\w*\b",),
+    "architecture": (r"\b(?:wall|roof|building|house|tower|bridge|architecture|"
+                     r"pavilion|chapel|cathedral|church|gatehouse|courtyard|"
+                     r"archway)\w*\b",),
+    "landmarks": (r"\b(?:landmark|chapel|pavilion|cathedral|church|statue|fountain|"
+                  r"monument|lighthouse|dock|pier|gatehouse|garden|courtyard|"
+                  r"archway|obelisk)\w*\b",),
+    "materials": (r"\b(?:stone|brick|wood|wooden|timber|glass|mirrored|mirror|"
+                  r"metal|steel|iron|concrete|marble|slate|tile|masonry|plaster|"
+                  r"material|surface|texture)\w*\b",),
     "atmosphere": (r"\b(?:mood|peaceful|tense|desolate|atmosphere|eerie|calm|storm)\w*\b",),
+}
+
+# Value-bearing spans keep a change to one facet from looking like a change to
+# every facet named in the same clause. The broad facet patterns above discover
+# which facets are present; these patterns compare the local values.
+_FACET_VALUE_PATTERNS: dict[str, tuple[str, ...]] = {
+    "age": (
+        r"\bage\w*\s+[\w-]+(?:\s+[\w-]+)?\b",
+        r"\b\d+\s+years?\s+old\b",
+        r"\b(?:young|old|elderly|teen)\b",
+    ),
+    "hair": (r"\b(?:[\w-]+\s+){0,3}(?:hair|bald|braids?\w*)\b",),
+    "face": (
+        r"\b(?:[\w-]+\s+){0,3}(?:face|visage|countenance|features)\b",
+        r"\bno\s+(?:human\s+)?face\b",
+    ),
+    "build": (
+        r"\b(?:[\w-]+\s+){0,2}(?:build|physique|frame|stature)\b",
+        r"\b(?:muscular|slender|stocky|hulking)\b",
+    ),
+    "anatomy": (
+        r"\b(?:[\w-]+\s+){0,3}(?:hand|limb|arm|leg|stump|prosthe|wing|tail|body)\w*\b",
+    ),
+    "clothing": (
+        r"\bwear\w*\s+(?:a\s+|an\s+|the\s+)?(?:[\w-]+\s+){0,2}"
+        r"(?:coat|tunic|dress|shirt|trouser|robe|outfit|jacket|armor|clothing)\w*\b",
+        r"\b(?:[\w-]+\s+){0,2}(?:coat|tunic|dress|shirt|trouser|robe|outfit|"
+        r"jacket|armor|clothing)\w*\b",
+    ),
 }
 
 
 def _sha256(path: Path | None) -> str | None:
     if path is None or not path.exists():
         return None
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
 
 
 def _relative(path: Path | None, project_dir: Path) -> str | None:
@@ -87,13 +127,11 @@ def _stable_clauses(anchor: str, overridden: set[str]) -> list[str]:
 
 
 def _facet_clauses(anchor: str) -> dict[str, list[str]]:
-    """Map each facet → its clauses in the anchor.
+    """Map each facet to the clauses in which it appears.
 
-    Used to compare which facet-bearing clauses changed between a canonical
-    anchor and a state anchor. A facet is "changed" only when the state anchor's
-    clause text for that facet differs from (or is absent in) the canonical
-    anchor — not merely when the facet keyword appears (self-contained state
-    anchors restate unchanged identity).
+    Character state anchors use the clause text to distinguish values such as
+    ``age 70`` from ``age 30`` while still allowing a self-contained state to
+    omit unrelated canonical facets.
     """
     out: dict[str, list[str]] = {}
     for clause in (part.strip() for part in re.split(r"[,;]", anchor) if part.strip()):
@@ -102,30 +140,60 @@ def _facet_clauses(anchor: str) -> dict[str, list[str]]:
     return out
 
 
+def _facet_evidence(text: str, facet: str) -> tuple[str, ...]:
+    """Return normalized value-bearing matches for one character facet."""
+    patterns = _FACET_VALUE_PATTERNS.get(facet, _FACET_PATTERNS[facet])
+    lowered = text.lower()
+    return tuple(sorted({
+        match.group(0).strip()
+        for pattern in patterns
+        for match in re.finditer(pattern, lowered)
+    }))
+
+
 def _changed_facets(canonical_anchor: str, state_anchor: str) -> set[str]:
     """Facets whose clause content differs between canonical and state.
 
     A state anchor is self-contained: it restates identity (age, hair) even when
-    unchanged. Comparing clause text — not keyword presence — distinguishes a
-    restated compatible facet from an actual override. Returns the set of facet
-    names whose state clauses differ from or extend the canonical clauses.
+    unchanged. Compare the clauses that explicitly name a facet; an omitted
+    facet is not treated as replaced because state anchors may focus on only the
+    changed appearance.
     """
-    canon = _facet_clauses(canonical_anchor)
     state = _facet_clauses(state_anchor)
     changed: set[str] = set()
-    for facet, state_clauses in state.items():
-        canon_clauses = canon.get(facet, [])
-        # Normalize for comparison: the facet changed if any state clause is not
-        # a restatement of a canonical clause.
-        if not canon_clauses:
-            # Facet appears in state but not canonical → new/changed.
+    for facet in state:
+        state_evidence = _facet_evidence(state_anchor, facet)
+        canon_evidence = _facet_evidence(canonical_anchor, facet)
+        if not canon_evidence or state_evidence != canon_evidence:
             changed.add(facet)
+    return changed
+
+
+def _location_facet_terms(text: str, facet: str) -> tuple[str, ...]:
+    """Return facet-specific lexical evidence for a location anchor.
+
+    A single location clause may name several independent facets (for example,
+    ``stone chapel by the lake``). Comparing whole clauses would incorrectly
+    treat a material change as an architecture, landmark, and water-level
+    change. Location identity facets therefore compare only their own terms.
+    """
+    lowered = text.lower()
+    terms: set[str] = set()
+    patterns = (*_FACET_PATTERNS[facet], *_LOCATION_FACET_VALUE_PATTERNS.get(facet, ()))
+    for pattern in patterns:
+        terms.update(match.group(0) for match in re.finditer(pattern, lowered))
+    return tuple(sorted(terms))
+
+
+def _changed_location_facets(canonical_anchor: str, state_anchor: str) -> set[str]:
+    """Return location facets explicitly changed by the state anchor."""
+    changed: set[str] = set()
+    for facet in _LOCATION_TOTAL_FACETS:
+        state_terms = _location_facet_terms(state_anchor, facet)
+        if not state_terms:
             continue
-        canon_set = {c for c in canon_clauses}
-        for sc in state_clauses:
-            if sc not in canon_set:
-                changed.add(facet)
-                break
+        if state_terms != _location_facet_terms(canonical_anchor, facet):
+            changed.add(facet)
     return changed
 
 
@@ -152,9 +220,17 @@ class StateAssetGenerationSpec(BaseModel):
     lineage_mode: LineageMode = LineageMode.UNCONDITIONED
     lineage_status: LineageStatus
     rendered_prompt: str
+    # Provider-bound scene direction derived from the state spec, excluding the
+    # protected active-state anchor and selected style text. This keeps the
+    # state addendum/continuity rules on the shared compiler path without
+    # duplicating protected anchors in the final prompt.
+    state_direction: str = ""
     #: Reference roles + content hashes from the conditioning plan (Slice 09).
     #: Populated by ``build_state_reference_plan``; empty for pre-Slice-09 specs.
     reference_summary: tuple[dict, ...] = ()
+    #: Every dropped candidate and its reason, retained for diagnostics and
+    #: provenance rather than being lost with the transient ReferencePlan.
+    reference_diagnostics: tuple[dict, ...] = ()
     #: Compiled/wire request identity hashes (Slice 09). Populated when the state
     #: request is compiled; remain ``None`` placeholders until provenance slices.
     compiled_request_sha256: str | None = None
@@ -179,6 +255,7 @@ class StateAssetGenerationSpec(BaseModel):
             "lineage_mode": self.lineage_mode,
             "lineage_status": self.lineage_status,
             "reference_summary": [dict(item) for item in self.reference_summary],
+            "reference_diagnostics": [dict(item) for item in self.reference_diagnostics],
             "compiled_request_sha256": self.compiled_request_sha256,
             "execution_fingerprint": self.execution_fingerprint,
             "generated_request_link": None,
@@ -202,16 +279,27 @@ def build_character_state_spec(
         f"CHARACTER STATE REFERENCE SHEET — {char.name} ({state.label}).",
         state.visual_anchor,
     ]
+    direction_parts = [f"CHARACTER STATE REFERENCE SHEET — {char.name} ({state.label})."]
     if stable_features:
-        prompt_parts.append("Preserve permanent identity marks: " + "; ".join(stable_features) + ".")
+        direction = "Preserve permanent identity marks: " + "; ".join(stable_features) + "."
+        prompt_parts.append(direction)
+        direction_parts.append(direction)
     if state.continuity_guard:
         prompt_parts.append("Keep the active state's changed anatomy consistent in every view.")
+        direction_parts.append(
+            "Keep the active state's changed anatomy consistent in every view. "
+            + state.continuity_guard
+        )
     if addendum:
-        prompt_parts.append(f"USER STATE FIX NOTE: {addendum}")
-    prompt_parts.append(
+        direction = f"USER STATE FIX NOTE: {addendum}"
+        prompt_parts.append(direction)
+        direction_parts.append(direction)
+    composition = (
         "One square 2x2 reference sheet: front, three-quarter, profile, and neutral mid-action views. "
         "Use only poses compatible with the anatomy in the active-state anchor. Same identity and active-state appearance in every view. No text or labels."
     )
+    prompt_parts.append(composition)
+    direction_parts.append(composition)
     parent_hash = _sha256(parent)
     return StateAssetGenerationSpec(
         asset_kind="character_state_ref", entity_id=char.id, state_id=state.id,
@@ -225,6 +313,7 @@ def build_character_state_spec(
         state_addendum=addendum, state_addendum_revision=_revision(instructions),
         lineage_status=LineageStatus.UNVERIFIED,
         rendered_prompt="\n\n".join(part for part in prompt_parts if part),
+        state_direction="\n\n".join(part for part in direction_parts if part),
     )
 
 
@@ -238,11 +327,18 @@ def build_location_state_spec(
     overridden = set(_facets(state.visual_anchor))
     stable = _stable_clauses(loc.visual_anchor, overridden)
     prompt_parts = [config.style_template.strip(), "LOCATION STATE DESIGN PLATE", state.visual_anchor]
+    direction_parts = ["LOCATION STATE DESIGN PLATE"]
     if stable:
-        prompt_parts.append("Preserve non-conflicting stable landmarks: " + ", ".join(stable) + ".")
+        direction = "Preserve non-conflicting stable landmarks: " + ", ".join(stable) + "."
+        prompt_parts.append(direction)
+        direction_parts.append(direction)
     if addendum:
-        prompt_parts.append(f"USER STATE FIX NOTE: {addendum}")
-    prompt_parts.append("Wide environment plate. Active-state conditions win. No characters or text.")
+        direction = f"USER STATE FIX NOTE: {addendum}"
+        prompt_parts.append(direction)
+        direction_parts.append(direction)
+    composition = "Wide environment plate. Active-state conditions win. No characters or text."
+    prompt_parts.append(composition)
+    direction_parts.append(composition)
     width, height = RefStrategy.for_config(config).location_plate_dimensions()
     parent_hash = _sha256(parent)
     return StateAssetGenerationSpec(
@@ -257,6 +353,7 @@ def build_location_state_spec(
         state_addendum=addendum, state_addendum_revision=_revision(instructions),
         lineage_status=LineageStatus.UNVERIFIED,
         rendered_prompt="\n\n".join(part for part in prompt_parts if part),
+        state_direction="\n\n".join(part for part in direction_parts if part),
     )
 
 
@@ -277,7 +374,7 @@ def mark_dependent_states_stale(
             continue
         if meta.get("entity_id") != entity_id:
             continue
-        if meta.get("canonical_parent_sha256") == current_hash:
+        if current_hash is not None and meta.get("canonical_parent_sha256") == current_hash:
             continue
         meta["lineage_status"] = LineageStatus.STALE
         meta["lineage_warning"] = {
@@ -303,7 +400,7 @@ def revalidate_state_asset_lineage(state_path: Path, parent_path: Path) -> dict 
     if not meta:
         return None
     parent_hash = _sha256(parent_path)
-    if meta.get("canonical_parent_sha256") != parent_hash:
+    if parent_hash is None or meta.get("canonical_parent_sha256") != parent_hash:
         meta["lineage_status"] = LineageStatus.STALE
         meta["lineage_warning"] = {
             "code": "state_asset_regeneration_required",
@@ -367,7 +464,17 @@ _LOCATION_OVERRIDABLE_FACETS: dict[str, tuple[str, ...]] = {
 #: omitted rather than sent. Identity facets are face, hair, build — when all
 #: three are changed, the canonical parent has nothing compatible to offer.
 _CHARACTER_TOTAL_FACETS = {"face", "hair", "build", "age", "anatomy", "clothing"}
-_LOCATION_TOTAL_FACETS = {"architecture", "damage", "water_level", "weather", "light", "atmosphere"}
+_LOCATION_TOTAL_FACETS = {
+    "architecture", "landmarks", "materials", "damage", "water_level",
+    "weather", "light", "atmosphere",
+}
+
+_LOCATION_FACET_VALUE_PATTERNS: dict[str, tuple[str, ...]] = {
+    "architecture": (
+        r"\b(?:steep|flat|pitched|gable|domed|arched|sloped|thatched|"
+        r"collapsed|intact|ruined|destroyed|rebuilt|missing|gone)\b",
+    ),
+}
 
 #: Patterns that signal a total identity replacement (human → non-human form),
 #: even when not every identity facet keyword appears. Used as an additional
@@ -376,11 +483,52 @@ _TOTAL_IDENTITY_NEGATION = (
     re.compile(r"\bno\s+(?:human\s+)?face\b"),
     re.compile(r"\b(?:transformed?|metamorphos\w+|became?\w*)\s+(?:into|to)\b"),
     re.compile(r"\b(?:serpent|beast|creature|monster|dragon|wolf|animal|insect)\b"),
+    re.compile(r"\b(?:amorphous|incorporeal|cloud\s+of\s+light|mist\s+form|"
+               r"smoke\s+form|energy\s+form|spectral|ethereal)\b"),
 )
 
 
 class StateConditioningError(ValueError):
     """A state asset cannot be safely conditioned on its canonical parent."""
+
+
+def _character_state_is_total(spec: StateAssetGenerationSpec) -> bool:
+    changed = _changed_facets(spec.canonical_parent_identity, spec.active_state_anchor)
+    changed_mapped = _map_overridden_facets(
+        tuple(sorted(changed & _CHARACTER_TOTAL_FACETS)), _CHARACTER_OVERRIDABLE_FACETS
+    )
+    identity_negated = any(
+        pattern.search(spec.active_state_anchor.lower())
+        for pattern in _TOTAL_IDENTITY_NEGATION
+    )
+    identity_replaced = set(changed_mapped) >= set(_CHARACTER_IDENTITY_FACETS)
+    return identity_replaced or identity_negated
+
+
+def _location_state_is_total(spec: StateAssetGenerationSpec) -> bool:
+    changed = _changed_location_facets(
+        spec.canonical_parent_identity, spec.active_state_anchor,
+    )
+    changed_loc = changed & _LOCATION_TOTAL_FACETS
+    changed_identity = changed & set(_LOCATION_IDENTITY_FACETS)
+    lowered_anchor = spec.active_state_anchor.lower()
+    structure_negated = bool(re.search(
+        r"\b(?:no\s+(?:walls?|roof|building|house|tower|bridge)|crater|annihilat\w+|"
+        r"everything\s+destroy\w+|nothing\s+(?:remains|left)|leveled|flattened)\b",
+        lowered_anchor,
+    ))
+    return not (set(_LOCATION_IDENTITY_FACETS) - changed_identity) or (
+        structure_negated and "architecture" in changed_loc
+    )
+
+
+def state_is_total_transformation(spec: StateAssetGenerationSpec) -> bool:
+    """Return whether a state replaces every useful canonical identity facet."""
+    return (
+        _character_state_is_total(spec)
+        if spec.asset_kind == "character_state_ref"
+        else _location_state_is_total(spec)
+    )
 
 
 def _map_overridden_facets(
@@ -414,22 +562,12 @@ def _build_character_conditioning_assets(
         SemanticCandidate,
     )
 
-    # Use clause-level comparison to find facets that actually CHANGED (a
-    # self-contained state anchor restates unchanged identity for completeness).
+    # A total transformation replaces every useful identity facet (face, hair,
+    # build), or explicitly describes a non-human/incompatible form.
+    is_total = _character_state_is_total(spec)
     changed = _changed_facets(spec.canonical_parent_identity, spec.active_state_anchor)
-    # Map changed state-anchor facets to the identity-facet vocabulary.
     changed_mapped = _map_overridden_facets(
         tuple(sorted(changed & _CHARACTER_TOTAL_FACETS)), _CHARACTER_OVERRIDABLE_FACETS
-    )
-    # A total transformation replaces every useful identity facet (face, hair,
-    # build). Additionally, explicit identity-negation language ("no human
-    # face", "transformed into a beast") signals a total replacement even when
-    # not every keyword surfaces.
-    lowered_anchor = spec.active_state_anchor.lower()
-    identity_negated = any(p.search(lowered_anchor) for p in _TOTAL_IDENTITY_NEGATION)
-    identity_replaced = set(changed_mapped) >= set(_CHARACTER_IDENTITY_FACETS)
-    is_total = identity_replaced or (
-        identity_negated and "face" in changed_mapped
     )
     # A total transformation replaces every useful identity facet — face is the
     # only thing the canonical parent could still offer, but a winged serpent
@@ -490,20 +628,14 @@ def _build_location_conditioning_assets(
         SemanticCandidate,
     )
 
-    changed = _changed_facets(spec.canonical_parent_identity, spec.active_state_anchor)
+    changed = _changed_location_facets(
+        spec.canonical_parent_identity, spec.active_state_anchor,
+    )
     changed_loc = changed & _LOCATION_TOTAL_FACETS
-    lowered_anchor = spec.active_state_anchor.lower()
     # A total location destruction explicitly negates core structure and is
     # irrecoverable. When the anchor removes the primary landmark AND signals
     # annihilation, the canonical plate is contradictory and omitted.
-    structure_negated = bool(re.search(
-        r"\b(?:no\s+(?:walls?|roof|building|house|tower|bridge)|crater|annihilat\w+|"
-        r"everything\s+destroy\w+|nothing\s+(?:remains|left)|leveled|flattened)\b",
-        lowered_anchor,
-    ))
-    is_total = changed_loc == _LOCATION_TOTAL_FACETS or (
-        structure_negated and "architecture" in changed_loc
-    )
+    is_total = _location_state_is_total(spec)
     if is_total:
         dropped = [DroppedReference(
             candidate=SemanticCandidate(
@@ -519,14 +651,18 @@ def _build_location_conditioning_assets(
         )]
         return [], dropped, True
 
+    preserve_facets = tuple(
+        facet for facet in _LOCATION_IDENTITY_FACETS if facet not in changed_loc
+    )
+    ignore_facets = tuple(sorted(changed_loc))
     asset = ReferenceAsset(
         path=parent_path,
         role="location_plate",
         entity_id=spec.entity_id,
         appearance_state_id=spec.state_id,
         authority_scope=AuthorityScope.CONTEXTUAL,
-        preserve_facets=_LOCATION_IDENTITY_FACETS,
-        ignore_facets=(),
+        preserve_facets=preserve_facets,
+        ignore_facets=ignore_facets,
         pose=None,
         content_sha256=parent_hash,
         lineage_parent_sha256=parent_hash,
@@ -537,32 +673,53 @@ def _build_location_conditioning_assets(
 
 def _maybe_style_asset(
     spec: StateAssetGenerationSpec, project_dir: Path
-) -> object | None:
+) -> tuple[object | None, object | None]:
     """Build a style reference asset from the spec's style path, if present.
 
     The spec stores a project-relative style path; resolve it against
     ``project_dir``.
     """
     if not spec.style_path:
-        return None
+        return None, None
     style_path = Path(spec.style_path)
     if not style_path.is_absolute():
         style_path = project_dir / style_path
-    if not style_path.exists():
-        return None
     from novel_to_comic.image_references import (
-        AuthorityScope, ReferenceAsset, _file_sha256,
+        AuthorityScope,
+        DropReason,
+        DroppedReference,
+        ReferenceAsset,
+        SemanticCandidate,
+        _file_sha256,
     )
+
+    candidate = SemanticCandidate(path=style_path, role="style", label="selected style")
+    if not style_path.exists():
+        spec.style_sha256 = None
+        return None, DroppedReference(
+            candidate=candidate,
+            reason=DropReason.MISSING,
+            detail=f"style reference is missing at {style_path}",
+        )
     content_hash = _file_sha256(style_path)
     if content_hash is None:
-        return None
+        spec.style_sha256 = None
+        return None, DroppedReference(
+            candidate=candidate,
+            reason=DropReason.UNREADABLE,
+            detail=f"style reference is unreadable at {style_path}",
+        )
+    # The path is resolved at request-build time. If its bytes changed after
+    # the spec was created, the selected reference and persisted metadata must
+    # use the same current digest.
+    spec.style_sha256 = content_hash
     return ReferenceAsset(
         path=style_path, role="style", entity_id=None, appearance_state_id=None,
         authority_scope=AuthorityScope.CONTEXTUAL,
         preserve_facets=(), ignore_facets=(), pose=None,
         content_sha256=content_hash, lineage_parent_sha256=None,
         label="selected style",
-    )
+    ), None
 
 
 def build_state_reference_plan(
@@ -619,7 +776,13 @@ def build_state_reference_plan(
             f"missing at {parent_path} — cannot condition state asset without a "
             "canonical parent"
         )
-    parent_hash = _file_sha256_for_state(parent_path)
+    try:
+        parent_hash = _file_sha256_for_state(parent_path)
+    except OSError as exc:
+        raise StateConditioningError(
+            f"canonical parent for state {spec.entity_id}:{spec.state_id} is "
+            f"unreadable at {parent_path} — cannot condition state asset"
+        ) from exc
     recorded_hash = spec.canonical_parent_sha256
     if recorded_hash is not None and parent_hash != recorded_hash:
         raise StateConditioningError(
@@ -627,6 +790,8 @@ def build_state_reference_plan(
             f"changed (expected {recorded_hash[:12]}…, got {parent_hash[:12]}…) "
             "— regenerate the canonical asset before conditioning the state"
         )
+    if recorded_hash is None:
+        spec.canonical_parent_sha256 = parent_hash
 
     # ── 2. Resolve canonical identity candidate (compatibility-checked). ─────
     if is_character:
@@ -638,10 +803,17 @@ def build_state_reference_plan(
             spec, project_dir, parent_path, parent_hash, route_profile=route_profile,
         )
 
+    required_role = "subject" if is_character else "location_plate"
+    if not is_total and required_role not in route_profile.supported_roles:
+        raise StateConditioningError(
+            f"route {route_profile.route.value} does not support {required_role} "
+            f"references for state {spec.entity_id}:{spec.state_id}"
+        )
+
     # ── 3. Add style where space permits (lower priority than identity). ─────
-    style_asset = None
-    if not is_total:
-        style_asset = _maybe_style_asset(spec, project_dir)
+    style_asset, style_drop = _maybe_style_asset(spec, project_dir)
+    if style_drop is not None:
+        dropped.append(style_drop)
 
     cap = route_profile.max_references
 
@@ -701,6 +873,17 @@ def build_state_reference_plan(
         }
         for a in selected
     )
+    spec.reference_diagnostics = tuple(
+        {
+            "path": _relative(drop.candidate.path, project_dir),
+            "role": drop.candidate.role,
+            "entity_id": drop.candidate.entity_id,
+            "appearance_state_id": drop.candidate.appearance_state_id,
+            "reason": drop.reason.value,
+            "detail": drop.detail,
+        }
+        for drop in dropped
+    )
 
     return ReferencePlan(
         expected_route=route_profile.route,
@@ -735,5 +918,5 @@ __all__ = [
     "StateAssetGenerationSpec", "StateConditioningError",
     "build_character_state_spec", "build_location_state_spec",
     "build_state_reference_plan", "mark_dependent_states_stale",
-    "revalidate_state_asset_lineage",
+    "revalidate_state_asset_lineage", "state_is_total_transformation",
 ]

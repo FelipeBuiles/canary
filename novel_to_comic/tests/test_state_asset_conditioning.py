@@ -133,6 +133,35 @@ def test_character_states_contain_no_contradictory_canonical_matching_rule(
     assert expected_conflict_facet in subject.ignore_facets
 
 
+def test_character_co_located_outfit_change_preserves_identity_facets(tmp_path: Path):
+    from novel_to_comic.state_assets import build_state_reference_plan
+
+    char = Character(
+        id="char_co_located", name="Mara",
+        visual_anchor=(
+            "Mara with a youthful face, long black hair, slender build wearing a red coat"
+        ),
+        age_range="early 30s", gender="woman",
+        distinguishing_features=[], default_outfit="red coat",
+        first_appearance_scene="scene_001",
+    )
+    _write_parent(artifacts.character_ref_sheet_path(tmp_path, char.id))
+    state = AppearanceState(
+        id="green", label="Green coat",
+        visual_anchor=(
+            "Mara with a youthful face, long black hair, slender build wearing a green coat"
+        ),
+        visually_significant=True,
+    )
+    spec = build_character_state_spec(Config(), tmp_path, char, state)
+    plan = build_state_reference_plan(spec, tmp_path)
+    subject = next(asset for asset in plan.selected if asset.role == "subject")
+
+    assert spec.lineage_mode == LineageMode.CONDITIONED
+    assert subject.preserve_facets == ("face", "hair", "build")
+    assert subject.ignore_facets == ("wardrobe",)
+
+
 def test_character_total_transformation_omits_canonical_parent(tmp_path: Path):
     """A total transformation with no compatible facets omits the canonical
     parent and records the conflict rather than sending a contradictory image."""
@@ -159,6 +188,28 @@ def test_character_total_transformation_omits_canonical_parent(tmp_path: Path):
     drops = [d for d in plan.dropped if d.reason == DropReason.STATE_CONFLICT]
     assert drops, "total transformation must record a state_conflict drop"
     assert spec.lineage_mode == LineageMode.STATE_ONLY
+
+
+def test_state_only_keeps_compatible_style_for_non_keyword_transformation(tmp_path: Path):
+    """A self-contained non-human transformation still gets style conditioning."""
+    from novel_to_comic.image_references import DropReason
+    from novel_to_comic.state_assets import build_state_reference_plan
+
+    char = _character()
+    parent = artifacts.character_ref_sheet_path(tmp_path, char.id)
+    _write_parent(parent)
+    style_path, _ = _write_style(tmp_path)
+    state = AppearanceState(
+        id="cloud", label="Cloud form",
+        visual_anchor="Mara is now an amorphous cloud of light, incorporeal and diffuse",
+        visually_significant=True,
+    )
+    spec = build_character_state_spec(Config(), tmp_path, char, state, style_path=style_path)
+    plan = build_state_reference_plan(spec, tmp_path)
+
+    assert spec.lineage_mode == LineageMode.STATE_ONLY
+    assert [asset.role for asset in plan.selected] == ["style"]
+    assert any(drop.reason == DropReason.STATE_CONFLICT for drop in plan.dropped)
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +264,151 @@ def test_location_active_anchor_wins_over_canonical_facets(tmp_path: Path, ancho
         from novel_to_comic.compiled_request import compile_reference_instruction
         instr = compile_reference_instruction(plate, 0)
         assert "active" in instr.semantic_instruction.lower() or "wins" in instr.semantic_instruction.lower()
+
+
+def test_location_state_reference_facets_exclude_overridden_architecture(tmp_path: Path):
+    from novel_to_comic.compiled_request import compile_reference_instruction
+    from novel_to_comic.state_assets import build_state_reference_plan
+
+    loc = _location()
+    parent = artifacts.location_plate_path(tmp_path, loc.id)
+    _write_parent(parent)
+    state = AppearanceState(
+        id="loc_001_collapse", label="Collapse",
+        visual_anchor="collapsed stone walls, roof gone, rubble everywhere, full blue lake, sunny noon",
+        visually_significant=True,
+    )
+    spec = build_location_state_spec(Config(), tmp_path, loc, state)
+    plan = build_state_reference_plan(spec, tmp_path)
+    plate = next(asset for asset in plan.selected if asset.role == "location_plate")
+
+    assert "architecture" not in plate.preserve_facets
+    assert "architecture" in plate.ignore_facets
+    instruction = compile_reference_instruction(plate, 0).semantic_instruction.lower()
+    assert "ignore architecture" in instruction
+
+
+def test_location_state_reference_facets_exclude_changed_materials(tmp_path: Path):
+    from novel_to_comic.state_assets import build_state_reference_plan
+
+    loc = _location()
+    _write_parent(artifacts.location_plate_path(tmp_path, loc.id))
+    state = AppearanceState(
+        id="loc_001_glass", label="Glass pavilion",
+        visual_anchor="mirrored glass pavilion, full blue lake, sunny noon",
+        visually_significant=True,
+    )
+    spec = build_location_state_spec(Config(), tmp_path, loc, state)
+    plan = build_state_reference_plan(spec, tmp_path)
+
+    assert spec.lineage_mode == LineageMode.STATE_ONLY
+    assert not any(asset.role == "location_plate" for asset in plan.selected)
+    assert any(drop.reason.value == "state_conflict" for drop in plan.dropped)
+
+
+def test_location_state_material_change_preserves_co_located_identity(tmp_path: Path):
+    from novel_to_comic.state_assets import build_state_reference_plan
+
+    loc = Location(
+        id="loc_chapel", name="Chapel",
+        visual_anchor="stone chapel by the lake, full blue lake, sunny noon",
+        time_of_day="noon", mood="peaceful",
+    )
+    _write_parent(artifacts.location_plate_path(tmp_path, loc.id))
+    state = AppearanceState(
+        id="brick", label="Brick chapel",
+        visual_anchor="brick chapel by the lake, full blue lake, sunny noon",
+        visually_significant=True,
+    )
+    spec = build_location_state_spec(Config(), tmp_path, loc, state)
+    plan = build_state_reference_plan(spec, tmp_path)
+    plate = next(asset for asset in plan.selected if asset.role == "location_plate")
+
+    assert spec.lineage_mode == LineageMode.CONDITIONED
+    assert "architecture" in plate.preserve_facets
+    assert "landmarks" in plate.preserve_facets
+    assert "materials" in plate.ignore_facets
+
+
+def test_location_architecture_value_change_is_not_preserved(tmp_path: Path):
+    from novel_to_comic.state_assets import build_state_reference_plan
+
+    loc = Location(
+        id="loc_roof", name="Roof House",
+        visual_anchor="stone lake house with steep roof, full blue lake, sunny noon",
+        time_of_day="noon", mood="peaceful",
+    )
+    _write_parent(artifacts.location_plate_path(tmp_path, loc.id))
+    state = AppearanceState(
+        id="flat", label="Flat roof",
+        visual_anchor="stone lake house with flat roof, full blue lake, sunny noon",
+        visually_significant=True,
+    )
+    spec = build_location_state_spec(Config(), tmp_path, loc, state)
+    plan = build_state_reference_plan(spec, tmp_path)
+    plate = next(asset for asset in plan.selected if asset.role == "location_plate")
+
+    assert spec.lineage_mode == LineageMode.CONDITIONED
+    assert "architecture" not in plate.preserve_facets
+    assert "architecture" in plate.ignore_facets
+
+
+def test_missing_style_candidate_is_persisted_as_diagnostic(tmp_path: Path):
+    from novel_to_comic.state_assets import build_state_reference_plan
+
+    char = _character()
+    _write_parent(artifacts.character_ref_sheet_path(tmp_path, char.id))
+    missing_style = tmp_path / "missing-style.png"
+    state = AppearanceState(
+        id="silver", label="Silver hands",
+        visual_anchor="Mara, age 30, long black hair, silver hands, red coat",
+        visually_significant=True,
+    )
+    spec = build_character_state_spec(
+        Config(), tmp_path, char, state, style_path=missing_style,
+    )
+    build_state_reference_plan(spec, tmp_path)
+
+    assert any(
+        item["role"] == "style" and item["reason"] == "missing"
+        for item in spec.reference_diagnostics
+    )
+
+
+def test_compiled_location_facets_match_empty_preserve_scope():
+    from novel_to_comic.compiled_request import compile_reference_instruction
+    from novel_to_comic.image_references import AuthorityScope, ReferenceAsset
+
+    asset = ReferenceAsset(
+        path=Path("refs/location.png"), role="location_plate", entity_id="loc_001",
+        appearance_state_id="glass", authority_scope=AuthorityScope.CONTEXTUAL,
+        preserve_facets=(), ignore_facets=("architecture", "landmarks", "materials"),
+        pose=None, content_sha256="a" * 64, lineage_parent_sha256="b" * 64,
+        label="Lake House",
+    )
+    instruction = compile_reference_instruction(asset, 0)
+
+    assert instruction.preserve_facets == ()
+    assert instruction.ignore_facets == ("architecture", "landmarks", "materials")
+    assert "no canonical location facets" in instruction.semantic_instruction
+
+
+def test_location_state_rejects_unsupported_reference_role(tmp_path: Path):
+    from novel_to_comic.state_assets import StateConditioningError, build_state_reference_plan
+
+    loc = _location()
+    _write_parent(artifacts.location_plate_path(tmp_path, loc.id))
+    state = AppearanceState(
+        id="loc_001_dusk", label="Dusk",
+        visual_anchor="stone lake house, intact slate roof, full blue lake at dusk",
+        visually_significant=True,
+    )
+    spec = build_location_state_spec(
+        Config(image_model="gpt-image-2"), tmp_path, loc, state,
+    )
+
+    with pytest.raises(StateConditioningError, match="does not support"):
+        build_state_reference_plan(spec, tmp_path)
 
 
 def test_location_total_destruction_omits_canonical_parent(tmp_path: Path):
@@ -317,6 +513,25 @@ def test_digest_mismatched_canonical_parent_fails_before_provider_io(tmp_path: P
         build_state_reference_plan(spec, tmp_path)
 
 
+def test_unreadable_canonical_parent_fails_with_structured_error(tmp_path: Path):
+    from novel_to_comic.state_assets import StateConditioningError, build_state_reference_plan
+
+    char = _character()
+    parent = artifacts.character_ref_sheet_path(tmp_path, char.id)
+    _write_parent(parent)
+    state = AppearanceState(
+        id="silver", label="Silver hands",
+        visual_anchor="Mara, age 30, long black hair, silver hands, red coat",
+        visually_significant=True,
+    )
+    spec = build_character_state_spec(Config(), tmp_path, char, state)
+    parent.unlink()
+    parent.mkdir()
+
+    with pytest.raises(StateConditioningError, match="unreadable"):
+        build_state_reference_plan(spec, tmp_path)
+
+
 # ---------------------------------------------------------------------------
 # Metadata and lineage mode
 # ---------------------------------------------------------------------------
@@ -342,6 +557,28 @@ def test_state_metadata_records_lineage_mode_conditioned(tmp_path: Path):
     assert meta["canonical_parent_sha256"] == parent_hash
     assert meta["style_sha256"] == style_hash
     assert meta["lineage_status"] == LineageStatus.CURRENT
+
+
+def test_style_digest_refreshes_when_selected_bytes_change(tmp_path: Path):
+    from novel_to_comic.state_assets import build_state_reference_plan
+
+    char = _character()
+    _write_parent(artifacts.character_ref_sheet_path(tmp_path, char.id))
+    style_path, _ = _write_style(tmp_path, b"style-v1")
+    state = AppearanceState(
+        id="silver", label="Silver hands",
+        visual_anchor="Mara, age 30, long black hair, silver hands, red coat",
+        visually_significant=True,
+    )
+    spec = build_character_state_spec(Config(), tmp_path, char, state, style_path=style_path)
+    style_path.write_bytes(b"style-v2")
+    plan = build_state_reference_plan(spec, tmp_path)
+    style = next(asset for asset in plan.selected if asset.role == "style")
+    expected = hashlib.sha256(b"style-v2").hexdigest()
+
+    assert style.content_sha256 == expected
+    assert spec.style_sha256 == expected
+    assert spec.lineage_metadata()["style_sha256"] == expected
 
 
 def test_state_only_metadata_records_exception(tmp_path: Path):
@@ -410,6 +647,41 @@ def test_state_wire_carries_canonical_reference_and_hashes(tmp_path: Path, monke
     assert wire.execution_fingerprint
 
 
+def test_state_wire_includes_state_direction_and_addendum(tmp_path: Path, monkeypatch):
+    from novel_to_comic.stages.s3_cast import _generate_state_asset_wire
+    from novel_to_comic.usage import ApiResult
+
+    char = _character()
+    _write_parent(artifacts.character_ref_sheet_path(tmp_path, char.id))
+    state = AppearanceState(
+        id="silver", label="Silver hands",
+        visual_anchor="SENTINEL active silver hands",
+        visually_significant=True,
+        continuity_guard="SENTINEL continuity guard",
+    )
+    instructions = artifacts.character_state_ref_instructions_path(tmp_path, char.id, state.id)
+    artifacts.append_instruction_log_entry(
+        instructions,
+        {"patch": {"status": "accepted", "addendum": "SENTINEL state correction"}},
+    )
+    spec = build_character_state_spec(Config(), tmp_path, char, state)
+    captured = {}
+
+    async def fake_generate_wire_image(*, config, wire, output_path, feature):
+        captured["wire"] = wire
+        output_path.write_bytes(b"state-image")
+        return ApiResult(value=output_path)
+
+    monkeypatch.setattr("novel_to_comic.ai.generate_wire_image", fake_generate_wire_image)
+    asyncio.run(_generate_state_asset_wire(
+        Config(), spec, tmp_path / "state.png", tmp_path, feature="test",
+    ))
+
+    prompt = captured["wire"].prompt_parts[0]
+    assert "SENTINEL state correction" in prompt
+    assert "SENTINEL continuity guard" in prompt
+
+
 def test_state_only_wire_has_no_canonical_reference(tmp_path: Path, monkeypatch):
     from novel_to_comic.stages.s3_cast import _generate_state_asset_wire
     from novel_to_comic.usage import ApiResult
@@ -438,6 +710,25 @@ def test_state_only_wire_has_no_canonical_reference(tmp_path: Path, monkeypatch)
     wire = captured["wire"]
     assert wire.references == ()
     assert "SENTINEL winged serpent" in wire.prompt_parts[0]
+
+
+def test_state_wire_compilation_populates_cache_metadata_before_transport(tmp_path: Path):
+    from novel_to_comic.stages.s3_cast import _compile_state_asset_wire
+
+    char = _character()
+    _write_parent(artifacts.character_ref_sheet_path(tmp_path, char.id))
+    state = AppearanceState(
+        id="silver", label="Silver hands",
+        visual_anchor="Mara, age 30, long black hair, silver hands, red coat",
+        visually_significant=True,
+    )
+    spec = build_character_state_spec(Config(), tmp_path, char, state)
+    wire = _compile_state_asset_wire(Config(), spec, tmp_path)
+    meta = spec.lineage_metadata()
+
+    assert wire.compiled_request_sha256 == meta["compiled_request_sha256"]
+    assert wire.execution_fingerprint == meta["execution_fingerprint"]
+    assert meta["reference_summary"]
 
 
 # ---------------------------------------------------------------------------
@@ -609,3 +900,101 @@ def test_no_paid_image_call_during_conditioning(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("novel_to_comic.ai.generate_wire_image", _boom)
     plan = build_state_reference_plan(spec, tmp_path)
     assert plan.selected  # conditioning produced a plan without I/O
+
+
+def test_cast_estimate_uses_final_state_reference_count(tmp_path: Path, monkeypatch):
+    from novel_to_comic.models.story_bible import StoryBible
+    from novel_to_comic.stages import s3_cast
+
+    char = _character()
+    state = AppearanceState(
+        id="silver", label="Silver hands",
+        visual_anchor="Mara, age 30, long black hair, silver hands, red coat",
+        visually_significant=True,
+    )
+    char.appearance_states = [state]
+    artifacts.write_story_bible(tmp_path, StoryBible(
+        title="T", author="A", total_scenes=1,
+        characters=[char], locations=[], props=[], scenes=[], narrative_arcs=[],
+    ))
+    _write_parent(artifacts.character_ref_sheet_path(tmp_path, char.id))
+    style_path, _ = _write_style(tmp_path)
+    monkeypatch.setattr(s3_cast, "_find_style_ref", lambda *_args: style_path)
+
+    calls = []
+
+    def fake_estimate(model, count, quality=None, ref_count=0, **kwargs):
+        calls.append((count, ref_count))
+        return float(ref_count)
+
+    monkeypatch.setattr("novel_to_comic.usage.estimate_image_cost", fake_estimate)
+    s3_cast.estimate_cost(Config(image_model="image-balanced"), tmp_path, None)
+
+    assert (1, 2) in calls
+
+
+def test_state_only_first_run_estimate_omits_missing_parent_reference(tmp_path: Path):
+    from novel_to_comic.models.story_bible import StoryBible
+    from novel_to_comic.stages import s3_cast
+
+    char = _character()
+    state = AppearanceState(
+        id="cloud", label="Cloud form",
+        visual_anchor="Mara is now an amorphous cloud of light, incorporeal and diffuse",
+        visually_significant=True,
+    )
+    char.appearance_states = [state]
+    artifacts.write_story_bible(tmp_path, StoryBible(
+        title="T", author="A", total_scenes=1,
+        characters=[char], locations=[], props=[], scenes=[], narrative_arcs=[],
+    ))
+
+    assert s3_cast.estimate_state_reference_count(
+        Config(image_model="image-balanced"), tmp_path, "character", char.id, state.id,
+    ) == 0
+
+
+def test_single_state_estimate_uses_final_state_reference_count(monkeypatch, tmp_path: Path):
+    from novel_to_comic.server.credits import UnifiedCostResolver
+
+    captured = {}
+
+    monkeypatch.setattr(
+        "novel_to_comic.stages.s3_cast.estimate_state_reference_count",
+        lambda *args: 2,
+    )
+
+    def fake_estimate(model, count, quality=None, ref_count=0, **kwargs):
+        captured["ref_count"] = ref_count
+        return 0.01
+
+    monkeypatch.setattr("novel_to_comic.server.credits.estimate_image_cost", fake_estimate)
+    UnifiedCostResolver.estimate_asset_regen_cost(
+        Config(), tmp_path, "character_ref_regen", "char_001:silver",
+    )
+
+    assert captured["ref_count"] == 2
+
+
+def test_state_estimate_propagates_unsupported_route_error(tmp_path: Path):
+    from novel_to_comic.models.story_bible import StoryBible
+    from novel_to_comic.stages import s3_cast
+    from novel_to_comic.state_assets import StateConditioningError
+
+    loc = _location()
+    state = AppearanceState(
+        id="night", label="Night",
+        visual_anchor="stone lake house at night, moonlit, dark sky",
+        visually_significant=True,
+    )
+    loc.appearance_states = [state]
+    artifacts.write_story_bible(tmp_path, StoryBible(
+        title="T", author="A", total_scenes=1,
+        characters=[], locations=[loc], props=[], scenes=[], narrative_arcs=[],
+    ))
+    _write_parent(artifacts.location_plate_path(tmp_path, loc.id))
+
+    with pytest.raises(StateConditioningError, match="does not support"):
+        s3_cast.estimate_state_reference_count(
+            Config(image_model="gpt-image-2"), tmp_path, "location", loc.id, state.id,
+        )

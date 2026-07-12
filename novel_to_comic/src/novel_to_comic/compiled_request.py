@@ -186,6 +186,11 @@ _CONTEXTUAL_IGNORE: dict[str, tuple[str, ...]] = {
     "continuity": ("facets incompatible with current states",),
 }
 
+_LOCATION_STATE_FACETS = frozenset({
+    "architecture", "landmarks", "materials", "damage", "water_level",
+    "weather", "light", "atmosphere",
+})
+
 
 def compile_reference_instruction(
     asset: ReferenceAsset, index: int
@@ -240,14 +245,31 @@ def compile_reference_instruction(
                 "do not copy its pose or background"
             )
     elif role == "location_plate":
-        preserve = _CONTEXTUAL_PRESERVE["location_plate"]
-        preserve_phrase = _facet_phrase(preserve)
+        # State-asset plans carry the exact canonical facets that remain
+        # compatible and the facets the active state replaces. Legacy/general
+        # location refs retain the contextual defaults.
+        state_facets = (
+            state_id is not None
+            and bool(
+                (set(asset.preserve_facets) | set(asset.ignore_facets))
+                & _LOCATION_STATE_FACETS
+            )
+        )
+        preserve = (
+            asset.preserve_facets
+            if state_facets else _CONTEXTUAL_PRESERVE["location_plate"]
+        )
+        preserve_phrase = _facet_phrase(preserve) or "no canonical location facets"
         if state_id:
+            ignore_clause = (
+                f"; ignore {_facet_phrase(asset.ignore_facets)}"
+                if state_facets and asset.ignore_facets else ""
+            )
             semantic = (
                 f"location reference for {label} — preserve {preserve_phrase} "
-                "that the active state does not replace; the active damage, "
-                "weather, or time-of-day anchor wins over any conflicting "
-                "canonical features"
+                f"that the active state does not replace{ignore_clause}; the "
+                "active damage, weather, or time-of-day anchor wins over any "
+                "conflicting canonical features"
             )
         else:
             semantic = (
@@ -278,13 +300,41 @@ def compile_reference_instruction(
     else:
         semantic = f"reference for {label}"
 
+    instruction_preserve = (
+            asset.preserve_facets
+            if role == "subject"
+            else (
+                asset.preserve_facets
+                if role == "location_plate"
+                and state_id is not None
+                and bool(
+                    (set(asset.preserve_facets) | set(asset.ignore_facets))
+                    & _LOCATION_STATE_FACETS
+                )
+                else _CONTEXTUAL_PRESERVE.get(role, ())
+            )
+    )
+    instruction_ignore = (
+        asset.ignore_facets
+        if role == "subject"
+        else (
+            asset.ignore_facets
+            if role == "location_plate"
+            and state_id is not None
+            and bool(
+                (set(asset.preserve_facets) | set(asset.ignore_facets))
+                & _LOCATION_STATE_FACETS
+            )
+            else _CONTEXTUAL_IGNORE.get(role, ())
+        )
+    )
     return CompiledReferenceInstruction(
         index=index,
         role=role,
         entity_label=label,
         authority_scope=scope,
-        preserve_facets=asset.preserve_facets if role == "subject" else _CONTEXTUAL_PRESERVE.get(role, ()),
-        ignore_facets=asset.ignore_facets if role == "subject" else _CONTEXTUAL_IGNORE.get(role, ()),
+        preserve_facets=instruction_preserve,
+        ignore_facets=instruction_ignore,
         appearance_state_id=state_id,
         semantic_instruction=semantic,
     )

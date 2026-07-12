@@ -45,6 +45,8 @@ class ApiResult(Generic[T]):
 
     value: T
     usage: UsageRecord | None = None
+    provider_request_id: str | None = None
+    actual_provider_model: str | None = None
 
 
 def calculate_cost_breakdown(record: UsageRecord) -> CostBreakdown:

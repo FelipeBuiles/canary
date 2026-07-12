@@ -11,6 +11,7 @@ from novel_to_comic.models.story_bible import Character, Location, Prop, StoryBi
 from novel_to_comic.models.prompt import ImagePrompt, PromptAnchor, PromptSubject
 from novel_to_comic.prompting import IMAGE_PROMPT_VERSION
 from novel_to_comic.server.routers.stages import list_images
+from novel_to_comic import panel_generation
 from novel_to_comic.state import create_initial_state
 from novel_to_comic.stages import s3_cast
 from novel_to_comic.stages import s7_draw
@@ -33,14 +34,10 @@ def test_generate_panel_writes_failure_metadata(tmp_path, monkeypatch):
     )
     prompt_path.write_text(prompt.model_dump_json(indent=2))
 
-    async def fail_generate_image_multi_ref(**kwargs):
+    async def fail_generate_image(**kwargs):
         raise ValueError("No image part in Gemini response. Gemini details: IMAGE_PROHIBITED_CONTENT")
 
-    monkeypatch.setattr(
-        s7_draw.flux,
-        "generate_image_multi_ref",
-        fail_generate_image_multi_ref,
-    )
+    monkeypatch.setattr(panel_generation, "execute_frozen_request", fail_generate_image)
 
     with pytest.raises(ValueError, match="No image part"):
         asyncio.run(
@@ -95,7 +92,7 @@ def test_generate_panel_classifies_rate_limit(tmp_path, monkeypatch):
             "failed (RESOURCE_EXHAUSTED): 429 Resource has been exhausted (check quota)."
         )
 
-    monkeypatch.setattr(s7_draw.flux, "generate_image_multi_ref", rate_limited)
+    monkeypatch.setattr(panel_generation, "execute_frozen_request", rate_limited)
 
     with pytest.raises(RuntimeError):
         asyncio.run(
@@ -141,16 +138,12 @@ def test_generate_panel_regenerates_stale_existing_image(tmp_path, monkeypatch):
 
     calls = []
 
-    async def fake_generate_image_multi_ref(**kwargs):
+    async def fake_generate_image(**kwargs):
         calls.append(kwargs)
         kwargs["output_path"].write_bytes(b"new image")
         return ApiResult(value=kwargs["output_path"])
 
-    monkeypatch.setattr(
-        s7_draw.flux,
-        "generate_image_multi_ref",
-        fake_generate_image_multi_ref,
-    )
+    monkeypatch.setattr(panel_generation, "execute_frozen_request", fake_generate_image)
 
     result = asyncio.run(
         s7_draw._generate_panel(
@@ -194,13 +187,13 @@ def test_generate_panel_submits_compiled_prompt(tmp_path, monkeypatch):
     ).model_dump_json())
     calls: list[dict] = []
 
-    async def fake_generate_image_multi_ref(**kwargs):
+    async def fake_generate_image(**kwargs):
         calls.append(kwargs)
         kwargs["output_path"].parent.mkdir(parents=True, exist_ok=True)
         kwargs["output_path"].write_bytes(b"panel")
         return ApiResult(value=kwargs["output_path"])
 
-    monkeypatch.setattr(s7_draw.flux, "generate_image_multi_ref", fake_generate_image_multi_ref)
+    monkeypatch.setattr(panel_generation, "execute_frozen_request", fake_generate_image)
     asyncio.run(s7_draw._generate_panel(
         Config(image_model="image-balanced", layout_prompts_enabled=False),
         tmp_path,
@@ -212,8 +205,8 @@ def test_generate_panel_submits_compiled_prompt(tmp_path, monkeypatch):
         None,
     ))
 
-    submitted = calls[0]["prompt"]
     meta = artifacts.read_asset_meta(tmp_path / "draw" / "scene_001" / "panel_001.png")
+    submitted = meta["prompt"]
     assert "DANGER" not in submitted
     assert submitted == meta["prompt"]
     assert "Generation geometry" not in submitted  # section bodies, not titles, are canonical
@@ -244,13 +237,13 @@ def test_selected_reference_byte_change_invalidates_panel_cache(tmp_path, monkey
 
     calls: list[dict] = []
 
-    async def fake_generate_image_multi_ref(**kwargs):
+    async def fake_generate_image(**kwargs):
         calls.append(kwargs)
         kwargs["output_path"].parent.mkdir(parents=True, exist_ok=True)
         kwargs["output_path"].write_bytes(b"panel")
         return ApiResult(value=kwargs["output_path"])
 
-    monkeypatch.setattr(s7_draw.flux, "generate_image_multi_ref", fake_generate_image_multi_ref)
+    monkeypatch.setattr(panel_generation, "execute_frozen_request", fake_generate_image)
     config = Config(
         image_model="image-balanced",
         visual_brief_enabled=False,
