@@ -461,9 +461,10 @@ export function PromptLineageCard({
         </CollapsibleSection>
       )}
 
-      <CollapsibleSection title="ASSEMBLED PROMPT" defaultExpanded>
+      <CollapsibleSection title="DRAFT ASSEMBLED PROMPT" defaultExpanded>
         {/* Derived preview — read-only. The server rebuilds this from the
             structured fields above; editing it directly is not authoritative. */}
+        <p className="mb-2 text-[0.68rem] text-ink-black/45">Projection only; the submitted provider request is shown in Dev Content after preparation.</p>
         <p className="text-[0.82rem] leading-6 text-ink-black/75 whitespace-pre-wrap">
           {prompt.full_prompt}
         </p>

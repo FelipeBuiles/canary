@@ -730,6 +730,39 @@ export interface ImageGenerationMeta {
   };
 }
 
+export interface GenerationRequestPreview {
+  schema_version?: number;
+  state_label: "Draft projection" | "Prepared request" | "Submitted request" | "Completed request" | string;
+  exact: boolean;
+  exactness: "exact" | "non-exact" | string;
+  warnings: string[];
+  request_id?: string;
+  execution_fingerprint?: string;
+  compiled_request_sha256?: string | null;
+  prompt_source_sha256?: string | null;
+  asset_kind?: string | null;
+  asset_identity?: string | null;
+  semantic_prompt?: Record<string, unknown> | null;
+  provider_wire?: Record<string, unknown>;
+  wire_json?: string;
+  requested_model?: Record<string, unknown>;
+  geometry?: Record<string, unknown>;
+  references?: Array<Record<string, unknown>>;
+  dropped_references?: Array<Record<string, unknown>>;
+  controls?: Record<string, unknown>;
+  versions?: Record<string, unknown>;
+  manifest_sha256?: string;
+  actual_model?: string;
+  actual_dimensions?: { width?: number | null; height?: number | null };
+  provenance?: Record<string, unknown>;
+  accounting?: {
+    estimated_cost_usd: number;
+    estimated_credits: number;
+    reserved: boolean;
+    charge_on: string;
+  };
+}
+
 export interface PanelImageVersion {
   version: number;
   current: boolean;

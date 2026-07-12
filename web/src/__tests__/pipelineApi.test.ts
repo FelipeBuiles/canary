@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchRegenEstimate, regenPanel, regenPanelWithInstruction } from "../api/pipeline";
+import {
+  fetchRegenEstimate,
+  getGenerationRequest,
+  previewGenerationRequest,
+  prepareGenerationRequest,
+  regenPanel,
+  regenPanelWithInstruction,
+} from "../api/pipeline";
 import { apiFetch } from "../api/client";
 
 vi.mock("../api/client", () => ({
@@ -53,6 +60,35 @@ describe("panel regeneration API", () => {
 
     expect(mockedApiFetch).toHaveBeenCalledWith(
       "/projects/proj/regen-estimate?scene_id=scene_001&panel_number=4&image_model_alias=image-fast",
+    );
+  });
+
+  it("labels preview requests with the non-paid dev-content switch", async () => {
+    await previewGenerationRequest("proj one", "scene/one", 3, "image-quality", true);
+
+    expect(mockedApiFetch).toHaveBeenCalledWith(
+      "/projects/proj%20one/generation-requests/preview?scene_id=scene%2Fone&panel_number=3&image_model_alias=image-quality&dev_content=1",
+    );
+  });
+
+  it("uses the authoritative request record for exact Dev Content reads", async () => {
+    await getGenerationRequest("proj", "request-1", true);
+    await prepareGenerationRequest("proj", "scene_001", 1, null);
+
+    expect(mockedApiFetch).toHaveBeenNthCalledWith(
+      1,
+      "/projects/proj/generation-requests/request-1?dev_content=1",
+    );
+    expect(mockedApiFetch).toHaveBeenNthCalledWith(
+      2,
+      "/projects/proj/generation-requests/prepare",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          scene_id: "scene_001",
+          panel_number: 1,
+        }),
+      },
     );
   });
 });

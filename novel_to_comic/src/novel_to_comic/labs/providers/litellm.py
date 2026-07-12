@@ -26,6 +26,11 @@ from .base import LabsImageInput, LabsImageResult, ProviderError
 log = logging.getLogger(__name__)
 
 
+def _canonical_temp_path(path: Path) -> Path:
+    """Resolve platform temp-dir aliases before the symlink-safe writer runs."""
+    return path.resolve(strict=False)
+
+
 def _config_for_model(endpoint: str) -> Config:
     """Build a Config pointed at the requested gateway alias.
 
@@ -57,7 +62,10 @@ class LitellmProvider:
         params = params or {}
 
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-            output_path = Path(tmp.name)
+            # macOS exposes its temp directory as /var/folders, while /var is a
+            # symlink to /private/var. The shared secure writer rejects symlinked
+            # path components, so hand it the canonical path to this same file.
+            output_path = _canonical_temp_path(Path(tmp.name))
 
         started = time.perf_counter()
         try:

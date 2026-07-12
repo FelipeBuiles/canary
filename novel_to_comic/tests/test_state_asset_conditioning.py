@@ -896,7 +896,7 @@ def test_no_paid_image_call_during_conditioning(tmp_path: Path, monkeypatch):
     def _boom(*args, **kwargs):
         raise AssertionError("no network call should occur during plan building")
 
-    monkeypatch.setattr("novel_to_comic.ai.client.generate_image", _boom)
+    monkeypatch.setattr("novel_to_comic.ai.client.generate_wire_image", _boom)
     monkeypatch.setattr("novel_to_comic.ai.generate_wire_image", _boom)
     plan = build_state_reference_plan(spec, tmp_path)
     assert plan.selected  # conditioning produced a plan without I/O

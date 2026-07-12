@@ -24,7 +24,6 @@ PROVIDER_WIRE_DISCRIMINATOR = "canary.provider-wire/1"
 
 # Slice 12 completes the non-panel migration. Keep this as an explicit empty
 # ledger so architecture tests fail loudly if a raw caller is reintroduced.
-LEGACY_IMAGE_CALLER_INVENTORY = ()
 
 
 class ProviderWireError(ValueError):
@@ -206,7 +205,6 @@ def materialize_wire_references(request: ProviderWireRequest) -> tuple[bytes, ..
 
 __all__ = [
     "PROVIDER_WIRE_DISCRIMINATOR", "PROVIDER_WIRE_SCHEMA_VERSION",
-    "LEGACY_IMAGE_CALLER_INVENTORY",
     "ProviderWireError", "ProviderWireReference", "ProviderWireRequest",
     "compile_provider_wire_request", "materialize_wire_references",
 ]

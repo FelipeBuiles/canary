@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from litellm_handlers.reve_provider import (  # noqa: E402
     ImageResponse,
@@ -48,6 +49,7 @@ def _capture_post(monkeypatch, payload=None):
     return captured
 
 
+@pytest.mark.skip(reason="legacy non-wire handler request was removed")
 def test_create_never_sends_pixel_dimensions(monkeypatch):
     captured = _capture_post(monkeypatch)
     asyncio.run(reve_llm.aimage_generation(
@@ -74,6 +76,7 @@ def test_create_never_sends_pixel_dimensions(monkeypatch):
     assert "height" not in payload
 
 
+@pytest.mark.skip(reason="provider-side prompt truncation was removed")
 def test_create_truncates_prompt_to_8000(monkeypatch):
     captured = _capture_post(monkeypatch)
     asyncio.run(reve_llm.aimage_generation(
@@ -88,6 +91,7 @@ def test_create_truncates_prompt_to_8000(monkeypatch):
     assert len(captured["payload"]["prompt"]) == 8000
 
 
+@pytest.mark.skip(reason="provider-side reference instruction injection was removed")
 def test_remix_uploads_references_with_indexed_instructions(monkeypatch):
     captured = _capture_post(monkeypatch)
     image_bytes = b"\x89PNG\r\n\x1a\nrefbytes"
@@ -115,6 +119,7 @@ def test_remix_uploads_references_with_indexed_instructions(monkeypatch):
     assert payload["prompt"].endswith("Alice reads in the library.")
 
 
+@pytest.mark.skip(reason="legacy non-wire handler request was removed")
 def test_remix_keeps_prompt_with_existing_tags(monkeypatch):
     captured = _capture_post(monkeypatch)
     files = [("__role_subject__char_alice_front.png", b"refbytes")]
@@ -130,8 +135,15 @@ def test_remix_keeps_prompt_with_existing_tags(monkeypatch):
     assert captured["payload"]["prompt"] == prompt
 
 
-def test_content_violation_raises(monkeypatch):
+def test_content_violation_raises(monkeypatch, tmp_path):
+    from test_provider_wire import _compiled
+    from novel_to_comic.image_models import GATEWAY_IMAGE_REVE
+    from novel_to_comic.provider_wire import compile_provider_wire_request
+
     _capture_post(monkeypatch, payload={"content_violation": True, "request_id": "req_v"})
+    wire = compile_provider_wire_request(
+        _compiled(tmp_path, model=GATEWAY_IMAGE_REVE, count=0)
+    )
     with pytest.raises(ValueError, match="content violation"):
         asyncio.run(reve_llm.aimage_generation(
             model="reve/create",
@@ -139,6 +151,6 @@ def test_content_violation_raises(monkeypatch):
             api_key="test_key",
             api_base=None,
             model_response=ImageResponse(),
-            optional_params={"size": "1024x1024"},
+            optional_params={"canary_wire_request": wire.to_json()},
             logging_obj=None,
         ))

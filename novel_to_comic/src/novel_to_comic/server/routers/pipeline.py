@@ -36,6 +36,7 @@ from ..credits import (
     assert_sufficient_credits,
     estimate_stage_credit_reservation,
     release_stage_reservations,
+    credit_estimate_for_provider_cost,
 )
 from ..db import get_db
 from ..deps import get_project, project_key
@@ -46,9 +47,20 @@ from ..credited_job import (
     run_credited_stage,
 )
 from novel_to_comic.panel_generation import (
+    compile_panel_request,
     estimate_panel_request,
     prepare_panel_request,
     submit_panel_request,
+)
+from novel_to_comic.frozen_requests import (
+    FrozenRequestError,
+    FrozenRequestNotFound,
+    load_frozen_request,
+    submit_frozen_request,
+)
+from novel_to_comic.generation_request_preview import (
+    compiled_request_context,
+    frozen_request_preview,
 )
 from ..generation_jobs import (
     generation_job_payload,
@@ -82,6 +94,12 @@ class InstructedPanelRegenRequest(BaseModel):
     image_model_alias: str | None = None
 
 
+class PreparePanelRequest(BaseModel):
+    scene_id: str = Field(min_length=1)
+    panel_number: int = Field(ge=1)
+    image_model_alias: str | None = None
+
+
 class InstructedRefRegenRequest(BaseModel):
     char_id: str = Field(min_length=1)
     instruction: str = Field(min_length=1, max_length=500)
@@ -99,6 +117,36 @@ class InstructedStateRegenRequest(BaseModel):
 class InstructedPropRegenRequest(BaseModel):
     prop_id: str = Field(min_length=1)
     instruction: str = Field(min_length=1, max_length=500)
+
+
+def _compile_panel_projection(
+    project_dir: Path,
+    config: Config,
+    scene_id: str,
+    panel_number: int,
+    image_model_alias: str | None,
+):
+    """Compile current persisted inputs without hydrating or calling a model."""
+    _validate_panel_scene_id(scene_id)
+    regen_config = _panel_regen_config_for_alias(config, image_model_alias)
+    prompt_path = artifacts.panel_prompt_path(project_dir, scene_id, panel_number)
+    if not prompt_path.exists():
+        raise HTTPException(404, f"Prompt not found: {scene_id}/panel_{panel_number:03d}")
+    try:
+        prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
+    except Exception as exc:
+        raise HTTPException(422, "Stored panel prompt is invalid") from exc
+    from novel_to_comic.stages.s7_draw import _find_style_sample
+
+    style_sample = _find_style_sample(project_dir, regen_config.style_template)
+    return regen_config, compile_panel_request(
+        regen_config,
+        project_dir,
+        prompt,
+        prompt_path=prompt_path,
+        style_sample=style_sample,
+        output_dir=project_dir / "draw" / scene_id,
+    )
 
 
 def _wrap_on_event(queue: asyncio.Queue, app_state, pkey: str):
@@ -463,6 +511,133 @@ async def regen_panel_estimate(
     }
 
 
+@router.get("/generation-requests/preview")
+def preview_generation_request(
+    project_id: str,
+    scene_id: str = Query(...),
+    panel_number: int = Query(..., ge=1),
+    image_model_alias: str | None = Query(None),
+    prepared_request_id: str | None = Query(None),
+    dev_content: bool = Query(False),
+    project=Depends(get_project),
+):
+    """Return a deterministic, non-exact projection unless a frozen request matches."""
+    project_dir, config, _state = project
+    _regen_config, panel_request = _compile_panel_projection(
+        project_dir, config, scene_id, panel_number, image_model_alias,
+    )
+    draft = {
+        "prompt": panel_request.compiled.final_prompt,
+        "warnings": [*panel_request.compiled.warnings, "preparation outstanding"],
+        "reference_count": len(panel_request.reference_plan.selected),
+    }
+    if not prepared_request_id:
+        return frozen_request_preview(None, draft=draft)
+
+    try:
+        frozen = load_frozen_request(project_dir, prepared_request_id)
+    except FrozenRequestNotFound as exc:
+        raise HTTPException(404, "Generation request not found") from exc
+    except FrozenRequestError as exc:
+        raise HTTPException(409, "Generation request failed integrity checks") from exc
+
+    if frozen.execution_fingerprint != panel_request.wire.execution_fingerprint:
+        result = frozen_request_preview(
+            None,
+            draft={
+                **draft,
+                "warnings": [
+                    *draft["warnings"],
+                    "prepared request is stale after an authoritative source change",
+                ],
+            },
+        )
+        if dev_content:
+            result["prepared_request_id"] = prepared_request_id
+            result["stale"] = True
+        return result
+    return frozen_request_preview(
+        frozen,
+        include_dev_content=dev_content,
+        project_dir=project_dir,
+    )
+
+
+@router.post("/generation-requests/prepare")
+def prepare_generation_request(
+    body: PreparePanelRequest,
+    project_id: str,
+    project=Depends(get_project),
+):
+    """Freeze one exact panel request without reserving credits or generating art."""
+    project_dir, config, _state = project
+    _regen_config, panel_request = _compile_panel_projection(
+        project_dir,
+        config,
+        body.scene_id,
+        body.panel_number,
+        body.image_model_alias,
+    )
+    context = compiled_request_context(panel_request.compiled)
+    estimate = estimate_panel_request(
+        _regen_config,
+        project_dir,
+        panel_request.prompt,
+        reference_plan=panel_request.reference_plan,
+        prepared=True,
+    )
+    estimate_credits = credit_estimate_for_provider_cost(
+        estimate.cost_usd,
+        "draw",
+        reserve=False,
+        zero_cost_estimate=1,
+    )["estimate_credits"]
+    fingerprint = panel_request.wire.execution_fingerprint
+    frozen = submit_frozen_request(
+        project_dir,
+        panel_request.wire,
+        idempotency_key=(
+            f"prepare:panel:{body.scene_id}:{body.panel_number}:{fingerprint}"
+        ),
+        status="prepared",
+        request_context=context,
+    )
+    preview = frozen_request_preview(
+        frozen,
+        include_dev_content=False,
+        project_dir=project_dir,
+    )
+    preview["request_id"] = frozen.request_id
+    preview["accounting"] = {
+        "estimated_cost_usd": estimate.cost_usd,
+        "estimated_credits": estimate_credits,
+        "reserved": False,
+        "charge_on": "explicit generation submission",
+    }
+    return preview
+
+
+@router.get("/generation-requests/{request_id}")
+def get_generation_request(
+    request_id: str,
+    dev_content: bool = Query(False),
+    project=Depends(get_project),
+):
+    """Read an authorized immutable request and optional completed provenance."""
+    project_dir, _config, _state = project
+    try:
+        frozen = load_frozen_request(project_dir, request_id)
+    except FrozenRequestNotFound as exc:
+        raise HTTPException(404, "Generation request not found") from exc
+    except FrozenRequestError as exc:
+        raise HTTPException(409, "Generation request failed integrity checks") from exc
+    return frozen_request_preview(
+        frozen,
+        include_dev_content=dev_content,
+        project_dir=project_dir,
+    )
+
+
 @router.post("/run")
 @limiter.limit(cost_limit)
 async def run_pipeline(
@@ -719,6 +894,7 @@ async def regen_panel(
     scene_id: str = Query(...),
     panel_number: int = Query(...),
     image_model_alias: str | None = Query(None),
+    prepared_request_id: str | None = Query(None),
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
@@ -745,15 +921,44 @@ async def regen_panel(
     except Exception:
         planned_panel_id = None
 
-    style_sample = None
-    from novel_to_comic.stages.s7_draw import _find_style_sample
-    style_sample = _find_style_sample(project_dir, regen_config.style_template)
-    panel_request = await prepare_panel_request(
-        regen_config,
-        project_dir,
-        prompt_path,
-        style_sample=style_sample,
+    if prepared_request_id:
+        # A prepared request already contains the exact semantic and provider
+        # inputs. Recompile only the current persisted projection to detect
+        # staleness; never hydrate missing derived fields during consumption.
+        regen_config, panel_request = _compile_panel_projection(
+            project_dir,
+            config,
+            scene_id,
+            panel_number,
+            image_model_alias,
+        )
+        style_sample = None
+    else:
+        style_sample = None
+        from novel_to_comic.stages.s7_draw import _find_style_sample
+        style_sample = _find_style_sample(project_dir, regen_config.style_template)
+        panel_request = await prepare_panel_request(
+            regen_config,
+            project_dir,
+            prompt_path,
+            style_sample=style_sample,
+        )
+    request_idempotency_key = (
+        f"panel_regen:{scene_id}:{panel_number}:{panel_request.wire.execution_fingerprint}"
     )
+    if prepared_request_id:
+        try:
+            prepared = load_frozen_request(project_dir, prepared_request_id)
+        except FrozenRequestNotFound as exc:
+            raise HTTPException(404, "Prepared generation request not found") from exc
+        except FrozenRequestError as exc:
+            raise HTTPException(409, "Prepared generation request failed integrity checks") from exc
+        if (
+            prepared.status == "invalidated"
+            or prepared.execution_fingerprint != panel_request.wire.execution_fingerprint
+        ):
+            raise HTTPException(409, "Prepared generation request is stale; prepare again")
+        request_idempotency_key = prepared.idempotency_key or prepared_request_id
     panel_estimate = estimate_panel_request(
         regen_config,
         project_dir,
@@ -785,7 +990,7 @@ async def regen_panel(
         debit_description=f"Model call: regenerate panel {scene_id}/{panel_number:03d}",
         semaphore=generation_semaphore_for_config(request.app, regen_config),
         estimate_credits=panel_estimate_credits,
-        idempotency_key=f"panel_regen:{scene_id}:{panel_number}:{panel_request.wire.execution_fingerprint}",
+        idempotency_key=request_idempotency_key,
     )
     job = submission.job
     created = submission.created
@@ -802,6 +1007,7 @@ async def regen_panel(
         "scene_id": scene_id,
         "panel_number": panel_number,
         "planned_panel_id": planned_panel_id,
+        "request_id": submission.request_id,
     }
 
 

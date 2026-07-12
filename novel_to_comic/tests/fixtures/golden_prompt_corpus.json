@@ -1,0 +1,231 @@
+{
+  "schema_version": 1,
+  "snapshot_policy": "Only canonical serialization and provider-wire fields whose byte stability is a contract are snapshotted. Diagnostics are asserted semantically and are excluded from request identity.",
+  "expectation_defaults": {
+    "active_entity_ids": "declared by required anchors and selected reference entity ids",
+    "active_state_ids": "declared by state/location_state when present; otherwise canonical",
+    "overlay_compatibility": "compatible unless the scenario explicitly exercises rejection",
+    "selected_references": "selected_roles are ordered and provider-bound in that order",
+    "dropped_references": "dropped_reasons are ordered diagnostics and never selected",
+    "warnings": [],
+    "errors": [],
+    "prompt_section_ownership": ["protected_anchors", "scene_direction", "reference_instructions", "system_constraints"],
+    "effective_geometry": {"width": 768, "height": 1344, "aspect": "9:16"},
+    "effective_controls": [],
+    "hash_effects": {
+      "source": "changes only for canonical or authoritative semantic input changes",
+      "selection": "changes only for selected reference semantics/order/digests",
+      "compiled": "changes for provider-independent semantic request changes",
+      "execution": "changes only for provider-affecting request/reference-byte changes",
+      "provenance": "changes for execution or diagnostic changes"
+    }
+  },
+  "review_findings": [
+    "protected_anchor_truncation",
+    "active_state_overrides_canonical_facts",
+    "wrong_location_state_substitution",
+    "dynamic_text_leakage",
+    "duplicate_owner_prose",
+    "reference_order_or_cap_drift",
+    "selected_bytes_cache_identity",
+    "frozen_request_mutation",
+    "preview_submission_parity",
+    "configured_vs_actual_model_identity"
+  ],
+  "scenarios": [
+    {
+      "id": "canonical_one_character_location",
+      "route": "image-reve",
+      "visible_subjects": 1,
+      "required_anchors": ["CHAR_MARA_CANONICAL_SENTINEL", "LOC_TAVERN_CANONICAL_SENTINEL"],
+      "selected_roles": ["subject", "location_plate"],
+      "dropped_reasons": [],
+      "required_concepts": ["full appearance", "architecture"],
+      "forbidden_concepts": ["ignore wardrobe"]
+    },
+    {
+      "id": "two_characters_plus_location",
+      "route": "image-reve",
+      "visible_subjects": 2,
+      "required_anchors": ["CHAR_MARA_CANONICAL_SENTINEL", "CHAR_RURIK_CANONICAL_SENTINEL", "LOC_TAVERN_CANONICAL_SENTINEL"],
+      "selected_roles": ["subject", "subject", "location_plate"],
+      "dropped_reasons": [],
+      "required_concepts": ["identity reference"],
+      "forbidden_concepts": []
+    },
+    {
+      "id": "three_characters_constrained_context",
+      "route": "image-reve",
+      "visible_subjects": 3,
+      "required_anchors": ["CHAR_MARA_CANONICAL_SENTINEL", "CHAR_RURIK_CANONICAL_SENTINEL", "CHAR_IVO_CANONICAL_SENTINEL", "LOC_TAVERN_CANONICAL_SENTINEL", "PROP_KEY_CRITICAL_SENTINEL"],
+      "selected_roles": ["subject", "subject", "subject", "prop"],
+      "dropped_reasons": ["provider_cap"],
+      "required_concepts": ["identity reference", "object reference"],
+      "forbidden_concepts": []
+    },
+    {
+      "id": "four_characters_location_overflow",
+      "route": "image-reve",
+      "visible_subjects": 4,
+      "required_anchors": ["CHAR_MARA_CANONICAL_SENTINEL", "CHAR_RURIK_CANONICAL_SENTINEL", "CHAR_IVO_CANONICAL_SENTINEL", "CHAR_NELL_CANONICAL_SENTINEL", "LOC_TAVERN_CANONICAL_SENTINEL"],
+      "selected_roles": ["subject", "subject", "subject", "subject"],
+      "dropped_reasons": ["provider_cap"],
+      "overflow_policy": "location remains text-only when all subject slots are required",
+      "required_concepts": ["provider cap"],
+      "forbidden_concepts": ["silent omission"]
+    },
+    {
+      "id": "subject_count_beyond_route_cap",
+      "route": "image-reve",
+      "visible_subjects": 5,
+      "required_anchors": ["CHAR_MARA_CANONICAL_SENTINEL", "CHAR_RURIK_CANONICAL_SENTINEL", "CHAR_IVO_CANONICAL_SENTINEL", "CHAR_NELL_CANONICAL_SENTINEL", "CHAR_ORA_OVERFLOW_SENTINEL"],
+      "selected_roles": ["subject", "subject", "subject", "subject"],
+      "dropped_reasons": ["provider_cap"],
+      "overflow_policy": "overflow subject remains a named text-only generation requirement",
+      "required_concepts": ["provider cap"],
+      "forbidden_concepts": ["silent omission"]
+    },
+    {
+      "id": "minor_wardrobe_only_state",
+      "route": "image-reve",
+      "visible_subjects": 1,
+      "state": "raincoat",
+      "required_anchors": ["STATE_MARA_RAINCOAT_SENTINEL"],
+      "selected_roles": ["subject"],
+      "authority": "identity_only",
+      "ignore_facets": ["wardrobe", "anatomy"],
+      "required_concepts": ["preserve only face, hair, build", "ignore wardrobe"],
+      "forbidden_concepts": ["canonical wardrobe is authoritative"]
+    },
+    {
+      "id": "major_age_anatomy_hair_injury_state",
+      "route": "image-reve",
+      "visible_subjects": 1,
+      "state": "battle_wounded_adult",
+      "required_anchors": ["STATE_MARA_MAJOR_SENTINEL"],
+      "selected_roles": ["subject"],
+      "authority": "full_appearance",
+      "ignore_facets": [],
+      "required_concepts": ["match face, hair, build, wardrobe and anatomy"],
+      "forbidden_concepts": ["default outfit"]
+    },
+    {
+      "id": "restored_canonical_equivalent_state",
+      "route": "image-reve",
+      "visible_subjects": 1,
+      "state": "restored",
+      "canonical_equivalent": true,
+      "required_anchors": ["STATE_MARA_RESTORED_SENTINEL"],
+      "selected_roles": ["subject"],
+      "authority": "full_appearance",
+      "required_concepts": ["identity reference"],
+      "forbidden_concepts": []
+    },
+    {
+      "id": "location_time_weather_damage_collapse_water",
+      "route": "image-reve",
+      "visible_subjects": 0,
+      "location_state": "collapsed_storm_flooded_night",
+      "required_anchors": ["LOC_TAVERN_COLLAPSED_STORM_FLOODED_NIGHT_SENTINEL"],
+      "selected_roles": ["location_plate"],
+      "required_concepts": ["active damage", "weather", "time-of-day", "water level"],
+      "forbidden_concepts": ["canonical location state wins"]
+    },
+    {
+      "id": "missing_unverified_stale_state_assets",
+      "route": "image-reve",
+      "visible_subjects": 1,
+      "required_anchors": ["STATE_MARA_MISSING_SENTINEL"],
+      "selected_roles": ["subject", "location_plate"],
+      "dropped_reasons": ["missing", "stale_lineage"],
+      "warnings": ["unverified_lineage"],
+      "required_concepts": ["state conflict"],
+      "forbidden_concepts": ["silent fallback"]
+    },
+    {
+      "id": "recurring_critical_and_noncritical_props",
+      "route": "image-reve",
+      "visible_subjects": 1,
+      "required_anchors": ["PROP_KEY_CRITICAL_SENTINEL", "PROP_CUP_NONCRITICAL_SENTINEL"],
+      "selected_roles": ["subject", "prop"],
+      "dropped_reasons": ["lower_priority"],
+      "required_concepts": ["critical prop"],
+      "forbidden_concepts": []
+    },
+    {
+      "id": "dynamic_story_text_is_not_image_text",
+      "route": "image-balanced",
+      "visible_subjects": 0,
+      "dynamic_fields": ["narration", "dialogue", "sfx", "sign"],
+      "required_anchors": ["LOC_TAVERN_CANONICAL_SENTINEL"],
+      "selected_roles": [],
+      "required_concepts": ["no lettering"],
+      "forbidden_concepts": ["OPEN NOW", "KRAK", "Mara says"]
+    },
+    {
+      "id": "compatible_match_cut_continuity",
+      "route": "image-reve",
+      "visible_subjects": 1,
+      "continuity": "compatible",
+      "required_anchors": ["CHAR_MARA_CANONICAL_SENTINEL"],
+      "selected_roles": ["subject", "continuity"],
+      "required_concepts": ["visual continuity reference"],
+      "forbidden_concepts": []
+    },
+    {
+      "id": "incompatible_match_cut_continuity",
+      "route": "image-reve",
+      "visible_subjects": 1,
+      "continuity": "incompatible_state_change",
+      "required_anchors": ["STATE_MARA_MAJOR_SENTINEL"],
+      "selected_roles": ["subject"],
+      "dropped_reasons": [],
+      "required_concepts": ["state conflict"],
+      "forbidden_concepts": ["visual continuity reference"]
+    },
+    {
+      "id": "manual_semantic_edit",
+      "route": "image-reve",
+      "edit": "semantic",
+      "required_anchors": ["CHAR_MARA_CANONICAL_SENTINEL"],
+      "selected_roles": [],
+      "required_concepts": ["visual_brief invalidated", "layout invalidated"],
+      "forbidden_concepts": []
+    },
+    {
+      "id": "manual_layout_only_edit",
+      "route": "image-reve",
+      "edit": "layout_only",
+      "required_anchors": ["CHAR_MARA_CANONICAL_SENTINEL"],
+      "selected_roles": [],
+      "required_concepts": ["visual_brief preserved", "layout preserved"],
+      "forbidden_concepts": []
+    },
+    {
+      "id": "instructed_edit",
+      "route": "image-reve",
+      "edit": "instructed",
+      "required_anchors": ["CHAR_MARA_CANONICAL_SENTINEL"],
+      "selected_roles": [],
+      "required_concepts": ["visual_brief invalidated", "layout invalidated"],
+      "forbidden_concepts": []
+    },
+    {
+      "id": "selected_reference_replaced_same_path",
+      "route": "image-reve",
+      "selected_roles": ["subject"],
+      "required_anchors": ["CHAR_MARA_CANONICAL_SENTINEL"],
+      "required_concepts": ["selected bytes change execution identity"],
+      "forbidden_concepts": [],
+      "hash_effects": {"compiled": "changes", "execution": "changes", "provenance": "changes"}
+    },
+    {
+      "id": "equivalent_aliases_same_route",
+      "aliases": ["image-fast", "image-balanced"],
+      "required_anchors": [],
+      "selected_roles": [],
+      "required_concepts": ["GEMINI_FLASH_LITE", "configured provider model"],
+      "forbidden_concepts": ["GPT Image 2"]
+    }
+  ]
+}

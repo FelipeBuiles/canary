@@ -19,7 +19,13 @@ from novel_to_comic.provider_wire import (
     compile_provider_wire_request,
     materialize_wire_references,
 )
-from novel_to_comic.ai.providers.litellm_http import serialize_wire_request
+from novel_to_comic.ai.providers.litellm_http import (
+    _image_response_descriptor,
+    _raise_safe_decode_error,
+    _raise_safe_wire_phase_error,
+    _safe_decode_error_descriptor,
+    serialize_wire_request,
+)
 from litellm_handlers.provider_wire import (
     exact_vertex_contents,
     parse_provider_wire,
@@ -101,8 +107,49 @@ def test_litellm_wire_serialization_preserves_manifest_order_and_controls(tmp_pa
     wire = compile_provider_wire_request(_compiled(tmp_path, model=GATEWAY_IMAGE_BALANCED, count=2))
     params, files = serialize_wire_request(wire)
     assert params["prompt"] == wire.prompt_parts[0]
+    assert params["response_format"] == "b64_json"
     assert parse_provider_wire(params["canary_wire_request"])["execution_fingerprint"] == wire.execution_fingerprint
     assert [file[1][1] for file in files] == [b"ref-0", b"ref-1"]
+
+
+def test_image_response_descriptor_redacts_payloads_and_signed_url_query():
+    descriptor = _image_response_descriptor({
+        "data": [{
+            "b64_json": "secret-image-bytes",
+            "url": "https://storage.example/var/image.png?token=secret",
+            "revised_prompt": "safe",
+        }],
+        "model": "provider/model",
+    })
+
+    assert descriptor == {
+        "response_keys": ["data", "model"],
+        "item_keys": ["b64_json", "revised_prompt", "url"],
+        "b64_length": 18,
+        "url_scheme": "https",
+        "url_host": "storage.example",
+    }
+    assert "secret" not in str(descriptor)
+
+
+def test_decode_error_descriptor_never_includes_exception_message():
+    error = OSError(20, "Not a directory: signed-token=secret")
+    descriptor = _safe_decode_error_descriptor(error)
+    assert descriptor == {"error_type": "NotADirectoryError", "errno": 20}
+    assert "secret" not in str(descriptor)
+
+    with pytest.raises(ValueError) as raised:
+        _raise_safe_decode_error({"data": [{"url": "https://example/x?secret=1"}]}, error)
+    assert raised.value.__cause__ is None
+    assert "secret" not in str(raised.value)
+
+    with pytest.raises(ValueError) as phase_error:
+        _raise_safe_wire_phase_error("gateway_request", error)
+    assert phase_error.value.__cause__ is None
+    assert str(phase_error.value) == (
+        'wire image transport failed ({"errno": 20, '
+        '"error_type": "NotADirectoryError", "phase": "gateway_request"})'
+    )
 
 
 def test_isolated_handler_rejects_reordered_or_changed_uploads(tmp_path: Path):

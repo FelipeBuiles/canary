@@ -24,6 +24,7 @@ from novel_to_comic.image_provenance import (
     common_image_provenance,
     failed_image_provenance,
 )
+from novel_to_comic.generation_request_preview import compiled_request_context
 from novel_to_comic.image_references import (
     AuthorityScope,
     ReferenceAsset,
@@ -158,7 +159,25 @@ def reference_plan_for_assets(config: Config, references: list[ReferenceAsset]) 
             ))
             continue
         selected.append(reference)
-    selected = selected[: profile.max_references]
+    if len(selected) > profile.max_references:
+        from novel_to_comic.image_references import DropReason, DroppedReference, SemanticCandidate
+
+        overflow = selected[profile.max_references:]
+        dropped.extend(
+            DroppedReference(
+                candidate=SemanticCandidate(
+                    path=reference.path,
+                    role=reference.role,
+                    entity_id=reference.entity_id,
+                    appearance_state_id=reference.appearance_state_id,
+                    label=reference.label,
+                ),
+                reason=DropReason.PROVIDER_CAP,
+                detail=f"route {profile.route.value} allows at most {profile.max_references} references",
+            )
+            for reference in overflow
+        )
+        selected = selected[: profile.max_references]
     return ReferencePlan(
         expected_route=profile.route,
         selected=tuple(selected),
@@ -348,7 +367,12 @@ async def submit_non_panel_request(
     semaphore: Any | None = None, estimate_credits: int = 0,
 ) -> NonPanelSubmission:
     if app is None:
-        frozen = submit_frozen_request(project_dir, request.wire, idempotency_key=idempotency_key)
+        frozen = submit_frozen_request(
+            project_dir,
+            request.wire,
+            idempotency_key=idempotency_key,
+            request_context=compiled_request_context(request.compiled),
+        )
         try:
             result = await execute_frozen_request(
                 project_dir=project_dir, request_id=frozen.request_id,
@@ -389,6 +413,7 @@ async def submit_non_panel_request(
         output_path=output_path, debit_description=debit_description,
         idempotency_key=idempotency_key, feature=feature, semaphore=semaphore,
         estimate_credits=estimate_credits, on_complete=_complete, on_failure=_failure,
+        request_context=compiled_request_context(request.compiled),
     )
     return NonPanelSubmission(
         job.payload["frozen_request_id"], request.wire.execution_fingerprint,

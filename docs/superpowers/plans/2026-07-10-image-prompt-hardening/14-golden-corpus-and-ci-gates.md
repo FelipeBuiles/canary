@@ -11,6 +11,26 @@ Create a compact deterministic scenario corpus and CI checks that fail whenever
 prompt ownership, alternate-state semantics, reference selection, provider wire,
 cache identity, freezing, or preview parity regresses—without calling a model.
 
+## Accepted corpus representation
+
+The corpus may combine compact scenario rows, shared expectation defaults, and
+scenario-to-executable-gate mappings. A scenario does not need to duplicate a
+complete standalone `expected` object when its semantics are enforced by a
+named deterministic gate and the shared defaults make ownership, geometry,
+controls, diagnostics, and hash rules explicit.
+
+Tests may reuse focused deterministic matrices from the existing test suite.
+They do not need to reconstruct every scenario exclusively from JSON, provided
+every corpus id maps to a collected executable gate and the release-blocker
+thresholds below remain directly asserted in CI.
+
+Exact golden snapshots are required only where byte stability is itself the
+contract, such as canonical serialization and portable provider wire. Reference
+selection, state semantics, diagnostics, and hash effects should normally use
+focused semantic assertions. Per-scenario hash declarations are required only
+for scenarios whose purpose is a hash-relevant mutation; the global source,
+selection, compiled, execution, and provenance invariants apply to all others.
+
 ## Required reading
 
 - Slices 00–13 handoffs, especially schema versions and canonical serializers
@@ -43,7 +63,8 @@ small explicit fixtures with reviewable expected semantics.
    - manual semantic edit, manual layout-only edit, and instructed edit;
    - selected reference replaced at the same path;
    - equivalent aliases resolving to the same configured route.
-2. For each scenario, state expected:
+2. Across each scenario row plus its shared expectation defaults and mapped
+   executable gate, state expected:
    - exact protected anchors;
    - active entity/state ids and overlay compatibility;
    - selected/dropped references, order, roles, scopes, and facets;
@@ -107,8 +128,12 @@ contracts to make snapshots easier to maintain.
 - All release-blocker thresholds pass without model/network calls.
 - Architecture tests guard the one-way IR -> plan -> compiler -> wire -> frozen
   request flow.
-- Full backend tests, Ruff, frontend tests/lint/build, and `git diff --check`
-  pass.
+- Every corpus fixture id maps to a collected deterministic gate. Shared
+  expectation defaults are acceptable; exhaustive per-row duplication is not
+  required.
+- Full backend tests, Ruff, frontend tests/build, and `git diff --check` pass.
+  Frontend lint must introduce no new findings; the documented pre-existing
+  repository baseline may remain when this slice changes no frontend code.
 
 ## Handoff to Slice 15
 

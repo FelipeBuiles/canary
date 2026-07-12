@@ -1,5 +1,11 @@
 # Canary — Detailed Agent Context
 
+The authoritative post-cutover image lifecycle, migration, storage, provider
+extension, and rollback contract is
+[`image-generation-lifecycle.md`](image-generation-lifecycle.md). Older prompt
+field descriptions below are historical/editing descriptions, not
+provider-bound authority.
+
 Detailed reference for agentic coding sessions. The root `AGENTS.md` stays
 compact. Open this file when work touches pipeline architecture, stage contracts,
 generation, assembly, or project artifacts.

@@ -35,6 +35,7 @@ from novel_to_comic.frozen_requests import (
 )
 from novel_to_comic.image_models import describe_image_model, image_model_profile_for_config
 from novel_to_comic.image_provenance import common_image_provenance
+from novel_to_comic.generation_request_preview import compiled_request_context
 from novel_to_comic.image_references import ReferencePlan
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.provider_wire import (
@@ -376,77 +377,6 @@ def panel_provenance(
         failure=failure,
         project_dir=project_dir,
     )
-    # The legacy implementation below is retained only as a source reference
-    # for the panel migration and is unreachable; all callers use the common
-    # non-panel-compatible envelope above.
-    selected = []
-    for index, asset in enumerate(getattr(reference_plan, "selected", ())):
-        path = str(asset.path)
-        if project_dir is not None:
-            try:
-                path = str(asset.path.relative_to(project_dir))
-            except ValueError:
-                pass
-        selected.append({
-            "index": index,
-            "path": path,
-            "role": asset.role,
-            "entity_id": asset.entity_id,
-            "appearance_state_id": asset.appearance_state_id,
-            "authority_scope": asset.authority_scope.value,
-            "preserve_facets": list(asset.preserve_facets),
-            "ignore_facets": list(asset.ignore_facets),
-            "content_sha256": asset.content_sha256,
-        })
-    dropped = []
-    for drop in getattr(reference_plan, "dropped", ()):
-        candidate = drop.candidate
-        dropped.append({
-            "role": candidate.role,
-            "entity_id": candidate.entity_id,
-            "reason": drop.reason.value,
-            "detail": _redact_diagnostic(drop.detail, project_dir),
-        })
-    envelope: dict[str, Any] = {
-        "schema_version": PANEL_PROVENANCE_SCHEMA_VERSION,
-        "compiled_request_schema_version": COMPILED_REQUEST_SCHEMA_VERSION,
-        "prepared_prompt_source_sha256": prompt_source_sha256,
-        "compiled_request_sha256": compiled_sha256,
-        "provider_wire_schema_version": getattr(wire, "schema_version", PROVIDER_WIRE_SCHEMA_VERSION),
-        "frozen_request_preparation_version": FROZEN_REQUEST_PREPARATION_VERSION,
-        "frozen_request_source_version": FROZEN_REQUEST_SOURCE_VERSION,
-        "frozen_request_version": FROZEN_REQUEST_VERSION,
-        "request_id": request_id,
-        "execution_fingerprint": wire.execution_fingerprint,
-        "reference_selection_fingerprint": getattr(reference_plan, "selection_fingerprint", None),
-        "selected_references": selected,
-        "dropped_candidates": dropped,
-        "warnings": [
-            _redact_diagnostic(warning, project_dir)
-            for warning in getattr(reference_plan, "warnings", ())
-        ],
-        "requested_alias": wire.requested_alias,
-        "expected_route": wire.expected_route,
-        "configured_provider_model": wire.configured_provider_model,
-        "actual_provider_model": actual_provider_model,
-        "requested_dimensions": {"width": wire.width, "height": wire.height},
-        "effective_dimensions": {"width": wire.width, "height": wire.height},
-        "actual_dimensions": {"width": actual_width, "height": actual_height},
-        "provider_request_id": provider_request_id,
-        "latency_ms": latency_ms,
-        "cost_usd": cost_usd,
-        "failure": failure,
-        # Timestamps are useful diagnostics but are excluded from the stable
-        # record identity below.
-        "started_at": started_at or datetime.now(UTC).isoformat(),
-    }
-    hash_projection = {key: value for key, value in envelope.items() if key not in {"started_at", "latency_ms"}}
-    envelope["provenance_record_hash"] = hashlib.sha256(
-        json.dumps(hash_projection, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
-    ).hexdigest()
-    return envelope
-
-
 def panel_failure_provenance(
     error: BaseException, project_dir: Path | None = None,
 ) -> dict[str, Any]:
@@ -511,53 +441,6 @@ def wire_provenance(
         cost_usd=cost_usd,
         failure=failure,
     )
-    # Unreachable legacy serialization is left below only to minimize this
-    # migration's diff; callers return through the common helper above.
-    record: dict[str, Any] = {
-        "schema_version": PANEL_PROVENANCE_SCHEMA_VERSION,
-        "compiled_request_schema_version": COMPILED_REQUEST_SCHEMA_VERSION,
-        "provider_wire_schema_version": wire.schema_version,
-        "frozen_request_preparation_version": FROZEN_REQUEST_PREPARATION_VERSION,
-        "frozen_request_source_version": FROZEN_REQUEST_SOURCE_VERSION,
-        "frozen_request_version": FROZEN_REQUEST_VERSION,
-        "request_id": request_id,
-        "execution_fingerprint": wire.execution_fingerprint,
-        "compiled_request_sha256": wire.compiled_request_sha256,
-        "selected_references": [
-            {
-                "index": ref.index,
-                "role": ref.role,
-                "entity_id": ref.entity_id,
-                "appearance_state_id": ref.appearance_state_id,
-                "authority_scope": ref.authority_scope,
-                "preserve_facets": list(ref.preserve_facets),
-                "ignore_facets": list(ref.ignore_facets),
-                "content_sha256": ref.content_sha256,
-            }
-            for ref in wire.references
-        ],
-        "dropped_candidates": [],
-        "warnings": [],
-        "requested_alias": wire.requested_alias,
-        "expected_route": wire.expected_route,
-        "configured_provider_model": wire.configured_provider_model,
-        "actual_provider_model": actual_provider_model,
-        "requested_dimensions": {"width": wire.width, "height": wire.height},
-        "effective_dimensions": {"width": wire.width, "height": wire.height},
-        "actual_dimensions": {"width": actual_width, "height": actual_height},
-        "provider_request_id": provider_request_id,
-        "latency_ms": None,
-        "cost_usd": cost_usd,
-        "failure": failure,
-        "started_at": datetime.now(UTC).isoformat(),
-    }
-    projection = {key: value for key, value in record.items() if key != "started_at"}
-    record["provenance_record_hash"] = hashlib.sha256(
-        json.dumps(projection, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
-    ).hexdigest()
-    return record
-
-
 def apply_panel_experiment(
     wire: ProviderWireRequest, experiment_inputs: dict[str, Any] | None,
 ) -> ProviderWireRequest:
@@ -688,7 +571,11 @@ async def submit_panel_request(
 ) -> PanelSubmission:
     """Freeze one request, then either enqueue or execute that frozen request."""
     if app is None:
-        frozen = submit_frozen_request(project_dir, request.wire)
+        frozen = submit_frozen_request(
+            project_dir,
+            request.wire,
+            request_context=compiled_request_context(request.compiled),
+        )
         result = await execute_frozen_request(
             project_dir=project_dir,
             request_id=frozen.request_id,
@@ -744,6 +631,7 @@ async def submit_panel_request(
         estimate_credits=estimate_credits,
         on_complete=_complete,
         on_failure=_failure,
+        request_context=compiled_request_context(request.compiled),
     )
     return PanelSubmission(
         request_id=job.payload.get("frozen_request_id"),

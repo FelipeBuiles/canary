@@ -30,7 +30,7 @@ from typing import Any
 
 from novel_to_comic import artifacts
 from novel_to_comic.models.panel import PanelBreakdown
-from novel_to_comic.models.prompt import ImagePrompt, PromptOverlayOp, PromptSubject
+from novel_to_comic.models.prompt import ImagePrompt, PromptLayout, PromptOverlayOp, PromptSubject
 from novel_to_comic.prompt_assembly import rerender_prompt_body
 from novel_to_comic.prompting import generate_distilled_prompt
 
@@ -143,7 +143,11 @@ def apply_prompt_patch(prompt: ImagePrompt, patch: dict[str, Any]) -> ImagePromp
             new_overlays.extend(_subject_overlay_ops(prompt.subjects, new_subjects))
             updated.subjects = new_subjects
         elif key == "layout":
-            updated.layout = value
+            updated.layout = (
+                value.model_copy(deep=True)
+                if isinstance(value, PromptLayout)
+                else PromptLayout.model_validate(value)
+            )
         else:
             setattr(updated, key, value)
             new_overlays.append(PromptOverlayOp(

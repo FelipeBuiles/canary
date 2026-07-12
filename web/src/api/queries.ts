@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listProjects, getProjectStatus, createProject, deleteProject, generateProjectCover, listShortStories, importStory } from "./projects";
-import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenStateRef, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate, getCharacterRefVersions, restoreCharacterRefVersion } from "./pipeline";
+import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenStateRef, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate, getCharacterRefVersions, restoreCharacterRefVersion, previewGenerationRequest, prepareGenerationRequest, getGenerationRequest } from "./pipeline";
 import type { ConfigOverrides, StoryBible, ProjectStatus, StageInfo, ImageStatus, CreditBalance, CostEstimate } from "../types/api";
 import { reconcileStatusPoll } from "../lib/stageProgress";
 import { getBalance, getCreditHistory, getPricingReference } from "./credits";
@@ -252,14 +252,56 @@ export function useRegenPanel() {
       sceneId,
       panelNumber,
       imageModelAlias,
+      preparedRequestId,
     }: {
       project: string;
       sceneId: string;
       panelNumber: number;
       imageModelAlias?: string | null;
-    }) => regenPanel(project, sceneId, panelNumber, imageModelAlias),
+      preparedRequestId?: string | null;
+    }) => regenPanel(project, sceneId, panelNumber, imageModelAlias, preparedRequestId),
     // No cache invalidation here — DrawRoom detects completion via images polling
     // and busts the cache itself to avoid the panel disappearing mid-regen.
+  });
+}
+
+export function useGenerationRequestPreview(
+  project: string | undefined,
+  sceneId: string | undefined,
+  panelNumber: number | undefined,
+  imageModelAlias?: string | null,
+  devContent = false,
+  preparedRequestId?: string | null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["project", project, "generation-request-preview", sceneId, panelNumber, imageModelAlias ?? "", preparedRequestId ?? "", devContent],
+    queryFn: () => previewGenerationRequest(project!, sceneId!, panelNumber!, imageModelAlias, devContent, preparedRequestId),
+    enabled: !!project && !!sceneId && panelNumber != null && enabled,
+    staleTime: 5_000,
+  });
+}
+
+export function useGenerationRequest(
+  project: string | undefined,
+  requestId: string | null | undefined,
+  devContent = false,
+) {
+  return useQuery({
+    queryKey: ["project", project, "generation-request", requestId, devContent],
+    queryFn: () => getGenerationRequest(project!, requestId!, devContent),
+    enabled: !!project && !!requestId,
+  });
+}
+
+export function usePrepareGenerationRequest() {
+  return useMutation({
+    mutationFn: ({ project, sceneId, panelNumber, imageModelAlias }: {
+      project: string;
+      sceneId: string;
+      panelNumber: number;
+      imageModelAlias?: string | null;
+    }) => prepareGenerationRequest(project, sceneId, panelNumber, imageModelAlias),
   });
 }
 

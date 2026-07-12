@@ -8,6 +8,9 @@ import { LazyImage } from "./ui/LazyImage";
 import { ConfirmDrawer } from "./composites";
 import {
   usePanelImageVersions,
+  useGenerationRequest,
+  useGenerationRequestPreview,
+  usePrepareGenerationRequest,
   useProjectConfig,
   usePromptsForScene,
   useRegenEstimate,
@@ -391,6 +394,19 @@ function PromptTabContent({
   const [confirmGenerate, setConfirmGenerate] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [showDevContent] = useShowDevContent();
+  const [preparedRequestId, setPreparedRequestId] = useState<string | null>(null);
+  const [submittedRequestId, setSubmittedRequestId] = useState<string | null>(null);
+  const requestPreview = useGenerationRequestPreview(
+    project,
+    sceneId,
+    panelNumber,
+    imageModelAlias,
+    showDevContent,
+    preparedRequestId,
+    true,
+  );
+  const submittedRequest = useGenerationRequest(project, submittedRequestId, showDevContent);
+  const prepareRequest = usePrepareGenerationRequest();
   const updatePrompt = useUpdatePrompt();
   const regenPanel = useRegenPanel();
   const begin = useRegenStore((s) => s.begin);
@@ -413,12 +429,17 @@ function PromptTabContent({
     let startedRegen = false;
     try {
       const fields = diffAuthoritativeFields(originalPrompt, draft);
-      await updatePrompt.mutateAsync({ project, sceneId, panelNumber, fields });
+      const requestId = fields && Object.keys(fields).length === 0 ? preparedRequestId : null;
+      setPreparedRequestId(null);
+      if (Object.keys(fields).length > 0) {
+        await updatePrompt.mutateAsync({ project, sceneId, panelNumber, fields });
+      }
       queryClient.invalidateQueries({ queryKey: ["project", project, "direct", sceneId] });
       begin(project, key);
       startedRegen = true;
-      const data = await regenPanel.mutateAsync({ project, sceneId, panelNumber, imageModelAlias });
+      const data = await regenPanel.mutateAsync({ project, sceneId, panelNumber, imageModelAlias, preparedRequestId: requestId });
       attachJob(project, key, data.job);
+      setSubmittedRequestId(data.request_id ?? data.job.payload.frozen_request_id as string | undefined ?? null);
       onGenerateFromDraft();
     } catch (err) {
       if (
@@ -462,10 +483,53 @@ function PromptTabContent({
         aspectRatio={draft.width && draft.height ? draft.width / draft.height : 1.5}
         onChange={(layout) => onDraftChange({ layout })}
       />
-      {hasChanges && (
+      {(hasChanges || preparedRequestId) && (
         <Button className="w-full" onClick={() => setConfirmGenerate(true)} disabled={isGenerating}>
-          {isGenerating ? "SAVING…" : `Generate from edits · ${creditsLabel}`}
+          {isGenerating ? "SAVING…" : `${hasChanges ? "Generate from edits" : "Generate prepared request"} · ${creditsLabel}`}
         </Button>
+      )}
+
+      {showDevContent && (
+        <div className="border-t-[2px] border-panel-line pt-3">
+          <div className="font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/45">REQUEST INSPECTION</div>
+          <div className="mt-2 text-xs">
+            <span className="font-semibold">{submittedRequest.data?.state_label ?? requestPreview.data?.state_label ?? "Draft projection"}</span>
+            <span className="ml-2 text-ink-black/55">
+              {(submittedRequest.data ?? requestPreview.data)?.exact ? "exact frozen request" : "free projection — not exact"}
+            </span>
+          </div>
+          {!submittedRequest.data && !requestPreview.data?.exact && (
+            <Button
+              className="mt-3 w-full"
+              variant="secondary"
+              disabled={prepareRequest.isPending}
+              onClick={() => prepareRequest.mutate(
+                { project, sceneId, panelNumber, imageModelAlias },
+                { onSuccess: (data) => setPreparedRequestId(data.request_id ?? null) },
+              )}
+            >
+              {prepareRequest.isPending ? "PREPARING…" : "Prepare exact request (no image call)"}
+            </Button>
+          )}
+          {(submittedRequest.data ?? requestPreview.data)?.accounting && (
+            <p className="mt-2 text-[0.68rem] text-ink-black/55">
+              Estimated on submit: ~{(submittedRequest.data ?? requestPreview.data)?.accounting?.estimated_credits} credits. Preparation does not reserve or spend credits.
+            </p>
+          )}
+          {(submittedRequest.data ?? requestPreview.data)?.provider_wire && (
+            <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap bg-bristol p-3 font-mono text-[0.65rem] leading-relaxed">
+              {JSON.stringify({
+                semantic_prompt: (submittedRequest.data ?? requestPreview.data)?.semantic_prompt,
+                provider_wire: (submittedRequest.data ?? requestPreview.data)?.provider_wire,
+                references: (submittedRequest.data ?? requestPreview.data)?.references,
+                dropped_references: (submittedRequest.data ?? requestPreview.data)?.dropped_references,
+                geometry: (submittedRequest.data ?? requestPreview.data)?.geometry,
+                controls: (submittedRequest.data ?? requestPreview.data)?.controls,
+                provenance: (submittedRequest.data ?? requestPreview.data)?.provenance,
+              }, null, 2)}
+            </pre>
+          )}
+        </div>
       )}
 
       <div className="border-t-[2px] border-panel-line pt-3">
@@ -474,8 +538,9 @@ function PromptTabContent({
           onClick={() => setShowRaw(!showRaw)}
           className="flex items-center gap-2 font-meta text-[0.58rem] tracking-[0.16em] text-ink-black/45 hover:text-ink-black"
         >
-          {showRaw ? "▲" : "▼"} ASSEMBLED PROMPT
+          {showRaw ? "▲" : "▼"} DRAFT PROMPT PROJECTION
         </button>
+        <p className="mt-1 text-[0.68rem] text-ink-black/45">Free projection from the current edit; it is not the submitted wire request.</p>
         {showRaw && (
           <pre className="mt-2 whitespace-pre-wrap border-[2px] border-ink-black/15 bg-bristol p-3 font-mono text-xs leading-relaxed text-ink-black">
             {visibleRaw}

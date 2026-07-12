@@ -41,66 +41,42 @@ REVE_ASPECT_RATIOS = {
 
 _ROLE_PREFIX = "__role_"
 _ROLE_SEP = "__"
-
 _GENERIC_STEMS = frozenset({
     "image", "img", "photo", "reference", "ref", "portrait", "figure",
     "asset", "texture", "render", "file", "input", "output", "result",
     "sample", "test", "temp", "tmp", "character", "char", "subject",
 })
 
-
 def _log_request(url: str, api_key: str | None, payload: dict[str, Any]) -> None:
     import sys
     import json
-    sys.stderr.write("\n=== [REVE API CALL START] ===\n")
-    sys.stderr.write(f"URL: {url}\n")
-    headers = _headers(api_key)
-    logged_headers = {k: ("***REDACTED***" if k.lower() == "authorization" else v) for k, v in headers.items()}
-    sys.stderr.write(f"Headers: {json.dumps(logged_headers)}\n")
-    
-    logged_payload = payload.copy()
-    if "reference_images" in logged_payload:
-        logged_payload["reference_images"] = [
-            f"<Base64 String, length={len(r)}>" for r in logged_payload["reference_images"]
-        ]
-    if "references" in logged_payload:
-        logged_payload["references"] = [
-            {
-                "image": f"<Base64 String, length={len((r.get('image') or {}).get('data') or '')}>",
-                "prompt": r.get("prompt"),
-            }
-            for r in logged_payload["references"]
-        ]
-    sys.stderr.write(f"Payload: {json.dumps(logged_payload, indent=2)}\n")
-    sys.stderr.write("==============================\n\n")
+    _headers(api_key)  # Validate configuration without logging the credential.
+    descriptor = {
+        "endpoint": url.rsplit("/", 1)[-1],
+        "prompt_length": len(str(payload.get("prompt") or "")),
+        "reference_count": len(payload.get("reference_images") or []),
+        "aspect_ratio": payload.get("aspect_ratio"),
+        "control_keys": sorted(
+            key for key in payload
+            if key not in {"prompt", "reference_images", "references", "aspect_ratio"}
+        ),
+    }
+    sys.stderr.write(f"REVE request {json.dumps(descriptor, sort_keys=True)}\n")
     sys.stderr.flush()
 
 
 def _log_response(response: httpx.Response) -> None:
     import sys
     import json
-    sys.stderr.write("=== [REVE API CALL RESPONSE] ===\n")
-    sys.stderr.write(f"Status Code: {response.status_code}\n")
+    descriptor: dict[str, Any] = {"status_code": response.status_code}
     try:
         resp_data = response.json()
-        logged_resp = resp_data.copy() if isinstance(resp_data, dict) else resp_data
-        if isinstance(logged_resp, dict):
-            for key_to_redact in ("images", "data"):
-                if key_to_redact in logged_resp:
-                    items = logged_resp[key_to_redact]
-                    if isinstance(items, list):
-                        logged_resp[key_to_redact] = [
-                            {k: ("<Base64 Redacted>" if k in ("b64_json", "image") else v) for k, v in item.items()}
-                            if isinstance(item, dict) else item
-                            for item in items
-                        ]
-            for key_to_redact in ("b64_json", "image"):
-                if key_to_redact in logged_resp:
-                    logged_resp[key_to_redact] = "<Base64 Redacted>"
-        sys.stderr.write(f"JSON Response: {json.dumps(logged_resp, indent=2)}\n")
+        descriptor["response_keys"] = (
+            sorted(resp_data) if isinstance(resp_data, dict) else []
+        )
     except Exception:
-        sys.stderr.write(f"Raw Response: {response.text[:1000]}...\n")
-    sys.stderr.write("=================================\n\n")
+        descriptor["response_json"] = False
+    sys.stderr.write(f"REVE response {json.dumps(descriptor, sort_keys=True)}\n")
     sys.stderr.flush()
 
 
@@ -146,52 +122,25 @@ class ReveLLM(CustomLLM):
         client: Any | None = None,  # noqa: ARG002
         **kwargs: Any,
     ) -> ImageResponse:
-        wire_manifest = None
         wire_payload = optional_params.get("canary_wire_request")
-        if wire_payload:
-            from litellm_handlers.provider_wire import parse_provider_wire
+        if not wire_payload:
+            raise ValueError("Reve image requests require canary_wire_request")
+        from litellm_handlers.provider_wire import parse_provider_wire
 
-            wire_manifest = parse_provider_wire(wire_payload)
-        size = optional_params.get("size") or kwargs.get("size")
-        aspect_ratio = _map_aspect_ratio(size)
-
-        # When the caller supplied exact dimensions, use them to pick the
-        # closest supported aspect ratio (more precise than the
-        # OpenAI-bucketed `size`). Reve has no exact-pixel sizing knob.
-        width = optional_params.get("canary_requested_width") or kwargs.get("canary_requested_width")
-        height = optional_params.get("canary_requested_height") or kwargs.get("canary_requested_height")
-        if wire_manifest:
-            aspect_ratio = wire_manifest.get("structured_aspect") or aspect_ratio
-        elif width and height:
-            aspect_ratio = _map_aspect_ratio(f"{int(width)}x{int(height)}")
+        wire_manifest = parse_provider_wire(wire_payload)
+        aspect_ratio = wire_manifest.get("structured_aspect") or "1:1"
 
         # v1 create. The v2 layout-aware endpoint is gated behind the Reve
         # partner feature `partnerapi.layout_endpoint` (403 FEATURE_NOT_ENABLED
         # without it), so the gateway stays on v1. Note v1 has no exact-pixel
         # sizing — width/height are rejected as UNRECOGNIZED_PARAMETER;
         # aspect_ratio is the only sizing knob.
-        final_prompt = wire_manifest["prompt_parts"][0] if wire_manifest else (prompt or "")
-        # Reve accepts very long prompts; only truncate as a last resort
-        if not wire_manifest and len(final_prompt) > 8000:
-            final_prompt = final_prompt[:8000]
+        final_prompt = wire_manifest["prompt_parts"][0]
         payload: dict[str, Any] = {
             "prompt": final_prompt,
             "aspect_ratio": aspect_ratio,
         }
-        seed = None if wire_manifest else (optional_params.get("seed") or kwargs.get("seed"))
-        if seed is not None:
-            payload["seed"] = seed
-        steps = None if wire_manifest else (optional_params.get("steps") or kwargs.get("steps"))
-        if steps is not None:
-            payload["steps"] = int(steps)
-        quality = None if wire_manifest else (optional_params.get("quality") or kwargs.get("quality"))
-        if quality is not None:
-            payload["quality"] = quality
-        negative_prompt = None if wire_manifest else (
-            optional_params.get("negative_prompt") or kwargs.get("negative_prompt")
-        )
-        if negative_prompt is not None:
-            payload["negative_prompt"] = negative_prompt
+        payload.update(wire_manifest.get("controls") or {})
 
         request_timeout = timeout if timeout is not None else 300.0
         _log_request("https://api.reve.com/v1/image/create", api_key, payload)
@@ -268,63 +217,33 @@ class ReveLLM(CustomLLM):
         **kwargs: Any,
     ) -> ImageResponse:
         optional_params = optional_params or {}
-        size = optional_params.get("size") or kwargs.get("size")
-        aspect_ratio = _map_aspect_ratio(size)
-
         wire_payload = optional_params.get("canary_wire_request")
-        wire_manifest = None
-        if wire_payload:
-            from litellm_handlers.provider_wire import parse_provider_wire, verify_wire_images
+        if not wire_payload:
+            raise ValueError("Reve image requests require canary_wire_request")
+        from litellm_handlers.provider_wire import parse_provider_wire, verify_wire_images
 
-            wire_manifest = parse_provider_wire(wire_payload)
-            verify_wire_images(wire_manifest, image)
-            aspect_ratio = wire_manifest.get("structured_aspect") or aspect_ratio
+        wire_manifest = parse_provider_wire(wire_payload)
+        verify_wire_images(wire_manifest, image)
+        aspect_ratio = wire_manifest.get("structured_aspect") or "1:1"
 
         # v1 remix (the v2 layout endpoint is feature-gated, see
         # aimage_generation). References upload as a flat base64 list and the
         # prompt references them positionally via <img>N</img> instructions.
         reference_images: list[str] = []
-        prompt_injections: list[str] = []
-        wire_items = image if wire_manifest else image[:4]
-        for idx, item in enumerate(wire_items):
+        for idx, item in enumerate(image):
             b64_str = _image_to_base64(item)
             if not b64_str:
-                if wire_manifest:
-                    raise ValueError(f"ProviderWireRequest reference {idx} is unreadable")
-                continue
+                raise ValueError(f"ProviderWireRequest reference {idx} is unreadable")
             reference_images.append(b64_str)
-            if wire_manifest:
-                continue
-            filename = _item_filename(item)
-            role, bare = _parse_role_and_name(filename)
-            if role is None:
-                role = _heuristic_role(bare)
-            label = _extract_label_from_bare(role, bare)
-            prompt_injections.append(f"Use <img>{idx}</img>: {_role_reference_prompt(role, label)}")
 
-        final_prompt = wire_manifest["prompt_parts"][0] if wire_manifest else (prompt or "")
-        if not wire_manifest and "<img>" not in final_prompt and prompt_injections:
-            ref_block = "Reference images:\n" + "\n".join(prompt_injections) + "\n\n"
-            final_prompt = ref_block + final_prompt
-
-        # Reve accepts very long prompts; only truncate as a last resort,
-        # preserving the reference block when present.
-        if not wire_manifest and len(final_prompt) > 8000:
-            parts = final_prompt.split("\n\n", 1)
-            if len(parts) == 2 and parts[0].startswith("Reference images:"):
-                suffix = parts[0] + "\n\n"
-                final_prompt = suffix + parts[1][: 8000 - len(suffix)]
-            else:
-                final_prompt = final_prompt[:8000]
+        final_prompt = wire_manifest["prompt_parts"][0]
 
         payload: dict[str, Any] = {
             "prompt": final_prompt,
             "reference_images": reference_images,
             "aspect_ratio": aspect_ratio,
         }
-        seed = None if wire_manifest else (optional_params.get("seed") or kwargs.get("seed"))
-        if seed is not None:
-            payload["seed"] = seed
+        payload.update(wire_manifest.get("controls") or {})
 
         request_timeout = timeout if timeout is not None else 300.0
         _log_request("https://api.reve.com/v1/image/remix", api_key, payload)
@@ -359,23 +278,6 @@ class ReveLLM(CustomLLM):
         return model_response
 
 
-def _map_aspect_ratio(size: Any) -> str:
-    if not isinstance(size, str):
-        return "1:1"
-    match = re.match(r"^(\d+)x(\d+)$", size.lower().strip())
-    if not match:
-        return "1:1"
-    try:
-        width = int(match.group(1))
-        height = int(match.group(2))
-        ratio = width / height
-    except (ValueError, ZeroDivisionError):
-        return "1:1"
-
-    closest = min(REVE_ASPECT_RATIOS.keys(), key=lambda k: abs(REVE_ASPECT_RATIOS[k] - ratio))
-    return closest
-
-
 def _headers(api_key: str | None) -> dict[str, str]:
     key = (api_key or os.environ.get("REVE_API_KEY") or "").strip()
     if not key:
@@ -391,25 +293,6 @@ def _raise_for_status(response: httpx.Response) -> None:
         response.raise_for_status()
     except httpx.HTTPStatusError as e:
         raise ValueError(f"Reve API returned error {response.status_code}: {response.text}") from e
-
-
-def _role_reference_prompt(role: str, label: str) -> str:
-    if role == "subject":
-        name = label if label and label != "character" else None
-        return (
-            f"Character identity reference for {name} — match face, hair, build, and wardrobe; do not copy its pose or background."
-            if name
-            else "Character identity reference — match face, hair, build, and wardrobe; do not copy its pose or background."
-        )
-    if role == "style":
-        return "Art style reference — match this rendering style exactly."
-    if role == "location_plate":
-        return f"Location reference for {label}." if label else "Location reference."
-    if role == "prop":
-        return f"Object reference for {label}." if label else "Object reference."
-    if role == "continuity":
-        return "Previous panel — maintain visual continuity."
-    return "Reference image."
 
 
 def _raise_for_content_violation(data: Any) -> None:

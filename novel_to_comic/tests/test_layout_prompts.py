@@ -358,6 +358,7 @@ class TestReveLayoutProvider:
 # ── end-to-end client wiring ─────────────────────────────────────────────────
 
 
+@pytest.mark.skip(reason="direct Reve v2 raw transport was removed at clean cutover")
 def test_generate_image_with_layout_hits_v2_and_writes_echo_sidecar(monkeypatch, tmp_path):
     from novel_to_comic import artifacts
     from novel_to_comic.ai import client

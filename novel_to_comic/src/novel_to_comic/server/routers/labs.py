@@ -277,7 +277,7 @@ def import_project_scene(
             "idx": i,
             "label": f"Panel {p.panel_number}" + (f" — {p.scene_id}" if p.scene_id else ""),
             "prompt": getattr(p, "visual_brief", None) or distilled_prompt,
-            "prompt_variant_b": p.full_prompt or "",
+            "prompt_variant_b": "",
             # Exact replay of what S7 sends for this panel (style + brief +
             # refs + constraints). Run it with an EMPTY experiment style
             # template — the style section is already embedded.
