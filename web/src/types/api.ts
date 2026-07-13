@@ -120,6 +120,14 @@ export interface RegenCostEstimate extends CostEstimate {
   scene_id: string;
   panel_number: number;
   reserved_credits: null;
+  instruction_estimate?: CostEstimate;
+}
+
+export interface AssetRegenCostEstimate extends CostEstimate {
+  asset_type: "character" | "location" | "prop";
+  asset_id: string;
+  state_id: string | null;
+  instruction_estimate?: CostEstimate;
 }
 
 export interface CreditTransaction {
@@ -715,6 +723,7 @@ export interface ImageStatus {
 export interface ImageGenerationMeta {
   version: number;
   kind: string;
+  asset_identity?: string;
   prompt: string;
   prompt_sha256: string;
   parameters: Record<string, unknown>;
@@ -723,6 +732,14 @@ export interface ImageGenerationMeta {
   recoverable?: boolean;
   user_message?: string;
   recovery?: Record<string, unknown>;
+  provenance?: {
+    request_id?: string;
+    compiled_request_sha256?: string;
+    execution_fingerprint?: string;
+    effective_dimensions?: { width: number; height: number };
+    actual_provider_model?: string | null;
+    [key: string]: unknown;
+  };
   error?: {
     type?: string;
     message?: string;

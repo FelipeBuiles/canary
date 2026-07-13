@@ -15,9 +15,30 @@ from supabase import Client
 
 from novel_to_comic.config import Config
 from novel_to_comic.state import PipelineState
-from novel_to_comic.usage import UsageRecord, calculate_cost, calculate_cost_breakdown, estimate_image_cost, usage_has_billable_activity
+from novel_to_comic.usage import (
+    UsageRecord,
+    calculate_cost,
+    calculate_cost_breakdown,
+    estimate_image_cost,
+    estimate_text_cost,
+    usage_has_billable_activity,
+)
 
 CostConfidence = Literal["low_variance", "usually_within_estimate", "variable"]
+
+# Instructions are capped at 500 characters, but text preprocessing also
+# includes system rules and serialized patchable prompt/asset context. 32k
+# input characters conservatively covers those bounded schemas. Each call caps
+# output at 4096 tokens; 16,384 characters represents that full allowance under
+# the estimator's character-to-token conversion. Cast performs one addendum
+# rewrite. Panels may additionally rebuild the visual brief and layout after
+# the rewrite invalidates both, so draw reserves for all three possible calls.
+INSTRUCTION_REWRITE_INPUT_CHARS = 32_000
+INSTRUCTION_REWRITE_OUTPUT_CHARS = 16_384
+INSTRUCTION_TEXT_CALLS_BY_STAGE: dict[Literal["cast", "draw"], int] = {
+    "cast": 1,
+    "draw": 3,
+}
 
 log = logging.getLogger("canary.credits")
 
@@ -168,6 +189,37 @@ def estimate_stage_provider_cost_usd(
 
 
 class UnifiedCostResolver:
+    @staticmethod
+    def estimate_instructed_regen_cost(
+        config: Config,
+        image_estimate: CreditEstimate,
+        stage: Literal["cast", "draw"],
+    ) -> CreditEstimate:
+        """Add the separately billed prompt rewrite to an image estimate."""
+        text_credits = 0
+        for _ in range(INSTRUCTION_TEXT_CALLS_BY_STAGE[stage]):
+            rewrite_cost_usd = estimate_text_cost(
+                config.effective_prompt_model(),
+                INSTRUCTION_REWRITE_INPUT_CHARS,
+                output_chars=INSTRUCTION_REWRITE_OUTPUT_CHARS,
+            )
+            rewrite_estimate = credit_estimate_for_provider_cost(
+                rewrite_cost_usd,
+                stage,
+                reserve=False,
+                zero_cost_estimate=1,
+            )
+            text_credits += rewrite_estimate["estimate_credits"]
+        return CreditEstimate(
+            estimate_credits=(
+                image_estimate["estimate_credits"]
+                + text_credits
+            ),
+            reserved_credits=None,
+            reservation_multiplier=reservation_buffer(),
+            confidence="variable",
+        )
+
     @staticmethod
     def estimate_stage_cost(
         config: Config,

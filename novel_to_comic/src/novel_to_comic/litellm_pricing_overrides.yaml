@@ -16,9 +16,9 @@ aliases:
   panel-fast: vertex_ai/gemini-3.1-flash-lite-preview
   panel-balanced: vertex_ai/gemini-3.5-flash
   panel-quality: openai/gpt-5.4
-  prompt-fast: vertex_ai/gemini-3.1-flash-lite-preview
+  prompt-fast: vertex_ai/gemini-3.5-flash
   prompt-balanced: vertex_ai/gemini-3.5-flash
-  prompt-quality: vertex_ai/gemini-3.1-flash-lite-preview
+  prompt-quality: vertex_ai/gemini-3.5-flash
   image-fast: vertex_ai/gemini-3.1-flash-lite-image
   image-balanced: vertex_ai/gemini-3.1-flash-lite-image
   image-balanced-seedream-test: fal-ai/bytedance/seedream/v4.5/edit

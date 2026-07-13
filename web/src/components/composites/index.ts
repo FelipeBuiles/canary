@@ -9,9 +9,9 @@ export { ConfirmDrawer, type ConfirmDrawerProps } from "./ConfirmDrawer";
 export { ConfirmModal, type ConfirmModalProps } from "./ConfirmModal";
 export { RerunDrawer, type RerunDrawerProps } from "./RerunDrawer";
 export { RerunStageAction } from "./RerunStageAction";
+export { RegenAction } from "./RegenAction";
 export { RoomHeader } from "./RoomHeader";
 export { RoomShell } from "./RoomShell";
 export { SceneSidebar } from "./SceneSidebar";
 export { StagePlaceholder } from "./StagePlaceholder";
 export { WarningOverrideDrawer, type WarningOverrideDrawerProps } from "./WarningOverrideDrawer";
-

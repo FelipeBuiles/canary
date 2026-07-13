@@ -192,7 +192,15 @@ def list_prompts(project=Depends(get_project)):
     if not prompts_dir.exists():
         return []
     return [
-        {"scene_id": d.name, "prompt_count": len(list(d.glob("panel_*.json")))}
+        {
+            "scene_id": d.name,
+            "prompt_count": len(list(d.glob("panel_*.json"))),
+            "panel_numbers": sorted(
+                int(path.stem.removeprefix("panel_"))
+                for path in d.glob("panel_*.json")
+                if path.stem.removeprefix("panel_").isdigit()
+            ),
+        }
         for d in sorted(prompts_dir.iterdir())
         if d.is_dir() and list(d.glob("panel_*.json"))
     ]

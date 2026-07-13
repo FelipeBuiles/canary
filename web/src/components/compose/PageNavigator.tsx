@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { PageSummary } from "../../types/api";
+import { pagePreviewUrl } from "../../api/pages";
 
 interface PageNavigatorProps {
   project: string;
@@ -35,6 +36,9 @@ function pageThumbUrl(project: string, pageNumber: number, tick: number): string
 }
 
 const THUMB_RETRY_MS = 3000;
+const PAGE_W = 2480;
+const PAGE_H = 3508;
+const THUMB_SCALE = 124 / PAGE_W;
 
 function Thumb({
   project,
@@ -58,14 +62,31 @@ function Thumb({
   }, [failed, shouldRetry]);
 
   return (
-    <img
-      src={pageThumbUrl(project, pageNumber, tick)}
-      alt={`Page ${pageNumber} thumbnail`}
-      className="relative h-full w-full object-contain"
-      loading="lazy"
-      onLoad={() => setFailed(false)}
-      onError={() => setFailed(true)}
-    />
+    <>
+      <img
+        src={pageThumbUrl(project, pageNumber, tick)}
+        alt={`Page ${pageNumber} thumbnail`}
+        className={`${failed ? "hidden" : "relative"} h-full w-full object-contain`}
+        loading="lazy"
+        onLoad={() => setFailed(false)}
+        onError={() => setFailed(true)}
+      />
+      {failed && (
+        <iframe
+          src={pagePreviewUrl(project, pageNumber)}
+          title={`Page ${pageNumber} live preview`}
+          className="absolute left-0 top-0 border-0 bg-white"
+          style={{
+            width: PAGE_W,
+            height: PAGE_H,
+            transform: `scale(${THUMB_SCALE})`,
+            transformOrigin: "top left",
+          }}
+          tabIndex={-1}
+          loading="lazy"
+        />
+      )}
+    </>
   );
 }
 

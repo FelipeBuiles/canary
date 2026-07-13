@@ -66,28 +66,26 @@ model_list:
       api_key: os.environ/OPENAI_API_KEY
 
   # ─── Stage 5: image-prompt assembly (template filling) ────────────────────
-  # Prompt assembly is light rewriting (structured panel spec → prose), so all
-  # three presets use Flash-Lite with reasoning disabled. gemini-3.5-flash could
-  # NOT fully turn off thinking (~945 reasoning tokens even with
-  # reasoning_effort=disable) and leaked chain-of-thought into the brief;
-  # Flash-Lite emits zero reasoning tokens and an equivalent brief.
+  # Prompt assembly is light rewriting (structured panel spec → prose). Use the
+  # generally available Flash route here; the Flash-Lite preview model is not
+  # available in every Vertex project/region and caused style-stage failures.
   - model_name: prompt-fast
     litellm_params:
-      model: vertex_ai/gemini-3.1-flash-lite-preview
+      model: vertex_ai/gemini-3.5-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
       reasoning_effort: "disable"
   - model_name: prompt-balanced
     litellm_params:
-      model: vertex_ai/gemini-3.1-flash-lite-preview
+      model: vertex_ai/gemini-3.5-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
       reasoning_effort: "disable"
   - model_name: prompt-quality
     litellm_params:
-      model: vertex_ai/gemini-3.1-flash-lite-preview
+      model: vertex_ai/gemini-3.5-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off

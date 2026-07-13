@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
-import type { ImagePrompt } from "../types/api";
+import type { CostEstimate, ImagePrompt } from "../types/api";
 import { PromptLineageCard } from "./PromptLineageCard";
 import { LayoutSection } from "./LayoutRegionEditor";
 import { Button } from "./ui/Button";
 import { Icon } from "./ui/Icon";
 import { LazyImage } from "./ui/LazyImage";
-import { ConfirmDrawer } from "./composites";
+import { ConfirmDrawer, RegenAction } from "./composites";
 import {
   usePanelImageVersions,
   useGenerationRequest,
@@ -25,6 +25,7 @@ import { useRegenStore } from "../store/regen";
 import { maybeShowInsufficientCredits } from "../store/insufficientCredits";
 import { useQueryClient } from "@tanstack/react-query";
 import { Select } from "./ui/Select";
+import { useI18n } from "../i18n";
 
 type TabId = "panel" | "prompt";
 const DEFAULT_IMAGE_MODEL_ALIASES = ["image-fast", "image-balanced", "image-quality"];
@@ -134,10 +135,10 @@ function PanelTabContent({
   prompt,
   onNextFlagged,
   regenCredits,
-  creditsLabel,
+  instructionCost,
   onQuickRedo,
   onInstructionRegen,
-  isInstructionBusy,
+  isRegenerating,
   onDisplayUrlChange,
 }: {
   project: string;
@@ -150,17 +151,13 @@ function PanelTabContent({
   prompt: ImagePrompt;
   onNextFlagged?: (() => void) | null;
   regenCredits: number | null;
-  creditsLabel: string;
+  instructionCost?: CostEstimate;
   onQuickRedo: () => void;
   onInstructionRegen: (instruction: string) => void;
-  isInstructionBusy: boolean;
+  isRegenerating: boolean;
   onDisplayUrlChange: (url: string) => void;
 }) {
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
-  const [confirmRedo, setConfirmRedo] = useState(false);
-  const [instruction, setInstruction] = useState("");
-  const [instructionError, setInstructionError] = useState<string | null>(null);
-  const [confirmInstruction, setConfirmInstruction] = useState(false);
 
   const shouldLoadVersions = versionCount > 0;
   const { data: versionData } = usePanelImageVersions(project, sceneId, panelNumber, shouldLoadVersions);
@@ -204,15 +201,6 @@ function PanelTabContent({
     );
   };
 
-  const handleInstructionRegen = () => {
-    const trimmed = instruction.trim();
-    if (!trimmed) { setInstructionError("Describe what to change first."); return; }
-    setInstructionError(null);
-    onInstructionRegen(trimmed);
-    setInstruction("");
-    setConfirmInstruction(false);
-  };
-
   const costObj = regenCredits != null
     ? { estimate_credits: regenCredits, reserved_credits: null as null, reservation_multiplier: 1, confidence: "low_variance" as const }
     : undefined;
@@ -245,43 +233,15 @@ function PanelTabContent({
       </div>
 
       <div className="border-t-[2px] border-panel-line pt-3">
-        <div className="font-meta text-[0.55rem] tracking-[0.18em] text-ink-black/40 mb-2">FIX THIS PANEL</div>
-        <Button
-          variant="outline"
-          className="w-full"
-          onClick={() => setConfirmRedo(true)}
+        <RegenAction
+          assetLabel={`Panel ${panelNumber}`}
+          cost={costObj}
+          instructionCost={instructionCost}
+          busy={isRegenerating}
           disabled={status !== "done" && status !== "failed"}
-        >
-          ⟳ Re-roll (same prompt) · {creditsLabel}
-        </Button>
-        <div className="mt-3">
-          <label className="mb-1.5 block font-meta text-[0.58rem] tracking-[0.18em] text-ink-black/45">
-            DESCRIBE A FIX
-          </label>
-          <textarea
-            value={instruction}
-            onChange={(e) => { setInstruction(e.target.value); if (instructionError) setInstructionError(null); }}
-            maxLength={500}
-            rows={2}
-            className="w-full resize-none border-[2px] border-ink-black/25 bg-bristol px-3 py-2.5 font-body text-[0.9rem] leading-6 text-ink-black outline-none focus:border-ink-black"
-            placeholder="e.g. Make the office darker, rain on the window…"
-          />
-          {instructionError && (
-            <p className="mt-1 text-sm text-hero-red">{instructionError}</p>
-          )}
-          <Button
-            className="mt-2 w-full"
-            onClick={() => {
-              const trimmed = instruction.trim();
-              if (!trimmed) { setInstructionError("Describe what to change first."); return; }
-              setInstructionError(null);
-              setConfirmInstruction(true);
-            }}
-            disabled={isInstructionBusy || !instruction.trim()}
-          >
-            {isInstructionBusy ? "APPLYING…" : `Regenerate with fix · ${creditsLabel}`}
-          </Button>
-        </div>
+          onRegenerate={onQuickRedo}
+          onRegenerateWithInstruction={onInstructionRegen}
+        />
       </div>
 
       {hasVersionHistory && (
@@ -334,25 +294,6 @@ function PanelTabContent({
         </div>
       )}
 
-      <ConfirmDrawer
-        open={confirmRedo}
-        title="Re-roll panel"
-        body="Regenerate this panel with the same prompt. The current image will be archived."
-        cost={costObj}
-        confirmLabel={`Re-roll · ${creditsLabel}`}
-        onConfirm={() => { setConfirmRedo(false); onQuickRedo(); }}
-        onClose={() => setConfirmRedo(false)}
-      />
-      <ConfirmDrawer
-        open={confirmInstruction}
-        title="Regenerate with fix"
-        body={`Regenerate this panel using your fix. Fix: "${instruction.trim()}"`}
-        cost={costObj}
-        confirmLabel={`Regenerate · ${creditsLabel}`}
-        onConfirm={handleInstructionRegen}
-        onClose={() => setConfirmInstruction(false)}
-        busy={isInstructionBusy}
-      />
     </div>
   );
 }
@@ -474,7 +415,7 @@ function PromptTabContent({
         prompt={draft}
         onSave={onDraftChange}
         mode="edit"
-        showAdvanced
+        showAdvanced={showDevContent}
         project={project}
       />
       <LayoutSection
@@ -517,21 +458,27 @@ function PromptTabContent({
             </p>
           )}
           {(submittedRequest.data ?? requestPreview.data)?.provider_wire && (
-            <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap bg-bristol p-3 font-mono text-[0.65rem] leading-relaxed">
-              {JSON.stringify({
-                semantic_prompt: (submittedRequest.data ?? requestPreview.data)?.semantic_prompt,
-                provider_wire: (submittedRequest.data ?? requestPreview.data)?.provider_wire,
-                references: (submittedRequest.data ?? requestPreview.data)?.references,
-                dropped_references: (submittedRequest.data ?? requestPreview.data)?.dropped_references,
-                geometry: (submittedRequest.data ?? requestPreview.data)?.geometry,
-                controls: (submittedRequest.data ?? requestPreview.data)?.controls,
-                provenance: (submittedRequest.data ?? requestPreview.data)?.provenance,
-              }, null, 2)}
-            </pre>
+            <details className="mt-3">
+              <summary className="cursor-pointer font-meta text-[0.54rem] tracking-[0.12em] text-ink-black/55">
+                EXACT REQUEST & PROVENANCE
+              </summary>
+              <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap bg-bristol p-3 font-mono text-[0.65rem] leading-relaxed">
+                {JSON.stringify({
+                  semantic_prompt: (submittedRequest.data ?? requestPreview.data)?.semantic_prompt,
+                  provider_wire: (submittedRequest.data ?? requestPreview.data)?.provider_wire,
+                  references: (submittedRequest.data ?? requestPreview.data)?.references,
+                  dropped_references: (submittedRequest.data ?? requestPreview.data)?.dropped_references,
+                  geometry: (submittedRequest.data ?? requestPreview.data)?.geometry,
+                  controls: (submittedRequest.data ?? requestPreview.data)?.controls,
+                  provenance: (submittedRequest.data ?? requestPreview.data)?.provenance,
+                }, null, 2)}
+              </pre>
+            </details>
           )}
         </div>
       )}
 
+      {showDevContent && (
       <div className="border-t-[2px] border-panel-line pt-3">
         <button
           type="button"
@@ -547,6 +494,7 @@ function PromptTabContent({
           </pre>
         )}
       </div>
+      )}
 
       <ConfirmDrawer
         open={confirmGenerate}
@@ -565,8 +513,8 @@ function PromptTabContent({
 // ── PanelDetailModal ──────────────────────────────────────────────────────────
 
 const TABS: Array<{ id: TabId; label: string }> = [
-  { id: "panel", label: "Panel" },
-  { id: "prompt", label: "Prompt" },
+  { id: "panel", label: "Review" },
+  { id: "prompt", label: "Image brief" },
 ];
 
 export function PanelDetailModal({
@@ -587,6 +535,7 @@ export function PanelDetailModal({
   versionCount = 0,
   onNextFlagged,
 }: PanelDetailModalProps) {
+  const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<TabId>("panel");
   const [draft, setDraft] = useState<ImagePrompt | null>(null);
   const [lastRewrittenPrompt, setLastRewrittenPrompt] = useState<ImagePrompt | null>(null);
@@ -634,7 +583,7 @@ export function PanelDetailModal({
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { onClose(); return; }
+      if (e.key === "Escape" && !document.querySelector('[role="alertdialog"]')) { onClose(); return; }
       if (e.key === "ArrowLeft" && onPrev) onPrev();
       if (e.key === "ArrowRight" && onNext) onNext();
     };
@@ -645,11 +594,12 @@ export function PanelDetailModal({
   if (!isOpen || !draft) return null;
 
   const isFailed = status === "failed" || !!errorMessage || !!failureClassification;
-  const failureTitle = failureClassification === "provider_blocked" ? "PROVIDER BLOCKED" : "GENERATION FAILED";
-  const failureMessage = errorMessage
-    || (failureClassification === "provider_blocked"
-      ? "The image provider blocked this panel. Describe a fix and regenerate before composing."
-      : "Image generation failed. Re-roll, or describe a fix and regenerate.");
+  const failureTitle = showDevContent && failureClassification === "provider_blocked"
+    ? t("PROVIDER BLOCKED")
+    : t("IMAGE COULD NOT BE CREATED");
+  const failureMessage = showDevContent && errorMessage
+    ? errorMessage
+    : t("Scenewright could not create this image. Describe a visual change and try again.");
 
   const handleQuickRedo = async () => {
     const key = `${sceneId}-${panelNumber}`;
@@ -773,7 +723,7 @@ export function PanelDetailModal({
                 <div className="border-[2px] border-hero-red bg-hero-red/8 p-3">
                   <div className="font-meta text-[0.58rem] tracking-[0.16em] text-hero-red">{failureTitle}</div>
                   <p className="mt-1 text-sm leading-6 text-ink-black/75">{failureMessage}</p>
-                  {errorDetail && (
+                  {showDevContent && errorDetail && (
                     <details className="mt-2">
                       <summary className="cursor-pointer font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/55 hover:text-hero-red">
                         SHOW PROVIDER ERROR
@@ -783,15 +733,9 @@ export function PanelDetailModal({
                       </pre>
                     </details>
                   )}
-                  <div className="mt-2.5 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={handleQuickRedo}
-                      className="border-[2px] border-hero-red bg-bristol px-3 py-1.5 font-meta text-[0.58rem] tracking-[0.14em] text-hero-red transition-colors hover:bg-hero-red hover:text-bristol"
-                    >
-                      ⟳ RE-ROLL · {creditsLabel}
-                    </button>
-                  </div>
+                  <p className="mt-2 font-meta text-[0.52rem] tracking-[0.12em] text-ink-black/50">
+                    {t("Use the regeneration controls under Review to try again.")}
+                  </p>
                 </div>
               )}
               <div className="flex min-h-0 flex-1 items-center justify-center bg-ink-black">
@@ -833,7 +777,7 @@ export function PanelDetailModal({
                       : "bg-bristol text-ink-black/50 hover:text-ink-black"
                   }`}
                 >
-                  {label.toUpperCase()}
+                  {t(label).toUpperCase()}
                 </button>
               ))}
             </div>
@@ -852,10 +796,10 @@ export function PanelDetailModal({
                   prompt={draft}
                   onNextFlagged={onNextFlagged}
                   regenCredits={regenCredits}
-                  creditsLabel={creditsLabel}
+                  instructionCost={regenEstimate?.instruction_estimate}
                   onQuickRedo={handleQuickRedo}
                   onInstructionRegen={handleInstructionRegen}
-                  isInstructionBusy={instructedRegen.isPending}
+                  isRegenerating={regenPanel.isPending || instructedRegen.isPending}
                   onDisplayUrlChange={setActiveDisplayUrl}
                 />
               )}

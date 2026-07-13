@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from novel_to_comic.ai.errors import AIRefusalError
+from novel_to_comic.ai.errors import AIRefusalError, AITransportError
 from novel_to_comic.ai.providers.base import ProviderRawResult
 from novel_to_comic.config import Config, is_gpt_image_2
 from novel_to_comic.panel_aspect import aspect_for_dimensions, generation_shape_for_aspect
@@ -60,10 +60,10 @@ class LitellmHttpProvider:
                         key: value for key, value in params.items() if value is not None
                     }},
                 )
+            if response.status_code >= 400:
+                response.raise_for_status()
         except Exception as exc:
             _raise_safe_wire_phase_error("gateway_request", exc)
-        if response.status_code >= 400:
-            response.raise_for_status()
         try:
             data = response.json()
         except Exception as exc:
@@ -174,8 +174,25 @@ def _raise_safe_decode_error(data: dict[str, Any], exc: BaseException) -> None:
 
 def _raise_safe_wire_phase_error(phase: str, exc: BaseException) -> None:
     descriptor = {"phase": phase, **_safe_decode_error_descriptor(exc)}
-    raise ValueError(
-        f"wire image transport failed ({json.dumps(descriptor, sort_keys=True)})"
+    response = getattr(exc, "response", None)
+    if response is not None:
+        descriptor["status_code"] = response.status_code
+        descriptor["reason"] = response.reason_phrase
+        # The body is intentionally excluded: provider responses can contain
+        # prompts, signed URLs, or other sensitive request context.
+        try:
+            body = response.json()
+        except Exception:
+            body = None
+        if isinstance(body, dict):
+            descriptor["response_keys"] = sorted(body)
+            error = body.get("error")
+            if isinstance(error, dict) and isinstance(error.get("code"), str):
+                descriptor["provider_error_code"] = error["code"]
+    raise AITransportError(
+        f"wire image transport failed ({json.dumps(descriptor, sort_keys=True)})",
+        phase=phase,
+        response=response if hasattr(response, "status_code") else None,
     ) from None
 
 

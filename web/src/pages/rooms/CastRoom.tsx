@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   useApproveStage,
@@ -17,13 +17,15 @@ import {
   useRegenPlateWithInstruction,
   useRegenProp,
   useRegenPropWithInstruction,
+  useAssetRegenEstimate,
+  useImageGenerationMeta,
 } from "../../api/queries";
-import { ApprovalBar, RoomHeader, RoomShell, RerunStageAction, StagePlaceholder, SectionHeader, EntityCard } from "../../components/composites";
+import { ApprovalBar, ConfirmDrawer, RegenAction, RoomHeader, RoomShell, RerunStageAction, StagePlaceholder, SectionHeader, EntityCard } from "../../components/composites";
 import { useRunAction } from "../../hooks/useRunAction";
 import { Tag } from "../../components/ui/Tag";
 import { Button } from "../../components/ui/Button";
-import { DestructiveButton } from "../../components/ui/DestructiveButton";
 import { ImageModal } from "../../components/ui/ImageModal";
+import { GenerationDetailsPanel } from "../../components/ui/GenerationDetailsModal";
 import { LazyImage } from "../../components/ui/LazyImage";
 import { StatusPill } from "../../components/ui/StatusPill";
 import type { AppearanceState, Character, GenerationJob, Location, Prop } from "../../types/api";
@@ -264,8 +266,10 @@ function StateRefTile({
   const [timestamp, setTimestamp] = useState(() => Date.now());
   const [activeJob, setActiveJob] = useState<GenerationJob | null>(null);
   const [regenError, setRegenError] = useState<string | null>(null);
+  const [confirmRegen, setConfirmRegen] = useState(false);
   const regenState = useRegenStateRef();
   const { data: generationJobs } = useGenerationJobs(projectName, activeJob ? [activeJob.id] : []);
+  const { data: regenEstimate } = useAssetRegenEstimate(projectName, "character", charId, state.id);
 
   useEffect(() => {
     const job = generationJobs?.jobs[0];
@@ -289,6 +293,7 @@ function StateRefTile({
   const thumbUrl = `/api/projects/${encodeURIComponent(projectName)}/files/refs/${encodeURIComponent(charId)}/states/${encodeURIComponent(state.id)}/front.png?t=${timestamp}`;
 
   const startRegen = () => {
+    setConfirmRegen(false);
     setRegenError(null);
     regenState.mutate(
       { project: projectName, charId, stateId: state.id },
@@ -333,11 +338,11 @@ function StateRefTile({
       </div>
       <button
         type="button"
-        onClick={startRegen}
-        disabled={busy}
+        onClick={() => setConfirmRegen(true)}
+        disabled={busy || !regenEstimate}
         className="mt-1 w-full border-[1.5px] border-ink-black/25 bg-bristol px-1.5 py-1 font-meta text-[0.5rem] tracking-[0.12em] text-ink-black/70 transition-colors hover:border-ink-black hover:text-ink-black disabled:opacity-50"
       >
-        {busy ? queuedLabel(activeJob) : imgFailed ? t("GENERATE") : t("RE-ROLL")}
+        {busy ? queuedLabel(activeJob) : imgFailed ? t("GENERATE") : t("REGENERATE")}
       </button>
       <RefVersionHistory
         projectName={projectName}
@@ -350,6 +355,18 @@ function StateRefTile({
         }}
       />
       {regenError && <div className="mt-1 text-[0.5rem] leading-tight text-hero-red">{regenError}</div>}
+      <ConfirmDrawer
+        open={confirmRegen}
+        title={imgFailed ? t("Generate image") : t("Try another version")}
+        body={imgFailed
+          ? t("Scenewright will create this image from its saved visual brief.")
+          : t("Scenewright will create a new image from the same saved brief. The current version stays in history.")}
+        cost={regenEstimate}
+        confirmLabel={imgFailed ? t("GENERATE IMAGE") : t("TRY ANOTHER VERSION")}
+        onConfirm={startRegen}
+        onClose={() => setConfirmRegen(false)}
+        busy={busy}
+      />
     </div>
   );
 }
@@ -402,6 +419,13 @@ function CharacterCastCard({
   const regenRef = useRegenRef();
   const regenRefInstructed = useRegenRefWithInstruction();
   const { data: generationJobs } = useGenerationJobs(projectName, activeJob ? [activeJob.id] : []);
+  const { data: regenEstimate } = useAssetRegenEstimate(projectName, "character", character.id, undefined, isModalOpen);
+  const { data: generationMeta, isLoading: isMetaLoading } = useImageGenerationMeta(
+    projectName,
+    `refs/${character.id}/sheet.png`,
+    isModalOpen,
+    timestamp,
+  );
 
   useEffect(() => {
     const job = generationJobs?.jobs[0];
@@ -458,13 +482,8 @@ function CharacterCastCard({
     );
   };
 
-  const handleRegen = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    startRegen();
-  };
-
-  const submitInstruction = () => {
-    const trimmed = instruction.trim();
+  const submitInstruction = (nextInstruction = instruction) => {
+    const trimmed = nextInstruction.trim();
     if (!trimmed) {
       setInstructionError("Add a short visual instruction first.");
       return;
@@ -483,7 +502,7 @@ function CharacterCastCard({
           if (
             maybeShowInsufficientCredits(err, {
               actionLabel: "Apply & regenerate character",
-              onRetry: submitInstruction,
+              onRetry: () => submitInstruction(trimmed),
             })
           ) {
             return;
@@ -506,9 +525,12 @@ function CharacterCastCard({
         padding="tight"
         className="group/cast-card"
         media={
-          <div
-            className="relative cursor-pointer bg-surface-container"
-            onClick={() => !imgFailed && !isGenerating && setIsModalOpen(true)}
+          <button
+            type="button"
+            className="relative block w-full cursor-pointer bg-surface-container text-left focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-hero-red disabled:cursor-wait"
+            onClick={() => setIsModalOpen(true)}
+            disabled={isGenerating}
+            aria-label={`${t("Open image")} · ${character.name}`}
           >
             {stageRegenerating && (
               <img
@@ -530,7 +552,7 @@ function CharacterCastCard({
             ) : imgFailed ? (
               <div className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-2 bg-surface-container">
                 <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">{t("NO REF IMAGE")}</div>
-                <DestructiveButton size="sm" onClick={handleRegen}>{t("GENERATE")}</DestructiveButton>
+                <div className="font-meta text-[0.5rem] tracking-[0.14em] text-hero-red">{t("OPEN TO GENERATE")}</div>
               </div>
             ) : (
               <>
@@ -555,7 +577,7 @@ function CharacterCastCard({
             <StatusPill tone="red" className="absolute right-4 top-4">
               {t("REF")}
             </StatusPill>
-          </div>
+          </button>
         }
       >
         <div className="font-display text-[1.35rem] font-bold uppercase leading-none tracking-[-0.04em] text-ink-black">
@@ -585,46 +607,24 @@ function CharacterCastCard({
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         src={`${refUrl}?t=${timestamp}`}
+        imageAvailable={!imgFailed}
+        emptyLabel={t("NO REF IMAGE")}
         alt={character.name}
         title={character.name.toUpperCase()}
         sidebar={(
           <div className="space-y-5">
-            <div>
-              <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1.5">REQUEST A FIX</div>
-              {lastAddendum && (
-                <details className="mb-2 border-[2px] border-archive-sage/40 bg-archive-sage/8">
-                  <summary className="cursor-pointer px-2 py-1.5 font-meta text-[0.55rem] tracking-[0.16em] text-archive-sage">
-                    APPLIED ON LAST REGEN ↓
-                  </summary>
-                  <p className="px-2 pb-2 pt-1 text-[0.72rem] leading-5 text-ink-black/70">
-                    {lastAddendum}
-                  </p>
-                </details>
-              )}
-              <textarea
-                value={instruction}
-                onChange={(e) => {
-                  setInstruction(e.target.value);
-                  if (instructionError) setInstructionError(null);
-                }}
-                maxLength={500}
-                rows={2}
-                className="w-full resize-none border-[2px] border-ink-black/25 bg-bristol px-3 py-2 font-body text-[0.82rem] leading-5 text-ink-black outline-none focus:border-ink-black"
-                placeholder="Describe what to change visually…"
-                disabled={isInstructionBusy || !!activeJob}
-              />
-              {instructionError && (
-                <p className="mt-1 text-[0.72rem] text-hero-red">{instructionError}</p>
-              )}
-              <Button
-                className="mt-2 w-full"
-                size="sm"
-                onClick={submitInstruction}
-                disabled={isInstructionBusy || !!activeJob || !instruction.trim()}
-              >
-                {isInstructionBusy ? "APPLYING..." : "APPLY & REGEN"}
-              </Button>
-            </div>
+            <RegenAction
+              assetLabel={character.name}
+              cost={regenEstimate}
+              instructionCost={regenEstimate?.instruction_estimate}
+              hasImage={!imgFailed}
+              busy={isGenerating || isInstructionBusy}
+              busyLabel={isQueued ? t("QUEUED") : t("DRAWING…")}
+              error={regenError ?? instructionError}
+              lastInstruction={lastAddendum}
+              onRegenerate={startRegen}
+              onRegenerateWithInstruction={submitInstruction}
+            />
             <RefSheet projectName={projectName} charId={character.id} timestamp={timestamp} />
             <RefVersionHistory
               projectName={projectName}
@@ -684,21 +684,13 @@ function CharacterCastCard({
                 </ul>
               </div>
             )}
+            <GenerationDetailsPanel metadata={generationMeta} isLoading={isMetaLoading} />
           </div>
         )}
         actions={(
-          <>
-            <Button variant="outline" size="sm" onClick={() => setIsModalOpen(false)}>
-              CLOSE
-            </Button>
-            <DestructiveButton
-              size="sm"
-              onClick={handleRegen}
-              disabled={regenRef.isPending || !!activeJob}
-            >
-              {regenRef.isPending || activeJob ? queuedLabel(activeJob) : "REGENERATE"}
-            </DestructiveButton>
-          </>
+          <Button variant="outline" size="sm" onClick={() => setIsModalOpen(false)}>
+            {t("CLOSE")}
+          </Button>
         )}
       />
     </>
@@ -726,6 +718,13 @@ function LocationPlateCard({
   const regenPlate = useRegenPlate();
   const regenPlateInstructed = useRegenPlateWithInstruction();
   const { data: generationJobs } = useGenerationJobs(projectName, activeJob ? [activeJob.id] : []);
+  const { data: regenEstimate } = useAssetRegenEstimate(projectName, "location", location.id, undefined, isModalOpen);
+  const { data: generationMeta, isLoading: isMetaLoading } = useImageGenerationMeta(
+    projectName,
+    `plates/${location.id}.png`,
+    isModalOpen,
+    timestamp,
+  );
 
   const regenError = localRegenError;
 
@@ -763,8 +762,7 @@ function LocationPlateCard({
     return () => window.clearInterval(interval);
   }, [stageRegenerating]);
 
-  const handleRegen = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const startRegen = () => {
     setLocalRegenError(null);
     regenPlate.mutate(
       { project: projectName, locId: location.id },
@@ -774,6 +772,7 @@ function LocationPlateCard({
           if (
             maybeShowInsufficientCredits(err, {
               actionLabel: "Regenerate location plate",
+              onRetry: startRegen,
             })
           ) {
             return;
@@ -784,8 +783,8 @@ function LocationPlateCard({
     );
   };
 
-  const submitInstruction = () => {
-    const trimmed = instruction.trim();
+  const submitInstruction = (nextInstruction = instruction) => {
+    const trimmed = nextInstruction.trim();
     if (!trimmed) {
       setInstructionError("Add a short visual instruction first.");
       return;
@@ -804,7 +803,7 @@ function LocationPlateCard({
           if (
             maybeShowInsufficientCredits(err, {
               actionLabel: "Apply & regenerate plate",
-              onRetry: submitInstruction,
+              onRetry: () => submitInstruction(trimmed),
             })
           ) {
             return;
@@ -827,9 +826,12 @@ function LocationPlateCard({
         padding="tight"
         className="group/cast-card"
         media={
-          <div
-            className="relative cursor-pointer bg-surface-container"
-            onClick={() => !imgFailed && !isGenerating && setIsModalOpen(true)}
+          <button
+            type="button"
+            className="relative block w-full cursor-pointer bg-surface-container text-left focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-hero-red disabled:cursor-wait"
+            onClick={() => setIsModalOpen(true)}
+            disabled={isGenerating}
+            aria-label={`${t("Open image")} · ${location.name}`}
           >
             {stageRegenerating && (
               <img
@@ -851,7 +853,7 @@ function LocationPlateCard({
             ) : imgFailed ? (
               <div className="flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 bg-surface-container">
                 <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">{t("NO PLATE IMAGE")}</div>
-                <DestructiveButton size="sm" onClick={handleRegen}>{t("GENERATE")}</DestructiveButton>
+                <div className="font-meta text-[0.5rem] tracking-[0.14em] text-hero-red">{t("OPEN TO GENERATE")}</div>
               </div>
             ) : (
               <>
@@ -873,7 +875,7 @@ function LocationPlateCard({
                 </div>
               </>
             )}
-          </div>
+          </button>
         }
       >
         <div className="font-display text-[1.35rem] font-bold uppercase leading-none tracking-[-0.04em] text-ink-black">
@@ -901,46 +903,24 @@ function LocationPlateCard({
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         src={`${plateUrl}?t=${timestamp}`}
+        imageAvailable={!imgFailed}
+        emptyLabel={t("NO PLATE IMAGE")}
         alt={location.name}
         title={location.name.toUpperCase()}
         sidebar={(
           <div className="space-y-5">
-            <div>
-              <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1.5">REQUEST A FIX</div>
-              {lastAddendum && (
-                <details className="mb-2 border-[2px] border-archive-sage/40 bg-archive-sage/8">
-                  <summary className="cursor-pointer px-2 py-1.5 font-meta text-[0.55rem] tracking-[0.16em] text-archive-sage">
-                    APPLIED ON LAST REGEN ↓
-                  </summary>
-                  <p className="px-2 pb-2 pt-1 text-[0.72rem] leading-5 text-ink-black/70">
-                    {lastAddendum}
-                  </p>
-                </details>
-              )}
-              <textarea
-                value={instruction}
-                onChange={(e) => {
-                  setInstruction(e.target.value);
-                  if (instructionError) setInstructionError(null);
-                }}
-                maxLength={500}
-                rows={2}
-                className="w-full resize-none border-[2px] border-ink-black/25 bg-bristol px-3 py-2 font-body text-[0.82rem] leading-5 text-ink-black outline-none focus:border-ink-black"
-                placeholder="Describe what to change visually…"
-                disabled={isInstructionBusy || !!activeJob}
-              />
-              {instructionError && (
-                <p className="mt-1 text-[0.72rem] text-hero-red">{instructionError}</p>
-              )}
-              <Button
-                className="mt-2 w-full"
-                size="sm"
-                onClick={submitInstruction}
-                disabled={isInstructionBusy || !!activeJob || !instruction.trim()}
-              >
-                {isInstructionBusy ? "APPLYING..." : "APPLY & REGEN"}
-              </Button>
-            </div>
+            <RegenAction
+              assetLabel={location.name}
+              cost={regenEstimate}
+              instructionCost={regenEstimate?.instruction_estimate}
+              hasImage={!imgFailed}
+              busy={isGenerating || isInstructionBusy}
+              busyLabel={isQueued ? t("QUEUED") : t("DRAWING…")}
+              error={regenError ?? instructionError}
+              lastInstruction={lastAddendum}
+              onRegenerate={startRegen}
+              onRegenerateWithInstruction={submitInstruction}
+            />
             <div>
               <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">VISUAL ANCHOR</div>
               <p className="text-[0.82rem] leading-6 text-ink-black">{location.visual_anchor}</p>
@@ -957,21 +937,13 @@ function LocationPlateCard({
                 <Tag>{location.mood}</Tag>
               </div>
             </div>
+            <GenerationDetailsPanel metadata={generationMeta} isLoading={isMetaLoading} />
           </div>
         )}
         actions={(
-          <>
-            <Button variant="outline" size="sm" onClick={() => setIsModalOpen(false)}>
-              CLOSE
-            </Button>
-            <DestructiveButton
-              size="sm"
-              onClick={handleRegen}
-              disabled={regenPlate.isPending || !!activeJob}
-            >
-              {regenPlate.isPending || activeJob ? queuedLabel(activeJob) : "REGENERATE"}
-            </DestructiveButton>
-          </>
+          <Button variant="outline" size="sm" onClick={() => setIsModalOpen(false)}>
+            {t("CLOSE")}
+          </Button>
         )}
       />
     </>
@@ -999,6 +971,13 @@ function PropRefCard({
   const regenProp = useRegenProp();
   const regenPropInstructed = useRegenPropWithInstruction();
   const { data: generationJobs } = useGenerationJobs(projectName, activeJob ? [activeJob.id] : []);
+  const { data: regenEstimate } = useAssetRegenEstimate(projectName, "prop", prop.id, undefined, isModalOpen);
+  const { data: generationMeta, isLoading: isMetaLoading } = useImageGenerationMeta(
+    projectName,
+    `refs/props/${prop.id}/ref.png`,
+    isModalOpen,
+    timestamp,
+  );
 
   const regenError = localRegenError;
 
@@ -1057,13 +1036,8 @@ function PropRefCard({
     );
   };
 
-  const handleRegen = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    startRegen();
-  };
-
-  const submitInstruction = () => {
-    const trimmed = instruction.trim();
+  const submitInstruction = (nextInstruction = instruction) => {
+    const trimmed = nextInstruction.trim();
     if (!trimmed) {
       setInstructionError("Add a short visual instruction first.");
       return;
@@ -1082,7 +1056,7 @@ function PropRefCard({
           if (
             maybeShowInsufficientCredits(err, {
               actionLabel: "Apply & regenerate prop",
-              onRetry: submitInstruction,
+              onRetry: () => submitInstruction(trimmed),
             })
           ) {
             return;
@@ -1105,9 +1079,12 @@ function PropRefCard({
         padding="tight"
         className="group/cast-card"
         media={
-          <div
-            className="relative cursor-pointer bg-surface-container"
-            onClick={() => !imgFailed && !isGenerating && setIsModalOpen(true)}
+          <button
+            type="button"
+            className="relative block w-full cursor-pointer bg-surface-container text-left focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-hero-red disabled:cursor-wait"
+            onClick={() => setIsModalOpen(true)}
+            disabled={isGenerating}
+            aria-label={`${t("Open image")} · ${prop.name}`}
           >
             {stageRegenerating && (
               <img
@@ -1129,7 +1106,7 @@ function PropRefCard({
             ) : imgFailed ? (
               <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 bg-surface-container">
                 <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">{t("NO REF IMAGE")}</div>
-                <DestructiveButton size="sm" onClick={handleRegen}>{t("GENERATE")}</DestructiveButton>
+                <div className="font-meta text-[0.5rem] tracking-[0.14em] text-hero-red">{t("OPEN TO GENERATE")}</div>
               </div>
             ) : (
               <>
@@ -1154,7 +1131,7 @@ function PropRefCard({
             <StatusPill tone="red" className="absolute right-4 top-4">
               {t("PROP")}
             </StatusPill>
-          </div>
+          </button>
         }
       >
         <div className="font-display text-[1.35rem] font-bold uppercase leading-none tracking-[-0.04em] text-ink-black">
@@ -1175,46 +1152,24 @@ function PropRefCard({
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         src={`${refUrl}?t=${timestamp}`}
+        imageAvailable={!imgFailed}
+        emptyLabel={t("NO REF IMAGE")}
         alt={prop.name}
         title={prop.name.toUpperCase()}
         sidebar={(
           <div className="space-y-5">
-            <div>
-              <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1.5">REQUEST A FIX</div>
-              {lastAddendum && (
-                <details className="mb-2 border-[2px] border-archive-sage/40 bg-archive-sage/8">
-                  <summary className="cursor-pointer px-2 py-1.5 font-meta text-[0.55rem] tracking-[0.16em] text-archive-sage">
-                    APPLIED ON LAST REGEN ↓
-                  </summary>
-                  <p className="px-2 pb-2 pt-1 text-[0.72rem] leading-5 text-ink-black/70">
-                    {lastAddendum}
-                  </p>
-                </details>
-              )}
-              <textarea
-                value={instruction}
-                onChange={(e) => {
-                  setInstruction(e.target.value);
-                  if (instructionError) setInstructionError(null);
-                }}
-                maxLength={500}
-                rows={2}
-                className="w-full resize-none border-[2px] border-ink-black/25 bg-bristol px-3 py-2 font-body text-[0.82rem] leading-5 text-ink-black outline-none focus:border-ink-black"
-                placeholder="Describe what to change visually…"
-                disabled={isInstructionBusy || !!activeJob}
-              />
-              {instructionError && (
-                <p className="mt-1 text-[0.72rem] text-hero-red">{instructionError}</p>
-              )}
-              <Button
-                className="mt-2 w-full"
-                size="sm"
-                onClick={submitInstruction}
-                disabled={isInstructionBusy || !!activeJob || !instruction.trim()}
-              >
-                {isInstructionBusy ? "APPLYING..." : "APPLY & REGEN"}
-              </Button>
-            </div>
+            <RegenAction
+              assetLabel={prop.name}
+              cost={regenEstimate}
+              instructionCost={regenEstimate?.instruction_estimate}
+              hasImage={!imgFailed}
+              busy={isGenerating || isInstructionBusy}
+              busyLabel={isQueued ? t("QUEUED") : t("DRAWING…")}
+              error={regenError ?? instructionError}
+              lastInstruction={lastAddendum}
+              onRegenerate={startRegen}
+              onRegenerateWithInstruction={submitInstruction}
+            />
             <div>
               <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">VISUAL ANCHOR</div>
               <p className="text-[0.82rem] leading-6 text-ink-black">{prop.visual_anchor}</p>
@@ -1225,21 +1180,13 @@ function PropRefCard({
                 <p className="text-[0.82rem] text-ink-black">{prop.first_appearance_scene}</p>
               </div>
             )}
+            <GenerationDetailsPanel metadata={generationMeta} isLoading={isMetaLoading} />
           </div>
         )}
         actions={(
-          <>
-            <Button variant="outline" size="sm" onClick={() => setIsModalOpen(false)}>
-              CLOSE
-            </Button>
-            <DestructiveButton
-              size="sm"
-              onClick={handleRegen}
-              disabled={regenProp.isPending || !!activeJob}
-            >
-              {regenProp.isPending || activeJob ? queuedLabel(activeJob) : "REGENERATE"}
-            </DestructiveButton>
-          </>
+          <Button variant="outline" size="sm" onClick={() => setIsModalOpen(false)}>
+            {t("CLOSE")}
+          </Button>
         )}
       />
     </>
@@ -1263,6 +1210,17 @@ export function CastRoom() {
   const stageStatus = stageInfo?.status ?? "pending";
   const needsApproval = stageStatus === "awaiting_review";
   const adaptStarted = status?.stages?.adapt?.status != null && status.stages.adapt.status !== "pending";
+  const autoStartedCast = useRef<string | null>(null);
+
+  // Manual ref generation writes the assets but does not advance the cast
+  // stage lifecycle. Reconcile a pending cast stage on room entry so those
+  // assets can be reviewed and approved (and any missing assets are filled).
+  useEffect(() => {
+    if (!id || !bible || !status?.style_selected || stageStatus !== "pending") return;
+    if (autoStartedCast.current === id) return;
+    autoStartedCast.current = id;
+    handleRun(id, "cast", { actionLabel: "Cast characters & places" });
+  }, [id, bible, status?.style_selected, stageStatus, handleRun]);
 
   function handleContinueToPanels() {
     if (!id) return;

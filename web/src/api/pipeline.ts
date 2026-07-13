@@ -8,6 +8,7 @@ import type {
   InstructedRefRegenResponse,
   StageCostEstimate,
   RegenCostEstimate,
+  AssetRegenCostEstimate,
   GenerationRequestPreview,
 } from "../types/api";
 
@@ -289,5 +290,21 @@ export function fetchRegenEstimate(
   if (imageModelAlias) params.set("image_model_alias", imageModelAlias);
   return apiFetch(
     `/projects/${encodeURIComponent(project)}/regen-estimate?${params.toString()}`,
+  );
+}
+
+export function fetchAssetRegenEstimate(
+  project: string,
+  assetType: "character" | "location" | "prop",
+  assetId: string,
+  stateId?: string,
+): Promise<AssetRegenCostEstimate> {
+  const params = new URLSearchParams({
+    asset_type: assetType,
+    asset_id: assetId,
+  });
+  if (stateId) params.set("state_id", stateId);
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/asset-regen-estimate?${params.toString()}`,
   );
 }

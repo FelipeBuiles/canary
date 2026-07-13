@@ -102,7 +102,7 @@ export function updatePanel(
 
 export function listPromptSummaries(
   project: string,
-): Promise<{ scene_id: string; prompt_count: number }[]> {
+): Promise<{ scene_id: string; prompt_count: number; panel_numbers?: number[] }[]> {
   return apiFetch(`/projects/${encodeURIComponent(project)}/prompts`);
 }
 

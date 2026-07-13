@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -26,6 +27,7 @@ from novel_to_comic.ai.providers.litellm_http import (
     _safe_decode_error_descriptor,
     serialize_wire_request,
 )
+from novel_to_comic.ai.errors import AITransportError
 from litellm_handlers.provider_wire import (
     exact_vertex_contents,
     parse_provider_wire,
@@ -150,6 +152,25 @@ def test_decode_error_descriptor_never_includes_exception_message():
         'wire image transport failed ({"errno": 20, '
         '"error_type": "NotADirectoryError", "phase": "gateway_request"})'
     )
+
+
+def test_gateway_transport_error_keeps_safe_http_diagnostics():
+    request = httpx.Request("POST", "http://gateway/v1/images/generations")
+    response = httpx.Response(
+        504,
+        request=request,
+        json={"error": {"code": "upstream_timeout", "message": "secret prompt"}},
+    )
+    error = httpx.HTTPStatusError("Server returned 504", request=request, response=response)
+
+    with pytest.raises(AITransportError) as raised:
+        _raise_safe_wire_phase_error("gateway_request", error)
+
+    assert raised.value.response is response
+    assert raised.value.phase == "gateway_request"
+    assert '"status_code": 504' in str(raised.value)
+    assert '"provider_error_code": "upstream_timeout"' in str(raised.value)
+    assert "secret prompt" not in str(raised.value)
 
 
 def test_isolated_handler_rejects_reordered_or_changed_uploads(tmp_path: Path):

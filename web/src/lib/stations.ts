@@ -102,11 +102,26 @@ function stageFailed(status: ProjectStatus | undefined, stage: StageName): boole
 export function getStationState(station: Station, status: ProjectStatus | undefined): StationState {
   const allStages = station.substeps.flatMap((s) => s.backendStages);
   const gatedStages = station.substeps.filter((s) => s.kind === "gated").flatMap((s) => s.backendStages);
+  const gatedStageSuperseded = (stage: StageName) => {
+    const index = gatedStages.indexOf(stage);
+    return index >= 0 && gatedStages
+      .slice(index + 1)
+      .some((laterStage) => stageStatusOf(status, laterStage) !== "pending");
+  };
 
-  if (allStages.some((s) => stageFailed(status, s))) return "failed";
   if (allStages.some((s) => stageStatusOf(status, s) === "running")) return "running";
+  // A live downstream stage is the current truth for the station. An older
+  // failed auto-step must not mask that work while the recovery chain runs.
+  // The same applies to an earlier gated step: once a later gated step has
+  // started, the user has necessarily accepted/progressed past the earlier
+  // step (style selection is the gate that allows cast to run). Keep the
+  // sidebar focused on the unresolved failure rather than stale history.
+  if (allStages.some((stage) => {
+    if (!stageFailed(status, stage)) return false;
+    return !gatedStageSuperseded(stage);
+  })) return "failed";
   if (gatedStages.some((s) => stageStatusOf(status, s) === "awaiting_review")) return "review";
-  if (gatedStages.every((s) => stageStatusOf(status, s) === "complete")) return "done";
+  if (gatedStages.every((s) => stageStatusOf(status, s) === "complete" || gatedStageSuperseded(s))) return "done";
   return "wait";
 }
 

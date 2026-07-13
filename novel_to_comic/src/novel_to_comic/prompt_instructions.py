@@ -407,7 +407,6 @@ async def apply_asset_instruction(
         # Resolve image model configuration for panels
         regen_config = config_for_image_model_alias(config, image_model_alias)
 
-        job_asset_id = f"{asset_id}:{state_id}" if state_id else asset_id
         existing_regen = find_active_generation_job(
             app,
             project_name=pkey,
@@ -426,10 +425,13 @@ async def apply_asset_instruction(
         panel_estimate = UnifiedCostResolver.estimate_panel_regen_cost(
             config, project_dir, scene_id, panel_number, image_model_alias
         )
+        instructed_estimate = UnifiedCostResolver.estimate_instructed_regen_cost(
+            config, panel_estimate, "draw"
+        )
         assert_sufficient_credits(
             db,
             user_id,
-            panel_estimate["estimate_credits"],
+            instructed_estimate["estimate_credits"],
             action="panel_regen",
         )
 
@@ -560,6 +562,7 @@ async def apply_asset_instruction(
             "prop": ("prop_ref", "prop_ref_regen", "prop_id", "cast.prop_ref_instruction_rewrite"),
         }
         ref_kind, job_kind, payload_key, feature = kind_map[asset_type]
+        job_asset_id = f"{asset_id}:{state_id}" if state_id else asset_id
 
         existing_regen = find_active_generation_job(
             app,
@@ -573,12 +576,15 @@ async def apply_asset_instruction(
         from novel_to_comic.server.credits import UnifiedCostResolver
 
         asset_estimate = UnifiedCostResolver.estimate_asset_regen_cost(
-            config, project_dir, asset_type, asset_id
+            config, project_dir, job_kind, job_asset_id
+        )
+        instructed_estimate = UnifiedCostResolver.estimate_instructed_regen_cost(
+            config, asset_estimate, "cast"
         )
         assert_sufficient_credits(
             db,
             user_id,
-            asset_estimate["estimate_credits"],
+            instructed_estimate["estimate_credits"],
             action=f"{asset_type}_regen",
         )
 

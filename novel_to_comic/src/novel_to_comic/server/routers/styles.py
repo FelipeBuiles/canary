@@ -18,6 +18,7 @@ from novel_to_comic.stages.s2_style import (
     save_suggestions,
     estimate_style_batch_cost_usd,
 )
+from novel_to_comic.usage import estimate_image_cost
 
 from ..auth import get_current_user
 from ..credits import (
@@ -75,6 +76,17 @@ def _suggest_batch_credit_estimate(config: Config, project_dir) -> dict:
     return dict(credit_estimate_for_provider_cost(cost_usd, "style", reserve=True))
 
 
+def _style_sample_credit_estimate(config: Config) -> dict:
+    """Keep one-sample preflight and generation credit checks in lockstep."""
+    cost_usd = estimate_image_cost(
+        config.effective_image_model(), 1,
+        quality=getattr(config, "image_quality", None),
+    )
+    return dict(credit_estimate_for_provider_cost(
+        cost_usd, "style", reserve=False, zero_cost_estimate=1,
+    ))
+
+
 def _assert_no_pipeline_task(request: Request, pkey: str) -> None:
     existing = request.app.state.running_tasks.get(pkey)
     if existing and not existing.done():
@@ -121,6 +133,17 @@ def suggest_estimate(
     """Return the credit cost for one 'Suggest More Styles' batch (text + samples)."""
     project_dir, config, _state = project
     return _suggest_batch_credit_estimate(config, project_dir)
+
+
+@router.get("/styles/sample-estimate")
+def style_sample_estimate(
+    project_id: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),  # noqa: ARG001 — auth gate
+):
+    """Return the credit cost to regenerate one style sample image."""
+    _project_dir, config, _state = project
+    return _style_sample_credit_estimate(config)
 
 
 @router.post("/styles/suggest")
@@ -246,15 +269,7 @@ async def generate_style_samples(
     # Credit pre-check: each sample calls the image model for real and is
     # debited via ai.client._settle_event_usage on success. Sum the per-sample
     # estimate so a zero-balance user can't queue free regens.
-    from novel_to_comic.usage import estimate_image_cost
-
-    per_sample = credit_estimate_for_provider_cost(
-        estimate_image_cost(
-            config.effective_image_model(), 1,
-            quality=getattr(config, "image_quality", None),
-        ),
-        "style", reserve=False, zero_cost_estimate=1,
-    )["estimate_credits"]
+    per_sample = _style_sample_credit_estimate(config)["estimate_credits"]
     assert_sufficient_credits(
         get_db(), user_id, max(1, per_sample) * len(indices),
         action="style_sample_regen",

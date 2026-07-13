@@ -105,6 +105,16 @@ describe("PageNavigator thumbnails", () => {
     expect(btn.textContent).toContain("1");
   });
 
+  it("falls back to the live page preview when the rendered PNG is missing", () => {
+    render(<PageNavigator project="proj" pages={PAGES} currentPage={1} onSelect={() => {}} />);
+
+    act(() => fireEvent.error(thumbImg(1)));
+
+    expect(screen.getByTitle("Page 1 live preview").getAttribute("src")).toBe(
+      "/api/projects/proj/pages/1/preview",
+    );
+  });
+
   it("does not retry by default (shouldRetryThumbs omitted)", () => {
     render(<PageNavigator project="proj" pages={PAGES} currentPage={1} onSelect={() => {}} />);
     act(() => fireEvent.error(thumbImg(1)));

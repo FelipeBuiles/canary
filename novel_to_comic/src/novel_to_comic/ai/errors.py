@@ -22,3 +22,18 @@ class AIRefusalError(RuntimeError):
         self.response_data = response_data
         self.response_headers = response_headers
         self.response = response
+
+
+class AITransportError(ValueError):
+    """A provider/gateway transport failure with safe diagnostic metadata."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        phase: str,
+        response: httpx.Response | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.phase = phase
+        self.response = response

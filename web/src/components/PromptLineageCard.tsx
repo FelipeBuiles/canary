@@ -248,7 +248,7 @@ export function PromptLineageCard({
   const [highlightedFields, setHighlightedFields] = useState<string[]>([]);
   const [highlightFromMap, setHighlightFromMap] = useState<Record<string, string>>({});
   const highlightTimersRef = useRef(new Map<string, number>());
-  const effectiveShowAdvanced = editable || showAdvanced;
+  const effectiveShowAdvanced = !!showAdvanced;
 
   useEffect(() => () => {
     for (const timer of highlightTimersRef.current.values()) {
@@ -453,7 +453,7 @@ export function PromptLineageCard({
         </button>
       )}
 
-      {prompt.distilled_prompt && (
+      {effectiveShowAdvanced && prompt.distilled_prompt && (
         <CollapsibleSection title="DISTILLED PROMPT" defaultExpanded>
           <p className="text-[0.82rem] leading-6 text-ink-black/75 whitespace-pre-wrap">
             {prompt.distilled_prompt}
@@ -461,14 +461,14 @@ export function PromptLineageCard({
         </CollapsibleSection>
       )}
 
-      <CollapsibleSection title="DRAFT ASSEMBLED PROMPT" defaultExpanded>
+      {effectiveShowAdvanced && <CollapsibleSection title="DRAFT ASSEMBLED PROMPT" defaultExpanded>
         {/* Derived preview — read-only. The server rebuilds this from the
             structured fields above; editing it directly is not authoritative. */}
         <p className="mb-2 text-[0.68rem] text-ink-black/45">Projection only; the submitted provider request is shown in Dev Content after preparation.</p>
         <p className="text-[0.82rem] leading-6 text-ink-black/75 whitespace-pre-wrap">
           {prompt.full_prompt}
         </p>
-      </CollapsibleSection>
+      </CollapsibleSection>}
       {prompt.continuity_note && (
         <CollapsibleSection title="CONTINUITY NOTE" defaultExpanded>
           <p className="text-[0.82rem] leading-6 text-ink-black/75 whitespace-pre-wrap italic">
