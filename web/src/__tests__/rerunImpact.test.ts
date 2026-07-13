@@ -38,9 +38,9 @@ describe("RERUN_IMPACT", () => {
     // Each stage's downstream should only contain stages that come AFTER it in STAGE_ORDER.
     // This guarantees no cycles and correct ordering.
     for (const key of Object.keys(RERUN_IMPACT) as RerunStageKey[]) {
-      const keyIndex = STAGE_ORDER.indexOf(key as any);
+      const keyIndex = STAGE_ORDER.indexOf(key);
       for (const downstream of RERUN_IMPACT[key].downstream) {
-        const downstreamIndex = STAGE_ORDER.indexOf(downstream as any);
+        const downstreamIndex = STAGE_ORDER.indexOf(downstream);
         expect(downstreamIndex).toBeGreaterThan(keyIndex);
       }
     }

@@ -217,14 +217,12 @@ before compose.
 - `plan/layout_plan.json`
 - `storyboard/scene_NNN/panel_NNN.json` (compatibility fallback only)
 - `story_bible.json` (character names for bubble attribution)
-- `assembly/character_voices.json` (optional per-character lettering overrides)
 - `assembly/lettering_style.json` (project lettering style: theme, font pair, CSS-var overrides)
 
 **Writes:**
 - `compose/pages/page_NNN.json` — **canonical editing surface** (`ComicPage` model)
 - `compose/pages/page_NNN.png` — rendered preview
 - `compose/html/page_NNN.html` — HTML preview (open in browser, hard-refresh)
-- `assembly/character_voices.json` — optional web-editor voice presets
 - `exports/comic.pdf` and/or `exports/comic.cbz` (on export)
 
 **What it does:** Projects the layout plan into `ComicPage` JSON, then renders

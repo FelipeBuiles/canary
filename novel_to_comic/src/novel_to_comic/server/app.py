@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -125,6 +126,64 @@ def _audit_pricing_at_startup() -> None:
     log.warning(msg)
 
 
+def _readiness_result() -> tuple[bool, dict[str, str]]:
+    """Check production dependencies and return an HTTP-readiness result.
+
+    Local development may intentionally run without Supabase or LiteLLM. A
+    production process must never report ready when either dependency is
+    missing or unreachable.
+    """
+    checks: dict[str, str] = {}
+    ok = True
+    env = (os.environ.get("CANARY_ENV") or os.environ.get("ENV") or "dev").lower()
+    production = env == "production"
+
+    supabase_values = (
+        os.environ.get("SUPABASE_URL", "").strip(),
+        os.environ.get("SUPABASE_SECRET_KEY", "").strip(),
+    )
+    if all(supabase_values):
+        try:
+            from .db import get_db
+
+            get_db().table("projects").select("id").limit(1).execute()
+            checks["supabase"] = "ok"
+        except Exception as exc:  # noqa: BLE001 - surfaced to the probe payload
+            ok = False
+            checks["supabase"] = f"error: {type(exc).__name__}"
+    elif production or any(supabase_values):
+        ok = False
+        checks["supabase"] = "error: missing configuration"
+    else:
+        checks["supabase"] = "skipped"
+
+    litellm_values = (
+        os.environ.get("LITELLM_BASE_URL", "").strip(),
+        os.environ.get("LITELLM_API_KEY", "").strip(),
+    )
+    if all(litellm_values):
+        import httpx
+
+        try:
+            with httpx.Client(timeout=2.0) as client:
+                response = client.get(
+                    f"{litellm_values[0].rstrip('/')}/health/liveliness",
+                    headers={"Authorization": f"Bearer {litellm_values[1]}"},
+                )
+                response.raise_for_status()
+            checks["litellm"] = "ok"
+        except Exception as exc:  # noqa: BLE001 - surfaced to the probe payload
+            ok = False
+            checks["litellm"] = f"error: {type(exc).__name__}"
+    elif production or any(litellm_values):
+        ok = False
+        checks["litellm"] = "error: missing configuration"
+    else:
+        checks["litellm"] = "skipped"
+
+    return ok, checks
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     # Initialise Sentry first so it can capture startup errors (e.g. pricing
@@ -183,9 +242,8 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app.middleware("http")(body_size_limit_middleware)
     # Trusted host validation — only added when explicitly configured. Set
     # CANARY_ALLOWED_HOSTS to a comma-separated list (e.g. "scenewright.ink,
-    # www.scenewright.ink"). Without this, the unsanitized Origin header is
-    # used to build Stripe redirect URLs (billing.py), which is a host-header
-    # injection risk.
+    # www.scenewright.ink"). Stripe redirects have a separate trusted-origin
+    # contract in billing.py; this middleware protects Host-based URL handling.
     allowed_hosts_raw = os.environ.get("CANARY_ALLOWED_HOSTS", "").strip()
     if allowed_hosts_raw:
         allowed_hosts = [h.strip() for h in allowed_hosts_raw.split(",") if h.strip()]
@@ -250,48 +308,13 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
 
     @app.get("/api/health/ready", tags=["meta"])
     def health_ready():
-        # Readiness: verifies core dependencies (Supabase, LiteLLM) are reachable
-        # so the load balancer stops routing to a half-up instance. Falls back to
-        # 'ok' when a dependency isn't configured (local dev / test).
-        checks: dict[str, str] = {}
-        ok = True
-        if os.environ.get("SUPABASE_URL"):
-            try:
-                from .db import get_db
-
-                get_db().table("projects").select("id").limit(1).execute()
-                checks["supabase"] = "ok"
-            except Exception as exc:  # noqa: BLE001 - surfaced to the probe payload
-                ok = False
-                checks["supabase"] = f"error: {type(exc).__name__}"
-        else:
-            checks["supabase"] = "skipped"
-
-        # LiteLLM gateway liveliness. Every AI call routes through it, so a dead
-        # gateway means the app can't serve its core function. /health/liveliness
-        # is the lightweight probe (no per-model DB round-trips). Short timeout —
-        # the LB check itself only allows ~5s, and we don't want to stall here.
-        litellm_base = os.environ.get("LITELLM_BASE_URL", "").rstrip("/")
-        if litellm_base:
-            import httpx
-
-            try:
-                headers = {}
-                api_key = os.environ.get("LITELLM_API_KEY")
-                if api_key:
-                    headers["Authorization"] = f"Bearer {api_key}"
-                with httpx.Client(timeout=2.0) as client:
-                    r = client.get(
-                        f"{litellm_base}/health/liveliness", headers=headers
-                    )
-                    r.raise_for_status()
-                checks["litellm"] = "ok"
-            except Exception as exc:  # noqa: BLE001 - surfaced to the probe payload
-                ok = False
-                checks["litellm"] = f"error: {type(exc).__name__}"
-        else:
-            checks["litellm"] = "skipped"
-        return {"status": "ok" if ok else "error", "checks": checks}
+        # Fly treats every 2xx response as healthy, so dependency failure must
+        # change the HTTP status rather than only the JSON payload.
+        ok, checks = _readiness_result()
+        return JSONResponse(
+            status_code=200 if ok else 503,
+            content={"status": "ok" if ok else "error", "checks": checks},
+        )
 
     # Routers
     app.include_router(credits.router, prefix="/api/credits", tags=["credits"])

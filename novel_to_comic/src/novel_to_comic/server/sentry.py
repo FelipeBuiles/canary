@@ -72,15 +72,19 @@ def configure_sentry() -> bool:
         logger.warning("Invalid SENTRY_TRACES_SAMPLE_RATE; defaulting to 0.0")
         sample_rate = 0.0
 
-    sentry_sdk.init(
-        dsn=dsn,
-        environment=os.environ.get("CANARY_ENV", "dev"),
-        release=os.environ.get("CANARY_VERSION", "0.1.0"),
-        traces_sample_rate=sample_rate,
-        # Never send PII — user_id (UUID) is enough context; emails/IP stay local.
-        send_default_pii=False,
-        before_send=_scrub_event,
-    )
+    try:
+        sentry_sdk.init(
+            dsn=dsn,
+            environment=os.environ.get("CANARY_ENV", "dev"),
+            release=os.environ.get("CANARY_VERSION", "0.1.0"),
+            traces_sample_rate=sample_rate,
+            # Never send PII — user_id (UUID) is enough context; emails/IP stay local.
+            send_default_pii=False,
+            before_send=_scrub_event,
+        )
+    except Exception as exc:  # noqa: BLE001 - observability must not prevent boot
+        logger.error("Sentry initialization failed; continuing without it: %s", exc)
+        return False
     _CONFIGURED = True
     logger.info(
         "[bold blue]Sentry enabled[/] env=%s release=%s",

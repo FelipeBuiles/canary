@@ -493,6 +493,7 @@ export function ComposeRoom() {
           project={id}
           pages={allPages}
           pageList={pageList}
+          lettering={lettering}
           isLoading={loadingAllPages}
           pageIdx={pageIdx}
           isExporting={exportMut.isPending}

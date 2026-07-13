@@ -31,7 +31,6 @@ These are the Pydantic models that flow between pipeline stages. `story_bible.js
 | `fill_color` | `str | None` | `None` |
 | `border_color` | `str | None` | `None` |
 | `border_width` | `int | None` | `None` |
-| `border_radius` | `int | None` | `None` |
 
 ## Sfx _(comic_page.py)_
 
@@ -80,20 +79,6 @@ These are the Pydantic models that flow between pipeline stages. `story_bible.js
 | `layout` | `str` | `'4'` |
 | `layout_mode` | `Literal['grid', 'freeform']` | `'grid'` |
 | `panels` | `list[PagePanel]` | `Field(default_factory=list)` |
-
-## CharacterVoice _(comic_page.py)_
-
-| Field | Type | Default |
-|-------|------|---------|
-| `character_id` | `str` |  |
-| `character_name` | `str` |  |
-| `font_family` | `str | None` | `None` |
-| `font_size` | `int | None` | `None` |
-| `font_color` | `str | None` | `None` |
-| `fill_color` | `str | None` | `None` |
-| `border_color` | `str | None` | `None` |
-| `border_width` | `int | None` | `None` |
-| `border_radius` | `int | None` | `None` |
 
 ## LayoutPlanBeatRef _(layout_plan.py)_
 
@@ -513,4 +498,3 @@ These are the Pydantic models that flow between pipeline stages. `story_bible.js
 | `narrative_arcs` | `list[NarrativeArc]` |  |
 | `style_notes` | `Optional[str]` | `None` |
 | `props` | `list[Prop]` | `[]` |
-

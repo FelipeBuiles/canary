@@ -37,8 +37,8 @@ import {
 } from "../../store/drawProgress";
 import {
   StaleStripe,
-  isAllInkedTransition,
 } from "../../components/draw/LiveCockpit";
+import { isAllInkedTransition } from "../../components/draw/progressTransitions";
 import type { ImageStatus, StageCostEstimate } from "../../types/api";
 import { getPanelPreparationState } from "../../lib/panelPreparation";
 import { useI18n } from "../../i18n";
@@ -240,7 +240,6 @@ export function DrawRoom() {
     : undefined;
 
   const generateStage = drawStage;
-  const failedItems = generateStage?.items_failed ?? [];
   const isStageStuck = !!generateStage?.stale;
   const lastProgressAt = generateStage?.last_progress_at ?? null;
 
@@ -251,11 +250,12 @@ export function DrawRoom() {
     [images],
   );
 
-  const baseImages = (sceneFilter !== "all"
-    ? images?.filter((img) => img.scene_id === sceneFilter)
-    : images) ?? [];
-
-  const allDisplayImages: ImageStatus[] = [...baseImages];
+  const allDisplayImages = useMemo(() => {
+    const failedItems = generateStage?.items_failed ?? [];
+    const baseImages = (sceneFilter !== "all"
+      ? images?.filter((img) => img.scene_id === sceneFilter)
+      : images) ?? [];
+    const displayImages: ImageStatus[] = [...baseImages];
 
   for (const failedItem of failedItems) {
     const parts = failedItem.split("/");
@@ -265,7 +265,7 @@ export function DrawRoom() {
     const panelMatch = panelPart?.match(/panel_(\d+)/);
     if (!panelMatch || !failedSceneId) continue;
     const failedPanelNum = parseInt(panelMatch[1], 10);
-    const alreadyPresent = allDisplayImages.some(
+    const alreadyPresent = displayImages.some(
       (img) => img.scene_id === failedSceneId && img.panel_number === failedPanelNum,
     );
     if (!alreadyPresent && (sceneFilter === "all" || sceneFilter === failedSceneId)) {
@@ -273,11 +273,11 @@ export function DrawRoom() {
         scene_id: failedSceneId, panel_number: failedPanelNum, status: "failed",
         image_available: false, accepted: false,
       };
-      const idx = allDisplayImages.findIndex(
+      const idx = displayImages.findIndex(
         (img) => img.scene_id > failedSceneId || (img.scene_id === failedSceneId && img.panel_number > failedPanelNum),
       );
-      if (idx === -1) allDisplayImages.push(synth);
-      else allDisplayImages.splice(idx, 0, synth);
+      if (idx === -1) displayImages.push(synth);
+      else displayImages.splice(idx, 0, synth);
     }
   }
 
@@ -289,19 +289,19 @@ export function DrawRoom() {
     const panelNumbers = summary.panel_numbers
       ?? Array.from({ length: summary.prompt_count }, (_, index) => index + 1);
     for (const panelNum of panelNumbers) {
-      const alreadyPresent = allDisplayImages.some(
+      const alreadyPresent = displayImages.some(
         (img) => img.scene_id === summary.scene_id && img.panel_number === panelNum,
       );
       if (!alreadyPresent) {
-        const idx = allDisplayImages.findIndex(
+        const idx = displayImages.findIndex(
           (img) => img.scene_id > summary.scene_id || (img.scene_id === summary.scene_id && img.panel_number > panelNum),
         );
         const synth: ImageStatus = {
           scene_id: summary.scene_id, panel_number: panelNum,
           status: "pending", image_available: false, accepted: false,
         };
-        if (idx === -1) allDisplayImages.push(synth);
-        else allDisplayImages.splice(idx, 0, synth);
+        if (idx === -1) displayImages.push(synth);
+        else displayImages.splice(idx, 0, synth);
       }
     }
   }
@@ -310,7 +310,7 @@ export function DrawRoom() {
     const lastDash = regeningKey.lastIndexOf("-");
     const regenSceneId = regeningKey.slice(0, lastDash);
     const regenPanelNum = parseInt(regeningKey.slice(lastDash + 1), 10);
-    const alreadyPresent = allDisplayImages.some(
+    const alreadyPresent = displayImages.some(
       (img) => img.scene_id === regenSceneId && img.panel_number === regenPanelNum,
     );
     if (!alreadyPresent && (sceneFilter === "all" || sceneFilter === regenSceneId)) {
@@ -318,13 +318,16 @@ export function DrawRoom() {
         scene_id: regenSceneId, panel_number: regenPanelNum,
         status: "pending", image_available: false, accepted: false,
       };
-      const idx = allDisplayImages.findIndex(
+      const idx = displayImages.findIndex(
         (img) => img.scene_id > regenSceneId || (img.scene_id === regenSceneId && img.panel_number > regenPanelNum),
       );
-      if (idx === -1) allDisplayImages.push(synth);
-      else allDisplayImages.splice(idx, 0, synth);
+      if (idx === -1) displayImages.push(synth);
+      else displayImages.splice(idx, 0, synth);
     }
-  }
+    }
+
+    return displayImages;
+  }, [generateStage?.items_failed, images, promptSummaries, regeningKeys, sceneFilter]);
 
   useEffect(() => {
     if (!id || !generationJobs?.jobs.length) return;

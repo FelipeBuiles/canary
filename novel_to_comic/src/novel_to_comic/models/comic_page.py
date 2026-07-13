@@ -196,7 +196,6 @@ class Bubble(BaseModel):
     fill_color: str | None = None
     border_color: str | None = None
     border_width: int | None = None
-    border_radius: int | None = None
 
     @field_validator("font_color", "fill_color", "border_color")
     @classmethod
@@ -327,58 +326,18 @@ class ComicPage(BaseModel):
 
 BUBBLE_PRESETS: dict[str, dict[str, str]] = {
     "speech": {
-        "border_radius": "10",
         "border_width": "2",
         "border_color": "#1a1b15",
         "fill_color": "#ffffff",
     },
     "thought": {
-        "border_radius": "22",
         "border_width": "2",
         "border_color": "#1a1b15",
         "fill_color": "#ffffff",
     },
     "narration": {
-        "border_radius": "2",
         "border_width": "2",
         "border_color": "#1a1b15",
         "fill_color": "#f0ebe0",
     },
-    "whisper": {
-        "border_radius": "10",
-        "border_width": "1",
-        "border_color": "#1a1b1580",
-        "fill_color": "#ffffffcc",
-    },
-    "shout": {
-        "border_radius": "2",
-        "border_width": "3",
-        "border_color": "#1a1b15",
-        "fill_color": "#e8c840",
-    },
 }
-
-
-# ── Character voices ──────────────────────────────────────────────────────────
-
-class CharacterVoice(BaseModel):
-    """Per-character bubble style preset applied automatically at render time."""
-    character_id: str
-    character_name: str
-    font_family: str | None = None
-    font_size: int | None = None
-    font_color: str | None = None
-    fill_color: str | None = None
-    border_color: str | None = None
-    border_width: int | None = None
-    border_radius: int | None = None
-
-    @field_validator("font_color", "fill_color", "border_color")
-    @classmethod
-    def _check_colors(cls, v: str | None) -> str | None:
-        return _validate_css_color(v)
-
-    @field_validator("font_family")
-    @classmethod
-    def _check_font_family(cls, v: str | None) -> str | None:
-        return _validate_font_family(v)

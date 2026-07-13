@@ -46,7 +46,6 @@ function makeBubble(overrides: Partial<Bubble> = {}): Bubble {
     fill_color: null,
     border_color: null,
     border_width: null,
-    border_radius: null,
     ...overrides,
   };
 }

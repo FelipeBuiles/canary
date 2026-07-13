@@ -118,7 +118,8 @@ alter table public.ai_usage_events
 
 drop view if exists public.user_credits;
 
-create or replace view public.user_credits as
+create or replace view public.user_credits
+  with (security_invoker = true) as
   select
     user_id,
     coalesce(

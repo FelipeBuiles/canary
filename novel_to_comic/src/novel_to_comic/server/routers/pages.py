@@ -25,7 +25,13 @@ from novel_to_comic.layout_planning import (
     reorder_planned_pages,
     save_layout_plan,
 )
-from novel_to_comic.models.comic_page import Bubble, ComicPage, Sfx, BUBBLE_PRESETS, CharacterVoice, normalize_sfx_text
+from novel_to_comic.models.comic_page import (
+    BUBBLE_PRESETS,
+    Bubble,
+    ComicPage,
+    Sfx,
+    normalize_sfx_text,
+)
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.models.lettering import LetteringStyle
 from novel_to_comic.assembly.lettering_style import load_lettering_style, save_lettering_style
@@ -70,15 +76,12 @@ STYLE_VAR_ALLOWLIST = {
     "--bubble-bg",
     "--bubble-border",
     "--bubble-border-width",
-    "--bubble-radius",
     "--bubble-font-size",
     "--bubble-padding",
     "--bubble-max-width",
     "--bubble-center-width",
     "--speaker-color",
     "--speaker-font-size",
-    "--thought-border-style",
-    "--thought-radius",
     "--sfx-color",
     "--sfx-shadow",
     "--sfx-font-size",
@@ -105,9 +108,7 @@ def _sanitize_style_vars(raw: dict) -> dict[str, str]:
         "--panel-border-width": (1, 12),
         "--caption-font-size": (14, 160),
         "--bubble-border-width": (1, 10),
-        "--bubble-radius": (6, 120),
         "--bubble-font-size": (16, 200),
-        "--thought-radius": (18, 180),
         "--speaker-font-size": (8, 60),
         "--sfx-font-size": (20, 260),
         "--page-num-font-size": (10, 80),
@@ -165,8 +166,6 @@ def _sanitize_style_vars(raw: dict) -> dict[str, str]:
                     return None
                 parsed.append(n)
             return " ".join(f"{_fmt_num(n)}px" for n in parsed)
-        if key == "--thought-border-style":
-            return text if text in {"solid", "dashed", "dotted"} else None
         return None
 
     clean: dict[str, str] = {}
@@ -386,67 +385,6 @@ def get_bubble_presets(project=Depends(get_project)):
     return BUBBLE_PRESETS
 
 
-def _voices_path(project_dir: Path) -> Path:
-    return project_dir / "assembly" / "character_voices.json"
-
-
-def _load_voices(project_dir: Path) -> dict[str, dict]:
-    path = _voices_path(project_dir)
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text())
-
-
-def _save_voices(project_dir: Path, voices: dict[str, dict]) -> None:
-    path = _voices_path(project_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(voices, indent=2))
-
-
-@router.get("/pages/character-voices")
-def get_character_voices(project=Depends(get_project)):
-    """Return all character voice presets."""
-    project_dir, config, state = project
-    return _load_voices(project_dir)
-
-
-@router.put("/pages/character-voices/{character_id}")
-def put_character_voice(character_id: str, body: dict, project=Depends(get_project)):
-    """Upsert a voice style for a character."""
-    project_dir, config, state = project
-    try:
-        voice = CharacterVoice(
-            character_id=character_id,
-            character_name=body.get("character_name", character_id),
-            font_family=body.get("font_family"),
-            font_size=body.get("font_size"),
-            font_color=body.get("font_color"),
-            fill_color=body.get("fill_color"),
-            border_color=body.get("border_color"),
-            border_width=body.get("border_width"),
-            border_radius=body.get("border_radius"),
-        )
-    except ValidationError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    voices = _load_voices(project_dir)
-    voices[character_id] = voice.model_dump(exclude_none=True)
-    voices[character_id]["character_id"] = character_id
-    voices[character_id]["character_name"] = voice.character_name
-    _save_voices(project_dir, voices)
-    return voice.model_dump()
-
-
-@router.delete("/pages/character-voices/{character_id}")
-def delete_character_voice(character_id: str, project=Depends(get_project)):
-    """Remove a character voice preset."""
-    project_dir, config, state = project
-    voices = _load_voices(project_dir)
-    if character_id in voices:
-        del voices[character_id]
-        _save_voices(project_dir, voices)
-    return {"status": "ok"}
-
-
 # ── Per-page routes ───────────────────────────────────────────────────────────
 
 
@@ -529,7 +467,6 @@ def _apply_page_patch(cp: ComicPage, body: dict) -> None:
                             "full_width",
                             "font_family", "font_size", "font_color",
                             "fill_color", "border_color", "border_width",
-                            "border_radius",
                         ):
                             if field in bp:
                                 setattr(bubble, field, bp[field])
@@ -549,7 +486,6 @@ def _apply_page_patch(cp: ComicPage, body: dict) -> None:
                             fill_color=bp.get("fill_color"),
                             border_color=bp.get("border_color"),
                             border_width=bp.get("border_width"),
-                            border_radius=bp.get("border_radius"),
                         ))
 
             # ── Reorder bubbles ──
@@ -713,9 +649,7 @@ def apply_bubble_preset(body: dict, project=Depends(get_project)):
             for bubble in panel.bubbles:
                 if bubble.type == preset_name:
                     for field, value in preset.items():
-                        if field == "border_radius":
-                            bubble.border_radius = int(value)
-                        elif field == "border_width":
+                        if field == "border_width":
                             bubble.border_width = int(value)
                         elif field == "border_color":
                             bubble.border_color = value
@@ -1024,14 +958,12 @@ def page_preview(page_num: int, project_id: str, project=Depends(get_project)):
     cp = _load_page(project_dir, page_num)
 
     custom_css = ""
-    character_voices = _load_voices(project_dir)
     lettering = load_lettering_style(project_dir)
 
     html = build_page_html(
         cp,
         project_dir,
         custom_css,
-        character_voices=character_voices,
         image_url_fn=lambda rel: f"/api/projects/{project_id}/files/{rel}",
         font_url_fn=lambda filename: f"/static/fonts/{filename}",
         lettering=lettering,

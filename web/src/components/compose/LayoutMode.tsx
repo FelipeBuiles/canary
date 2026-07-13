@@ -73,21 +73,20 @@ export function LayoutMode({
 }: LayoutModeProps) {
   const { data: lettering } = useLetteringStyle(project);
   const canvasShellRef = useRef<HTMLElement>(null);
-  const [floatingPosition, setFloatingPosition] = useState<{ top: number; left: number; shellViewportTop: number } | null>(null);
-  const [dragOffset, setDragOffset] = useState({ dx: 0, dy: 0 });
+  const inspectorKey = selection?.elementId ?? panelReframeId;
+  const [floatingState, setFloatingState] = useState<{
+    key: string;
+    position: { top: number; left: number; shellViewportTop: number };
+  } | null>(null);
+  const floatingPosition = floatingState?.key === inspectorKey ? floatingState.position : null;
+  const [dragState, setDragState] = useState({ key: inspectorKey, dx: 0, dy: 0 });
+  const dragOffset = dragState.key === inspectorKey ? dragState : { dx: 0, dy: 0 };
   const dragStartRef = useRef<{ clientX: number; clientY: number; dx: number; dy: number } | null>(null);
   const [scalePreview, setScalePreview] = useState<{ panelId: string; scale: number } | null>(null);
 
   useEffect(() => {
-    setDragOffset({ dx: 0, dy: 0 });
-  }, [selection?.elementId, panelReframeId]);
-
-  useEffect(() => {
     const hasInspector = !!selection || !!panelReframeId;
-    if (!hasInspector) {
-      setFloatingPosition(null);
-      return;
-    }
+    if (!hasInspector || !inspectorKey) return;
 
     const updatePosition = () => {
       const shell = canvasShellRef.current;
@@ -105,10 +104,10 @@ export function LayoutMode({
       } else if (panelReframeId) {
         selector = `[data-panel-id="${CSS.escape(panelReframeId)}"]`;
       }
-      if (!selector) { setFloatingPosition(null); return; }
+      if (!selector) return;
 
       const target = shell.querySelector<HTMLElement>(selector);
-      if (!target) { setFloatingPosition(null); return; }
+      if (!target) return;
 
       const shellRect = shell.getBoundingClientRect();
       const targetRect = target.getBoundingClientRect();
@@ -148,13 +147,16 @@ export function LayoutMode({
         top = Math.max(gap, bubbleTopInShell - spaceAbove);
       }
 
-      setFloatingPosition({ top, left, shellViewportTop: shellRect.top });
+      setFloatingState({
+        key: inspectorKey,
+        position: { top, left, shellViewportTop: shellRect.top },
+      });
     };
 
     updatePosition();
     window.addEventListener("resize", updatePosition);
     return () => window.removeEventListener("resize", updatePosition);
-  }, [selection, panelReframeId, page, zoom]);
+  }, [selection, panelReframeId, inspectorKey, page, zoom]);
 
   const propertyPanel = useMemo(() => {
     if (!page) return null;
@@ -283,7 +285,8 @@ export function LayoutMode({
                 }}
                 onPointerMove={(e) => {
                   if (!dragStartRef.current) return;
-                  setDragOffset({
+                  setDragState({
+                    key: inspectorKey,
                     dx: dragStartRef.current.dx + (e.clientX - dragStartRef.current.clientX),
                     dy: dragStartRef.current.dy + (e.clientY - dragStartRef.current.clientY),
                   });

@@ -299,19 +299,6 @@ export function BySceneCard({
 
 // True only on the transition into a fully-inked, failure-free stage.
 // A null prevGenerated (fresh mount of an already-complete stage) never fires.
-export function isAllInkedTransition(
-  prevGenerated: number | null,
-  counts: { generated: number; failed: number; total: number },
-): boolean {
-  return (
-    prevGenerated != null &&
-    counts.total > 0 &&
-    prevGenerated < counts.total &&
-    counts.generated === counts.total &&
-    counts.failed === 0
-  );
-}
-
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatPanelLabel(sceneId: string, panelNumber: number): string {

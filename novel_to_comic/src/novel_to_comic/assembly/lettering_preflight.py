@@ -31,6 +31,7 @@ class PanelLetteringMetrics:
     coverage_ratio: float
     max_auto_stack_ratio: float
     overflowing_bubble_ids: tuple[str, ...]
+    unsafe_bubble_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,19 @@ def classify_lettering_metrics(
                     message=(
                         f"Panel {panel.panel_number} has lettering outside its panel bounds. "
                         "Shorten, split, or reposition the text before export."
+                    ),
+                    **base,
+                )
+            )
+        if panel.unsafe_bubble_ids:
+            issues.append(
+                LetteringPreflightIssue(
+                    code="lettering_unsafe_area",
+                    severity="error",
+                    bubble_ids=panel.unsafe_bubble_ids,
+                    message=(
+                        f"Panel {panel.panel_number} has text outside its balloon safe area. "
+                        "Shorten the text or enlarge the balloon before export."
                     ),
                     **base,
                 )
@@ -147,6 +161,7 @@ async def inspect_project_lettering(project_dir: Path) -> list[LetteringPrefligh
                     coverage_ratio=float(item["coverage_ratio"]),
                     max_auto_stack_ratio=float(item["max_auto_stack_ratio"]),
                     overflowing_bubble_ids=tuple(str(value) for value in item["overflowing_bubble_ids"]),
+                    unsafe_bubble_ids=tuple(str(value) for value in item["unsafe_bubble_ids"]),
                 )
                 for item in rendered
             )

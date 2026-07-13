@@ -64,10 +64,6 @@ export function sanitizeStyleVars(input: Record<string, string> | undefined): Re
   if (pageNumFontSize) out["--page-num-font-size"] = pageNumFontSize;
   else delete out["--page-num-font-size"];
 
-  const bubbleRadius = normalizePx(out["--bubble-radius"], 6, 120);
-  if (bubbleRadius) out["--bubble-radius"] = bubbleRadius;
-  else delete out["--bubble-radius"];
-
   const borderWidth = normalizePx(out["--bubble-border-width"], 1, 10);
   if (borderWidth) out["--bubble-border-width"] = borderWidth;
   else delete out["--bubble-border-width"];

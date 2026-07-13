@@ -13,6 +13,7 @@ def _metrics(**overrides) -> PanelLetteringMetrics:
         "coverage_ratio": 0.12,
         "max_auto_stack_ratio": 0.18,
         "overflowing_bubble_ids": (),
+        "unsafe_bubble_ids": (),
     }
     values.update(overrides)
     return PanelLetteringMetrics(**values)
@@ -49,3 +50,12 @@ def test_overflow_and_tall_auto_stack_are_blocking_errors():
     }
     assert all(issue.severity == "error" for issue in issues)
 
+
+def test_text_outside_shape_safe_area_blocks_export():
+    issues = classify_lettering_metrics([
+        _metrics(unsafe_bubble_ids=("scene_001-p1-b0",))
+    ])
+
+    assert [(issue.code, issue.severity, issue.bubble_ids) for issue in issues] == [
+        ("lettering_unsafe_area", "error", ("scene_001-p1-b0",)),
+    ]

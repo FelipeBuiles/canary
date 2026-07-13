@@ -10,13 +10,19 @@ primary_region = 'iad'
   dockerfile = 'Dockerfile'
 
 [env]
+  AI_BILL_FAILED_REQUESTS = 'provider_usage_only'
+  CANARY_ALLOWED_HOSTS = 'canary-web.fly.dev'
   CANARY_COOKIE_SECURE = 'true'
   CANARY_ENV = 'production'
   CANARY_GENERATION_JOB_TIMEOUT_SECONDS = '900'
   CANARY_GENERATION_WORKERS = '5'
   CANARY_LABS_ENABLED = 'false'
-  CANARY_OTEL_ENABLED = 'true'
+  CANARY_OTEL_ENABLED = 'false'
+  CANARY_STRIPE_WEBHOOK_MAX_KB = '256'
   LITELLM_BASE_URL = 'http://127.0.0.1:4000'
+  PULP_CREDITS_PER_PROVIDER_USD = '100'
+  PULP_MODEL_COST_MARKUP = '2.0'
+  SCENEWRIGHT_APP_URL = 'https://canary-web.fly.dev'
 
 [[mounts]]
   source = 'canary_projects'
@@ -36,7 +42,7 @@ primary_region = 'iad'
   [[http_service.checks]]
     interval = '30s'
     timeout = '5s'
-    grace_period = '2m0s'
+    grace_period = '1m0s'
     method = 'GET'
     path = '/api/health/ready'
 

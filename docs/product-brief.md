@@ -118,7 +118,7 @@ to a room and rerun the affected backend stage/downstream stages.
 | 5-6. **Shot Plan** | "Here's how each scene breaks into pages and panels." Current: layout plan plus editable panel cards exist; add/remove/reorder within a scene is not done. |
 | 7. **Prompt Review** | "Here's the brief for each panel." Current: prompt inspector/editor exists with lineage display. |
 | 8. **Generate Panels** | "Here are your panels." Current: panel gallery, failures/pending states, detail modal, per-panel regen, instruction regen, acceptance, and version restore exist; bulk regen is not done. |
-| 9. **Letter & Compose** | "Here's your comic." Current: canonical page JSON editor exists for bubbles, SFX, layout/theme, translation, reflow, structural operations, character voices, and export; full drag-and-drop panel layout and persistent history are not done. |
+| 9. **Letter & Compose** | "Here's your comic." Current: canonical page JSON editor exists for bubbles, SFX, layout/theme, translation, reflow, structural operations, and export; full drag-and-drop panel layout and persistent history are not done. |
 
 This rooms-not-buttons mental model is the spine of the future UI.
 

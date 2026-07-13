@@ -619,7 +619,6 @@ export interface Bubble {
   fill_color: string | null;
   border_color: string | null;
   border_width: number | null;
-  border_radius: number | null;
 }
 
 export type SfxKind = "impact" | "mechanical" | "voice" | "ambient" | "environment";
@@ -851,18 +850,6 @@ export interface PromptWarning {
   detail: string;
   scene_id: string;
   panel_number: number;
-}
-
-export interface CharacterVoice {
-  character_id: string;
-  character_name: string;
-  font_family?: string | null;
-  font_size?: number | null;
-  font_color?: string | null;
-  fill_color?: string | null;
-  border_color?: string | null;
-  border_width?: number | null;
-  border_radius?: number | null;
 }
 
 /**
