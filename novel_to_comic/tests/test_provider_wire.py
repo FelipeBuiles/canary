@@ -110,6 +110,7 @@ def test_litellm_wire_serialization_preserves_manifest_order_and_controls(tmp_pa
     params, files = serialize_wire_request(wire)
     assert params["prompt"] == wire.prompt_parts[0]
     assert params["response_format"] == "b64_json"
+    assert params["canary_requested_aspect"] == pytest.approx(768 / 1344)
     assert parse_provider_wire(params["canary_wire_request"])["execution_fingerprint"] == wire.execution_fingerprint
     assert [file[1][1] for file in files] == [b"ref-0", b"ref-1"]
 

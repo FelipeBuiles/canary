@@ -29,7 +29,7 @@ export function Shell() {
         <SideNav showDesktop={showDesktopProjectNav} />
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <AppTopBar />
-          <main id="main-content" className="app-workbench min-w-0 flex-1 overflow-y-auto bg-surface-container">
+          <main id="main-content" className="app-workbench min-w-0 flex-1 overflow-y-auto bg-pulp-paper">
             <div className={cn(
               "app-workbench-sheet flex w-full flex-col bg-pulp-paper",
               !isCompose && "px-5 py-6 md:px-10 md:py-10",

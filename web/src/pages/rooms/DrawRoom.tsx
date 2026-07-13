@@ -11,6 +11,7 @@ import {
   useStageEstimate,
   useProjectConfig,
   useResetStale,
+  useRegenPanel,
 } from "../../api/queries";
 import { useRunAction } from "../../hooks/useRunAction";
 import { PanelCard } from "../../components/PanelCard";
@@ -18,6 +19,7 @@ import { Select } from "../../components/ui/Select";
 import { PanelDetailModal } from "../../components/PanelDetailModal";
 import {
   ApprovalBar,
+  PanelPreparationChecklist,
   RoomHeader,
   RoomShell,
   RoomTabs,
@@ -38,6 +40,9 @@ import {
   isAllInkedTransition,
 } from "../../components/draw/LiveCockpit";
 import type { ImageStatus, StageCostEstimate } from "../../types/api";
+import { getPanelPreparationState } from "../../lib/panelPreparation";
+import { useI18n } from "../../i18n";
+import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 
 function imageModelLabel(model: string | undefined) {
   switch (model) {
@@ -128,12 +133,15 @@ function panelImageUrl(project: string, img: Pick<ImageStatus, "scene_id" | "pan
 export function DrawRoom() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { t } = useI18n();
   const projectRegens = useActiveRegens(id ?? "");
   const bustTimestamps = useRegenStore((s) => s.bustTimestamps);
   const errors = useRegenStore((s) => s.errors);
   const updateJob = useRegenStore((s) => s.updateJob);
   const complete = useRegenStore((s) => s.complete);
   const fail = useRegenStore((s) => s.fail);
+  const beginRegen = useRegenStore((s) => s.begin);
+  const attachRegenJob = useRegenStore((s) => s.attachJob);
 
   const [statusFilter, setStatusFilter] = useState<PanelFilterBucket>("all");
   const didChooseInitialReviewFilter = useRef(false);
@@ -157,6 +165,8 @@ export function DrawRoom() {
   );
 
   const { data: status } = useProjectStatus(id);
+  const panelPreparation = getPanelPreparationState(status);
+  const failedPreparationStage = panelPreparation.failedStage;
   const { data: images, isLoading } = useImages(
     id,
     regeningKeys.length > 0 || status?.stages?.draw?.status === "running" ? 2000 : undefined,
@@ -212,8 +222,14 @@ export function DrawRoom() {
   const { mutate: resetStale, isPending: isResetting } = useResetStale();
   const approveStage = useApproveStage();
   const setPanelFlag = useSetPanelFlag();
+  const regenPanel = useRegenPanel();
   const { data: drawEstimate } = useStageEstimate(id, "draw");
   const { data: composeEstimate } = useStageEstimate(id, "compose");
+  const { data: preparationRetryEstimate } = useStageEstimate(
+    id,
+    failedPreparationStage ?? undefined,
+    failedPreparationStage !== null,
+  );
   const { data: projectConfig } = useProjectConfig(id);
   // A zero draw estimate means the prompt inputs were not visible to the
   // estimator yet. Drawing panels is never a genuinely free action, so do
@@ -443,6 +459,13 @@ export function DrawRoom() {
     setConfirmAction(null);
   }
 
+  function handleRetryPreparation() {
+    if (!id || !failedPreparationStage) return;
+    handleRun(id, failedPreparationStage, {
+      actionLabel: "Retry panel preparation",
+    });
+  }
+
   function handleRetryFailed() {
     if (!id) return;
     setDrawActionError(null);
@@ -476,6 +499,26 @@ export function DrawRoom() {
       panelNumber: img.panel_number,
       flagged: !img.flagged,
     });
+  }
+
+  async function handleQuickRedo(img: ImageStatus) {
+    if (!id) return;
+    const key = `${img.scene_id}-${img.panel_number}`;
+    beginRegen(id, key);
+    try {
+      const data = await regenPanel.mutateAsync({
+        project: id,
+        sceneId: img.scene_id,
+        panelNumber: img.panel_number,
+      });
+      attachRegenJob(id, key, data.job);
+    } catch (err) {
+      if (maybeShowInsufficientCredits(err, {
+        actionLabel: "Regenerate panel",
+        onRetry: () => handleQuickRedo(img),
+      })) return;
+      fail(id, key, err instanceof Error ? err.message : "Regeneration failed");
+    }
   }
 
   function handleAcceptAllContinue() {
@@ -517,31 +560,45 @@ export function DrawRoom() {
   // Pre-generation: a short explainer and one way forward.
   const nothingGeneratedYet =
     (!images?.length && regeningKeys.length === 0) || !id;
-  const upstreamReady = status?.stages?.direct?.status === "complete";
+  const upstreamReady = panelPreparation.isReady;
   if (nothingGeneratedYet) {
     return (
       <RoomShell project={id ?? ""}>
-        <StagePlaceholder
-          project={id ?? ""}
-          stage="draw"
-          status={drawStageStatus}
-          itemsDone={generateStage?.items_done}
-          itemsTotal={generateStage?.items_total}
-        />
+        {drawStageStatus === "pending" ? (
+          <PanelPreparationChecklist preparation={panelPreparation} />
+        ) : (
+          <StagePlaceholder
+            project={id ?? ""}
+            stage="draw"
+            status={drawStageStatus}
+            itemsDone={generateStage?.items_done}
+            itemsTotal={generateStage?.items_total}
+          />
+        )}
         {id && !isDrawRunning && upstreamReady && (
           <ApprovalBar
-            next="Scenewright draws every planned panel in your selected style"
+            next={t("Scenewright draws every planned panel in your selected style")}
             estimateCredits={drawCostEstimate?.estimate_credits}
-            primaryLabel="▶ DRAW ALL PANELS"
+            primaryLabel={t("▶ DRAW ALL PANELS")}
             onPrimary={() => setConfirmAction("draw_all")}
             primaryDisabled={isPipelineRunning}
             busy={isPipelineRunning}
           />
         )}
-        {id && !isDrawRunning && !upstreamReady && (
+        {id && !isDrawRunning && !upstreamReady && failedPreparationStage && (
           <ApprovalBar
-            next="Scenewright is preparing the panel plan and image instructions"
-            primaryLabel="▶ DRAW ALL PANELS"
+            next={t("Panel preparation stopped. Retry the interrupted step to continue")}
+            estimateCredits={preparationRetryEstimate?.estimate_credits}
+            primaryLabel={t("↺ RETRY PANEL PREPARATION")}
+            onPrimary={handleRetryPreparation}
+            primaryDisabled={isPipelineRunning}
+            busy={isPipelineRunning}
+          />
+        )}
+        {id && !isDrawRunning && !upstreamReady && !failedPreparationStage && (
+          <ApprovalBar
+            next={t("Scenewright is preparing the panel plan and image instructions")}
+            primaryLabel={t("PREPARING…")}
             onPrimary={() => {}}
             primaryDisabled
           />
@@ -794,6 +851,7 @@ export function DrawRoom() {
                 versionCount={img.version_count}
                 regenMode={inputs.regenMode}
                 regenError={regenError}
+                onQuickRedo={img.status === "failed" ? () => handleQuickRedo(img) : undefined}
                 inFlight={inputs.inFlight}
                 queuedInRun={inputs.queuedInRun}
                 isRetryFailedRunning={retryFailedActive}

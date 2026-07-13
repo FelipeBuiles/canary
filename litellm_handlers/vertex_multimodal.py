@@ -231,18 +231,21 @@ class VertexMultimodalLLM(CustomLLM):
             }
             controls = dict(manifest.get("controls", []))
             quality = controls.get("quality")
-            if quality is not None:
-                image_size = {"low": "1K", "medium": "2K", "high": "4K", "auto": "2K"}.get(
-                    str(quality).lower()
+            image_config_kwargs = _image_config_kwargs(requested_aspect, quality)
+            native_aspect = image_config_kwargs.get("aspect_ratio")
+
+            # Older LiteLLM images ship a google-genai version without
+            # ImageConfig. The size hint is optional, but dropping a requested
+            # non-square aspect would make the provider silently return the
+            # wrong frame, so surface that incompatibility before generation.
+            image_config_type = getattr(types, "ImageConfig", None)
+            if image_config_kwargs and image_config_type is not None:
+                config_kwargs["image_config"] = image_config_type(**image_config_kwargs)
+            elif native_aspect is not None:
+                raise ValueError(
+                    "Vertex image SDK does not support native aspect ratio controls; "
+                    f"cannot safely generate the requested {native_aspect} frame"
                 )
-                if image_size is None:
-                    raise ValueError(f"unsupported wire quality: {quality}")
-                # Older LiteLLM images ship a google-genai version without
-                # ImageConfig. The size hint is optional; keep the request
-                # compatible and let Vertex use its default in that case.
-                image_config_type = getattr(types, "ImageConfig", None)
-                if image_config_type is not None:
-                    config_kwargs["image_config"] = image_config_type(image_size=image_size)
             response = await asyncio.to_thread(
                 client.models.generate_content,
                 model=vertex_model,
@@ -501,6 +504,30 @@ def _map_to_supported_aspect(requested_aspect: float | None) -> str | None:
         "21:9": 21 / 9,
     }
     return min(supported.keys(), key=lambda k: abs(supported[k] - requested_aspect))
+
+
+def _image_config_kwargs(
+    requested_aspect: float | None,
+    quality: Any,
+) -> dict[str, str]:
+    """Build native Gemini image controls from the exact wire geometry."""
+    result: dict[str, str] = {}
+    if quality is not None:
+        image_size = {"low": "1K", "medium": "2K", "high": "4K", "auto": "2K"}.get(
+            str(quality).lower()
+        )
+        if image_size is None:
+            raise ValueError(f"unsupported wire quality: {quality}")
+        result["image_size"] = image_size
+
+    # Gemini otherwise defaults to a square image even when the
+    # provider-neutral request contains landscape/portrait geometry. Pass the
+    # closest supported native aspect explicitly so a retry cannot repeat a
+    # known shape mismatch.
+    native_aspect = _map_to_supported_aspect(requested_aspect)
+    if native_aspect is not None:
+        result["aspect_ratio"] = native_aspect
+    return result
 
 
 def _shape_for_aspect(aspect: float | None) -> str | None:

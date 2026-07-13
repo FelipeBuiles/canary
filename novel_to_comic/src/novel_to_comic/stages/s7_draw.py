@@ -25,7 +25,8 @@ from novel_to_comic.prompt_assembly import (
 from novel_to_comic.config import Config
 from novel_to_comic.events import make_progress
 from novel_to_comic.image_ref_strategy import RefStrategy
-from novel_to_comic.layout_planning import load_layout_plan, prompt_path_for_panel, scene_panel_map
+from novel_to_comic.image_failure import classify_image_failure, user_message_for_image_failure
+from novel_to_comic.layout_planning import load_layout_plan, scene_panel_map
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.panel_versions import record_current_panel_version
 from novel_to_comic.models.story_bible import StoryBible
@@ -511,51 +512,6 @@ def _exception_chain(exc: BaseException) -> list[BaseException]:
     return chain
 
 
-def _is_rate_limit_error(exc: BaseException) -> bool:
-    """True when the failure is an upstream quota / rate-limit (HTTP 429).
-
-    These are transient and prompt-independent — gemini-3-pro-image preview has
-    tight quota — so they should be retried (``retry_failed``) once quota
-    resets, NOT diagnosed as a prompt problem.
-    """
-    tokens = ("429", "resource_exhausted", "rate limit", "ratelimit", "quota")
-    for node in _exception_chain(exc):
-        if isinstance(getattr(node, "response", None), object):
-            status = getattr(getattr(node, "response", None), "status_code", None)
-            if status == 429:
-                return True
-        text = " ".join(
-            [str(node), *(str(arg) for arg in getattr(node, "args", ()) if arg is not None)]
-        ).lower()
-        if any(token in text for token in tokens):
-            return True
-    return False
-
-
-def _is_provider_blocked_error(exc: BaseException) -> bool:
-    tokens = (
-        "image_prohibited",
-        "prohibited_content",
-        "responsible ai",
-        "filtered out",
-        "safety rating",
-        "safety_ratings",
-        "safety filter",
-        "block_reason",
-        "blockreason",
-        "finish_reason=safety",
-        "finish_reason=content_filter",
-        "violated google",
-        "unable to show the generated image",
-        "silently rejected",
-    )
-    chain_text = " ".join(
-        " ".join([str(node), *(str(arg) for arg in getattr(node, "args", ()) if arg is not None)]).lower()
-        for node in _exception_chain(exc)
-    )
-    return any(token in chain_text for token in tokens)
-
-
 async def _generate_panel(
     config: Config,
     project_dir: Path,
@@ -851,33 +807,17 @@ async def _generate_panel(
                         },
                         project_dir=project_dir,
                     )
-                provider_blocked = _is_provider_blocked_error(exc)
-                rate_limited = not provider_blocked and _is_rate_limit_error(exc)
+                classification = classify_image_failure(
+                    exc,
+                    shape_mismatch=isinstance(exc, AspectMismatchError),
+                )
                 failure_payload = {
                     **meta_payload,
                     "kind": "panel_image_failure",
                     "failed_at": datetime.now(UTC).isoformat(),
-                    "classification": (
-                        "provider_blocked"
-                        if provider_blocked
-                        else "rate_limited"
-                        if rate_limited
-                        else "shape_mismatch"
-                        if isinstance(exc, AspectMismatchError)
-                        else "generation_error"
-                    ),
+                    "classification": classification,
                     "recoverable": True,
-                    "user_message": (
-                        "The image provider blocked this panel. Edit the prompt and use Quick Re-Do "
-                        "to generate replacement art before composing."
-                        if provider_blocked
-                        else "The image provider was rate-limited (quota exhausted). The prompt is fine — "
-                        "wait for quota to reset and use Retry Failed; no prompt edit is needed."
-                        if rate_limited
-                        else "The image provider returned art with the wrong frame shape. Regenerate this panel before composing."
-                        if isinstance(exc, AspectMismatchError)
-                        else "Image generation failed. Review the model error, edit the prompt if needed, and use Quick Re-Do."
-                    ),
+                    "user_message": user_message_for_image_failure(classification),
                     "error": {
                         "type": type(exc).__name__,
                         "message": _fmt_error(exc),

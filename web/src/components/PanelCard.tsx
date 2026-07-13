@@ -3,6 +3,8 @@ import { FlowingDotsPlaceholder } from "./ui/FlowingDotsPlaceholder";
 import { LazyImage } from "./ui/LazyImage";
 import { EntityCard } from "./composites";
 import { getPanelDisplayState, type PanelDisplayState } from "../lib/panelState";
+import { getImageFailureCopy } from "../lib/imageFailure";
+import { useI18n } from "../i18n";
 
 // Review-by-exception: only non-default states get a badge. A plain
 // generated panel is the default good state and carries no status chrome.
@@ -26,6 +28,7 @@ interface PanelCardProps {
   versionCount?: number;
   regenMode?: "queued" | "running" | null;
   regenError?: string | null;
+  onQuickRedo?: () => void;
   /** True when the backend reports this exact panel is currently mid-generation. */
   inFlight?: boolean;
   /** True when this panel is part of an active run's target set but not yet started. */
@@ -53,6 +56,7 @@ export function PanelCard({
   versionCount,
   regenMode = null,
   regenError,
+  onQuickRedo,
   inFlight = false,
   queuedInRun = false,
   isRetryFailedRunning = false,
@@ -62,6 +66,7 @@ export function PanelCard({
   description,
   onPanelClick,
 }: PanelCardProps) {
+  const { t } = useI18n();
   const displayState = getPanelDisplayState(
     { status, flagged, version_count: versionCount },
     { inFlight, queuedInRun, regenMode, isRetryFailedRunning },
@@ -79,12 +84,7 @@ export function PanelCard({
   const canFlag = !!onToggleFlag
     && (displayState === "generated" || displayState === "regenerated" || displayState === "flagged");
 
-  const failedCopyBody =
-    regenError ||
-    errorMessage ||
-    (failureClassification === "provider_blocked"
-      ? "Edit the prompt and re-run before composing."
-      : "Open the panel to describe a fix, or re-roll with the same prompt.");
+  const failureCopy = getImageFailureCopy(t, failureClassification, errorMessage, regenError);
 
   const media = (
     <div
@@ -146,11 +146,21 @@ export function PanelCard({
               △
             </div>
             <div className="mt-3 text-center font-display text-[1.1rem] font-bold leading-none tracking-[-0.03em] text-hero-red">
-              {failureClassification === "provider_blocked" ? "PROVIDER BLOCKED" : "GENERATION FAILED"}
+              {failureCopy.title}
             </div>
             <div className="mt-2 max-w-[22ch] text-center text-[0.68rem] leading-5 text-hero-red/85">
-              {failedCopyBody}
+              {failureCopy.message}
             </div>
+            {onQuickRedo && (
+              <button
+                type="button"
+                className="mt-4 inline-flex min-h-10 items-center border-[2px] border-hero-red bg-bristol px-3 font-meta text-[0.58rem] font-bold tracking-[0.1em] text-hero-red transition-colors hover:bg-hero-red hover:text-bristol focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-hero-red"
+                aria-label={`${t("QUICK RE-DO")} panel ${panelNum}`}
+                onClick={(event) => { event.stopPropagation(); onQuickRedo(); }}
+              >
+                ↺ {t("QUICK RE-DO")}
+              </button>
+            )}
           </div>
         </div>
       ) : (
