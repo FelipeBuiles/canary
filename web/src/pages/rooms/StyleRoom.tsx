@@ -14,13 +14,14 @@ import {
   useLetteringStyle,
   useGenerateLetteringStyle,
   useSetLetteringStyle,
+  useStyleSampleEstimate,
 } from "../../api/queries";
 import { Button } from "../../components/ui/Button";
 import { GenerationDetailsModal } from "../../components/ui/GenerationDetailsModal";
 import { LazyImage } from "../../components/ui/LazyImage";
 import { StateBlock } from "../../components/ui/StateBlock";
 import { Surface } from "../../components/ui/Surface";
-import { ApprovalBar, EntityCard, RoomHeader, ConfirmDrawer, RerunStageAction, RoomShell, SectionHeader } from "../../components/composites";
+import { ApprovalBar, EntityCard, RegenAction, RoomHeader, ConfirmDrawer, RerunStageAction, RoomShell, SectionHeader } from "../../components/composites";
 import { useApproveStage, useStageEstimate } from "../../api/queries";
 import { useRunAction } from "../../hooks/useRunAction";
 import { useI18n } from "../../i18n";
@@ -35,6 +36,7 @@ import {
 import { usePipelineStore } from "../../store/pipeline";
 import type { StyleSuggestion } from "../../api/styles";
 import type { StoryBible } from "../../types/api";
+import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 
 function buildFallbackStyleSamplePrompt(suggestion: StyleSuggestion, storyBible: StoryBible | undefined): string {
   const charDesc =
@@ -78,16 +80,20 @@ function StyleCard({
   const sampleUrl = `/api/projects/${encodeURIComponent(projectName)}/files/samples/style_${suggestion.index}.png`;
   const [imgFailed, setImgFailed] = useState(!suggestion.has_sample);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+  const [selectionError, setSelectionError] = useState<string | null>(null);
   const [timestamp, setTimestamp] = useState(() => Date.now());
   const wasGenerating = useRef(isGenerating);
   const generateSamples = useGenerateStyleSamples();
   const setActive = useSetActiveStyle();
   const { add, attachJobs, remove } = useStyleGenStore();
-  const { data: meta } = useImageGenerationMeta(
+  const { data: meta, isLoading: isMetaLoading } = useImageGenerationMeta(
     projectName,
     `samples/style_${suggestion.index}.png`,
     isDetailsOpen,
+    timestamp,
   );
+  const { data: sampleEstimate } = useStyleSampleEstimate(projectName, isDetailsOpen);
 
   useEffect(() => {
     if (!suggestion.has_sample) return;
@@ -106,15 +112,19 @@ function StyleCard({
     return () => window.clearTimeout(timer);
   }, [isGenerating]);
 
-  const handleGenerate = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleGenerate = () => {
+    setGenerationError(null);
     if (imgFailed) setImgFailed(true);
     add(projectName, [suggestion.index]);
     generateSamples.mutate(
       { project: projectName, indices: [suggestion.index] },
       {
         onSuccess: (data) => attachJobs(projectName, data.jobs),
-        onError: () => remove(projectName, [suggestion.index]),
+        onError: (error) => {
+          remove(projectName, [suggestion.index]);
+          if (maybeShowInsufficientCredits(error, { actionLabel: "Regenerate style proof", onRetry: handleGenerate })) return;
+          setGenerationError(error.message);
+        },
       },
     );
   };
@@ -125,7 +135,12 @@ function StyleCard({
 
   // The card itself is the selection — no per-card select buttons.
   const handleCardClick = () => {
-    if (canSelect) setActive.mutate({ project: projectName, index: suggestion.index });
+    if (!canSelect) return;
+    setSelectionError(null);
+    setActive.mutate(
+      { project: projectName, index: suggestion.index },
+      { onError: (error) => setSelectionError(error.message) },
+    );
   };
 
   return (
@@ -175,19 +190,11 @@ function StyleCard({
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); setIsDetailsOpen(true); }}
-                title="View sample details"
+                title={t("Open image")}
+                aria-label={`${t("Open image")} · ${suggestion.label}`}
                 className="flex h-10 w-10 items-center justify-center border-[2px] border-bristol bg-ink-black text-bristol transition-colors hover:bg-hero-red"
               >
                 <span className="font-meta text-[0.78rem]">⌕</span>
-              </button>
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); handleGenerate(e); }}
-                disabled={isGenerating || actionsDisabled}
-                title={suggestion.has_sample ? "Regenerate sample" : "Generate sample"}
-                className="flex h-10 w-10 items-center justify-center border-[2px] border-bristol bg-ink-black text-bristol transition-colors hover:bg-hero-red disabled:opacity-40"
-              >
-                <span className="font-meta text-[0.78rem]">↺</span>
               </button>
             </div>
           </div>
@@ -205,15 +212,42 @@ function StyleCard({
         <div className="mt-4 font-meta text-[0.58rem] font-bold tracking-[0.08em] text-ink-muted">
           {isActive ? `✓ ${t("YOUR STYLE")}` : t("CLICK TO SELECT")}
         </div>
+        {selectionError && (
+          <div className="mt-2 font-meta text-[0.55rem] font-bold tracking-[0.06em] text-hero-red">
+            {selectionError}
+          </div>
+        )}
       </EntityCard>
       <GenerationDetailsModal
         isOpen={isDetailsOpen}
         onClose={() => setIsDetailsOpen(false)}
         title={suggestion.label}
         imageUrl={`${sampleUrl}?t=${timestamp}`}
-        prompt={meta?.prompt ?? fallbackPrompt}
-        parameters={meta?.parameters ?? fallbackParameters}
+        metadata={meta}
+        prompt={fallbackPrompt}
+        parameters={fallbackParameters}
         isFallback={!meta}
+        isLoading={isMetaLoading}
+        imageAvailable={!imgFailed}
+        overview={(
+          <div className="space-y-5">
+            <div>
+              <div className="font-meta text-[0.54rem] tracking-[0.16em] text-ink-black/45">{t("VISUAL DIRECTION")}</div>
+              <p className="mt-1 text-[0.8rem] leading-6 text-ink-black/75">{suggestion.template}</p>
+            </div>
+            <RegenAction
+              assetLabel={suggestion.label}
+              cost={sampleEstimate}
+              hasImage={!imgFailed}
+              allowInstruction={false}
+              busy={isGenerating}
+              busyLabel={queueState === "queued" ? t("QUEUED") : t("DRAWING…")}
+              disabled={actionsDisabled && !isGenerating}
+              error={generationError}
+              onRegenerate={handleGenerate}
+            />
+          </div>
+        )}
       />
     </>
   );
@@ -346,18 +380,25 @@ export function StyleRoom() {
 
   function handleContinueToCast() {
     if (!id) return;
+    const startCastIfNeeded = () => {
+      if (!castStarted) handleRun(id, "cast", { actionLabel: "Cast characters & places" });
+      navigate(`/project/${id}/cast`);
+    };
+
     if (styleNeedsApproval && styleSelected) {
       approveStage.mutate(
         { project: id, stage: "style" },
         {
           onSuccess: () => {
-            if (!castStarted) handleRun(id, "cast", { actionLabel: "Cast characters & places" });
-            navigate(`/project/${id}/cast`);
+            startCastIfNeeded();
           },
         },
       );
     } else {
-      navigate(`/project/${id}/cast`);
+      // A previously approved style can leave cast pending when the user
+      // returns to this room. Continuing must still launch the missing run.
+      if (styleSelected) startCastIfNeeded();
+      else navigate(`/project/${id}/cast`);
     }
   }
 

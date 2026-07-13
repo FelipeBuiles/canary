@@ -19,7 +19,6 @@ import { downloadExportUrl } from "../../api/pages";
 import { RerunStageAction, StagePlaceholder } from "../../components/composites";
 import { ComposeHeader } from "../../components/compose/ComposeHeader";
 import { ExportBurst } from "../../components/compose/ExportBurst";
-import { LetteringReveal } from "../../components/compose/LetteringReveal";
 import { ScriptMode } from "../../components/compose/ScriptMode";
 import { LayoutMode } from "../../components/compose/LayoutMode";
 import { PreviewMode } from "../../components/compose/PreviewMode";
@@ -267,11 +266,6 @@ export function ComposeRoom() {
 
   // ── Export / style / translate ───────────────────────────────────────────
   const [exportSuccess, setExportSuccess] = useState<{ format: "pdf" | "cbz"; url: string } | null>(null);
-  const [revealSeen, setRevealSeen] = useState(() => !id || !!localStorage.getItem(`pulp:lettering-reveal:${id}`));
-  function dismissReveal() {
-    if (id) localStorage.setItem(`pulp:lettering-reveal:${id}`, "1");
-    setRevealSeen(true);
-  }
 
   function handleExport(format: "pdf" | "cbz") {
     if (!id) return;
@@ -441,12 +435,6 @@ export function ComposeRoom() {
         }
         pageCount={pageList.length}
       />
-
-      {!revealSeen && lettering?.label && composeStageStatus === "complete" && pageList.length > 0 && (
-        <div className="px-3">
-          <LetteringReveal lettering={lettering} onDismiss={dismissReveal} />
-        </div>
-      )}
 
       {/* Pages tab */}
       {tab === "pages" && (

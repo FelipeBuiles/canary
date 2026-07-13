@@ -28,6 +28,10 @@ export function fetchSuggestStylesEstimate(project: string): Promise<CostEstimat
   return apiFetch(`/projects/${encodeURIComponent(project)}/styles/suggest-estimate`);
 }
 
+export function fetchStyleSampleEstimate(project: string): Promise<CostEstimate> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/styles/sample-estimate`);
+}
+
 export function generateStyleSamples(
   project: string,
   indices: number[],

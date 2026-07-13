@@ -237,7 +237,12 @@ class VertexMultimodalLLM(CustomLLM):
                 )
                 if image_size is None:
                     raise ValueError(f"unsupported wire quality: {quality}")
-                config_kwargs["image_config"] = types.ImageConfig(image_size=image_size)
+                # Older LiteLLM images ship a google-genai version without
+                # ImageConfig. The size hint is optional; keep the request
+                # compatible and let Vertex use its default in that case.
+                image_config_type = getattr(types, "ImageConfig", None)
+                if image_config_type is not None:
+                    config_kwargs["image_config"] = image_config_type(image_size=image_size)
             response = await asyncio.to_thread(
                 client.models.generate_content,
                 model=vertex_model,

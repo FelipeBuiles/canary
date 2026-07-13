@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listProjects, getProjectStatus, createProject, deleteProject, generateProjectCover, listShortStories, importStory } from "./projects";
-import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenStateRef, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate, getCharacterRefVersions, restoreCharacterRefVersion, previewGenerationRequest, prepareGenerationRequest, getGenerationRequest } from "./pipeline";
+import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenStateRef, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate, fetchAssetRegenEstimate, getCharacterRefVersions, restoreCharacterRefVersion, previewGenerationRequest, prepareGenerationRequest, getGenerationRequest } from "./pipeline";
 import type { ConfigOverrides, StoryBible, ProjectStatus, StageInfo, ImageStatus, CreditBalance, CostEstimate } from "../types/api";
 import { reconcileStatusPoll } from "../lib/stageProgress";
 import { getBalance, getCreditHistory, getPricingReference } from "./credits";
@@ -31,7 +31,7 @@ import {
   setPrimaryRef,
 } from "./stages";
 import { listPages, getPage, updatePage, replacePage, getLetteringStyle, generateLetteringStyle, setLetteringStyle, translatePageBubbles, translateSinglePageBubbles, triggerExport } from "./pages";
-import { getStyles, suggestStyles, fetchSuggestStylesEstimate, generateStyleSamples, setActiveStyle } from "./styles";
+import { getStyles, suggestStyles, fetchSuggestStylesEstimate, fetchStyleSampleEstimate, generateStyleSamples, setActiveStyle } from "./styles";
 import { getProjectConfig, updateProjectConfig } from "./config";
 import {
   listLabsModels,
@@ -357,6 +357,21 @@ export function useRegenEstimate(
   });
 }
 
+export function useAssetRegenEstimate(
+  project: string | undefined,
+  assetType: "character" | "location" | "prop",
+  assetId: string | undefined,
+  stateId?: string,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["project", project, "asset-regen-estimate", assetType, assetId, stateId ?? ""],
+    queryFn: () => fetchAssetRegenEstimate(project!, assetType, assetId!, stateId),
+    enabled: !!project && !!assetId && enabled,
+    staleTime: 60_000,
+  });
+}
+
 export function useNarrationDecisionImpact(
   project: string | undefined,
   beatId: string | undefined,
@@ -615,9 +630,10 @@ export function useImageGenerationMeta(
   project: string | undefined,
   relativeImagePath: string | undefined,
   enabled = true,
+  revision?: unknown,
 ) {
   return useQuery({
-    queryKey: ["project", project, "image-generation-meta", relativeImagePath],
+    queryKey: ["project", project, "image-generation-meta", relativeImagePath, revision],
     queryFn: () => getImageGenerationMeta(project!, relativeImagePath!),
     enabled: !!project && !!relativeImagePath && enabled,
   });
@@ -907,6 +923,15 @@ export function useSuggestStylesEstimate(project: string | undefined, enabled = 
   return useQuery({
     queryKey: ["project", project, "styles", "suggest-estimate"],
     queryFn: () => fetchSuggestStylesEstimate(project!),
+    enabled: !!project && enabled,
+    staleTime: 60_000,
+  });
+}
+
+export function useStyleSampleEstimate(project: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ["project", project, "styles", "sample-estimate"],
+    queryFn: () => fetchStyleSampleEstimate(project!),
     enabled: !!project && enabled,
     staleTime: 60_000,
   });

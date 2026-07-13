@@ -972,6 +972,19 @@ async def run(
         plan = load_layout_plan(project_dir)
         panels_by_scene = scene_panel_map(plan)
 
+    if artifacts.story_bible_path(project_dir).exists():
+        story_bible = artifacts.read_story_bible(project_dir)
+
+    if story_bible is not None and plan is not None:
+        for scene_panels in panels_by_scene.values():
+            for index, panel in enumerate(scene_panels):
+                prev_panel = scene_panels[index - 1] if index > 0 else None
+                # A prior draw can legitimately leave a panel without a prompt
+                # (for example after an interrupted auto-chain). Rebuild the
+                # missing prompt from the authoritative layout so "draw again"
+                # has actual work to submit instead of completing as a no-op.
+                ensure_current_panel_prompt(config, project_dir, panel, story_bible, prev_panel)
+
     target_panels = set(panel_numbers) if panel_numbers else None
     if prompts_dir.exists():
         all_scene_dirs = sorted(d for d in prompts_dir.iterdir() if d.is_dir())
@@ -998,16 +1011,13 @@ async def run(
                         continue
                 prompt_files.append(pf)
 
-    if artifacts.story_bible_path(project_dir).exists():
-        story_bible = artifacts.read_story_bible(project_dir)
-
-    if story_bible is not None and plan is not None:
-        for scene_panels in panels_by_scene.values():
-            for index, panel in enumerate(scene_panels):
-                if not prompt_path_for_panel(project_dir, panel).exists():
-                    continue
-                prev_panel = scene_panels[index - 1] if index > 0 else None
-                ensure_current_panel_prompt(config, project_dir, panel, story_bible, prev_panel)
+    if not prompt_files:
+        message = (
+            "Draw could not find any panel prompts to generate. "
+            "The draw stage did not start; refresh the project and retry."
+        )
+        ctx.log(message, level="error")
+        raise RuntimeError(message)
 
     # ── Consistency context ───────────────────────────────────────────────────
     # 1. Global style anchor
@@ -1120,6 +1130,23 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     story_bible = artifacts.read_story_bible_safe(project_dir)
     if story_bible is not None:
         scene_to_location = {scene.id: scene.location_id for scene in story_bible.scenes}
+
+    # Keep the estimate aligned with the draw run. The gallery can show planned
+    # panels from the layout even when an interrupted auto-chain never wrote
+    # their direct prompts; without this repair the estimate incorrectly returns
+    # zero for those panels.
+    plan_path = project_dir / "plan" / "layout_plan.json"
+    if story_bible is not None and plan_path.exists():
+        plan = load_layout_plan(project_dir)
+        for scene_panels in scene_panel_map(plan).values():
+            for index, panel in enumerate(scene_panels):
+                ensure_current_panel_prompt(
+                    config,
+                    project_dir,
+                    panel,
+                    story_bible,
+                    scene_panels[index - 1] if index else None,
+                )
 
     for prompt_path in prompts_dir.glob("*/panel_*.json"):
         try:

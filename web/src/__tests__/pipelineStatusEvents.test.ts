@@ -39,6 +39,7 @@ function status(): ProjectStatus {
     share_token: null,
     stages: {
       compose: stage("pending"),
+      direct: stage("pending"),
       draw: stage("pending"),
     },
   };
@@ -108,6 +109,20 @@ describe("applyStageEventToProjectStatus", () => {
 
     expect(next?.stages.compose.status).toBe("complete");
     expect(next?.stages.compose.items_done).toBe(8);
+  });
+
+  it("marks direct complete without creating a review checkpoint", () => {
+    const current = status();
+    current.stages.direct = stage("running", 4);
+
+    const next = applyStageEventToProjectStatus(current, {
+      type: "stage_complete",
+      stage: "direct",
+      done: 4,
+      total: 4,
+    });
+
+    expect(next?.stages.direct.status).toBe("complete");
   });
 
   it("marks failed stages with the streamed error", () => {

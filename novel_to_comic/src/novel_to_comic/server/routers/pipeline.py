@@ -4,6 +4,7 @@ import asyncio
 from datetime import UTC, datetime
 import json
 import logging
+import re
 import shutil
 import time
 from pathlib import Path
@@ -72,6 +73,13 @@ from ..panel_flags import clear_panel_flag
 router = APIRouter()
 logger = logging.getLogger("canary.pipeline")
 
+_ASSET_REGEN_KINDS = {
+    "character": "character_ref_regen",
+    "location": "location_plate_regen",
+    "prop": "prop_ref_regen",
+}
+_GENERATED_ENTITY_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+
 
 def _panel_regen_config_for_alias(
     config: Config, image_model_alias: str | None
@@ -85,6 +93,11 @@ def _panel_regen_config_for_alias(
 def _validate_panel_scene_id(scene_id: str) -> None:
     if not scene_id or scene_id != Path(scene_id).name or scene_id in {".", ".."}:
         raise HTTPException(400, "Invalid scene_id")
+
+
+def _validate_generated_entity_id(value: str, field_name: str) -> None:
+    if not _GENERATED_ENTITY_ID_RE.fullmatch(value):
+        raise HTTPException(400, f"Invalid {field_name}")
 
 
 class InstructedPanelRegenRequest(BaseModel):
@@ -237,6 +250,7 @@ async def _run_stage(
         )
     except Exception as exc:
         from novel_to_comic.text_utils import clean_exception_message
+        from novel_to_comic.ai.errors import AITransportError
 
         message = clean_exception_message(exc)
         # StageRuntime.execute() already called fail_stage + save_state + emitted stage_fail.
@@ -246,14 +260,19 @@ async def _run_stage(
             save_state(state, project_dir)
             queue.put_nowait({"type": "stage_fail", "stage": stage, "message": message})
         elapsed = time.perf_counter() - started
-        logger.exception(
-            "[bold red]Stage failed[/] project=[white]%s[/] stage=[bold]%s[/] "
-            "elapsed=[bold]%.1fs[/] error=%s",
-            project_dir.name,
-            stage,
-            elapsed,
-            message,
-        )
+        log_args = (project_dir.name, stage, elapsed, message)
+        if isinstance(exc, AITransportError):
+            logger.warning(
+                "[bold yellow]Stage failed (handled provider error)[/] "
+                "project=[white]%s[/] stage=[bold]%s[/] elapsed=[bold]%.1fs[/] error=%s",
+                *log_args,
+            )
+        else:
+            logger.exception(
+                "[bold red]Stage failed[/] project=[white]%s[/] stage=[bold]%s[/] "
+                "elapsed=[bold]%.1fs[/] error=%s",
+                *log_args,
+            )
 
 
 # Stages that auto-chain: when the first stage completes, the rest run automatically.
@@ -263,6 +282,17 @@ STAGE_AUTO_CHAIN: dict[str, list[str]] = {
     "plan": ["storyboard", "direct"],
     "storyboard": ["direct"],
 }
+
+
+def _reset_missing_auto_chain_artifact(stage: str, project_dir, state) -> None:
+    """Make a stale completed stage runnable when its canonical output is gone."""
+    if stage == "plan" and not artifacts.layout_plan_path(project_dir).exists():
+        if state.stages[stage].status in (
+            StageStatus.COMPLETE,
+            StageStatus.AWAITING_REVIEW,
+        ):
+            state.stages[stage] = StageState()
+            save_state(state, project_dir)
 
 
 async def _run_stage_with_credits(
@@ -321,6 +351,7 @@ async def _run_stage_with_credits(
     # automatically run the next stages in the chain.
     if s.status == StageStatus.COMPLETE and stage in STAGE_AUTO_CHAIN:
         for next_stage in STAGE_AUTO_CHAIN[stage]:
+            _reset_missing_auto_chain_artifact(next_stage, project_dir, state)
             next_s = state.stages[next_stage]
             if next_s.status != StageStatus.PENDING:
                 continue
@@ -504,10 +535,51 @@ async def regen_panel_estimate(
     breakdown = UnifiedCostResolver.estimate_panel_regen_cost(
         config, project_dir, scene_id, panel_number, image_model_alias
     )
+    instruction_estimate = UnifiedCostResolver.estimate_instructed_regen_cost(
+        config, breakdown, "draw"
+    )
     return {
         "scene_id": scene_id,
         "panel_number": panel_number,
         **breakdown,
+        "instruction_estimate": instruction_estimate,
+    }
+
+
+@router.get("/asset-regen-estimate")
+async def regen_cast_asset_estimate(
+    project_id: str,
+    asset_type: str = Query(...),
+    asset_id: str = Query(...),
+    state_id: str | None = Query(None),
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),  # noqa: ARG001 — auth gate
+):
+    """Return the estimated credit cost to regenerate one cast asset."""
+    regen_kind = _ASSET_REGEN_KINDS.get(asset_type)
+    if regen_kind is None:
+        valid = ", ".join(_ASSET_REGEN_KINDS)
+        raise HTTPException(400, f"Unknown asset_type: {asset_type}. Valid: {valid}")
+    _validate_generated_entity_id(asset_id, "asset_id")
+    if state_id is not None:
+        if asset_type == "prop":
+            raise HTTPException(400, "state_id is not supported for prop assets")
+        _validate_generated_entity_id(state_id, "state_id")
+
+    project_dir, config, _state = project
+    resolver_asset_id = f"{asset_id}:{state_id}" if state_id else asset_id
+    breakdown = UnifiedCostResolver.estimate_asset_regen_cost(
+        config, project_dir, asset_type=regen_kind, asset_id=resolver_asset_id,
+    )
+    instruction_estimate = UnifiedCostResolver.estimate_instructed_regen_cost(
+        config, breakdown, "cast"
+    )
+    return {
+        "asset_type": asset_type,
+        "asset_id": asset_id,
+        "state_id": state_id,
+        **breakdown,
+        "instruction_estimate": instruction_estimate,
     }
 
 

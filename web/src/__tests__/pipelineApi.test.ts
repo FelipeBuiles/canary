@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   fetchRegenEstimate,
+  fetchAssetRegenEstimate,
   getGenerationRequest,
   previewGenerationRequest,
   prepareGenerationRequest,
   regenPanel,
   regenPanelWithInstruction,
 } from "../api/pipeline";
+import { fetchStyleSampleEstimate } from "../api/styles";
 import { apiFetch } from "../api/client";
 
 vi.mock("../api/client", () => ({
@@ -60,6 +62,22 @@ describe("panel regeneration API", () => {
 
     expect(mockedApiFetch).toHaveBeenCalledWith(
       "/projects/proj/regen-estimate?scene_id=scene_001&panel_number=4&image_model_alias=image-fast",
+    );
+  });
+
+  it("serializes cast asset and appearance-state estimates", async () => {
+    await fetchAssetRegenEstimate("proj one", "character", "char_001", "winter_coat");
+
+    expect(mockedApiFetch).toHaveBeenCalledWith(
+      "/projects/proj%20one/asset-regen-estimate?asset_type=character&asset_id=char_001&state_id=winter_coat",
+    );
+  });
+
+  it("requests a one-proof style estimate", async () => {
+    await fetchStyleSampleEstimate("proj one");
+
+    expect(mockedApiFetch).toHaveBeenCalledWith(
+      "/projects/proj%20one/styles/sample-estimate",
     );
   });
 

@@ -10,7 +10,6 @@ import {
   useSetPanelFlag,
   useStageEstimate,
   useProjectConfig,
-  useUpdateProjectConfig,
   useResetStale,
 } from "../../api/queries";
 import { useRunAction } from "../../hooks/useRunAction";
@@ -40,30 +39,28 @@ import {
 } from "../../components/draw/LiveCockpit";
 import type { ImageStatus, StageCostEstimate } from "../../types/api";
 
-// ── Quality preset (rendered inside ConfirmDrawer) ────────────────────────────
+function imageModelLabel(model: string | undefined) {
+  switch (model) {
+    case "image-fast": return "Fast image generation";
+    case "image-balanced": return "Balanced image generation";
+    case "image-quality": return "Quality image generation";
+    case "image-reve": return "Reve image generation";
+    default: return model || "Project image model";
+  }
+}
 
-const QUALITY_OPTIONS: Array<{ value: "fast" | "balanced" | "quality"; label: string }> = [
-  { value: "quality", label: "Quality" },
-  { value: "balanced", label: "Balanced" },
-  { value: "fast", label: "Fast" },
-];
-
-function QualityPresetField({ project }: { project: string }) {
-  const { data: config } = useProjectConfig(project);
-  const { mutate: updateConfig } = useUpdateProjectConfig();
-  if (!config || config.quality_preset === undefined) return null;
+function SelectedModelField({ model }: { model: string | undefined }) {
   return (
-    <div>
-      <label className="mb-1 block font-meta text-[0.56rem] tracking-[0.18em] text-ink-black/45">
-        GENERATION QUALITY
-      </label>
-      <Select
-        aria-label="Generation quality"
-        value={config.quality_preset ?? "balanced"}
-        onValueChange={(value) => updateConfig({ project, data: { quality_preset: value as "fast" | "balanced" | "quality" } })}
-        options={QUALITY_OPTIONS}
-        className="w-full"
-      />
+    <div className="border-[2px] border-ink-black/15 bg-bristol p-3">
+      <div className="font-meta text-[0.56rem] tracking-[0.18em] text-ink-black/45">
+        PROJECT IMAGE MODEL
+      </div>
+      <div className="mt-1 font-body text-[0.86rem] font-bold text-ink-black">
+        {imageModelLabel(model)}
+      </div>
+      <p className="mt-1 text-[0.75rem] leading-5 text-ink-black/60">
+        Draw uses the model selected for this project.
+      </p>
     </div>
   );
 }
@@ -148,6 +145,7 @@ export function DrawRoom() {
   const [selectedPanel, setSelectedPanel] = useState<{ sceneId: string; panelNumber: number } | null>(null);
   const [confirmAction, setConfirmAction] = useState<"draw_all" | "retry_failed" | null>(null);
   const [retryFailedActive, setRetryFailedActive] = useState(false);
+  const [drawActionError, setDrawActionError] = useState<string | null>(null);
 
   const regeningKeys = Object.keys(projectRegens);
   const regenJobIds = Object.values(projectRegens)
@@ -216,6 +214,14 @@ export function DrawRoom() {
   const setPanelFlag = useSetPanelFlag();
   const { data: drawEstimate } = useStageEstimate(id, "draw");
   const { data: composeEstimate } = useStageEstimate(id, "compose");
+  const { data: projectConfig } = useProjectConfig(id);
+  // A zero draw estimate means the prompt inputs were not visible to the
+  // estimator yet. Drawing panels is never a genuinely free action, so do
+  // not let the confirmation drawer turn that transient value into a false
+  // "This step is free" claim.
+  const drawCostEstimate = drawEstimate && drawEstimate.estimate_credits > 0
+    ? drawEstimate
+    : undefined;
 
   const generateStage = drawStage;
   const failedItems = generateStage?.items_failed ?? [];
@@ -261,7 +267,12 @@ export function DrawRoom() {
 
   for (const summary of promptSummaries ?? []) {
     if (sceneFilter !== "all" && sceneFilter !== summary.scene_id) continue;
-    for (let panelNum = 1; panelNum <= summary.prompt_count; panelNum++) {
+    // Panel numbers are not necessarily contiguous: a plan can legitimately
+    // contain panels 01–05, 07–09, 11, and 13. Never synthesize missing cards
+    // from prompt_count or the gallery will invent phantom pending panels.
+    const panelNumbers = summary.panel_numbers
+      ?? Array.from({ length: summary.prompt_count }, (_, index) => index + 1);
+    for (const panelNum of panelNumbers) {
       const alreadyPresent = allDisplayImages.some(
         (img) => img.scene_id === summary.scene_id && img.panel_number === panelNum,
       );
@@ -424,17 +435,25 @@ export function DrawRoom() {
 
   function handleDrawAll() {
     if (!id) return;
-    handleRun(id, "draw", { actionLabel: "Draw all panels" });
+    setDrawActionError(null);
+    handleRun(id, "draw", {
+      actionLabel: "Draw all panels",
+      onError: (error) => setDrawActionError(error.message),
+    });
     setConfirmAction(null);
   }
 
   function handleRetryFailed() {
     if (!id) return;
+    setDrawActionError(null);
     setRetryFailedActive(true);
     handleRun(id, "draw", {
       retryFailed: true,
       actionLabel: "Retry failed panels",
-      onError: () => setRetryFailedActive(false),
+      onError: (error) => {
+        setRetryFailedActive(false);
+        setDrawActionError(error.message);
+      },
     });
     setConfirmAction(null);
   }
@@ -512,7 +531,7 @@ export function DrawRoom() {
         {id && !isDrawRunning && upstreamReady && (
           <ApprovalBar
             next="Scenewright draws every planned panel in your selected style"
-            estimateCredits={drawEstimate?.estimate_credits}
+            estimateCredits={drawCostEstimate?.estimate_credits}
             primaryLabel="▶ DRAW ALL PANELS"
             onPrimary={() => setConfirmAction("draw_all")}
             primaryDisabled={isPipelineRunning}
@@ -532,8 +551,8 @@ export function DrawRoom() {
             open={confirmAction === "draw_all"}
             title="Draw all panels"
             body="Scenewright draws every planned panel in your selected style. You review by exception afterwards — flag anything that needs re-work."
-            cost={drawEstimate as StageCostEstimate | undefined}
-            extraBody={<QualityPresetField project={id} />}
+            cost={drawCostEstimate as StageCostEstimate | undefined}
+            extraBody={<SelectedModelField model={projectConfig?.image_model} />}
             confirmLabel="Draw all panels"
             onConfirm={handleDrawAll}
             onClose={() => setConfirmAction(null)}
@@ -610,7 +629,7 @@ export function DrawRoom() {
       next={panelCounts.generated > 0
         ? `Scenewright draws the ${panelCounts.pending} remaining panel${panelCounts.pending === 1 ? "" : "s"}`
         : "Scenewright draws every planned panel in your selected style"}
-      estimateCredits={drawEstimate?.estimate_credits}
+      estimateCredits={drawCostEstimate?.estimate_credits}
       primaryLabel="▶ DRAW ALL PANELS"
       onPrimary={() => setConfirmAction("draw_all")}
       primaryDisabled={isPipelineRunning}
@@ -628,7 +647,7 @@ export function DrawRoom() {
   ) : panelCounts.failed > 0 ? (
     <ApprovalBar
       next={`${panelCounts.failed} panel${panelCounts.failed === 1 ? "" : "s"} failed — retry before assembling the book`}
-      estimateCredits={drawEstimate?.estimate_credits}
+      estimateCredits={drawCostEstimate?.estimate_credits}
       primaryLabel={`↺ RETRY ${panelCounts.failed} FAILED`}
       onPrimary={() => setConfirmAction("retry_failed")}
       primaryDisabled={isPipelineRunning}
@@ -669,6 +688,15 @@ export function DrawRoom() {
           continuing={isPipelineRunning}
           resetting={isResetting}
         />
+      )}
+
+      {drawActionError && (
+        <div
+          role="alert"
+          className="border-[2px] border-hero-red/50 bg-chip-red/30 px-4 py-3 text-[0.86rem] leading-5 text-ink-black"
+        >
+          {drawActionError}
+        </div>
       )}
 
       <StatusStrip
@@ -863,8 +891,8 @@ export function DrawRoom() {
         open={confirmAction === "draw_all"}
         title="Draw all panels"
         body={`Scenewright draws ${panelCounts.pending} pending panel${panelCounts.pending === 1 ? "" : "s"} in your selected style.`}
-        cost={drawEstimate as StageCostEstimate | undefined}
-        extraBody={<QualityPresetField project={id} />}
+        cost={drawCostEstimate as StageCostEstimate | undefined}
+        extraBody={<SelectedModelField model={projectConfig?.image_model} />}
         confirmLabel="Draw all panels"
         onConfirm={handleDrawAll}
         onClose={() => setConfirmAction(null)}
@@ -874,8 +902,8 @@ export function DrawRoom() {
         open={confirmAction === "retry_failed"}
         title="Retry failed panels"
         body={`This will retry ${panelCounts.failed} failed panel${panelCounts.failed === 1 ? "" : "s"}.`}
-        cost={drawEstimate as StageCostEstimate | undefined}
-        extraBody={<QualityPresetField project={id} />}
+        cost={drawCostEstimate as StageCostEstimate | undefined}
+        extraBody={<SelectedModelField model={projectConfig?.image_model} />}
         confirmLabel="Retry failed"
         onConfirm={handleRetryFailed}
         onClose={() => setConfirmAction(null)}

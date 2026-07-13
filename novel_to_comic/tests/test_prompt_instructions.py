@@ -1,10 +1,12 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
 from novel_to_comic.config import Config
 from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
 from novel_to_comic import prompt_instructions
+from novel_to_comic.server import credits
 from novel_to_comic.prompt_instructions import (
     PromptInstructionError,
     apply_asset_instruction,
@@ -149,3 +151,111 @@ def test_instructed_panel_rerender_uses_validated_one_shot_alias(monkeypatch, tm
                 image_model_alias="image-quality",
             )
         )
+
+
+def test_instructed_panel_preflight_uses_combined_resolver_estimate(
+    monkeypatch, tmp_path,
+):
+    class CreditCheckReached(Exception):
+        pass
+
+    prompt_path = tmp_path / "direct" / "scene_001" / "panel_001.json"
+    prompt_path.parent.mkdir(parents=True)
+    prompt_path.write_text(_prompt().model_dump_json())
+    image_estimate = {
+        "estimate_credits": 4,
+        "reserved_credits": None,
+        "reservation_multiplier": 1.25,
+        "confidence": "variable",
+    }
+    combined_estimate = {**image_estimate, "estimate_credits": 9}
+    monkeypatch.setattr(
+        credits.UnifiedCostResolver,
+        "estimate_panel_regen_cost",
+        lambda *args: image_estimate,
+    )
+
+    def combined(config, received_image_estimate, stage):
+        assert received_image_estimate is image_estimate
+        assert stage == "draw"
+        return combined_estimate
+
+    monkeypatch.setattr(
+        credits.UnifiedCostResolver,
+        "estimate_instructed_regen_cost",
+        combined,
+    )
+
+    def assert_credits(_db, _user_id, required, *, action):
+        assert required == 9
+        assert action == "panel_regen"
+        raise CreditCheckReached
+
+    monkeypatch.setattr(credits, "assert_sufficient_credits", assert_credits)
+    app = SimpleNamespace(state=SimpleNamespace(generation_jobs={}))
+
+    with pytest.raises(CreditCheckReached):
+        asyncio.run(apply_asset_instruction(
+            config=Config(),
+            project_dir=tmp_path,
+            db=object(),
+            user_id="user-1",
+            project_id="project-1",
+            asset_type="panel",
+            asset_id="scene_001:1",
+            instruction="Make the lighting warmer.",
+            app=app,
+        ))
+
+
+def test_instructed_cast_preflight_uses_state_aware_combined_estimate(
+    monkeypatch, tmp_path,
+):
+    class CreditCheckReached(Exception):
+        pass
+
+    image_estimate = {
+        "estimate_credits": 5,
+        "reserved_credits": None,
+        "reservation_multiplier": 1.25,
+        "confidence": "variable",
+    }
+    combined_estimate = {**image_estimate, "estimate_credits": 7}
+
+    def image_cost(config, project_dir, asset_type, asset_id):
+        assert asset_type == "character_ref_regen"
+        assert asset_id == "char_001:silver"
+        return image_estimate
+
+    monkeypatch.setattr(
+        credits.UnifiedCostResolver,
+        "estimate_asset_regen_cost",
+        image_cost,
+    )
+    monkeypatch.setattr(
+        credits.UnifiedCostResolver,
+        "estimate_instructed_regen_cost",
+        lambda config, received, stage: combined_estimate,
+    )
+
+    def assert_credits(_db, _user_id, required, *, action):
+        assert required == 7
+        assert action == "character_regen"
+        raise CreditCheckReached
+
+    monkeypatch.setattr(credits, "assert_sufficient_credits", assert_credits)
+    app = SimpleNamespace(state=SimpleNamespace(generation_jobs={}))
+
+    with pytest.raises(CreditCheckReached):
+        asyncio.run(apply_asset_instruction(
+            config=Config(),
+            project_dir=tmp_path,
+            db=object(),
+            user_id="user-1",
+            project_id="project-1",
+            asset_type="character",
+            asset_id="char_001",
+            state_id="silver",
+            instruction="Make the coat darker.",
+            app=app,
+        ))

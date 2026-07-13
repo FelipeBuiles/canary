@@ -23,6 +23,8 @@ from novel_to_comic.stages.s3_cast import (
     _location_plate_jobs,
 )
 from novel_to_comic.stages.s7_draw import _interleave_by_scene, _plate_ref_path
+from novel_to_comic.state import StageStatus, create_initial_state
+from novel_to_comic.server.routers.pipeline import _reset_missing_auto_chain_artifact
 
 
 def _stateful_location() -> Location:
@@ -48,6 +50,15 @@ def _stateful_location() -> Location:
             ),
         ],
     )
+
+
+def test_auto_chain_resets_stale_completed_plan_when_artifact_is_missing(tmp_path):
+    state = create_initial_state("project", "novel.txt")
+    state.stages["plan"].status = StageStatus.COMPLETE
+
+    _reset_missing_auto_chain_artifact("plan", tmp_path, state)
+
+    assert state.stages["plan"].status == StageStatus.PENDING
 
 
 # ── Per-state location plates ────────────────────────────────────────────────
@@ -141,6 +152,23 @@ def test_ensure_current_panel_prompt_rebuilds_stale_and_keeps_current(tmp_path):
     prompt_path.write_text(json.dumps(data))
     kept = ensure_current_panel_prompt(Config(), tmp_path, panel, bible)
     assert kept.mood == "user-edited mood"
+
+
+def test_ensure_current_panel_prompt_rebuilds_missing_prompt(tmp_path):
+    bible = StoryBible(
+        title="t", author="a", total_scenes=0,
+        characters=[], locations=[], scenes=[], narrative_arcs=[],
+    )
+    panel = PlannedPanel(
+        panel_id="scene_001:panel_006", scene_id="scene_001", panel_number=6,
+        mood="tense",
+    )
+
+    prompt = ensure_current_panel_prompt(Config(), tmp_path, panel, bible)
+
+    assert prompt.scene_id == "scene_001"
+    assert prompt.panel_number == 6
+    assert (tmp_path / "direct" / "scene_001" / "panel_006.json").exists()
 
 
 # ── Word-boundary anchor filtering ───────────────────────────────────────────

@@ -13,9 +13,11 @@ interface ImageModalProps {
   actions?: ReactNode;
   /** When provided, renders a sidebar panel alongside the image. */
   sidebar?: ReactNode;
+  imageAvailable?: boolean;
+  emptyLabel?: string;
 }
 
-export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar }: ImageModalProps) {
+export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar, imageAvailable = true, emptyLabel = "No image generated" }: ImageModalProps) {
   const closeModal = useEffectEvent(onClose);
 
   useEffect(() => {
@@ -24,7 +26,7 @@ export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar 
     document.body.style.overflow = "hidden";
 
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") closeModal();
+      if (e.key === "Escape" && !document.querySelector('[role="alertdialog"]')) closeModal();
     }
     window.addEventListener("keydown", onKey);
     return () => {
@@ -70,17 +72,23 @@ export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar 
         </div>
 
         {/* Body: image + optional sidebar */}
-        <div className={`min-h-0 flex-1 ${sidebar ? "grid grid-cols-[minmax(0,1fr)_320px]" : "flex flex-col"}`}>
-          <div className="flex min-h-[60vh] items-center justify-center bg-ink-black">
-            <LazyImage
-              src={src}
-              alt={alt}
-              containerClassName="w-full h-full"
-              preserveAspectBox
-            />
+        <div className={`min-h-0 flex-1 ${sidebar ? "flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(300px,360px)]" : "flex flex-col"}`}>
+          <div className="flex min-h-[36vh] items-center justify-center bg-ink-black lg:min-h-[60vh]">
+            {imageAvailable ? (
+              <LazyImage
+                src={src}
+                alt={alt}
+                containerClassName="w-full h-full"
+                preserveAspectBox
+              />
+            ) : (
+              <p className="px-6 text-center font-meta text-[0.68rem] tracking-[0.14em] text-bristol/60">
+                {emptyLabel}
+              </p>
+            )}
           </div>
           {sidebar && (
-            <div className="border-l-[2px] border-ink-black overflow-y-auto bg-bristol p-5">
+            <div className="max-h-[42vh] overflow-y-auto border-t-[2px] border-ink-black bg-bristol p-5 lg:max-h-none lg:border-l-[2px] lg:border-t-0">
               {sidebar}
             </div>
           )}
