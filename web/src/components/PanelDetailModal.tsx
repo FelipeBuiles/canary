@@ -26,6 +26,7 @@ import { maybeShowInsufficientCredits } from "../store/insufficientCredits";
 import { useQueryClient } from "@tanstack/react-query";
 import { Select } from "./ui/Select";
 import { useI18n } from "../i18n";
+import { getImageFailureCopy } from "../lib/imageFailure";
 
 type TabId = "panel" | "prompt";
 const DEFAULT_IMAGE_MODEL_ALIASES = ["image-fast", "image-balanced", "image-quality"];
@@ -594,12 +595,7 @@ export function PanelDetailModal({
   if (!isOpen || !draft) return null;
 
   const isFailed = status === "failed" || !!errorMessage || !!failureClassification;
-  const failureTitle = showDevContent && failureClassification === "provider_blocked"
-    ? t("PROVIDER BLOCKED")
-    : t("IMAGE COULD NOT BE CREATED");
-  const failureMessage = showDevContent && errorMessage
-    ? errorMessage
-    : t("Scenewright could not create this image. Describe a visual change and try again.");
+  const failureCopy = getImageFailureCopy(t, failureClassification, errorMessage);
 
   const handleQuickRedo = async () => {
     const key = `${sceneId}-${panelNumber}`;
@@ -721,8 +717,8 @@ export function PanelDetailModal({
             <div className="flex h-full w-full flex-col gap-3">
               {isFailed && (
                 <div className="border-[2px] border-hero-red bg-hero-red/8 p-3">
-                  <div className="font-meta text-[0.58rem] tracking-[0.16em] text-hero-red">{failureTitle}</div>
-                  <p className="mt-1 text-sm leading-6 text-ink-black/75">{failureMessage}</p>
+                  <div className="font-meta text-[0.58rem] tracking-[0.16em] text-hero-red">{failureCopy.title}</div>
+                  <p className="mt-1 text-sm leading-6 text-ink-black/75">{failureCopy.message}</p>
                   {showDevContent && errorDetail && (
                     <details className="mt-2">
                       <summary className="cursor-pointer font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/55 hover:text-hero-red">

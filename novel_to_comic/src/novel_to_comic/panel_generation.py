@@ -35,6 +35,7 @@ from novel_to_comic.frozen_requests import (
 )
 from novel_to_comic.image_models import describe_image_model, image_model_profile_for_config
 from novel_to_comic.image_provenance import common_image_provenance
+from novel_to_comic.image_failure import classify_image_failure, user_message_for_image_failure
 from novel_to_comic.generation_request_preview import compiled_request_context
 from novel_to_comic.image_references import ReferencePlan
 from novel_to_comic.models.prompt import ImagePrompt
@@ -536,9 +537,11 @@ def persist_panel_result_provenance(
         "provenance": provenance,
     }
     if error is not None:
+        classification = classify_image_failure(error)
         meta.update({
-            "classification": "generation_error",
+            "classification": classification,
             "recoverable": True,
+            "user_message": user_message_for_image_failure(classification),
             "error": {
                 "type": type(error).__name__,
                 "message": _redact_diagnostic(error, project_dir),

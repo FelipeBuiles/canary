@@ -122,6 +122,7 @@ def serialize_wire_request(
         "canary_wire_request": wire.to_json(),
         "canary_requested_width": wire.width,
         "canary_requested_height": wire.height,
+        "canary_requested_aspect": aspect_for_dimensions(wire.width, wire.height),
     }
     if wire.structured_aspect is not None:
         params["aspect_ratio"] = wire.structured_aspect

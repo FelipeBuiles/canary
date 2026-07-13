@@ -715,7 +715,17 @@ export interface ImageStatus {
   accepted?: boolean;
   flagged?: boolean;
   version_count?: number;
-  failure_classification?: "provider_blocked" | "generation_error" | string | null;
+  failure_classification?:
+    | "provider_blocked"
+    | "rate_limited"
+    | "shape_mismatch"
+    | "timed_out"
+    | "service_unavailable"
+    | "configuration_error"
+    | "empty_response"
+    | "generation_error"
+    | string
+    | null;
   failure_message?: string | null;
   failure_detail?: string | null;
 }

@@ -5,7 +5,22 @@ from types import SimpleNamespace
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-from litellm_handlers.vertex_multimodal import litellm, _extract_image, _translate_vertex_error
+from litellm_handlers.vertex_multimodal import (
+    _extract_image,
+    _image_config_kwargs,
+    _map_to_supported_aspect,
+    _translate_vertex_error,
+    litellm,
+)
+
+
+def test_landscape_aspect_maps_to_native_gemini_mode():
+    assert _map_to_supported_aspect(1344 / 768) == "16:9"
+    assert _map_to_supported_aspect(768 / 1344) == "9:16"
+    assert _image_config_kwargs(1344 / 768, "medium") == {
+        "aspect_ratio": "16:9",
+        "image_size": "2K",
+    }
 
 
 def test_translate_vertex_error_rate_limit():
