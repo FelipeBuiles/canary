@@ -163,7 +163,7 @@ fly logs -a canary-web
 #     "[entrypoint] waiting for litellm proxy at 127.0.0.1:4000..."
 #     "[entrypoint] litellm proxy ready (after Ns)"
 #     "Uvicorn running on http://0.0.0.0:8000"
-#   Then the machine must stay up past the 2m readiness grace period.
+#   Then the machine must stay up past the 1m readiness grace period.
 ```
 
 If the proxy fails to come up, the entrypoint aborts early (it polls
@@ -182,9 +182,10 @@ if **either** dependency is unreachable:
 - **LiteLLM** — `GET <LITELLM_BASE_URL>/health/liveliness` with the bearer
   `LITELLM_API_KEY`. Hits the loopback proxy inside the same container.
 
-Both are skipped (not errored) when their env var is unset, so an empty-config
-boot reports `ok` — useful for diagnosing, misleading if you expected the
-probe to actually gate. Set the env vars and the probe gates for real.
+In local development, a dependency is skipped when both of its settings are
+absent. In `CANARY_ENV=production`, missing or partial dependency configuration
+is an error and the endpoint returns HTTP 503. Fly therefore keeps the machine
+unhealthy until both checks report `ok`.
 
 ### Verify the proxy is reachable from the web process
 
@@ -211,14 +212,19 @@ The handler verifies signatures and is idempotent on
 
 ## Step 4 — volume backups (do not skip)
 
-Fly volumes are **single-region with no automatic backup**. The
-`canary_projects` volume holds all user project files; losing the machine loses
-all user data. Schedule snapshots:
+Fly volumes are single-region. Scheduled snapshots protect against a damaged
+volume, but are not an off-provider backup. The current volume has automatic
+snapshots enabled with five-day retention. Confirm that state and increase the
+retention before inviting testers:
 
 ```bash
-fly volumes snapshots schedule canary_projects --schedule "daily"
+fly volumes show <volume-id>
+fly volumes update <volume-id> --scheduled-snapshots=true --snapshot-retention 14
 # Optional: wire a post-compose hook to push exports/ to R2 (storage.py exists).
 ```
+
+Perform one restore drill before launch; a snapshot that has never been restored
+is not yet a proven recovery path.
 
 ## Step 5 — go-live checklist
 
@@ -228,6 +234,9 @@ When you're ready to drop the gating posture and open to the public:
       STRIPE_SECRET_KEY=sk_live_... STRIPE_WEBHOOK_SECRET=whsec_live_...`
 - [ ] Update the Stripe webhook endpoint URL to the production domain.
 - [ ] `fly certs add app.<yourdomain>` + point DNS. TLS auto-provisions.
+- [ ] Set `SCENEWRIGHT_APP_URL=https://app.<yourdomain>` and add the custom
+      hostname to `CANARY_ALLOWED_HOSTS`, then redeploy. Stripe return URLs never
+      reflect the request's `Origin` header.
 - [ ] Set `SCENEWRIGHT_TERMS_URL=https://<domain>/legal/terms` so Stripe
       checkout captures enforceable ToS consent.
 - [ ] Update Supabase **Site URL** and **Redirect URLs** to the production
@@ -242,14 +251,12 @@ When you're ready to drop the gating posture and open to the public:
 
 ## Known gotchas (read once, save an hour each)
 
-### Boot-loop: `BadDsn: Unsupported scheme ''` (canary-web)
+### Sentry disabled: invalid DSN
 
 `server/sentry.py` skips init cleanly when `SENTRY_DSN` is *empty*, but a
-*non-empty invalid* value (a placeholder string, or missing the `https://`
-scheme) crashes `sentry_sdk.init()` at boot and the process exits 1 forever.
-**Fix:** `fly secrets unset SENTRY_DSN -a canary-web`. (The `configure_sentry`
-contract claims it never raises — that's a doc lie until the `init()` call is
-wrapped. Until then, only ever set a real DSN or leave it unset.)
+non-empty invalid value is logged and Sentry remains disabled; it no longer
+prevents the app from booting. Use a real DSN and verify a test event, or unset
+the secret with `fly secrets unset SENTRY_DSN -a canary-web`.
 
 ### Boot-loop: OOM on `canary-web` (litellm proxy resident)
 
@@ -276,12 +283,11 @@ dashboard. The frontend needs the one with `"role":"anon"` in its payload.
 publicly fetchable JS bundle. Fix the build-arg value and redeploy:
 `--build-arg VITE_SUPABASE_PUBLISHABLE_KEY=<anon key>`.
 
-### `WARNING OpenTelemetry requested but packages are missing`
+### OpenTelemetry is intentionally disabled
 
-Non-blocking. `CANARY_OTEL_ENABLED=true` is in `fly.toml [env]` but the
-`opentelemetry` extra isn't installed by `--extra web`. Telemetry silently
-no-ops; Sentry error capture still works. Either ignore or remove the env flag
-until the OTel extra is wired into the Dockerfile.
+`CANARY_OTEL_ENABLED=false` is the launch default because the production image
+does not install the `otel` extra. Sentry still captures errors. Do not enable
+OTel until the extra is installed and an export has been verified.
 
 ### Deploy error: `app not found`
 
@@ -307,20 +313,22 @@ One consolidated set, since the proxy and web app share a container:
   keys you actually use (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
   `GEMINI_API_KEY`, `REVE_API_KEY`, `FAL_KEY`, optionally
   `OPENROUTER_API_KEY` / `TOGETHER_API_KEY`), `VERTEXAI_PROJECT`,
-  `GCP_CREDENTIALS_B64`. The proxy reads these; the web app doesn't.
+  `GCP_CREDENTIALS_B64`. Both processes inherit the container environment, but
+  only the loopback proxy uses these keys for provider requests.
 - **Web-app layer:** `LITELLM_API_KEY` (== `LITELLM_MASTER_KEY`), `SUPABASE_URL`,
   `SUPABASE_SECRET_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
   `SENTRY_DSN` (optional — omit if invalid), `LANGFUSE_*` /
   `OTEL_EXPORTER_OTLP_ENDPOINT` (optional).
 
-Provider keys never leave the container — the proxy is bound to `127.0.0.1`,
-and the public `http_service` only exposes port 8000 (uvicorn). This preserves
-the gateway pattern's security boundary (no provider key egress to the browser)
-without a second machine.
+Provider keys never leave the container or reach the browser — the proxy is
+bound to `127.0.0.1`, and the public `http_service` only exposes port 8000.
+This is network isolation, not process-level secret isolation: uvicorn inherits
+the same environment.
 
 Non-secret runtime config is in `fly.toml [env]`: `CANARY_ENV`,
 `CANARY_COOKIE_SECURE`, `CANARY_OTEL_ENABLED`, `CANARY_LABS_ENABLED`,
-`LITELLM_BASE_URL`, worker counts, timeouts.
+`CANARY_ALLOWED_HOSTS`, `SCENEWRIGHT_APP_URL`, `LITELLM_BASE_URL`, pricing
+policy, worker counts, body limits, and timeouts.
 
 ### `canary-web` — build args (via `fly deploy --build-arg`)
 

@@ -302,11 +302,9 @@ function BubbleInspector({
 
   const tv = resolveThemeVars("default");
   const themeFs = parseInt(tv["--bubble-font-size"] ?? "64");
-  const themeRadius = parseInt(tv["--bubble-radius"] ?? "14");
   const themeBorder = parseInt(tv["--bubble-border-width"] ?? "2");
 
   const effectiveFs = bubble.font_size ?? themeFs;
-  const effectiveRadius = bubble.border_radius ?? themeRadius;
   const effectiveBorder = bubble.border_width ?? themeBorder;
 
   return (
@@ -397,7 +395,7 @@ function BubbleInspector({
                 </SelectField>
               </div>
 
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <div>
                   <FieldLabel>
                     SIZE
@@ -410,20 +408,6 @@ function BubbleInspector({
                     min={8}
                     max={96}
                     onChange={(e) => onUpdate({ font_size: intInRange(e.target.value, 8, 96) })}
-                  />
-                </div>
-                <div>
-                  <FieldLabel>
-                    RADIUS
-                    <span className="ml-1 text-ink-black/35">· {effectiveRadius}px</span>
-                  </FieldLabel>
-                  <TextField
-                    type="number"
-                    value={bubble.border_radius ?? ""}
-                    placeholder={String(themeRadius)}
-                    min={0}
-                    max={120}
-                    onChange={(e) => onUpdate({ border_radius: intInRange(e.target.value, 0, 120) })}
                   />
                 </div>
                 <div>
@@ -476,7 +460,6 @@ function BubbleInspector({
                   fill_color: null,
                   border_color: null,
                   border_width: null,
-                  border_radius: null,
                 })}
               >
                 RESET TO THEME

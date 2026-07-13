@@ -3,6 +3,7 @@
 import logging
 import os
 from typing import Any
+from urllib.parse import urlparse
 
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -79,6 +80,37 @@ def _wrap_stripe_error(exc: Exception) -> HTTPException:
     return HTTPException(502, f"Stripe call failed: {exc.user_message or exc}")
 
 
+def _checkout_origin(request: Request) -> str:
+    """Return the trusted application origin used in Stripe return URLs."""
+    env = (os.environ.get("CANARY_ENV") or os.environ.get("ENV") or "dev").lower()
+    configured = os.environ.get("SCENEWRIGHT_APP_URL", "").strip()
+    if configured:
+        parsed = urlparse(configured)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or (env == "production" and parsed.scheme != "https")
+            or not parsed.netloc
+            or parsed.username
+            or parsed.password
+            or parsed.path not in {"", "/"}
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise HTTPException(500, "SCENEWRIGHT_APP_URL must be an absolute origin")
+        return f"{parsed.scheme}://{parsed.netloc}"
+
+    if env == "production":
+        raise HTTPException(500, "SCENEWRIGHT_APP_URL is required in production")
+
+    # Development is intentionally limited to known local Vite origins. Never
+    # reflect an arbitrary Origin header into a third-party redirect URL.
+    origin = request.headers.get("origin", "")
+    if origin in {"http://localhost:5173", "http://127.0.0.1:5173"}:
+        return origin
+    return "http://localhost:5173"
+
+
 @router.get("/packages")
 def list_packages():
     """Return available credit packages — used by the frontend to render buy buttons."""
@@ -102,9 +134,7 @@ async def create_checkout(
     _stripe()
     branding = get_branding()
 
-    # Use the request origin for redirect URLs so this works in both dev and prod
-    # without an extra env var.
-    origin = request.headers.get("origin", "http://localhost:5173")
+    origin = _checkout_origin(request)
 
     try:
         # Build the checkout payload. ToS consent is conditional: only enabled
@@ -144,7 +174,7 @@ async def create_checkout(
 @router.post("/webhook")
 async def stripe_webhook(request: Request):
     """Receive Stripe events. Must use raw request body for signature verification."""
-    payload = await request.body()
+    payload = await _read_stripe_webhook_payload(request)
     sig = request.headers.get("stripe-signature", "")
     secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
     if not secret:
@@ -166,7 +196,45 @@ async def stripe_webhook(request: Request):
     return {"status": "ok"}
 
 
+def _stripe_webhook_max_bytes() -> int:
+    """Maximum raw Stripe payload size; defaults to a generous 256 KiB."""
+    try:
+        return max(
+            1,
+            int(os.environ.get("CANARY_STRIPE_WEBHOOK_MAX_KB", "256")),
+        ) * 1024
+    except (TypeError, ValueError):
+        return 256 * 1024
+
+
+async def _read_stripe_webhook_payload(request: Request) -> bytes:
+    """Read exact signature bytes without allowing an unbounded public body."""
+    cap = _stripe_webhook_max_bytes()
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > cap:
+                raise HTTPException(413, "Stripe webhook payload too large")
+        except ValueError:
+            pass
+
+    payload = bytearray()
+    async for chunk in request.stream():
+        payload.extend(chunk)
+        if len(payload) > cap:
+            raise HTTPException(413, "Stripe webhook payload too large")
+    return bytes(payload)
+
+
 def _handle_checkout_completed(session: dict) -> None:
+    if session.get("payment_status") != "paid":
+        logger.warning(
+            "Ignoring unpaid checkout.session.completed — session %s status=%r",
+            session.get("id"),
+            session.get("payment_status"),
+        )
+        return
+
     metadata = session.get("metadata") or {}
     user_id = metadata.get("user_id")
     package_id = metadata.get("package")
@@ -178,27 +246,36 @@ def _handle_checkout_completed(session: dict) -> None:
         return
 
     payment_intent_id = session.get("payment_intent")
+    if not payment_intent_id:
+        logger.warning(
+            "Paid checkout.session.completed missing payment_intent — session %s",
+            session.get("id"),
+        )
+        return
     credits = CREDIT_PACKAGES[package_id]["credits"]
     db = get_db()
 
-    # Idempotency: skip if we already processed this payment intent.
-    if payment_intent_id:
-        existing = (
-            db.table("credit_ledger")
-            .select("id")
-            .eq("stripe_payment_intent_id", payment_intent_id)
-            .execute()
+    # Atomic idempotency: the unique payment-intent constraint decides which
+    # concurrent webhook wins. ignore_duplicates turns the loser into a clean
+    # no-op instead of a uniqueness error/500 that makes Stripe retry forever.
+    response = db.table("credit_ledger").upsert(
+        {
+            "user_id": user_id,
+            "amount_credits": credits,
+            "status": "settled",
+            "description": f"Credit purchase — {CREDIT_PACKAGES[package_id]['label']}",
+            "stripe_payment_intent_id": payment_intent_id,
+        },
+        on_conflict="stripe_payment_intent_id",
+        ignore_duplicates=True,
+    ).execute()
+
+    if response.data:
+        logger.info(
+            "Added %d credits for user %s (payment_intent %s)",
+            credits,
+            user_id,
+            payment_intent_id,
         )
-        if existing.data:
-            logger.info("Duplicate webhook for payment_intent %s — skipping", payment_intent_id)
-            return
-
-    db.table("credit_ledger").insert({
-        "user_id": user_id,
-        "amount_credits": credits,
-        "status": "settled",
-        "description": f"Credit purchase — {CREDIT_PACKAGES[package_id]['label']}",
-        "stripe_payment_intent_id": payment_intent_id,
-    }).execute()
-
-    logger.info("Added %d credits for user %s (payment_intent %s)", credits, user_id, payment_intent_id)
+    else:
+        logger.info("Duplicate webhook for payment_intent %s — skipping", payment_intent_id)

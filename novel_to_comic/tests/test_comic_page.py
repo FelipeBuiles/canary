@@ -8,7 +8,6 @@ from novel_to_comic.models.comic_page import (
     Sfx,
     PagePanel,
     ComicPage,
-    CharacterVoice,
     BUBBLE_PRESETS,
     normalize_sfx_text,
 )
@@ -63,7 +62,6 @@ class TestBubbleTypographyOverrides:
             fill_color="#ffff00",
             border_color="#000000",
             border_width=3,
-            border_radius=8,
         )
         assert b.font_family == "Comic Sans"
         assert b.font_size == 14
@@ -310,45 +308,19 @@ class TestComicPageWithPanels:
 class TestBubblePresets:
     def test_speech_preset(self):
         assert "speech" in BUBBLE_PRESETS
-        assert BUBBLE_PRESETS["speech"]["border_radius"] == "10"
+        assert BUBBLE_PRESETS["speech"]["border_width"] == "2"
 
     def test_thought_preset(self):
         assert "thought" in BUBBLE_PRESETS
-        assert BUBBLE_PRESETS["thought"]["border_radius"] == "22"
+        assert BUBBLE_PRESETS["thought"]["border_width"] == "2"
 
     def test_narration_preset(self):
         assert "narration" in BUBBLE_PRESETS
         assert BUBBLE_PRESETS["narration"]["fill_color"] == "#f0ebe0"
 
-    def test_shout_preset(self):
-        assert "shout" in BUBBLE_PRESETS
-        assert BUBBLE_PRESETS["shout"]["fill_color"] == "#e8c840"
-
     def test_all_presets_have_required_keys(self):
         for name, preset in BUBBLE_PRESETS.items():
-            assert "border_radius" in preset
             assert "border_width" in preset
             assert "border_color" in preset
             assert "fill_color" in preset
 
-
-class TestCharacterVoice:
-    def test_minimal(self):
-        v = CharacterVoice(character_id="char_001", character_name="Alice")
-        assert v.font_family is None
-        assert v.font_size is None
-
-    def test_full_override(self):
-        v = CharacterVoice(
-            character_id="char_001",
-            character_name="Alice",
-            font_family="Impact",
-            font_size=18,
-            font_color="#000000",
-            fill_color="#ffffff",
-            border_color="#000000",
-            border_width=2,
-            border_radius=4,
-        )
-        assert v.font_family == "Impact"
-        assert v.font_size == 18

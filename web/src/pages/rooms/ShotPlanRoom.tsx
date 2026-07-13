@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import {
   useLayoutPlan,
@@ -425,11 +425,6 @@ function PanelDetailPanel({
   const [draft, setDraft] = useState<Partial<PanelBreakdown>>({});
   const updatePanel = useUpdatePanel();
 
-  // Reset draft whenever the selected panel changes
-  useEffect(() => {
-    setDraft({});
-  }, [panel.scene_id, panel.panel_number]);
-
   const merged = { ...panel, ...draft };
   const isDirty = Object.keys(draft).length > 0;
 
@@ -656,11 +651,6 @@ function BoardTab({
     [panels, selectedKey],
   );
 
-  // Clear selection when scene changes
-  useEffect(() => {
-    setSelectedKey(null);
-  }, [activeScene]);
-
   if (isLoading) {
     return <div className="p-6"><LoadingBlock label="LOADING BOARD…" /></div>;
   }
@@ -759,6 +749,7 @@ function BoardTab({
       {/* Detail panel */}
       {selectedPanel && (
         <PanelDetailPanel
+          key={`${selectedPanel.scene_id}-${selectedPanel.panel_number}`}
           panel={selectedPanel}
           project={project}
           resolveName={resolveName}

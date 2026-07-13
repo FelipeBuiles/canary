@@ -35,7 +35,7 @@ function renderAction(overrides: Partial<ComponentProps<typeof RegenAction>> = {
 
 afterEach(() => {
   document.body.style.overflow = "";
-  localStorage.clear();
+  window.localStorage.clear();
 });
 
 describe("RegenAction", () => {

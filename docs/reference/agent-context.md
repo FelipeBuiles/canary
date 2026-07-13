@@ -351,7 +351,7 @@ x, y, width: float | None   # None = auto, float = pinned
 tail_x, tail_y: float | None # SVG tail target point in panel coordinates
 tail_direction: Literal["auto", "up", "down"] # CSS-tail direction fallback
 font_family, font_size, font_color: optional per-bubble typography
-fill_color, border_color, border_width, border_radius: optional shape overrides
+fill_color, border_color, border_width: optional shape overrides
 ```
 
 ### Sfx model
@@ -594,7 +594,6 @@ projects/my-novel/
 │       └── panel_NNN.png
 ├── assembly/                # Cross-page assets
 │   ├── lettering_style.json # Project lettering style (theme, font pair, vars)
-│   └── character_voices.json # Optional per-character lettering presets
 ├── compose/                 # Stage 9 output
 │   ├── pages/
 │   │   ├── page_NNN.json    # Canonical editing surface (ComicPage)

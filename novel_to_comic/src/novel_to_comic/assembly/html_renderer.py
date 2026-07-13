@@ -164,17 +164,17 @@ body {
 }
 
 .caption {
-  background: var(--caption-bg);
-  border: 2px solid var(--caption-border);
-  border-radius: 2px;
+  position: relative;
+  isolation: isolate;
+  background: transparent;
+  border: 0;
   color: var(--caption-color);
-  padding: 8px 14px;
+  padding: 24px 36px 28px;
   font-family: var(--letter-font, 'Comic Neue', 'Comic Sans MS', cursive, sans-serif);
   font-size: var(--caption-font-size);
   font-weight: bold;
   line-height: 1.35;
   max-width: 86%;
-  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.24);
   overflow-wrap: break-word;
   user-select: none;
   -webkit-user-select: none;
@@ -186,32 +186,26 @@ body {
   text-align: center;
 }
 
-/* ── Speech/thought bubbles — auto (flex-end at panel bottom) ── */
+/* ── Speech/thought bubbles — automatic upper reading flow ── */
 .bubble-auto {
   position: absolute;
-  top: 0;
-  bottom: 6px;
-  left: 6px;
-  right: 6px;
+  top: 14px;
+  left: 14px;
+  right: 14px;
   z-index: 1;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
-  gap: 8px;
+  justify-content: flex-start;
+  gap: 42px;
   pointer-events: none;
-}
-
-/* Leave headroom so tail-up bubbles don't overlap when stacked */
-.bubble-auto > .bubble.speech.tail-up {
-  margin-top: 14px;
 }
 
 /* ── All bubbles share these base styles ── */
 .bubble {
   position: relative;
-  background: var(--bubble-bg);
-  border: var(--bubble-border-width) solid var(--bubble-border);
-  border-radius: var(--bubble-radius);
+  isolation: isolate;
+  background: transparent;
+  border: 0;
   padding: var(--bubble-padding);
   font-family: var(--letter-font, 'Comic Neue', 'Comic Sans MS', cursive, sans-serif);
   font-size: var(--bubble-font-size);
@@ -238,10 +232,46 @@ body {
 .bubble.center { align-self: center; max-width: var(--bubble-center-width); }
 .bubble.full-width { align-self: stretch; max-width: 100%; text-align: center; }
 
-/* Thought bubble */
+/* SVG balloon bodies: restrained speech, soft thought, cut-paper narration. */
+.letter-shape {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 1;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.2));
+}
+.caption .letter-shape {
+  filter: drop-shadow(0 2px 1px rgba(0, 0, 0, 0.2));
+}
+.letter-content {
+  position: relative;
+  z-index: 2;
+}
+
+.bubble .letter-content {
+  display: block;
+  width: 100%;
+}
+
+.caption .letter-content {
+  display: block;
+  width: 92%;
+  margin-inline: auto;
+}
+
 .bubble.thought {
-  border-radius: var(--thought-radius);
-  border-style: var(--thought-border-style);
+  min-height: 132px;
+  padding: 60px 70px 78px;
+  display: flex;
+  align-items: center;
+}
+
+.bubble.thought .letter-content {
+  width: 68%;
+  margin-inline: auto;
 }
 
 .bubble.thought::after {
@@ -254,7 +284,8 @@ body {
   border-radius: 50%;
   background: var(--bubble-bg);
   border: var(--bubble-border-width) solid var(--bubble-border);
-  z-index: 1;
+  z-index: 0;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.18);
 }
 .bubble.thought::before {
   content: '';
@@ -266,62 +297,30 @@ body {
   border-radius: 50%;
   background: var(--bubble-bg);
   border: var(--bubble-border-width) solid var(--bubble-border);
-  z-index: 1;
+  z-index: 0;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.18);
 }
+.bubble.thought.right::after { left: auto; right: 22px; }
+.bubble.thought.right::before { left: auto; right: 12px; }
+.bubble.thought.center::after { left: calc(50% - 6px); }
+.bubble.thought.center::before { left: calc(50% - 3px); }
 
-/* ── Upward tails (default — character is above bubble) ── */
-.bubble.speech.tail-up.left::after,
-.bubble.speech.tail-up.right::after,
-.bubble.speech.tail-up.center::after {
-  content: '';
+/* Curved speech tails. The body overlaps the tail base for one continuous ink line. */
+.auto-tail {
   position: absolute;
-  top: -18px;
-  border: 9px solid transparent;
-  border-bottom: 16px solid var(--bubble-border);
+  width: 54px;
+  height: 46px;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 0;
 }
-.bubble.speech.tail-up.left::before,
-.bubble.speech.tail-up.right::before,
-.bubble.speech.tail-up.center::before {
-  content: '';
-  position: absolute;
-  top: -14px;
-  border: 7px solid transparent;
-  border-bottom: 14px solid var(--bubble-bg);
-  z-index: 1;
-}
-.bubble.speech.tail-up.left::after   { left: 18px; }
-.bubble.speech.tail-up.left::before  { left: 20px; }
-.bubble.speech.tail-up.right::after  { right: 18px; }
-.bubble.speech.tail-up.right::before { right: 20px; }
-.bubble.speech.tail-up.center::after  { left: 50%; transform: translateX(-50%); }
-.bubble.speech.tail-up.center::before { left: 50%; transform: translateX(-50%); }
-
-/* ── Downward tails (character is below bubble) ── */
-.bubble.speech.tail-down.left::after,
-.bubble.speech.tail-down.right::after,
-.bubble.speech.tail-down.center::after {
-  content: '';
-  position: absolute;
-  bottom: -14px;
-  border: 8px solid transparent;
-  border-top: 14px solid var(--bubble-border);
-}
-.bubble.speech.tail-down.left::before,
-.bubble.speech.tail-down.right::before,
-.bubble.speech.tail-down.center::before {
-  content: '';
-  position: absolute;
-  bottom: -10px;
-  border: 6px solid transparent;
-  border-top: 12px solid var(--bubble-bg);
-  z-index: 1;
-}
-.bubble.speech.tail-down.left::after   { left: 18px; }
-.bubble.speech.tail-down.left::before  { left: 20px; }
-.bubble.speech.tail-down.right::after  { right: 18px; }
-.bubble.speech.tail-down.right::before { right: 20px; }
-.bubble.speech.tail-down.center::after  { left: 50%; transform: translateX(-50%); }
-.bubble.speech.tail-down.center::before { left: 50%; transform: translateX(-50%); }
+.bubble.speech.tail-down .auto-tail { top: calc(100% - 24px); }
+.bubble.speech.tail-up .auto-tail { bottom: calc(100% - 24px); transform: scaleY(-1); }
+.bubble.speech.left .auto-tail { left: 35%; }
+.bubble.speech.right .auto-tail { right: 35%; transform: scaleX(-1); }
+.bubble.speech.right.tail-up .auto-tail { transform: scale(-1, -1); }
+.bubble.speech.center .auto-tail { left: 50%; transform: translateX(-50%); }
+.bubble.speech.center.tail-up .auto-tail { transform: translateX(-50%) scaleY(-1); }
 
 /* Speaker label */
 .speaker {
@@ -347,11 +346,13 @@ body {
 .bubble.svg-tail::after { display: none; }
 .bubble .tail-svg {
   position: absolute;
-  width: 0;
-  height: 0;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
   overflow: visible;
   pointer-events: none;
-  z-index: -1;
+  z-index: 0;
 }
 
 /* ── Narration caption — pinned variant ── */
@@ -466,9 +467,8 @@ _THEME_HEADER = """\
  *    --bubble-bg               background (#FFFFFF)
  *    --bubble-border           border colour (#1A1A1A)
  *    --bubble-border-width     (2px)
- *    --bubble-radius           corner radius (14px)
  *    --bubble-font-size        (48px)
- *    --bubble-padding          (7px 11px)
+ *    --bubble-padding          (30px 40px)
  *    --bubble-max-width        max % of panel width (52%)
  *    --bubble-center-width     max % for centred bubbles (68%)
  *
@@ -476,9 +476,7 @@ _THEME_HEADER = """\
  *    --speaker-color           (#664400)
  *    --speaker-font-size       (20px)
  *
- *  Thought bubbles
- *    --thought-border-style    "dashed" | "solid" | "dotted" (dashed)
- *    --thought-radius          corner radius (50px — very rounded)
+ *  Thought bubbles use the semantic scalloped SVG body.
  *
  *  Sound effects
  *    --sfx-color               fill (#CC1111)
@@ -550,56 +548,188 @@ def _font_face(
 
 
 def _svg_tail(bubble: Bubble) -> str:
-    """Render an SVG tail triangle for a pinned bubble.
-
-    The SVG is placed *outside* the bubble via negative offset so the
-    tail does not overlap bubble content.  It draws a filled triangle
-    from the bubble edge toward ``(tail_x, tail_y)`` in panel-relative
-    coordinates.
-    """
+    """Render a measured pinned-tail host targeting panel-relative coordinates."""
     if bubble.tail_x is None or bubble.tail_y is None:
         return ""
     if bubble.x is None or bubble.y is None:
         return ""
-
-    bw = bubble.width or 200
-    tx = bubble.tail_x - bubble.x
-    ty = bubble.tail_y - bubble.y
-
-    # Determine anchor edge: if target is below the bubble center, anchor
-    # at the bottom edge; otherwise anchor at the top edge.
-    target_below = ty > 20  # rough threshold: anything below ~20px from top
-    hw = 10  # half-width of tail base
-
-    if target_below:
-        # Anchor at bottom-center, SVG extends downward
-        anchor_css = "left: 50%; bottom: 0; transform: translate(-50%, 100%);"
-        # Triangle points relative to anchor: base at y=0, tip toward target
-        # Target relative to bottom-center of bubble (estimated height ~50px)
-        tip_x = tx - bw / 2
-        tip_y = ty - 50  # approximate bubble height
-    else:
-        # Anchor at top-center, SVG extends upward
-        anchor_css = "left: 50%; top: 0; transform: translate(-50%, -100%);"
-        # Triangle base at y=0 (bottom of SVG, which is the bubble top edge)
-        # tip extends upward (negative y)
-        tip_x = tx - bw / 2
-        tip_y = ty  # already relative to bubble top
-
     return (
-        f'<svg class="tail-svg" style="{anchor_css}" viewBox="0 0 0 0">'
-        f'<polygon points="{-hw},0 {hw},0 {tip_x:.0f},{tip_y:.0f}" '
-        f'fill="var(--bubble-bg)" stroke="var(--bubble-border)" '
-        f'stroke-width="var(--bubble-border-width)" stroke-linejoin="round"/>'
+        f'<svg class="tail-svg" data-tail-x="{bubble.tail_x:.2f}" '
+        f'data-tail-y="{bubble.tail_y:.2f}" aria-hidden="true">'
+        '<path class="tail-path" fill="var(--bubble-bg)" '
+        'stroke="var(--bubble-border)" stroke-width="var(--bubble-border-width)" '
+        'vector-effect="non-scaling-stroke" stroke-linejoin="round"/>'
         f'</svg>'
+    )
+
+
+_SPEECH_SHAPE_PATH = (
+    "M8 2 C32 0 68 1 90 3 C96 4 98 7 98 14 "
+    "L98 84 C98 92 94 97 86 98 C60 100 30 100 12 98 "
+    "C5 97 2 93 2 85 L2 14 C2 7 4 3 8 2 Z"
+)
+_THOUGHT_SHAPE_PATH = (
+    "M8 47 C2 38 6 27 16 24 C18 5 30 3 40 8 "
+    "C48 2 62 3 68 11 C80 5 92 14 91 28 "
+    "C99 39 99 51 92 57 C96 68 88 81 78 81 "
+    "C73 92 58 94 49 86 C39 94 25 92 22 84 "
+    "C12 84 4 73 8 63 C1 58 1 51 8 47 Z"
+)
+_NARRATION_SHAPE_PATH = "M2 4 L96 2 L99 88 L92 98 L3 96 Z"
+
+_PINNED_TAIL_SCRIPT = """\
+<script>
+(() => {
+  const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
+  const safeGutter = 8;
+  const sampleLine = (start, end) => {
+    const distance = Math.hypot(end[0] - start[0], end[1] - start[1]);
+    const segments = Math.max(1, Math.ceil(distance / safeGutter));
+    return Array.from({ length: segments + 1 }, (_, index) => {
+      const fraction = index / segments;
+      return [
+        start[0] + (end[0] - start[0]) * fraction,
+        start[1] + (end[1] - start[1]) * fraction,
+      ];
+    });
+  };
+  const perimeterPoints = (rect) => {
+    const left = rect.left - safeGutter;
+    const right = rect.right + safeGutter;
+    const top = rect.top - safeGutter;
+    const bottom = rect.bottom + safeGutter;
+    return [
+      ...sampleLine([left, top], [right, top]),
+      ...sampleLine([right, top], [right, bottom]),
+      ...sampleLine([right, bottom], [left, bottom]),
+      ...sampleLine([left, bottom], [left, top]),
+    ];
+  };
+  const verifySafeArea = (host) => {
+    const content = host.querySelector(':scope > .letter-content');
+    const path = host.querySelector(':scope > .letter-shape path');
+    if (!content || !path || typeof path.isPointInFill !== 'function' || typeof DOMPoint === 'undefined') {
+      host.dataset.safeArea = 'unsupported';
+      return 'unsupported';
+    }
+    const matrix = path.getScreenCTM();
+    if (!matrix) {
+      host.dataset.safeArea = 'unsupported';
+      return 'unsupported';
+    }
+    const inverse = matrix.inverse();
+    const safe = perimeterPoints(content.getBoundingClientRect()).every(([x, y]) =>
+      path.isPointInFill(new DOMPoint(x, y).matrixTransform(inverse))
+    );
+    host.dataset.safeArea = safe ? 'verified' : 'failed';
+    return host.dataset.safeArea;
+  };
+  const verifySafeAreas = () => {
+    document.querySelectorAll('.bubble, .caption').forEach(verifySafeArea);
+  };
+  const pathFor = (width, height, targetX, targetY) => {
+    const dx = targetX - width / 2;
+    const dy = targetY - height / 2;
+    const halfBase = Math.max(8, Math.min(16, Math.min(width, height) * 0.12));
+    let first;
+    let second;
+    if (Math.abs(dx) / Math.max(width, 1) > Math.abs(dy) / Math.max(height, 1)) {
+      const edgeX = dx < 0 ? width * 0.06 : width * 0.94;
+      const anchorY = clamp(targetY, height * 0.25, height * 0.75);
+      first = [edgeX, anchorY - halfBase];
+      second = [edgeX, anchorY + halfBase];
+    } else {
+      const edgeY = dy < 0 ? height * 0.08 : height * 0.92;
+      const anchorX = clamp(targetX, width * 0.25, width * 0.75);
+      first = [anchorX - halfBase, edgeY];
+      second = [anchorX + halfBase, edgeY];
+    }
+    const c1 = [
+      first[0] + (targetX - first[0]) * 0.38,
+      first[1] + (targetY - first[1]) * 0.38,
+    ];
+    const c2 = [
+      second[0] + (targetX - second[0]) * 0.7,
+      second[1] + (targetY - second[1]) * 0.7,
+    ];
+    return `M ${first[0]} ${first[1]} Q ${c1[0]} ${c1[1]} ${targetX} ${targetY} ` +
+      `Q ${c2[0]} ${c2[1]} ${second[0]} ${second[1]} Z`;
+  };
+  const update = () => {
+    verifySafeAreas();
+    document.querySelectorAll('.panel').forEach((panel) => {
+      const flow = panel.querySelector(':scope > .bubble-auto');
+      if (!flow) return;
+      const groups = panel.querySelectorAll(
+        ':scope > .captions.zone-top, :scope > .captions.zone-left, :scope > .captions.zone-right'
+      );
+      const captionBottom = Math.max(
+        0,
+        ...Array.from(groups).map((group) => group.offsetTop + group.offsetHeight)
+      );
+      flow.style.top = `${Math.max(14, captionBottom + (captionBottom ? 24 : 0))}px`;
+    });
+    document.querySelectorAll('.tail-svg').forEach((svg) => {
+      const bubble = svg.parentElement;
+      const path = svg.querySelector('.tail-path');
+      if (!bubble || !path) return;
+      const targetX = Number(svg.dataset.tailX) - bubble.offsetLeft;
+      const targetY = Number(svg.dataset.tailY) - bubble.offsetTop;
+      path.setAttribute('d', pathFor(bubble.offsetWidth, bubble.offsetHeight, targetX, targetY));
+    });
+  };
+  window.__verifyLetteringSafeAreas = verifySafeAreas;
+  window.__updateBubbleTails = update;
+  document.fonts.ready.then(update);
+  window.addEventListener('resize', update);
+})();
+</script>
+"""
+
+
+def _bubble_shape_svg(bubble: Bubble) -> str:
+    """Return the semantic balloon body shared by auto and pinned lettering."""
+    if bubble.type == "narration":
+        path = _NARRATION_SHAPE_PATH
+        fill = "var(--caption-bg)"
+        stroke = "var(--caption-border)"
+        stroke_width = "var(--caption-border-width, 2px)"
+    elif bubble.type == "thought":
+        path = _THOUGHT_SHAPE_PATH
+        fill = "var(--bubble-bg)"
+        stroke = "var(--bubble-border)"
+        stroke_width = "var(--bubble-border-width)"
+    else:
+        path = _SPEECH_SHAPE_PATH
+        fill = "var(--bubble-bg)"
+        stroke = "var(--bubble-border)"
+        stroke_width = "var(--bubble-border-width)"
+    return (
+        '<svg class="letter-shape" viewBox="0 0 100 100" '
+        'preserveAspectRatio="none" aria-hidden="true">'
+        f'<path d="{path}" fill="{fill}" stroke="{stroke}" '
+        f'stroke-width="{stroke_width}" vector-effect="non-scaling-stroke" '
+        'stroke-linejoin="round" stroke-linecap="round"/></svg>'
+    )
+
+
+def _auto_tail_svg() -> str:
+    """Return a gently curved tail; CSS orients it by side and direction."""
+    return (
+        '<svg class="auto-tail" viewBox="0 0 54 46" '
+        'preserveAspectRatio="none" aria-hidden="true">'
+        '<path d="M13 0 C13 15 7 32 2 44 C16 37 29 21 36 0 Z" '
+        'fill="var(--bubble-bg)" stroke="var(--bubble-border)" '
+        'stroke-width="var(--bubble-border-width)" vector-effect="non-scaling-stroke" '
+        'stroke-linejoin="round" stroke-linecap="round"/></svg>'
     )
 
 
 def _resolve_tail_direction(bubble: Bubble) -> str:
     """Resolve 'auto' tail direction based on bubble position.
 
-    For auto-layout bubbles (x/y=None), the default CSS tail always
-    points up (characters are above, bubble at bottom).
+    Auto-layout bubbles sit in the upper reading flow, so their tails point
+    down toward characters in the panel.
 
     For pinned bubbles, auto checks whether the bubble is in the top or
     bottom half of the panel (using a 400px threshold — roughly half a
@@ -608,9 +738,11 @@ def _resolve_tail_direction(bubble: Bubble) -> str:
     direction = getattr(bubble, "tail_direction", "auto")
     if direction != "auto":
         return direction
+    if bubble.y is None:
+        return "down"
     if bubble.y is not None and bubble.y < 400:
         return "down"  # bubble near top → tail points down toward character below
-    return "up"  # default: bubble at bottom → tail points up
+    return "up"
 
 
 def _caption_zone_class(preferred_zone: str | None) -> str:
@@ -620,13 +752,8 @@ def _caption_zone_class(preferred_zone: str | None) -> str:
     return f"zone-{zone.replace('_', '-')}"
 
 
-def _bubble_html(bubble: Bubble, character_voices: dict[str, dict] | None = None) -> str:
-    """Render one Bubble to an HTML element string.
-
-    ``character_voices`` maps character_id → style dict. When a bubble has
-    a speaker_id matching a voice, the voice style is applied first, then
-    per-bubble overrides take precedence.
-    """
+def _bubble_html(bubble: Bubble) -> str:
+    """Render one Bubble to an HTML element string."""
     is_narration = bubble.type == "narration"
     classes = ["caption", bubble.type] if is_narration else ["bubble", bubble.type, bubble.side]
     inline: list[str] = []
@@ -642,28 +769,7 @@ def _bubble_html(bubble: Bubble, character_voices: dict[str, dict] | None = None
     if bubble.width is not None:
         inline.append(f"width: {bubble.width:.0f}px")
 
-    # Apply character voice first (lower priority than per-bubble overrides)
-    voice = (character_voices or {}).get(bubble.speaker_id or "") if bubble.speaker_id else None
-    if voice:
-        if voice.get("font_family") and not getattr(bubble, "font_family", None):
-            inline.append(f"font-family: {voice['font_family']}")
-        if voice.get("font_size") is not None and getattr(bubble, "font_size", None) is None:
-            inline.append(f"font-size: {voice['font_size']}px")
-        if voice.get("font_color") and not getattr(bubble, "font_color", None):
-            inline.append(f"color: {voice['font_color']}")
-        if voice.get("fill_color") and not getattr(bubble, "fill_color", None):
-            inline.append(f"background: {voice['fill_color']}")
-            inline.append(f"--bubble-bg: {voice['fill_color']}")
-        if voice.get("border_color") and not getattr(bubble, "border_color", None):
-            inline.append(f"border-color: {voice['border_color']}")
-            inline.append(f"--bubble-border: {voice['border_color']}")
-        if voice.get("border_width") is not None and getattr(bubble, "border_width", None) is None:
-            inline.append(f"border-width: {voice['border_width']}px")
-            inline.append(f"--bubble-border-width: {voice['border_width']}px")
-        if voice.get("border_radius") is not None and getattr(bubble, "border_radius", None) is None:
-            inline.append(f"border-radius: {voice['border_radius']}px")
-
-    # Per-bubble overrides (higher priority)
+    # Per-bubble overrides.
     if getattr(bubble, "font_family", None):
         inline.append(f"font-family: {bubble.font_family}")
     if getattr(bubble, "font_size", None) is not None:
@@ -671,17 +777,14 @@ def _bubble_html(bubble: Bubble, character_voices: dict[str, dict] | None = None
     if getattr(bubble, "font_color", None):
         inline.append(f"color: {bubble.font_color}")
     if getattr(bubble, "fill_color", None):
-        inline.append(f"background: {bubble.fill_color}")
-        inline.append(f"--bubble-bg: {bubble.fill_color}")
+        fill_var = "--caption-bg" if is_narration else "--bubble-bg"
+        inline.append(f"{fill_var}: {bubble.fill_color}")
     if getattr(bubble, "border_color", None):
-        inline.append(f"border-color: {bubble.border_color}")
-        inline.append(f"--bubble-border: {bubble.border_color}")
+        border_var = "--caption-border" if is_narration else "--bubble-border"
+        inline.append(f"{border_var}: {bubble.border_color}")
     if getattr(bubble, "border_width", None) is not None:
-        inline.append(f"border-width: {bubble.border_width}px")
-        inline.append(f"--bubble-border-width: {bubble.border_width}px")
-    if getattr(bubble, "border_radius", None) is not None:
-        inline.append(f"border-radius: {bubble.border_radius}px")
-
+        width_var = "--caption-border-width" if is_narration else "--bubble-border-width"
+        inline.append(f"{width_var}: {bubble.border_width}px")
     if bubble.tail_x is not None and bubble.tail_y is not None and not is_narration:
         classes.append("svg-tail")
         has_svg_tail = True
@@ -696,8 +799,17 @@ def _bubble_html(bubble: Bubble, character_voices: dict[str, dict] | None = None
     if bubble.speaker_name and not is_narration:
         speaker_html = f'<span class="speaker">{_e(bubble.speaker_name)}:</span>'
 
-    tail_html = _svg_tail(bubble) if has_svg_tail else ""
-    return f'<div class="{cls}" data-id="{_e(bubble.id)}"{style_attr}>{speaker_html}{_e(bubble.text)}{tail_html}</div>'
+    if has_svg_tail:
+        tail_html = _svg_tail(bubble)
+    elif bubble.type == "speech":
+        tail_html = _auto_tail_svg()
+    else:
+        tail_html = ""
+    content = f'<span class="letter-content">{speaker_html}{_e(bubble.text)}</span>'
+    return (
+        f'<div class="{cls}" data-id="{_e(bubble.id)}"{style_attr}>'
+        f'{_bubble_shape_svg(bubble)}{content}{tail_html}</div>'
+    )
 
 
 _AUTO_SFX_ANCHORS = (
@@ -751,7 +863,6 @@ def _panel_html(
     panel: PagePanel,
     project_dir: Path,
     image_url_fn: Callable[[str], str] | None = None,
-    character_voices: dict[str, dict] | None = None,
     lettering: LetteringStyle | None = None,
 ) -> str:
     """Render one PagePanel to an HTML element string.
@@ -761,10 +872,17 @@ def _panel_html(
     The web dashboard passes an HTTP URL builder; CLI/Playwright passes None
     and falls back to ``file://`` URIs.
 
-    ``character_voices`` maps character_id → style dict for per-character
-    bubble styling.
     """
     # Grid and freeform placement.
+    panel_classes = ["panel"]
+    if any(
+        bubble.type == "narration"
+        and bubble.x is None
+        and _caption_zone_class(bubble.preferred_zone)
+        in {"zone-top", "zone-left", "zone-right"}
+        for bubble in panel.bubbles
+    ):
+        panel_classes.append("has-top-captions")
     style_parts: list[str] = []
     if panel.grid_column:
         style_parts.append(f"grid-column: {panel.grid_column}")
@@ -830,18 +948,18 @@ def _panel_html(
             groups.setdefault(_caption_zone_class(bubble.preferred_zone), []).append(bubble)
         containers: list[str] = []
         for zone_class, bubbles in groups.items():
-            items = "\n".join(f"    {_bubble_html(b, character_voices)}" for b in bubbles)
+            items = "\n".join(f"    {_bubble_html(b)}" for b in bubbles)
             containers.append(f'  <div class="captions {zone_class}">\n{items}\n  </div>')
         captions_html = "\n".join(containers)
 
     # Auto speech/thought → .bubble-auto flex container at bottom
     auto_html = ""
     if auto_speech:
-        items = "\n".join(f"    {_bubble_html(b, character_voices)}" for b in auto_speech)
+        items = "\n".join(f"    {_bubble_html(b)}" for b in auto_speech)
         auto_html = f'  <div class="bubble-auto">\n{items}\n  </div>'
 
     # Pinned bubbles → absolute within panel
-    pinned_html = "\n".join(f"  {_bubble_html(b, character_voices)}" for b in pinned)
+    pinned_html = "\n".join(f"  {_bubble_html(b)}" for b in pinned)
 
     # SFX — multi-SFX per panel, with auto anchor cycling for variety.
     sfx_html = _render_sfx_block(panel.sfx)
@@ -861,7 +979,10 @@ def _panel_html(
         pid_html,
     ]))
 
-    return f'<div class="panel" data-panel-id="{_e(panel.id)}"{style_attr}>\n{inner}\n</div>'
+    return (
+        f'<div class="{" ".join(panel_classes)}" '
+        f'data-panel-id="{_e(panel.id)}"{style_attr}>\n{inner}\n</div>'
+    )
 
 
 def build_page_html(
@@ -870,7 +991,6 @@ def build_page_html(
     custom_css: str = "",
     image_url_fn: Callable[[str], str] | None = None,
     font_url_fn: Callable[[str], str] | None = None,
-    character_voices: dict[str, dict] | None = None,
     lettering: LetteringStyle | None = None,
 ) -> str:
     """Return a complete, self-contained HTML document for one comic page.
@@ -895,7 +1015,7 @@ def build_page_html(
     )
 
     panels_html = "\n".join(
-        _panel_html(panel, project_dir, image_url_fn, character_voices)
+        _panel_html(panel, project_dir, image_url_fn)
         for panel in comic_page.panels
     )
 
@@ -939,6 +1059,7 @@ def build_page_html(
 {panels_html}
 </div>
 <div class="page-number">{comic_page.page_number}</div>
+{_PINNED_TAIL_SCRIPT}
 </body>
 </html>"""
 
@@ -1015,6 +1136,7 @@ async def inspect_html_lettering_metrics(
         try:
             await page.goto(tmp.as_uri(), wait_until="networkidle")
             await page.evaluate("document.fonts.ready")
+            await page.evaluate("window.__updateBubbleTails?.()")
             metrics = await page.evaluate(
                 """() => {
                   const rect = (element) => {
@@ -1059,13 +1181,16 @@ async def inspect_html_lettering_metrics(
                   return [...document.querySelectorAll(".panel[data-panel-id]")].map((panel) => {
                     const panelRect = rect(panel);
                     const lettering = [...panel.querySelectorAll(".bubble[data-id], .caption[data-id]")]
-                      .map((element) => ({ id: element.dataset.id, rect: rect(element) }))
+                      .map((element) => ({ id: element.dataset.id, element, rect: rect(element) }))
                       .filter(({ rect: value }) => value.width > 0 && value.height > 0);
                     const overflow = lettering
                       .filter(({ rect: value }) => (
                         value.left < panelRect.left - 0.5 || value.top < panelRect.top - 0.5 ||
                         value.right > panelRect.right + 0.5 || value.bottom > panelRect.bottom + 0.5
                       ))
+                      .map(({ id }) => id);
+                    const unsafe = lettering
+                      .filter(({ element }) => element.dataset.safeArea !== "verified")
                       .map(({ id }) => id);
                     const coverage = panelRect.width > 0 && panelRect.height > 0
                       ? unionArea(lettering.map(({ rect: value }) => value)) / (panelRect.width * panelRect.height)
@@ -1077,6 +1202,7 @@ async def inspect_html_lettering_metrics(
                       coverage_ratio: coverage,
                       max_auto_stack_ratio: stacks.length ? Math.max(...stacks) : 0,
                       overflowing_bubble_ids: overflow,
+                      unsafe_bubble_ids: unsafe,
                     };
                   });
                 }"""
@@ -1139,6 +1265,8 @@ async def render_html_to_png(
             finally:
                 tmp.unlink(missing_ok=True)
 
+        await page.evaluate("document.fonts.ready")
+        await page.evaluate("window.__updateBubbleTails?.()")
         output_path.parent.mkdir(parents=True, exist_ok=True)
         await page.screenshot(
             path=str(output_path),

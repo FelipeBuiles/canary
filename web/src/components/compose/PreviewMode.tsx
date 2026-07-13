@@ -1,12 +1,12 @@
 import { useState } from "react";
-import type { ComicPage, PageSummary } from "../../types/api";
+import type { ComicPage, LetteringStyle, PageSummary } from "../../types/api";
 import { Button } from "../ui/Button";
 import { ConfirmDrawer } from "../composites";
-import { pagePreviewUrl } from "../../api/pages";
 import { cn } from "../../lib/cn";
 import type { ComposeIssue } from "../../lib/issueEngine";
 import { ScaledContainer } from "./ScaledContainer";
 import { PAGE_W, PAGE_H } from "./layouts";
+import { ComicPageCanvas } from "./ComicPageCanvas";
 
 const LANGUAGES = [
   { value: "en" as const, label: "English" },
@@ -18,6 +18,7 @@ interface PreviewModeProps {
   project: string;
   pages: (ComicPage | undefined)[];
   pageList: PageSummary[];
+  lettering?: LetteringStyle;
   isLoading: boolean;
   pageIdx: number;
   isExporting: boolean;
@@ -49,6 +50,7 @@ export function PreviewMode({
   project,
   pages,
   pageList,
+  lettering,
   isLoading,
   pageIdx,
   isExporting,
@@ -83,6 +85,12 @@ export function PreviewMode({
 
   const leftSummary = pageList[spreadStart];
   const rightSummary = pageList[spreadStart + 1];
+  const leftPage = leftSummary
+    ? pages.find((page) => page?.page_number === leftSummary.page_number)
+    : undefined;
+  const rightPage = rightSummary
+    ? pages.find((page) => page?.page_number === rightSummary.page_number)
+    : undefined;
 
   const loadedPages = pages.filter((p): p is ComicPage => p !== undefined);
   const totalPanels = loadedPages.reduce((acc, p) => acc + p.panels.length, 0);
@@ -126,6 +134,9 @@ export function PreviewMode({
             isLoading={isLoading}
             leftSummary={leftSummary}
             rightSummary={rightSummary}
+            leftPage={leftPage}
+            rightPage={rightPage}
+            lettering={lettering}
           />
         </div>
 
@@ -211,11 +222,17 @@ function SpreadView({
   isLoading,
   leftSummary,
   rightSummary,
+  leftPage,
+  rightPage,
+  lettering,
 }: {
   project: string;
   isLoading: boolean;
   leftSummary: PageSummary | undefined;
   rightSummary: PageSummary | undefined;
+  leftPage: ComicPage | undefined;
+  rightPage: ComicPage | undefined;
+  lettering?: LetteringStyle;
 }) {
   const [zoom, setZoom] = useState(1);
 
@@ -241,16 +258,44 @@ function SpreadView({
         fitPadding={64}
       >
         <div className="flex shadow-ink-lg" style={{ width: nativeW, height: PAGE_H }}>
-          {leftSummary && <PreviewPageSheet project={project} summary={leftSummary} isLeft />}
-          {rightSummary && <PreviewPageSheet project={project} summary={rightSummary} isLeft={false} />}
+          {leftSummary && (
+            <PreviewPageSheet
+              project={project}
+              summary={leftSummary}
+              page={leftPage}
+              lettering={lettering}
+              isLeft
+            />
+          )}
+          {rightSummary && (
+            <PreviewPageSheet
+              project={project}
+              summary={rightSummary}
+              page={rightPage}
+              lettering={lettering}
+              isLeft={false}
+            />
+          )}
         </div>
       </ScaledContainer>
     </div>
   );
 }
 
-function PreviewPageSheet({ project, summary, isLeft }: { project: string; summary: PageSummary; isLeft: boolean }) {
-  const src = pagePreviewUrl(project, summary.page_number);
+function PreviewPageSheet({
+  project,
+  summary,
+  page,
+  lettering,
+  isLeft,
+}: {
+  project: string;
+  summary: PageSummary;
+  page: ComicPage | undefined;
+  lettering?: LetteringStyle;
+  isLeft: boolean;
+}) {
+  const imageBaseUrl = `/api/projects/${encodeURIComponent(project)}/files`;
   return (
     <div
       className={cn(
@@ -261,13 +306,29 @@ function PreviewPageSheet({ project, summary, isLeft }: { project: string; summa
       )}
       style={{ width: PAGE_W, height: PAGE_H, flexShrink: 0 }}
     >
-      <iframe
-        src={src}
-        title={`Page ${summary.page_number} preview`}
-        className="pointer-events-none border-0 bg-white"
-        style={{ width: PAGE_W, height: PAGE_H, display: "block" }}
-        loading="lazy"
-      />
+      {page ? (
+        <div
+          aria-label={`Page ${summary.page_number} preview`}
+          className="pointer-events-none"
+          style={{ width: PAGE_W, height: PAGE_H }}
+        >
+          <ComicPageCanvas
+            page={page}
+            lettering={lettering}
+            selectedPanelId={null}
+            selectedElementId={null}
+            selectedType={null}
+            reframePanelId={null}
+            imageBaseUrl={imageBaseUrl}
+          />
+        </div>
+      ) : (
+        <div
+          className="flex h-full w-full items-center justify-center font-meta text-[2rem] tracking-[0.18em] text-ink-black/40"
+        >
+          LOADING PAGE {summary.page_number}…
+        </div>
+      )}
     </div>
   );
 }

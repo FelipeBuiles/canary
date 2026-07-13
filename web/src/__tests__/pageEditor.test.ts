@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { panelReframeHasSettled } from "../components/compose/PageEditor";
+import { panelReframeHasSettled } from "../components/compose/panelReframe";
 import type { ComicPage } from "../types/api";
 
 function pageWithOffset(x: number | null, y: number | null): ComicPage {

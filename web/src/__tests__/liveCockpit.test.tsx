@@ -1,7 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { StaleStripe, isAllInkedTransition } from "../components/draw/LiveCockpit";
+import { StaleStripe } from "../components/draw/LiveCockpit";
+import { isAllInkedTransition } from "../components/draw/progressTransitions";
 
 describe("isAllInkedTransition", () => {
   it("fires when the last panel lands with no failures", () => {

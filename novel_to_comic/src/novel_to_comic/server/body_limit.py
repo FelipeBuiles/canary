@@ -7,9 +7,7 @@ middleware caps the body of every non-exempt request up-front, so a giant JSON
 POST can't exhaust the worker's memory.
 
 Exemptions:
-  - The Stripe webhook (`/api/billing/webhook`) — Stripe event payloads vary
-    and the route already verifies the signature on the raw body.
-  - File uploads handled by the streaming cap in projects.py are also exempt,
+  - File uploads handled by the streaming cap in projects.py are exempt,
     since their larger bodies are validated mid-stream.
 
 Configurable via ``CANARY_MAX_BODY_MB`` (default 2 MB). Set higher only if a
@@ -23,10 +21,6 @@ from collections.abc import Awaitable, Callable
 
 from starlette.requests import Request
 from starlette.responses import Response
-
-# Paths whose bodies are handled (and bounded) by their own logic. The trailing
-# segment is intentionally loose (a path prefix match) so sub-routes inherit.
-_EXEMPT_PREFIXES = ("/api/billing/webhook",)
 
 # Upload routes use _save_upload_capped (streaming, 10 MB) — exempt from the
 # generic cap, which is lower. Matched by path suffix since the upload handler
@@ -43,8 +37,6 @@ def _max_body_bytes() -> int:
 
 
 def _is_exempt(path: str) -> bool:
-    if any(path.startswith(prefix) for prefix in _EXEMPT_PREFIXES):
-        return True
     if path in _EXEMPT_EXACT:
         return True
     return False

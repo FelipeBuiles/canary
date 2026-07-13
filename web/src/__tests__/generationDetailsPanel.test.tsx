@@ -25,7 +25,7 @@ function renderPanel() {
   );
 }
 
-afterEach(() => localStorage.clear());
+afterEach(() => window.localStorage.clear());
 
 describe("GenerationDetailsPanel", () => {
   it("keeps prompt lifecycle concepts out of the author-facing view", () => {
@@ -39,7 +39,7 @@ describe("GenerationDetailsPanel", () => {
   });
 
   it("exposes collapsed request diagnostics only with Dev Content enabled", () => {
-    localStorage.setItem(SHOW_DEV_CONTENT_KEY, "1");
+    window.localStorage.setItem(SHOW_DEV_CONTENT_KEY, "1");
     renderPanel();
 
     expect(screen.getByText("EXACT REQUEST & PROVENANCE")).toBeTruthy();

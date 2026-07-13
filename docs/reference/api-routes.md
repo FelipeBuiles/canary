@@ -31,9 +31,6 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `GET` | `/api/labs/runs/{run_id}/cells/{panel_idx}/{variant}/{model_id}/image` | `get_cell_image` | `labs.py` |
 | `GET` | `/api/projects/{project}/pages/` | `list_pages` | `pages.py` |
 | `GET` | `/api/projects/{project}/pages/bubble-presets` | `get_bubble_presets` | `pages.py` |
-| `GET` | `/api/projects/{project}/pages/character-voices` | `get_character_voices` | `pages.py` |
-| `PUT` | `/api/projects/{project}/pages/character-voices/{character_id}` | `put_character_voice` | `pages.py` |
-| `DELETE` | `/api/projects/{project}/pages/character-voices/{character_id}` | `delete_character_voice` | `pages.py` |
 | `GET` | `/api/projects/{project}/pages/{page_num}` | `get_page` | `pages.py` |
 | `PATCH` | `/api/projects/{project}/pages/{page_num}` | `update_page` | `pages.py` |
 | `GET` | `/api/projects/{project}/lettering-style` | `get_lettering_style` | `pages.py` |

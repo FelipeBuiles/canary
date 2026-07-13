@@ -1,9 +1,11 @@
+# check=skip=SecretsUsedInArgOrEnv
 # Stage 1: Build React frontend
 #
 # VITE_* vars are inlined into the JS bundle at build time (the browser talks
 # to Supabase directly for auth), so they must be present HERE, not at runtime.
-# They flow in as build args (publishable/anon values only — safe to expose in
-# the image; RLS gates access). Pass via `docker build --build-arg VITE_...=...`
+# They flow in as build args (publishable/anon values and public Sentry DSN only
+# — safe to expose in the image; RLS gates access). Pass via
+# `docker build --build-arg VITE_...=...`
 # or Fly's `fly deploy --build-arg`.
 FROM node:22-slim AS frontend
 WORKDIR /build
@@ -12,7 +14,7 @@ ARG VITE_SUPABASE_PUBLISHABLE_KEY
 ARG VITE_SENTRY_DSN
 ARG VITE_CANARY_ENV=production
 COPY web/package.json web/package-lock.json ./
-RUN npm install
+RUN npm ci
 COPY web/ ./
 # sync-tokens.mjs (run by `npm run build`) copies the canonical theme tokens
 # from the Python package into the web tree so the live canvas and the PNG/PDF

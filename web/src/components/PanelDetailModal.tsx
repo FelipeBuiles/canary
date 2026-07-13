@@ -542,11 +542,10 @@ export function PanelDetailModal({
   const [lastRewrittenPrompt, setLastRewrittenPrompt] = useState<ImagePrompt | null>(null);
   const [activeDisplayUrl, setActiveDisplayUrl] = useState<string>(imageUrl);
   const [imageModelAlias, setImageModelAlias] = useState("");
+  const [previousPanelKey, setPreviousPanelKey] = useState(`${sceneId}-${panelNumber}`);
+  const [previousImageUrl, setPreviousImageUrl] = useState(imageUrl);
+  const [previousOriginalPrompt, setPreviousOriginalPrompt] = useState<ImagePrompt | undefined>();
   const [showDevContent] = useShowDevContent();
-
-  useEffect(() => {
-    setActiveDisplayUrl(imageUrl);
-  }, [imageUrl, sceneId, panelNumber]);
   const queryClient = useQueryClient();
   const begin = useRegenStore((s) => s.begin);
   const attachJob = useRegenStore((s) => s.attachJob);
@@ -562,15 +561,21 @@ export function PanelDetailModal({
   const regenPanel = useRegenPanel();
   const instructedRegen = useRegenPanelWithInstruction();
 
-  useEffect(() => {
-    if (originalPrompt) setDraft({ ...originalPrompt });
-  }, [originalPrompt]);
-
-  useEffect(() => {
+  const panelKey = `${sceneId}-${panelNumber}`;
+  if (previousPanelKey !== panelKey) {
+    setPreviousPanelKey(panelKey);
     setLastRewrittenPrompt(null);
     setActiveTab("panel");
     setImageModelAlias("");
-  }, [sceneId, panelNumber]);
+  }
+  if (previousImageUrl !== imageUrl) {
+    setPreviousImageUrl(imageUrl);
+    setActiveDisplayUrl(imageUrl);
+  }
+  if (previousOriginalPrompt !== originalPrompt) {
+    setPreviousOriginalPrompt(originalPrompt);
+    setDraft(originalPrompt ? { ...originalPrompt } : null);
+  }
 
   useEffect(() => {
     if (isOpen) {

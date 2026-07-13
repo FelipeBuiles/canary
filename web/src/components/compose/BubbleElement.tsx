@@ -1,4 +1,7 @@
+import { useLayoutEffect, useRef } from "react";
 import type { Bubble } from "../../types/api";
+import { AutoSpeechTail, BalloonShape } from "./BalloonShape";
+import { verifyLetteringSafeArea } from "./letteringSafeArea";
 import { SvgTail } from "./SvgTail";
 
 interface BubbleElementProps {
@@ -9,6 +12,7 @@ interface BubbleElementProps {
 /** Resolve 'auto' tail direction based on bubble position. */
 function resolveTailDirection(bubble: Bubble): "up" | "down" {
   if (bubble.tail_direction !== "auto") return bubble.tail_direction;
+  if (bubble.y == null) return "down";
   if (bubble.y != null && bubble.y < 400) return "down";
   return "up";
 }
@@ -27,20 +31,15 @@ function bubbleStyle(bubble: Bubble): React.CSSProperties | undefined {
   if (bubble.font_size != null) style.fontSize = `${Math.round(bubble.font_size)}px`;
   if (bubble.font_color) style.color = bubble.font_color;
   if (bubble.fill_color) {
-    style.background = bubble.fill_color;
-    if (!isNarration) style["--bubble-bg"] = bubble.fill_color;
+    style[isNarration ? "--caption-bg" : "--bubble-bg"] = bubble.fill_color;
   }
   if (bubble.border_color) {
-    style.borderColor = bubble.border_color;
-    if (!isNarration) style["--bubble-border"] = bubble.border_color;
+    style[isNarration ? "--caption-border" : "--bubble-border"] = bubble.border_color;
   }
   if (bubble.border_width != null) {
     const width = `${Math.round(bubble.border_width)}px`;
-    style.borderWidth = width;
-    if (!isNarration) style["--bubble-border-width"] = width;
+    style[isNarration ? "--caption-border-width" : "--bubble-border-width"] = width;
   }
-  if (bubble.border_radius != null) style.borderRadius = `${Math.round(bubble.border_radius)}px`;
-
   return Object.keys(style).length > 0 ? style : undefined;
 }
 
@@ -50,6 +49,7 @@ function bubbleStyle(bubble: Bubble): React.CSSProperties | undefined {
  * Selection and drag are handled by the parent via event delegation on data-id.
  */
 export function BubbleElement({ bubble, selected }: BubbleElementProps) {
+  const ref = useRef<HTMLDivElement>(null);
   const isPinned = bubble.x != null && bubble.y != null;
   const isNarration = bubble.type === "narration";
   const hasSvgTail = bubble.tail_x != null && bubble.tail_y != null;
@@ -68,8 +68,23 @@ export function BubbleElement({ bubble, selected }: BubbleElementProps) {
   else if (bubble.type === "speech") classes.push(`tail-${resolveTailDirection(bubble)}`);
   if (selected) classes.push("selected");
 
+  useLayoutEffect(() => {
+    const host = ref.current;
+    if (!host) return;
+    let active = true;
+    const fit = () => {
+      if (active) verifyLetteringSafeArea(host);
+    };
+    fit();
+    void document.fonts?.ready.then(fit);
+    return () => {
+      active = false;
+    };
+  }, [bubble.type, bubble.text, bubble.speaker_name, bubble.width, bubble.font_family, bubble.font_size]);
+
   return (
     <div
+      ref={ref}
       className={classes.join(" ")}
       data-id={bubble.id}
       data-editor-selectable
@@ -79,11 +94,15 @@ export function BubbleElement({ bubble, selected }: BubbleElementProps) {
       aria-label={`${bubble.type} bubble: ${bubble.text}`}
       style={bubbleStyle(bubble)}
     >
-      {bubble.speaker_name && !isNarration && (
-        <span className="speaker">{bubble.speaker_name}:</span>
-      )}
-      {bubble.text}
+      <BalloonShape type={bubble.type} />
+      <span className="letter-content">
+        {bubble.speaker_name && !isNarration && (
+          <span className="speaker">{bubble.speaker_name}:</span>
+        )}
+        {bubble.text}
+      </span>
       {hasSvgTail && !isNarration && <SvgTail bubble={bubble} />}
+      {!hasSvgTail && bubble.type === "speech" && <AutoSpeechTail />}
     </div>
   );
 }

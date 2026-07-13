@@ -1,5 +1,8 @@
+import { useLayoutEffect, useRef } from "react";
 import type { LetteringStyle } from "../../types/api";
 import { resolveLetteringVars } from "./themes";
+import { AutoSpeechTail, BalloonShape } from "./BalloonShape";
+import { verifyLetteringSafeAreas } from "./letteringSafeArea";
 import "./comic-page.css";
 
 // Render a real-proportioned mini panel at native sizes, then scale the whole
@@ -16,10 +19,19 @@ const SCALE = 0.34;
  * user sees exactly how their book will be lettered before committing.
  */
 export function LetteringPreview({ lettering }: { lettering: LetteringStyle | undefined }) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const vars = resolveLetteringVars(lettering) as Record<string, string>;
 
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const verify = () => verifyLetteringSafeAreas(root);
+    verify();
+    void document.fonts?.ready.then(verify);
+  }, [lettering]);
+
   return (
-    <div style={{ width: NATIVE_W * SCALE, height: NATIVE_H * SCALE, overflow: "hidden" }}>
+    <div ref={rootRef} style={{ width: NATIVE_W * SCALE, height: NATIVE_H * SCALE, overflow: "hidden" }}>
       <div
         className="comic-page-root"
         style={{
@@ -47,13 +59,17 @@ export function LetteringPreview({ lettering }: { lettering: LetteringStyle | un
           }}
         >
           <div className="caption" style={{ position: "absolute", left: 28, top: 28, maxWidth: 620 }}>
-            A quiet street, just past midnight.
+            <BalloonShape type="narration" />
+            <span className="letter-content">A quiet street, just past midnight.</span>
           </div>
-          <div className="bubble speech left tail-up" style={{ position: "absolute", left: 34, top: 225 }}>
-            Who&apos;s there?
+          <div className="bubble speech left tail-down" style={{ position: "absolute", left: 34, top: 225 }}>
+            <BalloonShape type="speech" />
+            <span className="letter-content">Who&apos;s there?</span>
+            <AutoSpeechTail />
           </div>
           <div className="bubble thought" style={{ position: "absolute", right: 32, top: 350, maxWidth: 350 }}>
-            …something is wrong.
+            <BalloonShape type="thought" />
+            <span className="letter-content">…something is wrong.</span>
           </div>
           <div
             className="sfx"
