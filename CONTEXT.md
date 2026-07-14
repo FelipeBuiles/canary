@@ -120,8 +120,9 @@ routes to a concrete provider and model. Aliases follow the `<intent>-<preset>`
 convention (e.g. `extract-fast`, `image-quality`). All inference goes through
 the LiteLLM proxy — there is no direct provider call from application code.
 
-**Reve** — The image provider backing both `image-quality` and `image-reve`
-gateway aliases (`REVE_ALIASES` in `config.py`). Its reference strategy selects
+**Reve** — The image provider backing the `image-reve` gateway alias
+(`REVE_ALIASES` in `config.py`); `image-quality` now routes to Gemini 3 Pro
+Image instead. Reve's reference strategy selects
 up to 4 reference images: up to 3 subject crops (one per character,
 framing-selected), then continuity, prop, style, location plate to fill
 remaining slots.

@@ -27,7 +27,12 @@ from novel_to_comic.image_models import (
             "vertex-multimodal/gemini-3.1-flash-lite-image",
             "Balanced — Gemini 3.1 Flash Lite Image",
         ),
-        ("image-quality", ImageRoute.REVE, "reve/create", "Quality — Reve"),
+        (
+            "image-quality",
+            ImageRoute.GEMINI_PRO_IMAGE,
+            "vertex-multimodal/gemini-3-pro-image-preview",
+            "Quality — Gemini 3 Pro Image (Nano Banana 2 Pro)",
+        ),
         ("image-reve", ImageRoute.REVE, "reve/create", "Reve"),
     ],
 )

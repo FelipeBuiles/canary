@@ -102,9 +102,11 @@ layout_prompts_enabled: false
 
 Available image aliases: `image-fast`, `image-balanced`, `image-quality`, `image-reve`.
 The LiteLLM proxy resolves them to provider/model routes. `image-fast` and
-`image-balanced` both route to Gemini 3.1 Flash Lite Image. `image-quality` and `image-reve` both route to Reve
-(`REVE_ALIASES`). The default `image-quality` route selects Reve. Draw selects refs via `_reve_refs()` for Reve: up to 3 subject
-crops plus continuity/prop/style/location up to 4 total. With
+`image-balanced` both route to Gemini 3.1 Flash Lite Image. `image-quality` routes to
+Gemini 3 Pro Image (Nano Banana 2 Pro, ~$0.134/image at 1K) through the vertex-multimodal
+handler; `image-reve` routes to Reve (`REVE_ALIASES`). The default `image-quality` route
+now selects Gemini 3 Pro Image. For Reve (`image-reve`), draw selects refs via `_reve_refs()`:
+up to 3 subject crops plus continuity/prop/style/location up to 4 total. With
 `layout_prompts_enabled: true`, the panel wire uses Reve v2 `render_layout`
 with compound references and structural region bindings; otherwise the normal
 Reve path uses v2 `create`. Layout transport failures also fall back to v2

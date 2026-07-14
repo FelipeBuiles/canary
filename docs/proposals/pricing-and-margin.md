@@ -66,6 +66,9 @@ in-file) × the models `litellm/config.yaml` actually routes to at the
 - Switching to the **quality** preset (Reve @ $0.04/img, no per-ref charge)
   raises draw to $10.00 and the book to **~$14.09** (+11%). The default stays
   balanced.
+  - *Stale as of 2026-07-14:* the quality preset now routes to Gemini 3 Pro
+    Image (Nano Banana 2 Pro) at ~$0.134/img (+ ~$0.00112/ref), after Reve v2
+    repriced to ~$0.20/img. Redo this margin row before relying on it.
 
 **Where the markup applies:** `provider_usd_to_credits()` in
 `server/credits.py:43` is the *single* conversion point —

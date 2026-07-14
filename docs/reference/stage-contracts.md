@@ -186,7 +186,7 @@ contracts through the LiteLLM gateway image alias. The active style template is
 prepended at generation time. Subject references are loaded from project-relative
 prompt paths. For Gemini/Together-style routes, draw can add the active style
 sample, a location plate, or the previous panel for an explicit `match_cut`.
-For Reve (`image-quality` / `image-reve`), draw selects up to 4 refs via
+For Reve (`image-reve`), draw selects up to 4 refs via
 `_reve_refs()`: up to 3 subject crops (one per character, framing-selected),
 then continuity, prop, style, and location plate to fill remaining slots.
 Ordinary requests use v2 `/image/create` with raw ordered references and

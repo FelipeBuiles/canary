@@ -216,8 +216,9 @@ class TestGptImage2Alias:
 
 
 class TestReveModelAlias:
-    def test_quality_alias_is_reve_model(self):
-        assert is_reve_model(GATEWAY_IMAGE_QUALITY) is True
+    def test_quality_alias_is_not_reve_model(self):
+        # image-quality now routes to the Gemini 3 Pro Image tier, not Reve.
+        assert is_reve_model(GATEWAY_IMAGE_QUALITY) is False
 
     def test_reve_alias_is_reve_model(self):
         assert is_reve_model("image-reve") is True
