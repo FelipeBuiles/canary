@@ -31,7 +31,7 @@ import {
   setPrimaryRef,
 } from "./stages";
 import { listPages, getPage, updatePage, replacePage, getLetteringStyle, generateLetteringStyle, setLetteringStyle, translatePageBubbles, translateSinglePageBubbles, triggerExport } from "./pages";
-import { getStyles, suggestStyles, fetchSuggestStylesEstimate, fetchStyleSampleEstimate, generateStyleSamples, setActiveStyle } from "./styles";
+import { createStyleDirection, generateStyleValidation, getStyles, suggestStyles, fetchStyleDirectionEstimate, fetchSuggestStylesEstimate, fetchStyleSampleEstimate, generateStyleSamples, setActiveStyle } from "./styles";
 import { getProjectConfig, updateProjectConfig } from "./config";
 import {
   listLabsModels,
@@ -912,9 +912,21 @@ export function useStyles(project: string | undefined) {
 export function useSuggestStyles() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ project }: { project: string }) => suggestStyles(project),
+    mutationFn: ({ project, directionId }: { project: string; directionId?: string }) => suggestStyles(project, directionId),
     onSuccess: (_data, { project }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "styles"] });
+    },
+  });
+}
+
+export function useCreateStyleDirection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, direction, image, withNeighbors }: { project: string; direction: string; image: File | null; withNeighbors: boolean }) =>
+      createStyleDirection(project, { direction, image, withNeighbors }),
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "styles"] });
+      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
     },
   });
 }
@@ -937,11 +949,31 @@ export function useStyleSampleEstimate(project: string | undefined, enabled = tr
   });
 }
 
+export function useStyleDirectionEstimate(project: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ["project", project, "styles", "direction-estimate"],
+    queryFn: () => fetchStyleDirectionEstimate(project!),
+    enabled: !!project && enabled,
+    staleTime: 60_000,
+  });
+}
+
 export function useGenerateStyleSamples() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ project, indices }: { project: string; indices: number[] }) =>
-      generateStyleSamples(project, indices),
+    mutationFn: ({ project, ids }: { project: string; ids: string[] }) =>
+      generateStyleSamples(project, ids),
+    onSettled: (_data, _error, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "styles"] });
+    },
+  });
+}
+
+export function useGenerateStyleValidation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, id }: { project: string; id: string }) =>
+      generateStyleValidation(project, id),
     onSettled: (_data, _error, { project }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "styles"] });
     },
@@ -951,8 +983,8 @@ export function useGenerateStyleSamples() {
 export function useSetActiveStyle() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ project, index }: { project: string; index: number }) =>
-      setActiveStyle(project, index),
+    mutationFn: ({ project, id }: { project: string; id: string }) =>
+      setActiveStyle(project, id),
     onSuccess: (_data, { project }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "styles"] });
       qc.invalidateQueries({ queryKey: ["project", project, "status"] });

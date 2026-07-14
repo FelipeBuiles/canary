@@ -339,13 +339,19 @@ These are the Pydantic models that flow between pipeline stages. `story_bible.js
 | `prompt` | `str` |  |
 | `bbox` | `LayoutBbox` | `Field(default_factory=LayoutBbox)` |
 | `reference_key` | `str | None` | `None` |
+| `parent` | `str | None` | `None` |
+| `region_type` | `Literal['coarse_detail', 'medium_detail', 'fine_detail', 'text', 'hand', 'face'] | None` | `None` |
+| `image_region_index` | `int | None` | `None` |
 
 ## PromptLayout _(prompt.py)_
 
 | Field | Type | Default |
 |-------|------|---------|
 | `prompt` | `str | None` | `None` |
+| `normalized_edit_instruction` | `str | None` | `None` |
 | `regions` | `list[LayoutRegion]` | `Field(default_factory=list)` |
+| `width` | `int | None` | `None` |
+| `height` | `int | None` | `None` |
 
 ## PromptSubject _(prompt.py)_
 

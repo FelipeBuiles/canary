@@ -1,4 +1,10 @@
-"""LiteLLM custom provider for Reve image generation and remix endpoints."""
+"""LiteLLM custom provider for Reve's ordinary v2 image endpoint.
+
+Layout-aware panel requests bypass this adapter and use the direct
+``render_layout`` transport in the application. This adapter handles the
+ordinary v2 create path, including v1-compatible LiteLLM generation/edit
+calls translated into raw v2 references.
+"""
 
 from __future__ import annotations
 
@@ -30,14 +36,27 @@ except ModuleNotFoundError:
             self._hidden_params = {}
 
 REVE_ASPECT_RATIOS = {
-    "1:1": 1.0,
+    "4:1": 4.0,
+    "3:1": 3.0,
+    "21:9": 21 / 9,
+    "2:1": 2.0,
+    "17:9": 17 / 9,
+    "16:9": 16 / 9,
     "3:2": 1.5,
-    "2:3": 0.667,
-    "4:3": 1.333,
+    "4:3": 4 / 3,
+    "5:4": 1.25,
+    "1:1": 1.0,
+    "4:5": 0.8,
     "3:4": 0.75,
-    "16:9": 1.778,
-    "9:16": 0.5625,
+    "2:3": 2 / 3,
+    "9:16": 9 / 16,
+    "1:2": 0.5,
+    "1:3": 1 / 3,
+    "1:4": 0.25,
 }
+
+REVE_V2_CREATE_ENDPOINT = "https://api.reve.com/v2/image/create"
+REVE_V2_POSTPROCESSING = [{"process": "fit_image", "max_dim": 2048}]
 
 _ROLE_PREFIX = "__role_"
 _ROLE_SEP = "__"
@@ -54,7 +73,9 @@ def _log_request(url: str, api_key: str | None, payload: dict[str, Any]) -> None
     descriptor = {
         "endpoint": url.rsplit("/", 1)[-1],
         "prompt_length": len(str(payload.get("prompt") or "")),
-        "reference_count": len(payload.get("reference_images") or []),
+        "reference_count": len(
+            payload.get("references") or payload.get("reference_images") or []
+        ),
         "aspect_ratio": payload.get("aspect_ratio"),
         "control_keys": sorted(
             key for key in payload
@@ -130,23 +151,22 @@ class ReveLLM(CustomLLM):
         wire_manifest = parse_provider_wire(wire_payload)
         aspect_ratio = wire_manifest.get("structured_aspect") or "1:1"
 
-        # v1 create. The v2 layout-aware endpoint is gated behind the Reve
-        # partner feature `partnerapi.layout_endpoint` (403 FEATURE_NOT_ENABLED
-        # without it), so the gateway stays on v1. Note v1 has no exact-pixel
-        # sizing — width/height are rejected as UNRECOGNIZED_PARAMETER;
-        # aspect_ratio is the only sizing knob.
+        # The normal v2 create endpoint is the compatibility path for plain
+        # generation. Layout requests never arrive here: the application
+        # selects the direct compound-reference render_layout adapter.
         final_prompt = wire_manifest["prompt_parts"][0]
         payload: dict[str, Any] = {
             "prompt": final_prompt,
             "aspect_ratio": aspect_ratio,
+            "postprocessing": [*REVE_V2_POSTPROCESSING],
         }
         payload.update(wire_manifest.get("controls") or {})
 
         request_timeout = timeout if timeout is not None else 300.0
-        _log_request("https://api.reve.com/v1/image/create", api_key, payload)
+        _log_request(REVE_V2_CREATE_ENDPOINT, api_key, payload)
         async with httpx.AsyncClient(timeout=request_timeout) as http:
             response = await http.post(
-                "https://api.reve.com/v1/image/create",
+                REVE_V2_CREATE_ENDPOINT,
                 headers=_headers(api_key),
                 json=payload,
             )
@@ -167,7 +187,11 @@ class ReveLLM(CustomLLM):
 
         model_response.created = int(time.time())
         model_response.data = [ImageObject(b64_json=b64)]
-        actual_model = data.get("model") if isinstance(data.get("model"), str) else model
+        actual_model = (
+            data.get("version")
+            if isinstance(data.get("version"), str)
+            else data.get("model") if isinstance(data.get("model"), str) else model
+        )
         model_response.model = actual_model
         model_response._hidden_params["model"] = actual_model
         model_response._hidden_params["custom_llm_provider"] = "reve"
@@ -226,30 +250,32 @@ class ReveLLM(CustomLLM):
         verify_wire_images(wire_manifest, image)
         aspect_ratio = wire_manifest.get("structured_aspect") or "1:1"
 
-        # v1 remix (the v2 layout endpoint is feature-gated, see
-        # aimage_generation). References upload as a flat base64 list and the
-        # prompt references them positionally via <img>N</img> instructions.
-        reference_images: list[str] = []
+        # v2 create accepts raw ordered image objects. The prompt's
+        # <frame>N</frame> markers refer to this exact order.
+        references: list[dict[str, str]] = []
         for idx, item in enumerate(image):
             b64_str = _image_to_base64(item)
             if not b64_str:
                 raise ValueError(f"ProviderWireRequest reference {idx} is unreadable")
-            reference_images.append(b64_str)
+            references.append({"data": b64_str})
+        if len(references) > 8:
+            raise ValueError("Reve v2 create accepts at most 8 references")
 
         final_prompt = wire_manifest["prompt_parts"][0]
 
         payload: dict[str, Any] = {
             "prompt": final_prompt,
-            "reference_images": reference_images,
+            "references": references,
             "aspect_ratio": aspect_ratio,
+            "postprocessing": [*REVE_V2_POSTPROCESSING],
         }
         payload.update(wire_manifest.get("controls") or {})
 
         request_timeout = timeout if timeout is not None else 300.0
-        _log_request("https://api.reve.com/v1/image/remix", api_key, payload)
+        _log_request(REVE_V2_CREATE_ENDPOINT, api_key, payload)
         async with httpx.AsyncClient(timeout=request_timeout) as http:
             response = await http.post(
-                "https://api.reve.com/v1/image/remix",
+                REVE_V2_CREATE_ENDPOINT,
                 headers=_headers(api_key),
                 json=payload,
             )
@@ -270,7 +296,11 @@ class ReveLLM(CustomLLM):
 
         model_response.created = int(time.time())
         model_response.data = [ImageObject(b64_json=b64)]
-        actual_model = data.get("model") if isinstance(data.get("model"), str) else model
+        actual_model = (
+            data.get("version")
+            if isinstance(data.get("version"), str)
+            else data.get("model") if isinstance(data.get("model"), str) else model
+        )
         model_response.model = actual_model
         model_response._hidden_params["model"] = actual_model
         model_response._hidden_params["custom_llm_provider"] = "reve"

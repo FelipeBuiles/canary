@@ -130,10 +130,8 @@ _ALL_CONTROLS: tuple[str, ...] = (
 
 #: Verified prompt-character limits per route.
 #
-# - REVE: the ``instruction`` field is capped at 4000 chars by
-#   ``reve_layout._INSTRUCTION_MAX_CHARS``; longer prompts are prefix-sliced at
-#   transport, which can discard critical tail constraints. The compiler
-#   budgets against this so protected material never enters the slice window.
+# - REVE: the v2 ``prompt`` field is capped at 4000 chars. The compiler budgets
+#   against this so protected material never enters a provider-side slice.
 # - GEMINI_FLASH_LITE / GPT_IMAGE_2: the OpenAI-compatible ``prompt`` field has
 #   no hard provider cap below the model context window, but a generous budget
 #   keeps prompts focused. ``None`` means no compiler-applied character budget
@@ -150,7 +148,10 @@ _PROMPT_CHAR_LIMITS: dict[ImageRoute, int | None] = {
 #: structurally rather than as prose. Empty tuple means the route has no
 #: dedicated aspect parameter (it derives aspect from width/height only).
 _NATIVE_ASPECTS: dict[ImageRoute, tuple[str, ...]] = {
-    ImageRoute.REVE: ("1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16"),
+    ImageRoute.REVE: (
+        "4:1", "3:1", "21:9", "2:1", "17:9", "16:9", "3:2", "4:3",
+        "5:4", "1:1", "4:5", "3:4", "2:3", "9:16", "1:2", "1:3", "1:4",
+    ),
     ImageRoute.GEMINI_FLASH_LITE: (),
     ImageRoute.GPT_IMAGE_2: (),
     ImageRoute.UNKNOWN: (),
@@ -238,8 +239,10 @@ class ImageModelProfile:
         )
 
 
-# Hard reference caps per route. Reve accepts at most 4 reference images; the
-# Gemini Flash Lite route accepts many more (the contents-list has headroom),
+# Hard product reference caps per route. Reve v2 accepts at most 8 reference
+# images, but Canary keeps its production selector at four to reduce
+# conditioning noise; the Gemini Flash Lite route accepts many more
+# (the contents-list has headroom),
 # and GPT Image 2 processes every supplied image at high fidelity so it keeps
 # references to identity only.
 _ROUTE_REFERENCE_CAPS: dict[ImageRoute, int] = {

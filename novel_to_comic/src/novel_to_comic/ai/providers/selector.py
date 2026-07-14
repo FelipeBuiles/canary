@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from novel_to_comic.ai.providers.base import ImageProvider
@@ -14,10 +15,15 @@ def pick(model_alias: str, config: Config, layout: Any | None = None) -> ImagePr
     """Pick the provider for one image request.
 
     Layout-aware requests on Reve bypass the LiteLLM gateway: the gateway's
-    OpenAI-compatible image endpoints cannot carry the structured v2 request
-    or return the layout echo. Everything else — including flat Reve
-    generation — goes through the gateway.
+    OpenAI-compatible image endpoints cannot carry the compound-reference
+    ``render_layout`` request or return its layout echo. Everything else —
+    including flat Reve generation — goes through the gateway.
     """
-    if layout is not None and getattr(layout, "regions", None) and is_reve_model(model_alias):
+    regions = (
+        layout.get("regions")
+        if isinstance(layout, Mapping)
+        else getattr(layout, "regions", None)
+    )
+    if regions and is_reve_model(model_alias):
         return ReveLayoutProvider()
     return LitellmHttpProvider()

@@ -79,8 +79,11 @@ class TestConfigDefaults:
         assert cfg.screenplay_model == GATEWAY_SCREENPLAY_BALANCED
         assert cfg.panel_model == GATEWAY_PANEL_BALANCED
         assert cfg.prompt_model == GATEWAY_PROMPT_BALANCED
-        assert cfg.image_model == GATEWAY_IMAGE_BALANCED
+        assert cfg.image_model == GATEWAY_IMAGE_QUALITY
         assert cfg.fallback_image_model == GATEWAY_IMAGE_FAST
+
+    def test_layout_prompts_default_to_disabled(self):
+        assert Config().layout_prompts_enabled is False
 
     def test_litellm_defaults_are_populated(self):
         cfg = Config()
@@ -95,6 +98,10 @@ class TestEffectiveImageModel:
         assert cfg.effective_image_model() == "gpt-image-1"
 
     def test_uses_fallback_when_dev_mode_and_default_image_model(self):
+        cfg = Config(dev_mode=True)
+        assert cfg.effective_image_model() == GATEWAY_IMAGE_FAST
+
+    def test_uses_fallback_for_legacy_balanced_default_in_dev_mode(self):
         cfg = Config(dev_mode=True, image_model=GATEWAY_IMAGE_BALANCED)
         assert cfg.effective_image_model() == GATEWAY_IMAGE_FAST
 
@@ -349,7 +356,7 @@ class TestLoadConfig:
 
 class TestSaveConfig:
     def test_roundtrip(self):
-        cfg = Config(dev_mode=True, target_language="fr")
+        cfg = Config(dev_mode=True, target_language="fr", layout_prompts_enabled=True)
         with tempfile.TemporaryDirectory() as tmpdir:
             save_config(cfg, Path(tmpdir))
             path = Path(tmpdir) / "config.yaml"
@@ -357,3 +364,7 @@ class TestSaveConfig:
             content = path.read_text()
             assert "fr" in content
             assert "dev_mode: true" in content
+            assert "image_model: \"image-quality\"" in content
+            assert "layout_prompts_enabled: true" in content
+            loaded, _ = load_config(Path(tmpdir))
+            assert loaded.layout_prompts_enabled is True

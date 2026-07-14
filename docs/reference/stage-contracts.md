@@ -189,6 +189,11 @@ sample, a location plate, or the previous panel for an explicit `match_cut`.
 For Reve (`image-quality` / `image-reve`), draw selects up to 4 refs via
 `_reve_refs()`: up to 3 subject crops (one per character, framing-selected),
 then continuity, prop, style, and location plate to fill remaining slots.
+Ordinary requests use v2 `/image/create` with raw ordered references and
+`<frame>N</frame>` markers. When `layout_prompts_enabled` is enabled, the
+compiled layout is rendered through v2 `/image/render_layout`; region types,
+parent hierarchy, normalized boxes, and `image_index` bindings are sent
+structurally, and the returned layout echo is persisted beside the panel.
 For GPT Image 2 (literal `gpt-image-2` — no longer a gateway alias), draw
 keeps style/location/previous-panel context text-only and uploads a minimal
 subject ref set: one preferred character crop per visible character, or one

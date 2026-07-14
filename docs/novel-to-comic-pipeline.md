@@ -95,16 +95,22 @@ Set `quality_preset: fast | balanced | quality` to switch all five intents at on
 Configured via gateway aliases in `config.yaml`:
 
 ```yaml
-image_model: "image-balanced"
+image_model: "image-quality"
 fallback_image_model: "image-fast"
+layout_prompts_enabled: false
 ```
 
 Available image aliases: `image-fast`, `image-balanced`, `image-quality`, `image-reve`.
 The LiteLLM proxy resolves them to provider/model routes. `image-fast` and
 `image-balanced` both route to Gemini 3.1 Flash Lite Image. `image-quality` and `image-reve` both route to Reve
-(`REVE_ALIASES`). Draw selects refs via `_reve_refs()` for Reve: up to 3 subject
-crops plus continuity/prop/style/location up to 4 total. GPT Image 2 is no longer
-a default gateway alias (`GPT_IMAGE_2_ALIASES` is empty).
+(`REVE_ALIASES`). The default `image-quality` route selects Reve. Draw selects refs via `_reve_refs()` for Reve: up to 3 subject
+crops plus continuity/prop/style/location up to 4 total. With
+`layout_prompts_enabled: true`, the panel wire uses Reve v2 `render_layout`
+with compound references and structural region bindings; otherwise the normal
+Reve path uses v2 `create`. Layout transport failures also fall back to v2
+`create`; already-frozen layout wires remain exact when the flag is later
+disabled. GPT Image 2 is no longer a default gateway alias
+(`GPT_IMAGE_2_ALIASES` is empty).
 
 ---
 
@@ -434,14 +440,14 @@ gateway aliases at startup.
 |-----------|-------------|------------------|
 | Global extraction | `extract-balanced` | novel length and output Story Bible size |
 | Style suggestions | `prompt-balanced` | Story Bible size and suggestion count |
-| Style samples | `image-balanced` | sample count and image-model route |
-| Character refs | `image-balanced` | character count and reference conditioning |
-| Prop refs | `image-balanced` | recurring/plot-central prop count and reference conditioning |
-| Location plates | `image-balanced` | location count |
+| Style samples | `image-quality` | sample count and image-model route |
+| Character refs | `image-quality` | character count and reference conditioning |
+| Prop refs | `image-quality` | recurring/plot-central prop count and reference conditioning |
+| Location plates | `image-quality` | location count |
 | Screenplay adapt | `screenplay-balanced` | scene count and prose length |
 | Layout planning | `panel-balanced` | scene count and beat count |
 | Prompt specs | deterministic | no model cost |
-| Panel images | `image-balanced` | panel count, provider-specific reference image count, image dimensions, and provider pricing |
+| Panel images | `image-quality` | panel count, provider-specific reference image count, image dimensions, and provider pricing |
 
 ### Scale estimates
 

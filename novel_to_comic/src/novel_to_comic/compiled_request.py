@@ -42,7 +42,7 @@ What the compiler does NOT do
 -----------------------------
 
 - No file discovery, LLM call, persistence, or provider call.
-- No provider-specific serialization (Reve ``<img>N</img>``, signed URLs,
+- No provider-specific serialization (Reve ``<frame>N</frame>``, signed URLs,
   upload ids). Slice 07 serializes the stored semantic sections.
 - No ``actual_provider_model`` field — observed execution identity belongs to
   result provenance after transport.
@@ -60,7 +60,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from novel_to_comic.image_models import ImageModelProfile, ImageRoute
 from novel_to_comic.image_references import (
@@ -69,7 +69,7 @@ from novel_to_comic.image_references import (
     ReferencePlan,
 )
 from novel_to_comic.generation_input import GenerationPromptInput
-from novel_to_comic.models.prompt import ImagePrompt
+from novel_to_comic.models.prompt import ImagePrompt, PromptLayout
 from novel_to_comic.panel_aspect import (
     GenerationShape,
     aspect_for_dimensions,
@@ -88,7 +88,8 @@ from novel_to_comic.prompt_hygiene import (
 from novel_to_comic.text_utils import clean as _clean
 
 #: Compiler/schema version. Bumped when the compiled-request shape changes.
-COMPILED_REQUEST_SCHEMA_VERSION = 1
+#: Version 2 adds provider-neutral layout IR to the immutable request.
+COMPILED_REQUEST_SCHEMA_VERSION = 2
 
 AssetKind = Literal[
     "panel", "character_ref", "location_plate", "prop_ref", "style_sample",
@@ -202,7 +203,7 @@ def compile_reference_instruction(
     """Compile one semantic instruction for one selected reference.
 
     The instruction is provider-independent: it uses a positional
-    ``Reference {index}`` marker, never a Reve ``<img>N</img>`` tag. Slice 07
+    ``Reference {index}`` marker, never a Reve ``<frame>N</frame>`` tag. Slice 07
     serializes the marker into the provider wire format.
 
     Instruction text by authority scope and role:
@@ -436,6 +437,10 @@ class CompiledGenerationRequest:
     effective_dimensions: tuple[int, int]
     # Controls
     controls: GenerationControls
+    # Provider-neutral layout IR. The provider wire compiler projects this to
+    # Reve's strict layout schema and resolves semantic reference_key bindings
+    # against the already-final reference plan.
+    layout: dict[str, Any] | None
     # Hashes and metadata
     prompt_source_sha256: str | None
     reference_selection_fingerprint: str
@@ -582,6 +587,7 @@ def _compiled_hash_projection(req: CompiledGenerationRequest) -> str:
             "requested_shape": req.requested_shape,
             "effective_dimensions": list(req.effective_dimensions),
             "controls": json.loads(req.controls.to_hash_projection()),
+            "layout": req.layout,
         },
         sort_keys=True,
         ensure_ascii=False,
@@ -627,6 +633,28 @@ def _effective_geometry(prompt: ImagePrompt) -> tuple[GenerationShape | None, tu
         shape = generation_shape_for_aspect(aspect) if aspect else None
         dimensions = (int(width), int(height))
     return shape, dimensions
+
+
+def _layout_for_route(
+    prompt: ImagePrompt | GenerationPromptInput,
+    route: ImageRoute,
+    *,
+    enabled: bool = True,
+) -> dict[str, Any] | None:
+    """Return sanitized layout IR only for the route that can consume it."""
+    if not enabled or route is not ImageRoute.REVE:
+        return None
+    raw_layout = getattr(prompt, "layout", None)
+    if raw_layout is None:
+        return None
+    layout = (
+        raw_layout
+        if isinstance(raw_layout, PromptLayout)
+        else PromptLayout.model_validate(raw_layout)
+    ).sanitized()
+    if not layout.regions:
+        return None
+    return layout.model_dump(mode="json", exclude_none=True)
 
 
 # ---------------------------------------------------------------------------
@@ -800,6 +828,7 @@ def compile_generation_request(
     controls: GenerationControls | None = None,
     asset_kind: AssetKind = "panel",
     asset_identity: str | None = None,
+    layout_enabled: bool = True,
 ) -> CompiledGenerationRequest:
     """Compile one provider-independent generation request.
 
@@ -824,6 +853,9 @@ def compile_generation_request(
 
     shape, dimensions = _effective_geometry(prompt)
     native_aspect = _native_aspect_for(prompt, route_profile, shape, dimensions)
+    layout = _layout_for_route(
+        prompt, route_profile.route, enabled=layout_enabled,
+    )
 
     # Compile one semantic instruction per selected reference (final order).
     reference_instructions = tuple(
@@ -888,6 +920,7 @@ def compile_generation_request(
         requested_shape=shape,
         effective_dimensions=dimensions,
         controls=controls,
+        layout=layout,
         prompt_source_sha256=getattr(prompt, "source_sha256", None),
         reference_selection_fingerprint=reference_plan.selection_fingerprint,
         compiled_request_sha256="",  # placeholder; computed below

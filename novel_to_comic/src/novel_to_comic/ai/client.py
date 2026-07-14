@@ -971,34 +971,83 @@ async def generate_wire_image(
     """Submit an immutable exact-wire request through the isolated adapter."""
     from novel_to_comic.ai.providers import selector
     from novel_to_comic.ai.providers.litellm_http import LitellmHttpProvider
-    from novel_to_comic.provider_wire import materialize_wire_references
+    from novel_to_comic.ai.providers.reve_layout import ReveLayoutProvider
+    from novel_to_comic.provider_wire import materialize_wire_references, without_layout
 
-    blobs = materialize_wire_references(wire)
+    if wire.execution_fingerprint != wire.recompute_execution_fingerprint():
+        raise ValueError("ProviderWireRequest execution fingerprint mismatch")
+
+    # A frozen request is an exact persisted execution contract. The rollout
+    # gate is applied while compiling new requests; do not rewrite an already
+    # frozen layout request because a later config toggle changed.
+    transport_wire = wire
+    blobs = materialize_wire_references(transport_wire)
     ref_reads = [
         (Path(ref.source_path), data)
-        for ref, data in zip(wire.references, blobs, strict=True)
+        for ref, data in zip(transport_wire.references, blobs, strict=True)
     ]
-    provider = selector.pick(wire.requested_alias or "", config, layout=None)
-    if not isinstance(provider, LitellmHttpProvider):
+    provider = selector.pick(
+        transport_wire.requested_alias or "", config, layout=transport_wire.layout,
+    )
+    if isinstance(provider, ReveLayoutProvider):
+        params = provider.request_params_for_wire(transport_wire)
+    elif isinstance(provider, LitellmHttpProvider):
+        params, _files = provider.prepare_wire_request(transport_wire)
+    else:
         raise ValueError(f"wire transport is not implemented for adapter {provider.name}")
-    params, _files = provider.prepare_wire_request(wire)
     ctx = begin_image_call(
-        config=config, model=wire.requested_alias or wire.configured_provider_model,
-        feature=feature, prompt=wire.prompt_parts[0], params=params, ref_reads=ref_reads,
+        config=config,
+        model=transport_wire.requested_alias or transport_wire.configured_provider_model,
+        feature=feature,
+        prompt=transport_wire.prompt_parts[0],
+        params=params,
+        ref_reads=ref_reads,
     )
     try:
-        raw = await provider.generate_wire(
-            wire=wire, config=config, event_id=ctx.event_id, metadata=ctx.metadata,
-        )
+        if isinstance(provider, ReveLayoutProvider):
+            try:
+                raw = await provider.generate_wire(
+                    wire=transport_wire,
+                    reference_bytes=blobs,
+                    config=config,
+                    event_id=ctx.event_id,
+                    metadata=ctx.metadata,
+                )
+            except AIRefusalError:
+                raise
+            except Exception as exc:
+                # render_layout is experimental. Keep ordinary v2 create as a
+                # transparent availability fallback, but never retry a
+                # content refusal through a second paid request.
+                logger.warning(
+                    "Reve render_layout failed for %s; falling back to v2 create: %s",
+                    transport_wire.requested_alias or transport_wire.configured_provider_model,
+                    type(exc).__name__,
+                )
+                fallback_wire = without_layout(transport_wire)
+                fallback_provider = LitellmHttpProvider()
+                raw = await fallback_provider.generate_wire(
+                    wire=fallback_wire,
+                    config=config,
+                    event_id=ctx.event_id,
+                    metadata=ctx.metadata,
+                )
+        else:
+            raw = await provider.generate_wire(
+                wire=transport_wire,
+                config=config,
+                event_id=ctx.event_id,
+                metadata=ctx.metadata,
+            )
         return await finalise_image_success(
             ctx=ctx, config=config,
-            model=wire.requested_alias or wire.configured_provider_model,
+            model=transport_wire.requested_alias or transport_wire.configured_provider_model,
             feature=feature, output_path=output_path, raw=raw,
         )
     except Exception as exc:
         finalise_image_failure(
             ctx=ctx, config=config,
-            model=wire.requested_alias or wire.configured_provider_model,
+            model=transport_wire.requested_alias or transport_wire.configured_provider_model,
             feature=feature, error=exc, error_response=getattr(exc, "response", None),
         )
         raise

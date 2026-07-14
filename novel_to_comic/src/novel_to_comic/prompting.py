@@ -1445,7 +1445,7 @@ def render_generation_prompt(
     # ── Reference instructions (Slice 05) ──────────────────────────────────
     # The compiled request owns the semantic per-reference instruction text
     # (role-aware, facet-precise). This layer serializes it into the
-    # provider-tagged wire format (Reve ``<img>N</img>``) without re-selecting
+    # provider-tagged wire format (Reve ``<frame>N</frame>``) without re-selecting
     # references or re-capping. No generic "ignore all backgrounds" guard is
     # emitted — each instruction names its exact preserved/ignored facets.
     use_indexed = strategy.use_indexed_ref_instructions()
@@ -1453,7 +1453,7 @@ def render_generation_prompt(
         lines = []
         for instr in reference_instructions:
             idx = instr.index
-            marker = f"<img>{idx}</img>"
+            marker = f"<frame>{idx}</frame>"
             lines.append(f"Use {marker} as {instr.semantic_instruction}.")
         if lines:
             _append_section(sections, "Reference images", "\n".join(lines))
@@ -1476,20 +1476,20 @@ def render_generation_prompt(
             label = ref.label
             if role == "subject":
                 instr_line = (
-                    f"Use <img>{idx}</img> as the identity reference for {label} — match face, hair, build, and wardrobe; do not copy its pose or background."
+                    f"Use <frame>{idx}</frame> as the identity reference for {label} — match face, hair, build, and wardrobe; do not copy its pose or background."
                     if label
-                    else f"Use <img>{idx}</img> as the character identity reference; do not copy its pose or background."
+                    else f"Use <frame>{idx}</frame> as the character identity reference; do not copy its pose or background."
                 )
             elif role == "style":
-                instr_line = f"Use <img>{idx}</img> as the style reference for {label}." if label else f"Use <img>{idx}</img> as the style reference."
+                instr_line = f"Use <frame>{idx}</frame> as the style reference for {label}." if label else f"Use <frame>{idx}</frame> as the style reference."
             elif role == "location_plate":
-                instr_line = f"Use <img>{idx}</img> as the location reference for {label}." if label else f"Use <img>{idx}</img> as the location reference."
+                instr_line = f"Use <frame>{idx}</frame> as the location reference for {label}." if label else f"Use <frame>{idx}</frame> as the location reference."
             elif role == "prop":
-                instr_line = f"Use <img>{idx}</img> as the object reference for {label}." if label else f"Use <img>{idx}</img> as the object reference."
+                instr_line = f"Use <frame>{idx}</frame> as the object reference for {label}." if label else f"Use <frame>{idx}</frame> as the object reference."
             elif role == "continuity":
-                instr_line = f"Use <img>{idx}</img> for visual continuity."
+                instr_line = f"Use <frame>{idx}</frame> for visual continuity."
             else:
-                instr_line = f"Use <img>{idx}</img> as a reference."
+                instr_line = f"Use <frame>{idx}</frame> as a reference."
             ref_lines.append(instr_line)
         if ref_lines:
             _append_section(sections, "Reference images", "\n".join(ref_lines))

@@ -17,14 +17,18 @@ describe("ImageModal", () => {
     const firstClose = vi.fn();
     const latestClose = vi.fn();
     const { rerender } = render(
-      <ImageModal isOpen onClose={firstClose} src="/plate.png" alt="Location plate" />,
+      <I18nProvider>
+        <ImageModal isOpen onClose={firstClose} src="/plate.png" alt="Location plate" />
+      </I18nProvider>,
     );
 
     expect(document.body.style.overflow).toBe("hidden");
     expect(addListener.mock.calls.filter(([type]) => type === "keydown")).toHaveLength(1);
 
     rerender(
-      <ImageModal isOpen onClose={latestClose} src="/plate.png" alt="Location plate" />,
+      <I18nProvider>
+        <ImageModal isOpen onClose={latestClose} src="/plate.png" alt="Location plate" />
+      </I18nProvider>,
     );
 
     expect(removeListener.mock.calls.filter(([type]) => type === "keydown")).toHaveLength(0);
@@ -65,5 +69,32 @@ describe("ImageModal", () => {
     expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("moves focus into the dialog and restores it to the opener", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const opener = document.createElement("button");
+    opener.textContent = "Open proof";
+    document.body.appendChild(opener);
+    opener.focus();
+
+    const { rerender } = render(
+      <I18nProvider>
+        <ImageModal isOpen onClose={onClose} src="/proof.png" alt="Style proof" />
+      </I18nProvider>,
+    );
+
+    await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close" }));
+
+    rerender(
+      <I18nProvider>
+        <ImageModal isOpen={false} onClose={onClose} src="/proof.png" alt="Style proof" />
+      </I18nProvider>,
+    );
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+    await user.keyboard("{Escape}");
   });
 });

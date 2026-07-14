@@ -32,6 +32,15 @@ OverlayField = Literal[
     "position",
 ]
 
+LayoutRegionType = Literal[
+    "coarse_detail",
+    "medium_detail",
+    "fine_detail",
+    "text",
+    "hand",
+    "face",
+]
+
 
 class PromptOverlayOp(BaseModel):
     """One user-authored correction stored as an overlay on a canonical prompt.
@@ -94,34 +103,42 @@ class LayoutBbox(BaseModel):
 
 
 class LayoutRegion(BaseModel):
-    """One flat region of a panel layout (no nesting — containment is spatial).
+    """One region of a panel layout.
 
     reference_key binds the region to a reference image: a character id
     (e.g. "char_carl") for subjects or a prop id for props. The draw-stage
-    provider resolves it to the Reve `image_index` of the uploaded reference.
+    compiler resolves it to the Reve `image_index` of the uploaded reference.
+    ``parent`` and ``region_type`` are native Reve v2 layout hints; parent
+    relationships are optional and are spatially validated during sanitizing.
     """
 
     label: str
     prompt: str
     bbox: LayoutBbox = Field(default_factory=LayoutBbox)
     reference_key: str | None = None
+    parent: str | None = None
+    region_type: LayoutRegionType | None = None
+    image_region_index: int | None = None
 
 
 class PromptLayout(BaseModel):
-    """Flat layout for layout-aware generation (Reve v2 Description shape)."""
+    """Editable layout IR projected to Reve v2's layout render contract."""
 
     prompt: str | None = None
+    normalized_edit_instruction: str | None = None
     regions: list[LayoutRegion] = Field(default_factory=list)
+    width: int | None = None
+    height: int | None = None
 
     def sanitized(self) -> "PromptLayout":
-        """Drop malformed regions, clamp boxes, and de-duplicate labels.
+        """Drop malformed regions, clamp boxes, and normalize hierarchy.
 
         Stored layouts come from an LLM or hand edits, so loading stays
-        lenient and correctness is enforced here at the generation boundary
-        (Reve requires unique labels and boxes within [0, 1]).
+        lenient and correctness is enforced here at the generation boundary.
         """
         seen: set[str] = set()
-        regions: list[LayoutRegion] = []
+        candidates: list[tuple[LayoutRegion, str, LayoutBbox]] = []
+        aliases: dict[str, str] = {}
         for region in self.regions:
             label = (region.label or "").strip()
             prompt = (region.prompt or "").strip()
@@ -136,13 +153,77 @@ class PromptLayout(BaseModel):
                 label = f"{base}_{suffix}"
                 suffix += 1
             seen.add(label)
+            aliases.setdefault(base, label)
+            candidates.append((region, label, bbox))
+
+        labels = {label for _region, label, _bbox in candidates}
+        regions: list[LayoutRegion] = []
+        for source, label, bbox in candidates:
+            parent = (source.parent or "").strip() or None
+            if parent:
+                parent = aliases.get(parent, parent)
+                if parent not in labels or parent == label:
+                    parent = None
+            reference_key = (source.reference_key or "").strip() or None
+            image_region_index = (
+                source.image_region_index
+                if source.image_region_index is not None and source.image_region_index >= 0
+                else None
+            )
             regions.append(LayoutRegion(
                 label=label,
-                prompt=prompt,
+                prompt=(source.prompt or "").strip(),
                 bbox=bbox,
-                reference_key=region.reference_key,
+                reference_key=reference_key,
+                parent=parent,
+                region_type=source.region_type,
+                image_region_index=image_region_index,
             ))
-        return PromptLayout(prompt=(self.prompt or "").strip() or None, regions=regions)
+
+        # Reve accepts hierarchical regions, but cyclic parent references are
+        # invalid semantics. Clear the offending edge while retaining the
+        # otherwise useful region and its spatial box.
+        parent_by_label = {region.label: region.parent for region in regions}
+        normalized_regions: list[LayoutRegion] = []
+        for region in regions:
+            normalized_parent = region.parent
+            parent = normalized_parent
+            chain = {region.label}
+            while parent:
+                if parent in chain:
+                    normalized_parent = None
+                    break
+                chain.add(parent)
+                parent = parent_by_label.get(parent)
+            normalized_regions.append(
+                region.model_copy(update={"parent": normalized_parent})
+            )
+
+        bbox_by_label = {region.label: region.bbox for region in normalized_regions}
+        spatial_regions: list[LayoutRegion] = []
+        for region in normalized_regions:
+            parent_box = bbox_by_label.get(region.parent or "")
+            if parent_box and not (
+                parent_box.x0 <= region.bbox.x0
+                and parent_box.y0 <= region.bbox.y0
+                and parent_box.x1 >= region.bbox.x1
+                and parent_box.y1 >= region.bbox.y1
+            ):
+                spatial_regions.append(region.model_copy(update={"parent": None}))
+            else:
+                spatial_regions.append(region)
+
+        width = self.width if self.width and self.width > 0 and self.width % 32 == 0 else None
+        height = self.height if self.height and self.height > 0 and self.height % 32 == 0 else None
+        if (width is None) != (height is None):
+            width = height = None
+        return PromptLayout(
+            prompt=(self.prompt or "").strip() or None,
+            normalized_edit_instruction=(self.normalized_edit_instruction or "").strip() or None,
+            regions=spatial_regions,
+            width=width,
+            height=height,
+        )
 
 
 class PromptAnchor(BaseModel):

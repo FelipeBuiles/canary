@@ -13,8 +13,9 @@ from types import SimpleNamespace
 from novel_to_comic.config import Config
 from novel_to_comic.image_models import GATEWAY_IMAGE_REVE, image_model_profile
 from novel_to_comic.image_references import AuthorityScope, ReferenceAsset, ReferencePlan
-from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
+from novel_to_comic.models.prompt import ImagePrompt, LayoutRegion, PromptLayout, PromptSubject
 from novel_to_comic.panel_generation import (
+    apply_panel_experiment,
     compile_panel_request,
     estimate_panel_request,
     panel_provenance,
@@ -81,7 +82,7 @@ def test_compile_panel_request_is_one_compiled_and_wire_projection(tmp_path: Pat
     request = compile_panel_request(config, tmp_path, _prompt(), reference_plan=_plan(tmp_path))
 
     assert request.compiled.final_prompt == request.wire.prompt_parts[0].replace(
-        "<img>0</img>", "Reference 0"
+        "<frame>0</frame>", "Reference 0"
     ) or request.compiled.final_prompt == request.wire.prompt_parts[0]
     assert request.wire.execution_fingerprint == request.wire.recompute_execution_fingerprint()
     assert request.wire.references[0].content_sha256 == request.reference_plan.selected[0].content_sha256
@@ -136,6 +137,29 @@ def test_explicit_experiment_input_changes_attributable_wire_identity(tmp_path: 
     )
 
     assert base.wire.execution_fingerprint != variant.wire.execution_fingerprint
+
+
+def test_layout_experiment_updates_render_instruction(tmp_path: Path):
+    config = Config(
+        image_model=GATEWAY_IMAGE_REVE,
+        style_template="ink",
+        layout_prompts_enabled=True,
+    )
+    prompt = _prompt().model_copy(update={
+        "layout": PromptLayout(regions=[
+            LayoutRegion(label="person", prompt="a person", reference_key="char_001"),
+            LayoutRegion(label="room", prompt="a room"),
+        ])
+    })
+    base = compile_panel_request(config, tmp_path, prompt, reference_plan=_plan(tmp_path))
+    variant = apply_panel_experiment(base.wire, {"variant": "B"})
+
+    assert variant.layout is not None
+    assert base.wire.layout["regions"][0]["image_index"] == 0
+    assert variant.layout["regions"][0]["image_index"] == 0
+    assert "Experiment inputs" in variant.layout["normalized_edit_instruction"]
+    assert "Experiment inputs" in variant.prompt_parts[0]
+    assert variant.execution_fingerprint != base.wire.execution_fingerprint
 
 
 def test_panel_provenance_hash_excludes_timestamps_but_keeps_diagnostics():

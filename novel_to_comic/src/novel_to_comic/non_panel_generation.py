@@ -223,6 +223,7 @@ def compile_non_panel_request(
         controls=controls,
         asset_kind=input_data.asset_kind,
         asset_identity=input_data.asset_identity,
+        layout_enabled=getattr(config, "layout_prompts_enabled", False),
     )
     return NonPanelRequest(
         input=input_data,

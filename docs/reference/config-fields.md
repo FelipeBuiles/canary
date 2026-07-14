@@ -24,7 +24,7 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `panel_model` | `str` | `GATEWAY_PANEL_BALANCED` |  |
 | `prompt_model` | `str` | `GATEWAY_PROMPT_BALANCED` |  |
 | `image_provider` | `Literal['gemini', 'openai', 'openrouter', 'together', 'reve']` | `'gemini'` |  |
-| `image_model` | `str` | `GATEWAY_IMAGE_BALANCED` |  |
+| `image_model` | `str` | `GATEWAY_IMAGE_QUALITY` | New-project default quality image route (Reve). |
 | `fallback_image_model` | `str` | `GATEWAY_IMAGE_FAST` |  |
 | `target_language` | `str` | `'en'` |  |
 | `dev_mode` | `bool` | `False` |  |
@@ -41,7 +41,7 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `image_concurrency` | `int | None` | `None` |  |
 | `visual_brief_enabled` | `bool` | `True` |  |
 | `style_sample_brief_enabled` | `bool` | `True` |  |
-| `layout_prompts_enabled` | `bool` | `False` |  |
+| `layout_prompts_enabled` | `bool` | `False` | Set to `true` for newly compiled Reve v2 `render_layout` panels; the endpoint is experimental. Existing frozen requests remain exact. |
 | `negative_prompt` | `str` | `'ugly, deformed, blurry, bad anatomy, watermark, signatur...` |  |
 | `style_template` | `str` | `'High quality visual storytelling. Dramatic natural light...` |  |
 | `max_panels_per_scene` | `int` | `8` |  |

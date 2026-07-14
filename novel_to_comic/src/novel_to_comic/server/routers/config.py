@@ -23,6 +23,7 @@ _SETTABLE_FIELDS = {
     "fallback_image_model",
     "image_quality",
     "image_steps",
+    "layout_prompts_enabled",
     "continuity_mode",
     "negative_prompt",
     "max_panels_per_scene",

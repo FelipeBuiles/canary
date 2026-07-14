@@ -28,7 +28,7 @@ function regionColor(index: number) {
 }
 
 /**
- * Interactive editor for the flat layout-aware region map (Reve v2).
+ * Interactive editor for the hierarchical layout-aware region map (Reve v2).
  *
  * The canvas shows the panel image (when drawn) with normalized [0,1] bounding
  * boxes overlaid; boxes drag to move and resize from the corners. The list
@@ -227,6 +227,16 @@ export function LayoutRegionEditor({
                 {region.reference_key && (
                   <span className="font-meta text-[0.52rem] tracking-[0.12em] text-archive-sage">
                     ◈ {region.reference_key.toUpperCase()}
+                  </span>
+                )}
+                {region.region_type && (
+                  <span className="font-meta text-[0.5rem] tracking-[0.1em] text-ink-black/45">
+                    {region.region_type.replaceAll("_", " ")}
+                  </span>
+                )}
+                {region.parent && (
+                  <span className="font-meta text-[0.5rem] tracking-[0.1em] text-ink-black/45">
+                    ↳ {region.parent}
                   </span>
                 )}
               </button>

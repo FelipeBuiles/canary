@@ -33,6 +33,7 @@ from novel_to_comic.prompting import (
     generate_distilled_prompt,
     visual_brief_source_spec,
 )
+from novel_to_comic.panel_aspect import dimensions_for_reve_layout
 
 logger = logging.getLogger(__name__)
 
@@ -686,13 +687,13 @@ async def ensure_visual_brief(config: Config, prompt: ImagePrompt) -> ImagePromp
 
 # ── LLM layout pass (Reve v2 regional prompting) ────────────────────────────
 #
-# Decomposes the structured panel spec into a flat list of labelled, bounded
-# regions matching the Reve v2 Description wire format: absolute bboxes in
-# [0, 1], no nesting (containment is expressed by overlapping boxes), unique
-# labels. Subject regions carry a reference_key (character id) so the draw
-# provider can bind that character's reference image to the region. On any
-# failure the prompt keeps layout=None and generation falls back to the flat
-# visual brief.
+# Decomposes the structured panel spec into a labelled, bounded region map for
+# Reve v2. Subject regions carry a reference_key (character id) so the
+# provider wire compiler can bind that character's reference image to the
+# region. Native region types and parent links let Reve spend detail budget on
+# faces, hands, and important props instead of treating every box as a flat
+# background rectangle. On any failure the prompt keeps layout=None and
+# generation falls back to the flat visual brief.
 
 LAYOUT_SYSTEM_PROMPT = (
     "You are a comic-panel layout director. Decompose the panel spec you receive "
@@ -702,16 +703,22 @@ LAYOUT_SYSTEM_PROMPT = (
     "origin, absolute to the full canvas. x0 < x1 and y0 < y1.\n"
     "\n"
     "Rules:\n"
-    "- Output 2-8 regions. Big elements first (background/setting, then each "
-    "character), fine detail regions after.\n"
-    "- The list is FLAT. To put a detail inside a subject (a face, a held prop), "
-    "give the detail its own region whose box lies inside the subject's box.\n"
+    "- Output 2-10 regions. Big elements first (background/setting, then each "
+    "character), detail regions after.\n"
+    "- Use region_type: coarse_detail for the setting and full characters; "
+    "medium_detail for a major prop or limb; fine_detail for a small key "
+    "object; face for a visible face; hand for a hand that carries important "
+    "action or an object. Never use the text region type: lettering is added "
+    "later by compose, not rendered into the panel image.\n"
+    "- Detail regions may be nested under a containing region using parent; "
+    "their boxes must lie inside the parent's box.\n"
     "- Every region label must be unique, short, and snake_case.\n"
     "- Each region prompt describes ONLY what is inside that box, in concrete "
     "visual terms. Never mention other regions, the spec, or art style.\n"
     "- For each character in the spec, emit exactly one region covering their "
-    "full body placement, and set reference_key to that character's id from the "
-    "spec. Regions without a listed id use reference_key: null.\n"
+    "full body placement, set region_type to coarse_detail, and set "
+    "reference_key to that character's id from the spec. Regions without a "
+    "listed id use reference_key: null.\n"
     "- Respect stated positions (left/right/foreground/background) and the "
     "panel's aspect ratio when placing boxes.\n"
     "- Background/setting regions should cover the canvas areas not dominated by "
@@ -722,7 +729,9 @@ LAYOUT_SYSTEM_PROMPT = (
     'Output JSON only: {"prompt": "<one-sentence overall scene summary>", '
     '"regions": [{"label": "...", "prompt": "...", '
     '"bbox": {"x0": 0.0, "y0": 0.0, "x1": 1.0, "y1": 1.0}, '
-    '"reference_key": "<character id or null>"}]}'
+    '"reference_key": "<character id or null>", '
+    '"parent": "<containing label or null>", '
+    '"region_type": "<coarse_detail|medium_detail|fine_detail|face|hand>"}]}'
 )
 
 _LAYOUT_JSON_SCHEMA: dict = {
@@ -747,6 +756,18 @@ _LAYOUT_JSON_SCHEMA: dict = {
                         "required": ["x0", "y0", "x1", "y1"],
                     },
                     "reference_key": {"type": ["string", "null"]},
+                    "parent": {"type": ["string", "null"]},
+                    "region_type": {
+                        "type": ["string", "null"],
+                        "enum": [
+                            "coarse_detail",
+                            "medium_detail",
+                            "fine_detail",
+                            "hand",
+                            "face",
+                            None,
+                        ],
+                    },
                 },
                 "required": ["label", "prompt", "bbox"],
             },
@@ -849,6 +870,10 @@ async def ensure_layout(config: Config, prompt: ImagePrompt) -> ImagePrompt:
     layout = await generate_layout(config, prompt)
     if layout is None:
         return prompt
+    width = getattr(prompt, "generation_width", None) or prompt.width
+    height = getattr(prompt, "generation_height", None) or prompt.height
+    frame_width, frame_height = dimensions_for_reve_layout(width, height)
+    layout = layout.model_copy(update={"width": frame_width, "height": frame_height})
     updated = prompt.model_copy(deep=True)
     updated.layout = layout
     return updated

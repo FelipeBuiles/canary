@@ -462,9 +462,9 @@ def test_order_and_wire_snapshot_are_one_owner(tmp_path: Path):
     wire = compile_provider_wire_request(_compile(prompt, _plan(assets)))
     assert [reference.role for reference in wire.references] == ["subject", "prop", "location_plate"]
     assert [reference.index for reference in wire.references] == [0, 1, 2]
-    assert wire.prompt_parts[0].count("<img>0</img>") == 1
-    assert wire.prompt_parts[0].count("<img>1</img>") == 1
-    assert wire.prompt_parts[0].count("<img>2</img>") == 1
+    assert wire.prompt_parts[0].count("<frame>0</frame>") == 1
+    assert wire.prompt_parts[0].count("<frame>1</frame>") == 1
+    assert wire.prompt_parts[0].count("<frame>2</frame>") == 1
 
     snapshot = json.loads((CORPUS_PATH.parent / "golden_provider_wire_reve.json").read_text())
     actual = json.loads(wire.to_json())
