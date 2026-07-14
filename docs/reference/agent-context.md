@@ -441,7 +441,7 @@ Runtime image calls go through LiteLLM OpenAI-compatible image endpoints.
 `image_provider` is legacy metadata and should not be used for routing new code.
 
 Defaults:
-- `image_model: "image-quality"` (Reve)
+- `image_model: "image-quality"` (Gemini 3 Pro Image / Nano Banana 2 Pro)
 - `fallback_image_model: "image-fast"`
 
 `dev_mode: true` substitutes `fallback_image_model` when `image_model` is at the
@@ -454,15 +454,15 @@ Two new config fields control LLM pre-processing passes before image generation:
 Current image aliases:
 - `image-fast`: Gemini 3.1 Flash Lite Image route, also used by dev mode.
 - `image-balanced`: Gemini 3.1 Flash Lite Image route, retained for explicit balanced projects and legacy configs.
-- `image-quality`: Reve image generation (high-fidelity). `REVE_ALIASES` includes both `image-quality` and `image-reve`.
-- `image-reve`: Reve image generation (same provider as `image-quality`).
+- `image-quality`: Gemini 3 Pro Image (Nano Banana 2 Pro) route, ~$0.134/image at 1K, routed through the vertex-multimodal custom handler. Replaced Reve (~$0.20/image) as the production quality tier. `REVE_ALIASES` now includes only `image-reve`.
+- `image-reve`: Reve image generation (Reve remains available at this alias and via labs entries).
 
 Set `layout_prompts_enabled: true` in the project `config.yaml` to use Reve v2
 `render_layout` for newly compiled panel requests. The endpoint is experimental;
 layout transport failures fall back to v2 `create`, while existing frozen
 requests remain unchanged.
 
-`is_reve_model(model)` returns true for `image-reve`, `image-quality`, and any alias in `REVE_ALIASES` or starting with `reve/`.
+`is_reve_model(model)` returns true for `image-reve` and any alias in `REVE_ALIASES` or starting with `reve/`. It no longer matches `image-quality`, which now routes to the Gemini 3 Pro Image route.
 `is_gpt_image_2(model)` only matches literal `gpt-image-2` / `openai/gpt-image-2` strings; `GPT_IMAGE_2_ALIASES` is now empty — no gateway alias routes to GPT Image 2 by default.
 
 Draw-stage reference behavior is provider-aware:

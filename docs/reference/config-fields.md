@@ -24,7 +24,7 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `panel_model` | `str` | `GATEWAY_PANEL_BALANCED` |  |
 | `prompt_model` | `str` | `GATEWAY_PROMPT_BALANCED` |  |
 | `image_provider` | `Literal['gemini', 'openai', 'openrouter', 'together', 'reve']` | `'gemini'` |  |
-| `image_model` | `str` | `GATEWAY_IMAGE_QUALITY` | New-project default quality image route (Reve). |
+| `image_model` | `str` | `GATEWAY_IMAGE_QUALITY` | New-project default quality image route (Gemini 3 Pro Image / Nano Banana 2 Pro). |
 | `fallback_image_model` | `str` | `GATEWAY_IMAGE_FAST` |  |
 | `target_language` | `str` | `'en'` |  |
 | `dev_mode` | `bool` | `False` |  |

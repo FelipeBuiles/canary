@@ -15,37 +15,39 @@ aliases:
   screenplay-quality: anthropic/claude-opus-4-7
   panel-fast: vertex_ai/gemini-3.1-flash-lite-preview
   panel-balanced: vertex_ai/gemini-3.5-flash
-  panel-quality: openai/gpt-5.4
-  prompt-fast: vertex_ai/gemini-3.5-flash
-  prompt-balanced: vertex_ai/gemini-3.5-flash
-  prompt-quality: vertex_ai/gemini-3.5-flash
+  panel-quality: vertex_ai/gemini-3.5-flash
+  prompt-fast: vertex_ai/gemini-3.1-flash-lite-preview
+  prompt-balanced: vertex_ai/gemini-3.1-flash-lite-preview
+  prompt-quality: vertex_ai/gemini-3.1-flash-lite-preview
   image-fast: vertex_ai/gemini-3.1-flash-lite-image
   image-balanced: vertex_ai/gemini-3.1-flash-lite-image
   image-balanced-seedream-test: fal-ai/bytedance/seedream/v4.5/edit
   image-reve: reve/create
-  image-quality: reve/create
+  image-quality: vertex_ai/gemini-3-pro-image-preview
 
 model_overrides:
+  # Reve v2 real cost is ~$0.20/image (measured in production 2026-07; the
+  # $0.04 rate was the deprecated v1 API). Kept for image-reve/labs routes.
   reve/create:
-    output_cost_per_image: 0.04
+    output_cost_per_image: 0.20
     mode: image_generation
   reve/remix:
-    output_cost_per_image: 0.04
+    output_cost_per_image: 0.20
     mode: image_generation
   reve/layout:
-    output_cost_per_image: 0.04
+    output_cost_per_image: 0.20
     mode: image_generation
   reve/layout2image:
-    output_cost_per_image: 0.04
+    output_cost_per_image: 0.20
     mode: image_generation
   reve/text2layout:
-    output_cost_per_image: 0.04
+    output_cost_per_image: 0.20
     mode: image_generation
   reve/image2layout:
-    output_cost_per_image: 0.04
+    output_cost_per_image: 0.20
     mode: image_generation
   reve/layout2layout:
-    output_cost_per_image: 0.04
+    output_cost_per_image: 0.20
     mode: image_generation
 
   # Google Gemini text models.
@@ -201,4 +203,10 @@ model_overrides:
     mode: image_generation
   fal-ai/nano-banana-2/edit:
     output_cost_per_image: 0.08
+    mode: image_generation
+  fal-ai/z-image/turbo:
+    output_cost_per_image: 0.008
+    mode: image_generation
+  fal-ai/flux-2-klein:
+    output_cost_per_image: 0.015
     mode: image_generation

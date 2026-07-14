@@ -19,6 +19,7 @@ IMAGE_MODEL_ALIASES = (
 )
 
 _GEMINI_FLASH_LITE_MODEL = "vertex-multimodal/gemini-3.1-flash-lite-image"
+_GEMINI_PRO_IMAGE_MODEL = "vertex-multimodal/gemini-3-pro-image-preview"
 _REVE_CREATE_MODEL = "reve/create"
 
 
@@ -26,6 +27,7 @@ class ImageRoute(str, Enum):
     """Stable application routes independent of mutable UI tier labels."""
 
     GEMINI_FLASH_LITE = "gemini_flash_lite"
+    GEMINI_PRO_IMAGE = "gemini_pro_image"
     REVE = "reve"
     GPT_IMAGE_2 = "gpt_image_2"
     UNKNOWN = "unknown"
@@ -52,9 +54,9 @@ _ALIAS_DESCRIPTIONS: dict[str, ImageModelDescription] = {
         provider_model=_GEMINI_FLASH_LITE_MODEL,
     ),
     GATEWAY_IMAGE_QUALITY: ImageModelDescription(
-        route=ImageRoute.REVE,
-        display_name="Quality — Reve",
-        provider_model=_REVE_CREATE_MODEL,
+        route=ImageRoute.GEMINI_PRO_IMAGE,
+        display_name="Quality — Gemini 3 Pro Image (Nano Banana 2 Pro)",
+        provider_model=_GEMINI_PRO_IMAGE_MODEL,
     ),
     GATEWAY_IMAGE_REVE: ImageModelDescription(
         route=ImageRoute.REVE,
@@ -85,6 +87,12 @@ def describe_image_model(model: str) -> ImageModelDescription:
         return ImageModelDescription(
             route=ImageRoute.GEMINI_FLASH_LITE,
             display_name="Gemini 3.1 Flash Lite Image",
+            provider_model=normalized,
+        )
+    if normalized == _GEMINI_PRO_IMAGE_MODEL:
+        return ImageModelDescription(
+            route=ImageRoute.GEMINI_PRO_IMAGE,
+            display_name="Gemini 3 Pro Image (Nano Banana 2 Pro)",
             provider_model=normalized,
         )
     return ImageModelDescription(
@@ -140,6 +148,7 @@ _ALL_CONTROLS: tuple[str, ...] = (
 _PROMPT_CHAR_LIMITS: dict[ImageRoute, int | None] = {
     ImageRoute.REVE: 4000,
     ImageRoute.GEMINI_FLASH_LITE: None,
+    ImageRoute.GEMINI_PRO_IMAGE: None,
     ImageRoute.GPT_IMAGE_2: None,
     ImageRoute.UNKNOWN: None,
 }
@@ -153,6 +162,7 @@ _NATIVE_ASPECTS: dict[ImageRoute, tuple[str, ...]] = {
         "5:4", "1:1", "4:5", "3:4", "2:3", "9:16", "1:2", "1:3", "1:4",
     ),
     ImageRoute.GEMINI_FLASH_LITE: (),
+    ImageRoute.GEMINI_PRO_IMAGE: (),
     ImageRoute.GPT_IMAGE_2: (),
     ImageRoute.UNKNOWN: (),
 }
@@ -167,6 +177,7 @@ _NATIVE_ASPECTS: dict[ImageRoute, tuple[str, ...]] = {
 _SUPPORTED_CONTROLS: dict[ImageRoute, frozenset[str]] = {
     ImageRoute.REVE: frozenset(),
     ImageRoute.GEMINI_FLASH_LITE: frozenset({"quality"}),
+    ImageRoute.GEMINI_PRO_IMAGE: frozenset({"quality"}),
     ImageRoute.GPT_IMAGE_2: frozenset({"quality"}),
     ImageRoute.UNKNOWN: frozenset(),
 }
@@ -248,6 +259,7 @@ class ImageModelProfile:
 _ROUTE_REFERENCE_CAPS: dict[ImageRoute, int] = {
     ImageRoute.REVE: 4,
     ImageRoute.GEMINI_FLASH_LITE: 10,
+    ImageRoute.GEMINI_PRO_IMAGE: 10,
     ImageRoute.GPT_IMAGE_2: 4,
     ImageRoute.UNKNOWN: 10,
 }

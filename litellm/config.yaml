@@ -60,32 +60,38 @@ model_list:
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
+  # Panel planning is templated reasoning over already-extracted data; Gemini
+  # 3.5 Flash validates the layout JSON reliably at ~6x less than gpt-5.4.
   - model_name: panel-quality
     litellm_params:
-      model: openai/gpt-5.4
-      api_key: os.environ/OPENAI_API_KEY
+      model: vertex_ai/gemini-3.5-flash
+      vertex_project: os.environ/VERTEXAI_PROJECT
+      vertex_location: os.environ/VERTEXAI_LOCATION
+      safety_settings: *vertex_safety_off
 
   # ─── Stage 5: image-prompt assembly (template filling) ────────────────────
-  # Prompt assembly is light rewriting (structured panel spec → prose). Use the
-  # generally available Flash route here; the Flash-Lite preview model is not
-  # available in every Vertex project/region and caused style-stage failures.
+  # Prompt assembly is light rewriting (structured panel spec → prose), the
+  # highest-call-volume text stage. Flash-Lite is ~6x cheaper than 3.5 Flash
+  # and the same preview model already serves extract-fast/panel-fast in this
+  # project, so the earlier region-availability failure no longer applies.
+  # Smoke-test the style stage after any Vertex project/region change.
   - model_name: prompt-fast
     litellm_params:
-      model: vertex_ai/gemini-3.5-flash
+      model: vertex_ai/gemini-3.1-flash-lite-preview
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
       reasoning_effort: "disable"
   - model_name: prompt-balanced
     litellm_params:
-      model: vertex_ai/gemini-3.5-flash
+      model: vertex_ai/gemini-3.1-flash-lite-preview
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
       reasoning_effort: "disable"
   - model_name: prompt-quality
     litellm_params:
-      model: vertex_ai/gemini-3.5-flash
+      model: vertex_ai/gemini-3.1-flash-lite-preview
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
@@ -116,8 +122,13 @@ model_list:
       api_key: os.environ/REVE_API_KEY
   - model_name: image-quality
     litellm_params:
-      model: reve/create
-      api_key: os.environ/REVE_API_KEY
+      # Nano Banana 2 Pro (Gemini 3 Pro Image) — production quality tier,
+      # ~$0.134/image at 1K output. Replaced Reve (~$0.20/image). Routed
+      # through the vertex-multimodal custom handler like the image-fast/
+      # image-balanced tiers.
+      model: vertex-multimodal/gemini-3-pro-image-preview
+      vertex_project: os.environ/VERTEXAI_PROJECT
+      vertex_location: os.environ/VERTEXAI_LOCATION
 
 litellm_settings:
   # Langfuse logging happens directly from the Canary AI client (see

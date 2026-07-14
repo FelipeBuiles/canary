@@ -262,7 +262,7 @@ class Config(BaseModel):
         # fallback_image_model when image_model is still at its default. Treat
         # the previous balanced default as a legacy default too, so existing
         # project configs retain their dev-mode behavior after this default
-        # changes to the quality/Reve route.
+        # changes to the quality route.
         if self.dev_mode:
             if self.image_model in {
                 Config.model_fields["image_model"].default,

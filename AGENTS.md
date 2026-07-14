@@ -142,9 +142,11 @@ accuracy.
   style is selected (`is_style_selected` in `styles.py`). The status API returns
   `style_selected: bool` sourced from `config.yaml`. Frontend uses this field
   (not `useStyles` data) for gate checks to avoid stale-cache bugs.
-- **Image model routing:** `image-quality` and `image-reve` both route to Reve
-  (`REVE_ALIASES`). `GPT_IMAGE_2_ALIASES` is now empty — `is_gpt_image_2()`
-  only matches literal `gpt-image-2` strings, not gateway aliases.
+- **Image model routing:** `image-quality` routes to Gemini 3 Pro Image
+  (Nano Banana 2 Pro) via the vertex-multimodal handler; only `image-reve`
+  routes to Reve (`REVE_ALIASES`). `GPT_IMAGE_2_ALIASES` is now empty —
+  `is_gpt_image_2()` only matches literal `gpt-image-2` strings, not gateway
+  aliases.
 - **Panel aspect:** All aspect-ratio → dimension logic lives in `panel_aspect.py`
   (`GenerationShape`, `dimensions_for_generation_aspect`, `aspect_within_tolerance`).
   Do not inline dimension math in stage or route code.

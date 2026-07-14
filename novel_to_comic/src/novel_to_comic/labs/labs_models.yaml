@@ -78,6 +78,33 @@ models:
       Fast with 14-image conditioning. Useful baseline against the
       gemini-3-flash-image you currently use (same family, more refs).
 
+  - id: z-image-turbo
+    label: "Z-Image Turbo"
+    provider: fal
+    endpoint: fal-ai/z-image/turbo
+    tier: fast
+    multi_ref: true
+    max_refs: 4
+    approx_cost: 0.008
+    notes: >-
+      Cheapest strong draft candidate. ~1-2s latency with multi-image
+      composition support. Reviewers rate it well above FLUX Schnell —
+      candidate to replace Schnell as the draft tier pending visual eval.
+
+  - id: flux-2-klein
+    label: "FLUX.2 Klein"
+    provider: fal
+    endpoint: fal-ai/flux-2-klein
+    tier: fast
+    multi_ref: true
+    max_refs: 4
+    approx_cost: 0.015
+    notes: >-
+      Sub-second distilled FLUX.2, up to 4 reference images, license-free.
+      Endpoint slug follows this file's flux-2-pro hyphenation convention but
+      is NOT verified against the live fal catalog — if fal rejects it, try
+      fal-ai/flux-2/klein.
+
   # ── New candidates (together.ai) ──────────────────────────────────────────
   - id: flux-1-schnell-together
     label: "FLUX.1 Schnell"
@@ -130,15 +157,19 @@ models:
       verify built-in fal_ai routing preserves multi-reference conditioning
       before promoting image-balanced.
 
-  - id: reve-quality-current
-    label: "Reve (production quality)"
+  - id: gemini-pro-image-production-quality
+    label: "Gemini 3 Pro Image (production quality)"
     provider: litellm
     endpoint: image-quality
     tier: premium
     multi_ref: true
-    max_refs: 4
-    approx_cost: 0.04
-    notes: "Existing production quality tier routed to Reve — for baseline comparison."
+    max_refs: 10
+    approx_cost: 0.134
+    notes: >-
+      Production image-quality tier. Nano Banana 2 Pro (Gemini 3 Pro Image)
+      routed through the vertex-multimodal custom provider — native Vertex
+      multimodal shape, role-labeled reference images, 1K output. Replaced Reve
+      (~$0.20/image) at this alias.
 
   - id: reve-proxy
     label: "Reve (LiteLLM Proxy)"
@@ -148,7 +179,7 @@ models:
     multi_ref: true
     max_refs: 4
     style_refs: true
-    approx_cost: 0.04
+    approx_cost: 0.20
     notes: >-
       Reve model routed through the local LiteLLM proxy gateway.
       Uses custom handler litellm_handlers.reve_provider.
@@ -161,7 +192,7 @@ models:
     multi_ref: true
     max_refs: 4
     style_refs: true
-    approx_cost: 0.04
+    approx_cost: 0.20
     notes: >-
       Reve model calling the api.reve.com endpoints directly from the Canary
       backend, bypassing the LiteLLM proxy.

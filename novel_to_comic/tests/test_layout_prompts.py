@@ -158,8 +158,10 @@ class TestLayoutPassApplies:
     def test_applies_for_reve_model_when_enabled(self):
         assert layout_pass_applies(Config(image_model="image-reve", layout_prompts_enabled=True))
 
-    def test_applies_for_image_quality_alias_when_enabled(self):
-        assert layout_pass_applies(Config(image_model="image-quality", layout_prompts_enabled=True))
+    def test_skips_image_quality_alias_now_routed_to_gemini(self):
+        # image-quality routes to the Gemini 3 Pro Image tier now, not Reve, so
+        # the Reve-only layout pass must not run for it.
+        assert not layout_pass_applies(Config(image_model="image-quality", layout_prompts_enabled=True))
 
     def test_disabled_by_default_for_experimental_rollout(self):
         # The live endpoint is available but still documented as experimental;
@@ -230,7 +232,7 @@ class TestGenerateLayout:
 
 
 class TestSelector:
-    @pytest.mark.parametrize("model", ["image-reve", "image-quality", "reve/create"])
+    @pytest.mark.parametrize("model", ["image-reve", "reve/create"])
     def test_layout_on_reve_picks_layout_provider(self, model: str):
         provider = pick(
             model,
@@ -238,6 +240,16 @@ class TestSelector:
             layout=_layout(),
         )
         assert isinstance(provider, ReveLayoutProvider)
+
+    def test_layout_on_image_quality_stays_on_gateway(self):
+        # image-quality now routes to Gemini 3 Pro Image, not Reve, so the
+        # Reve layout provider must not be selected for it.
+        provider = pick(
+            "image-quality",
+            Config(image_model="image-quality", layout_prompts_enabled=True),
+            layout=_layout(),
+        )
+        assert isinstance(provider, LitellmHttpProvider)
 
     def test_layout_on_non_reve_stays_on_gateway(self):
         provider = pick("image-balanced", Config(), layout=_layout())
