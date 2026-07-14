@@ -10,8 +10,9 @@ Exemptions:
   - File uploads handled by the streaming cap in projects.py are exempt,
     since their larger bodies are validated mid-stream.
 
-Configurable via ``CANARY_MAX_BODY_MB`` (default 2 MB). Set higher only if a
-known endpoint legitimately needs more and has its own protections.
+Configurable via ``CANARY_MAX_BODY_MB`` (default 2 MB). The style-direction
+multipart endpoint has an explicit 11 MiB envelope so its advertised 10 MiB
+image limit remains usable; its route also validates decoded image dimensions.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from starlette.responses import Response
 # generic cap, which is lower. Matched by path suffix since the upload handler
 # is a POST to /api/projects or /api/projects/import-story.
 _EXEMPT_EXACT = frozenset({"/api/projects", "/api/projects/import-story", "/api/projects/short-stories"})
+_STYLE_DIRECTION_BODY_BYTES = 11 * 1024 * 1024
 
 
 def _max_body_bytes() -> int:
@@ -42,6 +44,19 @@ def _is_exempt(path: str) -> bool:
     return False
 
 
+def _body_cap_bytes(path: str, method: str) -> int:
+    """Return the pre-parser body cap for this endpoint."""
+    parts = path.rstrip("/").split("/")
+    if (
+        method == "POST"
+        and len(parts) == 6
+        and parts[1:3] == ["api", "projects"]
+        and parts[4:] == ["styles", "direction"]
+    ):
+        return _STYLE_DIRECTION_BODY_BYTES
+    return _max_body_bytes()
+
+
 async def body_size_limit_middleware(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
     """Reject oversized request bodies with 413 before the handler reads them.
 
@@ -54,7 +69,7 @@ async def body_size_limit_middleware(request: Request, call_next: Callable[[Requ
     if _is_exempt(path) or request.method in ("GET", "HEAD", "OPTIONS"):
         return await call_next(request)
 
-    cap = _max_body_bytes()
+    cap = _body_cap_bytes(path, request.method)
     content_length = request.headers.get("content-length")
     if content_length is not None:
         try:

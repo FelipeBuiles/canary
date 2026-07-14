@@ -1,6 +1,11 @@
+import pytest
+from fastapi import HTTPException
+
 from novel_to_comic.config import Config, load_config
 from novel_to_comic.server.routers.projects import _stage_payload
 from novel_to_comic.server.routers.styles import (
+    _supports_style_reference,
+    _assert_usable_style_direction,
     clear_style_failures_after_selection,
     is_style_selected,
     set_active_style,
@@ -69,3 +74,15 @@ def test_unselected_style_does_not_clear_failures(tmp_path):
     assert is_style_selected(tmp_path, config) is False
     assert state.stages["style"].items_failed == ["style_3"]
 
+
+def test_style_reference_capability_matches_configured_route():
+    assert _supports_style_reference(Config(image_model="image-balanced")) is True
+    assert _supports_style_reference(Config(image_model="gpt-image-2")) is False
+
+
+def test_image_only_direction_rejected_when_route_cannot_use_reference():
+    config = Config(image_model="gpt-image-2")
+    with pytest.raises(HTTPException) as exc_info:
+        _assert_usable_style_direction(config, "", True)
+    assert exc_info.value.status_code == 400
+    _assert_usable_style_direction(config, "bright ligne claire", True)

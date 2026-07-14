@@ -16,7 +16,7 @@ RefRole = Literal["subject", "style", "continuity", "location_plate", "prop"]
 # character identity gets the strongest positional weight; contextual refs
 # (style sample, location plate) come last. Every consumer of a RefImage list
 # — ref selection in s7_draw, multipart upload in litellm_http, and the
-# <img>N</img> index rendering in prompting.render_generation_prompt — MUST
+# <frame>N</frame> index rendering in prompting.render_generation_prompt — MUST
 # derive ordering from order_refs_for_upload so prompt indices always match
 # the uploaded files.
 UPLOAD_REF_PRIORITY: dict[str, int] = {
@@ -50,8 +50,8 @@ class ProviderRawResult:
     response_headers: httpx.Headers | None = None
     provider_cost_usd: float | None = None
     request_params: dict[str, Any] | None = None
-    # Layout the model actually generated (Reve v2 description echo) — persisted
-    # as a sidecar next to the output image when present.
+    # Layout the model actually generated (Reve v2 layout echo) — persisted as
+    # a sidecar next to the output image when present.
     layout_echo: dict[str, Any] | None = None
     # Observed response identity only. Never substitutes for configured route
     # identity carried by the compiled/wire request.

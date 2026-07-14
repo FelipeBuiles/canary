@@ -3,11 +3,9 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   useApproveStage,
   useProjectStatus,
-  useStageEstimate,
   useStoryBible,
   useUpdateStoryBible,
 } from "../../api/queries";
-import { useRunAction } from "../../hooks/useRunAction";
 import { Tag } from "../../components/ui/Tag";
 import { EditableText } from "../../components/ui/EditableText";
 import { InspectDrawer } from "../../components/InspectDrawer";
@@ -259,8 +257,6 @@ export function StoryBibleRoom() {
   const { data: status } = useProjectStatus(id);
   const updateBible = useUpdateStoryBible();
   const approveStage = useApproveStage();
-  const { handleRun, isPending: isPipelineRunning } = useRunAction();
-  const { data: styleEstimate } = useStageEstimate(id, "style");
   const [drawer, setDrawer] = useState<DrawerKind | null>(null);
 
   const stageInfo = status?.stages?.extract;
@@ -312,8 +308,6 @@ export function StoryBibleRoom() {
   };
 
   const needsApproval = stageStatus === "awaiting_review";
-  const styleStarted = status?.stages?.style?.status != null && status.stages.style.status !== "pending";
-
   function handleLooksRight() {
     if (!id) return;
     if (needsApproval) {
@@ -321,8 +315,8 @@ export function StoryBibleRoom() {
         { project: id, stage: "extract" },
         {
           onSuccess: () => {
-            // Send the user to the style room so they see samples generate live.
-            if (!styleStarted) handleRun(id, "style", { actionLabel: "Propose art styles" });
+            // Let the author choose automatic exploration or bring a direction
+            // before any style credits are spent.
             navigate(`/project/${id}/styles`);
           },
         },
@@ -387,13 +381,10 @@ export function StoryBibleRoom() {
       <InspectDrawer project={id} kind={drawer} onClose={() => setDrawer(null)} />
 
       <ApprovalBar
-        next={needsApproval
-          ? "Scenewright proposes five art styles drawn from your story"
-          : "Pick your art style at the Look station"}
-        estimateCredits={needsApproval ? styleEstimate?.estimate_credits : null}
+        next="Choose automatic exploration or bring your own visual direction"
         primaryLabel={needsApproval ? "LOOKS RIGHT — CONTINUE →" : "GO TO LOOK →"}
         onPrimary={handleLooksRight}
-        primaryDisabled={approveStage.isPending || isPipelineRunning || stageStatus === "running"}
+        primaryDisabled={approveStage.isPending || stageStatus === "running"}
         busy={approveStage.isPending}
         secondary={<RerunStageAction project={id} stage="extract" label="story" />}
       />

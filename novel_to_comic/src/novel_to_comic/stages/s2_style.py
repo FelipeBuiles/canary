@@ -16,10 +16,13 @@ from novel_to_comic import artifacts
 from novel_to_comic.clients import text as text_client
 from novel_to_comic.config import Config
 from novel_to_comic.generation_input import GenerationPromptInput
+from novel_to_comic.models.prompt import PromptAnchor, PromptSubject
 from novel_to_comic.non_panel_generation import (
     AbstractStyleProofInput,
+    asset_matches_request,
     compile_non_panel_request,
     estimate_non_panel_request,
+    style_reference_plan,
     submit_non_panel_request,
 )
 from novel_to_comic.models.story_bible import StoryBible
@@ -33,6 +36,15 @@ SAMPLE_COUNT = 5
 LLM_REQUEST_COUNT = 8  # ask for more than we need so dedup still yields >= 5
 SAMPLE_CONCURRENCY = 2
 _GENERATION_MAX_ATTEMPTS = 2
+SUGGESTION_SCHEMA_VERSION = 2
+STYLE_BRIEF_VERSION = 2
+PORTFOLIO_ROLES = (
+    "story_fit_primary", "story_fit_secondary", "adjacent", "contrast", "wildcard",
+)
+STYLE_VALIDATION_ACTION = "A decisive full-body action with readable silhouette and hand gesture."
+STYLE_VALIDATION_COMPOSITION = (
+    "Dynamic portrait action frame with foreground, subject, and environment depth."
+)
 
 _SYSTEM_PROMPT = (
     "You are a visual art director for adapted fiction. Surface 8 genuinely distinctive "
@@ -85,10 +97,45 @@ _SYSTEM_PROMPT = (
     "\"cut-paper collage\", \"35mm photography\"). This is the field your curation "
     "constraint is checked against, so name the medium honestly and specifically.\n\n"
 
-    "Output JSON array only, no markdown: "
-    '[{"label": "Style Name (2-4 words)", "medium": "primary medium, 1-3 words", '
-    '"template": "40-70 word description"}, ...]'
+    "The final five positions matter: return the two strongest story-fit directions, "
+    "then one aesthetically adjacent alternative, one viable contrast, and one controlled "
+    "wildcard. Judge every direction as sequential art: panel-size readability, repeatable "
+    "characters, expressive faces and action, clear environments, and value separation.\n\n"
+    "Output JSON array only, no markdown. Every object needs: label, medium, palette, "
+    "portfolio_role (story_fit_primary, story_fit_secondary, adjacent, contrast, or wildcard), "
+    "line_rendering, lighting_value, sequential_art_strengths, story_fit, risk, and template. "
+    "Template remains a 40-70 word downstream generation direction."
 )
+
+
+def _stable_suggestion_id(suggestion: dict) -> str:
+    material = "\n".join(
+        str(suggestion.get(key) or "").strip() for key in ("label", "medium", "template")
+    )
+    return f"style_{hashlib.sha256(material.encode('utf-8')).hexdigest()[:16]}"
+
+
+def normalize_suggestion(
+    suggestion: dict, *, role: str | None = None, origin: str = "generated",
+) -> dict:
+    """Normalize generated and safely-read older dictionaries to the v2 shape."""
+    normalized = {
+        "id": _stable_suggestion_id(suggestion),
+        "origin": suggestion.get("origin") or origin,
+        "role": role or suggestion.get("role"),
+        "label": suggestion.get("label") or "Untitled direction",
+        "medium": suggestion.get("medium") or "mixed media",
+        "palette": suggestion.get("palette") or "",
+        "line_rendering": suggestion.get("line_rendering") or "",
+        "lighting_value": suggestion.get("lighting_value") or "",
+        "sequential_art_strengths": suggestion.get("sequential_art_strengths") or "",
+        "story_fit": suggestion.get("story_fit") or "",
+        "risk": suggestion.get("risk") or "",
+        "template": suggestion.get("template") or "",
+    }
+    if suggestion.get("direction_id"):
+        normalized["direction_id"] = suggestion["direction_id"]
+    return normalized
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +183,73 @@ def _dedupe_suggestions(
     return kept
 
 
+_DIVERSITY_FIELDS = ("medium", "palette", "line_rendering", "lighting_value")
+
+
+def _field_distance(a: str, b: str) -> float:
+    left, right = _medium_tokens(a), _medium_tokens(b)
+    if not left and not right:
+        return 0.0
+    return 1.0 - (len(left & right) / len(left | right))
+
+
+def _portfolio_distance(a: dict, b: dict) -> float:
+    return sum(_field_distance(str(a.get(field) or ""), str(b.get(field) or ""))
+               for field in _DIVERSITY_FIELDS) / len(_DIVERSITY_FIELDS)
+
+
+def _select_portfolio(candidates: list[dict], count: int = SAMPLE_COUNT) -> list[dict]:
+    """Greedy farthest-first curation with a small model-ranking preference."""
+    if len(candidates) <= count:
+        return candidates
+    selected = [candidates[0]]
+    remaining = list(enumerate(candidates[1:], 1))
+    while remaining and len(selected) < count:
+        index, choice = max(
+            remaining,
+            key=lambda item: (
+                min(_portfolio_distance(item[1], prior) for prior in selected)
+                + max(0.0, 0.08 - item[0] * 0.01),
+                -item[0],
+            ),
+        )
+        selected.append(choice)
+        remaining = [(i, candidate) for i, candidate in remaining if i != index]
+    return selected
+
+
+def _candidate_role(candidate: dict, index: int) -> str:
+    declared = str(candidate.get("portfolio_role") or candidate.get("role") or "").strip()
+    if declared in PORTFOLIO_ROLES:
+        return declared
+    # Safe reading for older/model output: preserve the prompt's ranked role
+    # contract before diversity selection, rather than relabeling after reorder.
+    return PORTFOLIO_ROLES[min(index, len(PORTFOLIO_ROLES) - 1)]
+
+
+def _select_role_portfolio(candidates: list[dict], roles: tuple[str, ...]) -> list[dict]:
+    tagged = [(index, candidate, _candidate_role(candidate, index))
+              for index, candidate in enumerate(candidates)]
+    selected: list[dict] = []
+    used: set[int] = set()
+    for desired in roles:
+        eligible = [(index, candidate) for index, candidate, role in tagged
+                    if index not in used and role == desired]
+        if not eligible:
+            raise RuntimeError(f"Style curation did not produce required role: {desired}")
+        index, choice = max(
+            eligible,
+            key=lambda item: (
+                min((_portfolio_distance(item[1], prior) for prior in selected), default=1.0)
+                + max(0.0, 0.08 - item[0] * 0.01),
+                -item[0],
+            ),
+        )
+        used.add(index)
+        selected.append(choice)
+    return selected
+
+
 def _build_avoid_block(pool: list[dict]) -> str:
     if not pool:
         return ""
@@ -163,6 +277,7 @@ async def generate_suggestions(
     story_bible: StoryBible,
     *,
     existing_suggestions: list[dict] | None = None,
+    custom_direction: dict | None = None,
 ):
     """Generate style suggestions via LLM. Returns (suggestions_list, usage).
 
@@ -188,7 +303,16 @@ async def generate_suggestions(
         user = (
             f'Story: "{story_bible.title}" by {story_bible.author}\n'
             f"Style notes: {story_bible.style_notes or 'none'}\n"
-            f"Genre/tone: {', '.join({s.scene_type for s in story_bible.scenes})}\n\n"
+            f"Narrative arcs: {'; '.join(f'{a.title}: {a.turning_point or ""}' for a in story_bible.narrative_arcs) or 'not supplied'}\n"
+            f"Scene range: {'; '.join(f'{s.scene_type}/{s.narrative_beat}: {s.summary}' for s in story_bible.scenes[:12])}\n"
+            f"Settings: {'; '.join(f'{loc.name} — {loc.mood}: {loc.visual_anchor}' for loc in story_bible.locations[:8])}\n"
+            f"Character demands: {'; '.join(f'{char.name}: {char.visual_anchor}' for char in story_bible.characters[:8])}\n"
+            + (
+                "Author-supplied visual direction to use as the center of gravity while still "
+                f"preserving portfolio variance: {custom_direction.get('text') or 'uploaded visual reference'}\n"
+                if custom_direction else ""
+            )
+            + "\n"
             f"Generate {LLM_REQUEST_COUNT} style options for this story."
         )
 
@@ -213,17 +337,38 @@ async def generate_suggestions(
     # --- first attempt -------------------------------------------------------
     pool = existing_suggestions or []
     suggestions = _dedupe_suggestions(await _call_llm(pool), pool)
+    required_count = 4 if custom_direction else SAMPLE_COUNT
 
     # --- retry if dedup left us with fewer than SAMPLE_COUNT -----------------
     for _attempt in range(1, _GENERATION_MAX_ATTEMPTS):
-        if len(suggestions) >= SAMPLE_COUNT:
+        if len(suggestions) >= required_count:
             break
         # Expand the avoid-pool with the *unused* suggestions from the first
         # pass so the retry gets an even stronger steer.
         retry_pool = pool + suggestions
         suggestions.extend(_dedupe_suggestions(await _call_llm(retry_pool), retry_pool))
 
-    return suggestions[:SAMPLE_COUNT], first_usage
+    if len(suggestions) < required_count:
+        raise RuntimeError(
+            f"Style curation produced {len(suggestions)} usable directions; "
+            f"{required_count} are required. Please retry."
+        )
+    portfolio_roles = (
+        ("story_fit_primary", "adjacent", "contrast", "wildcard")
+        if custom_direction else PORTFOLIO_ROLES
+    )
+    curated = [
+        normalize_suggestion(
+            suggestion,
+            role=portfolio_roles[index],
+            origin="generated_neighbor" if custom_direction else "generated",
+        )
+        for index, suggestion in enumerate(_select_role_portfolio(suggestions, portfolio_roles))
+    ]
+    if custom_direction and custom_direction.get("id"):
+        for suggestion in curated:
+            suggestion["direction_id"] = custom_direction["id"]
+    return curated, first_usage
 
 
 # ---------------------------------------------------------------------------
@@ -241,10 +386,10 @@ STYLE_SAMPLE_BRIEF_SYSTEM_PROMPT = (
     "candidate art styles for a comic adaptation of a novel. You receive the story's "
     "main characters and locations.\n"
     "\n"
-    "First pick the one character and one location that together reveal the most "
-    "about a visual style: a face and figure that show how people render, an "
-    "environment with depth and material variety, and a lighting situation that "
-    "spans bright accents and deep shadow.\n"
+    "Use the first listed character and first listed location (already curated as the "
+    "proof subjects): a face and figure that show how people render, an "
+    "environment with depth and material variety. Let each candidate art direction own "
+    "the palette, contrast, and value structure.\n"
     "\n"
     "Then write that moment as a single flowing brief of 60-120 words, the way a "
     "film director describes one frozen frame:\n"
@@ -252,8 +397,8 @@ STYLE_SAMPLE_BRIEF_SYSTEM_PROMPT = (
     "hair, face, wardrobe) before their action.\n"
     "- Keep the figure the clear focal point at three-quarter or full length, with "
     "the location giving depth behind them; compose for a portrait frame.\n"
-    "- Give light its own concrete sentence: direction, color, quality, and where "
-    "the shadows fall.\n"
+    "- Name the physical light source and direction, but do not prescribe its color, "
+    "contrast, value range, or shadow density.\n"
     "- Exactly one frozen instant and a quiet, characteristic action — no climactic "
     "story beat.\n"
     "- Never mention art style, medium, or rendering technique: the same brief is "
@@ -318,19 +463,22 @@ async def generate_style_sample_brief(
     return brief
 
 
+def _style_sample_brief_source_key(config: Config, story_bible: StoryBible) -> str:
+    return hashlib.sha256("\n".join((
+        f"brief-schema:{STYLE_BRIEF_VERSION}",
+        f"model:{config.effective_prompt_model()}",
+        STYLE_SAMPLE_BRIEF_SYSTEM_PROMPT,
+        _style_sample_brief_source(story_bible),
+    )).encode("utf-8")).hexdigest()
+
+
 async def ensure_style_sample_brief(
     config: Config, story_bible: StoryBible, project_dir: Path,
 ) -> str | None:
-    """Return the project's shared sample brief, generating and caching it on
-    first use so every candidate style renders the identical scene.
-
-    Returns None when the pass is disabled or generation fails.
-    """
+    """Return a versioned cached proof brief or regenerate it."""
     if not getattr(config, "style_sample_brief_enabled", True):
         return None
-    source_key = hashlib.sha256(
-        _style_sample_brief_source(story_bible).encode("utf-8")
-    ).hexdigest()
+    source_key = _style_sample_brief_source_key(config, story_bible)
     path = artifacts.style_sample_brief_path(project_dir)
     if path.exists():
         try:
@@ -345,7 +493,7 @@ async def ensure_style_sample_brief(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(
         {
-            "version": 1,
+            "version": STYLE_BRIEF_VERSION,
             "kind": "style_sample_brief",
             "source_sha256": source_key,
             "brief": brief,
@@ -362,6 +510,11 @@ async def generate_sample_image(
     sample_path: Path,
     *,
     brief: str | None = None,
+    candidate_id: str | None = None,
+    style_reference: Path | None = None,
+    project_dir: Path | None = None,
+    subject_action: str | None = None,
+    composition: str | None = None,
 ):
     """Generate one style sample image at sample_path. Returns ApiResult.
 
@@ -373,16 +526,68 @@ async def generate_sample_image(
     dimensions must agree with that promised composition instead of the
     (default square) panel config dimensions.
     """
+    scene_brief = brief or style_sample_fallback_brief(bible)
+    sample_path.parent.mkdir(parents=True, exist_ok=True)
+    request = build_style_sample_request(
+        config, bible, scene_brief,
+        candidate_id=candidate_id or sample_path.stem,
+        style_reference=style_reference,
+        subject_action=subject_action,
+        composition=composition,
+    )
+    submission = await submit_non_panel_request(
+        config=config,
+        project_dir=project_dir or sample_path.parents[1],
+        request=request,
+        output_path=sample_path,
+        feature="style.sample",
+        kind="style_sample",
+    )
+    return submission.result
+
+
+def build_style_sample_request(
+    config: Config,
+    bible: StoryBible,
+    scene_brief: str,
+    *,
+    candidate_id: str,
+    style_reference: Path | None = None,
+    subject_action: str | None = None,
+    composition: str | None = None,
+):
+    """Compile the canonical, fingerprintable request for one style proof."""
     from novel_to_comic.panel_aspect import style_proof_dimensions
 
-    scene_brief = brief or style_sample_fallback_brief(bible)
     width, height = style_proof_dimensions()
-    sample_path.parent.mkdir(parents=True, exist_ok=True)
+    character = bible.characters[0] if bible.characters else None
+    location = bible.locations[0] if bible.locations else None
+    anchors = tuple(filter(None, (
+        PromptAnchor(
+            kind="character", entity_id=character.id, name=character.name,
+            text=character.visual_anchor,
+        ) if character else None,
+        PromptAnchor(
+            kind="location", entity_id=location.id, name=location.name,
+            text=location.visual_anchor,
+        ) if location else None,
+    )))
+    subjects = (
+        (PromptSubject(
+            character_id=character.id, name=character.name,
+            identity=character.visual_anchor,
+            action=subject_action or "A quiet characteristic action appropriate to the proof scene.",
+            position="Three-quarter or full-length focal figure.",
+        ),) if character else ()
+    )
     input_data = AbstractStyleProofInput(
-        asset_identity=f"style_sample:{sample_path.stem}",
+        asset_identity=f"style_sample:{candidate_id}",
         prompt=GenerationPromptInput(
+            anchors=anchors,
+            subjects=subjects,
             visual_brief=scene_brief,
-            composition="Portrait style proof frame filled edge to edge.",
+            composition=composition or "Portrait style proof frame filled edge to edge.",
+            setting=location.visual_anchor if location else None,
             constraints="Wordless artwork with no lettering or borders.",
             width=width,
             height=height,
@@ -395,16 +600,11 @@ async def generate_sample_image(
             config.style_template.encode("utf-8")
         ).hexdigest(),
     )
-    request = compile_non_panel_request(config, input_data)
-    submission = await submit_non_panel_request(
-        config=config,
-        project_dir=sample_path.parents[1],
-        request=request,
-        output_path=sample_path,
-        feature="style.sample",
-        kind="style_sample",
+    request = compile_non_panel_request(
+        config, input_data,
+        reference_plan=style_reference_plan(config, style_reference),
     )
-    return submission.result
+    return request
 
 
 def load_suggestions(project_dir: Path) -> list[dict]:
@@ -416,26 +616,161 @@ def load_suggestions(project_dir: Path) -> list[dict]:
         data = json.loads(path.read_text())
     except Exception:
         return []
-    if isinstance(data, dict):
-        return data.get("suggestions", []) or []
-    if isinstance(data, list):
-        return data
-    return []
+    raw = data.get("suggestions", []) if isinstance(data, dict) else data
+    if not isinstance(raw, list):
+        return []
+    return [normalize_suggestion(item) for item in raw if isinstance(item, dict)]
 
 
 def save_suggestions(project_dir: Path, suggestions: list[dict], title: str) -> None:
     path = artifacts.style_suggestions_path(project_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"title": title, "suggestions": suggestions}, indent=2))
+    path.write_text(json.dumps({
+        "version": SUGGESTION_SCHEMA_VERSION,
+        "title": title,
+        "suggestions": [normalize_suggestion(s) for s in suggestions],
+    }, indent=2))
 
 
-def missing_sample_indices(project_dir: Path, suggestions: list[dict]) -> list[int]:
-    """Return 1-indexed positions of suggestions that don't have a sample image."""
-    return [
-        idx
-        for idx in range(1, len(suggestions) + 1)
-        if not artifacts.style_sample_path(project_dir, idx).exists()
-    ]
+def load_style_direction(project_dir: Path, direction_id: str) -> dict | None:
+    if not re.fullmatch(r"direction_[a-f0-9]{16}", direction_id or ""):
+        return None
+    try:
+        path = artifacts.style_direction_path(project_dir, direction_id)
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) and data.get("id") == direction_id else None
+
+
+def style_direction_image(project_dir: Path, direction: dict | None) -> Path | None:
+    """Resolve a provenance-checked reference strictly inside its direction directory."""
+    if not direction or not direction.get("image_path") or not direction.get("id"):
+        return None
+    try:
+        base = artifacts.style_direction_path(project_dir, direction["id"]).parent.resolve()
+    except ValueError:
+        return None
+    root = project_dir.resolve()
+    if not base.is_relative_to(root):
+        return None
+    candidate = (project_dir / str(direction["image_path"])).resolve()
+    if not candidate.is_relative_to(base) or candidate.parent != base:
+        return None
+    if candidate.suffix.lower() not in {".png", ".jpg", ".webp"} or not candidate.is_file():
+        return None
+    expected = direction.get("image_sha256")
+    if not isinstance(expected, str) or not re.fullmatch(r"[a-f0-9]{64}", expected):
+        return None
+    if hashlib.sha256(candidate.read_bytes()).hexdigest() != expected:
+        return None
+    return candidate
+
+
+def style_validation_brief(bible: StoryBible) -> str:
+    """Deterministic second-proof brief emphasizing action and environment."""
+    character = bible.characters[0] if bible.characters else None
+    location = bible.locations[0] if bible.locations else None
+    scene = next(
+        (candidate for candidate in bible.scenes
+         if candidate.scene_type == "action"
+         and (not character or character.id in candidate.character_ids)
+         and (not location or candidate.location_id == location.id)),
+        bible.scenes[0] if bible.scenes else None,
+    )
+    action = scene.summary if scene else "A dynamic physical beat with clear spatial staging."
+    return (
+        f"{character.name if character else 'The protagonist'} moves decisively through "
+        f"{location.name if location else 'the story environment'} during this beat: {action} "
+        "Show a readable full-body action silhouette, expressive face and hands, layered "
+        "environment depth, and distinct foreground and background materials. One frozen "
+        "instant, no lettering or borders."
+    )
+
+
+def custom_direction_candidate(direction: dict) -> dict:
+    text = str(direction.get("text") or "").strip()
+    if not text:
+        text = (
+            "Use the supplied visual reference as the controlling art direction. Preserve its "
+            "observable palette, mark-making, shapes, material finish, value structure, and level "
+            "of realism while adapting the story content into readable sequential illustration."
+        )
+    candidate = {
+        "origin": direction.get("origin") or "user_text",
+        "role": "faithful",
+        "label": direction.get("label") or "Your direction",
+        "medium": "author directed",
+        "palette": "As specified by the author direction/reference.",
+        "line_rendering": "As specified by the author direction/reference.",
+        "lighting_value": "As specified by the author direction/reference.",
+        "sequential_art_strengths": "Faithful adaptation of the author's chosen visual language.",
+        "story_fit": "Directly supplied by the author.",
+        "risk": "A single proof may not expose every sequential-art edge case.",
+        "template": text,
+        "direction_id": direction["id"],
+    }
+    return normalize_suggestion(candidate)
+
+
+def suggestion_index_by_id(suggestions: list[dict], suggestion_id: str) -> int | None:
+    return next(
+        (index for index, suggestion in enumerate(suggestions, 1)
+         if suggestion.get("id") == suggestion_id),
+        None,
+    )
+
+
+def _style_reference_for_suggestion(project_dir: Path, suggestion: dict) -> Path | None:
+    direction_id = suggestion.get("direction_id")
+    if not direction_id:
+        return None
+    direction = load_style_direction(project_dir, direction_id)
+    return style_direction_image(project_dir, direction)
+
+
+def missing_sample_indices(
+    project_dir: Path,
+    suggestions: list[dict],
+    *,
+    config: Config | None = None,
+    bible: StoryBible | None = None,
+) -> list[int]:
+    """Return absent or fingerprint-stale sample positions.
+
+    Callers without config/bible retain the inexpensive existence check.
+    Stage execution supplies both and therefore never reuses a proof compiled
+    from an older prompt, model, dimensions, template, or reference image.
+    """
+    brief = None
+    brief_cache_valid = False
+    if config and bible:
+        try:
+            cached = json.loads(artifacts.style_sample_brief_path(project_dir).read_text())
+            brief_cache_valid = (
+                cached.get("source_sha256") == _style_sample_brief_source_key(config, bible)
+                and cached.get("version") == STYLE_BRIEF_VERSION
+            )
+            brief = cached.get("brief") if brief_cache_valid else None
+        except (OSError, ValueError):
+            pass
+    missing = []
+    for idx, suggestion in enumerate(suggestions, 1):
+        output = artifacts.style_sample_path(project_dir, idx)
+        if config is None or bible is None:
+            fresh = output.exists()
+        else:
+            template = suggestion.get("template") or config.style_template
+            request = build_style_sample_request(
+                config.model_copy(update={"style_template": template}), bible,
+                brief or style_sample_fallback_brief(bible),
+                candidate_id=suggestion.get("id") or f"style_{idx}",
+                style_reference=_style_reference_for_suggestion(project_dir, suggestion),
+            )
+            fresh = asset_matches_request(output, request)
+        if not fresh:
+            missing.append(idx)
+    return missing
 
 
 async def generate_samples_for_indices(
@@ -463,9 +798,12 @@ async def generate_samples_for_indices(
         template = s.get("template", config.style_template)
         sample_config = config.model_copy(update={"style_template": template})
         sample_path = artifacts.style_sample_path(project_dir, idx)
+        candidate_id = s.get("id")
+        reference = _style_reference_for_suggestion(project_dir, s)
         async with sem:
             result = await generate_sample_image(
                 sample_config, bible, sample_path, brief=brief,
+                candidate_id=candidate_id, style_reference=reference,
             )
         if on_sample_done is not None:
             await on_sample_done(idx, result)
@@ -481,7 +819,9 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> None:
     pending_sample_indices = (
         list(range(1, SAMPLE_COUNT + 1))
         if needs_suggestions
-        else missing_sample_indices(project_dir, existing_suggestions)
+        else missing_sample_indices(
+            project_dir, existing_suggestions, config=config, bible=bible,
+        )
     )
     total = (1 if needs_suggestions else 0) + len(pending_sample_indices)
 
@@ -554,6 +894,81 @@ def _style_sample_estimate(config: Config, project_dir: Path, bible: StoryBible,
     )
 
 
+def estimate_style_proof_cost_usd(
+    config: Config,
+    project_dir: Path,
+    bible: StoryBible,
+    template: str,
+    candidate_id: str,
+    *,
+    style_reference: Path | None = None,
+    reference_size: tuple[int, int] | None = None,
+    subject_action: str | None = None,
+    composition: str | None = None,
+) -> float:
+    """Estimate the exact compiled proof request plus a possible brief-model call."""
+    from novel_to_comic.usage import estimate_image_cost, estimate_text_cost
+
+    brief = None
+    brief_path = artifacts.style_sample_brief_path(project_dir)
+    if brief_path.exists():
+        try:
+            cached = json.loads(brief_path.read_text())
+            if (
+                isinstance(cached, dict)
+                and cached.get("source_sha256") == _style_sample_brief_source_key(config, bible)
+            ):
+                brief = (cached.get("brief") or "").strip() or None
+        except (OSError, ValueError):
+            pass
+    brief_cost = 0.0
+    if brief is None and getattr(config, "style_sample_brief_enabled", True):
+        brief_cost = estimate_text_cost(
+            config.effective_prompt_model(),
+            STYLE_SAMPLE_BRIEF_SYSTEM_PROMPT + "\n" + _style_sample_brief_source(bible),
+        )
+
+    proof_config = config.model_copy(update={"style_template": template})
+    request = build_style_sample_request(
+        proof_config,
+        bible,
+        brief or style_sample_fallback_brief(bible),
+        candidate_id=candidate_id,
+        style_reference=style_reference,
+        subject_action=subject_action,
+        composition=composition,
+    )
+    ref_count = request.reference_plan.ref_count
+    ref_sizes = None
+    from novel_to_comic.image_models import image_model_profile_for_config
+
+    if (
+        reference_size is not None
+        and "style" in image_model_profile_for_config(proof_config).supported_roles
+    ):
+        ref_count = 1
+        ref_sizes = [reference_size]
+    elif ref_count and style_reference is not None:
+        try:
+            from PIL import Image
+
+            with Image.open(style_reference) as image:
+                ref_sizes = [image.size]
+        except (OSError, ValueError):
+            ref_sizes = None
+    image_cost = estimate_image_cost(
+        proof_config.effective_image_model(),
+        1,
+        quality=getattr(proof_config, "image_quality", None),
+        ref_count=ref_count,
+        prompt_text=request.compiled.final_prompt,
+        width=request.wire.width,
+        height=request.wire.height,
+        ref_image_sizes=ref_sizes,
+    )
+    return brief_cost + image_cost
+
+
 def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
     from novel_to_comic.usage import estimate_image_cost, estimate_text_cost
 
@@ -574,7 +989,10 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
         sample_count = SAMPLE_COUNT
     else:
         text_cost = 0.0
-        sample_count = len(missing_sample_indices(project_dir, suggestions))
+        sample_count = len(missing_sample_indices(
+            project_dir, suggestions, config=config,
+            bible=artifacts.read_story_bible_safe(project_dir),
+        ))
 
     bible = artifacts.read_story_bible_safe(project_dir)
     if bible is not None:
@@ -582,7 +1000,9 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
             [s.get("template", config.style_template) for s in suggestions]
             if suggestions else [config.style_template] * sample_count
         )
-        missing = set(missing_sample_indices(project_dir, suggestions)) if suggestions else set(range(1, sample_count + 1))
+        missing = set(missing_sample_indices(
+            project_dir, suggestions, config=config, bible=bible,
+        )) if suggestions else set(range(1, sample_count + 1))
         image_cost = sum(
             _style_sample_estimate(config, project_dir, bible, template, f"style_sample:{idx}").cost_usd
             for idx, template in enumerate(templates, 1) if idx in missing
@@ -595,8 +1015,16 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     return text_cost + image_cost
 
 
-def estimate_style_batch_cost_usd(config: Config, project_dir: Path) -> float:
-    """Estimate provider cost for one 'Suggest More Styles' batch (text + samples)."""
+def estimate_style_batch_cost_usd(
+    config: Config,
+    project_dir: Path,
+    sample_count: int = SAMPLE_COUNT,
+    *,
+    has_style_reference: bool = False,
+    reference_size: tuple[int, int] | None = None,
+    suggestion_attempts: int = _GENERATION_MAX_ATTEMPTS,
+) -> float:
+    """Conservatively estimate one suggestion batch, including a possible retry."""
     from novel_to_comic.usage import estimate_image_cost, estimate_text_cost
 
     story_bible_text = ""
@@ -607,23 +1035,40 @@ def estimate_style_batch_cost_usd(config: Config, project_dir: Path) -> float:
         except Exception:
             pass
 
-    text_cost = estimate_text_cost(
+    text_cost = suggestion_attempts * estimate_text_cost(
         config.effective_prompt_model(),
         story_bible_text,
     )
     bible = artifacts.read_story_bible_safe(project_dir)
     if bible is not None:
-        image_cost = sum(
+        estimates = [
             _style_sample_estimate(
                 config, project_dir, bible, config.style_template,
                 f"style_sample:batch:{index}",
-            ).cost_usd
-            for index in range(1, SAMPLE_COUNT + 1)
-        )
+            )
+            for index in range(1, sample_count + 1)
+        ]
+        if has_style_reference:
+            image_cost = sum(
+                estimate_image_cost(
+                    config.effective_image_model(), 1,
+                    quality=getattr(config, "image_quality", None),
+                    ref_count=1,
+                    prompt_text=estimate.prompt_text,
+                    width=estimate.dimensions[0],
+                    height=estimate.dimensions[1],
+                    ref_image_sizes=[reference_size] if reference_size else None,
+                )
+                for estimate in estimates
+            )
+        else:
+            image_cost = sum(estimate.cost_usd for estimate in estimates)
     else:
         image_cost = estimate_image_cost(
-            config.effective_image_model(), SAMPLE_COUNT,
+            config.effective_image_model(), sample_count,
             quality=getattr(config, "image_quality", None),
+            ref_count=1 if has_style_reference else 0,
+            ref_image_sizes=[reference_size] if has_style_reference and reference_size else None,
         )
     return text_cost + image_cost
 

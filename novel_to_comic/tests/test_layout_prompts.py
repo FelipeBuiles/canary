@@ -2,11 +2,12 @@
 
 import asyncio
 import base64
+import hashlib
 import json
+from dataclasses import replace
 
 import pytest
 
-from novel_to_comic.ai.providers.base import RefImage
 from novel_to_comic.ai.providers.litellm_http import LitellmHttpProvider
 from novel_to_comic.ai.providers.reve_layout import ReveLayoutProvider
 from novel_to_comic.ai.providers.selector import pick
@@ -17,6 +18,7 @@ from novel_to_comic.models.prompt import (
     LayoutRegion,
     PromptLayout,
 )
+from novel_to_comic.provider_wire import ProviderWireReference, ProviderWireRequest
 from novel_to_comic.prompt_assembly import (
     ensure_layout,
     generate_layout,
@@ -106,6 +108,48 @@ class TestPromptLayoutSanitized:
         sanitized = _layout().sanitized()
         assert sanitized.regions[1].reference_key == "char_carl"
 
+    def test_normalizes_hierarchy_types_and_frame(self):
+        layout = PromptLayout(
+            width=4096,
+            height=2720,
+            regions=[
+                LayoutRegion(
+                    label="person",
+                    prompt="standing person",
+                    region_type="coarse_detail",
+                ),
+                LayoutRegion(
+                    label="face",
+                    prompt="visible face",
+                    parent="person",
+                    region_type="face",
+                    image_region_index=-1,
+                ),
+            ],
+        )
+        sanitized = layout.sanitized()
+        assert (sanitized.width, sanitized.height) == (4096, 2720)
+        assert sanitized.regions[1].parent == "person"
+        assert sanitized.regions[1].region_type == "face"
+        assert sanitized.regions[1].image_region_index is None
+
+    def test_clears_parent_when_child_is_outside_parent_box(self):
+        layout = PromptLayout(regions=[
+            LayoutRegion(
+                label="person",
+                prompt="person",
+                bbox=LayoutBbox(x0=0.1, y0=0.1, x1=0.5, y1=0.5),
+            ),
+            LayoutRegion(
+                label="face",
+                prompt="face",
+                bbox=LayoutBbox(x0=0.4, y0=0.4, x1=0.8, y1=0.8),
+                parent="person",
+                region_type="face",
+            ),
+        ])
+        assert layout.sanitized().regions[1].parent is None
+
 
 # ── gating ───────────────────────────────────────────────────────────────────
 
@@ -117,9 +161,9 @@ class TestLayoutPassApplies:
     def test_applies_for_image_quality_alias_when_enabled(self):
         assert layout_pass_applies(Config(image_model="image-quality", layout_prompts_enabled=True))
 
-    def test_disabled_by_default_pending_reve_feature_grant(self):
-        # /v2/image/create 403s (partnerapi.layout_endpoint) until Reve
-        # enables the feature for the API key — the pass must default off.
+    def test_disabled_by_default_for_experimental_rollout(self):
+        # The live endpoint is available but still documented as experimental;
+        # production rollout remains an explicit config choice.
         assert not layout_pass_applies(Config(image_model="image-reve"))
 
     def test_skips_non_reve_models(self):
@@ -188,7 +232,11 @@ class TestGenerateLayout:
 class TestSelector:
     @pytest.mark.parametrize("model", ["image-reve", "image-quality", "reve/create"])
     def test_layout_on_reve_picks_layout_provider(self, model: str):
-        provider = pick(model, Config(image_model=model), layout=_layout())
+        provider = pick(
+            model,
+            Config(image_model=model, layout_prompts_enabled=True),
+            layout=_layout(),
+        )
         assert isinstance(provider, ReveLayoutProvider)
 
     def test_layout_on_non_reve_stays_on_gateway(self):
@@ -234,22 +282,79 @@ def _capture_post(monkeypatch, payload: dict):
     return captured
 
 
-def _run_provider(monkeypatch, tmp_path, response_payload, *, refs=None, prompt="a panel"):
+def _wire(*, reference_count: int = 0, prompt: str = "a panel", layout: dict | None = None):
+    references = tuple(
+        ProviderWireReference(
+            index=index,
+            source_path=f"ref-{index}.png",
+            content_sha256=hashlib.sha256(_PNG_BYTES).hexdigest(),
+            role="subject" if index == 0 else "style",
+            role_label="subject:Carl" if index == 0 else "style:Selected",
+            instruction=(
+                "Character identity reference for Carl — match face, hair, build, and wardrobe; "
+                "do not copy its pose or background."
+                if index == 0
+                else "style reference — preserve medium, mark-making and palette; ignore depicted content"
+            ),
+            provider_binding=str(index),
+            entity_id="char_carl" if index == 0 else None,
+            appearance_state_id=None,
+            authority_scope="full_appearance" if index == 0 else "contextual",
+            preserve_facets=("face", "hair", "build") if index == 0 else (),
+            ignore_facets=(),
+        )
+        for index in range(reference_count)
+    )
+    layout = layout or {
+        "prompt": "Carl on a rainy street",
+        "normalized_edit_instruction": prompt,
+        "width": 4096,
+        "height": 2720,
+        "regions": [
+            {
+                "label": "street",
+                "prompt": "rain-slick asphalt street at night, neon reflections",
+                "bbox": {"x0": 0.0, "y0": 0.3, "x1": 1.0, "y1": 1.0},
+                "region_type": "coarse_detail",
+            },
+            {
+                "label": "carl",
+                "prompt": "young man with curly dark hair and wire glasses, walking",
+                "bbox": {"x0": 0.05, "y0": 0.1, "x1": 0.45, "y1": 0.95},
+                "region_type": "coarse_detail",
+                **({"image_index": 0} if reference_count else {}),
+            },
+        ],
+    }
+    wire = ProviderWireRequest(
+        discriminator="canary.provider-wire/1",
+        schema_version=1,
+        requested_alias="image-reve",
+        expected_route="reve",
+        configured_provider_model="reve/create",
+        prompt_parts=(prompt,),
+        references=references,
+        width=1024,
+        height=683,
+        structured_aspect="3:2",
+        controls=(),
+        compiled_request_sha256="c" * 64,
+        execution_fingerprint="",
+        layout=layout,
+    )
+    return replace(wire, execution_fingerprint=wire.recompute_execution_fingerprint())
+
+
+def _run_provider(monkeypatch, response_payload, *, reference_bytes=None, prompt="a panel", layout=None):
     monkeypatch.setenv("REVE_API_KEY", "test-key")
     monkeypatch.delenv("REVE_API_HOST", raising=False)
     captured = _capture_post(monkeypatch, response_payload)
     provider = ReveLayoutProvider()
-    params = provider.request_params(
-        model_alias="image-reve", width=1024, height=683, config=Config(),
-    )
-    params["layout"] = _layout().model_dump()
-    result = asyncio.run(provider.generate(
-        model_alias="image-reve",
-        prompt=prompt,
-        refs=refs or [],
-        width=1024,
-        height=683,
-        params=params,
+    reference_bytes = tuple(reference_bytes or ())
+    wire = _wire(reference_count=len(reference_bytes), prompt=prompt, layout=layout)
+    result = asyncio.run(provider.generate_wire(
+        wire=wire,
+        reference_bytes=reference_bytes,
         config=Config(),
         event_id="evt",
         metadata={},
@@ -269,86 +374,76 @@ def _ok_response(**extra) -> dict:
 
 
 class TestReveLayoutProvider:
-    def test_posts_v2_create_with_description(self, monkeypatch, tmp_path):
-        captured, result = _run_provider(monkeypatch, tmp_path, _ok_response())
-        assert captured["url"] == "https://api.reve.com/v2/image/create"
+    def test_posts_v2_render_layout(self, monkeypatch):
+        captured, result = _run_provider(monkeypatch, _ok_response())
+        assert captured["url"] == "https://api.reve.com/v2/image/render_layout"
         assert captured["headers"]["Authorization"] == "Bearer test-key"
         payload = captured["payload"]
-        assert payload["instruction"] == "a panel"
-        assert payload["aspect_ratio"] == "3:2"
-        labels = [r["label"] for r in payload["description"]["regions"]]
+        assert payload["layout"]["normalized_edit_instruction"] == "a panel"
+        assert "instruction" not in payload
+        assert "description" not in payload
+        assert "aspect_ratio" not in payload
+        assert payload["postprocessing"] == [{"process": "fit_image", "max_dim": 2048}]
+        labels = [r["label"] for r in payload["layout"]["regions"]]
         assert labels == ["street", "carl"]
-        assert payload["description"]["prompt"] == "Carl on a rainy street"
+        assert payload["layout"]["prompt"] == "Carl on a rainy street"
         assert "references" not in payload
         assert result.image_bytes == _PNG_BYTES
         assert result.provider_request_id == "req_123"
 
-    def test_binds_character_reference_to_region(self, monkeypatch, tmp_path):
-        char_ref = tmp_path / "refs" / "char_carl" / "front.png"
-        char_ref.parent.mkdir(parents=True)
-        char_ref.write_bytes(_PNG_BYTES)
-        style_ref = tmp_path / "style.png"
-        style_ref.write_bytes(_PNG_BYTES)
-        refs = [
-            RefImage(path=char_ref, role="subject", label="Carl"),
-            RefImage(path=style_ref, role="style", label="selected style"),
-        ]
-        captured, _ = _run_provider(monkeypatch, tmp_path, _ok_response(), refs=refs)
+    def test_sends_compound_references_and_region_binding(self, monkeypatch):
+        captured, _ = _run_provider(
+            monkeypatch, _ok_response(), reference_bytes=[_PNG_BYTES, _PNG_BYTES]
+        )
         payload = captured["payload"]
         assert len(payload["references"]) == 2
+        assert payload["references"][0]["image"]["data"] == base64.b64encode(_PNG_BYTES).decode("ascii")
         assert payload["references"][0]["prompt"].startswith("Character identity reference for Carl")
-        regions = {r["label"]: r for r in payload["description"]["regions"]}
+        regions = {r["label"]: r for r in payload["layout"]["regions"]}
         assert regions["carl"]["image_index"] == 0
         assert "image_index" not in regions["street"]
 
-    def test_truncates_instruction_to_4000_chars(self, monkeypatch, tmp_path):
-        captured, _ = _run_provider(
-            monkeypatch, tmp_path, _ok_response(), prompt="x" * 5000,
-        )
-        assert len(captured["payload"]["instruction"]) == 4000
+    def test_preserves_wire_instruction_without_provider_rewrite(self, monkeypatch):
+        prompt = "x" * 5000
+        captured, _ = _run_provider(monkeypatch, _ok_response(), prompt=prompt)
+        assert captured["payload"]["layout"]["normalized_edit_instruction"] == prompt
 
-    def test_extracts_layout_echo(self, monkeypatch, tmp_path):
+    def test_extracts_layout_echo(self, monkeypatch):
         echo = {"regions": [{"label": "carl", "prompt": "p", "bbox": {"x0": 0, "y0": 0, "x1": 0.5, "y1": 1}}]}
-        _, result = _run_provider(monkeypatch, tmp_path, _ok_response(description=echo))
+        _, result = _run_provider(monkeypatch, _ok_response(layout=echo))
         assert result.layout_echo == echo
         assert "image" not in (result.raw_response or {})
         assert result.raw_response["request_id"] == "req_123"
 
-    def test_content_violation_raises_refusal(self, monkeypatch, tmp_path):
+    def test_content_violation_raises_refusal(self, monkeypatch):
         from novel_to_comic.ai.errors import AIRefusalError
 
         with pytest.raises(AIRefusalError):
-            _run_provider(monkeypatch, tmp_path, _ok_response(content_violation=True))
+            _run_provider(monkeypatch, _ok_response(content_violation=True))
 
-    def test_missing_api_key_raises(self, monkeypatch, tmp_path):
+    def test_missing_api_key_raises(self, monkeypatch):
         monkeypatch.delenv("REVE_API_KEY", raising=False)
         monkeypatch.delenv("REVE_API_TOKEN", raising=False)
-        _capture_post(monkeypatch, _ok_response())
+        wire = _wire()
         provider = ReveLayoutProvider()
-        with pytest.raises(ValueError, match="REVE_API_KEY"):
-            asyncio.run(provider.generate(
-                model_alias="image-reve",
-                prompt="p",
-                refs=[],
-                width=1024,
-                height=683,
-                params={"layout": _layout().model_dump()},
+        with pytest.raises(ValueError, match="REVE_API_TOKEN|REVE_API_KEY"):
+            asyncio.run(provider.generate_wire(
+                wire=wire,
+                reference_bytes=(),
                 config=Config(),
                 event_id="evt",
                 metadata={},
             ))
 
-    def test_requires_layout_in_params(self, monkeypatch, tmp_path):
+    def test_requires_layout_in_wire(self, monkeypatch):
         monkeypatch.setenv("REVE_API_KEY", "test-key")
         provider = ReveLayoutProvider()
+        wire = replace(_wire(), layout=None, execution_fingerprint="")
+        wire = replace(wire, execution_fingerprint=wire.recompute_execution_fingerprint())
         with pytest.raises(ValueError, match="layout"):
-            asyncio.run(provider.generate(
-                model_alias="image-reve",
-                prompt="p",
-                refs=[],
-                width=1024,
-                height=683,
-                params={},
+            asyncio.run(provider.generate_wire(
+                wire=wire,
+                reference_bytes=(),
                 config=Config(),
                 event_id="evt",
                 metadata={},
@@ -358,7 +453,6 @@ class TestReveLayoutProvider:
 # ── end-to-end client wiring ─────────────────────────────────────────────────
 
 
-@pytest.mark.skip(reason="direct Reve v2 raw transport was removed at clean cutover")
 def test_generate_image_with_layout_hits_v2_and_writes_echo_sidecar(monkeypatch, tmp_path):
     from novel_to_comic import artifacts
     from novel_to_comic.ai import client
@@ -368,25 +462,90 @@ def test_generate_image_with_layout_hits_v2_and_writes_echo_sidecar(monkeypatch,
     monkeypatch.setattr(client, "_insert_event", lambda **kwargs: None)
     monkeypatch.setattr(client, "_finalize_event", lambda **kwargs: None)
     echo = {"regions": [{"label": "carl", "prompt": "p", "bbox": {"x0": 0, "y0": 0, "x1": 0.5, "y1": 1}}]}
-    captured = _capture_post(monkeypatch, _ok_response(description=echo))
+    captured = _capture_post(monkeypatch, _ok_response(layout=echo))
 
     output_path = tmp_path / "draw" / "scene_001" / "panel_001.png"
-    result = asyncio.run(client.generate_image(
-        config=Config(image_model="image-reve"),
-        model="image-reve",
-        prompt="a panel",
+    result = asyncio.run(client.generate_wire_image(
+        config=Config(image_model="image-reve", layout_prompts_enabled=True),
+        wire=_wire(prompt="a panel"),
         output_path=output_path,
-        width=1024,
-        height=683,
-        layout=_layout(),
         feature="draw.panel_image",
     ))
 
-    assert captured["url"] == "https://api.reve.com/v2/image/create"
+    assert captured["url"] == "https://api.reve.com/v2/image/render_layout"
     assert result.value == output_path
     assert output_path.read_bytes() == _PNG_BYTES
     sidecar = artifacts.asset_layout_echo_path(output_path)
     assert json.loads(sidecar.read_text()) == echo
+
+
+def test_render_layout_failure_falls_back_to_flat_v2_create(monkeypatch, tmp_path):
+    from novel_to_comic.ai import client
+    from novel_to_comic.ai.providers.base import ProviderRawResult
+
+    monkeypatch.setattr(client, "_insert_event", lambda **kwargs: None)
+    monkeypatch.setattr(client, "_finalize_event", lambda **kwargs: None)
+    captured: dict = {}
+
+    async def fail_layout(self, **kwargs):
+        captured["layout_wire"] = kwargs["wire"]
+        raise RuntimeError("render_layout unavailable")
+
+    async def fake_gateway(self, **kwargs):
+        captured["fallback_wire"] = kwargs["wire"]
+        return ProviderRawResult(
+            image_bytes=_PNG_BYTES,
+            raw_response={"model": "reve/create"},
+        )
+
+    monkeypatch.setattr(ReveLayoutProvider, "generate_wire", fail_layout)
+    monkeypatch.setattr(LitellmHttpProvider, "generate_wire", fake_gateway)
+    monkeypatch.setattr(
+        "novel_to_comic.provider_wire.materialize_wire_references",
+        lambda wire: (),
+    )
+
+    output_path = tmp_path / "panel.png"
+    asyncio.run(client.generate_wire_image(
+        config=Config(image_model="image-reve", layout_prompts_enabled=True),
+        wire=_wire(prompt="a panel"),
+        output_path=output_path,
+    ))
+
+    assert captured["layout_wire"].layout is not None
+    assert captured["fallback_wire"].layout is None
+    assert output_path.read_bytes() == _PNG_BYTES
+
+
+def test_render_layout_refusal_does_not_fall_back(monkeypatch, tmp_path):
+    from novel_to_comic.ai import client
+    from novel_to_comic.ai.errors import AIRefusalError
+
+    monkeypatch.setattr(client, "_insert_event", lambda **kwargs: None)
+    monkeypatch.setattr(client, "_finalize_event", lambda **kwargs: None)
+    called = {"fallback": False}
+
+    async def refuse_layout(self, **kwargs):
+        raise AIRefusalError("provider refusal", response_data={"content_violation": True})
+
+    async def fail_gateway(self, **kwargs):
+        called["fallback"] = True
+        raise AssertionError("content refusals must not be retried through create")
+
+    monkeypatch.setattr(ReveLayoutProvider, "generate_wire", refuse_layout)
+    monkeypatch.setattr(LitellmHttpProvider, "generate_wire", fail_gateway)
+    monkeypatch.setattr(
+        "novel_to_comic.provider_wire.materialize_wire_references",
+        lambda wire: (),
+    )
+
+    with pytest.raises(AIRefusalError):
+        asyncio.run(client.generate_wire_image(
+            config=Config(image_model="image-reve", layout_prompts_enabled=True),
+            wire=_wire(prompt="a panel"),
+            output_path=tmp_path / "panel.png",
+        ))
+    assert called["fallback"] is False
 
 
 # ── prompt JSON round-trip ───────────────────────────────────────────────────

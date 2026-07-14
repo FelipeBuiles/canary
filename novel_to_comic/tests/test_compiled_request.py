@@ -703,4 +703,4 @@ class TestReferenceSelectionUnchanged:
 
 
 def test_compiled_request_schema_version():
-    assert COMPILED_REQUEST_SCHEMA_VERSION == 1
+    assert COMPILED_REQUEST_SCHEMA_VERSION == 2

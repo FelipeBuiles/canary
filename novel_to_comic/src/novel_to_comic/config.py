@@ -166,7 +166,7 @@ class Config(BaseModel):
     panel_model: str = GATEWAY_PANEL_BALANCED
     prompt_model: str = GATEWAY_PROMPT_BALANCED
     image_provider: Literal["gemini", "openai", "openrouter", "together", "reve"] = "gemini"
-    image_model: str = GATEWAY_IMAGE_BALANCED
+    image_model: str = GATEWAY_IMAGE_QUALITY
     fallback_image_model: str = GATEWAY_IMAGE_FAST
 
     # Output language for generated screenplay dialogue, panel text, and prompt artifacts.
@@ -216,10 +216,10 @@ class Config(BaseModel):
     # falls back to the flat prompt when disabled, when the pass fails, or for
     # any other image model.
     #
-    # Default OFF: layout draws call Reve's /v2/image/create directly, which
-    # is gated behind the partner feature `partnerapi.layout_endpoint` and
-    # returns 403 FEATURE_NOT_ENABLED until Reve enables it for the API key.
-    # Flip to true once the key has the feature.
+    # Default OFF: Reve documents render_layout as experimental, so rollout is
+    # explicit while we collect visual-quality evidence. When enabled, panel
+    # requests use the compiled layout wire and Reve's
+    # /v2/image/render_layout endpoint; failures fall back to v2 create.
     layout_prompts_enabled: bool = False
 
     # Negative prompt — only applied for Together AI / SDXL models (Gemini native ignores it)
@@ -259,9 +259,15 @@ class Config(BaseModel):
         if self._one_shot_image_model_alias is not None:
             return self._one_shot_image_model_alias
         # In dev_mode an explicit user override wins. Only fall back to
-        # fallback_image_model when image_model is still at its default.
+        # fallback_image_model when image_model is still at its default. Treat
+        # the previous balanced default as a legacy default too, so existing
+        # project configs retain their dev-mode behavior after this default
+        # changes to the quality/Reve route.
         if self.dev_mode:
-            if self.image_model == Config.model_fields["image_model"].default:
+            if self.image_model in {
+                Config.model_fields["image_model"].default,
+                GATEWAY_IMAGE_BALANCED,
+            }:
                 return self.fallback_image_model or GATEWAY_IMAGE_FAST
             return self.image_model
         return self._effective_stage_model("image")
@@ -474,6 +480,11 @@ continuity_mode: "{config.continuity_mode}"  # off | text_only | ref_only | hybr
 # image_concurrency: 3  # parallel image generations; unset → provider default
 #                       # (Gemini/Vertex: 3, others: max_concurrent_requests)
 negative_prompt: "{config.negative_prompt}"  # applied to Together AI models only
+
+# Layout-aware image prompting. Reve's render_layout endpoint is experimental.
+# When enabled, newly compiled Reve panel requests use structural regions and
+# fall back to standard v2 create if layout transport fails.
+layout_prompts_enabled: {str(config.layout_prompts_enabled).lower()}
 
 # ---------------------------------------------------------------------------
 # Style template — THIS IS THE MOST IMPORTANT SETTING

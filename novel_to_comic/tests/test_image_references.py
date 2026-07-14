@@ -86,7 +86,7 @@ def _prompt(
 
 
 class TestImageModelProfile:
-    def test_reve_has_hard_cap_four(self):
+    def test_reve_has_conservative_product_cap_four(self):
         profile = image_model_profile(GATEWAY_IMAGE_REVE)
         assert profile.route is ImageRoute.REVE
         assert profile.max_references == 4

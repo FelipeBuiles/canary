@@ -441,10 +441,11 @@ Runtime image calls go through LiteLLM OpenAI-compatible image endpoints.
 `image_provider` is legacy metadata and should not be used for routing new code.
 
 Defaults:
-- `image_model: "image-balanced"`
+- `image_model: "image-quality"` (Reve)
 - `fallback_image_model: "image-fast"`
 
-`dev_mode: true` substitutes `fallback_image_model` when `image_model` is at its default.
+`dev_mode: true` substitutes `fallback_image_model` when `image_model` is at the
+new default (or the legacy `image-balanced` default).
 
 Two new config fields control LLM pre-processing passes before image generation:
 - `visual_brief_enabled` (default `True`): rewrites each panel's structured spec into flowing prose via `prompt_model`. Falls back to deterministic distilled prompt on failure.
@@ -452,15 +453,20 @@ Two new config fields control LLM pre-processing passes before image generation:
 
 Current image aliases:
 - `image-fast`: Gemini 3.1 Flash Lite Image route, also used by dev mode.
-- `image-balanced`: Gemini 3.1 Flash Lite Image route and the normal default.
+- `image-balanced`: Gemini 3.1 Flash Lite Image route, retained for explicit balanced projects and legacy configs.
 - `image-quality`: Reve image generation (high-fidelity). `REVE_ALIASES` includes both `image-quality` and `image-reve`.
 - `image-reve`: Reve image generation (same provider as `image-quality`).
+
+Set `layout_prompts_enabled: true` in the project `config.yaml` to use Reve v2
+`render_layout` for newly compiled panel requests. The endpoint is experimental;
+layout transport failures fall back to v2 `create`, while existing frozen
+requests remain unchanged.
 
 `is_reve_model(model)` returns true for `image-reve`, `image-quality`, and any alias in `REVE_ALIASES` or starting with `reve/`.
 `is_gpt_image_2(model)` only matches literal `gpt-image-2` / `openai/gpt-image-2` strings; `GPT_IMAGE_2_ALIASES` is now empty — no gateway alias routes to GPT Image 2 by default.
 
 Draw-stage reference behavior is provider-aware:
-- **Reve** (`is_reve_model`): uploads up to 4 refs — up to 3 subject crops (one per character, framing-selected), then continuity, prop, style, location plate to fill remaining slots. Uses `_reve_refs()`.
+- **Reve** (`is_reve_model`): uploads up to 4 refs — up to 3 subject crops (one per character, framing-selected), then continuity, prop, style, location plate to fill remaining slots. Uses `_reve_refs()`. Ordinary requests use v2 `/image/create` with `<frame>N</frame>` markers; when `layout_prompts_enabled` is on, panel requests use v2 `/image/render_layout` with compound references and structural region bindings. Reve's API accepts up to 8 references, but the product selector keeps the four-reference budget to reduce conditioning noise.
 - **GPT Image 2** (`is_gpt_image_2`): uploads a minimal subject reference set (character crops + props only), keeps style samples/location plates/continuity text-only to avoid edit-reference leakage. Only triggered for literal `gpt-image-2` model strings now.
 - **Other routes** (Gemini etc.): can use style samples, location plates, and a previous-panel image for explicit `match_cut` transitions.
 

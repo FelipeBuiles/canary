@@ -444,6 +444,42 @@ def style_sample_brief_path(project_dir: Path) -> Path:
     return project_dir / "samples" / "style_sample_brief.json"
 
 
+def style_direction_path(project_dir: Path, direction_id: str) -> Path:
+    import re
+
+    if not re.fullmatch(r"direction_[a-f0-9]{16}", direction_id or ""):
+        raise ValueError("invalid style direction id")
+    root = project_dir.resolve()
+    base = (root / "samples" / "directions").resolve()
+    candidate = (base / direction_id / "direction.json").resolve()
+    if not base.is_relative_to(root) or not candidate.is_relative_to(base):
+        raise ValueError("style direction path escapes project")
+    return candidate
+
+
+def style_direction_image_path(project_dir: Path, direction_id: str, suffix: str) -> Path:
+    if suffix not in {".png", ".jpg", ".webp"}:
+        raise ValueError("invalid style direction image suffix")
+    direction_dir = style_direction_path(project_dir, direction_id).parent
+    candidate = (direction_dir / f"reference{suffix}").resolve()
+    if candidate.parent != direction_dir:
+        raise ValueError("style direction image path escapes project")
+    return candidate
+
+
+def style_validation_path(project_dir: Path, suggestion_id: str) -> Path:
+    import re
+
+    if not re.fullmatch(r"style_[a-f0-9]{16}", suggestion_id or ""):
+        raise ValueError("invalid style suggestion id")
+    root = project_dir.resolve()
+    base = (root / "samples" / "validations").resolve()
+    candidate = (base / f"{suggestion_id}.png").resolve()
+    if not base.is_relative_to(root) or candidate.parent != base:
+        raise ValueError("style validation path escapes project")
+    return candidate
+
+
 # ---------------------------------------------------------------------------
 # Compose pages
 # ---------------------------------------------------------------------------

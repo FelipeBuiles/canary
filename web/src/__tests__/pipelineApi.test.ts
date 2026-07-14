@@ -8,7 +8,7 @@ import {
   regenPanel,
   regenPanelWithInstruction,
 } from "../api/pipeline";
-import { fetchStyleSampleEstimate } from "../api/styles";
+import { createStyleDirection, fetchStyleSampleEstimate, generateStyleSamples, generateStyleValidation, setActiveStyle, suggestStyles } from "../api/styles";
 import { apiFetch } from "../api/client";
 
 vi.mock("../api/client", () => ({
@@ -79,6 +79,52 @@ describe("panel regeneration API", () => {
     expect(mockedApiFetch).toHaveBeenCalledWith(
       "/projects/proj%20one/styles/sample-estimate",
     );
+  });
+
+  it("sends a custom text and image direction as multipart data", async () => {
+    const image = new File(["pixels"], "mood.webp", { type: "image/webp" });
+    await createStyleDirection("proj one", {
+      direction: "Luminous ink wash",
+      image,
+      withNeighbors: true,
+    });
+
+    const [, options] = mockedApiFetch.mock.calls[0];
+    expect(mockedApiFetch.mock.calls[0][0]).toBe("/projects/proj%20one/styles/direction");
+    expect(options?.method).toBe("POST");
+    expect(options?.body).toBeInstanceOf(FormData);
+    const body = options?.body as FormData;
+    expect(body.get("direction_text")).toBe("Luminous ink wash");
+    expect(body.get("image")).toBe(image);
+    expect(body.get("with_neighbors")).toBe("true");
+  });
+
+  it("uses stable ids for seeded suggestions, proof regeneration, and selection", async () => {
+    await suggestStyles("proj", "direction-1");
+    await generateStyleSamples("proj", ["style-1"]);
+    await setActiveStyle("proj", "style-1");
+
+    expect(mockedApiFetch).toHaveBeenNthCalledWith(1, "/projects/proj/styles/suggest", {
+      method: "POST",
+      body: JSON.stringify({ direction_id: "direction-1" }),
+    });
+    expect(mockedApiFetch).toHaveBeenNthCalledWith(2, "/projects/proj/styles/generate-samples", {
+      method: "POST",
+      body: JSON.stringify({ ids: ["style-1"] }),
+    });
+    expect(mockedApiFetch).toHaveBeenNthCalledWith(3, "/projects/proj/styles/active", {
+      method: "PATCH",
+      body: JSON.stringify({ id: "style-1" }),
+    });
+  });
+
+  it("requests an optional action audition by stable style id", async () => {
+    await generateStyleValidation("proj", "style-1");
+
+    expect(mockedApiFetch).toHaveBeenCalledWith("/projects/proj/styles/validation", {
+      method: "POST",
+      body: JSON.stringify({ id: "style-1" }),
+    });
   });
 
   it("labels preview requests with the non-paid dev-content switch", async () => {

@@ -1,14 +1,15 @@
 {
-  "compiled_request_sha256": "8f8a61c9d5c4eac96d182306b61664b55860d0de5462537ced3dd7e197b53f56",
+  "compiled_request_sha256": "01bc30e629d5fb5a2d4b6bdfb086cbf42ef3901063c4d72af34454eab9c029bd",
   "configured_provider_model": "reve/create",
   "controls": [],
   "discriminator": "canary.provider-wire/1",
-  "execution_fingerprint": "8d66d991c380c72686d2b0cc94086dcf426754960abff5e1338787c5c37e08f2",
+  "execution_fingerprint": "9eb4d28967990e52632dbee2e1dff31798159450e234f4f7ebfa7b836683f0e2",
   "expected_route": "reve",
   "height": 1344,
   "prompt_parts": [
-    "Mara: CHAR_MARA_CANONICAL_SENTINEL\nTavern: LOC_TAVERN_CANONICAL_SENTINEL\n\nComposition: medium shot\n\nink wash\n\n<img>0</img>: identity reference for char_mara — match face, hair and build; do not copy its pose or background\n<img>1</img>: object reference for prop_key — preserve object; ignore reference backdrop\n<img>2</img>: location reference for loc_tavern — preserve architecture, landmarks and materials\n\n- exactly 1 character\n- one body per listed character\n- single frozen instant, not a sequence or split-screen\n- no text, captions, speech balloons, or lettering anywhere in the image\n- One unified scene filling the entire canvas — no sub-panels, gutters, internal borders, page layouts, or split-screen compositions.\n\nOutput dimensions: 768x1344\nOutput shape: portrait\nNative aspect: 9:16"
+    "Mara: CHAR_MARA_CANONICAL_SENTINEL\nTavern: LOC_TAVERN_CANONICAL_SENTINEL\n\nComposition: medium shot\n\nink wash\n\n<frame>0</frame>: identity reference for char_mara — match face, hair and build; do not copy its pose or background\n<frame>1</frame>: object reference for prop_key — preserve object; ignore reference backdrop\n<frame>2</frame>: location reference for loc_tavern — preserve architecture, landmarks and materials\n\n- exactly 1 character\n- one body per listed character\n- single frozen instant, not a sequence or split-screen\n- no text, captions, speech balloons, or lettering anywhere in the image\n- One unified scene filling the entire canvas — no sub-panels, gutters, internal borders, page layouts, or split-screen compositions.\n\nOutput dimensions: 768x1344\nOutput shape: portrait\nNative aspect: 9:16"
   ],
+  "layout": null,
   "references": [
     {
       "appearance_state_id": null,

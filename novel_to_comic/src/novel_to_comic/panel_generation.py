@@ -262,6 +262,7 @@ def compile_panel_request(
         selected_style_text=selected_style,
         controls=controls,
         asset_kind="panel",
+        layout_enabled=getattr(config, "layout_prompts_enabled", False),
     )
     wire = compile_provider_wire_request(compiled)
     return PanelRequest(
@@ -455,7 +456,26 @@ def apply_panel_experiment(
     updated = wire.prompt_parts[:-1] + (wire.prompt_parts[-1] + marker,)
     from dataclasses import replace
 
-    updated_wire = replace(wire, prompt_parts=updated, execution_fingerprint="")
+    updated_layout = wire.layout
+    if updated_layout is not None:
+        # This is already provider-bound wire data. Do not round-trip it
+        # through PromptLayout: that semantic model intentionally does not
+        # carry Reve-only fields such as region image_index bindings.
+        updated_layout = wire.layout_payload()
+        if updated_layout is None:
+            raise ValueError("layout wire unexpectedly has no layout payload")
+        normalized_instruction = (
+            updated_layout.get("normalized_edit_instruction")
+            or wire.prompt_parts[-1]
+        )
+        updated_layout["normalized_edit_instruction"] = normalized_instruction + marker
+
+    updated_wire = replace(
+        wire,
+        prompt_parts=updated,
+        layout=updated_layout,
+        execution_fingerprint="",
+    )
     experiment_hash = hashlib.sha256(
         json.dumps(
             {

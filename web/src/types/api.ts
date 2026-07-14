@@ -27,6 +27,7 @@ export interface ConfigOverrides {
   screenplay_model?: string;
   panel_model?: string;
   prompt_model?: string;
+  layout_prompts_enabled?: boolean;
   dev_image_scale?: number;
   dev_image_steps?: number;
   dev_image_concurrency?: number;
@@ -510,16 +511,30 @@ export interface LayoutBbox {
   y1: number;
 }
 
+export type LayoutRegionType =
+  | "coarse_detail"
+  | "medium_detail"
+  | "fine_detail"
+  | "text"
+  | "hand"
+  | "face";
+
 export interface LayoutRegion {
   label: string;
   prompt: string;
   bbox: LayoutBbox;
   reference_key?: string | null;
+  parent?: string | null;
+  region_type?: LayoutRegionType | null;
+  image_region_index?: number | null;
 }
 
 export interface PromptLayout {
   prompt?: string | null;
+  normalized_edit_instruction?: string | null;
   regions: LayoutRegion[];
+  width?: number | null;
+  height?: number | null;
 }
 
 export interface ImagePrompt {

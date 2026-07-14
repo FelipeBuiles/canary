@@ -619,7 +619,7 @@ class TestDiagnosticsDoNotAffectCompiledHash:
 
 
 def test_schema_version_unchanged():
-    assert COMPILED_REQUEST_SCHEMA_VERSION == 1
+    assert COMPILED_REQUEST_SCHEMA_VERSION == 2
 
 
 # ---------------------------------------------------------------------------
