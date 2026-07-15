@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from novel_to_comic import artifacts
-from novel_to_comic.config import Config, config_for_image_model_alias
+from novel_to_comic.config import Config, config_for_image_model_alias, mock_mode_active
 from novel_to_comic.models.prompt import ImagePrompt
 from novel_to_comic.stages import REGISTRY
 from novel_to_comic.state import (
@@ -659,10 +659,10 @@ def prepare_generation_request(
         prepared=True,
     )
     estimate_credits = credit_estimate_for_provider_cost(
-        estimate.cost_usd,
+        0.0 if mock_mode_active(_regen_config) else estimate.cost_usd,
         "draw",
         reserve=False,
-        zero_cost_estimate=1,
+        zero_cost_estimate=0 if mock_mode_active(_regen_config) else 1,
     )["estimate_credits"]
     fingerprint = panel_request.wire.execution_fingerprint
     frozen = submit_frozen_request(
@@ -1042,7 +1042,9 @@ async def regen_panel(
     )
     from ..credits import credit_estimate_for_provider_cost
     panel_estimate_credits = credit_estimate_for_provider_cost(
-        panel_estimate.cost_usd, "draw", reserve=False, zero_cost_estimate=1,
+        0.0 if mock_mode_active(regen_config) else panel_estimate.cost_usd,
+        "draw", reserve=False,
+        zero_cost_estimate=0 if mock_mode_active(regen_config) else 1,
     )["estimate_credits"]
     clear_panel_acceptance(project_dir, scene_id, panel_number)
     clear_panel_flag(project_dir, scene_id, panel_number)

@@ -28,7 +28,7 @@ from fastapi import (
 from pydantic import BaseModel
 
 from novel_to_comic.ai import ai_request_context
-from novel_to_comic.config import Config, save_config
+from novel_to_comic.config import Config, mock_mode_active, save_config
 from novel_to_comic.generation_input import GenerationPromptInput
 from novel_to_comic.models.prompt import ImagePrompt, PromptAnchor
 from novel_to_comic.models.story_bible import StoryBible
@@ -294,6 +294,8 @@ def _cover_prompt(config: Config, bible: StoryBible) -> str:
 
 
 def _project_cover_credit_estimate(config: Config) -> dict:
+    if mock_mode_active(config):
+        return dict(credit_estimate_for_provider_cost(0.0, "cast", reserve=False))
     return dict(credit_estimate_for_provider_cost(
         estimate_image_cost(
             config.effective_image_model(), 1, width=768, height=1024,

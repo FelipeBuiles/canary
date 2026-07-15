@@ -73,8 +73,55 @@ def _asset_matches_generation_meta(output_path: Path, expected: dict) -> bool:
     except Exception:
         return False
     expected_fingerprint = (expected.get("parameters") or {}).get("execution_fingerprint")
-    actual_fingerprint = (actual.get("parameters") or {}).get("execution_fingerprint")
-    return bool(expected_fingerprint and actual_fingerprint) and actual_fingerprint == expected_fingerprint
+    actual_parameters = actual.get("parameters") or {}
+    actual_fingerprint = actual_parameters.get("execution_fingerprint")
+    if not (
+        expected_fingerprint
+        and actual_fingerprint
+        and actual_fingerprint == expected_fingerprint
+    ):
+        return False
+
+    # New panel metadata commits the exact PNG bytes alongside the request
+    # fingerprint. This closes the restart window where metadata for a new
+    # request has been promoted but its image has not. Older sidecars remain
+    # readable and continue to use fingerprint-only cache validation.
+    expected_output_sha256 = actual_parameters.get("output_sha256")
+    if expected_output_sha256:
+        try:
+            actual_output_sha256 = hashlib.sha256(output_path.read_bytes()).hexdigest()
+        except OSError:
+            return False
+        if actual_output_sha256 != expected_output_sha256:
+            return False
+    return True
+
+
+def _publish_generated_panel(
+    generation_path: Path,
+    output_path: Path,
+    meta_payload: dict,
+) -> None:
+    """Crash-safely publish a generated PNG and its sidecars.
+
+    Metadata is promoted before the image. Until the final atomic image rename,
+    cache validation either sees no PNG or rejects the previous PNG by its
+    content hash. Once the image rename lands, a restarted draw can safely skip
+    the completed panel.
+    """
+    parameters = dict(meta_payload.get("parameters", {}))
+    parameters["output_sha256"] = hashlib.sha256(generation_path.read_bytes()).hexdigest()
+    committed_meta = {**meta_payload, "parameters": parameters}
+    _write_generation_meta(generation_path, committed_meta)
+
+    temporary_meta = artifacts.asset_meta_path(generation_path)
+    temporary_meta.replace(artifacts.asset_meta_path(output_path))
+
+    temporary_layout = artifacts.asset_layout_echo_path(generation_path)
+    if temporary_layout.exists():
+        temporary_layout.replace(artifacts.asset_layout_echo_path(output_path))
+
+    generation_path.replace(output_path)
 
 
 def _image_dimensions(path: Path) -> tuple[int | None, int | None]:
@@ -609,11 +656,13 @@ async def _generate_panel(
         reference_plan = panel_request.reference_plan
         _surface_plan_warnings(reference_plan)
 
-        generation_path = output_path
-        if force:
-            generation_path = output_path.with_name(
-                f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
-            )
+        # Always generate away from the canonical panel path. Publishing the
+        # image and its metadata happens only after the provider result is
+        # complete, so a server stop cannot leave a visible half-committed
+        # panel that Continue unnecessarily regenerates.
+        generation_path = output_path.with_name(
+            f".{output_path.stem}.{uuid.uuid4().hex}.tmp{output_path.suffix}"
+        )
         compiled = panel_request.compiled
         generation_prompt = compiled.final_prompt
         meta_payload = {
@@ -724,34 +773,32 @@ async def _generate_panel(
             if result:
                 meta_payload = _meta_with_output_aspect(result, meta_payload, prompt)
                 _raise_if_aspect_mismatch(meta_payload)
-            if force and result:
+            if result:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
-                record_current_panel_version(
-                    project_dir,
-                    prompt.scene_id,
-                    prompt.panel_number,
-                    reason="before_regenerate",
-                )
-                generation_path.replace(output_path)
-                tmp_echo = artifacts.asset_layout_echo_path(generation_path)
-                if tmp_echo.exists():
-                    tmp_echo.replace(artifacts.asset_layout_echo_path(output_path))
-                record_current_panel_version(
-                    project_dir,
-                    prompt.scene_id,
-                    prompt.panel_number,
-                    reason="regenerate",
-                )
+                if force:
+                    record_current_panel_version(
+                        project_dir,
+                        prompt.scene_id,
+                        prompt.panel_number,
+                        reason="before_regenerate",
+                    )
+                _publish_generated_panel(generation_path, output_path, meta_payload)
+                if force:
+                    record_current_panel_version(
+                        project_dir,
+                        prompt.scene_id,
+                        prompt.panel_number,
+                        reason="regenerate",
+                    )
                 result = output_path
         finally:
-            if force and generation_path.exists():
+            if generation_path.exists():
                 generation_path.unlink(missing_ok=True)
-            if force:
-                artifacts.asset_layout_echo_path(generation_path).unlink(missing_ok=True)
+            artifacts.asset_meta_path(generation_path).unlink(missing_ok=True)
+            artifacts.asset_layout_echo_path(generation_path).unlink(missing_ok=True)
 
         if result:
             artifacts.asset_failure_path(output_path).unlink(missing_ok=True)
-            _write_generation_meta(output_path, meta_payload)
         if ctx is not None and panel_started_at is not None:
             ctx.emit_panel_done(
                 prompt.scene_id, prompt.panel_number,

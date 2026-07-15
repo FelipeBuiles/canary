@@ -40,6 +40,9 @@ _SETTABLE_FIELDS = {
 def get_config(project=Depends(get_project)):
     project_dir, config, state = project
     data = config.model_dump()
+    # Mock replay is an operator-only local facility, not an end-user setting.
+    data.pop("mock_mode", None)
+    data.pop("mock_model_base_url", None)
     # Mask secrets: show whether they're set, not the values
     for key in _SECRET_FIELDS:
         data[key] = "***" if data.get(key) else ""

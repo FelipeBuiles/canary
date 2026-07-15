@@ -149,7 +149,21 @@ _ENV_KEYS: dict[str, str] = {
     "LITELLM_BASE_URL": "litellm_base_url",
     "LITELLM_API_KEY": "litellm_api_key",
     "AI_BILL_FAILED_REQUESTS": "ai_bill_failed_requests",
+    "CANARY_MOCK_MODEL_BASE_URL": "mock_model_base_url",
 }
+
+
+def mock_mode_active(config: "Config") -> bool:
+    """Return whether the operator-authorized zero-cost replay mode is active.
+
+    The project flag alone is deliberately insufficient: production project
+    configuration must never be able to redirect model traffic or bypass the
+    credit gate without an explicit server-level opt-in.
+    """
+    if not config.mock_mode:
+        return False
+    raw = os.environ.get("CANARY_MOCK_GENERATIONS_ENABLED", "false").strip().lower()
+    return raw not in {"", "0", "false", "no", "off"}
 
 
 class Config(BaseModel):
@@ -162,6 +176,11 @@ class Config(BaseModel):
     litellm_base_url: str = "http://localhost:4000"
     litellm_api_key: str = "sk-local-canary"
     ai_bill_failed_requests: FailedRequestBillingPolicy = "provider_usage_only"
+
+    # Hidden local demo/test mode. It is not exposed by the config API and is
+    # inert unless CANARY_MOCK_GENERATIONS_ENABLED is also set by the operator.
+    mock_mode: bool = False
+    mock_model_base_url: str = "http://127.0.0.1:4010"
 
     # Google Gemini access. Vertex AI uses Application Default Credentials
     # instead of Gemini Developer API keys.
@@ -473,6 +492,7 @@ target_language: "{config.language_code()}"
 # balanced alias
 # unless a custom image_model is explicitly configured.
 dev_mode: {str(config.dev_mode).lower()}
+mock_mode: {str(config.mock_mode).lower()}  # requires operator env gate; not shown in UI
 dev_image_scale: {config.dev_image_scale}
 dev_image_steps: {config.dev_image_steps}
 dev_image_concurrency: {config.dev_image_concurrency}
