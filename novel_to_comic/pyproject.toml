@@ -40,6 +40,7 @@ otel = [
 
 [project.scripts]
 pipeline = "novel_to_comic.cli:cli"
+canary-mock-models = "novel_to_comic.mock_models:main"
 
 [build-system]
 requires = ["setuptools>=75.0"]

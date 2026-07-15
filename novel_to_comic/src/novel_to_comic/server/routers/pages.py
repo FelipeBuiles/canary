@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import ValidationError
 
 from novel_to_comic import artifacts
-from novel_to_comic.config import Config, LANGUAGE_NAMES, save_config
+from novel_to_comic.config import Config, LANGUAGE_NAMES, mock_mode_active, save_config
 from novel_to_comic.ai import ai_request_context
 from novel_to_comic.assembly.html_renderer import build_page_html, THEMES, FONT_PAIRS
 from novel_to_comic.layout_planning import (
@@ -560,7 +560,10 @@ async def generate_lettering_style(
 
     # Credit pre-check: one short LLM call (debited on success below). Floor at
     # 1 credit so a zero-balance user is blocked before the call is made.
-    assert_sufficient_credits(get_db(), user_id, 1, action="lettering_style_generate")
+    assert_sufficient_credits(
+        get_db(), user_id, 0 if mock_mode_active(config) else 1,
+        action="lettering_style_generate",
+    )
 
     with ai_request_context(
         user_id=user_id,
@@ -688,7 +691,9 @@ async def translate_page_bubbles(
     # large LLM call. Floor at 1 credit/page so the cost scales with book size
     # and a zero-balance user is blocked before the call.
     assert_sufficient_credits(
-        get_db(), user_id, max(1, len(page_paths)), action="translate_bubbles",
+        get_db(), user_id,
+        0 if mock_mode_active(config) else max(1, len(page_paths)),
+        action="translate_bubbles",
     )
 
     pages = [ComicPage.model_validate_json(path.read_text()) for path in page_paths]
@@ -766,7 +771,10 @@ async def translate_single_page_bubbles(
 
     # Credit pre-check: one page's worth of translation is a single LLM call;
     # floor at 1 credit so a zero-balance user is blocked before the call.
-    assert_sufficient_credits(get_db(), user_id, 1, action="translate_bubbles")
+    assert_sufficient_credits(
+        get_db(), user_id, 0 if mock_mode_active(config) else 1,
+        action="translate_bubbles",
+    )
 
     for panel in cp.panels:
         for bubble in panel.bubbles:

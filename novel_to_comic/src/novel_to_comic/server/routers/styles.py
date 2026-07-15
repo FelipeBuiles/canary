@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from novel_to_comic import artifacts
 from novel_to_comic.ai import ai_request_context
 from novel_to_comic.ai.errors import AITransportError
-from novel_to_comic.config import Config, save_config
+from novel_to_comic.config import Config, mock_mode_active, save_config
 from novel_to_comic.image_models import image_model_profile_for_config
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.non_panel_generation import asset_matches_request
@@ -115,6 +115,8 @@ def _suggest_batch_credit_estimate(
     has_style_reference: bool = False,
     reference_size: tuple[int, int] | None = None,
 ) -> dict:
+    if mock_mode_active(config):
+        return dict(credit_estimate_for_provider_cost(0.0, "style", reserve=True))
     cost_usd = estimate_style_batch_cost_usd(
         config, project_dir, sample_count,
         has_style_reference=has_style_reference,
@@ -131,6 +133,8 @@ def _style_sample_credit_estimate(
     exact_cost_usd: float | None = None,
 ) -> dict:
     """Keep one-sample preflight and generation credit checks in lockstep."""
+    if mock_mode_active(config):
+        return dict(credit_estimate_for_provider_cost(0.0, "style", reserve=reserve))
     if exact_cost_usd is None:
         cost_kwargs = {"quality": getattr(config, "image_quality", None)}
         if has_style_reference and _supports_style_reference(config):
@@ -153,6 +157,13 @@ def _direction_credit_estimates(
     candidate_id: str = "direction_estimate",
     reference_size: tuple[int, int] | None = None,
 ) -> dict:
+    if mock_mode_active(config):
+        zero = dict(credit_estimate_for_provider_cost(0.0, "style", reserve=True))
+        return {
+            "faithful": zero,
+            "neighbors": dict(zero),
+            "faithful_with_neighbors": dict(zero),
+        }
     reference_count = 1 if has_style_reference and _supports_style_reference(config) else 0
     bible = _get_bible(project_dir)
     faithful_cost = (

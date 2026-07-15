@@ -25,7 +25,7 @@ from novel_to_comic.ai.finalisation import (
     finalise_image_failure,
     finalise_image_success,
 )
-from novel_to_comic.config import Config
+from novel_to_comic.config import Config, mock_mode_active
 from novel_to_comic.provider_wire import ProviderWireRequest
 from novel_to_comic.usage import (
     ApiResult,
@@ -148,7 +148,13 @@ _http = httpx.AsyncClient(
 
 
 def _base_url(config: Config) -> str:
-    return config.litellm_base_url.rstrip("/")
+    if config.mock_mode and not mock_mode_active(config):
+        raise RuntimeError(
+            "mock_mode is enabled for this project but the server operator has not set "
+            "CANARY_MOCK_GENERATIONS_ENABLED=true; refusing to fall back to paid models"
+        )
+    base_url = config.mock_model_base_url if config.mock_mode else config.litellm_base_url
+    return base_url.rstrip("/")
 
 
 def _headers(config: Config, event_id: str) -> dict[str, str]:
@@ -289,6 +295,9 @@ def _extract_usage(
     provider_model = str(data.get("model") or model_alias)
     image_count = 1 if operation == "image" else 0
     response_cost, response_cost_source = _extract_response_cost(data, headers)
+    if provider_model == "canary-mock":
+        response_cost = 0.0
+        response_cost_source = "mock"
     return UsageRecord(
         call_id=event_id,
         provider=_provider_from_model(provider_model),
@@ -938,7 +947,11 @@ async def _chat_completion(
                 detail += f", completion_tokens={completion_tokens}"
             raise ValueError(f"Empty response from LiteLLM ({model}; {detail})")
         usage = _extract_usage(data, event_id, model, operation, response.headers)
-        if not usage.input_tokens and not usage.output_tokens:
+        if (
+            not usage.input_tokens
+            and not usage.output_tokens
+            and usage.cost_source != "mock"
+        ):
             usage = estimate_text_usage(
                 provider=usage.provider,
                 model=model,

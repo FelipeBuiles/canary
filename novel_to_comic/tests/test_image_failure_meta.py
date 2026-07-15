@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 from types import SimpleNamespace
 
@@ -210,6 +211,41 @@ def test_generate_panel_submits_compiled_prompt(tmp_path, monkeypatch):
     assert "DANGER" not in submitted
     assert submitted == meta["prompt"]
     assert "Generation geometry" not in submitted  # section bodies, not titles, are canonical
+    assert meta["parameters"]["output_sha256"] == hashlib.sha256(b"panel").hexdigest()
+
+
+def test_panel_cache_rejects_metadata_for_different_png_bytes(tmp_path):
+    image_path = tmp_path / "panel_001.png"
+    image_path.write_bytes(b"previous panel")
+    fingerprint = "f" * 64
+    artifacts.write_asset_meta(image_path, {
+        "parameters": {
+            "execution_fingerprint": fingerprint,
+            "output_sha256": hashlib.sha256(b"new panel").hexdigest(),
+        },
+    })
+
+    assert not s7_draw._asset_matches_generation_meta(
+        image_path,
+        {"parameters": {"execution_fingerprint": fingerprint}},
+    )
+
+
+def test_panel_cache_accepts_committed_png_bytes(tmp_path):
+    image_path = tmp_path / "panel_001.png"
+    image_path.write_bytes(b"new panel")
+    fingerprint = "f" * 64
+    artifacts.write_asset_meta(image_path, {
+        "parameters": {
+            "execution_fingerprint": fingerprint,
+            "output_sha256": hashlib.sha256(b"new panel").hexdigest(),
+        },
+    })
+
+    assert s7_draw._asset_matches_generation_meta(
+        image_path,
+        {"parameters": {"execution_fingerprint": fingerprint}},
+    )
 
 
 def test_selected_reference_byte_change_invalidates_panel_cache(tmp_path, monkeypatch):

@@ -157,29 +157,49 @@ def _readiness_result() -> tuple[bool, dict[str, str]]:
     else:
         checks["supabase"] = "skipped"
 
-    litellm_values = (
-        os.environ.get("LITELLM_BASE_URL", "").strip(),
-        os.environ.get("LITELLM_API_KEY", "").strip(),
-    )
-    if all(litellm_values):
+    mock_enabled = os.environ.get(
+        "CANARY_MOCK_GENERATIONS_ENABLED", "false"
+    ).strip().lower() not in {"", "0", "false", "no", "off"}
+    if mock_enabled:
         import httpx
 
+        mock_base_url = os.environ.get(
+            "CANARY_MOCK_MODEL_BASE_URL", "http://127.0.0.1:4010"
+        ).strip()
         try:
             with httpx.Client(timeout=2.0) as client:
                 response = client.get(
-                    f"{litellm_values[0].rstrip('/')}/health/liveliness",
-                    headers={"Authorization": f"Bearer {litellm_values[1]}"},
+                    f"{mock_base_url.rstrip('/')}/health/liveliness",
                 )
                 response.raise_for_status()
-            checks["litellm"] = "ok"
+            checks["mock_models"] = "ok"
         except Exception as exc:  # noqa: BLE001 - surfaced to the probe payload
             ok = False
-            checks["litellm"] = f"error: {type(exc).__name__}"
-    elif production or any(litellm_values):
-        ok = False
-        checks["litellm"] = "error: missing configuration"
+            checks["mock_models"] = f"error: {type(exc).__name__}"
     else:
-        checks["litellm"] = "skipped"
+        litellm_values = (
+            os.environ.get("LITELLM_BASE_URL", "").strip(),
+            os.environ.get("LITELLM_API_KEY", "").strip(),
+        )
+        if all(litellm_values):
+            import httpx
+
+            try:
+                with httpx.Client(timeout=2.0) as client:
+                    response = client.get(
+                        f"{litellm_values[0].rstrip('/')}/health/liveliness",
+                        headers={"Authorization": f"Bearer {litellm_values[1]}"},
+                    )
+                    response.raise_for_status()
+                checks["litellm"] = "ok"
+            except Exception as exc:  # noqa: BLE001 - surfaced to the probe payload
+                ok = False
+                checks["litellm"] = f"error: {type(exc).__name__}"
+        elif production or any(litellm_values):
+            ok = False
+            checks["litellm"] = "error: missing configuration"
+        else:
+            checks["litellm"] = "skipped"
 
     return ok, checks
 

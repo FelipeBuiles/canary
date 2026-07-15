@@ -13,7 +13,7 @@ from typing import Literal, TypedDict
 from fastapi import HTTPException
 from supabase import Client
 
-from novel_to_comic.config import Config
+from novel_to_comic.config import Config, mock_mode_active
 from novel_to_comic.state import PipelineState
 from novel_to_comic.usage import (
     UsageRecord,
@@ -78,6 +78,8 @@ def usage_to_credit_debit(usage: UsageRecord) -> tuple[int, float]:
     This is the only place where provider USD is converted to public credits.
     Keep purchase package math separate so margin is not applied twice.
     """
+    if usage.cost_source == "mock":
+        return 0, 0.0
     cost_usd = calculate_cost(usage)
     credits = provider_usd_to_credits(cost_usd)
     if credits <= 0 and usage_has_billable_activity(usage):
@@ -92,6 +94,8 @@ def estimate_stage_credit_reservation(
     stage: str,
 ) -> int:
     """Estimate public credits to reserve for a stage from current project inputs."""
+    if mock_mode_active(config):
+        return 0
     cost_usd = estimate_stage_provider_cost_usd(config, project_dir, state, stage)
     base_credits = provider_usd_to_credits(cost_usd)
     if base_credits <= 0:
@@ -106,6 +110,8 @@ def estimate_stage_credit_cost(
     stage: str,
 ) -> int:
     """Unbuffered projected final cost in public credits."""
+    if mock_mode_active(config):
+        return 0
     cost_usd = estimate_stage_provider_cost_usd(config, project_dir, state, stage)
     return provider_usd_to_credits(cost_usd)
 
@@ -195,6 +201,13 @@ class UnifiedCostResolver:
         stage: Literal["cast", "draw"],
     ) -> CreditEstimate:
         """Add the separately billed prompt rewrite to an image estimate."""
+        if mock_mode_active(config):
+            return CreditEstimate(
+                estimate_credits=0,
+                reserved_credits=None,
+                reservation_multiplier=reservation_buffer(),
+                confidence="low_variance",
+            )
         text_credits = 0
         for _ in range(INSTRUCTION_TEXT_CALLS_BY_STAGE[stage]):
             rewrite_cost_usd = estimate_text_cost(
@@ -238,6 +251,8 @@ class UnifiedCostResolver:
         image_model_alias: str | None = None,
     ) -> CreditEstimate:
         """Estimate the credits needed to regenerate a single panel."""
+        if mock_mode_active(config):
+            return credit_estimate_for_provider_cost(0.0, "draw", reserve=False)
         from novel_to_comic import artifacts
         from novel_to_comic.stages.s7_draw import estimate_panel_image_cost_usd
         from novel_to_comic.config import config_for_image_model_alias
@@ -263,6 +278,8 @@ class UnifiedCostResolver:
         asset_id: str,
     ) -> CreditEstimate:
         """Estimate the credits needed to regenerate a single cast asset (character sheet or plate)."""
+        if mock_mode_active(config):
+            return credit_estimate_for_provider_cost(0.0, "cast", reserve=False)
         ref_count = 0
         if asset_type in {"character_ref_regen", "location_plate_regen"} and ":" in asset_id:
             entity_id, state_id = asset_id.split(":", 1)

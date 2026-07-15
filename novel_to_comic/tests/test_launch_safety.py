@@ -204,6 +204,25 @@ def test_readiness_allows_missing_dependencies_in_development(monkeypatch):
     assert checks == {"supabase": "skipped", "litellm": "skipped"}
 
 
+def test_readiness_checks_mock_models_instead_of_litellm(monkeypatch):
+    monkeypatch.setenv("CANARY_ENV", "dev")
+    monkeypatch.setenv("CANARY_MOCK_GENERATIONS_ENABLED", "true")
+    monkeypatch.setenv("CANARY_MOCK_MODEL_BASE_URL", "http://mock.test:4010")
+    monkeypatch.setenv("LITELLM_BASE_URL", "http://paid-gateway.test:4000")
+    monkeypatch.setenv("LITELLM_API_KEY", "secret")
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_SECRET_KEY", raising=False)
+
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    with patch("httpx.Client.get", return_value=response) as get:
+        ok, checks = app_module._readiness_result()
+
+    assert ok is True
+    assert checks == {"supabase": "skipped", "mock_models": "ok"}
+    get.assert_called_once_with("http://mock.test:4010/health/liveliness")
+
+
 def test_readiness_endpoint_uses_http_503_on_failure(tmp_path: Path):
     app = app_module.create_app(tmp_path, dev=True)
     endpoint = next(
