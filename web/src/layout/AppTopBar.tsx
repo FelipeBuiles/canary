@@ -7,6 +7,7 @@ import { useCountUp } from "../hooks/useCountUp";
 import { useTopBarSlotRegister } from "./TopBarSlot";
 import { cn } from "../lib/cn";
 import { BrandMark } from "../components/BrandMark";
+import { CreditAmount, CreditMark } from "../components/ui/CreditAmount";
 
 function initials(email?: string | null) {
   if (!email) return "JP";
@@ -77,9 +78,8 @@ export function AppTopBar() {
           )}
           aria-label={isLow ? "Credits low — top up" : `Credits: ${credits}`}
         >
-          <span>◆</span>
-          <span className="tabular-nums">{displayCredits.toLocaleString()}</span>
-          <span className="text-ink-muted">credits{isLow ? " · top up" : ""}</span>
+          <CreditAmount value={displayCredits} showMark showLabel={false} className="tabular-nums" />
+          {isLow && <span className="text-ink-muted">· top up</span>}
         </Link>
 
         <div ref={menuRef} className="relative flex items-center">
@@ -103,8 +103,8 @@ export function AppTopBar() {
                 </div>
               </div>
               {[
-                ["Account", "/account", "⊙"],
-                ["Credits & Billing", "/credits", "◆"],
+                ["Account", "/account", "account"],
+                ["Credits & Billing", "/credits", "credits"],
               ].map(([label, to, mark]) => (
                 <Link
                   key={label}
@@ -112,7 +112,9 @@ export function AppTopBar() {
                   onClick={() => setOpen(false)}
                   className="flex min-h-12 items-center gap-4 border-t border-ink-black/10 px-5 font-body text-[0.88rem] font-bold tracking-[0.04em] hover:bg-surface-container"
                 >
-                  <span className="font-meta text-[0.62rem] text-ink-black/38">{mark}</span>
+                  <span className="font-meta text-[0.62rem] text-ink-black/38">
+                    {mark === "credits" ? <CreditMark /> : "⊙"}
+                  </span>
                   {label}
                 </Link>
               ))}

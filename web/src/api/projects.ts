@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import type { GenerationJob, ProjectSummary, ProjectStatus, ConfigOverrides, ShortStory } from "../types/api";
+import type { CostEstimate, GenerationJob, ProjectSummary, ProjectStatus, ConfigOverrides, ShortStory } from "../types/api";
 
 export function listProjects(): Promise<ProjectSummary[]> {
   return apiFetch<ProjectSummary[]>("/projects/");
@@ -41,6 +41,10 @@ export function generateProjectCover(
   });
 }
 
+export function fetchProjectCoverEstimate(projectId: string): Promise<CostEstimate> {
+  return apiFetch(`/projects/${encodeURIComponent(projectId)}/cover-estimate`);
+}
+
 export function listShortStories(): Promise<ShortStory[]> {
   return apiFetch<ShortStory[]>("/projects/short-stories");
 }
@@ -59,4 +63,3 @@ export function importStory(
     }),
   });
 }
-

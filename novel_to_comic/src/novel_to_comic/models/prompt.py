@@ -298,8 +298,8 @@ class ImagePrompt(BaseModel):
     preferred_caption_zone: str | None = None
     full_prompt: str = ""
     distilled_prompt: str | None = None
-    # LLM-composed prose visual brief — the preferred generation body.
-    # Falls back to distilled_prompt when absent (older prompts, LLM failure).
+    # Historical/experimental LLM prose. Production panel requests prefer the
+    # deterministic distilled_prompt; non-panel assets may use this field.
     visual_brief: str | None = None
     style: str | None = None
     composition: str | None = None

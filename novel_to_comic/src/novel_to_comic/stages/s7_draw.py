@@ -295,10 +295,11 @@ def build_panel_reference_plan(
         and strategy.use_prev_panel_image(getattr(prev_prompt, "transition_out", None))
     )
 
-    # Location id: prefer the prompt's resolved location_id, fall back to the
-    # scene→location map. Pass location labels through as the resolved plate's
-    # label so prompts stay readable.
-    loc_id = getattr(prompt, "location_id", None) or (scene_to_location or {}).get(prompt.scene_id)
+    # The prompt builder owns whether this panel actually uses the scene's
+    # canonical location. A transient flashback/cutaway deliberately carries
+    # location_id=None, which must not fall back to the scene location or its
+    # plate will override the panel-specific setting.
+    loc_id = getattr(prompt, "location_id", None)
     effective_scene_to_location = {prompt.scene_id: loc_id} if loc_id else {}
     plan = build_reference_plan(
         route_profile=route_profile,
@@ -422,10 +423,7 @@ def estimate_panel_image_cost_usd(
         prompt_path=prompt_path,
         style_sample=style_sample,
         scene_to_location=scene_to_location,
-        prepared=(
-            bool(getattr(prompt, "visual_brief", None))
-            or not getattr(config, "visual_brief_enabled", True)
-        ),
+        prepared=True,
     )
     return estimate_image_cost(
         config.effective_image_model(),

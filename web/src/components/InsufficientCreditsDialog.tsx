@@ -14,6 +14,7 @@ import {
   pickRecommendedPackage,
 } from "../lib/creditsPurchase";
 import { useInsufficientCreditsStore } from "../store/insufficientCredits";
+import { CreditAmount } from "./ui/CreditAmount";
 
 export function InsufficientCreditsDialog() {
   const open = useInsufficientCreditsStore((s) => s.open);
@@ -165,7 +166,7 @@ export function InsufficientCreditsDialog() {
                 Balance
               </div>
               <div className="mt-1 font-display text-[1.3rem] font-bold tabular-nums">
-                {balance.toLocaleString()}
+                <CreditAmount value={balance} showMark showLabel={false} />
               </div>
             </div>
             <div>
@@ -173,7 +174,7 @@ export function InsufficientCreditsDialog() {
                 Needed
               </div>
               <div className="mt-1 font-display text-[1.3rem] font-bold tabular-nums">
-                {required.toLocaleString()}
+                <CreditAmount value={required} showMark showLabel={false} />
               </div>
             </div>
             <div>
@@ -181,7 +182,7 @@ export function InsufficientCreditsDialog() {
                 Short by
               </div>
               <div className="mt-1 font-display text-[1.3rem] font-bold tabular-nums text-narrator-gold">
-                {shortfall.toLocaleString()}
+                <CreditAmount value={shortfall} showMark showLabel={false} />
               </div>
             </div>
           </div>
@@ -209,7 +210,7 @@ export function InsufficientCreditsDialog() {
                     >
                       <div className="flex w-full items-center justify-between gap-2">
                         <span className="font-display text-[1.1rem] font-black tabular-nums">
-                          {pkg.credits.toLocaleString()}
+                          <CreditAmount value={pkg.credits} showLabel={false} />
                         </span>
                         {isThisPending ? (
                           <span aria-hidden="true" className="animate-press-blink h-3 w-3 bg-hero-red" />

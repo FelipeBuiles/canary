@@ -12,7 +12,7 @@ from novel_to_comic.image_ref_strategy import RefStrategy
 from novel_to_comic.models.appearance import StoryPosition
 from novel_to_comic.models.layout_plan import PlannedPanel
 from novel_to_comic.models.prompt import ImagePrompt, PromptAnchor, PromptSubject
-from novel_to_comic.models.story_bible import Character, StoryBible
+from novel_to_comic.models.story_bible import Character, Location, StoryBible
 from novel_to_comic.panel_aspect import dimensions_for_generation_shape, frame_phrase
 from novel_to_comic.text_utils import clean, shorten
 from novel_to_comic.ai.providers.base import RefImage
@@ -278,6 +278,33 @@ def _filter_location_anchor_for_panel(anchor: str, background: str) -> str:
     tags = [t.strip() for t in anchor.split(",") if t.strip()]
     kept = [t for t in tags if not block_re.search(t)]
     return ", ".join(kept)
+
+
+def _panel_uses_scene_location(panel: PlannedPanel, location: Location | None) -> bool:
+    """Return whether the scene-level location is compatible with this panel.
+
+    ``use_scene_location`` is the authoritative planner signal. Explicit
+    flashback/dream/cutaway language protects older plans created before that
+    field existed. We deliberately do not infer from indoor/outdoor alone: a
+    panel can move inside a building while remaining at the same location.
+    """
+    if location is None or not getattr(panel, "use_scene_location", True):
+        return False
+    transient_text = " ".join(
+        [
+            panel.background_description,
+            panel.camera_note,
+            *panel.visual_requirements,
+        ]
+    )
+    return not bool(
+        re.search(
+            r"\b(?:flashback|flash[- ]forward|memory|dream sequence|cutaway|"
+            r"years earlier|months earlier|days earlier|hours earlier)\b",
+            transient_text,
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def _appearance_lock_clause(name: str, guard: str | None) -> str:
@@ -682,6 +709,8 @@ def build_planned_panel_prompt_spec(
     location = None
     if scene:
         location = next((loc for loc in story_bible.locations if loc.id == scene.location_id), None)
+    if not _panel_uses_scene_location(panel, location):
+        location = None
 
     # Resolve the active location state from the location's own timeline (same
     # resolver as characters). The resolved state id flows to the ImagePrompt so

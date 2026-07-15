@@ -39,7 +39,7 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `flux_guidance_scale` | `float` | `3.5` |  |
 | `continuity_mode` | `str` | `'hybrid'` | off | text_only | ref_only | hybrid |
 | `image_concurrency` | `int | None` | `None` |  |
-| `visual_brief_enabled` | `bool` | `True` |  |
+| `visual_brief_enabled` | `bool` | `False` | Experimental/Labs-only LLM prose comparison; production prompt assembly uses the deterministic distilled prompt. |
 | `style_sample_brief_enabled` | `bool` | `True` |  |
 | `layout_prompts_enabled` | `bool` | `False` | Set to `true` for newly compiled Reve v2 `render_layout` panels; the endpoint is experimental. Existing frozen requests remain exact. |
 | `negative_prompt` | `str` | `'ugly, deformed, blurry, bad anatomy, watermark, signatur...` |  |

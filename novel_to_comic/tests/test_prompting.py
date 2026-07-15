@@ -883,6 +883,24 @@ def test_match_cut_does_not_dump_previous_character_state_into_text_prompt():
     assert build_planned_panel_continuity_note(current, prev, _story_bible()) is None
 
 
+def test_exterior_flashback_suppresses_indoor_scene_location_and_plate(tmp_path):
+    panel = _continuity_panel(3, characters=[])
+    panel.background_description = (
+        "A steep Newport street descending toward a rain-dark harbor and ship masts"
+    )
+    panel.camera_note = "A desaturated flashback panel capturing the sudden collision"
+    bible = _story_bible()
+    bible.locations[0].visual_anchor = (
+        "indoors, night, cozy study, wooden bookshelves, large oak desk"
+    )
+
+    prompt = build_planned_panel_prompt_spec(Config(), tmp_path, panel, bible)
+
+    assert prompt.location_id is None
+    assert not any(anchor.kind == "location" for anchor in prompt.anchors)
+    assert "Newport" in (prompt.setting or "")
+
+
 def test_location_state_resolves_anchor_by_panel_position(tmp_path):
     """The location's active state is resolved per panel from its
     appearance_timeline: panels before the transition use the base anchor,

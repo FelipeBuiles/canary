@@ -150,6 +150,27 @@ def test_screenplay_hard_cut_overrides_layout_smooth_continuation():
     assert after.transition_in == "hard_cut"
 
 
+def test_panel_can_opt_out_of_scene_location_for_flashback():
+    beats = [ScreenplayBeat(type="action", content="A sailor vanishes into a Newport alley.")]
+    bible = StoryBible(
+        title="t", author="a", total_scenes=0,
+        characters=[], locations=[], scenes=[], narrative_arcs=[],
+    )
+    panel = _llm_spec_to_planned_panel(
+        "scene_001",
+        1,
+        LLMPanelSpec(
+            beat_indices=[1],
+            background_description="Newport harbor at night",
+            use_scene_location=False,
+        ),
+        beats,
+        bible,
+    )
+
+    assert panel.use_scene_location is False
+
+
 # ── Stage 5: shapes, targets, ordering, thought beats ────────────────────────
 
 def test_panorama_aspect_is_wide_not_tall():

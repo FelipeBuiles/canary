@@ -448,7 +448,7 @@ Defaults:
 new default (or the legacy `image-balanced` default).
 
 Two new config fields control LLM pre-processing passes before image generation:
-- `visual_brief_enabled` (default `True`): rewrites each panel's structured spec into flowing prose via `prompt_model`. Falls back to deterministic distilled prompt on failure.
+- `visual_brief_enabled` (default `False`): retained for explicit Labs/manual prose comparisons. Production `direct` and draw preparation compile the deterministic distilled prompt and make no visual-brief model call.
 - `style_sample_brief_enabled` (default `True`): composes a shared subject/setting prose block for Stage 2 style proof images, cached per project.
 
 Current image aliases:

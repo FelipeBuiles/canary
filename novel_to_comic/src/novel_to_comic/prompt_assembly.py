@@ -245,6 +245,7 @@ def _source_projection(
             "camera_angle": panel.camera_angle,
             "camera_note": panel.camera_note,
             "background_description": panel.background_description,
+            "use_scene_location": getattr(panel, "use_scene_location", True),
             "lighting": panel.lighting,
             "mood": panel.mood,
             "has_narration_caption": panel.has_narration_caption,

@@ -11,7 +11,7 @@ from novel_to_comic.config import Config
 from novel_to_comic.server import credits
 from novel_to_comic.server.auth import get_current_user
 from novel_to_comic.server.deps import get_project
-from novel_to_comic.server.routers import pipeline, styles
+from novel_to_comic.server.routers import pipeline, projects, styles
 
 
 @pytest.fixture
@@ -19,6 +19,7 @@ def estimate_client(tmp_path, monkeypatch):
     app = FastAPI()
     app.include_router(pipeline.router, prefix="/api/projects/{project_id}")
     app.include_router(styles.router, prefix="/api/projects/{project_id}")
+    app.include_router(projects.router, prefix="/api/projects")
     app.dependency_overrides[get_project] = lambda: (tmp_path, Config(), None)
     app.dependency_overrides[get_current_user] = lambda: "user_001"
 
@@ -48,7 +49,31 @@ def estimate_client(tmp_path, monkeypatch):
             "confidence": "variable",
         },
     )
+    monkeypatch.setattr(
+        projects,
+        "_project_cover_credit_estimate",
+        lambda config: {
+            "estimate_credits": 3,
+            "reserved_credits": None,
+            "reservation_multiplier": 1.0,
+            "confidence": "low_variance",
+        },
+    )
     return TestClient(app), calls
+
+
+def test_project_cover_estimate_uses_the_generation_precheck_estimate(estimate_client):
+    client, _calls = estimate_client
+
+    response = client.get("/api/projects/demo/cover-estimate")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "estimate_credits": 3,
+        "reserved_credits": None,
+        "reservation_multiplier": 1.0,
+        "confidence": "low_variance",
+    }
 
 
 @pytest.mark.parametrize(
@@ -137,12 +162,14 @@ def test_asset_regen_estimate_rejects_unallowlisted_or_unsafe_input(
     [
         "/api/projects/demo/asset-regen-estimate?asset_type=prop&asset_id=prop_001",
         "/api/projects/demo/styles/sample-estimate",
+        "/api/projects/demo/cover-estimate",
     ],
 )
 def test_regen_estimate_endpoints_require_authentication(tmp_path, path):
     app = FastAPI()
     app.include_router(pipeline.router, prefix="/api/projects/{project_id}")
     app.include_router(styles.router, prefix="/api/projects/{project_id}")
+    app.include_router(projects.router, prefix="/api/projects")
     app.dependency_overrides[get_project] = lambda: (tmp_path, Config(), None)
 
     response = TestClient(app).get(path)
@@ -220,7 +247,7 @@ def test_instructed_estimate_adds_conservative_prompt_rewrite_cost(monkeypatch):
     }
 
 
-def test_panel_instruction_estimate_covers_all_possible_text_passes(monkeypatch):
+def test_panel_instruction_estimate_covers_the_explicit_rewrite(monkeypatch):
     calls = []
     monkeypatch.setattr(
         credits,
@@ -238,8 +265,8 @@ def test_panel_instruction_estimate_covers_all_possible_text_passes(monkeypatch)
         Config(), image_estimate, "draw"
     )
 
-    assert len(calls) == credits.INSTRUCTION_TEXT_CALLS_BY_STAGE["draw"] == 3
-    assert combined["estimate_credits"] >= image_estimate["estimate_credits"] + 3
+    assert len(calls) == credits.INSTRUCTION_TEXT_CALLS_BY_STAGE["draw"] == 1
+    assert combined["estimate_credits"] >= image_estimate["estimate_credits"] + 1
 
 
 def test_style_sample_estimate_uses_shared_one_sample_calculation(

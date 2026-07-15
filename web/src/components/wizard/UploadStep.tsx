@@ -2,6 +2,7 @@ import { useState, useRef, useMemo } from "react";
 import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
+import { CreditAmount } from "../ui/CreditAmount";
 import { SectionLabel } from "../SectionLabel";
 import type { ConfigOverrides, ShortStory } from "../../types/api";
 import { LANGUAGES, useI18n } from "../../i18n";
@@ -448,12 +449,12 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                               {story.words.toLocaleString()} {t("Word count")}
                             </div>
                             <div className="mt-0.5 font-meta text-[10px] text-ink-black/45">
-                              {formatCreditRange(estimateProjectCredits({
+                              <CreditAmount value={formatCreditRange(estimateProjectCredits({
                                 fileSizeBytes: story.words * 6,
                                 renderPreset: devMode ? "fast_draft" : renderPreset,
                                 devMode,
                                 maxPanelsPerScene: presetPanelsPerScene,
-                              }))} credits
+                              }))} />
                             </div>
                             {story.rating && (
                               <div className="mt-0.5 text-narrator-gold flex items-center justify-end gap-0.5">
@@ -563,7 +564,9 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                   {t("PROJECT RANGE")}
                 </div>
                 <div className="mt-0.5 font-display text-[1.05rem] font-bold leading-none tracking-[-0.03em] text-ink-black tabular-nums">
-                  {estimate ? `${formatCreditRange(estimate)} ${t("credits")}` : t("Upload a file or select a story to estimate")}
+                  {estimate
+                    ? <CreditAmount value={formatCreditRange(estimate)} label={t("credits")} />
+                    : t("Upload a file or select a story to estimate")}
                 </div>
               </div>
               <div className="text-right font-meta text-[0.56rem] tracking-[0.14em] text-ink-black/55">

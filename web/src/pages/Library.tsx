@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCreateProject, useGenerateProjectCover, useProjects, useImportStory } from "../api/queries";
 import { usePipelineStore } from "../store/pipeline";
@@ -13,8 +13,7 @@ import { STATIONS } from "../lib/stations";
 import { UploadStep } from "../components/wizard/UploadStep";
 import type { ConfigOverrides } from "../types/api";
 import { useI18n } from "../i18n";
-
-const coverRequestedProjects = new Set<string>();
+import { maybeShowInsufficientCredits } from "../store/insufficientCredits";
 
 function FirstIssueInvitation({ onStart }: { onStart: () => void }) {
   const { t } = useI18n();
@@ -149,82 +148,8 @@ export function Library() {
   const { t } = useI18n();
   const { data: projects, isLoading, error, refetch } = useProjects();
   const generateCover = useGenerateProjectCover();
-  const [pendingCovers, setPendingCovers] = useState<Set<string>>(new Set());
   const [newProjectOpen, setNewProjectOpen] = useState(false);
-  const coverRevealTimers = useRef<Map<string, number>>(new Map());
   const isEmpty = (projects?.length ?? 0) === 0;
-
-  useEffect(() => {
-    if (!projects?.length) return;
-    for (const project of projects) {
-      if (
-        !project.furthest_stage ||
-        project.has_cover ||
-        project.cover_job?.status === "queued" ||
-        project.cover_job?.status === "running" ||
-        coverRequestedProjects.has(project.id)
-      ) {
-        continue;
-      }
-      coverRequestedProjects.add(project.id);
-      window.setTimeout(() => {
-        setPendingCovers((current) => new Set(current).add(project.id));
-      }, 0);
-      generateCover.mutate(
-        { project: project.id },
-        {
-          onSuccess: (data) => {
-            if (data.status === "exists") {
-              setPendingCovers((current) => {
-                const next = new Set(current);
-                next.delete(project.id);
-                return next;
-              });
-            }
-          },
-          onError: () => {
-            setPendingCovers((current) => {
-              const next = new Set(current);
-              next.delete(project.id);
-              return next;
-            });
-          },
-        },
-      );
-    }
-  }, [projects, generateCover]);
-
-  useEffect(() => {
-    if (!pendingCovers.size) return;
-    const timer = window.setInterval(() => {
-      refetch().then((result) => {
-        const covered = new Set(
-          (result.data ?? [])
-            .filter((project) => project.has_cover || project.cover_job?.status === "failed")
-            .map((project) => project.id),
-        );
-        if (!covered.size) return;
-        for (const name of covered) {
-          if (coverRevealTimers.current.has(name)) continue;
-          const timer = window.setTimeout(() => {
-            setPendingCovers((current) => {
-              const next = new Set(current);
-              next.delete(name);
-              return next;
-            });
-            coverRevealTimers.current.delete(name);
-          }, 700);
-          coverRevealTimers.current.set(name, timer);
-        }
-      });
-    }, 3000);
-    return () => window.clearInterval(timer);
-  }, [pendingCovers, refetch]);
-
-  useEffect(() => () => {
-    for (const timer of coverRevealTimers.current.values()) window.clearTimeout(timer);
-    coverRevealTimers.current.clear();
-  }, []);
 
   if (isLoading) {
     return <LoadingBlock label={t("WARMING UP THE DRAWING TABLE…")} />;
@@ -305,10 +230,20 @@ export function Library() {
                 key={project.id}
                 project={project}
                 coverPending={
-                  pendingCovers.has(project.id) ||
+                  (generateCover.isPending && generateCover.variables?.project === project.id) ||
                   project.cover_job?.status === "queued" ||
                   project.cover_job?.status === "running"
                 }
+                coverFailed={project.cover_job?.status === "failed"}
+                coverRetrying={generateCover.isPending && generateCover.variables?.project === project.id}
+                onRetryCover={() => generateCover.mutate(
+                  { project: project.id },
+                  {
+                    onError: (error) => {
+                      maybeShowInsufficientCredits(error, { actionLabel: t("Create project cover") });
+                    },
+                  },
+                )}
               />
             ))}
           </div>

@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { Button } from "../ui/Button";
 import { FieldLabel, TextAreaField } from "../ui/Field";
 import { Icon } from "../ui/Icon";
+import { CreditAmount } from "../ui/CreditAmount";
 import { Surface } from "../ui/Surface";
 import { useI18n } from "../../i18n";
 
@@ -22,11 +23,6 @@ interface StyleDirectionComposerProps {
 
 const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-
-function creditLabel(value: number | null | undefined): string | null {
-  if (!value || value < 1) return null;
-  return `~${value.toLocaleString()} credits`;
-}
 
 export function StyleDirectionComposer({
   automaticCost,
@@ -67,12 +63,11 @@ export function StyleDirectionComposer({
   const canSubmitCustom = (
     direction.trim().length > 0 || (image !== null && imageReferenceSupported)
   ) && !neighborsNeedText;
-  const automaticCredits = creditLabel(automaticCost);
   const usesReferencePricing = image !== null && imageReferenceSupported;
-  const customCredits = creditLabel(
+  const customCredits = (
     mode === "single"
       ? usesReferencePricing ? customSingleReferenceCost : customSingleCost
-      : usesReferencePricing ? customNeighborsReferenceCost : customNeighborsCost,
+      : usesReferencePricing ? customNeighborsReferenceCost : customNeighborsCost
   );
 
   return (
@@ -133,8 +128,13 @@ export function StyleDirectionComposer({
           <Button size="lg" onClick={onAutomatic} disabled={busy}>
             {busy ? t("PREPARING DIRECTIONS…") : t("CREATE FIVE DIRECTIONS")}
           </Button>
-          {automaticCredits && (
-            <span className="text-[0.78rem] font-semibold text-ink-black/65">{automaticCredits}</span>
+          {automaticCost != null && automaticCost > 0 && (
+            <CreditAmount
+              value={automaticCost}
+              approximate
+              label={t("credits")}
+              className="text-[0.78rem] font-semibold text-ink-black/65"
+            />
           )}
         </div>
       ) : (
@@ -231,8 +231,13 @@ export function StyleDirectionComposer({
             >
               {busy ? t("PREPARING PROOF…") : mode === "single" ? t("CREATE MY PROOF") : t("CREATE FIVE DIRECTIONS")}
             </Button>
-            {customCredits && (
-              <span className="text-[0.78rem] font-semibold text-ink-black/65">{customCredits}</span>
+            {customCredits != null && customCredits > 0 && (
+              <CreditAmount
+                value={customCredits}
+                approximate
+                label={t("credits")}
+                className="text-[0.78rem] font-semibold text-ink-black/65"
+              />
             )}
           </div>
         </div>

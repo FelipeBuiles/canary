@@ -104,7 +104,7 @@ def test_ensure_visual_brief_populates_from_llm():
         "novel_to_comic.clients.text.generate_text",
         new=AsyncMock(return_value=ApiResult(value=brief, usage=None)),
     ):
-        result = asyncio.run(ensure_visual_brief(Config(), prompt))
+        result = asyncio.run(ensure_visual_brief(Config(visual_brief_enabled=True), prompt))
 
     assert result is not prompt
     assert result.visual_brief == brief

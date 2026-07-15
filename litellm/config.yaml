@@ -70,28 +70,26 @@ model_list:
       safety_settings: *vertex_safety_off
 
   # ─── Stage 5: image-prompt assembly (template filling) ────────────────────
-  # Prompt assembly is light rewriting (structured panel spec → prose), but it
-  # also powers style suggestions before cast. Keep every prompt tier on the
-  # globally available 3.5 Flash route: the 3.1 Flash-Lite preview returns 404
-  # for this Vertex project/location. Smoke-test style suggestions after any
-  # future model or region change.
+  # Prompt models now serve explicit style suggestions and instructed rewrites;
+  # production panel prompt assembly is deterministic. Use the GA Flash-Lite
+  # route for these bounded, high-volume transformations.
   - model_name: prompt-fast
     litellm_params:
-      model: vertex_ai/gemini-3.5-flash
+      model: vertex_ai/gemini-3.1-flash-lite
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
       reasoning_effort: "disable"
   - model_name: prompt-balanced
     litellm_params:
-      model: vertex_ai/gemini-3.5-flash
+      model: vertex_ai/gemini-3.1-flash-lite
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
       reasoning_effort: "disable"
   - model_name: prompt-quality
     litellm_params:
-      model: vertex_ai/gemini-3.5-flash
+      model: vertex_ai/gemini-3.1-flash-lite
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off

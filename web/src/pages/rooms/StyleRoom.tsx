@@ -18,6 +18,9 @@ import {
   useGenerateLetteringStyle,
   useSetLetteringStyle,
   useStyleDirectionEstimate,
+  useGenerateProjectCover,
+  useProjectCoverEstimate,
+  useProjects,
 } from "../../api/queries";
 import { Button } from "../../components/ui/Button";
 import { GenerationDetailsModal } from "../../components/ui/GenerationDetailsModal";
@@ -386,6 +389,13 @@ export function StyleRoom() {
   const { handleRun, isPending: isPipelineRunning } = useRunAction();
   const { data: castEstimate } = useStageEstimate(id, "cast");
   const styleSelected = !!status?.style_selected;
+  const { data: projectSummaries } = useProjects();
+  const projectSummary = projectSummaries?.find((project) => project.id === id);
+  const coverJobActive = projectSummary?.cover_job?.status === "queued"
+    || projectSummary?.cover_job?.status === "running";
+  const needsCover = !!status && !status.has_cover && !projectSummary?.has_cover && !coverJobActive;
+  const generateCover = useGenerateProjectCover();
+  const { data: coverEstimate } = useProjectCoverEstimate(id, styleSelected && needsCover);
 
   const isSuggesting = suggestionStatus === "running";
   const styleActionsDisabled = isStageGenerating || isSuggesting || suggestStyles.isPending || createStyleDirection.isPending;
@@ -511,10 +521,26 @@ export function StyleRoom() {
 
   const styleNeedsApproval = styleStage?.status === "awaiting_review";
   const castStarted = status?.stages.cast?.status != null && status.stages.cast.status !== "pending";
+  const continueEstimateCredits = styleSelected
+    && (castStarted || castEstimate != null)
+    && (!needsCover || coverEstimate != null)
+    ? (castStarted ? 0 : castEstimate?.estimate_credits ?? 0)
+      + (needsCover ? coverEstimate?.estimate_credits ?? 0 : 0)
+    : null;
 
   function handleContinueToCast() {
     if (!id) return;
     const startCastIfNeeded = () => {
+      if (needsCover) {
+        generateCover.mutate(
+          { project: id },
+          {
+            onError: (error) => {
+              maybeShowInsufficientCredits(error, { actionLabel: t("Create project cover") });
+            },
+          },
+        );
+      }
       if (!castStarted) handleRun(id, "cast", { actionLabel: "Cast characters & places" });
       navigate(`/project/${id}/cast`);
     };
@@ -817,12 +843,22 @@ export function StyleRoom() {
 
       <ApprovalBar
         next={styleSelected
-          ? t("Scenewright casts your characters and places in this style")
+          ? needsCover
+            ? t("Scenewright casts your characters and places, and draws your project cover")
+            : t("Scenewright casts your characters and places in this style")
           : t("Pick a style — click the card that fits your story")}
-        estimateCredits={styleSelected && styleNeedsApproval ? castEstimate?.estimate_credits : null}
+        estimateCredits={continueEstimateCredits}
         primaryLabel={styleNeedsApproval || !styleSelected ? t("LOOKS RIGHT — CONTINUE →") : t("GO TO CAST →")}
         onPrimary={handleContinueToCast}
-        primaryDisabled={!styleSelected || approveStage.isPending || isPipelineRunning || isStageGenerating || isSuggesting}
+        primaryDisabled={
+          !styleSelected
+          || approveStage.isPending
+          || isPipelineRunning
+          || isStageGenerating
+          || isSuggesting
+          || (!castStarted && castEstimate == null)
+          || (needsCover && coverEstimate == null)
+        }
         busy={approveStage.isPending}
         secondary={suggestions.length > 0 && (styleStage?.status === "complete" || styleStage?.status === "awaiting_review") ? (
           <RerunStageAction

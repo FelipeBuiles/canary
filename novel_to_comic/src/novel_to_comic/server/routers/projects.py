@@ -293,6 +293,18 @@ def _cover_prompt(config: Config, bible: StoryBible) -> str:
     )
 
 
+def _project_cover_credit_estimate(config: Config) -> dict:
+    return dict(credit_estimate_for_provider_cost(
+        estimate_image_cost(
+            config.effective_image_model(), 1, width=768, height=1024,
+            quality=getattr(config, "image_quality", None),
+        ),
+        "cast",
+        reserve=False,
+        zero_cost_estimate=1,
+    ))
+
+
 async def _generate_project_cover(
     config: Config,
     project_dir: Path,
@@ -654,6 +666,17 @@ def project_status(
     }
 
 
+@router.get("/{project_id}/cover-estimate")
+def project_cover_estimate(
+    project_id: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),  # noqa: ARG001 — auth gate
+):
+    """Return the credit estimate for the project's background cover image."""
+    _project_dir, config, _state = project
+    return _project_cover_credit_estimate(config)
+
+
 @router.post("/{project_id}/cover")
 @limiter.limit(cost_limit)
 async def generate_cover(
@@ -676,15 +699,7 @@ async def generate_cover(
     # Credit pre-check before queuing: cover generation calls the image model
     # for real (see _generate_project_cover) and is debited on success, so a
     # zero-balance user would otherwise drive their balance negative.
-    cover_estimate = credit_estimate_for_provider_cost(
-        estimate_image_cost(
-            config.effective_image_model(), 1, width=768, height=1024,
-            quality=getattr(config, "image_quality", None),
-        ),
-        "cast",  # one-off image generation, no reservation
-        reserve=False,
-        zero_cost_estimate=1,
-    )
+    cover_estimate = _project_cover_credit_estimate(config)
     assert_sufficient_credits(
         get_db(), user_id, cover_estimate["estimate_credits"], action="project_cover",
     )

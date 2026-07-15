@@ -79,6 +79,7 @@ class LLMPanelSpec(BaseModel):
     lighting: str = ""
     mood: str = "neutral"
     background_description: str = ""
+    use_scene_location: bool = True
     importance: PanelImportance = "standard"
     shape_intent: ShapeIntent = "rect"
     transition_out: str | None = None
@@ -212,6 +213,7 @@ class PlannedPanel(BaseModel):
     key_objects: list[str] = Field(default_factory=list)
     visual_requirements: list[str] = Field(default_factory=list)
     background_description: str = ""
+    use_scene_location: bool = True
     camera_note: str = ""
     lighting: str = ""
     mood: str = ""

@@ -11,6 +11,7 @@ import {
   useStyles,
 } from "../../api/queries";
 import { Button } from "../../components/ui/Button";
+import { CreditAmount } from "../../components/ui/CreditAmount";
 import { CollapsibleSection } from "../../components/ui/CollapsibleSection";
 import { EditableText } from "../../components/ui/EditableText";
 import { LayoutSection } from "../../components/LayoutRegionEditor";
@@ -338,12 +339,6 @@ function DirectApproveAction({
   const hasWarnings = allWarnings.length > 0;
   const estimateCredits = estimate?.estimate_credits ?? 0;
 
-  const ctaLabel = hasWarnings
-    ? `Review ${allWarnings.length} Warning${allWarnings.length !== 1 ? "s" : ""} Before Approving`
-    : estimateCredits > 0
-    ? `Approve Prompts & Run Generate Panels · ~${estimateCredits.toLocaleString()} credits`
-    : "Approve Prompts & Run Generate Panels";
-
   function doApproveAndRun() {
     approveStage.mutate(
       { project, stage: "direct" },
@@ -376,7 +371,16 @@ function DirectApproveAction({
         onClick={handleClick}
         style={hasWarnings ? { borderColor: "var(--color-warn-orange)", color: "var(--color-warn-orange)" } : undefined}
       >
-        {busy ? "Working…" : ctaLabel}
+        {busy ? "Working…" : hasWarnings ? (
+          `Review ${allWarnings.length} Warning${allWarnings.length !== 1 ? "s" : ""} Before Approving`
+        ) : (
+          <>
+            Approve Prompts &amp; Run Generate Panels
+            {estimateCredits > 0 && (
+              <> <span aria-hidden="true">·</span> <CreditAmount value={estimateCredits} approximate /></>
+            )}
+          </>
+        )}
       </Button>
 
       <ConfirmDrawer

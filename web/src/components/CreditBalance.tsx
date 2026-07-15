@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { useCreditBalance } from "../api/queries";
 import { cn } from "../lib/cn";
+import { CreditAmount } from "./ui/CreditAmount";
 
 interface CreditBalanceProps {
   className?: string;
@@ -31,7 +32,7 @@ export function CreditBalance({ className }: CreditBalanceProps) {
           "font-meta text-[0.66rem] font-medium tabular-nums tracking-[0.06em]",
           isLow ? "text-narrator-gold" : "text-bristol/70",
         )}>
-          ◆ {credits.toLocaleString()} credits{isLow ? " · low" : ""}
+          <CreditAmount value={credits} showMark showLabel={false} />{isLow ? " · low" : ""}
         </span>
       )}
     </Link>

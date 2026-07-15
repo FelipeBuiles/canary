@@ -1,12 +1,117 @@
-"""Credit balance and transaction history endpoints."""
+"""Credit balance and production-history endpoints."""
 
-from fastapi import APIRouter, Depends
+from __future__ import annotations
+
+from collections import defaultdict
+from datetime import UTC, datetime
+from typing import Any
+
+from fastapi import APIRouter, Depends, Query
 
 from ..auth import get_current_user
 from ..credits import get_balance_credits
 from ..db import get_db
 
 router = APIRouter()
+
+_HISTORY_SELECT = (
+    "id, amount_credits, status, stage, description, created_at, project_id, job_id, "
+    "provider, model, provider_model, operation, input_tokens, output_tokens, image_count, cost_usd"
+)
+_LEDGER_PAGE_SIZE = 1000
+
+
+def _fetch_all_history_rows(db, user_id: str) -> list[dict[str, Any]]:
+    """Read complete ledger rows in bounded PostgREST pages.
+
+    Grouping after a fixed row limit can cut a job in half and under-report its
+    total. Fetching in pages keeps the endpoint correct without requiring a
+    database migration or assuming a PostgREST server-row limit.
+    """
+    rows: list[dict[str, Any]] = []
+    start = 0
+    while True:
+        page = (
+            db.table("credit_ledger")
+            .select(_HISTORY_SELECT)
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .range(start, start + _LEDGER_PAGE_SIZE - 1)
+            .execute()
+        ).data or []
+        rows.extend(page)
+        if len(page) < _LEDGER_PAGE_SIZE:
+            return rows
+        start += _LEDGER_PAGE_SIZE
+
+
+def _history_run(row: dict[str, Any]) -> str:
+    return str(row.get("job_id") or row["id"])
+
+
+def _group_history_runs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return one canonical run shape for modern and legacy ledger rows."""
+    by_run: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        by_run[_history_run(row)].append(row)
+
+    runs: list[dict[str, Any]] = []
+    for run_id, run_rows in by_run.items():
+        ordered = sorted(run_rows, key=lambda row: row["created_at"])
+        reservation = next(
+            (row for row in ordered if row.get("status") in {"reserved", "released"}),
+            None,
+        )
+        settled = [row for row in ordered if row.get("status") == "settled"]
+        estimate = abs(int(reservation["amount_credits"])) if reservation else 0
+        actual = sum(
+            abs(int(row["amount_credits"]))
+            for row in settled
+            if int(row["amount_credits"]) < 0
+        )
+        added = sum(
+            int(row["amount_credits"])
+            for row in settled
+            if int(row["amount_credits"]) > 0
+        )
+        released = reservation is None or reservation.get("status") == "released"
+        returned = max(0, estimate - actual) if released else 0
+        if reservation and not released:
+            status = "in_flight"
+        elif reservation and not actual and not added:
+            status = "failed"
+        else:
+            status = "complete"
+        representative = reservation or (settled[0] if settled else ordered[0])
+        runs.append(
+            {
+                "run_id": run_id,
+                "job_id": representative.get("job_id"),
+                "stage": representative.get("stage"),
+                "project_id": representative.get("project_id"),
+                "started_at": ordered[0]["created_at"],
+                "last_activity_at": ordered[-1]["created_at"],
+                "estimate_credits": estimate,
+                "actual_credits": actual,
+                "returned_credits": returned,
+                "credits_added": added,
+                "status": status,
+                "rows": ordered,
+            }
+        )
+    return sorted(runs, key=lambda run: run["last_activity_at"], reverse=True)
+
+
+def _month_used_credits(rows: list[dict[str, Any]]) -> int:
+    now = datetime.now(UTC)
+    prefix = f"{now.year:04d}-{now.month:02d}-"
+    return sum(
+        abs(int(row["amount_credits"]))
+        for row in rows
+        if row.get("status") == "settled"
+        and int(row["amount_credits"]) < 0
+        and str(row.get("created_at") or "").startswith(prefix)
+    )
 
 
 @router.get("/pricing-reference")
@@ -28,17 +133,18 @@ def balance(user_id: str = Depends(get_current_user)):
 
 
 @router.get("/history")
-def history(user_id: str = Depends(get_current_user)):
-    rows = (
-        get_db()
-        .table("credit_ledger")
-        .select(
-            "id, amount_credits, status, stage, description, created_at, project_id, job_id, "
-            "provider, model, provider_model, operation, input_tokens, output_tokens, image_count"
-        )
-        .eq("user_id", user_id)
-        .order("created_at", desc=True)
-        .limit(100)
-        .execute()
-    )
-    return {"transactions": rows.data}
+def history(
+    limit: int = Query(30, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    user_id: str = Depends(get_current_user),
+):
+    rows = _fetch_all_history_rows(get_db(), user_id)
+    runs = _group_history_runs(rows)
+    page = runs[offset : offset + limit]
+    return {
+        "runs": page,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(page) < len(runs),
+        "month_used_credits": _month_used_credits(rows),
+    }

@@ -16,9 +16,9 @@ aliases:
   panel-fast: vertex_ai/gemini-3.1-flash-lite-preview
   panel-balanced: vertex_ai/gemini-3.5-flash
   panel-quality: vertex_ai/gemini-3.5-flash
-  prompt-fast: vertex_ai/gemini-3.1-flash-lite-preview
-  prompt-balanced: vertex_ai/gemini-3.1-flash-lite-preview
-  prompt-quality: vertex_ai/gemini-3.1-flash-lite-preview
+  prompt-fast: vertex_ai/gemini-3.1-flash-lite
+  prompt-balanced: vertex_ai/gemini-3.1-flash-lite
+  prompt-quality: vertex_ai/gemini-3.1-flash-lite
   image-fast: vertex_ai/gemini-3.1-flash-lite-image
   image-balanced: vertex_ai/gemini-3.1-flash-lite-image
   image-balanced-seedream-test: bytedance/seedream/v5/lite/edit
@@ -87,6 +87,10 @@ model_overrides:
     output_cost_per_token: 0.000003
     mode: chat
   gemini-3.1-flash-lite-preview:
+    input_cost_per_token: 0.00000025
+    output_cost_per_token: 0.0000015
+    mode: chat
+  gemini-3.1-flash-lite:
     input_cost_per_token: 0.00000025
     output_cost_per_token: 0.0000015
     mode: chat

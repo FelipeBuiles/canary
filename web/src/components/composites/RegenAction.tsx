@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import type { CostEstimate } from "../../types/api";
 import { useI18n } from "../../i18n";
 import { Button } from "../ui/Button";
+import { CreditAmount } from "../ui/CreditAmount";
 import { ConfirmDrawer } from "./ConfirmDrawer";
 
 interface RegenActionProps {
@@ -20,11 +21,6 @@ interface RegenActionProps {
 }
 
 type ConfirmMode = "same" | "instruction" | null;
-
-function creditsLabel(cost: CostEstimate | undefined, fallback: string) {
-  if (!cost) return fallback;
-  return `~${cost.estimate_credits.toLocaleString()} credits`;
-}
 
 /**
  * Canonical single-image regeneration control. It keeps author intent first,
@@ -51,8 +47,6 @@ export function RegenAction({
   const [confirmMode, setConfirmMode] = useState<ConfirmMode>(null);
   const instructionId = useId();
   const instructionErrorId = useId();
-  const costLabel = creditsLabel(cost, t("COST CALCULATING…"));
-  const instructionCostLabel = creditsLabel(instructionCost, t("COST CALCULATING…"));
   const unavailable = disabled || busy || !cost;
   const instructionUnavailable = disabled || busy || !instructionCost;
 
@@ -135,7 +129,14 @@ export function RegenAction({
             onClick={requestInstructionRegen}
             disabled={instructionUnavailable || !instruction.trim()}
           >
-            {busy ? (busyLabel ?? t("STARTING…")) : `${t("REGENERATE WITH CHANGE")} · ${instructionCostLabel}`}
+            {busy ? (busyLabel ?? t("STARTING…")) : (
+              <>
+                {t("REGENERATE WITH CHANGE")} <span aria-hidden="true">·</span>{" "}
+                {instructionCost
+                  ? <CreditAmount value={instructionCost.estimate_credits} approximate label={t("credits")} />
+                  : t("COST CALCULATING…")}
+              </>
+            )}
           </Button>
         </div>
       )}
@@ -147,9 +148,14 @@ export function RegenAction({
         onClick={() => setConfirmMode("same")}
         disabled={unavailable}
       >
-        {busy
-          ? (busyLabel ?? t("STARTING…"))
-          : `${hasImage ? t("TRY ANOTHER VERSION") : t("GENERATE IMAGE")} · ${costLabel}`}
+        {busy ? (busyLabel ?? t("STARTING…")) : (
+          <>
+            {hasImage ? t("TRY ANOTHER VERSION") : t("GENERATE IMAGE")} <span aria-hidden="true">·</span>{" "}
+            {cost
+              ? <CreditAmount value={cost.estimate_credits} approximate label={t("credits")} />
+              : t("COST CALCULATING…")}
+          </>
+        )}
       </Button>
 
       {error && (
