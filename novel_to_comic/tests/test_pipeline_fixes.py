@@ -274,13 +274,14 @@ def test_state_ref_prompt_drops_hand_pose_and_locks_anatomy():
     prompt = _character_ref_prompt(Config(), bible, state_char, "", stumps)
 
     assert "one hand raised" not in prompt.lower()
-    assert "mid-gesture" in prompt.lower()
+    assert "neutral action pose with relaxed hands" in prompt.lower()
     assert "specific altered state" in prompt.lower()
     assert "never depict her gripping" in prompt  # guard injected
 
-    # The canonical (base) sheet is unchanged — still uses the hand-gesture pose.
+    # The canonical sheet also uses a low-performance neutral action pose.
     base = _character_ref_prompt(Config(), bible, char, "")
-    assert "one hand raised" in base.lower()
+    assert "neutral action pose with relaxed arms and hands" in base.lower()
+    assert "one hand raised" not in base.lower()
     assert "altered state" not in base.lower()
 
 
@@ -289,5 +290,5 @@ def test_state_ref_clean_text_prompt_drops_hand_pose():
     state_char = char.model_copy(update={"visual_anchor": stumps.visual_anchor})
     prompt = _character_ref_clean_text_prompt(Config(), state_char, "", stumps)
     assert "one hand raised" not in prompt.lower()
-    assert "mid-gesture" in prompt.lower()
+    assert "neutral action pose with relaxed hands" in prompt.lower()
     assert "altered state" in prompt.lower()

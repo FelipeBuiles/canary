@@ -441,7 +441,7 @@ Runtime image calls go through LiteLLM OpenAI-compatible image endpoints.
 `image_provider` is legacy metadata and should not be used for routing new code.
 
 Defaults:
-- `image_model: "image-quality"` (Gemini 3 Pro Image / Nano Banana 2 Pro)
+- `image_model: "image-quality"` (Seedream 5.0 Pro)
 - `fallback_image_model: "image-fast"`
 
 `dev_mode: true` substitutes `fallback_image_model` when `image_model` is at the
@@ -454,7 +454,7 @@ Two new config fields control LLM pre-processing passes before image generation:
 Current image aliases:
 - `image-fast`: Gemini 3.1 Flash Lite Image route, also used by dev mode.
 - `image-balanced`: Gemini 3.1 Flash Lite Image route, retained for explicit balanced projects and legacy configs.
-- `image-quality`: Gemini 3 Pro Image (Nano Banana 2 Pro) route, ~$0.134/image at 1K, routed through the vertex-multimodal custom handler. Replaced Reve (~$0.20/image) as the production quality tier. `REVE_ALIASES` now includes only `image-reve`.
+- `image-quality`: Seedream 5.0 Pro route, starting at ~$0.0675/image plus additional-reference and larger-output charges, routed through the fal queue custom handler with up to 10 references. `REVE_ALIASES` includes only `image-reve`.
 - `image-reve`: Reve image generation (Reve remains available at this alias and via labs entries).
 
 Set `layout_prompts_enabled: true` in the project `config.yaml` to use Reve v2
@@ -462,12 +462,14 @@ Set `layout_prompts_enabled: true` in the project `config.yaml` to use Reve v2
 layout transport failures fall back to v2 `create`, while existing frozen
 requests remain unchanged.
 
-`is_reve_model(model)` returns true for `image-reve` and any alias in `REVE_ALIASES` or starting with `reve/`. It no longer matches `image-quality`, which now routes to the Gemini 3 Pro Image route.
+`is_reve_model(model)` returns true for `image-reve` and any alias in `REVE_ALIASES` or starting with `reve/`. It does not match `image-quality`.
+`is_seedream_model(model)` returns true for `image-quality` and literal Seedream provider routes.
 `is_gpt_image_2(model)` only matches literal `gpt-image-2` / `openai/gpt-image-2` strings; `GPT_IMAGE_2_ALIASES` is now empty — no gateway alias routes to GPT Image 2 by default.
 
 Draw-stage reference behavior is provider-aware:
 - **Reve** (`is_reve_model`): uploads up to 4 refs — up to 3 subject crops (one per character, framing-selected), then continuity, prop, style, location plate to fill remaining slots. Uses `_reve_refs()`. Ordinary requests use v2 `/image/create` with `<frame>N</frame>` markers; when `layout_prompts_enabled` is on, panel requests use v2 `/image/render_layout` with compound references and structural region bindings. Reve's API accepts up to 8 references, but the product selector keeps the four-reference budget to reduce conditioning noise.
 - **GPT Image 2** (`is_gpt_image_2`): uploads a minimal subject reference set (character crops + props only), keeps style samples/location plates/continuity text-only to avoid edit-reference leakage. Only triggered for literal `gpt-image-2` model strings now.
+- **Seedream** (`is_seedream_model`): uploads up to 10 references in canonical role-priority order and can use style samples, location plates, and explicit `match_cut` continuity.
 - **Other routes** (Gemini etc.): can use style samples, location plates, and a previous-panel image for explicit `match_cut` transitions.
 
 ---

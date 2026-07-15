@@ -28,19 +28,32 @@ models:
     approx_cost: 0.08
     notes: >-
       Best-in-class character consistency across panels. Experimental on fal —
-      schema may change. Falls back to seedream/v4.5/edit if unavailable.
+      schema may change. Falls back to Seedream 5.0 Lite Edit if unavailable.
 
-  - id: seedream-v4-5-edit
-    label: "Seedream V4.5 Edit"
+  - id: seedream-v5-lite-edit
+    label: "Seedream 5.0 Lite Edit"
     provider: fal
-    endpoint: fal-ai/bytedance/seedream/v4.5/edit
+    endpoint: bytedance/seedream/v5/lite/edit
     tier: balanced
     multi_ref: true
     max_refs: 10
-    approx_cost: 0.04
+    approx_cost: 0.035
     notes: >-
-      Production-stable multi-reference editor. Strong subject-from-image-1 +
-      style-from-image-2 composition. ~60s latency per image.
+      Fast Seedream 5.0 editor with up to 10 reference images and 2K/3K/4K
+      output presets. Balanced-tier candidate for character and style fidelity.
+
+  - id: seedream-v5-pro-edit
+    label: "Seedream 5.0 Pro Edit"
+    provider: fal
+    endpoint: bytedance/seedream/v5/pro/edit
+    tier: premium
+    multi_ref: true
+    max_refs: 10
+    approx_cost: 0.0675
+    notes: >-
+      Flagship Seedream 5.0 editor for grounded, region-precise changes and up
+      to 10 references. Base price is ~$0.0675 at up to 1536px, plus $0.0045
+      for each reference after the first; larger outputs cost more.
 
   - id: flux-2-pro-edit
     label: "FLUX.2 Pro Edit"
@@ -144,32 +157,30 @@ models:
       vertex-multimodal custom provider — native Vertex multimodal shape,
       role-labeled reference images.
 
-  - id: seedream-v4-5-litellm-proxy
-    label: "Seedream V4.5 (LiteLLM proxy)"
+  - id: seedream-v5-lite-litellm-proxy
+    label: "Seedream 5.0 Lite (LiteLLM proxy)"
     provider: litellm
     endpoint: image-balanced-seedream-test
     tier: balanced
     multi_ref: true
     max_refs: 10
-    approx_cost: 0.04
+    approx_cost: 0.035
     notes: >-
       Seedream routed through the local LiteLLM proxy test alias. Use this to
-      verify built-in fal_ai routing preserves multi-reference conditioning
+      verify the fal queue routing preserves multi-reference conditioning
       before promoting image-balanced.
 
-  - id: gemini-pro-image-production-quality
-    label: "Gemini 3 Pro Image (production quality)"
+  - id: seedream-v5-pro-production-quality
+    label: "Seedream 5.0 Pro (production quality)"
     provider: litellm
     endpoint: image-quality
     tier: premium
     multi_ref: true
     max_refs: 10
-    approx_cost: 0.134
+    approx_cost: 0.0675
     notes: >-
-      Production image-quality tier. Nano Banana 2 Pro (Gemini 3 Pro Image)
-      routed through the vertex-multimodal custom provider — native Vertex
-      multimodal shape, role-labeled reference images, 1K output. Replaced Reve
-      (~$0.20/image) at this alias.
+      Production image-quality tier. Seedream 5.0 Pro routed through the local
+      LiteLLM gateway with up to 10 role-labeled reference images.
 
   - id: reve-proxy
     label: "Reve (LiteLLM Proxy)"

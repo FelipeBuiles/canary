@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+import httpx
+
 from novel_to_comic.ai.errors import AIRefusalError, AITransportError
 from novel_to_comic.ai.providers.base import ProviderRawResult
 from novel_to_comic.config import Config, is_gpt_image_2
@@ -175,6 +177,13 @@ def _raise_safe_decode_error(data: dict[str, Any], exc: BaseException) -> None:
 
 def _raise_safe_wire_phase_error(phase: str, exc: BaseException) -> None:
     descriptor = {"phase": phase, **_safe_decode_error_descriptor(exc)}
+    if phase == "gateway_request":
+        if isinstance(exc, httpx.ReadError):
+            descriptor["failure"] = "gateway disconnected before sending a response"
+        elif isinstance(exc, httpx.ConnectError):
+            descriptor["failure"] = "gateway connection could not be established"
+        elif isinstance(exc, httpx.TimeoutException):
+            descriptor["failure"] = "gateway request timed out"
     response = getattr(exc, "response", None)
     if response is not None:
         descriptor["status_code"] = response.status_code
@@ -190,6 +199,13 @@ def _raise_safe_wire_phase_error(phase: str, exc: BaseException) -> None:
             error = body.get("error")
             if isinstance(error, dict) and isinstance(error.get("code"), str):
                 descriptor["provider_error_code"] = error["code"]
+            if isinstance(error, dict) and isinstance(error.get("message"), str):
+                message = " ".join(error["message"].split())
+                marker = "Vertex image SDK does not support native aspect ratio controls"
+                if marker in message:
+                    detail = message[message.index(marker):]
+                    detail = detail.split(". Received Model Group=", 1)[0]
+                    descriptor["provider_detail"] = detail[:300]
     raise AITransportError(
         f"wire image transport failed ({json.dumps(descriptor, sort_keys=True)})",
         phase=phase,

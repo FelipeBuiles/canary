@@ -77,6 +77,7 @@ _STATIC_FILE_PATH_FRAGMENTS = (
     "/files/plates/",
     "/files/pages/",
     "/files/draw/",
+    "/files/samples/",
 )
 
 
@@ -84,6 +85,11 @@ def _should_log_request(request: Request, status_code: int, elapsed_ms: float) -
     path = request.url.path
     # Suppress noisy polling for asset files (auth failures, not-yet-generated, etc.)
     if any(fragment in path for fragment in _STATIC_FILE_PATH_FRAGMENTS):
+        return False
+    # EventSource reconnects while no pipeline run is active. The endpoint's
+    # 404 means "no active event queue", not that the route or project is
+    # missing, so logging every retry obscures actionable failures.
+    if path.endswith("/events") and status_code == 404:
         return False
     if status_code >= 400:
         return True

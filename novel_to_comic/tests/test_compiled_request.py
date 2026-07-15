@@ -78,6 +78,7 @@ def _subject(
     appearance_state_id: str | None = None,
     appearance_locked: bool = False,
     canonical_equivalent: bool = False,
+    baseline_affect: str | None = None,
 ) -> PromptSubject:
     return PromptSubject(
         character_id=char_id,
@@ -86,6 +87,7 @@ def _subject(
         appearance_state_id=appearance_state_id,
         appearance_locked=appearance_locked,
         appearance_state_canonical_equivalent=canonical_equivalent,
+        baseline_affect=baseline_affect,
     )
 
 
@@ -183,6 +185,7 @@ def _compile(
     configured_provider_model: str = "reve/create",
     selected_style_source_hash: str | None = None,
     controls: GenerationControls | None = None,
+    asset_kind: str = "panel",
 ) -> CompiledGenerationRequest:
     return compile_generation_request(
         prompt=prompt,
@@ -193,6 +196,7 @@ def _compile(
         selected_style_text=selected_style_text,
         selected_style_source_hash=selected_style_source_hash,
         controls=controls,
+        asset_kind=asset_kind,
     )
 
 
@@ -276,6 +280,11 @@ class TestReferenceInstructionsNameCorrectFacets:
         assert "build" in text
         assert "wardrobe" in text
         assert "anatomy" in text
+        assert "identity, anatomy, and wardrobe only" in text
+        assert "ignore its medium" in text
+        assert "line weight" in text
+        assert "rendering density" in text
+        assert "project style direction is the sole style authority" in text
 
     def test_identity_only_preserves_identity_ignores_wardrobe_anatomy(self):
         asset = _ref_asset(
@@ -345,6 +354,10 @@ class TestReferenceInstructionsNameCorrectFacets:
         assert "medium" in text
         assert "mark-making" in text
         assert "palette" in text
+        assert "line weight" in text
+        assert "facial modeling" in text
+        assert "rendering density" in text
+        assert "sole visual style authority" in text
         assert "ignore depicted content" in text
 
     def test_continuity_preserves_only_compatible_facets(self):
@@ -631,6 +644,116 @@ class TestPromptSectionOrder:
             assert kinds.index("style") < kinds.index("reference_instructions")
         # Geometry is last.
         assert kinds[-1] == "geometry"
+
+
+class TestCharacterReferenceConstraints:
+    def test_reference_sheet_replaces_panel_layout_invariants(self):
+        prompt = _prompt(subjects=[_subject(baseline_affect="quietly uneasy")])
+        req = _compile(
+            prompt,
+            _plan(),
+            asset_kind="character_ref",
+            selected_style_text="Bleeding watercolor and nervous ink.",
+        )
+
+        assert "exactly four full-body depictions of that same character" in req.final_prompt
+        assert "one square 2x2 reference sheet" in req.final_prompt
+        assert "exactly one character identity" in req.final_prompt
+        assert "one body per listed character" not in req.final_prompt
+        assert "single frozen instant" not in req.final_prompt
+        assert "One unified scene filling the entire canvas" not in req.final_prompt
+
+    def test_facial_quality_rules_survive_custom_style_and_preserve_anchor(self):
+        anchor = "1man, pale skin, dark circles under eyes, anxious expression"
+        prompt = _prompt(subjects=[_subject(identity=anchor, baseline_affect="quietly uneasy")])
+        req = _compile(
+            prompt,
+            _plan(),
+            asset_kind="character_ref",
+            selected_style_text="Dark organic caricature with nervous marks.",
+        )
+
+        assert anchor in req.final_prompt
+        assert req.protected_anchors[0].text == anchor
+        assert "baseline affect for Milla: quietly uneasy" in req.final_prompt
+        assert "restrained resting expression in all four views" in req.final_prompt
+        assert "oversized eyes, blackened eye sockets" in req.final_prompt
+        assert "low-intensity baseline affect rather than an active reaction" in req.final_prompt
+
+    def test_state_reference_allows_authored_state_affect_without_amplification(self):
+        subject = _subject(
+            identity="1woman, feverish, wild-eyed",
+            appearance_state_id="feverish",
+            baseline_affect="feverish and disoriented",
+        )
+        req = _compile(_prompt(subjects=[subject]), _plan(), asset_kind="character_ref")
+
+        assert "honor any explicitly authored appearance-state affect" in req.final_prompt
+        assert "do not intensify it beyond the state description" in req.final_prompt
+        assert "This is a calm character-design sitting" not in req.final_prompt
+
+
+class TestVisualStyleReferenceAuthority:
+    def test_approved_style_reference_demotes_named_artist_text(self):
+        style_ref = _ref_asset(
+            role="style", entity_id="style_1", label="selected style",
+            authority_scope=AuthorityScope.CONTEXTUAL,
+            preserve_facets=(), ignore_facets=(),
+        )
+        req = _compile(
+            _prompt(subjects=[_subject()]),
+            _plan(selected=(style_ref,)),
+            selected_style_text=(
+                "Bleeding watercolor and India ink, referencing the dark organic "
+                "illustration style of Dave McKean. Pooling olive and sepia washes."
+            ),
+        )
+
+        assert "Dave McKean" not in req.final_prompt
+        assert "Bleeding watercolor and India ink" in req.final_prompt
+        assert "Pooling olive and sepia washes" in req.final_prompt
+        assert "approved visual style reference overrides any conflict" in req.final_prompt
+        assert "approved visual style reference precedes this prompt" in req.final_prompt
+
+    def test_character_reference_keeps_light_subjects_in_the_same_rendering_style(self):
+        style_ref = _ref_asset(
+            role="style", entity_id="style_1", label="selected style",
+            authority_scope=AuthorityScope.CONTEXTUAL,
+            preserve_facets=(), ignore_facets=(),
+        )
+        req = _compile(
+            _prompt(subjects=[_subject(identity="young, pale, thin, light smock")]),
+            _plan(selected=(style_ref,)),
+            asset_kind="character_ref",
+            selected_style_text="Watercolor and India ink.",
+        )
+
+        assert "changes local subject color only" in req.final_prompt
+        assert "must not make the illustration cleaner, flatter" in req.final_prompt
+        assert "background wash coverage" in req.final_prompt
+
+    def test_subject_refs_cannot_introduce_separate_styles(self):
+        subject_ref = _ref_asset(
+            role="subject", entity_id="char_001", label="Milla",
+            authority_scope=AuthorityScope.FULL_APPEARANCE,
+        )
+        style_ref = _ref_asset(
+            role="style", entity_id="style_1", label="selected style",
+            authority_scope=AuthorityScope.CONTEXTUAL,
+            preserve_facets=(), ignore_facets=(), content_sha256="b" * 64,
+        )
+        req = _compile(
+            _prompt(subjects=[_subject()]),
+            _plan(selected=(subject_ref, style_ref)),
+            selected_style_text="Watercolor and India ink.",
+        )
+
+        subject_instruction = req.reference_instructions[0]
+        assert "ignore its medium" in subject_instruction.semantic_instruction
+        assert "paper texture" in subject_instruction.semantic_instruction
+        assert "rendering density" in subject_instruction.ignore_facets
+        assert "one shared artistic hand" in req.final_prompt
+        assert "Character references define identity, anatomy, and wardrobe only" in req.final_prompt
 
 
 # ---------------------------------------------------------------------------

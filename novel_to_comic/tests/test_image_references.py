@@ -97,11 +97,9 @@ class TestImageModelProfile:
         assert profile.route is ImageRoute.GEMINI_FLASH_LITE
         assert profile.max_references >= 4
 
-    def test_quality_route_matches_gemini_pro_image_profile(self):
-        # image-quality now routes to the Gemini 3 Pro Image tier, which shares
-        # the Gemini flash-lite reference capability profile (10 refs, all roles).
+    def test_quality_route_matches_seedream_pro_profile(self):
         profile = image_model_profile(GATEWAY_IMAGE_QUALITY)
-        assert profile.route is ImageRoute.GEMINI_PRO_IMAGE
+        assert profile.route is ImageRoute.SEEDREAM
         assert profile.max_references == image_model_profile(GATEWAY_IMAGE_FAST).max_references
         assert {"subject", "style", "location_plate", "prop", "continuity"} <= profile.supported_roles
 

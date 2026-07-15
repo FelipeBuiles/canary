@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from novel_to_comic.ai.providers.base import RefImage, order_refs_for_upload
-from novel_to_comic.config import Config, is_gpt_image_2, is_reve_model
+from novel_to_comic.config import Config, is_gpt_image_2, is_reve_model, is_seedream_model
 
 _GPT_LOCATION_PLATE_WIDTH = 1536
 _GPT_LOCATION_PLATE_HEIGHT = 1024
@@ -171,7 +171,7 @@ class RefStrategy:
 
     @property
     def _seedream(self) -> bool:
-        return "seedream" in (self.model or "").strip().lower()
+        return is_seedream_model(self.model)
 
     # ------------------------------------------------------------------
     # Draw: panel reference selection

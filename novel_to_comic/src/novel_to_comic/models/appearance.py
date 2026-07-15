@@ -57,6 +57,9 @@ class AppearanceState(BaseModel):
     label: str  # human label, e.g. "Silver hands"
     visual_anchor: str
     visually_significant: bool = False
+    # Optional stable demeanor specific to this appearance state. Transient
+    # beat-level reactions still belong in panel expression direction.
+    baseline_affect: Optional[str] = None
     # True only when this state explicitly matches the canonical visual look.
     # Reference selection must never infer equivalence from an id or label.
     canonical_equivalent: bool = False

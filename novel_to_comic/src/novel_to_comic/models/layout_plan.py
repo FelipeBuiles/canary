@@ -114,6 +114,41 @@ class LLMNarrationDecisionSpec(BaseModel):
     preferred_zone: CaptionZone = "top"
     decision_reason: str
 
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _normalize_mode(cls, value: Any) -> Any:
+        """Normalize common model paraphrases before applying the enum contract.
+
+        The planner is instructed to emit machine values, but this field is
+        especially prone to human-readable variants such as ``"overlay"`` or
+        ``"separate panel"``. These mappings preserve the intended meaning
+        without weakening the stored model's strict two-value contract.
+        """
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+        if normalized in {"", "none", "null", "n_a", "na"}:
+            return None
+        if normalized in {
+            "attached_caption",
+            "caption_attached",
+            "overlay",
+            "caption_overlay",
+            "overlay_caption",
+        }:
+            return "attached_caption"
+        if normalized in {
+            "caption_panel",
+            "panel_caption",
+            "separate_panel",
+            "standalone_panel",
+            "own_panel",
+        }:
+            return "caption_panel"
+        return value
+
     @field_validator("preferred_zone", mode="before")
     @classmethod
     def _normalize_zone(cls, v: str) -> str:

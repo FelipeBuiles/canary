@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import mimetypes
 import os
 import re
@@ -59,6 +60,7 @@ except ModuleNotFoundError:
     litellm = DummyLiteLLM
 
 _ASPECT_TOLERANCE = 0.12
+log = logging.getLogger(__name__)
 
 # Canary renders public-domain literature whose canonical content can include
 # violence (e.g. The Girl Without Hands). Vertex's default image safety filters
@@ -76,7 +78,12 @@ _SAFETY_OFF = [
 ]
 
 
-def _translate_vertex_error(exc: BaseException, model: str) -> BaseException:
+def _translate_vertex_error(
+    exc: BaseException,
+    model: str,
+    *,
+    request_context: str | None = None,
+) -> BaseException:
     """Map a raw Vertex/genai API error to a typed LiteLLM exception.
 
     Without this, a Vertex ``429 RESOURCE_EXHAUSTED`` (quota) propagates
@@ -94,6 +101,8 @@ def _translate_vertex_error(exc: BaseException, model: str) -> BaseException:
     status = getattr(exc, "status", None)
     message = getattr(exc, "message", None) or str(exc)
     detail = f"Vertex image generation failed ({status or code or type(exc).__name__}): {message}"
+    if request_context:
+        detail = f"{detail}; request={request_context}"
     if code == 429 or status == "RESOURCE_EXHAUSTED":
         return litellm.RateLimitError(message=detail, llm_provider="vertex-multimodal", model=model)
     if isinstance(code, int) and 400 <= code < 600:
@@ -231,20 +240,31 @@ class VertexMultimodalLLM(CustomLLM):
             }
             controls = dict(manifest.get("controls", []))
             quality = controls.get("quality")
-            image_config_kwargs = _image_config_kwargs(requested_aspect, quality)
+            image_config_kwargs = _image_config_kwargs(
+                requested_aspect,
+                quality,
+                model=vertex_model,
+            )
             native_aspect = image_config_kwargs.get("aspect_ratio")
 
             # Older LiteLLM images ship a google-genai version without
-            # ImageConfig. The size hint is optional, but dropping a requested
-            # non-square aspect would make the provider silently return the
-            # wrong frame, so surface that incompatibility before generation.
+            # ImageConfig. Gemini defaults to a square image, so square calls
+            # remain safe without the optional native controls (and are still
+            # verified from the returned bytes below). Dropping a requested
+            # non-square aspect could silently return the wrong frame, so keep
+            # surfacing that incompatibility before generation.
             image_config_type = getattr(types, "ImageConfig", None)
             if image_config_kwargs and image_config_type is not None:
                 config_kwargs["image_config"] = image_config_type(**image_config_kwargs)
-            elif native_aspect is not None:
+            elif _requires_native_aspect_control(native_aspect):
                 raise ValueError(
                     "Vertex image SDK does not support native aspect ratio controls; "
                     f"cannot safely generate the requested {native_aspect} frame"
+                )
+            elif image_config_kwargs:
+                log.warning(
+                    "Vertex image SDK lacks ImageConfig; using Gemini's default "
+                    "square output and verifying returned dimensions"
                 )
             response = await asyncio.to_thread(
                 client.models.generate_content,
@@ -253,7 +273,14 @@ class VertexMultimodalLLM(CustomLLM):
                 config=types.GenerateContentConfig(**config_kwargs),
             )
         except Exception as exc:  # noqa: BLE001 — re-raised as a typed LiteLLM error
-            translated = _translate_vertex_error(exc, vertex_model)
+            translated = _translate_vertex_error(
+                exc,
+                vertex_model,
+                request_context=(
+                    f"model={vertex_model}, location={location}, "
+                    f"image_config={image_config_kwargs}"
+                ),
+            )
             if translated is exc:
                 raise
             raise translated from exc
@@ -509,6 +536,8 @@ def _map_to_supported_aspect(requested_aspect: float | None) -> str | None:
 def _image_config_kwargs(
     requested_aspect: float | None,
     quality: Any,
+    *,
+    model: str | None = None,
 ) -> dict[str, str]:
     """Build native Gemini image controls from the exact wire geometry."""
     result: dict[str, str] = {}
@@ -518,6 +547,11 @@ def _image_config_kwargs(
         )
         if image_size is None:
             raise ValueError(f"unsupported wire quality: {quality}")
+        # Flash Lite Image has a fixed 1K output resolution. Sending the
+        # generic medium/high mapping (2K/4K) makes Vertex reject an otherwise
+        # valid request with an opaque INVALID_ARGUMENT response.
+        if model and "gemini-3.1-flash-lite-image" in model:
+            image_size = "1K"
         result["image_size"] = image_size
 
     # Gemini otherwise defaults to a square image even when the
@@ -528,6 +562,11 @@ def _image_config_kwargs(
     if native_aspect is not None:
         result["aspect_ratio"] = native_aspect
     return result
+
+
+def _requires_native_aspect_control(native_aspect: str | None) -> bool:
+    """Whether omitting ImageConfig could change the requested frame shape."""
+    return native_aspect not in (None, "1:1")
 
 
 def _shape_for_aspect(aspect: float | None) -> str | None:

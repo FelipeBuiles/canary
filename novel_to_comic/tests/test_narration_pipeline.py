@@ -7,6 +7,33 @@ from novel_to_comic.prompting import build_planned_panel_prompt_spec
 from novel_to_comic.stages.s5_layout_plan import _build_narration_decisions
 
 
+def test_llm_narration_decision_normalizes_common_mode_variants():
+    assert LLMNarrationDecisionSpec(
+        beat_index=1,
+        decision="rendered",
+        mode="overlay",
+        decision_reason="Overlay the caption on the image.",
+    ).mode == "attached_caption"
+    assert LLMNarrationDecisionSpec(
+        beat_index=1,
+        decision="rendered",
+        mode="separate panel",
+        decision_reason="Give the bridge its own panel.",
+    ).mode == "caption_panel"
+
+
+def test_llm_narration_decision_keeps_unknown_mode_invalid():
+    import pytest
+
+    with pytest.raises(ValueError, match="attached_caption"):
+        LLMNarrationDecisionSpec(
+            beat_index=1,
+            decision="rendered",
+            mode="speech_bubble",
+            decision_reason="Unsupported narration placement.",
+        )
+
+
 def test_narration_fallback_uses_adapted_caption_and_preserves_source_quote():
     beats = [
         ScreenplayBeat(type="action", content="Myop lays down her flowers."),

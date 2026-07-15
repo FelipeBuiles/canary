@@ -159,7 +159,7 @@ class TestLayoutPassApplies:
         assert layout_pass_applies(Config(image_model="image-reve", layout_prompts_enabled=True))
 
     def test_skips_image_quality_alias_now_routed_to_gemini(self):
-        # image-quality routes to the Gemini 3 Pro Image tier now, not Reve, so
+        # image-quality routes to Seedream 5 Pro, not Reve, so
         # the Reve-only layout pass must not run for it.
         assert not layout_pass_applies(Config(image_model="image-quality", layout_prompts_enabled=True))
 
@@ -242,7 +242,7 @@ class TestSelector:
         assert isinstance(provider, ReveLayoutProvider)
 
     def test_layout_on_image_quality_stays_on_gateway(self):
-        # image-quality now routes to Gemini 3 Pro Image, not Reve, so the
+        # image-quality routes to Seedream 5 Pro, not Reve, so the
         # Reve layout provider must not be selected for it.
         provider = pick(
             "image-quality",

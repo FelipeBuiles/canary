@@ -55,6 +55,11 @@ REVE_ALIASES: frozenset[str] = frozenset(
     for alias in IMAGE_MODEL_ALIASES
     if describe_image_model(alias).route is ImageRoute.REVE
 )
+SEEDREAM_ALIASES: frozenset[str] = frozenset(
+    alias
+    for alias in IMAGE_MODEL_ALIASES
+    if describe_image_model(alias).route is ImageRoute.SEEDREAM
+)
 
 # Default parallel image generations for Gemini/Vertex routes when
 # image_concurrency is unset. Vertex preview image models carry tight RPM
@@ -71,6 +76,11 @@ def is_gpt_image_2(model: str) -> bool:
 def is_reve_model(model: str) -> bool:
     """True if `model` is classified as a Reve route."""
     return describe_image_model(model).route is ImageRoute.REVE
+
+
+def is_seedream_model(model: str) -> bool:
+    """True if `model` is classified as a Seedream route."""
+    return describe_image_model(model).route is ImageRoute.SEEDREAM
 
 
 def image_model_aliases() -> tuple[str, ...]:

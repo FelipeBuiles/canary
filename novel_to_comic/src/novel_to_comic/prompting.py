@@ -164,7 +164,7 @@ def _labels(config: Config | None = None) -> dict[str, str]:
 _clean = clean
 _shorten = shorten
 IMAGE_PROMPT_VERSION = 23  # 23: semantic ReferencePlan owns all reference selection
-_SOFT_CONTINUITY = {"smooth_continuation", "match_cut"}
+_TEXT_CONTINUITY = {"smooth_continuation"}
 
 # Generic interior/exterior vocabulary for anchor filtering. All matching is
 # WORD-BOUNDARY based (see _compile_token_re) so "bed" never matches
@@ -547,10 +547,13 @@ def _clean_list(values: list[str] | None, limit: int = 10) -> list[str]:
 def _planned_panel_state_summary(
     panel: PlannedPanel,
     character_names: dict[str, str] | None = None,
+    character_ids: set[str] | None = None,
 ) -> str:
     names = character_names or {}
     parts: list[str] = []
     for char_id in panel.characters_present:
+        if character_ids is not None and char_id not in character_ids:
+            continue
         action = _single_instant_direction(panel.character_actions.get(char_id, ""))
         expression = panel.character_expressions.get(char_id, "")
         position = panel.character_positions.get(char_id, "")
@@ -569,23 +572,48 @@ def build_planned_panel_continuity_note(
     if not prev_panel:
         return None
 
+    # Narrative action continuity is intentionally intra-scene. A repeated
+    # location across scene boundaries does not mean the depicted moment is
+    # continuous, and feeding the prior action into a new scene is harmful.
+    if current_panel.scene_id != prev_panel.scene_id:
+        return None
+
     transition_type = (prev_panel.transition_out or "").strip().lower()
-    if transition_type not in _SOFT_CONTINUITY:
+    if transition_type not in _TEXT_CONTINUITY:
+        return None
+
+    # Only carry state for characters who remain visible across the boundary.
+    # This suppresses prior-only subjects for establishing shots, flashbacks,
+    # and other cuts that the layout model may have mislabeled as smooth.
+    shared_character_ids = set(prev_panel.characters_present) & set(
+        current_panel.characters_present
+    )
+    if not shared_character_ids:
         return None
 
     character_names = (
         {c.id: c.name for c in story_bible.characters} if story_bible else {}
     )
-    prev_state_str = _shorten(_planned_panel_state_summary(prev_panel, character_names), 120)
-    curr_state_str = _shorten(_planned_panel_state_summary(current_panel, character_names), 120)
+    prev_state_str = _shorten(
+        _planned_panel_state_summary(
+            prev_panel, character_names, shared_character_ids
+        ),
+        120,
+    )
+    curr_state_str = _shorten(
+        _planned_panel_state_summary(
+            current_panel, character_names, shared_character_ids
+        ),
+        120,
+    )
 
-    if prev_state_str == "scene continues" and curr_state_str == "scene continues":
+    if prev_state_str == "scene continues" or curr_state_str == "scene continues":
         return None
 
-    parts: list[str] = [f"CONTINUING FROM: {prev_state_str}."]
-    parts.append(f"TRANSITION TYPE: {transition_type}.")
-    parts.append(f"Now: {curr_state_str}.")
-    return " ".join(parts)
+    return (
+        f"ACTION CONTINUITY FROM PREVIOUS PANEL: {prev_state_str}. "
+        f"CURRENT PANEL: {curr_state_str}."
+    )
 
 
 def build_planned_panel_prompt_spec(
@@ -632,6 +660,11 @@ def build_planned_panel_prompt_spec(
                     panel.character_actions.get(character_id, "")
                 ),
                 expression=_clean(panel.character_expressions.get(character_id, "")),
+                baseline_affect=(
+                    resolved.state.baseline_affect
+                    if resolved.state is not None and resolved.state.baseline_affect
+                    else character.baseline_affect
+                ),
                 position=_clean(panel.character_positions.get(character_id, "")),
                 appearance_state_id=(resolved.state_id if resolved.state is not None else None),
                 appearance_state_canonical_equivalent=(

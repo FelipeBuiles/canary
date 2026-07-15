@@ -251,6 +251,10 @@ class PromptSubject(BaseModel):
     identity: str
     action: str = ""
     expression: str = ""
+    # Stable, low-intensity demeanor from the Story Bible. This is separate
+    # from the panel's transient ``expression`` direction and never mutates the
+    # verbatim identity anchor.
+    baseline_affect: str | None = None
     position: str = ""
     # The active character appearance state id for this panel (None = base look).
     # Set by the canonical builder from the appearance resolver; the brief and

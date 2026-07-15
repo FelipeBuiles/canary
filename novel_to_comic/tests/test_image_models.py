@@ -29,9 +29,9 @@ from novel_to_comic.image_models import (
         ),
         (
             "image-quality",
-            ImageRoute.GEMINI_PRO_IMAGE,
-            "vertex-multimodal/gemini-3-pro-image-preview",
-            "Quality — Gemini 3 Pro Image (Nano Banana 2 Pro)",
+            ImageRoute.SEEDREAM,
+            "fal-queue/bytedance/seedream/v5/pro/edit",
+            "Quality — Seedream 5.0 Pro",
         ),
         ("image-reve", ImageRoute.REVE, "reve/create", "Reve"),
     ],
@@ -74,6 +74,14 @@ def test_literal_gpt_image_2_models_are_classified(model: str):
 
     assert description.route is ImageRoute.GPT_IMAGE_2
     assert description.display_name == "GPT Image 2"
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["fal-queue/bytedance/seedream/v5/pro/edit", "bytedance/seedream/v5/pro/edit"],
+)
+def test_literal_seedream_models_are_classified(model: str):
+    assert describe_image_model(model).route is ImageRoute.SEEDREAM
 
 
 def test_unknown_model_has_truthful_fallback_description():

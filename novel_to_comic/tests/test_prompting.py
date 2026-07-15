@@ -24,12 +24,35 @@ from novel_to_comic.models.story_bible import (  # noqa: E402
     StoryBible,
 )
 from novel_to_comic.prompting import (  # noqa: E402
+    build_planned_panel_continuity_note,
     build_planned_panel_prompt_spec,
     dimensions_for_panel,
     generate_distilled_prompt,
     render_generation_prompt,
     visual_brief_source_spec,
 )
+
+
+def _continuity_panel(
+    number: int,
+    *,
+    scene_id: str = "scene_002",
+    characters: list[str] | None = None,
+    action: str = "",
+    transition_out: str | None = None,
+) -> PlannedPanel:
+    present = ["char_001"] if characters is None else characters
+    return PlannedPanel(
+        panel_id=f"{scene_id}:panel_{number:03d}",
+        scene_id=scene_id,
+        panel_number=number,
+        beat_ids=[f"{scene_id}:beat_{number:03d}"],
+        characters_present=present,
+        character_actions={"char_001": action} if present and action else {},
+        character_expressions={"char_001": "focused"} if present else {},
+        character_positions={"char_001": "center"} if present else {},
+        transition_out=transition_out,
+    )
 
 
 def _story_bible() -> StoryBible:
@@ -826,6 +849,38 @@ def test_distilled_prompt_surfaces_continuity_note():
     distilled = generate_distilled_prompt(prompt)
 
     assert "CONTINUING FROM" in distilled or "smooth continuation" in distilled.lower()
+
+
+def test_continuity_note_suppresses_prior_subject_for_subjectless_panel():
+    prev = _continuity_panel(
+        1, action="reaching toward a framed photograph", transition_out="smooth_continuation"
+    )
+    current = _continuity_panel(2, characters=[])
+
+    assert build_planned_panel_continuity_note(current, prev, _story_bible()) is None
+
+
+def test_continuity_note_keeps_only_shared_character_action():
+    prev = _continuity_panel(
+        1, action="reaching toward the door", transition_out="smooth_continuation"
+    )
+    current = _continuity_panel(2, action="hand closing around the doorknob")
+
+    note = build_planned_panel_continuity_note(current, prev, _story_bible())
+
+    assert note is not None
+    assert "reaching toward the door" in note
+    assert "hand closing around the doorknob" in note
+    assert "smooth_continuation" not in note
+
+
+def test_match_cut_does_not_dump_previous_character_state_into_text_prompt():
+    prev = _continuity_panel(
+        1, action="raising a circular mirror", transition_out="match_cut"
+    )
+    current = _continuity_panel(2, action="holding a round shield")
+
+    assert build_planned_panel_continuity_note(current, prev, _story_bible()) is None
 
 
 def test_location_state_resolves_anchor_by_panel_position(tmp_path):

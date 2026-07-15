@@ -95,7 +95,8 @@ RUN python -m venv /app/.venv-litellm \
     && /app/.venv-litellm/bin/pip install --no-cache-dir 'litellm[proxy]==1.83.14' \
     && /app/.venv-litellm/bin/pip install --no-cache-dir \
         'google-cloud-aiplatform>=1.133' \
-        'google-auth>=2.49'
+        'google-auth>=2.49' \
+        'google-genai==1.75.0'
 
 # LiteLLM config + custom handlers (vertex-multimodal / reve / fal-queue).
 # PYTHONPATH makes the handlers importable; config.yaml's custom_provider_map

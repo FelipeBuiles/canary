@@ -292,6 +292,44 @@ def test_gateway_transport_error_keeps_safe_http_diagnostics():
     assert "secret prompt" not in str(raised.value)
 
 
+def test_gateway_read_disconnect_has_actionable_safe_diagnostic():
+    request = httpx.Request("POST", "http://gateway/v1/images/generations")
+    error = httpx.ReadError("secret upstream detail", request=request)
+
+    with pytest.raises(AITransportError) as raised:
+        _raise_safe_wire_phase_error("gateway_request", error)
+
+    message = str(raised.value)
+    assert '"failure": "gateway disconnected before sending a response"' in message
+    assert "secret upstream detail" not in message
+
+
+def test_gateway_transport_error_exposes_allowlisted_aspect_detail():
+    request = httpx.Request("POST", "http://gateway/v1/images/generations")
+    response = httpx.Response(
+        500,
+        request=request,
+        json={"error": {
+            "code": "500",
+            "message": (
+                "litellm.APIConnectionError: Vertex image SDK does not support "
+                "native aspect ratio controls; cannot safely generate the requested "
+                "4:5 frame. Received Model Group=image-balanced"
+            ),
+        }},
+    )
+    error = httpx.HTTPStatusError(
+        "failed", request=request, response=response,
+    )
+
+    with pytest.raises(AITransportError) as raised:
+        _raise_safe_wire_phase_error("gateway_request", error)
+
+    assert (
+        '"provider_detail": "Vertex image SDK does not support native aspect '
+        'ratio controls; cannot safely generate the requested 4:5 frame"'
+        in str(raised.value)
+    )
 def test_isolated_handler_rejects_reordered_or_changed_uploads(tmp_path: Path):
     wire = compile_provider_wire_request(_compiled(tmp_path, model=GATEWAY_IMAGE_BALANCED, count=2))
     manifest = parse_provider_wire(wire.to_json())
@@ -306,8 +344,9 @@ def test_isolated_vertex_parser_adds_no_prose_or_relabels(tmp_path: Path):
     parts = [object(), object()]
     contents = exact_vertex_contents(manifest, parts)
     assert contents == [
-        wire.prompt_parts[0], wire.references[0].instruction, parts[0],
-        wire.references[1].instruction, parts[1],
+        parts[0], wire.references[0].instruction,
+        parts[1], wire.references[1].instruction,
+        wire.prompt_parts[0],
     ]
 
 

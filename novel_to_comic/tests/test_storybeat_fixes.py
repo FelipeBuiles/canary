@@ -16,6 +16,7 @@ from novel_to_comic.models.story_bible import Location, Scene, StoryBible
 from novel_to_comic.stages.s1_extract import _find_quote_position, _write_scene_files
 from novel_to_comic.stages.s4_screenplay import _annotate_transition_beats
 from novel_to_comic.stages.s5_layout_plan import (
+    _apply_screenplay_transition_boundaries,
     _aspect_for_shape,
     _cross_scene_transition_pass,
     _dedupe_adjacent_panels,
@@ -123,6 +124,30 @@ def test_annotate_transitions_fills_fade_as_hard_cut():
     )
     out = _annotate_transition_beats(sp)
     assert out.beats[0].transition_type == "hard_cut"
+
+
+def test_annotate_transitions_fills_flashback_as_hard_cut():
+    sp = Screenplay(
+        scene_id="scene_001", location_id="loc_001", characters=[],
+        beats=[ScreenplayBeat(type="transition", content="Flashback to Newport years earlier.")],
+    )
+    out = _annotate_transition_beats(sp)
+    assert out.beats[0].transition_type == "hard_cut"
+
+
+def test_screenplay_hard_cut_overrides_layout_smooth_continuation():
+    beats = [
+        ScreenplayBeat(type="action", content="Francis reaches for the photograph."),
+        ScreenplayBeat(type="transition", content="Flashback to Newport.", transition_type="hard_cut"),
+        ScreenplayBeat(type="action", content="Two sailors collide in the street."),
+    ]
+    before = _panel(1, beat_ids=["scene_001:beat_001"], transition_out="smooth_continuation")
+    after = _panel(2, beat_ids=["scene_001:beat_002", "scene_001:beat_003"])
+
+    _apply_screenplay_transition_boundaries([before, after], beats)
+
+    assert before.transition_out == "hard_cut"
+    assert after.transition_in == "hard_cut"
 
 
 # ── Stage 5: shapes, targets, ordering, thought beats ────────────────────────

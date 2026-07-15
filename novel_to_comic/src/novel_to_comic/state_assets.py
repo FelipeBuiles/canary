@@ -203,6 +203,7 @@ class StateAssetGenerationSpec(BaseModel):
     entity_id: str
     state_id: str
     active_state_anchor: str
+    baseline_affect: str | None = None
     canonical_parent_identity: str
     canonical_parent_path: str
     canonical_parent_sha256: str | None
@@ -304,6 +305,7 @@ def build_character_state_spec(
     return StateAssetGenerationSpec(
         asset_kind="character_state_ref", entity_id=char.id, state_id=state.id,
         active_state_anchor=state.visual_anchor, canonical_parent_identity=char.visual_anchor,
+        baseline_affect=state.baseline_affect or char.baseline_affect,
         canonical_parent_path=_relative(parent, project_dir) or "", canonical_parent_sha256=parent_hash,
         preserved_facets=("identity", *(() if not stable_features else ("distinguishing_features",))),
         overridden_facets=tuple(sorted(overridden)), style_path=_relative(style_path, project_dir),

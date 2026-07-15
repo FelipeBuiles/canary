@@ -299,7 +299,12 @@ def _transition_type_for_text(text: str) -> str:
     # cuts are deliberate jumps (hard_cut); visual echoes are match cuts;
     # everything else is a gentle handoff.
     lower = text.lower()
-    hard_markers = ("smash cut", "cut to", "scene change", "time jump", "jump cut", "fade")
+    hard_markers = (
+        "smash cut", "cut to", "scene change", "time jump", "jump cut", "fade",
+        "flashback", "flash forward", "years earlier", "years later",
+        "months earlier", "months later", "days earlier", "days later",
+        "hours earlier", "hours later", "elsewhere", "meanwhile",
+    )
     if any(marker in lower for marker in hard_markers):
         return "hard_cut"
     if any(marker in lower for marker in ("match cut", "parallel", "echo", "mirrors")):

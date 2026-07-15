@@ -550,12 +550,12 @@ def test_frozen_wire_and_submitted_preview_are_byte_equivalent(tmp_path: Path):
     assert adapter_manifest == submitted_manifest
     image_parts = [object() for _ in files]
     assert exact_vertex_contents(adapter_manifest, image_parts) == [
-        loaded.wire.prompt_parts[0],
         *[
             value
             for reference, image_part in zip(loaded.wire.references, image_parts, strict=True)
-            for value in (reference.instruction, image_part)
+            for value in (image_part, reference.instruction)
         ],
+        loaded.wire.prompt_parts[0],
     ]
 
 

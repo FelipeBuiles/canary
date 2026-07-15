@@ -465,6 +465,19 @@
   animation: register-stamp 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+@keyframes panel-regen-progress {
+  0% {
+    transform: translateX(-105%);
+  }
+  100% {
+    transform: translateX(205%);
+  }
+}
+
+.panel-regen-progress {
+  animation: panel-regen-progress 1.4s cubic-bezier(0.76, 0, 0.24, 1) infinite;
+}
+
 @media (max-width: 640px) {
   .display-impact {
     font-size: 3.5rem;

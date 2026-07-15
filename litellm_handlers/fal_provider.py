@@ -11,8 +11,21 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from litellm.llms.custom_llm import CustomLLM
-from litellm.types.utils import ImageObject, ImageResponse
+try:
+    from litellm.llms.custom_llm import CustomLLM
+    from litellm.types.utils import ImageObject, ImageResponse
+except ModuleNotFoundError:
+    # Keep pure payload/endpoint helpers importable in the application test
+    # environment, where the isolated LiteLLM proxy dependency is absent.
+    class CustomLLM:
+        pass
+
+    class ImageObject:
+        def __init__(self, **kwargs: Any):
+            self.__dict__.update(kwargs)
+
+    class ImageResponse:
+        pass
 
 FAL_QUEUE_BASE = "https://queue.fal.run"
 POLL_INTERVAL_S = 1.5
@@ -116,7 +129,7 @@ class FalQueueLLM(CustomLLM):
         b64 = base64.b64encode(image_bytes).decode("ascii")
         model_response.created = int(time.time())
         model_response.data = [ImageObject(b64_json=b64)]
-        model_response._hidden_params["model"] = f"fal-ai/{endpoint}"
+        model_response._hidden_params["model"] = endpoint
         model_response._hidden_params["custom_llm_provider"] = "fal-queue"
         model_response._hidden_params["response_cost"] = None
         return model_response
@@ -124,7 +137,10 @@ class FalQueueLLM(CustomLLM):
 
 def _fal_endpoint(model: str) -> str:
     cleaned = (model or "").strip().strip("/")
-    if cleaned.startswith("fal-ai/"):
+    # Current ByteDance partner endpoints are rooted at `bytedance/...` rather
+    # than `fal-ai/bytedance/...`. Preserve that provider-owned namespace; the
+    # latter accepts some Lite routes but 404s for Seedream 5 Pro results.
+    if cleaned.startswith(("fal-ai/", "bytedance/")):
         return cleaned
     return f"fal-ai/{cleaned}"
 

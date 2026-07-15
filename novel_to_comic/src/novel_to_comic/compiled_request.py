@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -180,7 +181,11 @@ def _facet_phrase(facets: tuple[str, ...]) -> str:
 _CONTEXTUAL_PRESERVE: dict[str, tuple[str, ...]] = {
     "location_plate": ("architecture", "landmarks", "materials"),
     "prop": ("object",),
-    "style": ("medium", "mark-making", "palette"),
+    "style": (
+        "medium", "mark-making", "palette", "line weight", "facial modeling",
+        "wash density", "edge treatment", "shading", "shadow depth",
+        "rendering density", "degree of simplification",
+    ),
     "continuity": (),
 }
 
@@ -195,6 +200,11 @@ _LOCATION_STATE_FACETS = frozenset({
     "architecture", "landmarks", "materials", "damage", "water_level",
     "weather", "light", "atmosphere",
 })
+
+_SUBJECT_STYLE_IGNORE = (
+    "medium", "mark-making", "palette", "line weight", "shading", "lighting",
+    "paper texture", "edge treatment", "rendering density",
+)
 
 
 def compile_reference_instruction(
@@ -227,27 +237,33 @@ def compile_reference_instruction(
 
     if role == "subject":
         preserve_phrase = _facet_phrase(asset.preserve_facets)
+        style_ignore = _facet_phrase(_SUBJECT_STYLE_IGNORE)
         if scope is AuthorityScope.FULL_APPEARANCE:
             ignore_clause = ""
             if asset.ignore_facets:
                 ignore_clause = f"; ignore {_facet_phrase(asset.ignore_facets)}"
             semantic = (
                 f"identity reference for {label} — match {preserve_phrase}"
-                f"{ignore_clause}; do not copy its pose or background"
+                f"{ignore_clause}; use this reference for identity, anatomy, and wardrobe only; "
+                f"ignore its {style_ignore}; the project style direction is the sole style "
+                "authority; do not copy its pose or background"
             )
         elif scope is AuthorityScope.IDENTITY_ONLY:
             ignore_phrase = _facet_phrase(asset.ignore_facets)
             conflict_note = " that conflict with the active appearance state" if state_id else ""
             semantic = (
                 f"identity reference for {label} — preserve only {preserve_phrase}; "
-                f"ignore {ignore_phrase}{conflict_note}; do not copy its pose or background"
+                f"ignore {ignore_phrase}{conflict_note}; also ignore its {style_ignore}; "
+                "the project style direction is the sole style authority; do not copy its pose "
+                "or background"
             )
         else:
             # A subject under CONTEXTUAL scope is unusual (shouldn't happen for
             # a finalized plan); fall back to a minimal identity instruction.
             semantic = (
                 f"identity reference for {label} — preserve identity facets; "
-                "do not copy its pose or background"
+                f"ignore its {style_ignore}; the project style direction is the sole style "
+                "authority; do not copy its pose or background"
             )
     elif role == "location_plate":
         # State-asset plans carry the exact canonical facets that remain
@@ -291,8 +307,10 @@ def compile_reference_instruction(
         preserve = _CONTEXTUAL_PRESERVE["style"]
         ignore = _CONTEXTUAL_IGNORE["style"]
         semantic = (
-            f"style reference for {label} — preserve {_facet_phrase(preserve)}; "
-            f"ignore {_facet_phrase(ignore)}"
+            f"sole visual style authority for {label} — match its exact "
+            f"{_facet_phrase(preserve)} consistently throughout the output; "
+            f"ignore {_facet_phrase(ignore)}; subject matter and named-artist wording "
+            "must not introduce another illustration style"
         )
     elif role == "continuity":
         preserve = _CONTEXTUAL_PRESERVE["continuity"]
@@ -320,7 +338,7 @@ def compile_reference_instruction(
             )
     )
     instruction_ignore = (
-        asset.ignore_facets
+        tuple(dict.fromkeys((*asset.ignore_facets, *_SUBJECT_STYLE_IGNORE)))
         if role == "subject"
         else (
             asset.ignore_facets
@@ -662,6 +680,32 @@ def _layout_for_route(
 # ---------------------------------------------------------------------------
 
 
+_NAMED_STYLE_ATTRIBUTION_PATTERNS = (
+    # "referencing the dark illustration style of Jane Doe"
+    re.compile(
+        r",?\s*referenc(?:ing|e|ed)\s+the\s+[^.;]*?\s+style\s+of\s+[^.;]+",
+        re.IGNORECASE,
+    ),
+    # "in the style of Jane Doe" / "in Jane Doe's style"
+    re.compile(r",?\s*in\s+the\s+style\s+of\s+[^.;]+", re.IGNORECASE),
+    # "inspired by Jane Doe"
+    re.compile(r",?\s*inspired\s+by\s+[^.;]+", re.IGNORECASE),
+)
+
+
+def _demote_named_style_attributions(style_text: str) -> str:
+    """Remove named-style priors once an approved visual reference exists.
+
+    The stored selected style remains untouched for provenance. Only the
+    provider-bound projection is cleaned, letting the approved image—not a
+    broad named-artist prior—own the rendering grammar.
+    """
+    cleaned = style_text
+    for pattern in _NAMED_STYLE_ATTRIBUTION_PATTERNS:
+        cleaned = pattern.sub("", cleaned)
+    return re.sub(r"\s+([,.;])", r"\1", re.sub(r"\s{2,}", " ", cleaned)).strip()
+
+
 def _build_sections(
     prompt: ImagePrompt | GenerationPromptInput,
     style_text: str | None,
@@ -670,6 +714,7 @@ def _build_sections(
     dimensions: tuple[int, int],
     shape: GenerationShape | None,
     native_aspect: str | None,
+    asset_kind: AssetKind,
 ) -> tuple[tuple[CompiledPromptSection, ...], str]:
     """Assemble prompt sections in one stable order and the final prompt.
 
@@ -683,6 +728,12 @@ def _build_sections(
     - Native aspect is recorded structurally in the geometry section.
     """
     sections: list[CompiledPromptSection] = []
+    has_style_reference = any(
+        instruction.role == "style" for instruction in reference_instructions
+    )
+    has_subject_references = any(
+        instruction.role == "subject" for instruction in reference_instructions
+    )
 
     # ── 1. Protected anchors (verbatim — NEVER sanitized) ────────────────
     anchor_lines: list[str] = []
@@ -752,10 +803,15 @@ def _build_sections(
     # ── 3. Selected style (medium guidance owner — appears once) ─────────
     cleaned_style = _clean(style_text or getattr(prompt, "style", None))
     if cleaned_style:
+        if has_style_reference:
+            cleaned_style = _demote_named_style_attributions(cleaned_style)
         sections.append(CompiledPromptSection(
             kind="style",
-            title="Style",
-            lines=(cleaned_style,),
+            title=("Secondary style notes" if has_style_reference else "Style"),
+            lines=((
+                "Secondary textual style notes; the approved visual style reference "
+                f"overrides any conflict: {cleaned_style}"
+            ) if has_style_reference else cleaned_style,),
         ))
 
     # ── 4. Reference instructions (semantic, final order) ────────────────
@@ -773,7 +829,12 @@ def _build_sections(
     # ── 5. System constraints (generated from typed fields) ──────────────
     from novel_to_comic.generation_prompt import generate_system_constraints
 
-    system_lines = generate_system_constraints(prompt)
+    system_lines = generate_system_constraints(
+        prompt,
+        asset_kind=asset_kind,
+        has_style_reference=has_style_reference,
+        has_subject_references=has_subject_references,
+    )
     if system_lines:
         sections.append(CompiledPromptSection(
             kind="system_constraints",
@@ -865,7 +926,7 @@ def compile_generation_request(
 
     sections, final_prompt = _build_sections(
         prompt, selected_style_text, reference_instructions, controls,
-        dimensions, shape, native_aspect,
+        dimensions, shape, native_aspect, asset_kind,
     )
 
     # Slice 06: section-aware budget. Protected sections (anchors, reference

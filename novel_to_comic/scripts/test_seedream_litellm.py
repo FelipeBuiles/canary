@@ -1,4 +1,4 @@
-"""Smoke-test Seedream V4.5 Edit through the local LiteLLM proxy.
+"""Smoke-test Seedream 5.0 Lite Edit through the local LiteLLM proxy.
 
 Example:
     uv run python novel_to_comic/scripts/test_seedream_litellm.py \

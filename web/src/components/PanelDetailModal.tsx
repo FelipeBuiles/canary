@@ -27,6 +27,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Select } from "./ui/Select";
 import { useI18n } from "../i18n";
 import { getImageFailureCopy } from "../lib/imageFailure";
+import { PanelRegenerationOverlay } from "./PanelRegenerationOverlay";
 
 type TabId = "panel" | "prompt";
 const DEFAULT_IMAGE_MODEL_ALIASES = ["image-fast", "image-balanced", "image-quality"];
@@ -560,6 +561,7 @@ export function PanelDetailModal({
   const creditsLabel = regenCredits !== null ? `~${regenCredits.toLocaleString()} credits` : "…";
   const regenPanel = useRegenPanel();
   const instructedRegen = useRegenPanelWithInstruction();
+  const isPreparingRegeneration = regenPanel.isPending || instructedRegen.isPending;
 
   const panelKey = `${sceneId}-${panelNumber}`;
   if (previousPanelKey !== panelKey) {
@@ -739,7 +741,7 @@ export function PanelDetailModal({
                   </p>
                 </div>
               )}
-              <div className="flex min-h-0 flex-1 items-center justify-center bg-ink-black">
+              <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-ink-black">
                 {imageAvailable ? (
                   <LazyImage
                     src={activeDisplayUrl}
@@ -752,6 +754,7 @@ export function PanelDetailModal({
                     No panel image generated
                   </div>
                 )}
+                {isPreparingRegeneration && <PanelRegenerationOverlay phase="preparing" />}
               </div>
             </div>
           </div>
@@ -800,7 +803,7 @@ export function PanelDetailModal({
                   instructionCost={regenEstimate?.instruction_estimate}
                   onQuickRedo={handleQuickRedo}
                   onInstructionRegen={handleInstructionRegen}
-                  isRegenerating={regenPanel.isPending || instructedRegen.isPending}
+                  isRegenerating={isPreparingRegeneration}
                   onDisplayUrlChange={setActiveDisplayUrl}
                 />
               )}

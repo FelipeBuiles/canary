@@ -51,4 +51,25 @@ describe("getImageFailureCopy", () => {
     fireEvent.click(screen.getByRole("button", { name: "QUICK RE-DO panel 01" }));
     expect(onQuickRedo).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    ["queued", "REGENERATION QUEUED"],
+    ["running", "REDRAWING PANEL…"],
+  ] as const)("keeps the existing image visible while regeneration is %s", (regenMode, label) => {
+    render(
+      <I18nProvider>
+        <PanelCard
+          sceneId="scene_001"
+          panelNumber={1}
+          status="done"
+          imageUrl="/panel.png"
+          imageAvailable
+          regenMode={regenMode}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByRole("img", { name: "Panel 01" })).toBeTruthy();
+    expect(screen.getByRole("status", { name: label })).toBeTruthy();
+  });
 });
