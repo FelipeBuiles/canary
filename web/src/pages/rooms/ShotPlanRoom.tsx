@@ -10,6 +10,7 @@ import {
   useUpdatePanel,
 } from "../../api/queries";
 import { Button } from "../../components/ui/Button";
+import { CreditAmount } from "../../components/ui/CreditAmount";
 import { FieldLabel, SelectField, TextAreaField, TextField } from "../../components/ui/Field";
 import { Icon } from "../../components/ui/Icon";
 import { ShotDiagram } from "../../components/ui/ShotDiagram";
@@ -85,11 +86,6 @@ function ShotPlanActionButton({ project }: { project: string }) {
 
   const busy = isPending || status?.is_running;
   const estimateCredits = estimate?.estimate_credits;
-  const label =
-    estimateCredits && estimateCredits > 0
-      ? `${action.label} · ~${estimateCredits.toLocaleString()} credits`
-      : action.label;
-
   function run(stage: "plan" | "storyboard", rerun = false) {
     handleRun(project, stage, {
       rerun,
@@ -110,7 +106,14 @@ function ShotPlanActionButton({ project }: { project: string }) {
       disabled={action.kind === "none" || busy}
       onClick={handleClick}
     >
-      {busy ? "Working…" : label}
+      {busy ? "Working…" : (
+        <>
+          {action.label}
+          {estimateCredits && estimateCredits > 0 ? (
+            <> <span aria-hidden="true">·</span> <CreditAmount value={estimateCredits} approximate /></>
+          ) : null}
+        </>
+      )}
     </Button>
   );
 }

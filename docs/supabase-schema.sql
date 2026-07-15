@@ -191,6 +191,91 @@ begin
 end;
 $$;
 
+-- ── Atomic model-usage settlement ───────────────────────────────────────────
+-- Model calls are retained as individual audit rows, but whole public credits
+-- are rounded once across the job's cumulative provider cost. The advisory
+-- lock prevents concurrent panel calls from each observing the same subtotal.
+
+create or replace function public.settle_model_usage_credits(
+  p_user_id             uuid,
+  p_project_id          uuid,
+  p_job_id              uuid,
+  p_stage               text,
+  p_description         text,
+  p_usage_call_id       text,
+  p_provider            text,
+  p_model               text,
+  p_provider_model      text,
+  p_operation           text,
+  p_input_tokens        integer,
+  p_output_tokens       integer,
+  p_image_count         integer,
+  p_cost_usd            numeric,
+  p_cost_source         text,
+  p_pricing_snapshot    text,
+  p_credits_per_usd     numeric,
+  p_markup              numeric,
+  p_billable            boolean
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_existing_amount integer;
+  v_prior_cost numeric := 0;
+  v_prior_debit integer := 0;
+  v_target_debit integer := 0;
+  v_increment integer := 0;
+begin
+  perform pg_advisory_xact_lock(
+    hashtextextended(p_user_id::text || ':' || p_job_id::text, 0)
+  );
+
+  select amount_credits into v_existing_amount
+  from public.credit_ledger
+  where usage_call_id = p_usage_call_id;
+  if found then
+    return abs(v_existing_amount);
+  end if;
+
+  select
+    coalesce(sum(cost_usd), 0),
+    coalesce(sum(abs(amount_credits)), 0)::integer
+  into v_prior_cost, v_prior_debit
+  from public.credit_ledger
+  where user_id = p_user_id
+    and job_id = p_job_id
+    and status = 'settled'
+    and usage_call_id is not null;
+
+  v_target_debit := ceil(
+    (v_prior_cost + greatest(coalesce(p_cost_usd, 0), 0))
+    * greatest(coalesce(p_credits_per_usd, 0), 0)
+    * greatest(coalesce(p_markup, 0), 0)
+  )::integer;
+  if p_billable and v_target_debit <= 0 then
+    v_target_debit := 1;
+  end if;
+  v_increment := greatest(0, v_target_debit - v_prior_debit);
+
+  insert into public.credit_ledger (
+    user_id, project_id, amount_credits, status, stage, description,
+    usage_call_id, provider, model, provider_model, operation, input_tokens,
+    output_tokens, image_count, cost_usd, cost_source, pricing_snapshot, job_id
+  ) values (
+    p_user_id, p_project_id, -v_increment, 'settled', p_stage, p_description,
+    p_usage_call_id, p_provider, p_model, p_provider_model, p_operation,
+    coalesce(p_input_tokens, 0), coalesce(p_output_tokens, 0),
+    coalesce(p_image_count, 0), p_cost_usd, p_cost_source,
+    p_pricing_snapshot, p_job_id
+  );
+
+  return v_increment;
+end;
+$$;
+
 -- ── Indexes ──────────────────────────────────────────────────────────────────
 
 create index if not exists credit_ledger_user_created_idx
@@ -294,3 +379,12 @@ revoke all on function public.reserve_stage_credits(uuid, uuid, text, integer, u
   from public, anon, authenticated;
 grant execute on function public.reserve_stage_credits(uuid, uuid, text, integer, uuid)
   to service_role;
+
+revoke all on function public.settle_model_usage_credits(
+  uuid, uuid, uuid, text, text, text, text, text, text, text, integer, integer,
+  integer, numeric, text, text, numeric, numeric, boolean
+) from public, anon, authenticated;
+grant execute on function public.settle_model_usage_credits(
+  uuid, uuid, uuid, text, text, text, text, text, text, text, integer, integer,
+  integer, numeric, text, text, numeric, numeric, boolean
+) to service_role;

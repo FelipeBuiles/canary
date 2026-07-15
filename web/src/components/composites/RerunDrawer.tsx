@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { cn } from "../../lib/cn";
+import { CreditAmount } from "../ui/CreditAmount";
 import { Button } from "../ui/Button";
 import { DestructiveButton } from "../ui/DestructiveButton";
 import { ShortcutHint } from "../ui/ShortcutHint";
@@ -159,7 +160,7 @@ export function RerunDrawer({
                     Estimated
                   </span>
                   <span className="font-display text-[1.1rem] font-bold">
-                    ~{cost.estimate_credits.toLocaleString()} credits
+                    <CreditAmount value={cost.estimate_credits} approximate />
                   </span>
                 </div>
                 {cost.reserved_credits > 0 && (
@@ -168,7 +169,7 @@ export function RerunDrawer({
                       Held
                     </span>
                     <span className="font-display text-[1.0rem]">
-                      {cost.reserved_credits.toLocaleString()} credits
+                      <CreditAmount value={cost.reserved_credits} />
                     </span>
                   </div>
                 )}

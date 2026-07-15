@@ -18,6 +18,9 @@ const FALLBACK_BG = "#111827";
 interface Props {
   project: ProjectSummary;
   coverPending?: boolean;
+  coverFailed?: boolean;
+  coverRetrying?: boolean;
+  onRetryCover?: () => void;
 }
 
 /** One status line does both jobs: what state, and where in the flow. */
@@ -46,11 +49,17 @@ function statusLine(project: ProjectSummary, t: (s: string) => string): { label:
   return { label: t("New"), className: "bg-surface-container text-ink-muted" };
 }
 
-export function ProjectCard({ project, coverPending = false }: Props) {
+export function ProjectCard({
+  project,
+  coverPending = false,
+  coverFailed = false,
+  coverRetrying = false,
+  onRetryCover,
+}: Props) {
   const { t } = useI18n();
   const card = statusLine(project, t);
   const coverUrl = `/api/projects/${encodeURIComponent(project.id)}/files/cover/cover.png`;
-  const coverRevealed = coverPending && project.has_cover;
+  const coverRevealed = project.has_cover && project.cover_job?.status === "complete";
 
   const stageKey = project.furthest_stage as StageName | null;
   const coverStyle = stageKey ? STAGE_COVER_STYLE[stageKey] : undefined;
@@ -60,13 +69,14 @@ export function ProjectCard({ project, coverPending = false }: Props) {
   const station = stationRoute ? stationForRoute(stationRoute) : null;
 
   return (
-    <Link
-      to={`/project/${encodeURIComponent(project.id)}`}
-      aria-label={`${t("OPEN FILE")}: ${project.project_name}`}
-      className="group block h-full focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
-    >
-      <article className={`h-full overflow-hidden border-[3px] border-ink-black/12 bg-bristol shadow-paper-sm transition-[border-color,box-shadow,transform] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:border-ink-black group-hover:-translate-x-[2px] group-hover:-translate-y-[2px] group-hover:shadow-ink group-focus-visible:border-ink-black group-focus-visible:-translate-x-[2px] group-focus-visible:-translate-y-[2px] group-focus-visible:shadow-ink${coverRevealed ? " animate-comic-pop" : ""}`}>
-        <div className="relative border-b-[2px] border-ink-black/12 transition-colors duration-200 group-hover:border-ink-black group-focus-visible:border-ink-black">
+    <div className="relative h-full">
+      <Link
+        to={`/project/${encodeURIComponent(project.id)}`}
+        aria-label={`${t("OPEN FILE")}: ${project.project_name}`}
+        className="group block h-full focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
+      >
+        <article className={`h-full overflow-hidden border-[3px] border-ink-black/12 bg-bristol shadow-paper-sm transition-[border-color,box-shadow,transform] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:border-ink-black group-hover:-translate-x-[2px] group-hover:-translate-y-[2px] group-hover:shadow-ink group-focus-visible:border-ink-black group-focus-visible:-translate-x-[2px] group-focus-visible:-translate-y-[2px] group-focus-visible:shadow-ink${coverRevealed ? " animate-comic-pop" : ""}`}>
+          <div className="relative border-b-[2px] border-ink-black/12 transition-colors duration-200 group-hover:border-ink-black group-focus-visible:border-ink-black">
           {project.has_cover ? (
             <LazyImage
               src={coverUrl}
@@ -77,7 +87,13 @@ export function ProjectCard({ project, coverPending = false }: Props) {
               className="transition-transform duration-300 group-hover:scale-[1.02]"
             />
           ) : coverPending ? (
-            <Skeleton aspect="6 / 5" />
+            <div className="relative aspect-[6/5]">
+              <Skeleton className="absolute inset-0" />
+              <div className="absolute bottom-0 left-0 z-10 bg-narrator-gold px-4 py-2.5 font-meta text-[0.68rem] font-bold tracking-[0.12em] text-ink-black">
+                <span className="animate-press-blink mr-2 inline-block h-2 w-2 bg-hero-red" />
+                {t("DRAWING COVER…")}
+              </div>
+            </div>
           ) : (
             <div
               className="relative flex aspect-[6/5] flex-col justify-between overflow-hidden p-5 text-bristol"
@@ -99,15 +115,15 @@ export function ProjectCard({ project, coverPending = false }: Props) {
             </div>
           )}
 
-          {project.is_running && (
+          {project.is_running && !coverPending && (
             <div className="absolute bottom-0 left-0 z-10 bg-narrator-gold px-4 py-2.5 font-meta text-[0.68rem] font-bold tracking-[0.12em] text-ink-black">
               <span className="animate-press-blink mr-2 inline-block h-2 w-2 bg-hero-red" />
               {t("DRAWING…")}
             </div>
           )}
-        </div>
+          </div>
 
-        <div className="p-4">
+          <div className="p-4">
           <h3
             title={project.project_name}
             className="truncate font-display text-[1.34rem] font-black uppercase leading-none tracking-[-0.03em] text-ink-black"
@@ -129,8 +145,22 @@ export function ProjectCard({ project, coverPending = false }: Props) {
             <span>{t("OPEN FILE")}</span>
             <span aria-hidden="true" className="text-hero-red transition-transform duration-150 group-hover:translate-x-1">→</span>
           </div>
+          </div>
+        </article>
+      </Link>
+
+      {coverFailed && !project.has_cover && !coverPending && onRetryCover && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex aspect-[6/5] items-end p-4">
+          <button
+            type="button"
+            className="pointer-events-auto min-h-11 bg-hero-red px-4 font-meta text-[0.62rem] font-bold uppercase tracking-[0.12em] text-bristol shadow-[3px_3px_0_0_var(--color-ink-black)] transition-transform hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-75"
+            onClick={onRetryCover}
+            disabled={coverRetrying}
+          >
+            {coverRetrying ? t("RETRYING COVER…") : t("COVER FAILED — RETRY")}
+          </button>
         </div>
-      </article>
-    </Link>
+      )}
+    </div>
   );
 }

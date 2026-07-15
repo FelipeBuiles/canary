@@ -101,6 +101,7 @@ def _prompt(
     location_state_id: str | None = None,
     style: str | None = None,
     visual_brief: str | None = None,
+    distilled_prompt: str | None = None,
     constraints: str | None = None,
     source_sha256: str | None = None,
     composition: str = "medium shot",
@@ -120,6 +121,7 @@ def _prompt(
         location_state_id=location_state_id,
         style=style,
         visual_brief=visual_brief,
+        distilled_prompt=distilled_prompt,
         constraints=constraints,
         source_sha256=source_sha256,
         width=768,
@@ -246,6 +248,15 @@ class TestSentinelAnchorsSurviveExact:
 
 
 class TestBriefCannotAlterProtectedAnchors:
+    def test_deterministic_distilled_prompt_outranks_historical_visual_brief(self):
+        prompt = _prompt(
+            visual_brief="STALE LLM PROSE",
+            distilled_prompt="DETERMINISTIC PANEL DIRECTION",
+        )
+        req = _compile(prompt, _plan())
+        assert "DETERMINISTIC PANEL DIRECTION" in req.final_prompt
+        assert "STALE LLM PROSE" not in req.final_prompt
+
     def test_contradictory_brief_does_not_remove_anchors(self):
         subject = _subject(identity=_CHAR_SENTINEL)
         prompt = _prompt(

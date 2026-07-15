@@ -192,3 +192,47 @@ def test_debit_model_usage_persists_pricing_snapshot():
 
     assert db.table_obj.on_conflict == "usage_call_id"
     assert db.table_obj.payload["pricing_snapshot"]
+
+
+def test_debit_model_usage_prefers_atomic_job_level_settlement():
+    class _Rpc:
+        def execute(self):
+            return SimpleNamespace(data=1)
+
+    class _Db:
+        def __init__(self):
+            self.name = None
+            self.params = None
+
+        def rpc(self, name, params):
+            self.name = name
+            self.params = params
+            return _Rpc()
+
+        def table(self, _name):  # pragma: no cover - assertion helper
+            raise AssertionError("atomic RPC should own the insert")
+
+    db = _Db()
+    usage = UsageRecord(
+        provider="gemini",
+        model="prompt-balanced",
+        provider_model="vertex_ai/gemini-3.1-flash-lite",
+        operation="text",
+        input_tokens=800,
+        output_tokens=200,
+    )
+
+    debit_model_usage(
+        db,
+        "user_1",
+        "project_1",
+        usage,
+        stage="style",
+        description="Model call: style.suggest",
+        job_id="00000000-0000-0000-0000-000000000001",
+    )
+
+    assert db.name == "settle_model_usage_credits"
+    assert db.params["p_usage_call_id"] == usage.call_id
+    assert db.params["p_cost_usd"] > 0
+    assert db.params["p_credits_per_usd"] > 0

@@ -28,6 +28,7 @@ import { Select } from "./ui/Select";
 import { useI18n } from "../i18n";
 import { getImageFailureCopy } from "../lib/imageFailure";
 import { PanelRegenerationOverlay } from "./PanelRegenerationOverlay";
+import { CreditAmount } from "./ui/CreditAmount";
 
 type TabId = "panel" | "prompt";
 const DEFAULT_IMAGE_MODEL_ALIASES = ["image-fast", "image-balanced", "image-quality"];
@@ -315,7 +316,6 @@ function PromptTabContent({
   projectConfig,
   lastRewrittenPrompt,
   regenCredits,
-  creditsLabel,
   imageModelAlias,
   onGenerateFromDraft,
 }: {
@@ -329,7 +329,6 @@ function PromptTabContent({
   projectConfig: import("../api/config").ProjectConfig | undefined;
   lastRewrittenPrompt: ImagePrompt | null;
   regenCredits: number | null;
-  creditsLabel: string;
   imageModelAlias: string | null;
   onGenerateFromDraft: () => void;
 }) {
@@ -428,7 +427,12 @@ function PromptTabContent({
       />
       {(hasChanges || preparedRequestId) && (
         <Button className="w-full" onClick={() => setConfirmGenerate(true)} disabled={isGenerating}>
-          {isGenerating ? "SAVING…" : `${hasChanges ? "Generate from edits" : "Generate prepared request"} · ${creditsLabel}`}
+          {isGenerating ? "SAVING…" : (
+            <>
+              {hasChanges ? "Generate from edits" : "Generate prepared request"} <span aria-hidden="true">·</span>{" "}
+              {regenCredits !== null ? <CreditAmount value={regenCredits} approximate /> : "…"}
+            </>
+          )}
         </Button>
       )}
 
@@ -456,7 +460,11 @@ function PromptTabContent({
           )}
           {(submittedRequest.data ?? requestPreview.data)?.accounting && (
             <p className="mt-2 text-[0.68rem] text-ink-black/55">
-              Estimated on submit: ~{(submittedRequest.data ?? requestPreview.data)?.accounting?.estimated_credits} credits. Preparation does not reserve or spend credits.
+              Estimated on submit:{" "}
+              <CreditAmount
+                value={(submittedRequest.data ?? requestPreview.data)?.accounting?.estimated_credits ?? 0}
+                approximate
+              />. Preparation does not reserve or spend credits.
             </p>
           )}
           {(submittedRequest.data ?? requestPreview.data)?.provider_wire && (
@@ -503,7 +511,7 @@ function PromptTabContent({
         title="Generate from edits"
         body="Save your prompt edits and regenerate this panel."
         cost={costObj}
-        confirmLabel={`Generate · ${creditsLabel}`}
+        confirmLabel="Generate"
         onConfirm={handleGenerateFromDraft}
         onClose={() => setConfirmGenerate(false)}
         busy={isGenerating}
@@ -558,7 +566,6 @@ export function PanelDetailModal({
   const selectedImageModelAlias = imageModelAlias || null;
   const { data: regenEstimate } = useRegenEstimate(project, sceneId, panelNumber, selectedImageModelAlias, isOpen);
   const regenCredits: number | null = regenEstimate?.estimate_credits ?? null;
-  const creditsLabel = regenCredits !== null ? `~${regenCredits.toLocaleString()} credits` : "…";
   const regenPanel = useRegenPanel();
   const instructedRegen = useRegenPanelWithInstruction();
   const isPreparingRegeneration = regenPanel.isPending || instructedRegen.isPending;
@@ -819,7 +826,6 @@ export function PanelDetailModal({
                   projectConfig={projectConfig}
                   lastRewrittenPrompt={lastRewrittenPrompt}
                   regenCredits={regenCredits}
-                  creditsLabel={creditsLabel}
                   imageModelAlias={selectedImageModelAlias}
                   onGenerateFromDraft={onClose}
                 />

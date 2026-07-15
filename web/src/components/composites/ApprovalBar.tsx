@@ -3,6 +3,7 @@ import { useCreditBalance } from "../../api/queries";
 import { Button } from "../ui/Button";
 import { useI18n } from "../../i18n";
 import { BottomBarPortal } from "../../layout/TopBarSlot";
+import { CreditAmount } from "../ui/CreditAmount";
 
 interface ApprovalBarProps {
   /** Plain-language preview of what happens next, without the "Next:" prefix. */
@@ -39,16 +40,19 @@ export function ApprovalBar({
   const { data: balance } = useCreditBalance();
 
   const costLine = note ?? (
-    estimateCredits != null && estimateCredits > 0
-      ? `~${estimateCredits.toLocaleString()} ${t("credits")}${
-          balance ? ` · ${t("you have")} ${balance.balance_credits.toLocaleString()}` : ""
-        }`
-      : null
+    estimateCredits != null && estimateCredits > 0 ? (
+      <>
+        <CreditAmount value={estimateCredits} approximate label={t("credits")} />
+        {balance && (
+          <span> · {t("you have")} <CreditAmount value={balance.balance_credits} showLabel={false} label={t("credits")} /></span>
+        )}
+      </>
+    ) : null
   );
 
   return (
     <BottomBarPortal>
-      <footer className="relative flex min-h-[76px] flex-wrap items-center gap-x-4 gap-y-2 border-t-[3px] border-ink-black bg-bristol px-4 py-3 shadow-[0_-4px_0_0_var(--color-ghost-shadow)] md:py-0 md:pl-0 md:pr-6">
+      <footer className="relative flex min-h-shell-footer flex-wrap items-center gap-x-4 gap-y-2 border-t-[3px] border-ink-black bg-bristol px-4 py-3 shadow-[0_-4px_0_0_var(--color-ghost-shadow)] md:py-0 md:pl-0 md:pr-6">
         <div className="hidden self-stretch bg-narrator-gold px-5 font-meta text-[0.54rem] font-bold uppercase tracking-[0.14em] text-ink-black md:flex md:items-center">
           {t("Next:")}
         </div>

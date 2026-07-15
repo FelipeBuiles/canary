@@ -108,11 +108,7 @@ async def prepare_panel_prompt(
     derived fields are then hydrated only when absent; a queued runner never
     calls this function because it consumes the frozen wire instead.
     """
-    from novel_to_comic.prompt_assembly import (
-        ensure_current_panel_prompt,
-        ensure_layout,
-        ensure_visual_brief,
-    )
+    from novel_to_comic.prompt_assembly import ensure_current_panel_prompt
     from novel_to_comic.prompting import ensure_distilled_prompt
 
     prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
@@ -121,8 +117,6 @@ async def prepare_panel_prompt(
             config, project_dir, panel, story_bible, prev_panel
         )
     prompt = ensure_distilled_prompt(config, prompt)
-    prompt = await ensure_visual_brief(config, prompt)
-    prompt = await ensure_layout(config, prompt)
     if prompt_path.exists():
         current = ImagePrompt.model_validate_json(prompt_path.read_text())
         if current.model_dump() != prompt.model_dump():

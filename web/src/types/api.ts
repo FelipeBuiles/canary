@@ -142,10 +142,35 @@ export interface CreditTransaction {
   created_at: string;
   provider?: string | null;
   model?: string | null;
+  provider_model?: string | null;
   operation?: string | null;
   input_tokens?: number;
   output_tokens?: number;
   image_count?: number;
+  cost_usd?: number | null;
+}
+
+export interface CreditLedgerRun {
+  run_id: string;
+  job_id: string | null;
+  stage: string | null;
+  project_id: string | null;
+  started_at: string;
+  last_activity_at: string;
+  estimate_credits: number;
+  actual_credits: number;
+  returned_credits: number;
+  credits_added: number;
+  status: "in_flight" | "complete" | "failed";
+  rows: CreditTransaction[];
+}
+
+export interface CreditHistoryPage {
+  runs: CreditLedgerRun[];
+  limit: number;
+  offset: number;
+  has_more: boolean;
+  month_used_credits: number;
 }
 
 export interface CreditPackage {

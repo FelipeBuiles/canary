@@ -1,5 +1,5 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { listProjects, getProjectStatus, createProject, deleteProject, generateProjectCover, listShortStories, importStory } from "./projects";
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { listProjects, getProjectStatus, createProject, deleteProject, fetchProjectCoverEstimate, generateProjectCover, listShortStories, importStory } from "./projects";
 import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenStateRef, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate, fetchAssetRegenEstimate, getCharacterRefVersions, restoreCharacterRefVersion, previewGenerationRequest, prepareGenerationRequest, getGenerationRequest } from "./pipeline";
 import type { ConfigOverrides, StoryBible, ProjectStatus, StageInfo, ImageStatus, CreditBalance, CostEstimate } from "../types/api";
 import { reconcileStatusPoll } from "../lib/stageProgress";
@@ -53,6 +53,12 @@ export function useProjects() {
   return useQuery({
     queryKey: ["projects"],
     queryFn: listProjects,
+    refetchInterval: (query) => {
+      const projects = query.state.data;
+      return projects?.some((project) =>
+        project.cover_job?.status === "queued" || project.cover_job?.status === "running"
+      ) ? 3000 : false;
+    },
   });
 }
 
@@ -112,6 +118,15 @@ export function useGenerateProjectCover() {
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
+  });
+}
+
+export function useProjectCoverEstimate(project: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ["project", project, "cover-estimate"],
+    queryFn: () => fetchProjectCoverEstimate(project!),
+    enabled: !!project && enabled,
+    staleTime: 60_000,
   });
 }
 
@@ -1014,9 +1029,15 @@ export function usePricingReference() {
 }
 
 export function useCreditHistory() {
-  return useQuery({
-    queryKey: ["credits", "history"],
-    queryFn: getCreditHistory,
+  return useInfiniteQuery({
+    // Version the cache key when the response shape changes. The previous
+    // flat `transactions` payload is not compatible with InfiniteData pages.
+    queryKey: ["credits", "history", "runs-v2"],
+    queryFn: ({ pageParam }) => getCreditHistory(pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => lastPage?.has_more && Array.isArray(lastPage.runs)
+      ? lastPage.offset + lastPage.runs.length
+      : undefined,
   });
 }
 

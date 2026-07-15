@@ -1,4 +1,5 @@
 import type { CostEstimate } from "../../types/api";
+import { CreditAmount } from "../ui/CreditAmount";
 import {
   CONFIDENCE_LABELS,
   ESTIMATE_ONLY_HELPER,
@@ -35,11 +36,11 @@ export function CostBreakdown({ cost }: CostBreakdownProps) {
             Cost
           </span>
           <span className="font-display text-[1.1rem] font-bold">
-            ~{estimate_credits.toLocaleString()} credits
+            <CreditAmount value={estimate_credits} approximate />
           </span>
           {hasReservation && (
             <span className="font-meta text-[0.62rem] tracking-[0.06em] text-ink-black/45">
-              won&apos;t exceed {reserved_credits!.toLocaleString()}
+              won&apos;t exceed <CreditAmount value={reserved_credits!} showLabel={false} />
             </span>
           )}
         </div>

@@ -208,10 +208,9 @@ class Config(BaseModel):
     # more (or demands less).
     image_concurrency: int | None = None
 
-    # LLM visual-brief pass: rewrite each panel's structured spec into flowing
-    # prose (via prompt_model) before image generation. Falls back to the
-    # deterministic distilled prompt when disabled or when the call fails.
-    visual_brief_enabled: bool = True
+    # Experimental LLM visual-brief pass. Production prompt assembly is
+    # deterministic; this flag is retained for Labs/manual comparisons only.
+    visual_brief_enabled: bool = False
 
     # LLM style-sample brief: compose the shared subject/setting prose for S2
     # style proof images (via prompt_model), cached per project so every

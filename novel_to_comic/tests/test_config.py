@@ -216,7 +216,7 @@ class TestGptImage2Alias:
         )
 
 
-def test_prompt_aliases_use_vertex_model_available_in_global():
+def test_prompt_aliases_use_ga_vertex_flash_lite():
     gateway_config = Path(__file__).resolve().parents[2] / "litellm" / "config.yaml"
     data = yaml.safe_load(gateway_config.read_text())
     prompt_models = {
@@ -225,7 +225,7 @@ def test_prompt_aliases_use_vertex_model_available_in_global():
         if str(item.get("model_name", "")).startswith("prompt-")
     }
 
-    assert prompt_models == {"vertex_ai/gemini-3.5-flash"}
+    assert prompt_models == {"vertex_ai/gemini-3.1-flash-lite"}
 
 
 class TestReveModelAlias:

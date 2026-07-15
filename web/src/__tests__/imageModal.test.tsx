@@ -61,7 +61,7 @@ describe("ImageModal", () => {
       </I18nProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: /TRY ANOTHER VERSION · ~4 credits/i }));
+    await user.click(screen.getByRole("button", { name: /TRY ANOTHER VERSION about 4 credits/i }));
     expect(screen.getByRole("alertdialog")).toBeTruthy();
 
     await user.keyboard("{Escape}");

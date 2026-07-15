@@ -30,14 +30,13 @@ CostConfidence = Literal["low_variance", "usually_within_estimate", "variable"]
 # includes system rules and serialized patchable prompt/asset context. 32k
 # input characters conservatively covers those bounded schemas. Each call caps
 # output at 4096 tokens; 16,384 characters represents that full allowance under
-# the estimator's character-to-token conversion. Cast performs one addendum
-# rewrite. Panels may additionally rebuild the visual brief and layout after
-# the rewrite invalidates both, so draw reserves for all three possible calls.
+# the estimator's character-to-token conversion. Cast and panel instruction
+# jobs each perform one explicit rewrite; derived panel prompt bodies are local.
 INSTRUCTION_REWRITE_INPUT_CHARS = 32_000
 INSTRUCTION_REWRITE_OUTPUT_CHARS = 16_384
 INSTRUCTION_TEXT_CALLS_BY_STAGE: dict[Literal["cast", "draw"], int] = {
     "cast": 1,
-    "draw": 3,
+    "draw": 1,
 }
 
 log = logging.getLogger("canary.credits")
@@ -414,7 +413,13 @@ def debit_model_usage(
     description: str,
     job_id: str | None = None,
 ) -> None:
-    """Insert one settled credit ledger row for one model-provider call."""
+    """Insert one settled row, rounding public credits once per job.
+
+    The database RPC serializes concurrent calls for the same job and assigns
+    only the incremental whole-credit debit. This preserves per-call audit rows
+    without rounding every tiny request up independently. The direct upsert is
+    a deployment fallback until the accompanying schema function is installed.
+    """
     credits, cost_usd = usage_to_credit_debit(usage)
     try:
         cost = calculate_cost_breakdown(usage)
@@ -426,29 +431,59 @@ def debit_model_usage(
         cost = None
     if credits <= 0:
         return
-    db.table("credit_ledger").upsert(
-        {
-            "user_id": user_id,
-            "project_id": project_id,
-            "amount_credits": -credits,
-            "status": "settled",
-            "stage": stage,
-            "description": description,
-            "usage_call_id": usage.call_id,
-            "provider": usage.provider,
-            "model": usage.model,
-            "provider_model": cost.provider_model if cost else None,
-            "operation": usage.operation,
-            "input_tokens": usage.input_tokens,
-            "output_tokens": usage.output_tokens,
-            "image_count": usage.image_count,
-            "cost_usd": cost_usd,
-            "cost_source": cost.source if cost else None,
-            "pricing_snapshot": cost.pricing_snapshot if cost else None,
-            "job_id": job_id,
-        },
-        on_conflict="usage_call_id",
-    ).execute()
+    payload = {
+        "user_id": user_id,
+        "project_id": project_id,
+        "amount_credits": -credits,
+        "status": "settled",
+        "stage": stage,
+        "description": description,
+        "usage_call_id": usage.call_id,
+        "provider": usage.provider,
+        "model": usage.model,
+        "provider_model": cost.provider_model if cost else None,
+        "operation": usage.operation,
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
+        "image_count": usage.image_count,
+        "cost_usd": cost_usd,
+        "cost_source": cost.source if cost else None,
+        "pricing_snapshot": cost.pricing_snapshot if cost else None,
+        "job_id": job_id,
+    }
+    if job_id:
+        try:
+            db.rpc(
+                "settle_model_usage_credits",
+                {
+                    "p_user_id": user_id,
+                    "p_project_id": project_id,
+                    "p_job_id": job_id,
+                    "p_stage": stage,
+                    "p_description": description,
+                    "p_usage_call_id": usage.call_id,
+                    "p_provider": usage.provider,
+                    "p_model": usage.model,
+                    "p_provider_model": cost.provider_model if cost else None,
+                    "p_operation": usage.operation,
+                    "p_input_tokens": usage.input_tokens,
+                    "p_output_tokens": usage.output_tokens,
+                    "p_image_count": usage.image_count,
+                    "p_cost_usd": cost_usd,
+                    "p_cost_source": cost.source if cost else None,
+                    "p_pricing_snapshot": cost.pricing_snapshot if cost else None,
+                    "p_credits_per_usd": credits_per_provider_usd(),
+                    "p_markup": model_cost_markup(),
+                    "p_billable": usage_has_billable_activity(usage),
+                },
+            ).execute()
+            return
+        except Exception:
+            log.warning(
+                "Job-level credit settlement unavailable; falling back to per-call rounding",
+                exc_info=True,
+            )
+    db.table("credit_ledger").upsert(payload, on_conflict="usage_call_id").execute()
 
 
 def release_reservation(

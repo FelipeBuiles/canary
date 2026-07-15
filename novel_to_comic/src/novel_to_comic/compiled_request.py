@@ -782,13 +782,21 @@ def _build_sections(
     continuity = sanitize_dynamic_text(getattr(prompt, "continuity_note", None))
     if continuity:
         direction_lines.append(f"Continuity: {continuity}")
-    # The visual brief / distilled prompt is the scene-direction prose body.
+    # Panels use the deterministic distilled prompt in production. Non-panel
+    # assets still use their explicit visual brief: those briefs carry style
+    # auditions and user addenda that have no panel-style distilled equivalent.
     # Single-owner: strip continuity content from the brief so it appears once.
-    brief = (
-        sanitize_dynamic_text(getattr(prompt, "visual_brief", None))
-        or sanitize_dynamic_text(getattr(prompt, "distilled_prompt", None))
-        or sanitize_dynamic_text(getattr(prompt, "full_prompt", None))
-    )
+    if asset_kind == "panel":
+        brief = (
+            sanitize_dynamic_text(getattr(prompt, "distilled_prompt", None))
+            or sanitize_dynamic_text(getattr(prompt, "full_prompt", None))
+        )
+    else:
+        brief = (
+            sanitize_dynamic_text(getattr(prompt, "visual_brief", None))
+            or sanitize_dynamic_text(getattr(prompt, "distilled_prompt", None))
+            or sanitize_dynamic_text(getattr(prompt, "full_prompt", None))
+        )
     brief = dedupe_brief_against_continuity(brief, continuity)
     brief = strip_hardcoded_mediums(brief)
     if brief:

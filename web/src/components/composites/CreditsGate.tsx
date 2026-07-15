@@ -9,6 +9,7 @@ import {
 } from "../../lib/creditsPurchase";
 import { useRunAction } from "../../hooks/useRunAction";
 import type { StageName } from "../../types/api";
+import { CreditAmount } from "../ui/CreditAmount";
 
 interface CreditsGateProps {
   project: string;
@@ -87,7 +88,7 @@ export function CreditsGate({
                 Balance
               </div>
               <div className="mt-1 font-display text-[1.3rem] font-bold tabular-nums">
-                {balance.toLocaleString()}
+                <CreditAmount value={balance} showMark showLabel={false} />
               </div>
             </div>
             <div>
@@ -95,7 +96,7 @@ export function CreditsGate({
                 Needed
               </div>
               <div className="mt-1 font-display text-[1.3rem] font-bold tabular-nums">
-                ~{required.toLocaleString()}
+                <CreditAmount value={required} approximate showMark showLabel={false} />
               </div>
             </div>
             <div>
@@ -103,7 +104,7 @@ export function CreditsGate({
                 Short by
               </div>
               <div className="mt-1 font-display text-[1.3rem] font-bold tabular-nums text-narrator-gold">
-                {shortfall.toLocaleString()}
+                <CreditAmount value={shortfall} showMark showLabel={false} />
               </div>
             </div>
           </div>
@@ -125,7 +126,7 @@ export function CreditsGate({
               >
                 <div>
                   <div className="font-display text-[1.1rem] font-black tabular-nums">
-                    {pkg.credits.toLocaleString()} credits
+                    <CreditAmount value={pkg.credits} />
                   </div>
                   <div className="font-meta text-[0.56rem] tracking-[0.14em] uppercase text-ink-black/50">
                     ${(pkg.price_cents / 100).toLocaleString()}

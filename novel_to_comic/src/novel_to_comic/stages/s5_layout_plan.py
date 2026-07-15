@@ -149,6 +149,9 @@ PANEL FIELDS
   Do not include dialogue text, captions, labels, or SFX lettering here.
 - background_description: panel-specific environmental DELTA from the location anchor
   (e.g. "smoldering debris left, boot prints in slush"). Leave empty if identical.
+- use_scene_location: true when the panel is physically in the scene's listed Location.
+  Set false for flashbacks, memories, dreams, inserts, or cutaways occurring somewhere
+  else. When false, background_description must fully describe the depicted location.
 - camera_note: one concrete composition sentence
   (e.g. "Low angle looking up at the doorframe, figure in silhouette").
   Do NOT name a character if characters_present is empty.
@@ -215,7 +218,8 @@ Return {{"panels": [ {{...}}, ... ], "narration_decisions": [ {{...}}, ... ]}}.
 Each panel object has exactly these keys:
   beat_indices, characters_present, character_actions, character_expressions,
   key_objects, visual_requirements, shot_type, camera_angle, camera_note, lighting,
-  mood, background_description, importance, shape_intent, transition_out, page_break_after
+  mood, background_description, use_scene_location, importance, shape_intent,
+  transition_out, page_break_after
 Each narration_decisions object has exactly these keys:
   beat_index, decision, mode, panel_index, preferred_zone, decision_reason
 For ``mode``, use only the exact machine values above or JSON ``null``.
@@ -995,6 +999,7 @@ def _llm_spec_to_planned_panel(
         key_objects=_key_objects_for_panel(spec, covered_pairs, story_bible),
         visual_requirements=_visual_requirements_for_panel(spec, covered_pairs, story_bible),
         background_description=spec.background_description,
+        use_scene_location=spec.use_scene_location,
         camera_note=spec.camera_note,
         lighting=spec.lighting,
         mood=spec.mood,

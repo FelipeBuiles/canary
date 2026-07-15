@@ -262,3 +262,4 @@ monitored:
 - **Public signup / live Stripe:** no-go until email abuse controls, legal/support
   operations, browser security headers, extraction limits, monitoring, and
   backup recovery are proven.
+sup

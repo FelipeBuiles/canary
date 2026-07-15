@@ -462,11 +462,10 @@ async def apply_asset_instruction(
                 )
                 patch = parse_instruction_patch(rewrite.value)
                 updated_prompt = apply_instruction_patch(prompt, patch)
-                # Re-derive both generated bodies — the patch invalidated them.
-                from novel_to_comic.prompt_assembly import ensure_visual_brief
+                # Re-derive the deterministic production body. The authored
+                # instruction rewrite is the only text-model call in this job.
                 from novel_to_comic.prompting import ensure_distilled_prompt
                 updated_prompt = ensure_distilled_prompt(config, updated_prompt)
-                updated_prompt = await ensure_visual_brief(config, updated_prompt)
         except PromptInstructionError as exc:
             logger.warning(
                 "Panel instruction rewrite could not be applied project=%s scene=%s panel=%s reason=%s",

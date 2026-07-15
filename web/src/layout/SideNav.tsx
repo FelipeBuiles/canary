@@ -21,6 +21,12 @@ interface SideNavProps {
   showDesktop?: boolean;
 }
 
+interface ProjectCoverThumbProps {
+  projectId: string;
+  hasCover: boolean;
+  compact?: boolean;
+}
+
 const STATE_TAG: Record<StationState, { label: string; className: string }> = {
   done: { label: "✓ DONE", className: "text-archive-sage" },
   review: { label: "● REVIEW", className: "text-hero-red" },
@@ -28,6 +34,42 @@ const STATE_TAG: Record<StationState, { label: string; className: string }> = {
   failed: { label: "! FAILED", className: "text-hero-red" },
   wait: { label: "WAIT", className: "text-bristol/28" },
 };
+
+function ProjectCoverThumb({
+  projectId,
+  hasCover,
+  compact = false,
+}: ProjectCoverThumbProps) {
+  const [coverFailed, setCoverFailed] = useState(false);
+  const showCover = hasCover && !coverFailed;
+
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "relative flex shrink-0 items-center justify-center overflow-hidden border-[2px] border-bristol/20 bg-pulp-paper text-ink-black shadow-[3px_3px_0_0_var(--color-hero-red)]",
+        compact ? "h-12 w-9" : "h-16 w-12",
+      )}
+    >
+      {showCover ? (
+        <img
+          src={`/api/projects/${encodeURIComponent(projectId)}/files/cover/cover.png`}
+          alt=""
+          className="h-full w-full object-cover"
+          onError={() => setCoverFailed(true)}
+        />
+      ) : (
+        <>
+          <Icon name="draft" size={compact ? 15 : 18} className="text-ink-black/65" />
+          <span className={cn(
+            "absolute right-0 top-0 bg-narrator-gold [clip-path:polygon(100%_0,100%_100%,0_0)]",
+            compact ? "h-2 w-2" : "h-2.5 w-2.5",
+          )} />
+        </>
+      )}
+    </span>
+  );
+}
 
 export function SideNav({ showDesktop = true }: SideNavProps) {
   const { id: projectId } = useParams<{ id: string }>();
@@ -176,9 +218,12 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     <>
       <header className="pressroom-sidebar flex h-shell-top shrink-0 items-center gap-2 border-b-[2px] border-ink-black bg-ink-black px-3 text-bristol md:hidden">
         <Link to="/" className="flex min-w-0 flex-1 items-center gap-2">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center bg-pulp-paper font-display text-[0.72rem] font-black text-ink-black">
-            {projectTitle.charAt(0)}
-          </span>
+          <ProjectCoverThumb
+            key={projectId}
+            projectId={projectId}
+            hasCover={current?.has_cover ?? false}
+            compact
+          />
           <span className="min-w-0">
             <span className="block truncate font-display text-[0.88rem] font-bold uppercase leading-none tracking-[-0.02em]">
               {projectTitle}
@@ -236,10 +281,13 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           className="flex h-shell-top shrink-0 items-center gap-3 border-b-[2px] border-bristol/10 px-5 xl:px-6"
           aria-label={t("LIBRARY")}
         >
-          <span className="relative flex h-11 w-11 shrink-0 items-center justify-center border-[2px] border-bristol/20 bg-pulp-paper font-display text-[0.86rem] font-black text-ink-black shadow-[3px_3px_0_0_var(--color-hero-red)]">
-            {projectTitle.charAt(0)}
-            <span aria-hidden="true" className="absolute right-0 top-0 h-2.5 w-2.5 bg-narrator-gold [clip-path:polygon(100%_0,100%_100%,0_0)]" />
-          </span>
+          {projectId && (
+            <ProjectCoverThumb
+              key={projectId}
+              projectId={projectId}
+              hasCover={current?.has_cover ?? false}
+            />
+          )}
           <span className="min-w-0">
             <span className="line-clamp-2 font-display text-[0.92rem] font-black uppercase leading-[1.08] tracking-[-0.02em] 2xl:text-[1.05rem]" title={projectTitle}>
               {projectTitle}
@@ -260,7 +308,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           )}
         </nav>
 
-        <div className="h-16 shrink-0 border-t-[2px] border-bristol/10">
+        <div className="h-shell-footer shrink-0 border-t-[2px] border-bristol/10">
           <Link
             to={settingsPath}
             className={cn(

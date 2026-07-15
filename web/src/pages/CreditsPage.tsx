@@ -2,85 +2,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCreditBalance, useCreditHistory, useCreditPackages, useCreateCheckout, usePricingReference, useProjects } from "../api/queries";
-import type { CreditPackage, CreditTransaction } from "../types/api";
+import type { CreditLedgerRun, CreditPackage, CreditTransaction } from "../types/api";
 import { cn } from "../lib/cn";
+import { useShowDevContent } from "../lib/devContent";
 import { Icon } from "../components/ui/Icon";
 import { Select } from "../components/ui/Select";
 import { Button } from "../components/ui/Button";
 import { Skeleton } from "../components/ui/Skeleton";
+import { CreditAmount } from "../components/ui/CreditAmount";
 import { SectionHeader } from "../components/composites";
-import { stageLabel } from "../lib/stageLabels";
-
-interface LedgerGroup {
-  job_id: string;
-  stage: string | null;
-  project_id: string | null;
-  startedAt: string;
-  estimate_credits: number;
-  actual_credits: number;
-  returned_credits: number;
-  status: "in_flight" | "complete" | "failed";
-  rows: CreditTransaction[];
-}
-
-function groupTransactions(txs: CreditTransaction[]): LedgerGroup[] {
-  const byJob = new Map<string, CreditTransaction[]>();
-  const ungrouped: CreditTransaction[] = [];
-
-  for (const tx of txs) {
-    if (tx.job_id) {
-      const existing = byJob.get(tx.job_id) ?? [];
-      existing.push(tx);
-      byJob.set(tx.job_id, existing);
-    } else {
-      ungrouped.push(tx);
-    }
-  }
-
-  const groups: LedgerGroup[] = [];
-
-  for (const [job_id, rows] of byJob.entries()) {
-    const reservation = rows.find((r) => r.status === "reserved" || r.status === "released");
-    const settled = rows.filter((r) => r.status === "settled");
-    const estimate = reservation ? Math.abs(reservation.amount_credits) : 0;
-    const actual = settled.reduce((s, r) => s + Math.abs(r.amount_credits), 0);
-    const isReleased = !reservation || reservation.status === "released";
-    const returned = isReleased ? Math.max(0, estimate - actual) : 0;
-    const status: LedgerGroup["status"] =
-      !isReleased ? "in_flight" : actual > 0 ? "complete" : "failed";
-    const startedAt = rows.reduce(
-      (earliest, r) => (r.created_at < earliest ? r.created_at : earliest),
-      rows[0].created_at,
-    );
-    groups.push({
-      job_id,
-      stage: reservation?.stage ?? settled[0]?.stage ?? null,
-      project_id: reservation?.project_id ?? settled[0]?.project_id ?? null,
-      startedAt,
-      estimate_credits: estimate,
-      actual_credits: actual,
-      returned_credits: returned,
-      status,
-      rows,
-    });
-  }
-
-  for (const tx of ungrouped) {
-    groups.push({
-      job_id: tx.id,
-      stage: tx.stage,
-      project_id: tx.project_id,
-      startedAt: tx.created_at,
-      estimate_credits: 0,
-      actual_credits: Math.max(0, -tx.amount_credits),
-      returned_credits: 0,
-      status: "complete",
-      rows: [tx],
-    });
-  }
-
-  return groups.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
-}
+import { groupRunsByStage, type StageLedgerGroup } from "../lib/creditsHistory";
 
 function formatWhen(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
@@ -103,14 +34,22 @@ function perThousand(pkg: CreditPackage) {
 }
 
 function childRowLabel(tx: CreditTransaction): string {
-  const parts: string[] = [];
-  if (tx.model) parts.push(tx.model);
-  if (tx.operation) parts.push(tx.operation);
-  if (tx.image_count && tx.image_count > 0) parts.push(`${tx.image_count} image${tx.image_count !== 1 ? "s" : ""}`);
-  return parts.join(" · ") || (tx.description ?? "Model call");
+  const feature = (tx.description ?? "").replace(/^Model call(?: \w+)?:\s*/i, "").trim();
+  const labels: Record<string, string> = {
+    "prompt.visual_brief": "Compose panel image instruction",
+    "prompt.layout": "Plan panel regions",
+    "style.sample": "Render style proof",
+    "draw.panel_image": "Draw panel",
+  };
+  if (labels[feature]) return labels[feature];
+  if (feature) return feature.replaceAll(".", " ");
+  if (tx.image_count && tx.image_count > 0) {
+    return `Generate ${tx.image_count} image${tx.image_count === 1 ? "" : "s"}`;
+  }
+  return tx.operation === "text" ? "Text model call" : "Model call";
 }
 
-function StatusBadge({ status }: { status: LedgerGroup["status"] }) {
+function StatusBadge({ status }: { status: CreditLedgerRun["status"] }) {
   if (status === "in_flight") {
     return (
       <span className="bg-narrator-gold px-2 py-1 font-meta text-[0.5rem] font-bold tracking-[0.08em] text-ink-black">
@@ -132,50 +71,28 @@ function StatusBadge({ status }: { status: LedgerGroup["status"] }) {
   );
 }
 
-function LedgerGroupRow({
-  group,
+function LedgerRunRow({
+  run,
   projectName,
-  isGrouped,
+  showDevContent,
 }: {
-  group: LedgerGroup;
+  run: CreditLedgerRun;
   projectName: string | null;
-  isGrouped: boolean;
+  showDevContent: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const settled = group.rows.filter((r) => r.status === "settled");
-
-  if (!isGrouped) {
-    // Ungrouped / legacy single-row display
-    const tx = group.rows[0];
-    const isCredit = tx.amount_credits > 0;
-    const amount = Math.abs(tx.amount_credits).toLocaleString();
-    return (
-      <div className="flex flex-wrap items-center gap-3 border-b border-ink-black/10 bg-bristol/45 px-5 py-3 odd:bg-bristol">
-        <div className="min-w-0 flex-1 font-body text-[0.9rem] font-semibold text-ink-black/82">
-          {tx.description ?? (tx.stage ? `Model call: ${tx.stage}` : "Credit transaction")}
-        </div>
-        <div className="shrink-0 font-body text-[0.78rem] font-semibold text-ink-muted">
-          {formatWhen(tx.created_at)}
-        </div>
-        <div
-          className={cn(
-            "shrink-0 text-right font-meta text-[0.82rem] font-bold tracking-[0.08em] tabular-nums",
-            isCredit ? "text-archive-sage" : "text-ink-black/70",
-          )}
-        >
-          {isCredit ? "+" : "-"}{amount} ◆
-        </div>
-      </div>
-    );
-  }
+  const settled = run.rows.filter((row) => row.status === "settled");
+  const detailsId = `ledger-run-${run.run_id}`;
 
   return (
-    <div className="border-b border-ink-black/10">
+    <div className="border-t border-ink-black/10 first:border-t-0">
       {/* Summary row */}
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full flex-wrap items-start gap-3 bg-bristol/45 px-4 py-4 text-left transition-colors hover:bg-bristol sm:flex-nowrap sm:px-5"
+        aria-expanded={expanded}
+        aria-controls={detailsId}
+        className="flex w-full flex-wrap items-start gap-3 bg-bristol px-4 py-4 text-left transition-colors hover:bg-pulp-paper sm:flex-nowrap sm:px-5"
       >
         {/* Chevron */}
         <span className="mt-0.5 shrink-0 text-ink-muted">
@@ -185,43 +102,43 @@ function LedgerGroupRow({
         {/* Label block */}
         <div className="min-w-0 flex-1">
           <div className="font-body text-[0.9rem] font-semibold text-ink-black/82">
-            {stageLabel(group.stage)}
-            {projectName && (
-              <span className="ml-2 font-body text-[0.78rem] font-semibold text-ink-muted">
-                · {projectName}
-              </span>
-            )}
+            {projectName ?? (run.credits_added > 0 ? "Credit purchase" : "Account activity")}
           </div>
           <div className="mt-0.5 flex items-center gap-2">
             <span className="font-body text-[0.72rem] font-semibold text-ink-muted">
-              {formatWhen(group.startedAt)}
+              {formatWhen(run.started_at)}
             </span>
-            <StatusBadge status={group.status} />
+            <StatusBadge status={run.status} />
           </div>
         </div>
 
         {/* Credit columns */}
         <div className="flex w-full shrink-0 items-center justify-between gap-3 border-t border-ink-black/10 pt-3 font-meta text-[0.7rem] tabular-nums text-ink-muted sm:w-auto sm:justify-start sm:border-0 sm:pt-0">
-          {group.estimate_credits > 0 && (
+          {run.estimate_credits > 0 && (
             <span>
               <span className="text-[0.54rem] font-bold tracking-[0.06em] text-ink-muted">HELD </span>
-              {group.estimate_credits.toLocaleString()}
+              <CreditAmount value={run.estimate_credits} showMark showLabel={false} />
             </span>
           )}
-          {group.status !== "in_flight" ? (
-            <span className={cn(group.actual_credits > 0 ? "font-bold text-ink-black" : "text-ink-muted")}>
+          {run.credits_added > 0 ? (
+            <span className="font-bold text-archive-sage">
+              <span className="text-[0.54rem] font-bold tracking-[0.06em]">ADDED </span>
+              <CreditAmount value={run.credits_added} sign="+" showMark showLabel={false} />
+            </span>
+          ) : run.status !== "in_flight" ? (
+            <span className={cn(run.actual_credits > 0 ? "font-bold text-ink-black" : "text-ink-muted")}>
               <span className="text-[0.54rem] font-bold tracking-[0.06em] text-ink-muted">USED </span>
-              {group.actual_credits > 0 ? group.actual_credits.toLocaleString() : "—"}
+              {run.actual_credits > 0 ? <CreditAmount value={run.actual_credits} showMark showLabel={false} /> : "—"}
             </span>
           ) : (
             <span className="text-ink-muted">
               <span className="text-[0.54rem] font-bold tracking-[0.06em]">USED </span>—
             </span>
           )}
-          {group.returned_credits > 0 && (
+          {run.returned_credits > 0 && (
             <span className="text-archive-sage">
               <span className="text-[0.54rem] font-bold tracking-[0.06em]">RETURNED </span>
-              {group.returned_credits.toLocaleString()}
+              <CreditAmount value={run.returned_credits} showMark showLabel={false} />
             </span>
           )}
         </div>
@@ -229,7 +146,7 @@ function LedgerGroupRow({
 
       {/* Expanded child rows */}
       {expanded && settled.length > 0 && (
-        <div className="bg-surface-container">
+        <div id={detailsId} className="bg-surface-container">
           {settled.map((tx, i) => (
             <div
               key={tx.id}
@@ -242,16 +159,71 @@ function LedgerGroupRow({
                 {i < settled.length - 1 ? "├" : "└"}
               </span>
               <div className="min-w-0 flex-1 font-body text-[0.78rem] text-ink-muted">
-                {childRowLabel(tx)}
+                <div>{childRowLabel(tx)}</div>
+                {showDevContent && (
+                  <div className="mt-0.5 font-mono text-[0.62rem] text-ink-black/45">
+                    {[tx.provider_model ?? tx.model, tx.input_tokens ? `${tx.input_tokens.toLocaleString()} in` : null, tx.output_tokens ? `${tx.output_tokens.toLocaleString()} out` : null]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </div>
+                )}
               </div>
               <div className="shrink-0 font-meta text-[0.72rem] font-bold tabular-nums text-ink-muted">
-                {Math.abs(tx.amount_credits).toLocaleString()} ◆
+                <CreditAmount
+                  value={Math.abs(tx.amount_credits)}
+                  sign={tx.amount_credits > 0 ? "+" : "-"}
+                  showMark
+                  showLabel={false}
+                />
               </div>
             </div>
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+function StageLedgerSection({
+  group,
+  projectNameMap,
+  showDevContent,
+}: {
+  group: StageLedgerGroup;
+  projectNameMap: Map<string, string>;
+  showDevContent: boolean;
+}) {
+  return (
+    <section className="border-[2px] border-ink-black/10 bg-surface-container">
+      <div className="flex flex-wrap items-baseline justify-between gap-3 bg-ink-black px-5 py-3 text-bristol">
+        <div>
+          <h3 className="font-body text-[0.9rem] font-bold">{group.label}</h3>
+          <p className="mt-0.5 font-body text-[0.68rem] font-semibold text-bristol/65">
+            {group.runs.length} {group.runs.length === 1 ? "run" : "runs"}
+          </p>
+        </div>
+        <div className="font-meta text-[0.68rem] font-bold tracking-[0.06em] tabular-nums">
+          {group.creditsAdded > 0 ? "ADDED " : "USED "}
+          <CreditAmount
+            value={group.creditsAdded > 0 ? group.creditsAdded : group.actualCredits}
+            sign={group.creditsAdded > 0 ? "+" : undefined}
+            showMark
+            showLabel={false}
+            className="ml-1"
+          />
+        </div>
+      </div>
+      <div>
+        {group.runs.map((run) => (
+          <LedgerRunRow
+            key={run.run_id}
+            run={run}
+            projectName={run.project_id ? (projectNameMap.get(run.project_id) ?? run.project_id.slice(0, 8)) : null}
+            showDevContent={showDevContent}
+          />
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -262,11 +234,18 @@ export function CreditsPage() {
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
 
   const { data: balance, isLoading: balanceLoading } = useCreditBalance();
-  const { data: history, isLoading: historyLoading } = useCreditHistory();
+  const {
+    data: history,
+    isLoading: historyLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useCreditHistory();
   const { data: packagesData, isLoading: packagesLoading } = useCreditPackages();
   const { data: pricingRef } = usePricingReference();
   const { data: projects } = useProjects();
   const checkout = useCreateCheckout();
+  const [showDevContent] = useShowDevContent();
 
   const didRefresh = useRef(false);
   useEffect(() => {
@@ -289,33 +268,23 @@ export function CreditsPage() {
     return map;
   }, [projects]);
 
-  const transactions = useMemo(() => history?.transactions ?? [], [history?.transactions]);
-
-  const allGroups = useMemo(() => groupTransactions(transactions), [transactions]);
-
-  const filterProjectIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const g of allGroups) {
-      if (g.project_id) ids.add(g.project_id);
-    }
-    return [...ids];
-  }, [allGroups]);
-
-  const visibleGroups = useMemo(() => {
-    if (!projectFilter) return allGroups;
-    return allGroups.filter((g) => g.project_id === projectFilter);
-  }, [allGroups, projectFilter]);
+  const runs = useMemo(
+    () => history?.pages.flatMap((page) => Array.isArray(page?.runs) ? page.runs.filter(Boolean) : []) ?? [],
+    [history?.pages],
+  );
+  const filterProjectIds = useMemo(
+    () => (projects ?? []).map((project) => project.id),
+    [projects],
+  );
+  const visibleRuns = useMemo(
+    () => projectFilter ? runs.filter((run) => run.project_id === projectFilter) : runs,
+    [runs, projectFilter],
+  );
+  const stageGroups = useMemo(() => groupRunsByStage(visibleRuns), [visibleRuns]);
 
   const credits = balance?.balance_credits ?? 0;
 
-  const totalUsed = useMemo(
-    () =>
-      transactions
-        .filter((tx) => tx.amount_credits < 0)
-        .reduce((sum, tx) => sum + Math.abs(tx.amount_credits), 0),
-    [transactions],
-  );
-  const usageWidth = Math.min(100, Math.round((totalUsed / 1000) * 100));
+  const totalUsed = history?.pages[0]?.month_used_credits ?? 0;
 
   function dismissSuccess() {
     searchParams.delete("success");
@@ -356,17 +325,14 @@ export function CreditsPage() {
           <div>
             <div className="font-meta text-[0.58rem] font-bold uppercase tracking-[0.12em] text-ink-muted">Available now</div>
             <div className="mt-3 font-display text-[3.3rem] font-black leading-[0.82] tracking-[-0.035em]">
-              {balanceLoading ? "—" : credits.toLocaleString()}
+              {balanceLoading ? "—" : <CreditAmount value={credits} showMark showLabel={false} />}
             </div>
             <div className="mt-2 font-meta text-[0.68rem] font-bold uppercase tracking-[0.1em]">Credits</div>
           </div>
           <div className="mt-8 border-t-[2px] border-ink-black pt-4">
             <div className="flex items-center justify-between font-body text-[0.78rem] font-bold">
               <span>This month</span>
-              <span>{totalUsed.toLocaleString()} used</span>
-            </div>
-            <div className="mt-2 h-2 border-[2px] border-ink-black bg-pulp-paper">
-              <div className="h-full bg-hero-red" style={{ width: `${usageWidth}%` }} />
+              <span><CreditAmount value={totalUsed} showMark showLabel={false} /> used</span>
             </div>
           </div>
         </div>
@@ -416,7 +382,7 @@ export function CreditsPage() {
                       {packageName(pkg)}
                     </div>
                     <div className="mt-2 font-display text-[3rem] font-black leading-[0.8] tracking-[-0.04em] text-ink-black">
-                      {pkg.credits.toLocaleString()}
+                      <CreditAmount value={pkg.credits} showMark showLabel={false} />
                     </div>
                     <div className="mt-1 font-meta text-[0.64rem] font-bold uppercase tracking-[0.1em] text-ink-muted">
                       Credits
@@ -470,23 +436,46 @@ export function CreditsPage() {
           <div className="space-y-2">
             {[1, 2, 3].map((i) => <Skeleton key={i} className="h-14" />)}
           </div>
-        ) : visibleGroups.length === 0 ? (
-          <div className="border-[2px] border-ink-black/12 bg-surface-container px-5 py-8 font-body text-[0.9rem] font-semibold text-ink-muted">
-            No transactions yet. Your first hold and final charge will appear here after you run a paid stage.
+        ) : stageGroups.length === 0 ? (
+          <div className="space-y-3">
+            <div className="border-[2px] border-ink-black/12 bg-surface-container px-5 py-8 font-body text-[0.9rem] font-semibold text-ink-muted">
+              {projectFilter
+                ? "No loaded history for this project. Load older history to keep looking."
+                : "No transactions yet. Your first hold and final charge will appear here after you run a paid stage."}
+            </div>
+            {hasNextPage && (
+              <Button
+                variant="outline"
+                size="sm"
+                fullWidth
+                disabled={isFetchingNextPage}
+                onClick={() => fetchNextPage()}
+              >
+                {isFetchingNextPage ? "Loading history…" : "Load older history"}
+              </Button>
+            )}
           </div>
         ) : (
-          <div className="border-[2px] border-ink-black/10">
-            {visibleGroups.map((g) => {
-              const isGrouped = g.rows.some((r) => r.job_id != null);
-              return (
-                <LedgerGroupRow
-                  key={g.job_id}
-                  group={g}
-                  projectName={g.project_id ? (projectNameMap.get(g.project_id) ?? g.project_id.slice(0, 8)) : null}
-                  isGrouped={isGrouped}
-                />
-              );
-            })}
+          <div className="space-y-5">
+            {stageGroups.map((group) => (
+              <StageLedgerSection
+                key={group.key}
+                group={group}
+                projectNameMap={projectNameMap}
+                showDevContent={showDevContent}
+              />
+            ))}
+            {hasNextPage && (
+              <Button
+                variant="outline"
+                size="sm"
+                fullWidth
+                disabled={isFetchingNextPage}
+                onClick={() => fetchNextPage()}
+              >
+                {isFetchingNextPage ? "Loading history…" : "Load older history"}
+              </Button>
+            )}
           </div>
         )}
       </section>
