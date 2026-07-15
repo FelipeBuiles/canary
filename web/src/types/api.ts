@@ -249,6 +249,7 @@ export interface AppearanceState {
   id: string;
   label: string;
   visual_anchor: string;
+  baseline_affect: string | null;
   visually_significant: boolean;
 }
 
@@ -259,6 +260,7 @@ export interface Character {
   age_range: string;
   gender: string;
   distinguishing_features: string[];
+  baseline_affect: string | null;
   default_outfit: string;
   relationships: CharacterRelationship[];
   first_appearance_scene: string;

@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from novel_to_comic.ai import client
+from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.ai.providers.base import RefImage
 from novel_to_comic.config import Config
 
@@ -395,6 +396,80 @@ def test_failed_request_estimate_all_finalizes_billable_usage(monkeypatch, _patc
     assert finalized["status"] == "failed"
     assert finalized["usage"] is not None
     assert finalized["config"].ai_bill_failed_requests == "estimate_all"
+
+
+def test_text_gateway_error_identifies_feature_model_and_provider_detail(
+    monkeypatch, _patch_events,
+):
+    def handler(request):
+        return httpx.Response(
+            404,
+            request=request,
+            json={
+                "error": {
+                    "message": "Publisher model gemini-preview was not found in global",
+                    "code": "NOT_FOUND",
+                }
+            },
+        )
+
+    _mock_transport(monkeypatch, handler)
+
+    with pytest.raises(AITransportError) as exc_info:
+        asyncio.run(
+            client.generate_text(
+                config=Config(),
+                model="prompt-balanced",
+                system_prompt="system",
+                user_content="user",
+                feature="style.suggestions",
+            )
+        )
+
+    message = str(exc_info.value)
+    assert "style.suggestions" in message
+    assert "prompt-balanced" in message
+    assert "/v1/chat/completions" in message
+    assert "404 Not Found" in message
+    assert "Publisher model gemini-preview was not found in global" in message
+    assert exc_info.value.phase == "gateway_request"
+    assert exc_info.value.response is not None
+    assert _patch_events[-1][1]["status"] == "failed"
+
+
+def test_text_gateway_read_error_identifies_operation_after_retries(
+    monkeypatch, _patch_events,
+):
+    delays = _patch_sleep(monkeypatch)
+    calls = {"count": 0}
+
+    def handler(request):
+        calls["count"] += 1
+        raise httpx.ReadError("", request=request)
+
+    _mock_transport(monkeypatch, handler)
+
+    with pytest.raises(AITransportError) as exc_info:
+        asyncio.run(
+            client.generate_text(
+                config=Config(),
+                model="prompt-balanced",
+                system_prompt="system",
+                user_content="user",
+                feature="style.suggestions",
+            )
+        )
+
+    message = str(exc_info.value)
+    assert "style.suggestions" in message
+    assert "prompt-balanced" in message
+    assert "/v1/chat/completions" in message
+    assert "transport ReadError" in message
+    assert "after 4 attempts" in message
+    assert calls["count"] == 4
+    assert len(delays) == 3
+    assert exc_info.value.phase == "gateway_request"
+    assert _patch_events[-1][1]["status"] == "failed"
 
 
 # ── _post_with_retry: rate-limit-aware backoff ──────────────────────────────

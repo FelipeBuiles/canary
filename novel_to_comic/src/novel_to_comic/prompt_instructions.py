@@ -20,7 +20,10 @@ logger = logging.getLogger(__name__)
 
 
 MAX_INSTRUCTION_CHARS = 500
-MAX_PATCH_VALUE_CHARS = 320
+# Patch values can legitimately be longer than the user's 500-character
+# instruction because the rewrite may preserve relevant existing scene
+# direction. This is a defensive runaway-output bound, not a writing target.
+MAX_PATCH_VALUE_CHARS = 1200
 MAX_ASSET_ADDENDUM_CHARS = 600
 
 PanelPatchField = Literal[
@@ -204,6 +207,7 @@ def instruction_rewrite_system_prompt() -> str:
         "Allowed operation shapes are: "
         '{"type":"panel","field":"composition|setting|lighting|mood|constraints|continuity_note","value":"..."}, '
         '{"type":"subject","subject_index":0,"field":"action|expression|position","value":"..."}. '
+        f"Keep every operation value concise and no longer than {MAX_PATCH_VALUE_CHARS} characters. "
         "For an accepted visual instruction, always return at least one operation. "
         "Use subject_index from the supplied context when editing a subject. "
         "For character appearance consistency, strengthen action/expression/position or constraints; do not edit identity. "

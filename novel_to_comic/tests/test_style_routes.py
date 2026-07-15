@@ -1,5 +1,6 @@
 import asyncio
 import io
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -10,6 +11,7 @@ from starlette.datastructures import Headers
 from starlette.requests import Request
 
 from novel_to_comic import artifacts
+from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.config import Config
 from novel_to_comic.server.routers.styles import (
     _assert_no_style_task,
@@ -330,6 +332,43 @@ def test_get_styles_discloses_usable_reference_per_suggestion(tmp_path):
     assert [item["has_style_reference"] for item in result["suggestions"]] == [True, False]
 
 
+def test_get_styles_keeps_stale_proof_visible_and_marks_it_for_refresh(tmp_path):
+    project = _project(tmp_path, StageStatus.FAILED)
+    suggestions = [normalize_suggestion({
+        "label": "Old proof", "medium": "ink", "template": "Bold ink",
+    })]
+    save_suggestions(tmp_path, suggestions, "Demo")
+    artifacts.style_sample_path(tmp_path, 1).write_bytes(b"existing proof")
+
+    with patch(
+        "novel_to_comic.server.routers.styles.missing_sample_indices",
+        return_value=[1],
+    ):
+        result = get_styles("demo", project=project)
+
+    proof = result["suggestions"][0]
+    assert proof["has_sample"] is True
+    assert proof["sample_stale"] is True
+
+
+def test_get_styles_does_not_call_missing_proof_stale(tmp_path):
+    project = _project(tmp_path, StageStatus.FAILED)
+    suggestions = [normalize_suggestion({
+        "label": "Missing proof", "medium": "ink", "template": "Bold ink",
+    })]
+    save_suggestions(tmp_path, suggestions, "Demo")
+
+    with patch(
+        "novel_to_comic.server.routers.styles.missing_sample_indices",
+        return_value=[1],
+    ):
+        result = get_styles("demo", project=project)
+
+    proof = result["suggestions"][0]
+    assert proof["has_sample"] is False
+    assert proof["sample_stale"] is False
+
+
 @pytest.mark.parametrize("failure_point", ["estimate", "db"])
 def test_direction_post_guard_failures_release_owner(tmp_path, failure_point):
     request = _request()
@@ -404,6 +443,90 @@ def test_suggest_worker_cancellation_releases_and_fails_lifecycle(tmp_path):
         assert project[2].stages["style"].status == StageStatus.FAILED
 
     asyncio.run(scenario())
+
+
+def test_suggest_worker_reports_failure_without_unobserved_task_exception(
+    tmp_path, caplog,
+):
+    async def scenario():
+        request = _request()
+        project = _project(tmp_path)
+        error = AITransportError(
+            "AI gateway request failed for style.suggestions "
+            "(model=prompt-balanced, endpoint=/v1/chat/completions): "
+            "transport ReadError after 4 attempts",
+            phase="gateway_request",
+        )
+        with (
+            patch("novel_to_comic.server.routers.styles.get_db", return_value=object()),
+            patch("novel_to_comic.server.routers.styles.assert_sufficient_credits"),
+            patch("novel_to_comic.server.routers.styles.reserve_credits", return_value=("r", "j")),
+            patch("novel_to_comic.server.routers.styles.release_reservation") as release,
+            patch(
+                "novel_to_comic.server.routers.styles.generate_suggestions",
+                new=AsyncMock(side_effect=error),
+            ),
+        ):
+            await suggest_styles(request, "demo", project=project, user_id="user")
+            task = request.app.state.style_tasks["user:demo"]
+            assert await task is None
+
+        failures = [
+            event for event in request.app.state.event_queues["user:demo"]._queue
+            if event["type"] == "stage_fail"
+        ]
+        assert failures == [{
+            "type": "stage_fail",
+            "stage": "style_suggest",
+            "message": str(error),
+        }]
+        assert release.call_count == 1
+        assert project[2].stages["style"].status == StageStatus.FAILED
+        assert "project_id=demo" in caplog.text
+        assert "feature=style.suggestions" in caplog.text
+        assert "model=prompt-balanced" in caplog.text
+        assert "transport ReadError after 4 attempts" in caplog.text
+        assert "Traceback" not in caplog.text
+
+    with caplog.at_level(logging.WARNING, logger="canary.styles"):
+        asyncio.run(scenario())
+
+
+def test_suggest_worker_labels_sample_image_failure_with_image_model(tmp_path, caplog):
+    async def scenario():
+        request = _request()
+        project = _project(tmp_path)
+        suggestion = normalize_suggestion({
+            "label": "Ink", "medium": "ink", "template": "Bold ink",
+        })
+        error = AITransportError(
+            "wire image transport failed (status_code=500)",
+            phase="gateway_request",
+        )
+        with (
+            patch("novel_to_comic.server.routers.styles.get_db", return_value=object()),
+            patch("novel_to_comic.server.routers.styles.assert_sufficient_credits"),
+            patch("novel_to_comic.server.routers.styles.reserve_credits", return_value=("r", "j")),
+            patch("novel_to_comic.server.routers.styles.release_reservation"),
+            patch(
+                "novel_to_comic.server.routers.styles.generate_suggestions",
+                new=AsyncMock(return_value=([suggestion], None)),
+            ),
+            patch(
+                "novel_to_comic.server.routers.styles.generate_samples_for_indices",
+                new=AsyncMock(side_effect=error),
+            ),
+        ):
+            await suggest_styles(request, "demo", project=project, user_id="user")
+            task = request.app.state.style_tasks["user:demo"]
+            assert await task is None
+
+        assert "feature=style.sample" in caplog.text
+        assert "model=image-balanced" in caplog.text
+        assert "feature=style.suggestions" not in caplog.text
+
+    with caplog.at_level(logging.WARNING, logger="canary.styles"):
+        asyncio.run(scenario())
 
 
 def test_validation_runner_groups_usage_with_reservation_job_id(tmp_path):

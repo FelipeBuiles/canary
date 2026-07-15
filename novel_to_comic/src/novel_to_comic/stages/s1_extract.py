@@ -449,7 +449,10 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
         if not novel_path.is_absolute():
             novel_path = project_dir / novel_path
         console.print(f"[bold]Reading novel:[/bold] {novel_path}")
-        ctx.log(f"Reading novel: {novel_path}")
+        # SSE logs are rendered directly in the production UI. Keep the
+        # resolved path in server diagnostics above, but never expose the
+        # host machine's filesystem layout to the user.
+        ctx.log("Reading source text...")
         novel_text = _read_novel(novel_path)
         if isinstance(novel_text, bytes):
             raise ValueError(

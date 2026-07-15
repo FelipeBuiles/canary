@@ -9,6 +9,7 @@ from litellm_handlers.vertex_multimodal import (
     _extract_image,
     _image_config_kwargs,
     _map_to_supported_aspect,
+    _requires_native_aspect_control,
     _translate_vertex_error,
     litellm,
 )
@@ -21,6 +22,24 @@ def test_landscape_aspect_maps_to_native_gemini_mode():
         "aspect_ratio": "16:9",
         "image_size": "2K",
     }
+
+
+def test_flash_lite_image_clamps_unsupported_resolution_to_1k():
+    assert _image_config_kwargs(
+        4 / 5,
+        "medium",
+        model="gemini-3.1-flash-lite-image",
+    ) == {
+        "aspect_ratio": "4:5",
+        "image_size": "1K",
+    }
+
+
+def test_legacy_vertex_sdk_can_safely_omit_square_aspect_control():
+    assert not _requires_native_aspect_control(None)
+    assert not _requires_native_aspect_control("1:1")
+    assert _requires_native_aspect_control("16:9")
+    assert _requires_native_aspect_control("9:16")
 
 
 def test_translate_vertex_error_rate_limit():
@@ -48,6 +67,24 @@ def test_translate_vertex_error_other_api_error():
     assert translated.status_code == 400
     assert "Vertex image generation failed" in str(translated)
     assert "INVALID_ARGUMENT" in str(translated)
+
+
+def test_translate_vertex_error_includes_safe_request_context():
+    exc = Exception("Request contains an invalid argument")
+    exc.code = 400
+    exc.status = "INVALID_ARGUMENT"
+
+    translated = _translate_vertex_error(
+        exc,
+        "gemini-3.1-flash-lite-image",
+        request_context=(
+            "model=gemini-3.1-flash-lite-image, location=global, "
+            "image_config={'aspect_ratio': '4:5', 'image_size': '1K'}"
+        ),
+    )
+
+    assert "model=gemini-3.1-flash-lite-image" in str(translated)
+    assert "image_size': '1K'" in str(translated)
 
 
 def test_extract_image_safety_block_diagnostics():

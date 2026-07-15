@@ -65,7 +65,10 @@ services:
 
 
   litellm:
-    image: docker.litellm.ai/berriai/litellm:main-v1.83.14-stable
+    build:
+      context: .
+      dockerfile: litellm/Dockerfile
+    image: canary-litellm:1.83.14-google-genai-1.75.0
     command: ["--port", "4000", "--config", "/app/config.yaml"]
     ports:
       - "4000:4000"

@@ -70,28 +70,28 @@ model_list:
       safety_settings: *vertex_safety_off
 
   # ─── Stage 5: image-prompt assembly (template filling) ────────────────────
-  # Prompt assembly is light rewriting (structured panel spec → prose), the
-  # highest-call-volume text stage. Flash-Lite is ~6x cheaper than 3.5 Flash
-  # and the same preview model already serves extract-fast/panel-fast in this
-  # project, so the earlier region-availability failure no longer applies.
-  # Smoke-test the style stage after any Vertex project/region change.
+  # Prompt assembly is light rewriting (structured panel spec → prose), but it
+  # also powers style suggestions before cast. Keep every prompt tier on the
+  # globally available 3.5 Flash route: the 3.1 Flash-Lite preview returns 404
+  # for this Vertex project/location. Smoke-test style suggestions after any
+  # future model or region change.
   - model_name: prompt-fast
     litellm_params:
-      model: vertex_ai/gemini-3.1-flash-lite-preview
+      model: vertex_ai/gemini-3.5-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
       reasoning_effort: "disable"
   - model_name: prompt-balanced
     litellm_params:
-      model: vertex_ai/gemini-3.1-flash-lite-preview
+      model: vertex_ai/gemini-3.5-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
       reasoning_effort: "disable"
   - model_name: prompt-quality
     litellm_params:
-      model: vertex_ai/gemini-3.1-flash-lite-preview
+      model: vertex_ai/gemini-3.5-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
@@ -114,7 +114,7 @@ model_list:
       vertex_location: os.environ/VERTEXAI_LOCATION
   - model_name: image-balanced-seedream-test
     litellm_params:
-      model: fal-queue/bytedance/seedream/v4.5/edit
+      model: fal-queue/bytedance/seedream/v5/lite/edit
       api_key: os.environ/FAL_KEY
   - model_name: image-reve
     litellm_params:
@@ -122,13 +122,10 @@ model_list:
       api_key: os.environ/REVE_API_KEY
   - model_name: image-quality
     litellm_params:
-      # Nano Banana 2 Pro (Gemini 3 Pro Image) — production quality tier,
-      # ~$0.134/image at 1K output. Replaced Reve (~$0.20/image). Routed
-      # through the vertex-multimodal custom handler like the image-fast/
-      # image-balanced tiers.
-      model: vertex-multimodal/gemini-3-pro-image-preview
-      vertex_project: os.environ/VERTEXAI_PROJECT
-      vertex_location: os.environ/VERTEXAI_LOCATION
+      # Seedream 5.0 Pro — production quality tier with up to 10 references.
+      # Routed through the fal queue custom handler.
+      model: fal-queue/bytedance/seedream/v5/pro/edit
+      api_key: os.environ/FAL_KEY
 
 litellm_settings:
   # Langfuse logging happens directly from the Canary AI client (see

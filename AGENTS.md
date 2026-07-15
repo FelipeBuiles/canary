@@ -3,54 +3,6 @@
 Compact instruction file for every coding-agent session. Detailed reference:
 `docs/reference/agent-context.md`.
 
-# Pilotfish-style orchestration for Codex
-
-Use subagents selectively. The objective is to protect the main thread's context and improve verification, not to maximize agent count.
-
-## Main-agent responsibilities
-
-- Keep requirements, planning, architecture, tradeoffs, approvals, and final synthesis in the main thread.
-- Handle quick reads, small single-file edits, and tightly coupled changes inline.
-- Before delegating, give the subagent a bounded task, relevant paths and constraints, the reason for the work, and an explicit output contract.
-- Treat subagent reports as evidence, not authority. Reconcile conflicts in the main thread.
-
-## Agent routing
-
-- Use `scout` for read-only codebase discovery, symbol tracing, and configuration lookup.
-- Use `mechanical_worker` for fully specified repetitive edits, test additions that follow an established pattern, documentation updates, and bulk formatting-safe changes.
-- Use `implementer` for features, bug fixes, and refactors that require engineering judgment.
-- Use `verifier` after non-trivial changes to independently attempt to refute correctness. The verifier reports `CONFIRMED`, `REFUTED`, or `INCONCLUSIVE` and never fixes the work it reviews.
-- Use `security_reviewer` for authentication, authorization, secrets, cryptography, untrusted input, command execution, permissions, and dependency-supply-chain changes.
-
-## Delegation rules
-
-- Spawn subagents only when the work is independently bounded or when isolating noisy investigation materially protects the main context.
-- Prefer parallel agents for independent read-heavy work such as exploration, test-log analysis, documentation research, and review.
-- Do not have multiple agents edit overlapping files concurrently.
-- Use one editing agent for a coupled change set. Parallelize only disjoint write sets with explicit file ownership.
-- Start with the least expensive role capable of the task. Escalate to `implementer` if a mechanical worker cannot complete a task reliably.
-- After two materially similar failed attempts, stop retrying and reassess the specification in the main thread.
-- Require a fresh `verifier` pass for non-trivial implementation before claiming completion. Also run the project's normal tests and checks.
-- For security-sensitive work, use `security_reviewer` even if another verifier has already reviewed it.
-- Do not delegate trivial work whose coordination cost exceeds its execution cost.
-
-## Tooling
-
-- Prefix shell commands with `rtk`.
-- Prefer `rg` and `rg --files` for search.
-- Preserve user changes and avoid destructive Git operations.
-
-## Work Style
-
-- State assumptions before implementing when the request is ambiguous.
-- Prefer the minimum code that solves the request.
-- Touch only files required by the task. Do not refactor adjacent code unless
-  the request requires it.
-- Match existing style, even when you would personally choose another pattern.
-- Mention unrelated issues you notice; do not fix them unless asked.
-- Remove only unused imports/variables/functions introduced by your own change.
-- For multi-step work, define success criteria and verify them.
-
 ## Project Snapshot
 
 Canary is a Python/React app that turns novels into comic books via a 9-stage

@@ -42,13 +42,20 @@ def parse_provider_wire(payload: str) -> dict[str, Any]:
 
 
 def exact_vertex_contents(manifest: dict[str, Any], image_parts: list[Any]) -> list[Any]:
-    """Interleave exact instructions and bytes; no labels/prose are authored."""
+    """Place reference bytes before their instructions and final prompt.
+
+    Vertex's multimodal prompting guidance recommends image-first ordering for
+    single-image requests.  Keeping every image adjacent to its compiler-owned
+    instruction preserves that advantage for multi-reference requests without
+    letting the isolated adapter author labels or semantic prose.
+    """
     refs = manifest.get("references", [])
     if len(refs) != len(image_parts):
         raise ValueError("ProviderWireRequest reference count mismatch")
-    contents: list[Any] = list(manifest.get("prompt_parts", []))
+    contents: list[Any] = []
     for ref, part in zip(refs, image_parts, strict=True):
-        contents.extend((ref["instruction"], part))
+        contents.extend((part, ref["instruction"]))
+    contents.extend(manifest.get("prompt_parts", []))
     return contents
 
 

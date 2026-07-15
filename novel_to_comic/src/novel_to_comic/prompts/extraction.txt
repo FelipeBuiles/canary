@@ -14,10 +14,11 @@ Given the complete text of a novel, output a single JSON object matching the sch
     {
       "id": "char_001",
       "name": "Full Name",
-      "visual_anchor": "STRICT DANBOORU-STYLE TAGS (comma-separated). Use 10-16 evidence-grounded tags of the character's typical look — physical appearance, usual clothing, accessories. NO situational state (wet, dirty, shivering, injured, covered in blood).",
+      "visual_anchor": "STRICT DANBOORU-STYLE PHYSICAL IDENTITY TAGS (comma-separated). Use 10-16 evidence-grounded tags of the character's typical look — anatomy, physical appearance, usual clothing, accessories. NO emotion, expression, mood, pose, action, or situational state.",
       "age_range": "early 30s",
       "gender": "female",
       "distinguishing_features": ["feature one", "feature two"],
+      "baseline_affect": "string or null — stable low-intensity demeanor only, e.g. 'guarded and watchful'; never a scene reaction",
       "default_outfit": "description of typical clothing",
       "relationships": [
         {"character_id": "char_002", "relationship": "husband"}
@@ -27,7 +28,8 @@ Given the complete text of a novel, output a single JSON object matching the sch
         {
           "id": "silver",
           "label": "Silver hands",
-          "visual_anchor": "SELF-CONTAINED tags for the WHOLE look in this state (identity + the change) — e.g. the full base anchor PLUS 'polished silver prosthetic hands'. Never a bare delta, never mixed with another state.",
+          "visual_anchor": "SELF-CONTAINED PHYSICAL tags for the WHOLE look in this state (identity + the change) — e.g. the full base anchor PLUS 'polished silver prosthetic hands'. Never a bare delta, never mixed with another state, and never include emotion or expression.",
+          "baseline_affect": "string or null — only when this state has a stable altered demeanor; never a beat-level reaction",
           "visually_significant": true,
           "continuity_guard": "When visually_significant is true, ONE imperative sentence stating what the image model must preserve and must NOT revert to its default, plus how to stage actions to stay consistent. State the rule in this entity's own terms; do not assume a generic case. Examples: a lost limb → 'She has no hands — both arms end in bandaged stumps; never depict her holding, gripping, or gesturing; she acts with her mouth or against her stumps.' A prosthetic → 'Her hands are rigid polished silver prosthetics, not flesh; always show the metallic sheen.' Omit (null) for minor/text-only states."
         }
@@ -127,6 +129,7 @@ Given the complete text of a novel, output a single JSON object matching the sch
 - narrative_arcs[].scenes: ARRAY of scene id strings — e.g. ["scene_001", "scene_002"]. NOT a single string.
 - narrative_arcs[].title: SHORT string — e.g. "Setup", "Confrontation", "Resolution".
 - characters[].distinguishing_features: ARRAY of strings — e.g. ["long red hair", "scar on chin"]. NOT a single string.
+- characters[].baseline_affect: STRING or null. A stable, low-intensity demeanor separate from physical identity and from scene reactions.
 - scenes[].source_start_quote: VERBATIM string — copy the first 60-80 characters of that scene exactly as they appear in the text. Do NOT paraphrase or summarise. Do NOT count characters.
 - characters[].appearance_states, locations[].appearance_states: ARRAY (may be empty) of alternate-look objects. See APPEARANCE TIMELINE rules below.
 - characters[].appearance_timeline, locations[].appearance_timeline: ARRAY (may be empty) of activations, each {state_id, at:{scene_id, beat}, transition?}, ordered by story position. See APPEARANCE TIMELINE rules below.
@@ -139,15 +142,16 @@ CHARACTERS
 - Include only characters who can be visually shown in panels.
 - Do NOT create Character entries for off-screen voices, unseen speakers, people only heard from another room, or people mentioned but never physically shown. Preserve their dialogue/events in scene summaries instead.
 - Do NOT add voice-only or off-screen speakers to scenes[].character_ids.
-- visual_anchor = Danbooru-style comma-separated tags ONLY. No prose, no sentences. The character's typical, recognizable look — physical traits, usual clothing, usual accessories. The only exclusion is situational/changed state: no "wet", "injured", "shivering", "covered in blood", "exhausted", "silver hands". A permanent mid-story change to the body (loses a hand, gains a scar, silver prostheses) belongs in appearance_states + appearance_timeline (see APPEARANCE TIMELINE), never baked into the base anchor.
+- visual_anchor = Danbooru-style comma-separated PHYSICAL IDENTITY tags ONLY. No prose, sentences, emotion, expression, mood, pose, or action. Include the character's typical recognizable anatomy, physical traits, usual clothing, and usual accessories. Exclude both transient affect ("anxious expression", "terrified", "smiling", "wild-eyed") and situational/changed state ("wet", "injured", "shivering", "covered in blood", "exhausted", "silver hands"). A permanent mid-story body change belongs in appearance_states + appearance_timeline, never the base anchor.
+- baseline_affect owns any stable demeanor supported by the source, expressed at low intensity: e.g. "guarded and watchful", "habitually stern", "quietly uneasy". It is NOT part of visual_anchor. Do not record beat-level reactions here; screenplay/panel expression direction owns those. Prefer null when the source establishes no stable demeanor.
 - Ground every visual_anchor tag in textual evidence from the source. Do NOT invent specific clothing items, facial features, or accessories that are not supported by the text.
 - Prefer omission over fabrication. If details are sparse, use broader but evidence-supported tags instead of made-up specifics.
 - Preserve deliberate ambiguity from the source text. If the text frames a character as gender-ambiguous/indeterminate, keep that ambiguity in the tags and avoid collapsing to a strongly gendered archetype unless the source explicitly does so.
 - Cast contrast is required: when two recurring characters share a scene, include at least 3 clearly differentiating visual tags per character so they are not rendered as the same generic person.
-- Avoid overusing generic filler tags that make characters converge (e.g., "average face", "neutral expression", "relaxed posture") unless those traits are textually salient.
+- Avoid generic filler physical tags that make characters converge (e.g., "average face"). Expression and posture do not belong in visual_anchor at all; put a stable demeanor in baseline_affect and leave scene reactions to panel direction.
   WRONG: "A tall woman with short black hair who is wearing a tactical jacket."
   WRONG: "1woman, adult female, tall, short black hair, grey eyes, shivering, thin torn clothes, lips blue from cold" (situational/changed state — belongs in appearance_states)
-  RIGHT: "1woman, adult female, tall, short black hair, grey eyes, jagged scar on cheek, olive skin, athletic build, dark tactical jacket, red arm patch, upright posture"
+  RIGHT: "1woman, adult female, tall, short black hair, grey eyes, jagged scar on cheek, olive skin, athletic build, dark tactical jacket, red arm patch"
 - default_outfit = supplementary clothing details the anchor tags may not fully capture. e.g. "cargo pants, combat boots, dog tags around neck"
 - Use age-appropriate count/gender tags:
   - Adult male characters MUST start with "1man, adult male" — NEVER "1boy".
@@ -184,8 +188,9 @@ APPEARANCE TIMELINE (characters[] and locations[] — how a look changes over th
 - Most entities look the SAME throughout: leave appearance_states and appearance_timeline empty ([]).
 - Use them when an entity's visible appearance changes at a definite point: a character loses a hand, gains silver prostheses, is restored; a place collapses, burns, shifts day→night.
 - Model it as a CATALOG of alternate looks (appearance_states) + an ordered TIMELINE of transitions (appearance_timeline).
-- appearance_states[]: each {id, label, visual_anchor, visually_significant}.
-  - visual_anchor is SELF-CONTAINED: it fully describes the entity in that state (identity + the change) so it can REPLACE the base look with no contradiction. Never a bare delta; never mix two states' tags.
+- appearance_states[]: each {id, label, visual_anchor, baseline_affect, visually_significant}.
+  - visual_anchor is SELF-CONTAINED physical identity: it fully describes the entity in that state (identity + the physical change) so it can REPLACE the base look with no contradiction. Never a bare delta; never mix two states' tags; never include emotion, expression, pose, or action.
+  - baseline_affect is optional and only describes a stable state-specific demeanor. A momentary expression remains panel direction, not appearance identity.
   - visually_significant: true when the state deserves its own generated reference image (a body transformation, a collapsed building); false for a minor text-only difference (dusty travel clothes).
 - appearance_timeline[]: each {state_id, at, transition?}, ORDERED by story position.
   - at = {scene_id, beat}: the FIRST point where the new look holds. beat = null means "from that scene's start" (the usual case). Before the first activation, the base visual_anchor applies.

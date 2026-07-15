@@ -44,6 +44,18 @@ import { getPanelPreparationState } from "../../lib/panelPreparation";
 import { useI18n } from "../../i18n";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 
+function effectiveImageModel(config: {
+  image_model?: string;
+  quality_preset?: "fast" | "balanced" | "quality" | null;
+  dev_mode?: boolean;
+} | undefined) {
+  if (!config) return undefined;
+  if (config.dev_mode || config.quality_preset === "fast") return "image-fast";
+  if (config.quality_preset === "balanced") return "image-balanced";
+  if (config.quality_preset === "quality") return "image-quality";
+  return config.image_model;
+}
+
 function imageModelLabel(model: string | undefined) {
   switch (model) {
     case "image-fast": return "Fast image generation";
@@ -54,7 +66,12 @@ function imageModelLabel(model: string | undefined) {
   }
 }
 
-function SelectedModelField({ model }: { model: string | undefined }) {
+function SelectedModelField({ config }: { config: {
+  image_model?: string;
+  quality_preset?: "fast" | "balanced" | "quality" | null;
+  dev_mode?: boolean;
+} | undefined }) {
+  const model = effectiveImageModel(config);
   return (
     <div className="border-[2px] border-ink-black/15 bg-bristol p-3">
       <div className="font-meta text-[0.56rem] tracking-[0.18em] text-ink-black/45">
@@ -612,7 +629,7 @@ export function DrawRoom() {
             title="Draw all panels"
             body="Scenewright draws every planned panel in your selected style. You review by exception afterwards — flag anything that needs re-work."
             cost={drawCostEstimate as StageCostEstimate | undefined}
-            extraBody={<SelectedModelField model={projectConfig?.image_model} />}
+            extraBody={<SelectedModelField config={projectConfig} />}
             confirmLabel="Draw all panels"
             onConfirm={handleDrawAll}
             onClose={() => setConfirmAction(null)}
@@ -953,7 +970,7 @@ export function DrawRoom() {
         title="Draw all panels"
         body={`Scenewright draws ${panelCounts.pending} pending panel${panelCounts.pending === 1 ? "" : "s"} in your selected style.`}
         cost={drawCostEstimate as StageCostEstimate | undefined}
-        extraBody={<SelectedModelField model={projectConfig?.image_model} />}
+        extraBody={<SelectedModelField config={projectConfig} />}
         confirmLabel="Draw all panels"
         onConfirm={handleDrawAll}
         onClose={() => setConfirmAction(null)}
@@ -964,7 +981,7 @@ export function DrawRoom() {
         title="Retry failed panels"
         body={`This will retry ${panelCounts.failed} failed panel${panelCounts.failed === 1 ? "" : "s"}.`}
         cost={drawCostEstimate as StageCostEstimate | undefined}
-        extraBody={<SelectedModelField model={projectConfig?.image_model} />}
+        extraBody={<SelectedModelField config={projectConfig} />}
         confirmLabel="Retry failed"
         onConfirm={handleRetryFailed}
         onClose={() => setConfirmAction(null)}

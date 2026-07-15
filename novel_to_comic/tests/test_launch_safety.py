@@ -243,3 +243,14 @@ def test_credit_view_uses_callers_rls_context():
 
     assert "create or replace view public.user_credits" in schema
     assert "with (security_invoker = true)" in schema
+
+
+def test_litellm_images_pin_sdk_with_native_image_config_support():
+    root = Path(__file__).resolve().parents[2]
+    production = (root / "Dockerfile").read_text(encoding="utf-8")
+    local_gateway = (root / "litellm" / "Dockerfile").read_text(encoding="utf-8")
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+
+    assert "google-genai==1.75.0" in production
+    assert "google-genai==1.75.0" in local_gateway
+    assert "dockerfile: litellm/Dockerfile" in compose

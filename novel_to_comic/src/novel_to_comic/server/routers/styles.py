@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import io
 import json
+import logging
 import warnings
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 
 from novel_to_comic import artifacts
 from novel_to_comic.ai import ai_request_context
+from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.config import Config, save_config
 from novel_to_comic.image_models import image_model_profile_for_config
 from novel_to_comic.models.story_bible import StoryBible
@@ -57,6 +59,7 @@ from ..generation_jobs import (
 )
 
 router = APIRouter()
+logger = logging.getLogger("canary.styles")
 _STYLE_IMAGE_TYPES = {
     "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp",
 }
@@ -235,6 +238,7 @@ def get_styles(project_id: str, project=Depends(get_project)):
     result = []
     for i, s in enumerate(suggestions, 1):
         sample_path = artifacts.style_sample_path(project_dir, i)
+        sample_exists = sample_path.exists()
         validation_path = artifacts.style_validation_path(project_dir, s["id"])
         direction = (
             load_style_direction(project_dir, s.get("direction_id"))
@@ -255,7 +259,11 @@ def get_styles(project_id: str, project=Depends(get_project)):
         result.append({
             **s,
             "index": i,
-            "has_sample": sample_path.exists() and i not in stale_indices,
+            # Existence and freshness are separate UI concerns.  A proof made
+            # under an older prompt contract is still valuable project work:
+            # keep it visible and let the author decide when to replace it.
+            "has_sample": sample_exists,
+            "sample_stale": sample_exists and i in stale_indices,
             "has_validation": validation_fresh,
             "has_style_reference": bool(
                 style_reference is not None and _supports_style_reference(config)
@@ -613,6 +621,8 @@ async def suggest_styles(
     lifecycle_started = False
 
     async def _job():
+        operation_feature = "style.suggestions"
+        operation_model = config.effective_prompt_model()
         queue.put_nowait({"type": "stage_begin", "stage": "style_suggest", "total": 1})
         try:
             queue.put_nowait({
@@ -648,6 +658,8 @@ async def suggest_styles(
                     "type": "log", "stage": "style_suggest", "level": "info",
                     "message": f"Generating {total_samples} sample images...",
                 })
+                operation_feature = "style.sample"
+                operation_model = config.effective_image_model()
                 
                 async def _on_sample_done(idx: int, result) -> None:
                     done_count = idx - existing_count
@@ -669,14 +681,42 @@ async def suggest_styles(
                 complete_stage(state, "style")
                 save_state(state, project_dir)
         except BaseException as exc:
+            from novel_to_comic.text_utils import clean_exception_message
+
+            cancelled = isinstance(exc, asyncio.CancelledError)
+            message = (
+                "Style suggestion job cancelled"
+                if cancelled else clean_exception_message(exc)
+            )
             queue.put_nowait({
                 "type": "stage_fail", "stage": "style_suggest",
-                "message": str(exc) or type(exc).__name__,
+                "message": message,
             })
             if lifecycle_owned:
-                fail_stage(state, "style", str(exc) or type(exc).__name__)
+                fail_stage(state, "style", message)
                 save_state(state, project_dir)
-            raise
+            if cancelled:
+                raise
+            log_args = (
+                project_dir.name,
+                project_id,
+                operation_feature,
+                operation_model,
+                message,
+            )
+            if isinstance(exc, AITransportError):
+                logger.warning(
+                    "Style suggestion failed (handled AI transport error) "
+                    "project=%s project_id=%s stage=style_suggest "
+                    "feature=%s model=%s error=%s",
+                    *log_args,
+                )
+            else:
+                logger.exception(
+                    "Style suggestion failed project=%s project_id=%s "
+                    "stage=style_suggest feature=%s model=%s error=%s",
+                    *log_args,
+                )
         finally:
             if reservation_id:
                 release_reservation(db, reservation_id)

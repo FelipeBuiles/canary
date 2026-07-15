@@ -39,6 +39,59 @@ _UNIFIED_CANVAS = (
     "internal borders, page layouts, or split-screen compositions."
 )
 
+_FACIAL_QUALITY = (
+    "Faces have natural individuality, asymmetry, and human proportions; avoid "
+    "airbrushed beauty-filter surfaces, idealized symmetry, caricature, oversized "
+    "eyes, blackened eye sockets, and theatrical eyebrow shapes",
+    "Keep facial acting restrained unless the scene direction explicitly requires "
+    "a stronger reaction; convey emotion primarily through subtle gaze, posture, and "
+    "small changes around the eyes and mouth",
+)
+
+_CHARACTER_REFERENCE_LAYOUT = (
+    "exactly one character identity",
+    "exactly four full-body depictions of that same character",
+    "arrange the four depictions as front, three-quarter, profile, and neutral-action "
+    "views in one square 2x2 reference sheet",
+    "the four views are simultaneous design views, not four different characters and "
+    "not a narrative sequence",
+)
+
+_CHARACTER_REFERENCE_PERFORMANCE = (
+    "This is a calm character-design sitting, not an emotional scene; use the same "
+    "restrained resting expression in all four views with mouth closed, jaw relaxed, "
+    "brows at rest, and eyes naturally open and normally proportioned",
+    "If an identity anchor names an emotion, interpret it as a low-intensity baseline "
+    "affect rather than an active reaction; do not turn anxiety, sternness, sadness, "
+    "or fatigue into a frightened, startled, deranged, or theatrical face",
+)
+
+_VISUAL_STYLE_REFERENCE_AUTHORITY = (
+    "The approved visual style reference precedes this prompt and is the sole authority "
+    "for rendering style; "
+    "match its line weight, facial modeling, wash behavior, palette, edge treatment, "
+    "shadow density, rendering density, and degree of simplification",
+    "Treat textual style notes as secondary descriptive vocabulary only; named-artist "
+    "wording and subject stereotypes must not override the approved visual reference",
+)
+
+_SHARED_ARTISTIC_HAND = (
+    "Render every character with one shared artistic hand: identical contour language, "
+    "line weight, facial modeling, wash behavior, palette, edge treatment, shadow density, "
+    "and degree of simplification",
+    "Character references define identity, anatomy, and wardrobe only; do not inherit "
+    "their medium, mark-making, palette, lighting, paper texture, or rendering density",
+)
+
+_CHARACTER_VALUE_STYLE_LOCK = (
+    "A character's youth, pale skin, thin build, anxiety, illness, or light-colored "
+    "wardrobe changes local subject color only; it must not make the illustration "
+    "cleaner, flatter, more cartoon-like, or more simplified than the approved style",
+    "Preserve the approved reference's contour weight, facial modeling depth, texture "
+    "density, shadow structure, edge variation, and background wash coverage even when "
+    "the character's clothing and skin are predominantly light",
+)
+
 # Character-count / figure / instant / no-lettering labels follow the prompting
 # module's i18n label table. The canonical projection reuses them so the
 # constraint vocabulary stays in one place.
@@ -110,7 +163,13 @@ def _appearance_lock_clauses(prompt: ImagePrompt) -> list[str]:
     return clauses
 
 
-def generate_system_constraints(prompt: ImagePrompt) -> list[str]:
+def generate_system_constraints(
+    prompt: ImagePrompt,
+    *,
+    asset_kind: str = "panel",
+    has_style_reference: bool = False,
+    has_subject_references: bool = False,
+) -> list[str]:
     """Generate the system-constraint lines from typed fields.
 
     These are non-editable invariants: character count, one body per character,
@@ -119,21 +178,52 @@ def generate_system_constraints(prompt: ImagePrompt) -> list[str]:
     regenerated on every render — they are never stored in ``constraints``.
     """
     labels = _labels(prompt)
-    character_count = len(getattr(prompt, "subjects", []) or [])
+    subjects = list(getattr(prompt, "subjects", []) or [])
+    character_count = len(subjects)
     character_label = labels["character"] if character_count == 1 else labels["characters"]
-    lines: list[str] = [
-        f"exactly {character_count} {character_label}",
-        labels["one_body"],
-        labels["single_instant"],
-        labels["no_lettering"],
-    ]
+    if asset_kind == "character_ref":
+        lines = [*_CHARACTER_REFERENCE_LAYOUT, labels["no_lettering"]]
+        for subject in subjects:
+            baseline_affect = (getattr(subject, "baseline_affect", None) or "").strip()
+            if baseline_affect:
+                lines.append(
+                    f"baseline affect for {subject.name}: {baseline_affect}; render it "
+                    "subtly and consistently without escalating its intensity"
+                )
+        lines.extend(_FACIAL_QUALITY)
+        # A state reference may intentionally require fever, delirium, or another
+        # altered affect. Preserve it, but do not let the model amplify beyond the
+        # authored state description.
+        if any(getattr(subject, "appearance_state_id", None) for subject in subjects):
+            lines.append(
+                "honor any explicitly authored appearance-state affect, but do not "
+                "intensify it beyond the state description"
+            )
+        else:
+            lines.extend(_CHARACTER_REFERENCE_PERFORMANCE)
+    else:
+        lines = [
+            f"exactly {character_count} {character_label}",
+            labels["one_body"],
+            labels["single_instant"],
+            labels["no_lettering"],
+        ]
+        if subjects:
+            lines.extend(_FACIAL_QUALITY)
     if getattr(prompt, "has_narration_caption", False):
         lines.append(_NARRATION_NOTE)
     crop_policy = getattr(prompt, "crop_policy", None)
     if crop_policy:
         lines.append(f"crop policy: {crop_policy}")
     lines.extend(_appearance_lock_clauses(prompt))
-    lines.append(_UNIFIED_CANVAS)
+    if has_style_reference:
+        lines.extend(_VISUAL_STYLE_REFERENCE_AUTHORITY)
+        if asset_kind == "character_ref":
+            lines.extend(_CHARACTER_VALUE_STYLE_LOCK)
+        if subjects and has_subject_references:
+            lines.extend(_SHARED_ARTISTIC_HAND)
+    if asset_kind != "character_ref":
+        lines.append(_UNIFIED_CANVAS)
     return lines
 
 

@@ -298,8 +298,8 @@ def compile_provider_wire_request(compiled: CompiledGenerationRequest) -> Provid
             entity_id=asset.entity_id,
             appearance_state_id=asset.appearance_state_id,
             authority_scope=asset.authority_scope.value,
-            preserve_facets=asset.preserve_facets,
-            ignore_facets=asset.ignore_facets,
+            preserve_facets=instruction.preserve_facets,
+            ignore_facets=instruction.ignore_facets,
         )
         for index, (asset, instruction) in enumerate(
             zip(compiled.reference_plan.selected, compiled.reference_instructions, strict=True)

@@ -5,8 +5,9 @@ import {
   useStyles,
   useSuggestStyles,
   useCreateStyleDirection,
-  useSuggestStylesEstimate,
   useGenerateStyleSamples,
+  useSuggestStylesEstimate,
+  useStyleSampleEstimate,
   useGenerateStyleValidation,
   useSetActiveStyle,
   useImageGenerationMeta,
@@ -16,7 +17,6 @@ import {
   useLetteringStyle,
   useGenerateLetteringStyle,
   useSetLetteringStyle,
-  useStyleSampleEstimate,
   useStyleDirectionEstimate,
 } from "../../api/queries";
 import { Button } from "../../components/ui/Button";
@@ -24,7 +24,7 @@ import { GenerationDetailsModal } from "../../components/ui/GenerationDetailsMod
 import { LazyImage } from "../../components/ui/LazyImage";
 import { StateBlock } from "../../components/ui/StateBlock";
 import { Surface } from "../../components/ui/Surface";
-import { ApprovalBar, EntityCard, RegenAction, RoomHeader, ConfirmDrawer, RerunStageAction, RoomShell, SectionHeader } from "../../components/composites";
+import { ApprovalBar, EntityCard, RoomHeader, ConfirmDrawer, RerunStageAction, RoomShell, SectionHeader } from "../../components/composites";
 import { useApproveStage, useStageEstimate } from "../../api/queries";
 import { useRunAction } from "../../hooks/useRunAction";
 import { useI18n } from "../../i18n";
@@ -39,7 +39,7 @@ import {
 } from "../../store/styleGen";
 import { usePipelineStore } from "../../store/pipeline";
 import type { StyleSuggestion } from "../../api/styles";
-import type { StoryBible } from "../../types/api";
+import type { CostEstimate, StoryBible } from "../../types/api";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 
 const ROLE_LABELS: Record<string, string> = {
@@ -70,6 +70,17 @@ function buildFallbackStyleSamplePrompt(suggestion: StyleSuggestion, storyBible:
   );
 }
 
+function multiplyEstimate(estimate: CostEstimate | undefined, count: number): CostEstimate | undefined {
+  if (!estimate || count < 1) return undefined;
+  return {
+    ...estimate,
+    estimate_credits: estimate.estimate_credits * count,
+    reserved_credits: estimate.reserved_credits === null
+      ? null
+      : estimate.reserved_credits * count,
+  };
+}
+
 function StyleCard({
   suggestion,
   projectName,
@@ -83,6 +94,7 @@ function StyleCard({
   onToggleCompare,
   validationBusy,
   onValidate,
+  onRefresh,
 }: {
   suggestion: StyleSuggestion;
   projectName: string;
@@ -96,25 +108,22 @@ function StyleCard({
   onToggleCompare: () => void;
   validationBusy: boolean;
   onValidate: () => void;
+  onRefresh: () => void;
 }) {
   const { t } = useI18n();
   const sampleUrl = `/api/projects/${encodeURIComponent(projectName)}/files/samples/style_${suggestion.index}.png`;
   const [imgFailed, setImgFailed] = useState(!suggestion.has_sample);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
-  const [generationError, setGenerationError] = useState<string | null>(null);
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [timestamp, setTimestamp] = useState(() => Date.now());
   const wasGenerating = useRef(isGenerating);
-  const generateSamples = useGenerateStyleSamples();
   const setActive = useSetActiveStyle();
-  const { add, attachJobs, remove } = useStyleGenStore();
   const { data: meta, isLoading: isMetaLoading } = useImageGenerationMeta(
     projectName,
     `samples/style_${suggestion.index}.png`,
     isDetailsOpen,
     timestamp,
   );
-  const { data: sampleEstimate } = useStyleSampleEstimate(projectName, isDetailsOpen);
 
   useEffect(() => {
     if (!suggestion.has_sample) return;
@@ -132,23 +141,6 @@ function StyleCard({
     }, 0);
     return () => window.clearTimeout(timer);
   }, [isGenerating]);
-
-  const handleGenerate = () => {
-    setGenerationError(null);
-    if (imgFailed) setImgFailed(true);
-    add(projectName, [suggestion.index]);
-    generateSamples.mutate(
-      { project: projectName, ids: [suggestion.id] },
-      {
-        onSuccess: (data) => attachJobs(projectName, data.jobs),
-        onError: (error) => {
-          remove(projectName, [suggestion.index]);
-          if (maybeShowInsufficientCredits(error, { actionLabel: "Regenerate style proof", onRetry: handleGenerate })) return;
-          setGenerationError(error.message);
-        },
-      },
-    );
-  };
 
   const showLoading = isGenerating || (!suggestion.has_sample && generationDisabled);
   const isActive = suggestion.is_active;
@@ -262,14 +254,29 @@ function StyleCard({
           </div>
         )}
 
-        <div className="mt-auto flex flex-wrap gap-2 pt-5">
+        {suggestion.sample_stale && (
+          <div className="mt-4 flex items-center justify-between gap-3 bg-pulp-paper px-3 py-2.5">
+            <span className="font-meta text-[0.62rem] font-bold tracking-[0.08em] text-ink-black/65">
+              {t("REFRESH AVAILABLE")}
+            </span>
+            <Button
+              variant="outline"
+              size="xs"
+              disabled={generationDisabled || isGenerating}
+              onClick={onRefresh}
+            >
+              {t("REFRESH PROOF")}
+            </Button>
+          </div>
+        )}
+
+        <div className="mt-auto grid grid-cols-1 gap-2 pt-5 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
           <Button
             variant={isActive ? "secondary" : "primary"}
             size="sm"
             disabled={!canSelect}
             onClick={handleCardClick}
             aria-pressed={isActive}
-            className="flex-1"
           >
             {isActive ? `✓ ${t("YOUR STYLE")}` : t("SELECT THIS STYLE")}
           </Button>
@@ -286,7 +293,7 @@ function StyleCard({
             size="sm"
             disabled={validationBusy || generationDisabled}
             onClick={onValidate}
-            className="w-full"
+            className="w-full sm:col-span-2"
           >
             {validationBusy
               ? t("TESTING IN ACTION…")
@@ -318,17 +325,6 @@ function StyleCard({
               <div className="font-meta text-[0.54rem] tracking-[0.16em] text-ink-black/45">{t("VISUAL DIRECTION")}</div>
               <p className="mt-1 text-[0.8rem] leading-6 text-ink-black/75">{suggestion.template}</p>
             </div>
-            <RegenAction
-              assetLabel={suggestion.label}
-              cost={sampleEstimate}
-              hasImage={!imgFailed}
-              allowInstruction={false}
-              busy={isGenerating}
-              busyLabel={queueState === "queued" ? t("QUEUED") : t("DRAWING…")}
-              disabled={generationDisabled && !isGenerating}
-              error={generationError}
-              onRegenerate={handleGenerate}
-            />
           </div>
         )}
       />
@@ -355,6 +351,7 @@ export function StyleRoom() {
   const { data: status } = useProjectStatus(id);
   const suggestStyles = useSuggestStyles();
   const createStyleDirection = useCreateStyleDirection();
+  const generateSamples = useGenerateStyleSamples();
   const generateValidation = useGenerateStyleValidation();
   const { data: generationJobs } = useGenerationJobs(
     id,
@@ -381,6 +378,7 @@ export function StyleRoom() {
     mode: StyleDirectionMode;
   } | null>(null);
   const [pendingValidation, setPendingValidation] = useState<StyleSuggestion | null>(null);
+  const [pendingRefresh, setPendingRefresh] = useState<StyleSuggestion[]>([]);
 
   const styleStage = status?.stages.style;
   const isStageGenerating = styleStage?.status === "running";
@@ -393,6 +391,7 @@ export function StyleRoom() {
   const styleActionsDisabled = isStageGenerating || isSuggesting || suggestStyles.isPending || createStyleDirection.isPending;
   const { data: suggestEstimate } = useSuggestStylesEstimate(id, !isSuggesting);
   const { data: directionEstimate } = useStyleDirectionEstimate(id, !createStyleDirection.isPending);
+  const { data: sampleEstimate } = useStyleSampleEstimate(id, pendingRefresh.length > 0);
 
   const startSuggestions = useCallback((directionId?: string) => {
     clearEvents();
@@ -580,6 +579,8 @@ export function StyleRoom() {
   const comparedSuggestions = compareIds
     .map((suggestionId) => suggestions.find((suggestion) => suggestion.id === suggestionId))
     .filter((suggestion): suggestion is StyleSuggestion => !!suggestion);
+  const staleSuggestions = suggestions.filter((suggestion) => suggestion.sample_stale);
+  const refreshEstimate = multiplyEstimate(sampleEstimate, pendingRefresh.length);
 
   return (
     <RoomShell project={id}>
@@ -633,6 +634,29 @@ export function StyleRoom() {
               : t("Asking the art director for visual directions and rendering one sample image per style. Samples appear as they complete.")}
           </div>
         </div>
+      )}
+
+      {staleSuggestions.length > 0 && (
+        <Surface border="soft" shadow="none" padding="md" className="mt-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <div className="font-meta text-[0.68rem] font-bold tracking-[0.1em] text-ink-black">
+                {t("REFRESH AVAILABLE")}
+              </div>
+              <p className="mt-1 max-w-3xl text-[0.84rem] leading-6 text-ink-black/72">
+                {t("Some proofs were generated with earlier rendering rules. They remain visible and usable until you choose to refresh them.")}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={styleActionsDisabled || anyGenerating}
+              onClick={() => setPendingRefresh(staleSuggestions)}
+            >
+              {t("REFRESH ALL")} ({staleSuggestions.length})
+            </Button>
+          </div>
+        </Surface>
       )}
 
       {stylesLoadFailed ? (
@@ -745,6 +769,7 @@ export function StyleRoom() {
                     onToggleCompare={() => toggleCompare(suggestion.id)}
                     validationBusy={suggestion.id in validationJobs}
                     onValidate={() => setPendingValidation(suggestion)}
+                    onRefresh={() => setPendingRefresh([suggestion])}
                   />
               ))}
             </div>
@@ -809,6 +834,37 @@ export function StyleRoom() {
         ) : undefined}
       />
 
+      <ConfirmDrawer
+        open={pendingRefresh.length > 0}
+        title={pendingRefresh.length > 1 ? t("Refresh outdated proofs?") : t("Refresh this proof?")}
+        body={t("Regenerates the selected proof using the current rendering rules. The existing image remains available unless generation succeeds.")}
+        cost={refreshEstimate}
+        confirmLabel={pendingRefresh.length > 1 ? t("REFRESH ALL") : t("REFRESH PROOF")}
+        busy={generateSamples.isPending || !refreshEstimate}
+        onConfirm={() => {
+          if (!pendingRefresh.length) return;
+          const selections = pendingRefresh;
+          generateSamples.mutate(
+            { project: projectName, ids: selections.map((suggestion) => suggestion.id) },
+            {
+              onSuccess: (data) => {
+                add(projectName, data.indices);
+                attachJobs(projectName, data.jobs);
+                setPendingRefresh([]);
+              },
+              onError: (error) => {
+                if (maybeShowInsufficientCredits(error, {
+                  actionLabel: "Refresh style proof",
+                  onRetry: () => setPendingRefresh(selections),
+                })) return;
+                setSampleError(error.message);
+                setPendingRefresh([]);
+              },
+            },
+          );
+        }}
+        onClose={() => setPendingRefresh([])}
+      />
       <ConfirmDrawer
         open={showSuggestConfirm}
         title="Suggest more styles?"

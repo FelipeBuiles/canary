@@ -20,6 +20,9 @@ class Character(BaseModel):
     age_range: str  # "early 30s"
     gender: str
     distinguishing_features: list[str]  # ["jagged scar on left cheek"]
+    # Stable, low-intensity demeanor only (for example "guarded and watchful").
+    # Scene reactions belong in panel expression direction, never visual_anchor.
+    baseline_affect: str | None = None
     default_outfit: str
     relationships: list[CharacterRelationship] = []
     first_appearance_scene: str  # "scene_001"

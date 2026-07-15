@@ -19,7 +19,7 @@ from typing import Any
 import httpx
 
 from novel_to_comic.ai.context import current_ai_request_context
-from novel_to_comic.ai.errors import AIRefusalError
+from novel_to_comic.ai.errors import AIRefusalError, AITransportError
 from novel_to_comic.ai.finalisation import (
     begin_image_call,
     finalise_image_failure,
@@ -39,6 +39,12 @@ from novel_to_comic.usage import (
 logger = logging.getLogger("canary.ai")
 
 _RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
+_TRANSPORT_ERRORS = (
+    httpx.ConnectError,
+    httpx.ReadError,
+    httpx.WriteError,
+    httpx.PoolTimeout,
+)
 _MAX_RETRIES = 3
 # 429s get their own, longer retry budget: the provider is asking us to slow
 # down, not reporting a failure. Backoff windows double from the base up to
@@ -107,7 +113,7 @@ async def _post_with_retry(url: str, *, headers: dict[str, str], json: dict[str,
                 request=response.request,
                 response=response,
             )
-        except (httpx.ConnectError, httpx.ReadError, httpx.WriteError, httpx.PoolTimeout) as exc:
+        except _TRANSPORT_ERRORS as exc:
             last_exc = exc
         if rate_limited:
             rate_limit_attempts += 1
@@ -322,6 +328,53 @@ def _refusal_reason(data: dict[str, Any]) -> str | None:
 
 def _is_refusal(data: dict[str, Any]) -> bool:
     return _refusal_reason(data) is not None
+
+
+def _gateway_http_error(
+    response: httpx.Response,
+    *,
+    feature: str,
+    model: str,
+    endpoint: str,
+) -> AITransportError:
+    """Build a bounded, useful error without echoing arbitrary response data."""
+    detail = ""
+    try:
+        body = response.json()
+    except Exception:
+        body = None
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict) and isinstance(error.get("message"), str):
+            detail = error["message"]
+        elif isinstance(body.get("detail"), str):
+            detail = body["detail"]
+        elif isinstance(body.get("message"), str):
+            detail = body["message"]
+    detail = " ".join(detail.split())[:800]
+    suffix = f" — {detail}" if detail else ""
+    return AITransportError(
+        f"AI gateway request failed for {feature} "
+        f"(model={model}, endpoint={endpoint}): "
+        f"{response.status_code} {response.reason_phrase}{suffix}",
+        phase="gateway_request",
+        response=response,
+    )
+
+
+def _gateway_transport_error(
+    exc: BaseException,
+    *,
+    feature: str,
+    model: str,
+    endpoint: str,
+) -> AITransportError:
+    return AITransportError(
+        f"AI gateway request failed for {feature} "
+        f"(model={model}, endpoint={endpoint}): transport {type(exc).__name__} "
+        f"after {_MAX_RETRIES + 1} attempts",
+        phase="gateway_request",
+    )
 
 
 def _error_json(exc: BaseException | None = None, response: httpx.Response | None = None) -> dict[str, Any]:
@@ -844,12 +897,27 @@ async def _chat_completion(
     ]
     response: httpx.Response | None = None
     try:
-        response = await _post_with_retry(
-            f"{_base_url(config)}/v1/chat/completions",
-            headers=_headers(config, event_id),
-            json=payload,
-        )
-        response.raise_for_status()
+        endpoint = "/v1/chat/completions"
+        try:
+            response = await _post_with_retry(
+                f"{_base_url(config)}{endpoint}",
+                headers=_headers(config, event_id),
+                json=payload,
+            )
+        except httpx.HTTPStatusError as exc:
+            raise _gateway_http_error(
+                exc.response, feature=feature, model=model, endpoint=endpoint,
+            ) from exc
+        except _TRANSPORT_ERRORS as exc:
+            raise _gateway_transport_error(
+                exc, feature=feature, model=model, endpoint=endpoint,
+            ) from exc
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise _gateway_http_error(
+                response, feature=feature, model=model, endpoint=endpoint,
+            ) from exc
         data = response.json()
         refusal = _refusal_reason(data)
         if refusal:

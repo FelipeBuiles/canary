@@ -28,6 +28,7 @@ from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.prompting import (
     IMAGE_PROMPT_VERSION,
     _render_panel_prompt_body_parts,
+    build_planned_panel_continuity_note,
     build_planned_panel_prompt_spec,
     ensure_distilled_prompt,
     generate_distilled_prompt,
@@ -163,6 +164,7 @@ def _source_projection(
             "visual_anchor": c.visual_anchor,
             "default_outfit": c.default_outfit,
             "distinguishing_features": list(c.distinguishing_features or []),
+            "baseline_affect": c.baseline_affect,
             "appearance_states": [
                 {
                     "id": s.id,
@@ -171,6 +173,7 @@ def _source_projection(
                     "visually_significant": s.visually_significant,
                     "canonical_equivalent": s.canonical_equivalent,
                     "continuity_guard": s.continuity_guard,
+                    "baseline_affect": s.baseline_affect,
                 }
                 for s in (c.appearance_states or [])
             ],
@@ -259,7 +262,9 @@ def _source_projection(
             "sfx_text": [s.text for s in (panel.sfx or [])],
             "aspect_preference": panel.aspect_preference,
         },
-        "prev_continuity": _prev_continuity_projection(prev_panel, story_bible),
+        "prev_continuity": _prev_continuity_projection(
+            panel, prev_panel, story_bible
+        ),
         "characters": character_projections,
         "location": location_projection,
         "scene_location_id": (scene.location_id if scene else None),
@@ -285,43 +290,15 @@ def _dialogue_texts(panel: PlannedPanel) -> list[str]:
 
 
 def _prev_continuity_projection(
-    prev_panel: PlannedPanel | None, story_bible: StoryBible
+    current_panel: PlannedPanel,
+    prev_panel: PlannedPanel | None,
+    story_bible: StoryBible,
 ) -> dict | None:
-    """Project the prior-panel continuity inputs.
-
-    The builder only synthesizes a continuity note for smooth/match-cut
-    transitions; its content derives from the previous panel's transition type
-    plus the action/expression/position state of its present characters. Those
-    are the only prev-panel fields that affect the canonical prompt.
-    """
-    if prev_panel is None:
-        return None
-    soft_continuity = {"smooth_continuation", "match_cut"}
-    transition_type = (prev_panel.transition_out or "").strip().lower()
-    if transition_type not in soft_continuity:
-        return None
-    character_names = {c.id: c.name for c in story_bible.characters}
-    present = sorted(set(prev_panel.characters_present or []))
-    actions = {
-        cid: prev_panel.character_actions.get(cid, "")
-        for cid in present
-    }
-    expressions = {
-        cid: prev_panel.character_expressions.get(cid, "")
-        for cid in present
-    }
-    positions = {
-        cid: prev_panel.character_positions.get(cid, "")
-        for cid in present
-    }
-    return {
-        "transition_out": transition_type,
-        "characters_present": present,
-        "character_names": {cid: character_names.get(cid, cid) for cid in present},
-        "character_actions": actions,
-        "character_expressions": expressions,
-        "character_positions": positions,
-    }
+    """Project exactly the prior-panel text that affects this prompt."""
+    note = build_planned_panel_continuity_note(
+        current_panel, prev_panel, story_bible
+    )
+    return {"note": note} if note else None
 
 
 def _matched_prop_ids_for_panel(

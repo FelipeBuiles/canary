@@ -21,6 +21,7 @@ from novel_to_comic.config import (
     LANGUAGE_NAMES,
     is_gpt_image_2,
     is_reve_model,
+    is_seedream_model,
     validate_image_model_alias,
     save_config,
     load_config,
@@ -215,9 +216,21 @@ class TestGptImage2Alias:
         )
 
 
+def test_prompt_aliases_use_vertex_model_available_in_global():
+    gateway_config = Path(__file__).resolve().parents[2] / "litellm" / "config.yaml"
+    data = yaml.safe_load(gateway_config.read_text())
+    prompt_models = {
+        item["litellm_params"]["model"]
+        for item in data["model_list"]
+        if str(item.get("model_name", "")).startswith("prompt-")
+    }
+
+    assert prompt_models == {"vertex_ai/gemini-3.5-flash"}
+
+
 class TestReveModelAlias:
     def test_quality_alias_is_not_reve_model(self):
-        # image-quality now routes to the Gemini 3 Pro Image tier, not Reve.
+        # image-quality routes to Seedream 5 Pro, not Reve.
         assert is_reve_model(GATEWAY_IMAGE_QUALITY) is False
 
     def test_reve_alias_is_reve_model(self):
@@ -227,6 +240,14 @@ class TestReveModelAlias:
 
     def test_balanced_alias_is_not_reve_model(self):
         assert is_reve_model(GATEWAY_IMAGE_BALANCED) is False
+
+
+class TestSeedreamModelAlias:
+    def test_quality_alias_is_seedream(self):
+        assert is_seedream_model(GATEWAY_IMAGE_QUALITY) is True
+
+    def test_balanced_alias_is_not_seedream(self):
+        assert is_seedream_model(GATEWAY_IMAGE_BALANCED) is False
 
 
 class TestLanguageHelpers:

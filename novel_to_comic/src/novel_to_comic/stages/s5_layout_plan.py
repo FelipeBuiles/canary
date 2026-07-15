@@ -171,7 +171,8 @@ PANEL FIELDS
     "accent"   -- emotional reaction or close-up
     "standard" -- everything else
 - shape_intent: "wide"/"panorama" for vistas, "tall" for vertical action, "rect" otherwise.
-- transition_out: in-scene only -- "smooth_continuation", "match_cut", or null.
+- transition_out: in-scene only -- "smooth_continuation", "match_cut", "hard_cut", or null.
+  Use "hard_cut" for any jump in time, place, or depicted reality, including flashbacks.
 - page_break_after: true ONLY at a genuine narrative act-break (e.g. the scene's final
   panel if the scene ends a chapter). Most scenes: 0 page breaks. Maximum 1 per scene.
   Do NOT mark hero or accent panels with page_break_after just because they feel dramatic.
@@ -188,6 +189,9 @@ Decide what happens to every narration beat:
 For rendered narration, choose one mode:
 - attached_caption: the quote overlays an existing visual panel.
 - caption_panel: the narration motivates a distinct visual panel, usually establishing, transitional, or reflective.
+Emit the mode value exactly as ``attached_caption`` or ``caption_panel`` -- do not
+use synonyms such as ``overlay``, ``attached caption``, or ``separate panel``.
+For visualized or dropped narration, emit ``mode: null``.
 
 Rules:
 - Use the narration beat's content as the caption text. Do not rewrite it here.
@@ -214,6 +218,7 @@ Each panel object has exactly these keys:
   mood, background_description, importance, shape_intent, transition_out, page_break_after
 Each narration_decisions object has exactly these keys:
   beat_index, decision, mode, panel_index, preferred_zone, decision_reason
+For ``mode``, use only the exact machine values above or JSON ``null``.
 """
 
 
@@ -999,6 +1004,54 @@ def _llm_spec_to_planned_panel(
     )
 
 
+def _apply_screenplay_transition_boundaries(
+    panels: list[PlannedPanel],
+    beats: list[ScreenplayBeat],
+) -> None:
+    """Make explicit screenplay transitions authoritative at panel boundaries.
+
+    The layout model decides where beats are grouped, but it must not downgrade
+    a screenplay hard cut to a smooth continuation. A transition beat grouped
+    with following visual beats applies to the boundary before that panel;
+    otherwise it applies to the boundary after its owning panel.
+    """
+    owner_by_beat_id = {
+        beat_id: panel_index
+        for panel_index, panel in enumerate(panels)
+        for beat_id in panel.beat_ids
+    }
+    beat_index_by_id = {
+        _beat_id(panels[0].scene_id, index): index
+        for index in range(1, len(beats) + 1)
+    } if panels else {}
+
+    for beat_index, beat in enumerate(beats, start=1):
+        transition_type = (beat.transition_type or "").strip().lower()
+        if beat.type != "transition" or not transition_type:
+            continue
+        owner_index = owner_by_beat_id.get(
+            _beat_id(panels[0].scene_id, beat_index)
+        ) if panels else None
+        if owner_index is None:
+            continue
+
+        owner = panels[owner_index]
+        has_following_visual_in_owner = any(
+            beat_index_by_id.get(beat_id, 0) > beat_index
+            and beats[beat_index_by_id[beat_id] - 1].type != "transition"
+            for beat_id in owner.beat_ids
+            if beat_id in beat_index_by_id
+        )
+        if has_following_visual_in_owner and owner_index > 0:
+            before, after = panels[owner_index - 1], owner
+        elif owner_index + 1 < len(panels):
+            before, after = owner, panels[owner_index + 1]
+        else:
+            continue
+        before.transition_out = transition_type
+        after.transition_in = transition_type
+
+
 def _build_narration_decisions(
     scene_id: str,
     specs: list[LLMNarrationDecisionSpec],
@@ -1125,6 +1178,7 @@ async def _plan_scene(
         _llm_spec_to_planned_panel(screenplay.scene_id, idx, spec, screenplay.beats, story_bible)
         for idx, spec in enumerate(specs, start=1)
     ]
+    _apply_screenplay_transition_boundaries(panels, screenplay.beats)
     decisions = _build_narration_decisions(
         screenplay.scene_id,
         narration_specs,

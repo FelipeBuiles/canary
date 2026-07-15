@@ -8,6 +8,7 @@ from novel_to_comic.models.prompt import ImagePrompt, PromptSubject
 from novel_to_comic import prompt_instructions
 from novel_to_comic.server import credits
 from novel_to_comic.prompt_instructions import (
+    MAX_PATCH_VALUE_CHARS,
     PromptInstructionError,
     apply_asset_instruction,
     apply_instruction_patch,
@@ -84,6 +85,48 @@ def test_parse_instruction_patch_rejects_forbidden_fields():
                         "subject_index": 0,
                         "field": "identity",
                         "value": "different person",
+                    }
+                ],
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("operation_type", "field"),
+    [("panel", "composition"), ("subject", "action")],
+)
+def test_parse_instruction_patch_preserves_detailed_model_values(operation_type, field):
+    detailed_value = "Detailed visual direction. " * 30
+    operation = {
+        "type": operation_type,
+        "field": field,
+        "value": detailed_value,
+    }
+    if operation_type == "subject":
+        operation["subject_index"] = 0
+
+    patch = parse_instruction_patch(
+        {
+            "status": "accepted",
+            "message": "Applied the requested change.",
+            "operations": [operation],
+        }
+    )
+
+    assert patch.operations[0].value == detailed_value
+
+
+def test_parse_instruction_patch_rejects_runaway_model_values_without_truncating():
+    with pytest.raises(PromptInstructionError):
+        parse_instruction_patch(
+            {
+                "status": "accepted",
+                "message": "Applied the requested change.",
+                "operations": [
+                    {
+                        "type": "panel",
+                        "field": "composition",
+                        "value": "d" * (MAX_PATCH_VALUE_CHARS + 1),
                     }
                 ],
             }

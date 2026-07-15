@@ -576,6 +576,7 @@ def build_style_sample_request(
         (PromptSubject(
             character_id=character.id, name=character.name,
             identity=character.visual_anchor,
+            baseline_affect=character.baseline_affect,
             action=subject_action or "A quiet characteristic action appropriate to the proof scene.",
             position="Three-quarter or full-length focal figure.",
         ),) if character else ()

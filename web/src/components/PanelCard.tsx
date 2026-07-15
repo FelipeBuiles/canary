@@ -5,6 +5,7 @@ import { EntityCard } from "./composites";
 import { getPanelDisplayState, type PanelDisplayState } from "../lib/panelState";
 import { getImageFailureCopy } from "../lib/imageFailure";
 import { useI18n } from "../i18n";
+import { PanelRegenerationOverlay } from "./PanelRegenerationOverlay";
 
 // Review-by-exception: only non-default states get a badge. A plain
 // generated panel is the default good state and carries no status chrome.
@@ -85,6 +86,9 @@ export function PanelCard({
     && (displayState === "generated" || displayState === "regenerated" || displayState === "flagged");
 
   const failureCopy = getImageFailureCopy(t, failureClassification, errorMessage, regenError);
+  const isExistingImageRegen = imageAvailable
+    && regenMode !== null
+    && (displayState === "queued" || displayState === "generating");
 
   const media = (
     <div
@@ -106,7 +110,23 @@ export function PanelCard({
           }}
         />
       )}
-      {displayState === "generating" ? (
+      {isExistingImageRegen ? (
+        <>
+          <LazyImage
+            src={imageUrl}
+            alt={`Panel ${panelNum}`}
+            loading="lazy"
+            width={400}
+            height={500}
+            containerClassName="absolute inset-0 h-full w-full"
+            className="h-full w-full object-contain"
+          />
+          <PanelRegenerationOverlay
+            phase={displayState === "generating" ? "running" : "queued"}
+            compact
+          />
+        </>
+      ) : displayState === "generating" ? (
         <FlowingDotsPlaceholder
           aspect="4 / 5"
           className="h-full"

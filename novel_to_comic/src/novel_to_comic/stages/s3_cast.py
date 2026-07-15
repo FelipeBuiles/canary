@@ -308,9 +308,9 @@ def _character_ref_prompt(
     # For an altered-anatomy state, a literal "one hand raised" pose forces a
     # default hand the state may not have — keep the gesture pose neutral.
     gesture_pose = (
-        "three-quarter, mid-gesture pose"
+        "three-quarter, neutral action pose with relaxed hands"
         if state is not None
-        else "three-quarter with one hand raised in gesture"
+        else "three-quarter neutral action pose with relaxed arms and hands"
     )
     state_block = f"\n{_state_anatomy_directive(char.name, state)}\n" if state is not None else ""
     return (
@@ -363,9 +363,9 @@ def _character_ref_clean_text_prompt(
         parts.append(_state_anatomy_directive(name, state))
 
     gesture_pose = (
-        "three-quarter view, mid-gesture pose"
+        "three-quarter view, neutral action pose with relaxed hands"
         if state is not None
-        else "three-quarter view with one hand raised in a gesture"
+        else "three-quarter neutral action pose with relaxed arms and hands"
     )
     grid_desc = (
         "One square image divided into a 2x2 grid of four equal panels showing the SAME character: "
@@ -499,6 +499,7 @@ def _character_generation_input(
         prompt=GenerationPromptInput(
             subjects=(PromptSubject(
                 character_id=char.id, name=char.name, identity=char.visual_anchor,
+                baseline_affect=char.baseline_affect,
             ),),
             visual_brief=direction,
             composition="Square character reference sheet, full body, no cropping.",
@@ -604,6 +605,7 @@ def _state_asset_prompt(spec: StateAssetGenerationSpec) -> GenerationPromptInput
             character_id=spec.entity_id,
             name=spec.entity_id,
             identity=spec.active_state_anchor,
+            baseline_affect=spec.baseline_affect,
             appearance_state_id=spec.state_id,
             appearance_locked=True,
         )]

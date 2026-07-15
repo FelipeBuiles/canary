@@ -16,6 +16,7 @@ export interface StyleSuggestion {
   risk: string;
   template: string;
   has_sample: boolean;
+  sample_stale: boolean;
   has_style_reference: boolean;
   has_validation: boolean;
   validation_url: string | null;
