@@ -6,9 +6,10 @@ extension, and rollback contract is
 field descriptions below are historical/editing descriptions, not
 provider-bound authority.
 
-Detailed reference for agentic coding sessions. The root `AGENTS.md` stays
-compact. Open this file when work touches pipeline architecture, stage contracts,
-generation, assembly, or project artifacts.
+Detailed reference for agentic coding sessions. **Status: Current reference
+(2026-07-18).** The root `AGENTS.md` stays compact. Open this file when work
+touches pipeline architecture, stage contracts, generation, assembly, or
+project artifacts.
 
 ---
 
@@ -139,8 +140,9 @@ pipeline pauses at `awaiting_review` after the stage completes. Advance with
 `POST /api/projects/{project}/approve/{stage}` or the web UI. `direct` stopped
 being a checkpoint in the 4-station redesign (June 2026): after cast approval
 the `adapt → plan → storyboard → direct` chain runs unattended, and prompts
-are inspected (not approved) in the UI. Older projects parked at
-`direct: awaiting_review` need a one-time approve or rerun.
+are inspected (not approved) in the UI. Older projects may contain stale
+`direct: awaiting_review` state from the former workflow. That state is
+historical compatibility data; current runs do not create a direct checkpoint.
 
 **File prefix warning:** stage file prefixes are not the public contract. `plan`
 and `storyboard` both use an `s5` prefix, and `direct` still lives in
@@ -160,8 +162,9 @@ and `serve`. All pipeline operations are HTTP endpoints. This means:
 
 ### Decomposition over end-to-end
 
-Each LLM call does exactly one thing. This enables targeted re-runs, clean error
-recovery, and human review at boundaries. Never collapse stages.
+Each stage owns a discrete artifact contract and can be rerun independently.
+The server may orchestrate the explicit post-cast auto-chain, but stages do not
+call one another as application functions. Never collapse stages.
 
 ### Unified AI client (`ai/client.py`)
 

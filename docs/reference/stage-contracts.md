@@ -1,7 +1,12 @@
 # Stage I/O Contracts
 
-What each pipeline stage reads and writes. Each stage runs independently —
-it reads its inputs from disk and writes its own outputs. Never add cross-stage logic.
+> **Status: Current (2026-07-18).** Verify implementation details against
+> `state.py`, `stages/__init__.py`, and `server/routers/pipeline.py`. This page
+> is the focused contract reference; proposals and plans are not substitutes.
+
+What each pipeline stage reads and writes. Each stage owns its artifact
+contract and reads/writes project files; the server may orchestrate explicit
+stage chains. Never collapse stages or bypass their artifact boundaries.
 
 **Manually maintained.** Update when stage I/O changes.
 

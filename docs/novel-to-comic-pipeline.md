@@ -1,5 +1,9 @@
 # Novel-to-Comic Pipeline
 
+> **Status: Current (2026-07-18).** This is the product-level pipeline
+> overview. For exact I/O, use `docs/reference/stage-contracts.md`; for agent
+> implementation guidance, use `docs/reference/agent-context.md`.
+
 A 9-stage Python/FastAPI/React application that converts a novel
 (EPUB, TXT, or PDF) into a graphic novel (PDF/CBZ), using LLMs for story
 analysis and image generation models for panel artwork.
@@ -63,7 +67,7 @@ Novel (EPUB / TXT / PDF)
 | **Character anchors are sacred** | 60–80 word physical description injected verbatim into every image prompt. Never paraphrased. |
 | **Text in post** | Speech bubbles composited in Stage 9 — never generated inside images. |
 | **Layout plan as planner** | Stage 5 owns page/panel structure; downstream stages project from it. |
-| **Decompose relentlessly** | Each LLM call does exactly one thing. No end-to-end generation. |
+| **Decompose relentlessly** | Each stage owns a discrete artifact contract; server orchestration may run the explicit auto-chain, but there is no end-to-end stage. |
 | **Human checkpoints at boundaries** | Pipeline pauses after `extract`, `style`, `cast`, and `draw`. The `adapt → plan → storyboard → direct` chain auto-runs after cast approval — inspectable, never blocking. |
 | **Style gate enforced** | Backend blocks post-style stages until a style is selected. Frontend reads `style_selected` from status API (sourced from `config.yaml`, never stale). |
 | **Resume from failure** | `state.json` tracks every item. Interrupted stages resume where they left off. |

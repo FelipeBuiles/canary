@@ -240,7 +240,7 @@ def _audit_pricing_at_startup() -> None:
     logger.warning(msg)
 ```
 
-Also update `audit_pricing()` itself ([usage.py:175-188](../../novel_to_comic/src/novel_to_comic/usage.py)) to enumerate all
+Also update `audit_pricing()` itself ([usage.py:175-188](../../../novel_to_comic/src/novel_to_comic/usage.py)) to enumerate all
 15 gateway aliases (`extract-fast` … `image-quality`) instead of just
 `MODEL_REGISTRY` keys + image defaults. Use the values in
 `config._QUALITY_PRESETS` as the source of truth.

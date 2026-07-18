@@ -1,222 +1,85 @@
 # Canary — Domain Glossary
 
-Canonical terms for this codebase. When code or docs use a term that conflicts
-with a definition here, the conflict should be surfaced and resolved — one term,
-one meaning.
+This file defines the project's canonical vocabulary. It is intentionally
+implementation-free: runtime contracts, file paths, API routes, model choices,
+and UI behavior belong in `docs/reference/`.
 
----
+When a term conflicts with this glossary, stop and resolve the vocabulary
+before changing code or documentation.
 
-## Core pipeline concepts
+## Pipeline concepts
 
-**Stage** — A discrete, resumable unit of the pipeline that reads inputs from
-disk and writes its own outputs. Stages never share in-memory state or call each
-other directly. There are 9 stages: `extract`, `style`, `cast`, `adapt`, `plan`,
-`storyboard`, `direct`, `draw`, `compose`.
+**Stage** — A discrete, resumable unit of the comic-making pipeline. A stage
+has a named input/output contract and may pause for user review.
 
-**Checkpoint stage** — A stage that pauses at `awaiting_review` after completing,
-requiring explicit approval before the pipeline continues. Checkpoint stages are:
-`extract`, `style`, `cast`, `draw`. (`direct` was removed as a checkpoint in the
-4-station redesign: prompts auto-run after cast approval and are inspected — not
-approved — in the UI.)
+**Checkpoint stage** — A stage whose completed output requires explicit user
+approval before the pipeline advances.
 
-**Station** — A user-facing grouping of stages in the web UI: `01 Story →
-02 Look → 03 Panels → 04 Book`. Presentation-only — backend stages stay
-discrete. The mapping lives in `web/src/lib/stations.ts`; see
-`docs/proposals/four-station-redesign.md`.
+**Station** — A user-facing grouping of pipeline work. Stations are a product
+concept; they do not rename or merge backend stages.
 
-**Auto step** — A stage that runs without user approval (`adapt`, `plan`,
-`storyboard`, `direct`). Surfaces in the sidebar with an `auto · view` badge
-that opens a read-only **inspect drawer** (`web/src/components/InspectDrawer.tsx`);
-shows a placeholder when its artifact doesn't exist yet. Never blocks progression.
+**Auto step** — Pipeline work that runs without an approval decision and is
+presented for inspection when useful.
 
-**Approval bar** — The one standing way forward
-(`web/src/components/composites/ApprovalBar.tsx`): fixed to the bottom of the
-content area on every station, showing a plain-language "Next: …" sentence,
-`~N credits · you have M`, one primary button, and an optional quiet secondary
-(a re-run verb or "Review N flagged"). The sidebar carries no CTA.
+**Story Bible** — The shared story understanding used by later pipeline work:
+characters, locations, scenes, arcs, and props.
 
-**Story Bible** — The central artifact produced by Stage 1. Contains characters
-(with visual anchors), locations, scenes, narrative arcs, and props. All
-downstream stages read from it.
+**Visual anchor** — A stable physical description attached to a character or
+location and used to preserve visual identity across generated images.
 
-**Visual anchor** — A 60–80 word physical description on a `Character` or
-`Location` that is injected verbatim at the start of every image prompt. Never
-paraphrase or summarize a visual anchor.
+**Layout plan** — The planner-owned description of page and panel structure.
 
-**Layout plan** — The planner-owned artifact produced by Stage 5 (`plan`). A
-`LayoutPlan` containing `PlannedPage` and `PlannedPanel` records. It is the
-source of truth for page/panel structure; all downstream stages project from it.
+**Planned panel** — A panel-level record in a layout plan. It describes the
+intended scene, framing, shape, and other visual constraints.
 
-**Planned panel** — A `PlannedPanel` record inside the layout plan. Carries
-scene, shot type, shape intent, generation mode, crop/framing contract, lighting,
-and page-break hints. Downstream stages (storyboard, direct, draw) project from
-planned panels rather than owning structure themselves.
+**Panel breakdown** — A downstream description of a planned panel used where
+the pipeline still needs a panel-specific projection.
 
-**Panel breakdown** — A `PanelBreakdown` record produced by Stage 6
-(`storyboard`). A legacy-compatibility projection from a `PlannedPanel`. Used by
-tools that haven't migrated to reading the layout plan directly.
+**Image prompt** — The assembled visual instruction for generating a panel
+image. Editable source fields and the assembled prompt are distinct concepts.
 
-**Image prompt** — An `ImagePrompt` record produced by Stage 7 (`direct`).
-Contains `full_prompt` (the assembled string), project-relative
-`reference_image_paths`, transition hints, and `continuity_note`. The
-`full_prompt` field is re-derived from other fields — never edit it directly;
-use `prompt_assembly.rerender_prompt_body()` after editing the source fields.
+## Comic editing concepts
 
-**ComicPage** — The canonical Stage 9 editing surface. Stored at
-`compose/pages/page_NNN.json`. Contains per-panel `PagePanel` objects, each
-with a `Bubble` list and optional `Sfx`. All page edits must go through this
-JSON — never bypass it with renderer-only state.
+**ComicPage** — The editable representation of one comic page, including panel
+placement and lettering elements.
 
-**Style template** — The active visual style for a project, persisted as
-`style_template` in `config.yaml`. Chosen by the user during Stage 2 review.
-Post-style stages are blocked until a style is selected.
+**Bubble** — A speech, thought, or narration element placed on a comic page.
 
-**Style gate** — The backend check (`is_style_selected()` in `server/routers/styles.py`)
-that blocks `POST /run` for any post-style stage when no style is selected. The
-status API surfaces `style_selected: bool` for the frontend to read; the
-frontend must read this field from status rather than from stale React Query cache.
+**Sfx** — A sound-effect element placed on a comic page.
 
----
+**Panel flag** — A user's request to revisit a generated panel. Flags support
+review-by-exception; they are not the same as approval.
 
-## Artifacts and storage
+**Panel acceptance** — The legacy concept of explicitly accepting individual
+panels. It remains meaningful for compatibility, but current review is based
+on panel flags and checkpoint approval.
 
-**Artifact** — Any file produced or consumed by a stage. Canonical paths for all
-artifacts are defined in `artifacts.py`. Always use functions from `artifacts.py`
-to construct paths — never hardcode them in stage or route code.
+**Primary ref** — The user's chosen canonical character reference used to
+support consistent depiction.
 
-**Project directory** — The root directory for a single comic project. Contains
-`config.yaml`, `state.json`, and all stage output subdirectories (`scenes/`,
-`refs/`, `plates/`, `plan/`, `storyboard/`, `direct/`, `draw/`, `compose/`,
-`exports/`).
+## Project and generation concepts
 
-**Panel flag** — The review-by-exception mark stored in `draw/panel_flags.json`
-(`server/panel_flags.py`). Generated panels are accepted by default; the user's
-action is flagging a panel for re-work (⚑). Flags never block compose or
-export — they drive the "Review N flagged" secondary action and surface as
-warnings in the Book station's issues drawer. Any regeneration of a panel
-clears its flag.
+**Project** — One comic production workspace, from source novel through export.
 
-**Panel acceptance** — Legacy explicit per-panel approval state stored in
-`draw/panel_acceptance.json`. Keyed by image fingerprint so regeneration clears
-it automatically. The endpoints remain, but the UI no longer surfaces per-panel
-accepts — "Accept all — Continue" approves the `draw` checkpoint stage instead.
+**Style template** — The project's active visual direction.
 
-**Primary ref** — The user-chosen canonical pose crop per character
-(`front`, `three_quarter`, `profile`, `gesture`), stored in
-`refs/primary_refs.json` and set from the cast card's reference sheet. When set,
-it overrides the framing-based pose preference in `RefStrategy` for every panel.
+**Target language** — The language used for generated creative text in a
+project.
 
----
+**UI localization** — The language used for browser interface text. It is
+separate from target language.
 
-## Generation and models
+**Quality preset** — A named generation-quality choice that selects a coherent
+set of model intents.
 
-**Quality preset** — One of `"fast" | "balanced" | "quality"` (or null). When
-set, overrides all five intent model fields (`extract`, `adapt`, `plan`,
-`prompt`, `image`) at once. `dev_mode` forces `"fast"`. Always read model
-choices via `config.effective_*_model()` methods, not raw config fields.
+**Generation job** — An asynchronous unit of asset generation, such as a panel
+or character reference regeneration.
 
-**LiteLLM alias** — A named model alias configured in `litellm/config.yaml` that
-routes to a concrete provider and model. Aliases follow the `<intent>-<preset>`
-convention (e.g. `extract-fast`, `image-quality`). All inference goes through
-the LiteLLM proxy — there is no direct provider call from application code.
+**Labs run** — An independent model-experiment run. It is not a pipeline run
+and does not advance project pipeline state.
 
-**Reve** — The image provider backing the `image-reve` gateway alias
-(`REVE_ALIASES` in `config.py`); `image-quality` now routes to Gemini 3 Pro
-Image instead. Reve's reference strategy selects
-up to 4 reference images: up to 3 subject crops (one per character,
-framing-selected), then continuity, prop, style, location plate to fill
-remaining slots.
+## Historical terms
 
-**GPT Image 2** — No longer a default gateway alias. `GPT_IMAGE_2_ALIASES` is
-now empty; `is_gpt_image_2()` only matches the literal strings `gpt-image-2` /
-`openai/gpt-image-2`. Its reference strategy uploads a minimal character crop
-set and keeps style/location/continuity context text-only.
-
-**Reference strategy (`RefStrategy`)** — The per-image-model decision surface
-in `image_ref_strategy.py`. Every behavioural difference between image model
-routes (which reference images to upload, prompt sections, output dimensions)
-is a `RefStrategy` query. Stage and prompt code never test model identity
-(`is_gpt_image_2` etc.) inline; only `config.py` (the predicates),
-`image_ref_strategy.py` (the decisions), and `ai/providers/` (the transport)
-may know provider names.
-
-**Generation job** — An async background task managed by `server/generation_jobs.py`.
-Used for single-asset regeneration (panel, character ref, prop, location plate).
-Each job is deduped by kind + payload so retrying an active request returns the
-existing job. New generation jobs should go through `server/credited_job.py` so
-the credit check and debit are coupled to the job lifecycle in one call.
-
----
-
-## Server concepts
-
-**StageRuntime** — The object passed as `ctx` to every stage `run()`. Owns the
-stage lifecycle: state transitions (`begin` → `complete` | `fail`), event
-emission, and cost recording. Stages do not call state functions or thread
-`on_event` directly; they call `ctx.log()`, `ctx.progress()`,
-`ctx.record_item_done()`, etc.
-
-**CreditedJob** — The credit-guarantee module, `server/credited_job.py`. Both
-shapes of credited work cross this seam: Generation jobs via
-`enqueue_credited_job` (assert → enqueue → debit on success) and stage runs
-via `run_credited_stage` (reserve → run → release; per-call debits settle in
-the AI client). Routers never reserve, assert, or debit directly.
-
-**Structured model call** — `clients/structured_call.py`. The
-"generate JSON → parse → validate → feed errors back → retry" loop with a
-temperature ladder. Stages that need schema-validated model output call
-`generate_validated_json` instead of hand-rolling retry loops; on exhaustion
-`StructuredCallError` carries the last parsed value for deterministic
-fallbacks (e.g. the plan stage's panel auto-split).
-
-**Labs run** — An experimentation run in the Labs subsystem. Not a pipeline run.
-A `LabsRunSpec` describes a set of panels and models; `start_run()` generates
-each panel against each model/variant combination, storing results under
-`{user_id}/_labs/`. Labs runs are independent of pipeline state.
-
----
-
-## Compose room
-
-**Bubble** — A speech, thought, or narration element in a `ComicPage`. Has
-optional `x/y` (null = CSS auto-layout, float = pinned pixel position) and
-optional `tail_x/tail_y` (panel-relative SVG tail target point).
-
-**Sfx** — A sound-effect element in a `ComicPage`. Has optional `x/y` and
-`rotation`. Uppercased at render time.
-
-**Book tabs** — The single tab row of the Stage 9 editor (the Book station):
-Pages (canvas, drag/drop, undo/redo, docked inspector), Script (text review,
-find & replace), Export (PDF/CBZ download, translation). Issues live in a
-triaged drawer ("N need you · M suggestions") reachable from the header chip
-on any tab — never as a tab of their own.
-
-**Theme** — A named CSS variable override set applied to the page renderer.
-Available themes: `default`, `noir`, `manga`, `vintage`, `painted`. Detected
-automatically from `style_template` keywords. Chosen at the Look station (it
-re-renders the book, so it does not live inside Export); the project settings
-page keeps an advanced override.
-
----
-
-## Integration concepts
-
-**Library of Short Stories** — A public-domain literature archive (`libraryofshortstories.com`) integrated as a text source option for project generation. Stories can be imported using their URL or unique story code.
-
----
-
-## Localization and translation
-
-**Target language (`target_language`)** — The configured project-level language (e.g., English, Spanish, French) that controls generated creative text (dialogue, narration, panel descriptions) down the pipeline. AI models are instructed to translate creative fields while preserving structural keys, IDs, and character/location names verbatim.
-
-**UI localization (i18n)** — The frontend translation system (`web/src/i18n.tsx`) that translates UI labels, buttons, and settings in the browser based on the user's selected preference, separate from the project's target generation language.
-
----
-
-## Layout and aspect ratios
-
-**GenerationShape** — The target bounding bucket for image generation: `"square"` (1024x1024), `"portrait"` (768x1024), or `"landscape"` (1344x768). All numeric layout aspect ratios are mapped to one of these three shapes for optimal generation quality.
-
-**Aspect tolerance** — The allowable floating-point discrepancy (default 12% or `ASPECT_TOLERANCE = 0.12` in `panel_aspect.py`) between a generated image's aspect ratio and its requested aspect ratio. Crucially, any two ratios that map to the same `GenerationShape` are automatically considered within tolerance.
-
-
+**Direct checkpoint** — Obsolete terminology for a former approval boundary.
+Current product language treats direct as an auto step; references to the old
+boundary should be labeled historical.

@@ -1,7 +1,8 @@
 # Canary — Agent Guidelines
 
-Compact instruction file for every coding-agent session. Detailed reference:
-`docs/reference/agent-context.md`.
+Guardrails and navigation for coding-agent sessions. Detailed runtime context:
+`docs/reference/agent-context.md`. Documentation policy and source hierarchy:
+`docs/README.md` and `docs/adr/0002-documentation-source-of-truth.md`.
 
 ## Project Snapshot
 
@@ -73,9 +74,10 @@ accuracy.
 - **No `pipeline run` CLI.** Pipeline operations (run, approve, status, export)
   are HTTP API endpoints on the web server. The CLI only has `init` and `serve`.
   See `novel_to_comic/src/novel_to_comic/server/routers/pipeline.py` for all pipeline endpoints.
-- Do not collapse stages or add cross-stage logic. Each stage reads its inputs
-  from disk and writes its own outputs. The 4-station UI grouping lives entirely
-  in the frontend (`web/src/lib/uiStages` and SideNav) — never in stage code.
+- Do not collapse stages or make stages call one another as application
+  functions. Each stage owns its artifact boundary; server orchestration may
+  run the explicit auto-chain. The 4-station UI grouping lives entirely in the
+  frontend — never in stage code.
 - Preserve `visual_anchor` text verbatim. Never paraphrase anchors in prompts.
 - Text belongs in Stage 9 (`compose`) post-processing, never inside generated
   panel images.
@@ -148,3 +150,24 @@ All paths are repo-relative.
   `web/dist`, `.playwright-cli`, project outputs, and binary assets.
 - Start a fresh session for unrelated work instead of carrying long histories.
 
+## Documentation policy
+
+- Treat implementation and tests as authoritative; use `docs/reference/` for
+  current contracts, `CONTEXT.md` for vocabulary, and proposals/plans/handoffs
+  only when their status says they are current or proposed.
+- Keep this file and `CLAUDE.md` to guardrails and pointers. Do not duplicate
+  detailed runtime contracts here.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs live in GitHub Issues for `FelipeBuiles/canary`, using the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the default canonical labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context repo; read root `CONTEXT.md` and relevant ADRs in `docs/adr/`. See `docs/agents/domain.md`.
