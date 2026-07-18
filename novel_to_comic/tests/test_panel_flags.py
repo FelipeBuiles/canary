@@ -32,8 +32,8 @@ def test_flags_survive_reload_from_disk(tmp_path: Path) -> None:
 
 def test_primary_refs_round_trip(tmp_path: Path) -> None:
     assert read_primary_refs(tmp_path) == {}
-    write_primary_refs(tmp_path, {"char_001": "front"})
-    assert read_primary_refs(tmp_path) == {"char_001": "front"}
+    write_primary_refs(tmp_path, {"char_001": "portrait"})
+    assert read_primary_refs(tmp_path) == {"char_001": "portrait"}
 
 
 def _ref(tmp_path: Path, char_dir: str, stem: str) -> RefImage:
@@ -43,18 +43,17 @@ def _ref(tmp_path: Path, char_dir: str, stem: str) -> RefImage:
 
 def test_primary_pose_overrides_framing_preference(tmp_path: Path) -> None:
     subjects = [
-        _ref(tmp_path, "char_001", "front"),
-        _ref(tmp_path, "char_001", "gesture"),
-        _ref(tmp_path, "char_001", "three_quarter"),
+        _ref(tmp_path, "char_001", "portrait"),
+        _ref(tmp_path, "char_001", "full_body"),
     ]
-    # Default framing preference would pick three_quarter.
+    # Default framing preference picks the body/proportion view.
     chosen = _select_subject_crops(subjects, None)
-    assert chosen[0].path.stem == "three_quarter"
+    assert chosen[0].path.stem == "full_body"
 
-    # A user-chosen primary pose wins.
-    chosen = _select_subject_crops(subjects, None, {"char_001": "gesture"})
-    assert chosen[0].path.stem == "gesture"
+    # The legacy/internal override still wins.
+    chosen = _select_subject_crops(subjects, None, {"char_001": "portrait"})
+    assert chosen[0].path.stem == "portrait"
 
     # Primary for a different character does not affect this one.
-    chosen = _select_subject_crops(subjects, None, {"char_999": "gesture"})
-    assert chosen[0].path.stem == "three_quarter"
+    chosen = _select_subject_crops(subjects, None, {"char_999": "portrait"})
+    assert chosen[0].path.stem == "full_body"

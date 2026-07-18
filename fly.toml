@@ -36,15 +36,27 @@ primary_region = 'iad'
 
   [http_service.concurrency]
     type = 'requests'
-    hard_limit = 200
-    soft_limit = 150
+    # One shared-CPU Machine also runs LiteLLM, generation workers, and
+    # Chromium composition. Keep enough room for SSE connections and assets
+    # without allowing request bursts to exhaust the box.
+    hard_limit = 50
+    soft_limit = 30
 
   [[http_service.checks]]
     interval = '30s'
     timeout = '5s'
+    # Fly caps HTTP-check grace periods at one minute.
     grace_period = '1m0s'
     method = 'GET'
-    path = '/api/health/ready'
+    # Routing checks must remain cheap and local. Dependency readiness is
+    # monitored separately at /api/health/ready so a transient Supabase or
+    # LiteLLM outage does not make the only Machine unroutable.
+    path = '/api/health'
+
+    [http_service.checks.headers]
+      # TrustedHostMiddleware only accepts the public production hostname.
+      # Fly's internal probe otherwise sends a platform-internal Host value.
+      Host = 'canary-web.fly.dev'
 
 [[vm]]
   size = 'shared-cpu-2x'

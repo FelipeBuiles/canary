@@ -267,20 +267,22 @@ def _girl_and_stumps() -> tuple[StoryBible, Character, AppearanceState]:
 
 
 def test_state_ref_prompt_drops_hand_pose_and_locks_anatomy():
-    """A state sheet must not force a 'one hand raised' pose, and must demand the
-    altered body be consistent across all quadrants (carrying the guard)."""
+    """A state sheet must use anatomy-compatible neutral views and keep the
+    altered body consistent between them (carrying the guard)."""
     bible, char, stumps = _girl_and_stumps()
     state_char = char.model_copy(update={"visual_anchor": stumps.visual_anchor})
     prompt = _character_ref_prompt(Config(), bible, state_char, "", stumps)
 
     assert "one hand raised" not in prompt.lower()
-    assert "neutral action pose with relaxed hands" in prompt.lower()
+    assert "anatomy-compatible hands" in prompt.lower()
+    assert "identical in both views" in prompt.lower()
     assert "specific altered state" in prompt.lower()
     assert "never depict her gripping" in prompt  # guard injected
 
-    # The canonical sheet also uses a low-performance neutral action pose.
+    # The canonical sheet also uses a restrained anatomy-compatible body view.
     base = _character_ref_prompt(Config(), bible, char, "")
-    assert "neutral action pose with relaxed arms and hands" in base.lower()
+    assert "neutral full-body three-quarter standing view" in base.lower()
+    assert "anatomy-compatible hands" in base.lower()
     assert "one hand raised" not in base.lower()
     assert "altered state" not in base.lower()
 
@@ -290,5 +292,6 @@ def test_state_ref_clean_text_prompt_drops_hand_pose():
     state_char = char.model_copy(update={"visual_anchor": stumps.visual_anchor})
     prompt = _character_ref_clean_text_prompt(Config(), state_char, "", stumps)
     assert "one hand raised" not in prompt.lower()
-    assert "neutral action pose with relaxed hands" in prompt.lower()
+    assert "anatomy-compatible hands" in prompt.lower()
+    assert "identical in both views" in prompt.lower()
     assert "altered state" in prompt.lower()

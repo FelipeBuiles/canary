@@ -38,7 +38,7 @@ def _gpt_image_2_subject_refs(paths: list[Path]) -> list[Path]:
     """Return a minimal, stable identity ref set for GPT Image 2 panels.
 
     Multiple pose crops plus prop refs push GPT Image 2 into noisy edit behavior.
-    Prefer one front-facing crop per character. Prop refs stay text-only unless a
+    Prefer one framing-appropriate crop per character. Prop refs stay text-only unless a
     panel has no character refs at all, in which case one prop ref is allowed.
     """
     character_refs = [p for p in paths if not is_prop_ref(p)]
@@ -48,11 +48,9 @@ def _gpt_image_2_subject_refs(paths: list[Path]) -> list[Path]:
 
     def sort_key(path: Path) -> tuple[int, str]:
         preferred = {
-            "front.png": 0,
-            "three_quarter.png": 1,
-            "profile.png": 2,
-            "gesture.png": 3,
-            "sheet.png": 4,
+            "portrait.png": 0,
+            "full_body.png": 1,
+            "sheet.png": 2,
         }
         return preferred.get(path.name, 99), str(path)
 
@@ -70,11 +68,11 @@ def _gpt_image_2_subject_refs(paths: list[Path]) -> list[Path]:
 
 
 # Pose-crop preference per framing. Close framings want a face-forward crop;
-# wide framings want a full-body/gesture crop so proportions carry over.
+# Wide framings want a full-body crop so proportions carry over.
 _SHOT_VIEW_PREFERENCES: dict[str, list[str]] = {
-    "close": ["front", "three_quarter", "profile", "gesture", "sheet"],
-    "wide": ["gesture", "three_quarter", "front", "profile", "sheet"],
-    "default": ["three_quarter", "front", "gesture", "profile", "sheet"],
+    "close": ["portrait", "full_body", "sheet"],
+    "wide": ["full_body", "portrait", "sheet"],
+    "default": ["full_body", "portrait", "sheet"],
 }
 
 
@@ -94,11 +92,11 @@ def _select_subject_crops(
 ) -> list[RefImage]:
     """Pick ONE pose crop per character, matched to the panel's framing.
 
-    Sending several crops of the same character (or a 2x2 sheet grid) makes
+    Sending several crops of the same character (or a composite sheet) makes
     ref-driven models blend poses and occasionally leak the grid layout into
     the panel. One clean, framing-appropriate crop per character keeps identity
-    strong without those artifacts. A user-chosen primary pose (keyed by the
-    character directory name) overrides the framing preference.
+    strong without those artifacts. A legacy/internal override (keyed by the
+    character directory name) can still override the framing preference.
     """
     preference = {stem: i for i, stem in enumerate(_shot_view_preference(composition))}
     primary = primary_poses or {}
@@ -244,7 +242,7 @@ class RefStrategy:
         return None
 
     def use_clean_text_character_prompt(self) -> bool:
-        """Reve gets a clean text character prompt instead of the 2x2 grid sheet."""
+        """Reve gets a clean text character prompt instead of layout-heavy wording."""
         return self._reve
 
     def clamp_style_text(self, style: str) -> str:

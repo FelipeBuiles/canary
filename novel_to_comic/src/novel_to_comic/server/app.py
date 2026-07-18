@@ -7,7 +7,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -19,6 +19,7 @@ from novel_to_comic.model_costs import DEFAULT_COST_MAP_PATH, refresh_litellm_co
 from novel_to_comic.usage import audit_pricing
 
 from .generation_jobs import generation_worker
+from .deployment_status import deployment_activity, require_ops_token
 from .logging import request_log_middleware
 from .ratelimit import configure_rate_limiting
 from .sentry import configure_sentry
@@ -335,6 +336,15 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
             status_code=200 if ok else 503,
             content={"status": "ok" if ok else "error", "checks": checks},
         )
+
+    @app.get(
+        "/api/ops/deployment-status",
+        tags=["operations"],
+        dependencies=[Depends(require_ops_token)],
+    )
+    def deployment_status():
+        """Report whether in-process generation activity makes a deploy unsafe."""
+        return deployment_activity(app)
 
     # Routers
     app.include_router(credits.router, prefix="/api/credits", tags=["credits"])

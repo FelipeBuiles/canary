@@ -24,6 +24,7 @@ _SENSITIVE_HEADERS = {
     "cookie",
     "pulp_session",
     "x-api-key",
+    "x-canary-ops-token",
     "x-supabase-key",
     "set-cookie",
 }

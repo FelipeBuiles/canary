@@ -1144,9 +1144,50 @@ def test_reve_cast_clean_text_prompt():
     assert "A tall man with spectacles and a brown coat" in prompt_str
     assert "Default clothing: brown coat" in prompt_str
     assert "USER FIX NOTE: Make him look studious" in prompt_str
-    assert "divided into a 2x2 grid of four equal panels" in prompt_str
+    assert "divided into two equal vertical panels" in prompt_str
+    assert "Never chibi" in prompt_str
     assert "STYLE AUTHORITY" not in prompt_str
     assert "CAST IDENTITY LOCK" not in prompt_str
+
+
+def test_character_style_calibration_locks_shared_rendering_and_proportions():
+    from novel_to_comic.config import Config
+    from novel_to_comic.stages.s3_cast import _character_style_calibration_input
+
+    calibration = _character_style_calibration_input(
+        Config(style_template="Gothic noir stippling with dense cross-hatching.")
+    )
+
+    assert calibration.asset_identity == "cast:character_style_board"
+    assert [subject.name for subject in calibration.prompt.subjects] == [
+        "slim adult", "stout adult", "older adult",
+    ]
+    assert "one shared artistic hand" in calibration.prompt.visual_brief
+    assert "line weight" in calibration.prompt.visual_brief
+    assert "no chibi" in calibration.prompt.constraints
+
+
+def test_character_sheet_crops_to_portrait_and_full_body(tmp_path):
+    from PIL import Image
+    from novel_to_comic.stages.s3_cast import _crop_sheet_to_poses
+
+    sheet = tmp_path / "refs" / "char_001" / "sheet.png"
+    sheet.parent.mkdir(parents=True)
+    image = Image.new("RGB", (12, 8))
+    for x in range(12):
+        color = (255, 0, 0) if x < 6 else (0, 0, 255)
+        for y in range(8):
+            image.putpixel((x, y), color)
+    image.save(sheet)
+
+    _crop_sheet_to_poses(sheet)
+
+    portrait = Image.open(sheet.parent / "portrait.png")
+    full_body = Image.open(sheet.parent / "full_body.png")
+    assert portrait.size == (6, 8)
+    assert full_body.size == (6, 8)
+    assert portrait.getpixel((2, 2)) == (255, 0, 0)
+    assert full_body.getpixel((2, 2)) == (0, 0, 255)
 
 
 def test_reve_refs_one_crop_per_character_and_capping():
@@ -1154,9 +1195,9 @@ def test_reve_refs_one_crop_per_character_and_capping():
     from novel_to_comic.ai.providers.base import RefImage
 
     refs = [
-        RefImage(path=Path("refs/char_alice/front.png"), role="subject", label="Alice"),
-        RefImage(path=Path("refs/char_alice/gesture.png"), role="subject", label="Alice"),
-        RefImage(path=Path("refs/char_bob/three_quarter.png"), role="subject", label="Bob"),
+        RefImage(path=Path("refs/char_alice/portrait.png"), role="subject", label="Alice"),
+        RefImage(path=Path("refs/char_alice/full_body.png"), role="subject", label="Alice"),
+        RefImage(path=Path("refs/char_bob/full_body.png"), role="subject", label="Bob"),
         RefImage(path=Path("style.png"), role="style", label="Style"),
         RefImage(path=Path("loc.png"), role="location_plate", label="Loc"),
         RefImage(path=Path("prop.png"), role="prop", label="Prop"),
@@ -1168,28 +1209,28 @@ def test_reve_refs_one_crop_per_character_and_capping():
     assert len(selected) == 4
     names = [ref.path.name for ref in selected]
     # One crop per character, identity first; wide framing prefers the
-    # full-body gesture crop over the front portrait crop.
-    assert names[0] == "gesture.png"
-    assert names[1] == "three_quarter.png"
+    # full-body crop over the portrait crop.
+    assert names[0] == "full_body.png"
+    assert names[1] == "full_body.png"
     # Remaining slots fill with prop/continuity in canonical upload order.
     assert names[2] == "prop.png"
     assert names[3] == "cont.png"
 
 
-def test_reve_refs_close_up_prefers_front_crop():
+def test_reve_refs_close_up_prefers_portrait_crop():
     from novel_to_comic.image_ref_strategy import RefStrategy
     from novel_to_comic.ai.providers.base import RefImage
 
     refs = [
-        RefImage(path=Path("refs/char_alice/gesture.png"), role="subject", label="Alice"),
-        RefImage(path=Path("refs/char_alice/front.png"), role="subject", label="Alice"),
+        RefImage(path=Path("refs/char_alice/full_body.png"), role="subject", label="Alice"),
+        RefImage(path=Path("refs/char_alice/portrait.png"), role="subject", label="Alice"),
         RefImage(path=Path("style.png"), role="style", label="Style"),
     ]
 
     selected = RefStrategy("image-reve").select_panel_refs(refs, "close-up panel, eye-level camera")
 
     names = [ref.path.name for ref in selected]
-    assert names == ["front.png", "style.png"]
+    assert names == ["portrait.png", "style.png"]
 
 
 def _style_sample_bible() -> StoryBible:

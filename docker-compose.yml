@@ -59,6 +59,7 @@ services:
       R2_BUCKET: ${R2_BUCKET:-}
       R2_PUBLIC_URL: ${R2_PUBLIC_URL:-}
       CANARY_GENERATION_WORKERS: ${CANARY_GENERATION_WORKERS:-5}
+      CANARY_OPS_TOKEN: ${CANARY_OPS_TOKEN:-local-ops-token}
     volumes:
       - ./projects:/projects
     restart: unless-stopped

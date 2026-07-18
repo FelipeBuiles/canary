@@ -23,7 +23,7 @@ from novel_to_comic.usage import ApiResult, estimate_text_cost
 
 console = Console()
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "screenplay.txt"
-_MAX_NARRATION_WORDS = 20
+_MAX_NARRATION_WORDS = 16
 
 
 def _word_count(value: str) -> int:

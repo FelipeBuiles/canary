@@ -259,6 +259,15 @@ export function PageEditor({
     [onDragEnd, onPanelReframeDragEnd],
   );
 
+  const handlePointerCancel = useCallback((e: React.PointerEvent) => {
+    dragRef.current = null;
+    panelDragRef.current = null;
+    setDragPreview(null);
+    setPanelDragPreview(null);
+    const canvas = canvasRef.current;
+    if (canvas?.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+  }, []);
+
   const displayPage = buildDisplayPage(page, dragPreview ?? committedDrag, panelDragPreview ?? committedPanelDrag);
 
   useEffect(() => {
@@ -313,10 +322,11 @@ export function PageEditor({
   return (
     <div
       ref={canvasRef}
-      className="w-full h-full"
+      className="page-editor h-full w-full"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
       onKeyDown={handleKeyDown}
     >
       <ScaledContainer zoom={zoom} onZoomChange={onZoomChange} onScaleChange={handleScaleChange}>

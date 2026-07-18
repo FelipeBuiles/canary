@@ -3,9 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   useApproveStage,
   useGenerationJobs,
-  usePrimaryRefs,
   useProjectStatus,
-  useSetPrimaryRef,
   useStageEstimate,
   useStoryBible,
   useRegenRef,
@@ -40,58 +38,45 @@ function queuedLabel(job: GenerationJob | null) {
   return "QUEUED";
 }
 
-const REF_POSES = [
-  { pose: "front", label: "Front" },
-  { pose: "three_quarter", label: "¾ view" },
-  { pose: "profile", label: "Profile" },
-  { pose: "gesture", label: "Gesture" },
+const REF_VIEWS = [
+  { pose: "portrait", label: "Portrait" },
+  { pose: "full_body", label: "Full body" },
 ] as const;
 
 /**
- * Reference sheet: the pose crops PULP sends to the image model. Click one
- * to set it as the primary — it then wins ref selection for every panel.
+ * Read-only derived views sent to the image model. Panel framing chooses the
+ * portrait for close shots and the full-body crop for other shots.
  */
-function RefSheet({ projectName, charId, timestamp }: { projectName: string; charId: string; timestamp: number }) {
-  const { data: primaryData } = usePrimaryRefs(projectName);
-  const setPrimary = useSetPrimaryRef();
+function ReferenceViews({ projectName, charId, timestamp }: { projectName: string; charId: string; timestamp: number }) {
   const [failed, setFailed] = useState<Record<string, boolean>>({});
-  const primaryPose = primaryData?.primary_refs?.[charId];
 
-  const visiblePoses = REF_POSES.filter(({ pose }) => !failed[pose]);
+  const visiblePoses = REF_VIEWS.filter(({ pose }) => !failed[pose]);
   if (visiblePoses.length === 0) return null;
 
   return (
     <div>
       <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1.5">
-        REFERENCE SHEET · CLICK TO SET PRIMARY
+        REFERENCE VIEWS · SELECTED AUTOMATICALLY BY SHOT
       </div>
       <div className="flex flex-wrap gap-2">
         {visiblePoses.map(({ pose, label }) => {
-          const isPrimary = primaryPose === pose;
           const src = `/api/projects/${encodeURIComponent(projectName)}/files/refs/${encodeURIComponent(charId)}/${pose}.png?t=${timestamp}`;
           return (
-            <button
+            <div
               key={pose}
-              type="button"
-              title={isPrimary ? `${label} — primary ref` : `Set ${label} as primary`}
-              onClick={() => setPrimary.mutate({ project: projectName, charId, pose: isPrimary ? null : pose })}
-              disabled={setPrimary.isPending}
-              className={`relative w-[64px] overflow-hidden border-[2px] transition-colors ${
-                isPrimary ? "border-hero-red" : "border-ink-black/15 hover:border-ink-black/50"
-              }`}
+              title={`${label} reference`}
+              className="relative w-[72px] overflow-hidden border-[2px] border-ink-black/15"
             >
               <img
                 src={src}
                 alt={`${label} reference`}
-                className="aspect-[64/84] w-full object-cover"
+                className="aspect-[1/2] w-full object-cover"
                 onError={() => setFailed((f) => ({ ...f, [pose]: true }))}
               />
-              {isPrimary && (
-                <span className="absolute inset-x-0 bottom-0 bg-hero-red py-0.5 text-center font-meta text-[0.42rem] tracking-[0.14em] text-bristol">
-                  PRIMARY
-                </span>
-              )}
-            </button>
+              <span className="block bg-ink-black/5 px-1 py-0.5 text-center font-meta text-[0.42rem] tracking-[0.1em] text-ink-black/70">
+                {label}
+              </span>
+            </div>
           );
         })}
       </div>
@@ -111,11 +96,15 @@ function StateRefRow({
   entityId,
   kind,
   states,
+  stageRegenerating,
+  refreshToken,
 }: {
   projectName: string;
   entityId: string;
   kind: "character" | "location";
   states: AppearanceState[] | undefined;
+  stageRegenerating: boolean;
+  refreshToken: string | null;
 }) {
   const { t } = useI18n();
   const [failed, setFailed] = useState<Record<string, boolean>>({});
@@ -127,12 +116,12 @@ function StateRefRow({
   const base = `/api/projects/${encodeURIComponent(projectName)}/files`;
   const thumbUrl = (stateId: string) =>
     kind === "character"
-      ? `${base}/refs/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}/front.png`
-      : `${base}/plates/${encodeURIComponent(stateId)}.png`;
+      ? `${base}/refs/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}/portrait.png?v=${encodeURIComponent(refreshToken ?? "current")}`
+      : `${base}/plates/${encodeURIComponent(stateId)}.png?v=${encodeURIComponent(refreshToken ?? "current")}`;
   const fullUrl = (stateId: string) =>
     kind === "character"
-      ? `${base}/refs/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}/sheet.png`
-      : `${base}/plates/${encodeURIComponent(stateId)}.png`;
+      ? `${base}/refs/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}/sheet.png?v=${encodeURIComponent(refreshToken ?? "current")}`
+      : `${base}/plates/${encodeURIComponent(stateId)}.png?v=${encodeURIComponent(refreshToken ?? "current")}`;
 
   const tileWidth = kind === "character" ? "w-[64px]" : "w-[104px]";
   const imgAspect = kind === "character" ? "aspect-[64/84]" : "aspect-[16/9]";
@@ -144,7 +133,19 @@ function StateRefRow({
       </div>
       <div className="flex flex-wrap gap-2">
         {significant.map((s) =>
-          failed[s.id] ? (
+          stageRegenerating ? (
+            <div
+              key={s.id}
+              className={`flex ${tileWidth} flex-col items-center justify-center gap-1 border-[2px] border-ink-black/20 bg-surface-container px-1 py-3 text-center`}
+            >
+              <span className="font-meta text-[0.46rem] leading-tight tracking-[0.12em] text-ink-black/55">
+                {s.label}
+              </span>
+              <span className="font-meta text-[0.42rem] tracking-[0.14em] text-hero-red">
+                {t("REBUILDING")}
+              </span>
+            </div>
+          ) : failed[thumbUrl(s.id)] ? (
             <div
               key={s.id}
               title={t("Not generated yet — re-run cast to build this state")}
@@ -169,7 +170,7 @@ function StateRefRow({
                 src={thumbUrl(s.id)}
                 alt={`${s.label} reference`}
                 className={`${imgAspect} w-full object-cover`}
-                onError={() => setFailed((f) => ({ ...f, [s.id]: true }))}
+                onError={() => setFailed((f) => ({ ...f, [thumbUrl(s.id)]: true }))}
               />
               <span className="block truncate bg-ink-black/5 px-1 py-0.5 font-meta text-[0.42rem] tracking-[0.1em] text-ink-black/70">
                 {s.label}
@@ -290,7 +291,7 @@ function StateRefTile({
     return () => window.clearTimeout(timer);
   }, [generationJobs]);
 
-  const thumbUrl = `/api/projects/${encodeURIComponent(projectName)}/files/refs/${encodeURIComponent(charId)}/states/${encodeURIComponent(state.id)}/front.png?t=${timestamp}`;
+  const thumbUrl = `/api/projects/${encodeURIComponent(projectName)}/files/refs/${encodeURIComponent(charId)}/states/${encodeURIComponent(state.id)}/portrait.png?t=${timestamp}`;
 
   const startRegen = () => {
     setConfirmRegen(false);
@@ -596,6 +597,8 @@ function CharacterCastCard({
           entityId={character.id}
           kind="character"
           states={character.appearance_states}
+          stageRegenerating={stageRegenerating}
+          refreshToken={stageRegenerating ? null : timestamp.toString()}
         />
         {regenError && (
           <div className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-[0.72rem] leading-relaxed text-bristol">
@@ -625,7 +628,7 @@ function CharacterCastCard({
               onRegenerate={startRegen}
               onRegenerateWithInstruction={submitInstruction}
             />
-            <RefSheet projectName={projectName} charId={character.id} timestamp={timestamp} />
+            <ReferenceViews projectName={projectName} charId={character.id} timestamp={timestamp} />
             <RefVersionHistory
               projectName={projectName}
               charId={character.id}
@@ -892,6 +895,8 @@ function LocationPlateCard({
           entityId={location.id}
           kind="location"
           states={location.appearance_states}
+          stageRegenerating={stageRegenerating}
+          refreshToken={stageRegenerating ? null : timestamp.toString()}
         />
         {regenError && (
           <div className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-[0.72rem] leading-relaxed text-bristol">

@@ -169,7 +169,7 @@ body {
   background: transparent;
   border: 0;
   color: var(--caption-color);
-  padding: 24px 36px 28px;
+  padding: 16px 24px 20px;
   font-family: var(--letter-font, 'Comic Neue', 'Comic Sans MS', cursive, sans-serif);
   font-size: var(--caption-font-size);
   font-weight: bold;
@@ -196,7 +196,7 @@ body {
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
-  gap: 42px;
+  gap: 28px;
   pointer-events: none;
 }
 
@@ -263,15 +263,30 @@ body {
 }
 
 .bubble.thought {
-  min-height: 132px;
-  padding: 60px 70px 78px;
+  min-height: 96px;
+  padding: 34px 42px 48px;
   display: flex;
   align-items: center;
 }
 
 .bubble.thought .letter-content {
-  width: 68%;
+  width: 80%;
   margin-inline: auto;
+}
+
+/* Narrow panels need wider, shorter lettering rather than newspaper-thin
+   columns. The page renderer uses fixed-size panel containers, so inline-size
+   queries are stable in both the editor and exported pages. */
+@container (max-width: 1400px) {
+  .bubble { max-width: 64%; }
+  .bubble.center { max-width: 72%; }
+  .bubble.thought { max-width: 72%; }
+}
+
+@container (max-width: 900px) {
+  .bubble { max-width: 78%; }
+  .bubble.center { max-width: 82%; }
+  .bubble.thought { max-width: 84%; }
 }
 
 .bubble.thought::after {
@@ -468,7 +483,7 @@ _THEME_HEADER = """\
  *    --bubble-border           border colour (#1A1A1A)
  *    --bubble-border-width     (2px)
  *    --bubble-font-size        (48px)
- *    --bubble-padding          (30px 40px)
+ *    --bubble-padding          (18px 26px)
  *    --bubble-max-width        max % of panel width (52%)
  *    --bubble-center-width     max % for centred bubbles (68%)
  *
@@ -564,16 +579,17 @@ def _svg_tail(bubble: Bubble) -> str:
 
 
 _SPEECH_SHAPE_PATH = (
-    "M8 2 C32 0 68 1 90 3 C96 4 98 7 98 14 "
-    "L98 84 C98 92 94 97 86 98 C60 100 30 100 12 98 "
-    "C5 97 2 93 2 85 L2 14 C2 7 4 3 8 2 Z"
+    "M4 1 C30 0 70 0 94 2 C99 3 100 6 100 12 "
+    "L100 88 C100 95 96 99 89 100 C62 100 31 100 9 99 "
+    "C3 98 0 95 0 88 L0 12 C0 5 1 2 4 1 Z"
 )
 _THOUGHT_SHAPE_PATH = (
-    "M8 47 C2 38 6 27 16 24 C18 5 30 3 40 8 "
-    "C48 2 62 3 68 11 C80 5 92 14 91 28 "
-    "C99 39 99 51 92 57 C96 68 88 81 78 81 "
-    "C73 92 58 94 49 86 C39 94 25 92 22 84 "
-    "C12 84 4 73 8 63 C1 58 1 51 8 47 Z"
+    "M4 50 C-2 39 1 27 10 22 C7 10 17 2 29 6 "
+    "C38 -1 52 0 59 7 C71 1 85 5 89 16 "
+    "C99 19 102 32 95 41 C102 50 100 62 92 68 "
+    "C96 80 85 91 73 88 C65 98 50 100 41 92 "
+    "C29 98 16 92 13 82 C2 81 -3 69 3 59 "
+    "C-1 56 -1 52 4 50 Z"
 )
 _NARRATION_SHAPE_PATH = "M2 4 L96 2 L99 88 L92 98 L3 96 Z"
 
@@ -627,6 +643,16 @@ _PINNED_TAIL_SCRIPT = """\
   const verifySafeAreas = () => {
     document.querySelectorAll('.bubble, .caption').forEach(verifySafeArea);
   };
+  const fitPinnedLettering = () => {
+    document.querySelectorAll('.panel > .pinned').forEach((host) => {
+      const panel = host.parentElement;
+      if (!panel) return;
+      const maxLeft = Math.max(safeGutter, panel.clientWidth - host.offsetWidth - safeGutter);
+      const maxTop = Math.max(safeGutter, panel.clientHeight - host.offsetHeight - safeGutter);
+      host.style.left = `${clamp(host.offsetLeft, safeGutter, maxLeft)}px`;
+      host.style.top = `${clamp(host.offsetTop, safeGutter, maxTop)}px`;
+    });
+  };
   const pathFor = (width, height, targetX, targetY) => {
     const dx = targetX - width / 2;
     const dy = targetY - height / 2;
@@ -656,6 +682,7 @@ _PINNED_TAIL_SCRIPT = """\
       `Q ${c2[0]} ${c2[1]} ${second[0]} ${second[1]} Z`;
   };
   const update = () => {
+    fitPinnedLettering();
     verifySafeAreas();
     document.querySelectorAll('.panel').forEach((panel) => {
       const flow = panel.querySelector(':scope > .bubble-auto');
@@ -764,8 +791,11 @@ def _bubble_html(bubble: Bubble) -> str:
 
     if bubble.x is not None and bubble.y is not None:
         classes.append("pinned")
-        inline.append(f"left: {bubble.x:.0f}px")
-        inline.append(f"top:  {bubble.y:.0f}px")
+        # Older pages may contain negative coordinates from the previous,
+        # smaller balloon geometry. Keep pinned lettering inside the panel;
+        # the editor will persist the corrected value after the next drag.
+        inline.append(f"left: {max(8.0, bubble.x):.0f}px")
+        inline.append(f"top:  {max(8.0, bubble.y):.0f}px")
     if bubble.width is not None:
         inline.append(f"width: {bubble.width:.0f}px")
 

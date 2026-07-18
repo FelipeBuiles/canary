@@ -288,7 +288,7 @@ def parse_asset_instruction_patch(raw: object) -> AssetInstructionPatch:
 def asset_instruction_rewrite_system_prompt(kind: AssetKind) -> str:
     if kind == "character_ref":
         target = (
-            "a single character's reference sheet (a 2x2 grid of four poses on a clean white background). "
+            "a single character's two-view reference sheet (portrait and full-body view on a clean background). "
             "Edits change the character's appearance — features, outfit, color, accessories, expression — "
             "without renaming the character or changing the sheet layout."
         )

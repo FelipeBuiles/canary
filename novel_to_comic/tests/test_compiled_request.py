@@ -667,8 +667,10 @@ class TestCharacterReferenceConstraints:
             selected_style_text="Bleeding watercolor and nervous ink.",
         )
 
-        assert "exactly four full-body depictions of that same character" in req.final_prompt
-        assert "one square 2x2 reference sheet" in req.final_prompt
+        assert "exactly two depictions of that same character" in req.final_prompt
+        assert "one clean two-view reference sheet" in req.final_prompt
+        assert "anatomically believable adult proportions" in req.final_prompt
+        assert "Never use chibi" in req.final_prompt
         assert "exactly one character identity" in req.final_prompt
         assert "one body per listed character" not in req.final_prompt
         assert "single frozen instant" not in req.final_prompt
@@ -687,7 +689,7 @@ class TestCharacterReferenceConstraints:
         assert anchor in req.final_prompt
         assert req.protected_anchors[0].text == anchor
         assert "baseline affect for Milla: quietly uneasy" in req.final_prompt
-        assert "restrained resting expression in all four views" in req.final_prompt
+        assert "restrained resting expression in both views" in req.final_prompt
         assert "oversized eyes, blackened eye sockets" in req.final_prompt
         assert "low-intensity baseline affect rather than an active reaction" in req.final_prompt
 

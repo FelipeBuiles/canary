@@ -209,7 +209,7 @@ async def evaluate_scene(
     refs_dir = project_dir / "refs"
     if primary_character_id:
         candidates = refs_dir / primary_character_id
-        for view in ("front.png", "three_quarter.png", "sheet.png"):
+        for view in ("portrait.png", "full_body.png", "sheet.png"):
             if (candidates / view).exists():
                 cast_ref = candidates / view
                 break
@@ -217,7 +217,7 @@ async def evaluate_scene(
         for char_dir in sorted(refs_dir.iterdir()):
             if not char_dir.is_dir():
                 continue
-            for view in ("front.png", "three_quarter.png", "sheet.png"):
+            for view in ("portrait.png", "full_body.png", "sheet.png"):
                 if (char_dir / view).exists():
                     cast_ref = char_dir / view
                     break

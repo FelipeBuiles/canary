@@ -8,6 +8,7 @@ import pytest
 from fastapi import HTTPException
 
 from novel_to_comic.server import app as app_module
+from novel_to_comic.server import deployment_status as deployment_status_module
 from novel_to_comic.server import sentry as sentry_module
 from novel_to_comic.server.routers import billing
 
@@ -169,6 +170,22 @@ def test_invalid_sentry_dsn_does_not_crash_startup(monkeypatch):
         assert sentry_module.configure_sentry() is False
 
 
+def test_sentry_scrubs_operations_token():
+    event = {
+        "request": {
+            "headers": {
+                "X-Canary-Ops-Token": "operator-secret",
+                "Accept": "application/json",
+            }
+        }
+    }
+
+    scrubbed = sentry_module._scrub_event(event, {})
+
+    assert scrubbed["request"]["headers"]["X-Canary-Ops-Token"] == "[Filtered]"
+    assert scrubbed["request"]["headers"]["Accept"] == "application/json"
+
+
 def test_readiness_fails_closed_when_production_config_is_missing(monkeypatch):
     monkeypatch.setenv("CANARY_ENV", "production")
     for name in (
@@ -253,6 +270,104 @@ def test_readiness_endpoint_uses_http_200_on_success(tmp_path: Path):
         response = endpoint()
 
     assert response.status_code == 200
+
+
+def test_deployment_activity_reports_idle_app(tmp_path: Path):
+    app = app_module.create_app(tmp_path, dev=True)
+    app.state.generation_jobs = {}
+    app.state.generation_queue = asyncio.Queue()
+
+    result = deployment_status_module.deployment_activity(app)
+
+    assert result["safe_to_deploy"] is True
+    assert result["status"] == "idle"
+    assert not any(result["counts"].values())
+
+
+def test_deployment_activity_counts_all_generation_work(tmp_path: Path):
+    app = app_module.create_app(tmp_path, dev=True)
+    app.state.generation_jobs = {}
+    app.state.generation_queue = asyncio.Queue()
+    pipeline_task = MagicMock()
+    pipeline_task.done.return_value = False
+    style_task = MagicMock()
+    style_task.done.return_value = False
+    queued_job = MagicMock(status="queued")
+    running_job = MagicMock(status="running")
+    app.state.running_tasks["pipeline"] = pipeline_task
+    app.state.style_tasks["style"] = style_task
+    app.state.generation_jobs.update(
+        {"queued": queued_job, "running": running_job}
+    )
+    app.state.generation_queue.put_nowait(queued_job)
+    app.state.draw_in_flight["project"] = [{"panel_number": 1}]
+
+    result = deployment_status_module.deployment_activity(app)
+
+    assert result == {
+        "status": "busy",
+        "safe_to_deploy": False,
+        "counts": {
+            "pipeline_tasks": 1,
+            "style_tasks": 1,
+            "queued_generation_jobs": 1,
+            "running_generation_jobs": 1,
+            "queue_items": 1,
+            "draw_panels_in_flight": 1,
+        },
+    }
+
+
+def test_ops_token_is_required_and_constant_time_compared(monkeypatch):
+    monkeypatch.setenv("CANARY_OPS_TOKEN", "operator-secret")
+
+    with pytest.raises(HTTPException) as exc_info:
+        deployment_status_module.require_ops_token("wrong")
+    assert exc_info.value.status_code == 401
+
+    assert deployment_status_module.require_ops_token("operator-secret") is None
+
+
+def test_ops_token_fails_closed_when_unconfigured(monkeypatch):
+    monkeypatch.delenv("CANARY_OPS_TOKEN", raising=False)
+
+    with pytest.raises(HTTPException) as exc_info:
+        deployment_status_module.require_ops_token(None)
+    assert exc_info.value.status_code == 503
+
+
+def test_fly_routes_on_local_liveness_and_uses_conservative_limits():
+    import tomllib
+
+    root = Path(__file__).resolve().parents[2]
+    config = tomllib.loads((root / "fly.toml").read_text(encoding="utf-8"))
+    service = config["http_service"]
+
+    assert service["checks"][0]["path"] == "/api/health"
+    assert service["checks"][0]["headers"] == {"Host": "canary-web.fly.dev"}
+    assert service["concurrency"] == {
+        "type": "requests",
+        "hard_limit": 50,
+        "soft_limit": 30,
+    }
+
+
+def test_production_docker_build_fails_without_supabase_build_args():
+    root = Path(__file__).resolve().parents[2]
+    dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
+
+    assert '[ -z "$VITE_SUPABASE_URL" ]' in dockerfile
+    assert '[ -z "$VITE_SUPABASE_PUBLISHABLE_KEY" ]' in dockerfile
+
+
+def test_bundled_fonts_have_real_sfnt_headers():
+    root = Path(__file__).resolve().parents[2]
+    fonts = root / "novel_to_comic" / "src" / "novel_to_comic" / "fonts"
+
+    for font in fonts.glob("*.ttf"):
+        assert font.read_bytes()[:4] in {b"\x00\x01\x00\x00", b"OTTO"}, (
+            f"{font.name} is not a valid TrueType/OpenType asset"
+        )
 
 
 def test_credit_view_uses_callers_rls_context():

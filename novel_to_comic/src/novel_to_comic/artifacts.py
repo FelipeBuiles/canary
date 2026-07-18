@@ -331,7 +331,7 @@ def character_state_ref_instructions_path(
     return project_dir / "refs" / char_id / "states" / state_id / "instructions.jsonl"
 
 
-CHARACTER_REF_POSES = ("front", "three_quarter", "profile", "gesture")
+CHARACTER_REF_POSES = ("portrait", "full_body")
 
 
 def primary_refs_path(project_dir: Path) -> Path:
@@ -339,7 +339,7 @@ def primary_refs_path(project_dir: Path) -> Path:
 
 
 def read_primary_refs(project_dir: Path) -> dict[str, str]:
-    """User-chosen canonical pose crop per character, e.g. {"char_001": "front"}."""
+    """Legacy/Dev Content pose override per character."""
     path = primary_refs_path(project_dir)
     if not path.exists():
         return {}

@@ -17,6 +17,14 @@ export function SvgTail({ bubble }: SvgTailProps) {
     if (!svg || !element || bubble.tail_x == null || bubble.tail_y == null) return;
 
     const update = () => {
+      const panel = element.closest<HTMLElement>(".panel");
+      if (panel) {
+        const gutter = 8;
+        const maxLeft = Math.max(gutter, panel.clientWidth - element.offsetWidth - gutter);
+        const maxTop = Math.max(gutter, panel.clientHeight - element.offsetHeight - gutter);
+        element.style.left = `${Math.min(maxLeft, Math.max(gutter, element.offsetLeft))}px`;
+        element.style.top = `${Math.min(maxTop, Math.max(gutter, element.offsetTop))}px`;
+      }
       const targetX = bubble.tail_x! - element.offsetLeft;
       const targetY = bubble.tail_y! - element.offsetTop;
       setPath(pinnedTailPath(element.offsetWidth, element.offsetHeight, targetX, targetY));

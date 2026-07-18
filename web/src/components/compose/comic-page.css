@@ -245,7 +245,7 @@
   background: transparent;
   border: 0;
   color: var(--caption-color);
-  padding: 24px 36px 28px;
+  padding: 16px 24px 20px;
   font-family: var(--letter-font, 'Comic Neue', 'Comic Sans MS', cursive, sans-serif);
   font-size: var(--caption-font-size);
   font-weight: bold;
@@ -272,7 +272,7 @@
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
-  gap: 42px;
+  gap: 28px;
   pointer-events: none;
 }
 
@@ -341,15 +341,29 @@
 }
 
 .bubble.thought {
-  min-height: 132px;
-  padding: 60px 70px 78px;
+  min-height: 96px;
+  padding: 34px 42px 48px;
   display: flex;
   align-items: center;
 }
 
 .bubble.thought .letter-content {
-  width: 68%;
+  width: 80%;
   margin-inline: auto;
+}
+
+/* Narrow panels need wider, shorter lettering rather than newspaper-thin
+   columns. Keep these thresholds aligned with html_renderer.py. */
+@container (max-width: 1400px) {
+  .bubble { max-width: 64%; }
+  .bubble.center { max-width: 72%; }
+  .bubble.thought { max-width: 72%; }
+}
+
+@container (max-width: 900px) {
+  .bubble { max-width: 78%; }
+  .bubble.center { max-width: 82%; }
+  .bubble.thought { max-width: 84%; }
 }
 
 .bubble.thought::after {

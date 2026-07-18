@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scenewright — Pre-launch and Customer Acquisition Brief</title>
+  <style>
+    :root {
+      --ink: #20211b;
+      --paper: #f3eddf;
+      --card: #fffaf0;
+      --red: #b63b2b;
+      --gold: #d7a93f;
+      --sage: #536b57;
+      --muted: #6c6a60;
+      --line: #cbc2ae;
+      --blue: #385b73;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 18% 0%, rgba(215,169,63,.13), transparent 34rem),
+        var(--paper);
+      font: 16px/1.58 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    a { color: var(--blue); text-underline-offset: 3px; }
+    header {
+      color: #fffaf0;
+      background: var(--ink);
+      border-bottom: 8px solid var(--red);
+    }
+    .hero, main, footer { width: min(1180px, calc(100% - 32px)); margin: 0 auto; }
+    .hero { padding: 64px 0 54px; display: grid; grid-template-columns: 1fr 340px; gap: 48px; align-items: end; }
+    .eyebrow { margin: 0 0 14px; color: var(--gold); font-size: .76rem; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+    h1, h2, h3, .metric strong { font-family: Georgia, "Times New Roman", serif; }
+    h1 { margin: 0; max-width: 820px; font-size: clamp(2.6rem, 6vw, 5.4rem); line-height: .96; letter-spacing: -.045em; }
+    .hero p { margin: 24px 0 0; max-width: 760px; color: #d8d4c8; font-size: 1.08rem; }
+    .verdict { padding: 22px; color: var(--ink); background: var(--gold); border: 3px solid #fffaf0; box-shadow: 8px 8px 0 rgba(182,59,43,.85); }
+    .verdict b { display: block; font-size: .74rem; letter-spacing: .13em; text-transform: uppercase; }
+    .verdict strong { display: block; margin-top: 8px; font: 700 1.65rem/1.05 Georgia, serif; }
+    nav { position: sticky; top: 0; z-index: 5; background: rgba(243,237,223,.96); border-bottom: 1px solid var(--line); backdrop-filter: blur(10px); }
+    nav div { width: min(1180px, calc(100% - 32px)); margin: auto; display: flex; gap: 20px; overflow-x: auto; padding: 12px 0; }
+    nav a { flex: 0 0 auto; color: var(--ink); font-size: .73rem; font-weight: 800; letter-spacing: .08em; text-decoration: none; text-transform: uppercase; }
+    main { padding: 54px 0 80px; }
+    section { margin: 0 0 68px; scroll-margin-top: 58px; }
+    h2 { margin: 0 0 22px; font-size: clamp(2rem, 4vw, 3.35rem); line-height: 1; letter-spacing: -.035em; }
+    h3 { margin: 0 0 10px; font-size: 1.35rem; line-height: 1.12; }
+    .lede { max-width: 850px; color: var(--muted); font-size: 1.08rem; }
+    .notice { margin: 24px 0; padding: 18px 20px; background: #fff5d8; border-left: 6px solid var(--gold); }
+    .notice.danger { background: #f7dfd8; border-color: var(--red); }
+    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 18px; }
+    .card { grid-column: span 4; padding: 24px; background: var(--card); border: 1px solid var(--line); box-shadow: 4px 4px 0 rgba(32,33,27,.08); }
+    .card.wide { grid-column: span 6; }
+    .card.full { grid-column: 1 / -1; }
+    .tag { display: inline-block; margin-bottom: 14px; padding: 4px 8px; color: white; background: var(--ink); font-size: .67rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+    .tag.red { background: var(--red); }
+    .tag.sage { background: var(--sage); }
+    .card p:last-child, .card ul:last-child { margin-bottom: 0; }
+    ul, ol { padding-left: 1.25rem; }
+    li + li { margin-top: 7px; }
+    .snapshot { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 24px 0; }
+    .metric { min-height: 135px; padding: 18px; background: var(--ink); color: #fffaf0; border-top: 5px solid var(--gold); }
+    .metric strong { display: block; font-size: 1.75rem; line-height: 1.05; }
+    .metric span { display: block; margin-top: 10px; color: #c9c5ba; font-size: .82rem; }
+    table { width: 100%; border-collapse: collapse; background: var(--card); font-size: .91rem; }
+    th, td { padding: 14px 13px; text-align: left; vertical-align: top; border: 1px solid var(--line); }
+    th { color: #fffaf0; background: var(--ink); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; }
+    tr:nth-child(even) td { background: #f8f1e4; }
+    .priority { display: grid; grid-template-columns: 82px minmax(0,1fr) 230px; border-top: 1px solid var(--line); }
+    .priority:last-child { border-bottom: 1px solid var(--line); }
+    .priority > div { padding: 18px 14px; }
+    .pnum { color: var(--red); font-weight: 900; letter-spacing: .08em; }
+    .owner { color: var(--muted); font-size: .87rem; }
+    .flow { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-top: 28px; }
+    .flow div { position: relative; min-height: 145px; padding: 18px 15px; background: var(--card); border: 2px solid var(--ink); }
+    .flow div:not(:last-child)::after { content: "→"; position: absolute; right: -17px; top: 47%; z-index: 2; width: 22px; height: 22px; display: grid; place-items: center; background: var(--red); color: white; border-radius: 50%; }
+    .flow b { display: block; color: var(--red); font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; }
+    .flow strong { display: block; margin: 8px 0; font-family: Georgia, serif; font-size: 1.05rem; line-height: 1.1; }
+    .flow span { color: var(--muted); font-size: .8rem; line-height: 1.35; }
+    .week { display: grid; grid-template-columns: 120px minmax(0,1fr) 270px; gap: 0; border-top: 1px solid var(--line); }
+    .week:last-child { border-bottom: 1px solid var(--line); }
+    .week > div { padding: 17px 14px; }
+    .week .when { font-weight: 900; color: var(--red); }
+    .source-list li { margin: 0 0 10px; }
+    .small { color: var(--muted); font-size: .84rem; }
+    footer { padding: 28px 0 50px; border-top: 1px solid var(--line); color: var(--muted); font-size: .82rem; }
+    @media (max-width: 900px) {
+      .hero { grid-template-columns: 1fr; }
+      .snapshot { grid-template-columns: repeat(2, 1fr); }
+      .card, .card.wide { grid-column: 1 / -1; }
+      .flow { grid-template-columns: repeat(2, 1fr); }
+      .flow div::after { display: none !important; }
+      .priority, .week { grid-template-columns: 1fr; }
+      .priority > div, .week > div { padding: 10px 14px; }
+    }
+    @media (max-width: 560px) {
+      .snapshot, .flow { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="hero">
+      <div>
+        <p class="eyebrow">Pre-launch review · 18 July 2026</p>
+        <h1>Prove a paid author outcome before you “launch.”</h1>
+        <p>Scenewright has a credible product story and a functioning production system. What it does not yet have is a safe, observable, repeatable path from interested author to successful paying customer.</p>
+      </div>
+      <div class="verdict">
+        <b>Recommendation</b>
+        <strong>Do not open public signup yet.</strong>
+        Run a 10-customer Founding Author Lab after the release and operations gates pass.
+      </div>
+    </div>
+  </header>
+
+  <nav aria-label="Report sections"><div>
+    <a href="#context">Context</a>
+    <a href="#baseline">Baseline</a>
+    <a href="#competition">Competition</a>
+    <a href="#backlog">Pre-launch backlog</a>
+    <a href="#motion">Customer motion</a>
+    <a href="#automation">Automation</a>
+    <a href="#scorecard">Scorecard</a>
+    <a href="#sources">Sources</a>
+  </div></nav>
+
+  <main>
+    <section id="context">
+      <p class="eyebrow">01 · Context</p>
+      <h2>The strategy is directionally right; the launch plan is not operational enough.</h2>
+      <p class="lede">This review combines the existing branding proposal, the current repository and live environment, recent CI evidence, and current public competitor and author-market evidence. It does not include CRM data, customer interviews, support logs, or conversion data—because those systems and cohorts do not exist yet.</p>
+
+      <div class="snapshot">
+        <div class="metric"><strong>Live</strong><span>Fly machine is running; platform check passes and the readiness endpoint reports Supabase and LiteLLM as healthy.</span></div>
+        <div class="metric"><strong>Not releasable</strong><span>The working tree is heavily modified and the latest visible CI runs are failing.</span></div>
+        <div class="metric"><strong>Not hardened</strong><span>The live homepage response lacks the browser-security headers called for by the launch gate.</span></div>
+        <div class="metric"><strong>Not observable</strong><span>No acquisition attribution, product funnel, lifecycle email, referral, or structured feedback system was found.</span></div>
+      </div>
+
+      <div class="notice danger"><strong>Immediate contradiction to fix:</strong> the product says a sample story is the “zero-friction first success,” but no automatic signup credit grant was found. A new user can choose a sample and then encounter a credit wall before experiencing the value.</div>
+    </section>
+
+    <section id="baseline">
+      <p class="eyebrow">02 · Seller baseline</p>
+      <h2>Keep the positioning. Change the entry outcome.</h2>
+      <div class="grid">
+        <article class="card wide">
+          <span class="tag sage">Keep</span>
+          <h3>Durable product truths</h3>
+          <ul>
+            <li>Whole-manuscript ingestion and a source-faithful adaptation workflow.</li>
+            <li>Four understandable author decisions: story, look, panels, book.</li>
+            <li>Reference-guided cast and location continuity with focused panel correction.</li>
+            <li>Lettering and page finishing inside the same system.</li>
+            <li>Explicit cost estimates, non-expiring credits, and no subscription.</li>
+            <li>Precise rights language: manuscript ownership remains with the author; generated-output copyrightability is case-specific.</li>
+          </ul>
+        </article>
+        <article class="card wide">
+          <span class="tag red">Change</span>
+          <h3>The first job to be done</h3>
+          <p>Do not ask an unproven customer to commit to a full graphic novel. Sell a finished <strong>visual reader magnet</strong> or <strong>first-chapter issue</strong>: a 6–12 page artifact they can share with readers, use in a newsletter, or include in a launch campaign.</p>
+          <p>This preserves the whole-book vision while making the first purchase faster, cheaper, measurable, and naturally distributable.</p>
+        </article>
+      </div>
+      <div class="notice"><strong>Sharper promise:</strong> “Turn one chapter or bonus scene into a graphic issue you direct—then continue the book when the cast, look, and workflow have earned your trust.”</div>
+    </section>
+
+    <section id="competition">
+      <p class="eyebrow">03 · Competitive landscape</p>
+      <h2>The category caught up. Control and fidelity must be demonstrated, not asserted.</h2>
+      <table>
+        <thead><tr><th>Alternative</th><th>What is confirmed</th><th>Why a buyer cares</th><th>Scenewright response</th><th>Landmine</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>ComicInk</strong></td>
+            <td>100 signup credits, 50 credits per comic page, packs from $9.99, recurring cast/world assets, print PDF, shareable reader, and creator storefront.</td>
+            <td>It is cheaper to try, easier to share, and connects creation to selling.</td>
+            <td>Lead with manuscript fidelity, explicit checkpoints, panel-level correction, and author-directed page finishing. Publish proof of the decisions a user can actually make.</td>
+            <td>Do not claim whole-book input, consistency, ownership, export, or no-expiry credits as unique.</td>
+          </tr>
+          <tr>
+            <td><strong>LlamaGen</strong></td>
+            <td>Free entry, paid plans from roughly $18/month, character consistency on higher tiers, high panel limits, HD export, video, and a public “20,000+ customers” claim.</td>
+            <td>Broad feature set, familiar subscription, and more apparent social proof.</td>
+            <td>Position Scenewright as a novel-adaptation studio rather than a general comic generator; emphasize no subscription and the source-to-page editorial trail.</td>
+            <td>Do not compete on feature count, languages, speed, or lowest cost before measured evidence exists.</td>
+          </tr>
+          <tr>
+            <td><strong>DIY stack</strong></td>
+            <td>Authors can combine a general language model, an image model, and design software.</td>
+            <td>Maximum flexibility and known tools; perceived low cost.</td>
+            <td>Demonstrate the avoided coordination work: story bible, continuity references, cost preview, per-panel repair, lettering, and export in one project.</td>
+            <td>Do not use invented time-savings or fixed book-cost claims.</td>
+          </tr>
+          <tr>
+            <td><strong>SceneWrite</strong></td>
+            <td>Active, phonetically identical adjacent product with a 9-step AI story-to-video workflow, a 7-day free trial, and $49 lifetime pricing.</td>
+            <td>Creates real confusion risk even though the end product differs.</td>
+            <td>Obtain practitioner clearance before meaningful brand spend or public promotion under Scenewright.</td>
+            <td>A federal exact-match search alone is not adequate clearance.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small">Inference: ComicInk’s free utilities, help center, pricing transparency, public sharing, and storefront form a materially stronger acquisition loop than Scenewright’s current signup-first path.</p>
+    </section>
+
+    <section id="backlog">
+      <p class="eyebrow">04 · Pre-launch backlog</p>
+      <h2>Seven gates before inviting real authors.</h2>
+
+      <div class="priority">
+        <div class="pnum">P0.1</div>
+        <div><h3>Release a known-good revision</h3><p>Fix CI’s missing Playwright browser setup, require all jobs to pass for the exact release SHA, remove or isolate unrelated working-tree changes, and ensure the deployed image maps to that SHA.</p></div>
+        <div class="owner"><strong>Exit:</strong> green CI + reproducible deployment + recorded release SHA.</div>
+      </div>
+      <div class="priority">
+        <div class="pnum">P0.2</div>
+        <div><h3>Finish the operational acceptance test</h3><p>Complete two-user authorization, email confirmation/reset, Stripe test purchase and duplicate webhook, end-to-end manuscript run, reservation recovery, Sentry alert, snapshot restore, mobile/error flows, and language scope. Add CSP, HSTS, nosniff, referrer, and frame policies; bound decompressed imports.</p></div>
+        <div class="owner"><strong>Exit:</strong> signed checklist with evidence, owners, and rollback notes.</div>
+      </div>
+      <div class="priority">
+        <div class="pnum">P0.3</div>
+        <div><h3>Make first value reachable</h3><p>Choose one: grant tightly capped trial credits to accepted design partners, or sell the $12 Starter pilot before generation. The public CTA must never imply a usable sample if the user will immediately hit a zero balance.</p></div>
+        <div class="owner"><strong>Exit:</strong> a new invited user can reach a first generated panel without surprise.</div>
+      </div>
+      <div class="priority">
+        <div class="pnum">P0.4</div>
+        <div><h3>Add first-party learning and attribution</h3><p>Capture consent-aware UTMs and a small event vocabulary: landing, application/signup, confirmation, project created, extract approved, style selected, cast approved, first panel, first export, purchase, support issue, referral, and deletion. Never send manuscript text, prompts, images, auth data, or entity names to analytics.</p></div>
+        <div class="owner"><strong>Exit:</strong> one funnel report by source and cohort; cost and gross margin joined to project outcomes.</div>
+      </div>
+      <div class="priority">
+        <div class="pnum">P0.5</div>
+        <div><h3>Prove the product with permissioned work</h3><p>Run three public-domain benchmarks and 5–10 author-owned pilots. Measure continuity, panel flag rate, successful export, actual credits, retries, elapsed time, and operator intervention. Secure explicit permission before using any manuscript, image, name, result, or quote.</p></div>
+        <div class="owner"><strong>Exit:</strong> one 30–50-panel proof reel and two honest case studies.</div>
+      </div>
+      <div class="priority">
+        <div class="pnum">P0.6</div>
+        <div><h3>Close trust and support operations</h3><p>Monitor support and legal inboxes; add an in-product “report a problem” route with project/stage metadata; document refund, abuse/DMCA, deletion/export, failed-generation, and incident handling. Publish an AI-use and KDP-disclosure guide without legal promises.</p></div>
+        <div class="owner"><strong>Exit:</strong> support response target, runbooks, and working contacts.</div>
+      </div>
+      <div class="priority">
+        <div class="pnum">P0.7</div>
+        <div><h3>Resolve the name risk</h3><p>Have a practitioner assess SceneWrite/Scenewright across federal, state, common-law, domain, and relevant international use. Until then, avoid paid brand campaigns, major assets, or wide press.</p></div>
+        <div class="owner"><strong>Exit:</strong> written go/rename recommendation before public promotion.</div>
+      </div>
+    </section>
+
+    <section id="motion">
+      <p class="eyebrow">05 · Initial sales motion</p>
+      <h2>Founding Author Lab: ten paying customers, two at a time.</h2>
+      <div class="grid">
+        <article class="card"><span class="tag">Who</span><h3>Narrow ICP</h3><p>Self-published fantasy, science-fiction, horror, or romance authors with a finished book, clear rights, at least two published titles or an active serial, an existing reader channel, and an explicit willingness to use generative tools.</p></article>
+        <article class="card"><span class="tag">Offer</span><h3>$12 visual pilot</h3><p>Use the existing Starter pack as the price anchor. Promise a 6–12 page visual reader magnet or first-chapter issue, one style direction, one cast, panel repair, and PDF/CBZ export. Credits remain theirs.</p></article>
+        <article class="card"><span class="tag">Exchange</span><h3>Learning contract</h3><p>In return for founding access: a short intake, structured feedback after export, and permission to use anonymized operational metrics. Quote or artwork permission is separate and optional.</p></article>
+      </div>
+
+      <h3 style="margin-top:34px">Recruit in this order</h3>
+      <ol>
+        <li><strong>Warm and adjacent network:</strong> authors, editors, cover designers, formatters, writing coaches, and author assistants who can make trusted introductions.</li>
+        <li><strong>High-intent hand research:</strong> authors publicly discussing visual adaptations, AI-assisted publishing, reader magnets, bonus chapters, or comic editions. Use public business contact details; review every message manually.</li>
+        <li><strong>Partner referrals:</strong> give cover designers and author marketers a co-branded visual-pilot link and fixed bonus credits after a referred customer pays and exports.</li>
+        <li><strong>Permissioned project content:</strong> turn each successful pilot into a before/after strip, continuity sheet, cost/time summary, and author quote; the author approves every asset before publication.</li>
+        <li><strong>High-intent search:</strong> publish real example pages for “turn a novel into a graphic novel,” “book to comic,” and “visual reader magnet for authors.” Avoid generic “AI comic generator” traffic where incumbents are stronger.</li>
+      </ol>
+      <div class="notice"><strong>Do not automate community posting or mass DMs.</strong> Automate research, scoring, drafts, reminders, and reporting. Keep targeting, claims, and sending under human review; trust is the scarce resource in this segment.</div>
+    </section>
+
+    <section id="automation">
+      <p class="eyebrow">06 · Automated acquisition system</p>
+      <h2>Automate the plumbing; keep the relationship human.</h2>
+      <div class="flow" aria-label="Acquisition flow">
+        <div><b>1 · Attract</b><strong>Proof pages</strong><span>Public examples, cost calculator, adaptation guide, visual-reader-magnet guide.</span></div>
+        <div><b>2 · Capture</b><strong>Qualified application</strong><span>Genre, rights, word count, audience, goal, AI posture, source/UTM.</span></div>
+        <div><b>3 · Score</b><strong>Fit routing</strong><span>Auto-score 0–100; human approves. Reject or nurture low-fit leads.</span></div>
+        <div><b>4 · Activate</b><strong>Triggered checklist</strong><span>Welcome, rights check, sample choice, credit state, next gate, stalled-user reminders.</span></div>
+        <div><b>5 · Convert</b><strong>Outcome-based offer</strong><span>$12 Starter pilot; $30 Standard only after a successful first export.</span></div>
+        <div><b>6 · Compound</b><strong>Proof + referral</strong><span>Ask for approved assets, referral link, and next-book continuation.</span></div>
+      </div>
+
+      <div class="grid" style="margin-top:28px">
+        <article class="card wide"><h3>Minimal data model</h3><ul><li><strong>leads:</strong> source, consent, fit fields, score, status, owner.</li><li><strong>campaign touches:</strong> channel, template, human approval, sent/replied dates.</li><li><strong>product events:</strong> user/project ID, event, stage, timestamp, cohort; no creative content.</li><li><strong>customer outcomes:</strong> export, pages, credits, retries, flags, support minutes, permission status.</li><li><strong>referrals:</strong> referrer, referred account, paid/exported qualification, reward.</li></ul></article>
+        <article class="card wide"><h3>Trigger set</h3><ul><li>Signup but no project in 24 hours → one orientation message.</li><li>Project created but no extract approval in 48 hours → contextual help.</li><li>Cast approved → explain the automated panel chain and expected timing/cost.</li><li>First panel generated → ask one confidence question, not a long survey.</li><li>Export completed → case-study permission, referral, and next-step offer.</li><li>Failure or repeated regeneration → support alert; suppress promotional email.</li></ul></article>
+      </div>
+
+      <h3 style="margin-top:34px">Content engine from every approved project</h3>
+      <table>
+        <thead><tr><th>Input</th><th>Generated draft</th><th>Human gate</th><th>Channel</th></tr></thead>
+        <tbody>
+          <tr><td>Author-approved panels + source excerpt</td><td>Before/after adaptation strip</td><td>Author approves text and images</td><td>Case study, newsletter, social</td></tr>
+          <tr><td>30–50 panel evaluation</td><td>Continuity proof reel + miss log</td><td>Product owner verifies claims</td><td>Homepage, comparison page</td></tr>
+          <tr><td>Ledger + timing events</td><td>“What it cost and how long it took” summary</td><td>Remove identifiers; confirm actuals</td><td>Case study, sales follow-up</td></tr>
+          <tr><td>Support and stage survey tags</td><td>Monthly friction report and ranked backlog</td><td>Product review</td><td>Internal only</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="scorecard">
+      <p class="eyebrow">07 · Six-week plan and go/no-go</p>
+      <h2>Launch only when the system produces customers, proof, and learning.</h2>
+      <div class="week"><div class="when">Week 1</div><div><strong>Release safety.</strong> Fix CI, identify the deployed SHA, complete security headers, Sentry, support contacts, and the acceptance-test owners.</div><div><strong>Evidence:</strong> green release, live alert, health and rollback records.</div></div>
+      <div class="week"><div class="when">Week 2</div><div><strong>Observability and first value.</strong> Add UTMs/events, design-partner application, fit scoring, a visible trial/pilot credit state, and triggered transactional messaging.</div><div><strong>Evidence:</strong> test account appears end-to-end in the funnel report.</div></div>
+      <div class="week"><div class="when">Week 3</div><div><strong>Proof production.</strong> Complete public-domain benchmarks and recruit the first four qualified authors. Run no more than two concurrently.</div><div><strong>Evidence:</strong> first 30–50 panel reel and measured cost/retry data.</div></div>
+      <div class="week"><div class="when">Weeks 4–5</div><div><strong>Founding Author Lab.</strong> Enroll ten authors into the $12 pilot, in waves. Conduct short interviews only at start and after export; collect in-product micro-feedback between.</div><div><strong>Evidence:</strong> paid receipts, exports, friction tags, support time.</div></div>
+      <div class="week"><div class="when">Week 6</div><div><strong>Decide.</strong> Publish only permissioned proof, fix the top two shared blockers, and decide whether to expand to 25 invitees, repeat the lab, or pause.</div><div><strong>Evidence:</strong> cohort scorecard and explicit go/no-go memo.</div></div>
+
+      <h3 style="margin-top:34px">Minimum expansion thresholds</h3>
+      <table>
+        <thead><tr><th>Measure</th><th>Threshold to expand beyond 10</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td>Qualified paid pilots</td><td>10 customers pay at least $12</td><td>Validates willingness to pay, not waitlist enthusiasm.</td></tr>
+          <tr><td>Activation</td><td>≥ 8 begin; ≥ 7 approve cast</td><td>Tests onboarding and the first two creative gates.</td></tr>
+          <tr><td>Outcome</td><td>≥ 6 export a usable 6–12 page issue</td><td>The first marketed outcome must be reliably attainable.</td></tr>
+          <tr><td>Continuation</td><td>≥ 3 buy or commit to the $30 Standard pack</td><td>Tests whether the pilot creates expansion demand.</td></tr>
+          <tr><td>Proof</td><td>≥ 2 grant case-study permission; ≥ 3 give a usable quote</td><td>Creates the trust assets the current site lacks.</td></tr>
+          <tr><td>Quality</td><td>Panel flags, retries, and continuity failures stay within a predeclared budget that the cohort accepts</td><td>Use measured tolerance; do not invent “perfect consistency.”</td></tr>
+          <tr><td>Operations</td><td>No authorization/billing incidents; recovery and support targets met</td><td>Growth cannot outrun safe operations.</td></tr>
+          <tr><td>Economics</td><td>Positive contribution margin after provider cost and measured support time</td><td>The current model covers compute; the cohort must reveal the human-service burden.</td></tr>
+        </tbody>
+      </table>
+      <div class="notice"><strong>Budget:</strong> keep the first six weeks under roughly $2,000: $500–800 for name clearance, $300–600 for controlled compute/credit grants and benchmark runs, $300–500 for partner or author honoraria where needed, and the remainder for email/analytics/support tooling. Spend nothing on broad paid acquisition yet.</div>
+    </section>
+
+    <section id="overclaim">
+      <p class="eyebrow">08 · What not to overclaim</p>
+      <h2>Trust language is part of the product.</h2>
+      <div class="grid">
+        <article class="card"><h3>Do not say</h3><ul><li>Perfect or guaranteed character consistency</li><li>Copyright-safe or copyright-protected</li><li>KDP-ready without disclosure</li><li>A full novel in minutes</li><li>A fixed cost per book</li><li>Publish-ready without qualification</li></ul></article>
+        <article class="card"><h3>Say instead</h3><ul><li>Reference-guided continuity with focused repair</li><li>Human direction and arrangement are documented</li><li>KDP treats generated interior images as AI-generated content</li><li>Costs are estimated before each paid step</li><li>Export PDF and CBZ for further review and production</li></ul></article>
+        <article class="card"><h3>Still unknown</h3><ul><li>Best-converting genre and buyer profile</li><li>True retry and panel-repair rate</li><li>Support minutes per completed project</li><li>Visitor-to-paid conversion</li><li>Referral coefficient</li><li>Whether the Scenewright name is defensible</li></ul></article>
+      </div>
+    </section>
+
+    <section id="sources">
+      <p class="eyebrow">09 · Sources and evidence posture</p>
+      <h2>Grounded, but not yet customer-validated.</h2>
+      <ul class="source-list">
+        <li><a href="branding-and-marketing.md">Canary — Product Naming &amp; Marketing Strategy</a> — supplied strategy, corrections, and hypotheses.</li>
+        <li><a href="launch-readiness.md">Scenewright — Launch Readiness</a> — operational gates and acceptance test; its “no machine deployed” statement is now stale.</li>
+        <li><a href="pricing-and-margin.md">Pricing and Margin</a> — current credit packages and unit-economics assumptions.</li>
+        <li><a href="https://www.comicink.ai/pricing">ComicInk pricing</a>, <a href="https://www.comicink.ai/">product</a>, and <a href="https://help.comicink.ai/en/article/setting-up-your-storefront-zgj7lo/">storefront</a> — current public offer, free entry, sharing, and distribution proof.</li>
+        <li><a href="https://llamagen.ai/pricing">LlamaGen pricing</a> — current public plans, limits, and product claims.</li>
+        <li><a href="https://scenewrite.app/">SceneWrite</a> — adjacent phonetically identical product, pricing, trial, and workflow.</li>
+        <li><a href="https://insights.bookbub.com/how-authors-are-thinking-about-ai-survey/">BookBub survey of 1,200+ authors</a> — split author sentiment and audience composition.</li>
+        <li><a href="https://kdp.amazon.com/en_US/help/topic/G200672390">Amazon KDP content guidelines</a> — current AI-generated versus AI-assisted disclosure definition.</li>
+        <li><a href="https://www.copyright.gov/newsnet/2025/1060.html">U.S. Copyright Office AI copyrightability summary</a> — human-authorship and case-specific protection.</li>
+        <li><a href="https://authors.bookfunnel.com/categories/promotions/">BookFunnel group promotions</a> — evidence that reader magnets, newsletter builders, and cross-promotion are established author workflows.</li>
+        <li><a href="https://reedsy.com/">Reedsy marketplace</a> — evidence of a large author-services partner ecosystem.</li>
+      </ul>
+      <p class="small"><strong>Evidence gaps:</strong> no CRM, customer interviews, meeting transcripts, email replies, support history, or product analytics were available. Competitive pricing and features can change; customer claims from competitor sites are seller-controlled and should be treated as such. Live environment checks were observed on 18 July 2026.</p>
+    </section>
+  </main>
+
+  <footer>
+    Prepared as a read-only launch and acquisition review. No outreach, customer messages, production writes, or marketing publication were performed.
+  </footer>
+</body>
+</html>

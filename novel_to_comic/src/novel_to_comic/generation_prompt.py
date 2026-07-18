@@ -48,18 +48,26 @@ _FACIAL_QUALITY = (
     "small changes around the eyes and mouth",
 )
 
+_BODY_PROPORTION_QUALITY = (
+    "Use anatomically believable adult proportions appropriate to the described age, "
+    "height, and build; preserve a natural head-to-body ratio and consistent silhouette",
+    "Never use chibi, super-deformed, big-headed, doll-like, toy-like, mascot-like, "
+    "bobblehead, or squat-caricature proportions",
+)
+
 _CHARACTER_REFERENCE_LAYOUT = (
+    "one clean two-view reference sheet",
     "exactly one character identity",
-    "exactly four full-body depictions of that same character",
-    "arrange the four depictions as front, three-quarter, profile, and neutral-action "
-    "views in one square 2x2 reference sheet",
-    "the four views are simultaneous design views, not four different characters and "
-    "not a narrative sequence",
+    "exactly two depictions of that same character",
+    "arrange the two depictions side by side: a head-and-shoulders three-quarter portrait "
+    "on the left and a neutral full-body three-quarter view on the right",
+    "the two views are simultaneous design views, not two different characters and not "
+    "a narrative sequence",
 )
 
 _CHARACTER_REFERENCE_PERFORMANCE = (
     "This is a calm character-design sitting, not an emotional scene; use the same "
-    "restrained resting expression in all four views with mouth closed, jaw relaxed, "
+    "restrained resting expression in both views with mouth closed, jaw relaxed, "
     "brows at rest, and eyes naturally open and normally proportioned",
     "If an identity anchor names an emotion, interpret it as a low-intensity baseline "
     "affect rather than an active reaction; do not turn anxiety, sternness, sadness, "
@@ -191,6 +199,7 @@ def generate_system_constraints(
                     "subtly and consistently without escalating its intensity"
                 )
         lines.extend(_FACIAL_QUALITY)
+        lines.extend(_BODY_PROPORTION_QUALITY)
         # A state reference may intentionally require fever, delirium, or another
         # altered affect. Preserve it, but do not let the model amplify beyond the
         # authored state description.
