@@ -3,9 +3,16 @@
 **Status:** Accepted
 **Date:** 2026-05-15
 
+> **Current status (2026-07-18):** Current. The atoms/composites split and
+> component-led adoption remain the active frontend architecture. The room
+> counts and migration inventory below are historical context, not a current
+> implementation census.
+
 ## Context
 
-The web frontend in `web/src/` has 8 room pages (`StoryBibleRoom`, `StyleRoom`, `AdaptRoom`, `CastRoom`, `DirectRoom`, `DrawRoom`, `ComposeRoom`, `ShotPlanRoom`) totalling ~4,900 lines. An audit found significant visual inconsistency across rooms despite the existence of a canonical design system (`DESIGN.md`) and ~32 primitive components in `web/src/components/ui/`.
+At the time of this decision, the web frontend had eight room pages and about
+4,900 lines of room-specific UI. An audit found significant visual
+inconsistency despite a canonical design system and primitive components.
 
 The drift manifests in three forms:
 
@@ -56,7 +63,11 @@ The first migration is `StoryBibleRoom` (the smallest room at 274 lines), refact
 
 **CSS-first design system** (canonicalize the `@layer components` classes, treat React components as optional sugar). Rejected because CSS classes can't enforce slot structure — you can put any markup inside a `.ui-surface` div, including a forked section header. Components let us encode the layout contract.
 
-**Composite-first, breadth-first migration** (build `SectionHeader` in the abstract, migrate all 8 rooms at once). Rejected because designing primitives without a real consumer is what produced the unused primitives in the first place. The exemplar-first approach uses a real room to anchor each API decision.
+**Composite-first, breadth-first migration** (build `SectionHeader` in the
+abstract, then migrate all rooms at once). Rejected because designing
+primitives without a real consumer is what produced the unused primitives in
+the first place. The exemplar-first approach uses a real room to anchor each
+API decision.
 
 **Heavy enforcement via Stylelint / visual-regression tests.** Rejected for now as cost-to-value is wrong at this stage. If drift recurs after the deletion + docs + narrow ESLint rule prove insufficient, revisit.
 

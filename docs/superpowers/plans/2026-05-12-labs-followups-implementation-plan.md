@@ -80,7 +80,7 @@ behaviour change for users.**
   — `generate_image()` is one HTTP function tightly coupled to LiteLLM's
   `/v1/images/generations` and `/v1/images/edits` endpoints. Cost/Langfuse
   finalisation is interleaved with the HTTP call inside the same function.
-- [`clients/flux.py`](../../../novel_to_comic/src/novel_to_comic/clients/flux.py)
+- [`ai/client.py`](../../../novel_to_comic/src/novel_to_comic/ai/client.py)
   — facade that all stage code calls. Dispatches to `ai_generate_image`.
 - [`s7_draw.py:resolve_panel_reference_paths`](../../../novel_to_comic/src/novel_to_comic/stages/s7_draw.py)
   — emits two flat lists: `subject_refs` and `style_refs`. Loses per-ref role
