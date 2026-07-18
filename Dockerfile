@@ -13,6 +13,13 @@ ARG VITE_SUPABASE_URL
 ARG VITE_SUPABASE_PUBLISHABLE_KEY
 ARG VITE_SENTRY_DSN
 ARG VITE_CANARY_ENV=production
+RUN if [ -z "$VITE_SUPABASE_URL" ]; then \
+      echo "VITE_SUPABASE_URL build argument is required" >&2; exit 1; \
+    fi \
+    && if [ -z "$VITE_SUPABASE_PUBLISHABLE_KEY" ]; then \
+      echo "VITE_SUPABASE_PUBLISHABLE_KEY build argument is required" >&2; exit 1; \
+    fi \
+    && case "$VITE_SUPABASE_URL" in https://*.supabase.co|http://localhost:*|http://127.0.0.1:*) ;; *) echo "VITE_SUPABASE_URL must be a Supabase HTTPS URL or a local development URL" >&2; exit 1 ;; esac
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
@@ -22,8 +29,8 @@ COPY web/ ./
 # to web/scripts/ (../../novel_to_comic/...), so place it at that sibling path.
 COPY novel_to_comic/src/novel_to_comic/assembly/theme_tokens.json /novel_to_comic/src/novel_to_comic/assembly/theme_tokens.json
 # Export the build args into the shell environment so Vite inlines them into
-# the bundle. Missing values (e.g. VITE_SENTRY_DSN unset) are fine — Vite
-# leaves them undefined and the client no-ops gracefully.
+# the bundle. Supabase URL/key are required and validated before compilation;
+# optional values such as VITE_SENTRY_DSN may remain empty.
 RUN export VITE_SUPABASE_URL="$VITE_SUPABASE_URL" \
     VITE_SUPABASE_PUBLISHABLE_KEY="$VITE_SUPABASE_PUBLISHABLE_KEY" \
     VITE_SENTRY_DSN="$VITE_SENTRY_DSN" \

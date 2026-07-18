@@ -1215,7 +1215,7 @@ def restore_character_ref_version(
         restore_asset_version(sheet, project_dir, version)
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
-    # The single-pose crops (front/three_quarter/profile/gesture) are derived
+    # The single-view crops (portrait/full_body) are derived
     # from the sheet, so re-crop after restoring so they match.
     s3_cast._crop_sheet_to_poses(sheet)
     if state_id is None:

@@ -234,12 +234,12 @@ class SelectionFingerprint:
 # ---------------------------------------------------------------------------
 
 _SHOT_VIEW_PREFERENCES: dict[str, tuple[str, ...]] = {
-    "close": ("front", "three_quarter", "profile", "gesture", "sheet"),
-    "wide": ("gesture", "three_quarter", "front", "profile", "sheet"),
-    "default": ("three_quarter", "front", "gesture", "profile", "sheet"),
+    "close": ("portrait", "full_body", "sheet"),
+    "wide": ("full_body", "portrait", "sheet"),
+    "default": ("full_body", "portrait", "sheet"),
 }
 
-_POSE_CROP_NAMES = ("front", "three_quarter", "profile", "gesture", "sheet")
+_POSE_CROP_NAMES = ("portrait", "full_body", "sheet")
 
 
 def _shot_view_preference(composition: str | None) -> tuple[str, ...]:
@@ -386,10 +386,11 @@ def _choose_pose_crop(
     composition: str | None,
     primary_pose: str | None,
 ) -> Path | None:
-    """Pick ONE framing-appropriate pose crop, honoring an explicit primary pose.
+    """Pick ONE framing-appropriate pose crop, honoring a legacy explicit override.
 
-    Mirrors the one-crop-per-character rule: a user-chosen primary pose wins on
-    every route, including state directories.
+    The product now selects portrait vs full-body automatically. The optional
+    override remains an internal compatibility seam for existing projects and
+    Dev Content tooling, not a standard user-facing control.
     """
     crops = _available_pose_crops(ref_dir)
     if not crops:
@@ -598,7 +599,7 @@ def _contextual_priority(
     """
     role = candidate.role
     shot = _shot_view_preference(composition)[0]
-    if role == "prop" and candidate.critical and shot == "front":
+    if role == "prop" and candidate.critical and shot == "portrait":
         return 0
     if role == "continuity":
         return 0
@@ -813,7 +814,7 @@ def build_reference_plan(
             if not has_state_ref:
                 dropped.append(DroppedReference(
                     candidate=SemanticCandidate(
-                        path=project_dir / "refs" / char_id / "states" / subject.appearance_state_id / "front.png",
+                        path=project_dir / "refs" / char_id / "states" / subject.appearance_state_id / "portrait.png",
                         role="subject",
                         entity_id=char_id,
                         appearance_state_id=subject.appearance_state_id,

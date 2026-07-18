@@ -1,9 +1,5 @@
 {
   "env": {
-    // "AI_PROVIDER": "vertex",
-    // "AI_VERTEX_PROJECT": "project-b6d024d3-3aff-4788-b8a",
-    // "AI_VERTEX_LOCATION": "global",
-    // "AI_MODEL": "google/gemini-3.5-flash"
   },
   "permissions": {
     "allow": [

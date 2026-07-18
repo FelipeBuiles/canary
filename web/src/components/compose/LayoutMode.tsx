@@ -209,6 +209,8 @@ export function LayoutMode({
           onRedo={onRedo}
           canUndo={canUndo}
           canRedo={canRedo}
+          zoom={zoom}
+          onZoomChange={onZoomChange}
         />
       </div>
 
@@ -270,15 +272,15 @@ export function LayoutMode({
 
             return (
             <div
-              className="absolute z-[200] flex w-[300px] max-w-[calc(100%-2rem)] flex-col overflow-hidden"
+              className="compose-floating-inspector z-[200] flex flex-col overflow-hidden"
               style={{
-                top: currentTop,
-                left: floatingPosition.left + dragOffset.dx,
-                maxHeight: dynamicMaxHeight,
-              }}
+                "--compose-inspector-top": `${currentTop}px`,
+                "--compose-inspector-left": `${floatingPosition.left + dragOffset.dx}px`,
+                "--compose-inspector-max-height": `${dynamicMaxHeight}px`,
+              } as React.CSSProperties}
             >
               <div
-                className="flex shrink-0 cursor-grab items-center justify-center border-[2px] border-b-0 border-ink-black bg-pulp-paper py-1.5 select-none active:cursor-grabbing"
+                className="flex min-h-11 shrink-0 cursor-grab touch-none items-center justify-between border-[2px] border-b-0 border-ink-black bg-pulp-paper pl-3 select-none active:cursor-grabbing"
                 onPointerDown={(e) => {
                   e.currentTarget.setPointerCapture(e.pointerId);
                   dragStartRef.current = { clientX: e.clientX, clientY: e.clientY, dx: dragOffset.dx, dy: dragOffset.dy };
@@ -293,16 +295,30 @@ export function LayoutMode({
                 }}
                 onPointerUp={() => { dragStartRef.current = null; }}
               >
-                <svg width="24" height="8" viewBox="0 0 24 8" className="text-ink-black/60">
-                  <circle cx="4" cy="2" r="1.5" fill="currentColor"/>
-                  <circle cx="12" cy="2" r="1.5" fill="currentColor"/>
-                  <circle cx="20" cy="2" r="1.5" fill="currentColor"/>
-                  <circle cx="4" cy="6" r="1.5" fill="currentColor"/>
-                  <circle cx="12" cy="6" r="1.5" fill="currentColor"/>
-                  <circle cx="20" cy="6" r="1.5" fill="currentColor"/>
-                </svg>
+                <div className="flex items-center gap-2">
+                  <svg width="24" height="8" viewBox="0 0 24 8" className="text-ink-black/60" aria-hidden="true">
+                    <circle cx="4" cy="2" r="1.5" fill="currentColor"/>
+                    <circle cx="12" cy="2" r="1.5" fill="currentColor"/>
+                    <circle cx="20" cy="2" r="1.5" fill="currentColor"/>
+                    <circle cx="4" cy="6" r="1.5" fill="currentColor"/>
+                    <circle cx="12" cy="6" r="1.5" fill="currentColor"/>
+                    <circle cx="20" cy="6" r="1.5" fill="currentColor"/>
+                  </svg>
+                  <span className="font-meta text-[0.52rem] font-bold tracking-[0.1em] text-ink-black/55 md:hidden">
+                    EDIT CONTROLS
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Close edit controls"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={onDeselect}
+                  className="inline-flex size-11 items-center justify-center text-xl leading-none text-ink-black/60 transition-colors hover:bg-bristol hover:text-ink-black md:hidden"
+                >
+                  ×
+                </button>
               </div>
-              <div className="overflow-y-auto [&_.shadow-ink-sm]:shadow-none [&_.shadow-ink]:shadow-none">
+              <div className="min-h-0 overflow-y-auto [&_.shadow-ink-sm]:shadow-none [&_.shadow-ink]:shadow-none">
                 {propertyPanel}
               </div>
             </div>

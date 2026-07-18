@@ -30,6 +30,7 @@ from novel_to_comic.state_assets import (
     mark_dependent_states_stale,
 )
 from novel_to_comic.non_panel_generation import (
+    AbstractStyleProofInput,
     CanonicalCharacterReferenceInput,
     CanonicalLocationPlateInput,
     CharacterStateReferenceInput,
@@ -103,23 +104,19 @@ def _cast_identity_lock(char: Character, story_bible: StoryBible) -> str:
 
 
 _SHEET_POSE_BOXES: dict[str, tuple[float, float, float, float]] = {
-    # 2x2 grid produced by _character_ref_prompt — quadrant coordinates as
-    # fractions of (width, height).
-    "front":         (0.0, 0.0, 0.5, 0.5),
-    "three_quarter": (0.5, 0.0, 1.0, 0.5),
-    "profile":       (0.0, 0.5, 0.5, 1.0),
-    "gesture":       (0.5, 0.5, 1.0, 1.0),
+    # Two-view sheet produced by the character prompt: a large facial-identity
+    # crop and a large body/proportion crop. Fractions are (x0, y0, x1, y1).
+    "portrait":  (0.0, 0.0, 0.5, 1.0),
+    "full_body": (0.5, 0.0, 1.0, 1.0),
 }
 
 
 def _crop_sheet_to_poses(sheet_path: Path) -> None:
-    """Crop a 2x2 character reference sheet into four single-pose PNGs.
+    """Crop a two-view character reference sheet into panel-ready PNGs.
 
-    The 2x2 composite keeps style/identity coherent across the four poses
-    during generation, but passing the grid directly as a panel reference
-    leaks the grid layout into the model's attention. Individual poses give
-    the model a clean portrait to condition on while preserving the shared
-    style the sheet was generated with.
+    The combined generation keeps identity coherent across portrait and body
+    views, while the derived crops prevent the sheet layout leaking into panel
+    composition. Close shots use ``portrait``; other framings use ``full_body``.
     """
     from PIL import Image
 
@@ -276,17 +273,16 @@ def _style_authority_block(asset_kind: str) -> str:
 def _state_anatomy_directive(char_name: str, state: AppearanceState) -> str:
     """Force a state sheet to depict the altered body consistently.
 
-    The 2x2 sheet renders the figure four times, so the changed body part (lost
-    hands, prosthetics) can come out inconsistent across quadrants — or the
-    hardcoded "one hand raised in gesture" pose reasserts a default hand the
-    state doesn't have. State-agnostic: it pins whatever the anchor describes,
+    The two-view sheet renders the figure twice, so a changed body part (lost
+    hands, prosthetics) must remain consistent between the portrait and the
+    full-body view. State-agnostic: this pins whatever the anchor describes,
     sharpened by the authored continuity_guard when present.
     """
     lines = [
         f"APPEARANCE STATE — this sheet depicts {char_name} in a specific altered state: {state.label}.",
-        "The altered body (hands, limbs, or other changed features) MUST look identical in all four "
-        "quadrants and match the description above exactly — never show a different version of it in "
-        "any quadrant, and never blend in the character's other appearance states.",
+        "The altered body (hands, limbs, or other changed features) MUST look identical in both "
+        "views and match the description above exactly — never show a different version of it in "
+        "either view, and never blend in the character's other appearance states.",
     ]
     guard = (state.continuity_guard or "").strip()
     if guard:
@@ -301,17 +297,9 @@ def _character_ref_prompt(
     addendum: str = "",
     state: AppearanceState | None = None,
 ) -> str:
-    # All four views in one image guarantees identical style, identical face,
-    # identical rendering. Separate calls drift even with the same text prompt.
+    # Both views in one image keep facial identity and body design coherent.
     identity_lock = _cast_identity_lock(char, story_bible)
     addendum_block = f"\nUSER FIX NOTE: {addendum.strip()}\n" if addendum.strip() else ""
-    # For an altered-anatomy state, a literal "one hand raised" pose forces a
-    # default hand the state may not have — keep the gesture pose neutral.
-    gesture_pose = (
-        "three-quarter, neutral action pose with relaxed hands"
-        if state is not None
-        else "three-quarter neutral action pose with relaxed arms and hands"
-    )
     state_block = f"\n{_state_anatomy_directive(char.name, state)}\n" if state is not None else ""
     return (
         f"{config.style_template}\n\n"
@@ -321,15 +309,15 @@ def _character_ref_prompt(
         f"{char.visual_anchor}\n"
         f"{addendum_block}"
         f"{state_block}\n"
-        f"One square image divided into a 2x2 grid of four equal panels: "
-        f"top-left: front-facing, arms at sides; "
-        f"top-right: three-quarter turn, near shoulder forward; "
-        f"bottom-left: side profile, only profile of face visible; "
-        f"bottom-right: {gesture_pose}. "
-        f"All four figures are the SAME character - identical face, hair, build, and clothing. "
-        f"Each figure is fully contained within its quadrant with white space around it - no figure touches or crosses the edge of the image. "
+        f"One square image divided into two equal vertical panels: "
+        f"left: head-and-shoulders three-quarter portrait with a restrained neutral expression; "
+        f"right: neutral full-body three-quarter standing view with relaxed arms and anatomy-compatible hands. "
+        f"Both depictions are the SAME character - identical face, hair, build, proportions, and clothing. "
+        f"Use believable adult anatomy and a natural head-to-body ratio appropriate to the described build. "
+        f"Never chibi, super-deformed, big-headed, doll-like, toy-like, mascot-like, or caricatured. "
+        f"Each depiction is fully contained within its half with white space around it. "
         f"Plain uncluttered reference background; a subtle style-colored studio wash or cast light is allowed, but no scenery. "
-        f"Full body head to toe in each quadrant, no cropping. No text, no labels, no grid lines. "
+        f"The right figure is full body, head to toe, with no cropping. No text, labels, or divider line. "
         f"Clean controlled surfaces; no noisy grain, speckled dappling, repeated texture fields, or muddy micro-detail.\n\n"
         f"Render every figure in the style described above."
     )
@@ -362,19 +350,13 @@ def _character_ref_clean_text_prompt(
     if state is not None:
         parts.append(_state_anatomy_directive(name, state))
 
-    gesture_pose = (
-        "three-quarter view, neutral action pose with relaxed hands"
-        if state is not None
-        else "three-quarter neutral action pose with relaxed arms and hands"
-    )
     grid_desc = (
-        "One square image divided into a 2x2 grid of four equal panels showing the SAME character: "
-        "top-left: front-facing view; "
-        "top-right: three-quarter turn view; "
-        "bottom-left: side profile view; "
-        f"bottom-right: {gesture_pose}. "
-        "Identical face, hair, build, and clothing in all panels. "
-        "Plain neutral background. No text, no labels, no grid lines."
+        "One square image divided into two equal vertical panels showing the SAME character: "
+        "left: head-and-shoulders three-quarter portrait; right: neutral full-body "
+        "three-quarter standing view with relaxed arms and anatomy-compatible hands. "
+        "Identical face, hair, build, natural adult proportions, and clothing in both panels. "
+        "Never chibi, super-deformed, big-headed, doll-like, toy-like, mascot-like, or "
+        "caricatured. Plain neutral background. No text, labels, or divider line."
     )
     parts.append(grid_desc)
 
@@ -489,8 +471,9 @@ def _character_generation_input(
     config: Config, story_bible: StoryBible, char: Character, addendum: str = "",
 ) -> CanonicalCharacterReferenceInput:
     direction = (
-        "Square 2x2 reference sheet with front, three-quarter, profile, and neutral action views. "
-        "Keep every figure fully visible on a plain uncluttered background with no scenery."
+        "Square two-view reference sheet: a head-and-shoulders three-quarter portrait on "
+        "the left and a neutral full-body three-quarter standing view on the right. Keep "
+        "the full-body figure visible head to toe on a plain uncluttered background."
     )
     if addendum.strip():
         direction += f" User fix note: {addendum.strip()}"
@@ -502,13 +485,74 @@ def _character_generation_input(
                 baseline_affect=char.baseline_affect,
             ),),
             visual_brief=direction,
-            composition="Square character reference sheet, full body, no cropping.",
-            constraints="No text, labels, grid lines, scenery, or other characters.",
+            composition="Square two-view character reference sheet, portrait left and full body right.",
+            constraints=(
+                "Natural adult head-to-body ratio; no chibi, super-deformed, big-headed, "
+                "doll-like, toy-like, mascot-like, or caricatured proportions; no text, "
+                "labels, divider lines, scenery, or other characters."
+            ),
             width=1024,
             height=1024,
             generation_width=1024,
             generation_height=1024,
             generation_shape="square",
+        ),
+        selected_style_text=config.style_template,
+        selected_style_source_hash=hashlib.sha256(config.style_template.encode()).hexdigest(),
+    )
+
+
+def _character_style_board_path(project_dir: Path) -> Path:
+    return project_dir / "refs" / "character_style_board.png"
+
+
+def _character_style_reference(project_dir: Path, fallback: Path | None) -> Path | None:
+    """Return the character-domain style authority when it has been generated."""
+    board = _character_style_board_path(project_dir)
+    return board if board.exists() else fallback
+
+
+def _character_style_calibration_input(config: Config) -> AbstractStyleProofInput:
+    """Build a subject-diverse style board that de-entangles style from identity.
+
+    The approved scene proof often contains one specific person. Character-sheet
+    calls can mistake that person's age/build for part of the style, then drift
+    toward stereotypes for other bodies. This single calibration image shows
+    several unrelated adults under one artistic hand and becomes the style-only
+    reference for every canonical and alternate character sheet.
+    """
+    subjects = (
+        PromptSubject(
+            name="slim adult", identity="an unrelated slim adult with natural proportions",
+        ),
+        PromptSubject(
+            name="stout adult", identity="an unrelated stout adult with natural proportions",
+        ),
+        PromptSubject(
+            name="older adult", identity="an unrelated older adult with natural proportions",
+        ),
+    )
+    return AbstractStyleProofInput(
+        asset_identity="cast:character_style_board",
+        prompt=GenerationPromptInput(
+            subjects=subjects,
+            visual_brief=(
+                "Character-rendering calibration board. Show three clearly unrelated adults "
+                "standing side by side at the same scale: one slim, one stout, and one older. "
+                "Use one shared artistic hand, identical facial-modeling depth, line weight, "
+                "mark-making, shadow density, rendering density, and degree of simplification."
+            ),
+            composition="Landscape three-person character calibration lineup, full body, neutral poses.",
+            constraints=(
+                "Natural anatomically believable adult head-to-body ratios appropriate to each "
+                "build; no chibi, super-deformed, big-headed, doll-like, toy-like, mascot-like, "
+                "or caricatured proportions; plain quiet background; no text or labels."
+            ),
+            width=1344,
+            height=768,
+            generation_width=1344,
+            generation_height=768,
+            generation_shape="landscape",
         ),
         selected_style_text=config.style_template,
         selected_style_source_hash=hashlib.sha256(config.style_template.encode()).hexdigest(),
@@ -611,8 +655,9 @@ def _state_asset_prompt(spec: StateAssetGenerationSpec) -> GenerationPromptInput
         )]
         anchors = []
         composition = (
-            "Square 2x2 reference sheet with front, three-quarter, profile, and "
-            "anatomy-compatible neutral action views; no text or labels."
+            "Square two-view reference sheet with a head-and-shoulders three-quarter "
+            "portrait on the left and an anatomy-compatible neutral full-body "
+            "three-quarter view on the right; no text or labels."
         )
     else:
         subjects = []
@@ -624,7 +669,12 @@ def _state_asset_prompt(spec: StateAssetGenerationSpec) -> GenerationPromptInput
     return GenerationPromptInput(
         anchors=tuple(anchors), subjects=tuple(subjects), composition=composition,
         visual_brief=spec.state_direction or None,
-        constraints="The active-state anchor wins over canonical mutable facts.",
+        constraints=(
+            "The active-state anchor wins over canonical mutable facts; preserve the "
+            "canonical parent's head-to-body ratio, silhouette, facial modeling, degree "
+            "of simplification, line weight, and rendering density; never chibi, "
+            "super-deformed, big-headed, doll-like, toy-like, mascot-like, or caricatured."
+        ),
         width=spec.effective_width, height=spec.effective_height,
         generation_width=spec.effective_width, generation_height=spec.effective_height,
         generation_shape=spec.requested_shape,
@@ -703,7 +753,10 @@ async def regenerate_character_ref(
     sem = semaphore or asyncio.Semaphore(1)
     output_path = project_dir / "refs" / char.id / "sheet.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
+    approved_style_ref = _cast_asset_style_ref(
+        config, _find_style_ref(project_dir, config.style_template)
+    )
+    style_ref = _character_style_reference(project_dir, approved_style_ref)
     addendum = _read_character_ref_addendum(project_dir, char.id)
     input_data = _character_generation_input(config, story_bible, char, addendum)
     request = compile_non_panel_request(
@@ -748,7 +801,10 @@ async def regenerate_character_state_ref(
     sem = semaphore or asyncio.Semaphore(1)
     output_path = project_dir / "refs" / char.id / "states" / state.id / "sheet.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
+    approved_style_ref = _cast_asset_style_ref(
+        config, _find_style_ref(project_dir, config.style_template)
+    )
+    style_ref = _character_style_reference(project_dir, approved_style_ref)
     spec = build_character_state_spec(config, project_dir, char, state, style_path=style_ref)
 
     record_asset_version(output_path, project_dir, reason="before_regenerate")
@@ -842,16 +898,68 @@ async def regenerate_location_plate(
     return result
 
 
+async def _generate_character_style_board(
+    config: Config,
+    project_dir: Path,
+    ctx: StageRuntime,
+) -> Path | None:
+    """Generate the shared character-domain style authority once per cast run."""
+    output_path = _character_style_board_path(project_dir)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    approved_style_ref = _cast_asset_style_ref(
+        config, _find_style_ref(project_dir, config.style_template)
+    )
+    input_data = _character_style_calibration_input(config)
+    request = compile_non_panel_request(
+        config,
+        input_data,
+        reference_plan=style_reference_plan(config, approved_style_ref),
+    )
+
+    if asset_matches_request(output_path, request):
+        ctx.record_item_done(cost=0.0)
+        ctx.log("Using existing character style calibration board", level="dim")
+        ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+        return output_path
+
+    ctx.log("Generating shared character style calibration board")
+    try:
+        semaphore = _cast_semaphore(config)
+        async with semaphore:
+            submission = await submit_non_panel_request(
+                config=config,
+                project_dir=project_dir,
+                request=request,
+                output_path=output_path,
+                feature="cast.character_style_board",
+                kind="character_style_board",
+            )
+        result = submission.result
+        assert result is not None
+        ctx.record_item_done(usage=result.usage)
+        ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+        return output_path
+    except Exception as error:
+        cause = error.last_attempt.exception() if hasattr(error, "last_attempt") else error
+        ctx.record_item_failed("character_style_board")
+        ctx.log(
+            f"Character style calibration failed; using approved scene proof: {cause}",
+            level="error",
+        )
+        ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+        return approved_style_ref
+
+
 async def _generate_character_refs(
     config: Config, project_dir: Path, story_bible: StoryBible, ctx: StageRuntime,
     char_ids: list[str] | None = None,
+    style_ref: Path | None = None,
 ) -> None:
     """Part B: Generate character reference sheets.
 
-    Each character gets a single wide composite image (sheet.png) showing all
-    four poses side by side. Generating all poses in one API call is the only
-    reliable way to ensure style consistency — separate calls produce separate
-    style interpretations regardless of reference conditioning.
+    Each character gets one wide composite image (sheet.png) containing a
+    portrait and full-body view. Generating both views in one API call keeps
+    identity, proportions, and rendering consistent within the reference.
     """
     console.print("[bold]Generating character reference images...[/bold]")
     ctx.log("Generating character reference sheets...")
@@ -861,7 +969,7 @@ async def _generate_character_refs(
     # Without it, the model applies different stylistic conventions per character
     # type (human → concept art, cat → anime, creature → dark fantasy).
     candidate_style_ref = _find_style_ref(project_dir, config.style_template)
-    style_ref = _cast_asset_style_ref(config, candidate_style_ref)
+    style_ref = style_ref or _cast_asset_style_ref(config, candidate_style_ref)
     if style_ref:
         console.print(f"[dim]Using style reference: {style_ref.name}[/dim]")
     elif candidate_style_ref:
@@ -893,7 +1001,7 @@ async def _generate_character_refs(
 
             if asset_matches_request(output_path, request):
                 # Migrate older sheets that pre-date cropped-pose references.
-                if not (char_dir / "front.png").exists():
+                if not (char_dir / "portrait.png").exists():
                     try:
                         await asyncio.to_thread(_crop_sheet_to_poses, output_path)
                     except Exception:
@@ -903,8 +1011,8 @@ async def _generate_character_refs(
             else:
                 try:
                     ctx.log(f"Generating ref sheet for {char.name}")
-                    # Square 2x2 grid — each quadrant gives a full-body figure
-                    # ~512x512px of space, enough to avoid edge clipping.
+                    # The shared two-view sheet provides both facial identity
+                    # and body proportions for framing-aware conditioning.
                     # Pass the style sample when the active image model handles
                     # references reliably; gpt-image-2 cast refs stay text-driven.
                     async with semaphore:
@@ -933,12 +1041,13 @@ async def _generate_character_refs(
 async def _generate_character_state_refs(
     config: Config, project_dir: Path, story_bible: StoryBible, ctx: StageRuntime,
     char_ids: list[str] | None = None,
+    style_ref: Path | None = None,
 ) -> None:
     """Generate a reference sheet per visually-significant appearance state.
 
     Each flagged state (e.g. silver hands) is generated from the state's own
     self-contained anchor, reusing the canonical character-sheet prompt so the
-    identity lock and 2x2 pose grid stay consistent. Output lives under
+    identity lock and two-view layout stay consistent. Output lives under
     refs/<char>/states/<state_id>/ and is selected by prompting.py when that
     state is active for a panel.
     """
@@ -949,7 +1058,9 @@ async def _generate_character_state_refs(
 
     console.print("[bold]Generating character appearance-state refs...[/bold]")
     ctx.log("Generating character appearance-state refs...")
-    style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
+    style_ref = style_ref or _cast_asset_style_ref(
+        config, _find_style_ref(project_dir, config.style_template)
+    )
     semaphore = _cast_semaphore(config)
 
     with make_progress(ctx.on_event) as progress:
@@ -960,6 +1071,17 @@ async def _generate_character_state_refs(
             out_dir = project_dir / "refs" / char.id / "states" / state_id
             out_dir.mkdir(parents=True, exist_ok=True)
             output_path = out_dir / "sheet.png"
+            parent_path = artifacts.character_ref_sheet_path(project_dir, char.id)
+            if not parent_path.exists():
+                ctx.record_item_failed(f"{char.id}:{state_id}")
+                ctx.log(
+                    f"Skipped {state_id} ref for {char.name}: canonical ref is unavailable",
+                    level="error",
+                )
+                ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+                if task is not None:
+                    progress.advance(task)
+                return
             spec = build_character_state_spec(
                 config, project_dir, char, state_obj, style_path=style_ref
             )
@@ -970,7 +1092,7 @@ async def _generate_character_state_refs(
             wire = _compile_state_asset_wire(config, spec, project_dir)
 
             if asset_matches_request(output_path, wire):
-                if not (out_dir / "front.png").exists():
+                if not (out_dir / "portrait.png").exists():
                     try:
                         await asyncio.to_thread(_crop_sheet_to_poses, output_path)
                     except Exception:
@@ -1163,6 +1285,8 @@ async def run(
     total_items = 0
     if should_generate_refs:
         chars_for_count = [c for c in story_bible.characters if not char_ids or c.id in char_ids]
+        if chars_for_count:
+            total_items += 1  # shared character style calibration board
         total_items += len(chars_for_count)
         total_items += sum(len(_character_state_jobs(c)) for c in chars_for_count)
     if should_generate_plates:
@@ -1176,8 +1300,16 @@ async def run(
 
     with ctx.execute(total=total_items):
         if should_generate_refs:
-            await _generate_character_refs(config, project_dir, story_bible, ctx, char_ids)
-            await _generate_character_state_refs(config, project_dir, story_bible, ctx, char_ids)
+            character_style_ref = (
+                await _generate_character_style_board(config, project_dir, ctx)
+                if chars_for_count else None
+            )
+            await _generate_character_refs(
+                config, project_dir, story_bible, ctx, char_ids, character_style_ref
+            )
+            await _generate_character_state_refs(
+                config, project_dir, story_bible, ctx, char_ids, character_style_ref
+            )
             ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
 
         if should_generate_plates:
@@ -1228,8 +1360,12 @@ def estimate_state_reference_count(
     )
 
     story_bible = artifacts.read_story_bible(project_dir)
-    style_ref = _cast_asset_style_ref(
+    approved_style_ref = _cast_asset_style_ref(
         config, _find_style_ref(project_dir, config.style_template)
+    )
+    style_ref = (
+        _character_style_reference(project_dir, approved_style_ref)
+        if asset_kind == "character" else approved_style_ref
     )
     profile = image_model_profile_for_config(config)
     if asset_kind == "character":
@@ -1309,11 +1445,19 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
     style_plan = style_reference_plan(config, style_ref)
     total = 0.0
+    character_style_ref = _character_style_reference(project_dir, style_ref)
+    character_style_plan = style_reference_plan(config, character_style_ref)
+    if story_bible.characters and not _character_style_board_path(project_dir).exists():
+        total += estimate_non_panel_request(
+            config,
+            _character_style_calibration_input(config),
+            reference_plan=style_plan,
+        ).cost_usd
     for char in story_bible.characters:
         if not (project_dir / "refs" / char.id / "sheet.png").exists():
             total += estimate_non_panel_request(
                 config, _character_generation_input(config, story_bible, char),
-                reference_plan=style_plan,
+                reference_plan=character_style_plan,
             ).cost_usd
     for loc in story_bible.locations:
         for stem, anchor, state_id in _location_plate_jobs(loc):

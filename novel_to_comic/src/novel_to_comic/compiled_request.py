@@ -206,6 +206,10 @@ _SUBJECT_STYLE_IGNORE = (
     "paper texture", "edge treatment", "rendering density",
 )
 
+_STATE_PARENT_STYLE_IGNORE = (
+    "medium", "palette", "lighting", "paper texture", "background",
+)
+
 
 def compile_reference_instruction(
     asset: ReferenceAsset, index: int
@@ -251,12 +255,22 @@ def compile_reference_instruction(
         elif scope is AuthorityScope.IDENTITY_ONLY:
             ignore_phrase = _facet_phrase(asset.ignore_facets)
             conflict_note = " that conflict with the active appearance state" if state_id else ""
-            semantic = (
-                f"identity reference for {label} — preserve only {preserve_phrase}; "
-                f"ignore {ignore_phrase}{conflict_note}; also ignore its {style_ignore}; "
-                "the project style direction is the sole style authority; do not copy its pose "
-                "or background"
-            )
+            if state_id:
+                semantic = (
+                    f"canonical parent reference for {label} — preserve only {preserve_phrase}; "
+                    f"ignore {ignore_phrase}{conflict_note}; match its compatible head-to-body "
+                    "ratio, silhouette, facial modeling, degree of simplification, line weight, "
+                    "and rendering density; the active-state anchor overrides changed anatomy "
+                    "or wardrobe and the project style direction overrides any global style "
+                    "conflict; do not copy its pose or background"
+                )
+            else:
+                semantic = (
+                    f"identity reference for {label} — preserve only {preserve_phrase}; "
+                    f"ignore {ignore_phrase}{conflict_note}; also ignore its {style_ignore}; "
+                    "the project style direction is the sole style authority; do not copy its pose "
+                    "or background"
+                )
         else:
             # A subject under CONTEXTUAL scope is unusual (shouldn't happen for
             # a finalized plan); fall back to a minimal identity instruction.
@@ -338,7 +352,11 @@ def compile_reference_instruction(
             )
     )
     instruction_ignore = (
-        tuple(dict.fromkeys((*asset.ignore_facets, *_SUBJECT_STYLE_IGNORE)))
+        tuple(dict.fromkeys((
+            *asset.ignore_facets,
+            *(_STATE_PARENT_STYLE_IGNORE if state_id and scope is AuthorityScope.IDENTITY_ONLY
+              else _SUBJECT_STYLE_IGNORE),
+        )))
         if role == "subject"
         else (
             asset.ignore_facets

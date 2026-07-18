@@ -267,7 +267,7 @@ def test_selected_reference_byte_change_invalidates_panel_cache(tmp_path, monkey
         height=1024,
         steps=8,
     ).model_dump_json())
-    ref = tmp_path / "refs" / "char_001" / "front.png"
+    ref = tmp_path / "refs" / "char_001" / "full_body.png"
     ref.parent.mkdir(parents=True)
     ref.write_bytes(b"reference-v1")
 
@@ -435,6 +435,7 @@ def test_gpt_image_2_reference_resolution_keeps_location_plate_text_only(tmp_pat
         scene_id="scene_001",
         panel_number=1,
         full_prompt="A panel.",
+        location_id="loc_001",
         width=768,
         height=1024,
         steps=28,
@@ -470,10 +471,9 @@ def test_gpt_image_2_reference_resolution_keeps_location_plate_text_only(tmp_pat
 def test_gpt_image_2_reference_resolution_uses_minimal_subject_refs(tmp_path):
     char_dir = tmp_path / "refs" / "char_001"
     char_dir.mkdir(parents=True)
-    front = char_dir / "front.png"
-    three_quarter = char_dir / "three_quarter.png"
-    gesture = char_dir / "gesture.png"
-    for path in (front, three_quarter, gesture):
+    portrait = char_dir / "portrait.png"
+    full_body = char_dir / "full_body.png"
+    for path in (portrait, full_body):
         path.write_bytes(b"char")
 
     prop_dir = tmp_path / "refs" / "props" / "prop_001"
@@ -516,8 +516,8 @@ def test_gpt_image_2_reference_resolution_uses_minimal_subject_refs(tmp_path):
         prompt,
     )
 
-    assert [ref.path for ref in gpt_refs] == [front]
-    assert [ref.path for ref in gemini_refs] == [three_quarter, prop_ref]
+    assert [ref.path for ref in gpt_refs] == [portrait]
+    assert [ref.path for ref in gemini_refs] == [full_body, prop_ref]
     assert [ref.role for ref in gemini_refs] == ["subject", "prop"]
     assert [ref.label for ref in gemini_refs] == ["Mr. White", "prop_001"]
 

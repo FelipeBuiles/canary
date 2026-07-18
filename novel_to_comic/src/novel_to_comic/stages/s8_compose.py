@@ -28,7 +28,13 @@ from novel_to_comic import artifacts
 from novel_to_comic.assembly.html_renderer import (
     browser_context,
     build_page_html,
+    inspect_html_lettering_metrics,
     render_html_to_png,
+)
+from novel_to_comic.assembly.lettering_preflight import (
+    PanelLetteringMetrics,
+    classify_lettering_metrics,
+    has_blocking_lettering_issues,
 )
 from novel_to_comic.assembly.lettering_style import load_lettering_style
 from novel_to_comic.config import Config
@@ -277,6 +283,7 @@ async def _render_and_export(
 ) -> None:
     """Render each page JSON to HTML + PNG, then write PDF/CBZ exports."""
     lettering = load_lettering_style(project_dir)
+    lettering_metrics: list[PanelLetteringMetrics] = []
     async with browser_context() as browser:
         with make_progress(ctx.on_event) as progress:
             task = progress.add_task("Rendering pages", total=len(json_paths))
@@ -288,6 +295,25 @@ async def _render_and_export(
                 html_path = html_dir / f"page_{comic_page.page_number:03d}.html"
                 html_path.write_text(html_content, encoding="utf-8")
 
+                rendered = await inspect_html_lettering_metrics(html_content, browser=browser)
+                panel_numbers = {panel.id: panel.panel_number for panel in comic_page.panels}
+                lettering_metrics.extend(
+                    PanelLetteringMetrics(
+                        page_number=comic_page.page_number,
+                        panel_id=str(item["panel_id"]),
+                        panel_number=panel_numbers.get(str(item["panel_id"]), 0),
+                        coverage_ratio=float(item["coverage_ratio"]),
+                        max_auto_stack_ratio=float(item["max_auto_stack_ratio"]),
+                        overflowing_bubble_ids=tuple(
+                            str(value) for value in item["overflowing_bubble_ids"]
+                        ),
+                        unsafe_bubble_ids=tuple(
+                            str(value) for value in item["unsafe_bubble_ids"]
+                        ),
+                    )
+                    for item in rendered
+                )
+
                 png_path = png_dir / f"page_{comic_page.page_number:03d}.png"
                 await render_html_to_png(
                     html_content, png_path,
@@ -298,6 +324,17 @@ async def _render_and_export(
                 ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
                 if task is not None:
                     progress.advance(task)
+
+    lettering_issues = classify_lettering_metrics(lettering_metrics)
+    if has_blocking_lettering_issues(lettering_issues):
+        blocking = [issue for issue in lettering_issues if issue.severity == "error"]
+        summary = "; ".join(
+            f"page {issue.page_number}, panel {issue.panel_number}: {issue.message}"
+            for issue in blocking[:8]
+        )
+        if len(blocking) > 8:
+            summary += f"; and {len(blocking) - 8} more"
+        raise ValueError(f"Lettering preflight blocked export: {summary}")
 
     _do_exports(png_paths, exports_dir, export_formats)
     for fmt in export_formats:

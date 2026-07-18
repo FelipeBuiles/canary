@@ -92,6 +92,7 @@ keys that used to live on `litellm-gw` now live here too:
 LITELLM_MASTER_KEY=sk-litellm-<from above>
 LITELLM_SALT_KEY=<from above>
 LITELLM_API_KEY=<same value as LITELLM_MASTER_KEY>
+CANARY_OPS_TOKEN=<random operator-only token, e.g. openssl rand -hex 32>
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 GEMINI_API_KEY=AIza...
@@ -173,9 +174,9 @@ or a malformed `config.yaml`.
 
 ### Readiness probe contract
 
-`fly.toml` points the health check at `GET /api/health/ready`, defined in
-`server/app.py`. It returns `error` (and Fly will keep the machine unhealthy)
-if **either** dependency is unreachable:
+Fly's service-level routing check points at the cheap, process-local
+`GET /api/health`. Monitor `GET /api/health/ready` separately for dependency
+health; it returns `error` if **either** dependency is unreachable:
 
 - **Supabase** — runs `select id from projects limit 1`. Needs the schema from
   Step 1 and a valid `SUPABASE_SECRET_KEY`.
@@ -184,8 +185,30 @@ if **either** dependency is unreachable:
 
 In local development, a dependency is skipped when both of its settings are
 absent. In `CANARY_ENV=production`, missing or partial dependency configuration
-is an error and the endpoint returns HTTP 503. Fly therefore keeps the machine
-unhealthy until both checks report `ok`.
+is an error and the endpoint returns HTTP 503. Keeping this deep check out of
+the routing path prevents a transient provider outage from making the only
+Machine unroutable.
+
+### Check whether a deploy is safe
+
+`GET /api/ops/deployment-status` aggregates the in-memory pipeline tasks,
+style work, queued/running image jobs, and draw panels. It returns
+`safe_to_deploy: true` only when all counts are zero. The endpoint is protected
+by the `CANARY_OPS_TOKEN` secret and does not reveal project or user details:
+
+```bash
+curl -fsS https://canary-web.fly.dev/api/ops/deployment-status \
+  -H "X-Canary-Ops-Token: $CANARY_OPS_TOKEN"
+
+# Or use the repository guard: it prints the counts and exits non-zero while
+# work is active, so it can gate a manual deploy command.
+python scripts/check_deploy_safe.py
+```
+
+Treat this as a pre-deploy observation, not an atomic drain lock: a user can
+start work after the check. During the soft launch, announce a short maintenance
+window or otherwise pause generation intake, wait for `safe_to_deploy: true`,
+then deploy. A server-enforced drain mode is the next step before unattended CD.
 
 ### Verify the proxy is reachable from the web process
 
@@ -225,6 +248,10 @@ fly volumes update <volume-id> --scheduled-snapshots=true --snapshot-retention 1
 
 Perform one restore drill before launch; a snapshot that has never been restored
 is not yet a proven recovery path.
+
+The `canary_projects` volume is currently provisioned at 10 GB. Monitor
+`fly_volume_used_pct` and extend it before it reaches 80%; Fly volumes can grow
+but cannot shrink.
 
 ## Step 5 — go-live checklist
 
@@ -317,6 +344,7 @@ One consolidated set, since the proxy and web app share a container:
   only the loopback proxy uses these keys for provider requests.
 - **Web-app layer:** `LITELLM_API_KEY` (== `LITELLM_MASTER_KEY`), `SUPABASE_URL`,
   `SUPABASE_SECRET_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
+  `CANARY_OPS_TOKEN`,
   `SENTRY_DSN` (optional — omit if invalid), `LANGFUSE_*` /
   `OTEL_EXPORTER_OTLP_ENDPOINT` (optional).
 

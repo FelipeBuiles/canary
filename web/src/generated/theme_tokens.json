@@ -14,7 +14,7 @@
     "--bubble-border": "#1A1A1A",
     "--bubble-border-width": "2px",
     "--bubble-font-size": "48px",
-    "--bubble-padding": "30px 40px",
+    "--bubble-padding": "18px 26px",
     "--bubble-max-width": "52%",
     "--bubble-center-width": "68%",
     "--speaker-color": "#664400",

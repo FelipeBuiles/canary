@@ -296,8 +296,13 @@ def build_character_state_spec(
         prompt_parts.append(direction)
         direction_parts.append(direction)
     composition = (
-        "One square 2x2 reference sheet: front, three-quarter, profile, and neutral mid-action views. "
-        "Use only poses compatible with the anatomy in the active-state anchor. Same identity and active-state appearance in every view. No text or labels."
+        "One square two-view reference sheet: a head-and-shoulders three-quarter portrait "
+        "on the left and a neutral full-body three-quarter standing view on the right. "
+        "Use only poses compatible with the anatomy in the active-state anchor. Preserve "
+        "the canonical parent's natural head-to-body ratio, silhouette, facial modeling, "
+        "degree of simplification, line weight, and rendering density. Same identity and "
+        "active-state appearance in both views. Never chibi, super-deformed, big-headed, "
+        "doll-like, toy-like, mascot-like, or caricatured. No text or labels."
     )
     prompt_parts.append(composition)
     direction_parts.append(composition)
@@ -435,6 +440,16 @@ def revalidate_state_asset_lineage(state_path: Path, parent_path: Path) -> dict 
 #: state ref carries full appearance authority; the canonical parent used as a
 #: compatible identity reference preserves only these facets.
 _CHARACTER_IDENTITY_FACETS: tuple[str, ...] = ("face", "hair", "build")
+
+# Rendering facets inherited from the canonical character sheet by every
+# compatible alternate state. These are deliberately separate from identity
+# replacement detection: a total transformation may replace the character,
+# while an ordinary injury/wardrobe state must retain the same proportions and
+# degree of stylization as its parent.
+_CHARACTER_RENDERING_FACETS: tuple[str, ...] = (
+    "proportions", "silhouette", "facial_modeling", "degree_of_simplification",
+    "line_weight", "rendering_density",
+)
 
 #: Facets that a character state anchor may override. When overridden, the
 #: canonical parent ignores them (it must not reassert the canonical version).
@@ -593,7 +608,7 @@ def _build_character_conditioning_assets(
     # Identity facets not overridden are what the parent can still condition.
     preserve_facets = tuple(
         f for f in _CHARACTER_IDENTITY_FACETS if f not in set(ignore_facets)
-    )
+    ) + _CHARACTER_RENDERING_FACETS
     asset = ReferenceAsset(
         path=parent_path,
         role="subject",

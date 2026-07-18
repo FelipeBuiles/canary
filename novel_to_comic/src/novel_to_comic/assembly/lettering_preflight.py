@@ -84,11 +84,15 @@ def classify_lettering_metrics(
             issues.append(
                 LetteringPreflightIssue(
                     code="lettering_unsafe_area",
-                    severity="error",
+                    # SVG perimeter sampling is deliberately conservative and
+                    # can flag visually sound auto-sized balloons at scalloped
+                    # corners. Keep it visible for review, but reserve export
+                    # blocking for objective overflow/coverage failures.
+                    severity="warning",
                     bubble_ids=panel.unsafe_bubble_ids,
                     message=(
-                        f"Panel {panel.panel_number} has text outside its balloon safe area. "
-                        "Shorten the text or enlarge the balloon before export."
+                        f"Panel {panel.panel_number} may have text close to its balloon edge. "
+                        "Review the rendered lettering before export."
                     ),
                     **base,
                 )

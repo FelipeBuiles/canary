@@ -23,8 +23,8 @@ function bubbleStyle(bubble: Bubble): React.CSSProperties | undefined {
   const isNarration = bubble.type === "narration";
 
   if (isPinned) {
-    style.left = `${Math.round(bubble.x!)}px`;
-    style.top = `${Math.round(bubble.y!)}px`;
+    style.left = `${Math.round(Math.max(8, bubble.x!))}px`;
+    style.top = `${Math.round(Math.max(8, bubble.y!))}px`;
   }
   if (bubble.width != null) style.width = `${Math.round(bubble.width)}px`;
   if (bubble.font_family) style.fontFamily = bubble.font_family;
@@ -41,6 +41,16 @@ function bubbleStyle(bubble: Bubble): React.CSSProperties | undefined {
     style[isNarration ? "--caption-border-width" : "--bubble-border-width"] = width;
   }
   return Object.keys(style).length > 0 ? style : undefined;
+}
+
+function fitPinnedElement(host: HTMLElement) {
+  const panel = host.closest<HTMLElement>(".panel");
+  if (!panel) return;
+  const gutter = 8;
+  const maxLeft = Math.max(gutter, panel.clientWidth - host.offsetWidth - gutter);
+  const maxTop = Math.max(gutter, panel.clientHeight - host.offsetHeight - gutter);
+  host.style.left = `${Math.min(maxLeft, Math.max(gutter, host.offsetLeft))}px`;
+  host.style.top = `${Math.min(maxTop, Math.max(gutter, host.offsetTop))}px`;
 }
 
 /**
@@ -73,14 +83,26 @@ export function BubbleElement({ bubble, selected }: BubbleElementProps) {
     if (!host) return;
     let active = true;
     const fit = () => {
-      if (active) verifyLetteringSafeArea(host);
+      if (!active) return;
+      if (isPinned) fitPinnedElement(host);
+      verifyLetteringSafeArea(host);
     };
     fit();
     void document.fonts?.ready.then(fit);
     return () => {
       active = false;
     };
-  }, [bubble.type, bubble.text, bubble.speaker_name, bubble.width, bubble.font_family, bubble.font_size]);
+  }, [
+    bubble.type,
+    bubble.text,
+    bubble.speaker_name,
+    bubble.x,
+    bubble.y,
+    bubble.width,
+    bubble.font_family,
+    bubble.font_size,
+    isPinned,
+  ]);
 
   return (
     <div

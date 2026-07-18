@@ -319,7 +319,7 @@ def test_character_and_location_state_corpus_executes_authority_matrix(tmp_path:
     subject.test_explicit_canonical_equivalent_state_allows_full_canonical_ref(tmp_path / "restored")
 
     minor_dir = tmp_path / "minor-wardrobe"
-    base_ref = minor_dir / "refs" / "char_mara" / "front.png"
+    base_ref = minor_dir / "refs" / "char_mara" / "full_body.png"
     base_ref.parent.mkdir(parents=True, exist_ok=True)
     base_ref.write_bytes(b"canonical-mara")
     minor_prompt = _prompt(subjects=[PromptSubject(
@@ -640,7 +640,10 @@ def test_architecture_contract_has_no_raw_production_caller_or_second_selector()
         }
         assert not calls, f"{module_name} still calls a raw provider interface: {calls}"
 
-    handler_tree = ast.parse(Path("../litellm_handlers/provider_wire.py").resolve().read_text())
+    repo_root = Path(__file__).resolve().parents[2]
+    handler_tree = ast.parse(
+        (repo_root / "litellm_handlers" / "provider_wire.py").read_text()
+    )
     imports = {
         alias.name
         for node in ast.walk(handler_tree)

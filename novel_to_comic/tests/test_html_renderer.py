@@ -64,6 +64,85 @@ def test_pinned_narration_keeps_caption_style(tmp_path: Path):
     assert '<svg class="tail-svg"' not in html
 
 
+def test_pinned_bubble_coordinates_are_clamped_inside_panel(tmp_path: Path):
+    page = ComicPage(
+        page_number=1,
+        panels=[
+            PagePanel(
+                id="scene_001-001",
+                image_path="draw/missing.png",
+                scene_id="scene_001",
+                panel_number=1,
+                bubbles=[
+                    Bubble(
+                        id="thought",
+                        type="thought",
+                        text="Too close.",
+                        x=-120,
+                        y=-40,
+                    )
+                ],
+            )
+        ],
+    )
+
+    html = build_page_html(page, tmp_path)
+
+    assert 'style="left: 8px; top:  8px"' in html
+
+
+def test_rendered_pinned_bubble_is_refit_at_far_panel_edge(tmp_path: Path):
+    page = ComicPage(
+        page_number=1,
+        layout="1",
+        panels=[
+            PagePanel(
+                id="scene_001-001",
+                image_path="draw/missing.png",
+                scene_id="scene_001",
+                panel_number=1,
+                bubbles=[
+                    Bubble(
+                        id="speech",
+                        type="speech",
+                        text="Keep me visible.",
+                        x=2400,
+                        y=3300,
+                        width=520,
+                    )
+                ],
+            )
+        ],
+    )
+
+    html = build_page_html(page, tmp_path)
+    metrics = asyncio.run(inspect_html_lettering_metrics(html))
+
+    assert metrics[0]["overflowing_bubble_ids"] == []
+
+
+def test_balloon_geometry_is_compact_and_panel_responsive(tmp_path: Path):
+    page = ComicPage(
+        page_number=1,
+        panels=[
+            PagePanel(
+                id="scene_001-001",
+                image_path="draw/missing.png",
+                scene_id="scene_001",
+                panel_number=1,
+                bubbles=[Bubble(id="thought", type="thought", text="A long thought.")],
+            )
+        ],
+    )
+
+    html = build_page_html(page, tmp_path)
+
+    assert "--bubble-padding: 18px 26px" in html
+    assert "padding: 34px 42px 48px" in html
+    assert ".bubble.thought { max-width: 84%; }" in html
+    assert "width: 80%" in html
+
+
 def test_semantic_balloon_shapes_and_upper_flow_render(tmp_path: Path):
     page = ComicPage(
         page_number=1,
@@ -177,11 +256,11 @@ def test_multiline_text_is_verified_inside_actual_svg_fill(tmp_path: Path):
 
 
 def _speech_path() -> str:
-    return "M8 2 C32 0 68 1 90 3"
+    return "M4 1 C30 0 70 0 94 2"
 
 
 def _thought_path() -> str:
-    return "M8 47 C2 38 6 27 16 24 C18 5"
+    return "M4 50 C-2 39 1 27 10 22 C7 10"
 
 
 def _narration_path() -> str:

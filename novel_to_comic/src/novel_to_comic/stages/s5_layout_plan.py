@@ -86,8 +86,8 @@ logger = logging.getLogger("canary.plan")
 # a last resort.
 _MAX_VISUAL_PER_PANEL = 7
 _MAX_DIALOGUE_PER_PANEL = 4
-_MAX_DIALOGUE_WORDS_PER_PANEL = 30
-_MAX_NARRATION_WORDS_PER_PANEL = 20
+_MAX_DIALOGUE_WORDS_PER_PANEL = 24
+_MAX_NARRATION_WORDS_PER_PANEL = 16
 
 # Average beats per panel used to derive a concrete target panel count.
 _BEATS_PER_PANEL_AVG = 3.0

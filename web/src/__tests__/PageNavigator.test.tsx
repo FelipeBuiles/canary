@@ -110,9 +110,21 @@ describe("PageNavigator thumbnails", () => {
 
     act(() => fireEvent.error(thumbImg(1)));
 
-    expect(screen.getByTitle("Page 1 live preview").getAttribute("src")).toBe(
+    const preview = screen.getByTitle("Page 1 live preview");
+    expect(preview.getAttribute("src")).toBe(
       "/api/projects/proj/pages/1/preview",
     );
+    expect(preview.classList.contains("pointer-events-none")).toBe(true);
+  });
+
+  it("selects a page from the whole preview card", () => {
+    const onSelect = vi.fn();
+    render(<PageNavigator project="proj" pages={PAGES} currentPage={1} onSelect={onSelect} />);
+
+    fireEvent.click(thumbImg(2));
+
+    expect(onSelect).toHaveBeenCalledWith(2);
+    expect(screen.getByRole("button", { name: "Select page 2, 5 panels" })).toBeTruthy();
   });
 
   it("does not retry by default (shouldRetryThumbs omitted)", () => {

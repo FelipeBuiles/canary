@@ -347,17 +347,12 @@ def _character_identity(character: Character, resolved: ResolvedAppearance) -> s
 def _pose_crops_in(ref_dir: Path, project_dir: Path, character_count: int) -> list[str]:
     """Project-relative pose crops from a ref directory.
 
-    Prefers individual pose crops (front/three_quarter/gesture) over the 2x2
-    sheet composite — passing the grid directly leaks its layout into the
+    Prefers the portrait/full-body crops over the combined sheet — passing the
+    sheet directly leaks its layout into the
     model's panel compositions. Falls back to sheet.png only when crops are
     not yet available. Returns [] when the directory has no usable refs.
     """
-    if character_count <= 1:
-        views = ["front", "three_quarter", "gesture"]
-    elif character_count == 2:
-        views = ["front", "three_quarter"]
-    else:
-        views = ["front"]
+    views = ["portrait", "full_body"] if character_count <= 2 else ["portrait"]
     cropped = [
         str((ref_dir / f"{v}.png").relative_to(project_dir))
         for v in views

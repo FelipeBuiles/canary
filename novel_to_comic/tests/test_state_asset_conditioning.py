@@ -62,7 +62,7 @@ def _write_style(project_dir: Path, data: bytes = b"style-sample-bytes") -> tupl
 
 
 def _write_minimal_png(path: Path) -> None:
-    """Write a valid 4x4 PNG so _crop_sheet_to_poses can crop quadrants."""
+    """Write a valid 4x4 PNG so _crop_sheet_to_poses can crop both views."""
     from PIL import Image
     Image.new("RGB", (4, 4), (128, 128, 128)).save(path)
 
@@ -158,7 +158,11 @@ def test_character_co_located_outfit_change_preserves_identity_facets(tmp_path: 
     subject = next(asset for asset in plan.selected if asset.role == "subject")
 
     assert spec.lineage_mode == LineageMode.CONDITIONED
-    assert subject.preserve_facets == ("face", "hair", "build")
+    assert subject.preserve_facets == (
+        "face", "hair", "build", "proportions", "silhouette",
+        "facial_modeling", "degree_of_simplification", "line_weight",
+        "rendering_density",
+    )
     assert subject.ignore_facets == ("wardrobe",)
 
 

@@ -488,6 +488,36 @@
   }
 }
 
+/* Compose editor: a touched lettering element owns the gesture so mobile
+   browsers do not turn a bubble drag into page scrolling. Canvas scrolling
+   remains available everywhere else. */
+.page-editor [data-editor-selectable],
+.page-editor [data-panel-id].panel-reframe {
+  touch-action: none;
+  -webkit-user-drag: none;
+}
+
+/* The inspector is a thumb-reachable bottom sheet on phones and returns to
+   its element-anchored floating palette position on larger workspaces. */
+.compose-floating-inspector {
+  position: fixed;
+  inset-inline: 0.5rem;
+  bottom: max(0.5rem, env(safe-area-inset-bottom));
+  max-height: min(72dvh, calc(100dvh - 1rem - env(safe-area-inset-bottom)));
+}
+
+@media (min-width: 768px) {
+  .compose-floating-inspector {
+    position: absolute;
+    inset: auto;
+    top: var(--compose-inspector-top);
+    left: var(--compose-inspector-left);
+    width: 300px;
+    max-width: calc(100% - 2rem);
+    max-height: var(--compose-inspector-max-height);
+  }
+}
+
 /* New pipeline log lines slide up 4px as they arrive (stage-running ticker). */
 @keyframes ticker-rise {
   0% {

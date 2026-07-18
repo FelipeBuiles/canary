@@ -66,7 +66,8 @@ function Thumb({
       <img
         src={pageThumbUrl(project, pageNumber, tick)}
         alt={`Page ${pageNumber} thumbnail`}
-        className={`${failed ? "hidden" : "relative"} h-full w-full object-contain`}
+        className={`${failed ? "hidden" : "relative"} pointer-events-none h-full w-full select-none object-contain`}
+        draggable={false}
         loading="lazy"
         onLoad={() => setFailed(false)}
         onError={() => setFailed(true)}
@@ -75,7 +76,7 @@ function Thumb({
         <iframe
           src={pagePreviewUrl(project, pageNumber)}
           title={`Page ${pageNumber} live preview`}
-          className="absolute left-0 top-0 border-0 bg-white"
+          className="pointer-events-none absolute left-0 top-0 border-0 bg-white"
           style={{
             width: PAGE_W,
             height: PAGE_H,
@@ -111,8 +112,10 @@ export function PageNavigator({
           return (
             <button
               key={p.page_number}
+              type="button"
               onClick={() => onSelect(p.page_number)}
               aria-current={isActive ? "page" : undefined}
+              aria-label={`Select page ${p.page_number}, ${p.panel_count} panels`}
               className={`group block w-[124px] shrink-0 border-[2px] text-left transition-[background-color,border-color,box-shadow,transform] duration-150 md:w-full ${
                 isActive
                   ? "border-hero-red bg-bristol shadow-[2px_2px_0_0_var(--color-outline-ghost)]"

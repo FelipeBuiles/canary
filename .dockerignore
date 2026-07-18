@@ -4,9 +4,12 @@ projects
 samples
 web/node_modules
 web/dist
-novel_to_comic/.venv
-novel_to_comic/__pycache__
-novel_to_comic/src/**/__pycache__
+.venv
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/*.egg-info
 novel_to_comic/tests
 *.pyc
 *.pyo

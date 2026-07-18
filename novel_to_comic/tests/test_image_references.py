@@ -128,7 +128,7 @@ class TestImageModelProfile:
 # ── Selection matrix: 0–4 subjects + contextual candidates ────────────────────
 
 
-def _setup_subject_refs(project_dir: Path, char_ids: list[str], *, pose="front") -> dict[str, Path]:
+def _setup_subject_refs(project_dir: Path, char_ids: list[str], *, pose="portrait") -> dict[str, Path]:
     """Write one canonical ref per character."""
     return {cid: _write_png(project_dir / "refs" / cid / f"{pose}.png") for cid in char_ids}
 
@@ -267,8 +267,8 @@ class TestSubjectMatrix:
         """Deliverable: close framing picks a face-forward crop; wide picks
         full-body. Same character dir, multiple crops."""
         char_dir = tmp_path / "refs" / "char_001"
-        _write_png(char_dir / "front.png")
-        _write_png(char_dir / "gesture.png")
+        _write_png(char_dir / "portrait.png")
+        _write_png(char_dir / "full_body.png")
 
         close_prompt = _prompt(subjects=[_subject()])
         close_prompt.composition = "close-up portrait, face filling the panel"
@@ -277,7 +277,7 @@ class TestSubjectMatrix:
             project_dir=tmp_path,
             prompt=close_prompt,
         )
-        assert close_plan.selected[0].path.name == "front.png"
+        assert close_plan.selected[0].path.name == "portrait.png"
 
         wide_prompt = _prompt(subjects=[_subject()])
         wide_prompt.composition = "wide establishing panel, full body visible"
@@ -286,7 +286,7 @@ class TestSubjectMatrix:
             project_dir=tmp_path,
             prompt=wide_prompt,
         )
-        assert wide_plan.selected[0].path.name == "gesture.png"
+        assert wide_plan.selected[0].path.name == "full_body.png"
 
     @pytest.mark.parametrize("subject_count", range(5))
     @pytest.mark.parametrize("composition", [
@@ -332,7 +332,7 @@ class TestSubjectMatrix:
 class TestOneCropPerCharacter:
     def test_many_crops_select_one(self, tmp_path):
         char_dir = tmp_path / "refs" / "char_001"
-        for pose in ("front", "three_quarter", "profile", "gesture"):
+        for pose in ("portrait", "full_body"):
             _write_png(char_dir / f"{pose}.png")
         prompt = _prompt(subjects=[_subject()])
         plan = build_reference_plan(
@@ -343,29 +343,29 @@ class TestOneCropPerCharacter:
         subject_selected = [a for a in plan.selected if a.role == "subject"]
         assert len(subject_selected) == 1
 
-    def test_explicit_primary_pose_wins(self, tmp_path):
-        """Deliverable 5: the user's explicit primary pose wins on every route."""
+    def test_internal_primary_override_wins(self, tmp_path):
+        """A legacy/internal primary override still wins for compatibility."""
         char_dir = tmp_path / "refs" / "char_001"
-        for pose in ("front", "three_quarter", "profile", "gesture"):
+        for pose in ("portrait", "full_body"):
             _write_png(char_dir / f"{pose}.png")
-        # Mark profile as the primary pose.
+        # Mark portrait as the legacy/internal primary override.
         primary_refs = tmp_path / "refs" / "primary_refs.json"
-        primary_refs.write_text(json.dumps({"char_001": "profile"}))
+        primary_refs.write_text(json.dumps({"char_001": "portrait"}))
 
         prompt = _prompt(subjects=[_subject()])
         plan = build_reference_plan(
             route_profile=image_model_profile(GATEWAY_IMAGE_REVE),
             project_dir=tmp_path,
             prompt=prompt,
-            primary_poses={"char_001": "profile"},
+            primary_poses={"char_001": "portrait"},
         )
         subject_selected = [a for a in plan.selected if a.role == "subject"]
-        assert subject_selected[0].path.name == "profile.png"
+        assert subject_selected[0].path.name == "portrait.png"
 
-    def test_primary_pose_wins_in_state_directory(self, tmp_path):
-        """Deliverable 5: primary pose wins for assets nested in state dirs."""
+    def test_internal_primary_override_wins_in_state_directory(self, tmp_path):
+        """The internal override also applies to assets nested in state dirs."""
         state_dir = tmp_path / "refs" / "char_001" / "states" / "silver"
-        for pose in ("front", "three_quarter", "profile", "gesture"):
+        for pose in ("portrait", "full_body"):
             _write_png(state_dir / f"{pose}.png")
         prompt = _prompt(
             subjects=[_subject(appearance_state_id="silver", appearance_locked=True)],
@@ -374,10 +374,10 @@ class TestOneCropPerCharacter:
             route_profile=image_model_profile(GATEWAY_IMAGE_REVE),
             project_dir=tmp_path,
             prompt=prompt,
-            primary_poses={"char_001": "gesture"},
+            primary_poses={"char_001": "full_body"},
         )
         subject_selected = [a for a in plan.selected if a.role == "subject"]
-        assert subject_selected[0].path.name == "gesture.png"
+        assert subject_selected[0].path.name == "full_body.png"
         assert subject_selected[0].appearance_state_id == "silver"
 
 
@@ -389,7 +389,7 @@ class TestAuthorityScopes:
         """Deliverable 6: dedicated significant-state ref → full active
         appearance authority."""
         state_dir = tmp_path / "refs" / "char_001" / "states" / "silver"
-        _write_png(state_dir / "front.png")
+        _write_png(state_dir / "portrait.png")
         prompt = _prompt(
             subjects=[_subject(appearance_state_id="silver", appearance_locked=True)],
         )
@@ -404,7 +404,7 @@ class TestAuthorityScopes:
 
     def test_canonical_base_ref_full_appearance_authority(self, tmp_path):
         """Base-look ref with no state → full appearance authority."""
-        _write_png(tmp_path / "refs" / "char_001" / "front.png")
+        _write_png(tmp_path / "refs" / "char_001" / "portrait.png")
         prompt = _prompt(subjects=[_subject()])
         plan = build_reference_plan(
             route_profile=image_model_profile(GATEWAY_IMAGE_REVE),
@@ -419,7 +419,7 @@ class TestAuthorityScopes:
         """Deliverable 6: missing significant-state ref → no contradictory
         canonical full-body conditioning. The canonical ref is NOT used."""
         # Only a canonical (base) ref exists; the subject is in a significant state.
-        _write_png(tmp_path / "refs" / "char_001" / "front.png")
+        _write_png(tmp_path / "refs" / "char_001" / "portrait.png")
         prompt = _prompt(
             subjects=[_subject(appearance_state_id="silver", appearance_locked=True)],
         )
@@ -434,7 +434,7 @@ class TestAuthorityScopes:
         assert drops, "the omitted canonical ref must be reported as a state_conflict drop"
 
     def test_explicit_canonical_equivalent_state_allows_full_canonical_ref(self, tmp_path):
-        _write_png(tmp_path / "refs" / "char_001" / "front.png")
+        _write_png(tmp_path / "refs" / "char_001" / "portrait.png")
         subject = _subject(appearance_state_id="restored", appearance_locked=True)
         subject.appearance_state_canonical_equivalent = True
         plan = build_reference_plan(
@@ -509,7 +509,7 @@ class TestLineage:
         """Deliverable 7: a state asset's recorded canonical parent hash that
         mismatches current canonical bytes → stale_lineage, excluded."""
         state_dir = tmp_path / "refs" / "char_001" / "states" / "silver"
-        _write_png(state_dir / "front.png")
+        _write_png(state_dir / "portrait.png")
         # Record a lineage sidecar pointing at a stale canonical hash.
         _write_png(tmp_path / "refs" / "char_001" / "sheet.png", b"canonical-v1")
         import hashlib
@@ -537,7 +537,7 @@ class TestLineage:
         significant-state ref is still selected (the safety policy is non-blocking
         for significant states) but flagged in the plan diagnostics."""
         state_dir = tmp_path / "refs" / "char_001" / "states" / "silver"
-        _write_png(state_dir / "front.png")
+        _write_png(state_dir / "portrait.png")
         # No lineage sidecar.
         prompt = _prompt(
             subjects=[_subject(appearance_state_id="silver", appearance_locked=True)],
@@ -591,7 +591,7 @@ class TestContinuity:
         """Deliverable 8: disable previous-panel continuity when character/
         location state authority changes across the boundary."""
         _write_png(tmp_path / "draw" / "scene_001" / "panel_001.png")
-        _write_png(tmp_path / "refs" / "char_001" / "front.png")
+        _write_png(tmp_path / "refs" / "char_001" / "portrait.png")
         prompt = _prompt(
             subjects=[_subject(appearance_state_id="silver", appearance_locked=True)],
             panel_number=2,
@@ -611,7 +611,7 @@ class TestContinuity:
 
     def test_compatible_match_cut_keeps_continuity(self, tmp_path):
         _write_png(tmp_path / "draw" / "scene_001" / "panel_001.png")
-        _write_png(tmp_path / "refs" / "char_001" / "front.png")
+        _write_png(tmp_path / "refs" / "char_001" / "portrait.png")
         prompt = _prompt(
             subjects=[_subject(appearance_state_id=None)],
             panel_number=2,
@@ -660,7 +660,7 @@ class TestContinuity:
 
 class TestSelectionFingerprint:
     def test_selected_byte_change_alters_fingerprint(self, tmp_path):
-        ref = _write_png(tmp_path / "refs" / "char_001" / "front.png", b"v1")
+        ref = _write_png(tmp_path / "refs" / "char_001" / "portrait.png", b"v1")
         prompt = _prompt(subjects=[_subject()])
         plan1 = build_reference_plan(
             route_profile=image_model_profile(GATEWAY_IMAGE_REVE),
@@ -679,8 +679,8 @@ class TestSelectionFingerprint:
         """Deliverable 10: a changed unselected candidate must not invalidate
         cache unless it changes the selected plan."""
         char_dir = tmp_path / "refs" / "char_001"
-        _write_png(char_dir / "front.png", b"front-v1")
-        unselected = _write_png(char_dir / "gesture.png", b"gesture-v1")
+        _write_png(char_dir / "portrait.png", b"front-v1")
+        unselected = _write_png(char_dir / "full_body.png", b"gesture-v1")
         prompt = _prompt(subjects=[_subject()])
         prompt.composition = "close-up portrait"
         plan1 = build_reference_plan(
@@ -698,7 +698,7 @@ class TestSelectionFingerprint:
         assert plan1.selection_fingerprint == plan2.selection_fingerprint
 
     def test_fingerprint_is_stable_across_rebuilds(self, tmp_path):
-        _write_png(tmp_path / "refs" / "char_001" / "front.png", b"stable")
+        _write_png(tmp_path / "refs" / "char_001" / "portrait.png", b"stable")
         prompt = _prompt(subjects=[_subject()])
         kwargs = dict(
             route_profile=image_model_profile(GATEWAY_IMAGE_REVE),
@@ -708,7 +708,7 @@ class TestSelectionFingerprint:
         assert build_reference_plan(**kwargs).selection_fingerprint == build_reference_plan(**kwargs).selection_fingerprint
 
     def test_fingerprint_covers_roles_order_scopes_and_hashes(self, tmp_path):
-        _write_png(tmp_path / "refs" / "char_001" / "front.png", b"a")
+        _write_png(tmp_path / "refs" / "char_001" / "portrait.png", b"a")
         prompt = _prompt(subjects=[_subject()])
         plan = build_reference_plan(
             route_profile=image_model_profile(GATEWAY_IMAGE_REVE),
@@ -727,7 +727,7 @@ class TestReadability:
     def test_unreadable_selected_asset_fails_before_prompt_indices(self, tmp_path, monkeypatch):
         """Deliverable 9 + test: an unreadable selected asset fails before prompt
         indices can be constructed."""
-        path = tmp_path / "refs" / "char_001" / "front.png"
+        path = tmp_path / "refs" / "char_001" / "portrait.png"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"png")  # exists
         prompt = _prompt(subjects=[_subject()])
