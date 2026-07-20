@@ -80,6 +80,23 @@ create table if not exists public.ai_usage_events (
   error_json            jsonb       not null default '{}'::jsonb
 );
 
+-- Durable, privacy-bounded customer journey milestones. The service role is
+-- the only writer; browser events go through the authenticated API so event
+-- names, properties, and payload size remain allowlisted by application code.
+create table if not exists public.product_events (
+  id                    uuid        primary key default gen_random_uuid(),
+  occurred_at           timestamptz not null default now(),
+  event_name            text        not null,
+  user_id               uuid        references auth.users(id) on delete set null,
+  project_id            uuid        references public.projects(id) on delete set null,
+  job_id                uuid,
+  request_id            text,
+  source                text        not null default 'server'
+                                      check (source in ('server', 'web')),
+  properties_json       jsonb       not null default '{}'::jsonb
+                                      check (jsonb_typeof(properties_json) = 'object')
+);
+
 -- One-time migration for databases created by earlier drafts of this schema.
 do $$ begin
   if exists (
@@ -105,7 +122,11 @@ alter table public.credit_ledger
   add column if not exists cost_usd numeric(12, 6),
   add column if not exists cost_source text,
   add column if not exists pricing_snapshot text,
-  add column if not exists job_id uuid;
+  add column if not exists job_id uuid,
+  add column if not exists stripe_checkout_session_id text,
+  add column if not exists credit_package_id text,
+  add column if not exists gross_amount_cents integer,
+  add column if not exists currency text;
 
 alter table public.ai_usage_events
   add column if not exists provider_cost_usd numeric(12, 6),
@@ -315,6 +336,130 @@ create unique index if not exists ai_usage_events_provider_response_id_idx
 create index if not exists projects_user_created_idx
   on public.projects (user_id, created_at desc);
 
+create index if not exists product_events_user_occurred_idx
+  on public.product_events (user_id, occurred_at desc);
+
+create index if not exists product_events_project_occurred_idx
+  on public.product_events (project_id, occurred_at desc)
+  where project_id is not null;
+
+create index if not exists product_events_name_occurred_idx
+  on public.product_events (event_name, occurred_at desc);
+
+create unique index if not exists credit_ledger_checkout_session_idx
+  on public.credit_ledger (stripe_checkout_session_id)
+  where stripe_checkout_session_id is not null;
+
+-- ── Operator observability views ────────────────────────────────────────────
+-- These views are intentionally not granted to anon/authenticated. Query them
+-- through the service role or a future dedicated read-only operator role.
+
+create or replace view public.ops_ai_cost_daily
+with (security_invoker = true) as
+select
+  date_trunc('day', created_at) as day,
+  stage,
+  feature,
+  provider,
+  coalesce(provider_model, model_alias) as model,
+  operation,
+  status,
+  billable,
+  count(*)::bigint as call_count,
+  coalesce(sum(input_tokens), 0)::bigint as input_tokens,
+  coalesce(sum(output_tokens), 0)::bigint as output_tokens,
+  coalesce(sum(image_count), 0)::bigint as image_count,
+  coalesce(sum(cost_usd), 0)::numeric(14, 6) as actual_cost_usd,
+  coalesce(sum(estimated_cost_usd), 0)::numeric(14, 6) as estimated_cost_usd,
+  percentile_cont(0.5) within group (order by latency_ms)
+    filter (where latency_ms is not null) as latency_p50_ms,
+  percentile_cont(0.95) within group (order by latency_ms)
+    filter (where latency_ms is not null) as latency_p95_ms
+from public.ai_usage_events
+group by 1, 2, 3, 4, 5, 6, 7, 8;
+
+create or replace view public.ops_usage_reconciliation
+with (security_invoker = true) as
+select
+  coalesce(a.id::text, l.usage_call_id) as usage_call_id,
+  coalesce(a.created_at, l.created_at) as occurred_at,
+  coalesce(a.user_id, l.user_id) as user_id,
+  coalesce(a.project_id, l.project_id) as project_id,
+  coalesce(a.stage, l.stage) as stage,
+  a.feature,
+  a.status as ai_status,
+  a.billable,
+  a.cost_usd as provider_cost_usd,
+  l.amount_credits,
+  case
+    when a.id is not null and a.billable and l.id is null
+      then 'billable_ai_event_without_debit'
+    when a.id is null and l.id is not null
+      then 'debit_without_ai_event'
+    when a.status != 'succeeded' and l.id is not null
+      then 'failed_ai_event_debited'
+  end as issue
+from public.ai_usage_events a
+full outer join public.credit_ledger l
+  on l.usage_call_id = a.id::text
+  and l.status = 'settled'
+where
+  (a.id is not null and a.billable and l.id is null)
+  or (a.id is null and l.usage_call_id is not null)
+  or (a.status != 'succeeded' and l.id is not null);
+
+create or replace view public.ops_unit_economics_daily
+with (security_invoker = true) as
+with days as (
+  select date_trunc('day', created_at) as day from public.ai_usage_events
+  union
+  select date_trunc('day', created_at) as day from public.credit_ledger
+), spend as (
+  select
+    date_trunc('day', created_at) as day,
+    coalesce(sum(cost_usd) filter (where billable), 0) as provider_cost_usd
+  from public.ai_usage_events
+  group by 1
+), ledger as (
+  select
+    date_trunc('day', created_at) as day,
+    coalesce(sum(gross_amount_cents) filter (
+      where amount_credits > 0 and status = 'settled' and currency = 'usd'
+    ), 0) as gross_revenue_cents,
+    coalesce(sum(amount_credits) filter (
+      where amount_credits > 0 and status = 'settled'
+    ), 0) as credits_granted,
+    coalesce(sum(abs(amount_credits)) filter (
+      where amount_credits < 0 and status = 'settled' and usage_call_id is not null
+    ), 0) as credits_used
+  from public.credit_ledger
+  group by 1
+)
+select
+  days.day,
+  coalesce(ledger.gross_revenue_cents, 0)::bigint as gross_revenue_cents,
+  coalesce(spend.provider_cost_usd, 0)::numeric(14, 6) as provider_cost_usd,
+  (
+    coalesce(ledger.gross_revenue_cents, 0)::numeric / 100
+    - coalesce(spend.provider_cost_usd, 0)
+  )::numeric(14, 6) as pre_fee_margin_usd,
+  coalesce(ledger.credits_granted, 0)::bigint as credits_granted,
+  coalesce(ledger.credits_used, 0)::bigint as credits_used
+from days
+left join spend using (day)
+left join ledger using (day);
+
+create or replace view public.ops_product_funnel_daily
+with (security_invoker = true) as
+select
+  date_trunc('day', occurred_at) as day,
+  event_name,
+  count(*)::bigint as event_count,
+  count(distinct user_id)::bigint as unique_users,
+  count(distinct project_id)::bigint as unique_projects
+from public.product_events
+group by 1, 2;
+
 -- ── Row-level security ───────────────────────────────────────────────────────
 -- The backend uses the service_role key (SUPABASE_SECRET_KEY) which bypasses
 -- RLS entirely. These policies protect against accidental direct client access.
@@ -322,6 +467,7 @@ create index if not exists projects_user_created_idx
 alter table public.projects enable row level security;
 alter table public.credit_ledger enable row level security;
 alter table public.ai_usage_events enable row level security;
+alter table public.product_events enable row level security;
 
 -- Projects: users see only their own; public projects visible to all.
 do $$ begin
@@ -374,6 +520,18 @@ grant select on public.user_credits to authenticated;
 grant select on public.projects to authenticated;
 grant select on public.credit_ledger to authenticated;
 grant select on public.ai_usage_events to authenticated;
+
+revoke all on public.product_events from public, anon, authenticated;
+revoke all on public.ops_ai_cost_daily from public, anon, authenticated;
+revoke all on public.ops_usage_reconciliation from public, anon, authenticated;
+revoke all on public.ops_unit_economics_daily from public, anon, authenticated;
+revoke all on public.ops_product_funnel_daily from public, anon, authenticated;
+
+grant all on public.product_events to service_role;
+grant select on public.ops_ai_cost_daily to service_role;
+grant select on public.ops_usage_reconciliation to service_role;
+grant select on public.ops_unit_economics_daily to service_role;
+grant select on public.ops_product_funnel_daily to service_role;
 
 revoke all on function public.reserve_stage_credits(uuid, uuid, text, integer, uuid)
   from public, anon, authenticated;

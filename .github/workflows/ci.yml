@@ -46,6 +46,11 @@ jobs:
         # directory". Mirror the Dockerfile's explicit-extras style.
         run: uv sync --frozen --extra web --extra dev
 
+      - name: Install Playwright Chromium
+        # HTML renderer tests launch a real browser. The Python package does
+        # not download Playwright's browser binaries during dependency sync.
+        run: uv run playwright install --with-deps chromium
+
       - name: Ruff (lint + format check)
         run: uv run ruff check .
 

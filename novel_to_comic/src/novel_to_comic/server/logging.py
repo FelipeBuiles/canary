@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+import uuid
 from collections.abc import Callable
 
 from fastapi import Request, Response
@@ -14,6 +15,7 @@ from rich.logging import RichHandler
 from novel_to_comic.server.env import bool_env
 from novel_to_comic.server.sentry import configure_sentry
 from novel_to_comic.server.telemetry import configure_telemetry
+from novel_to_comic.server.metrics import increment, observe
 
 
 api_logger = logging.getLogger("canary.api")
@@ -108,20 +110,51 @@ async def request_log_middleware(
     request: Request,
     call_next: Callable[[Request], Response],
 ) -> Response:
+    request_id = request.headers.get("x-request-id", "").strip()[:128] or str(uuid.uuid4())
+    request.state.request_id = request_id
     started = time.perf_counter()
     try:
         response = await call_next(request)
     except Exception:
         elapsed_ms = (time.perf_counter() - started) * 1000
+        route = _route_template(request)
+        increment(
+            "canary_http_requests_total",
+            method=request.method,
+            route=route,
+            status_class="5xx",
+        )
+        observe(
+            "canary_http_request_duration_seconds",
+            elapsed_ms / 1000,
+            method=request.method,
+            route=route,
+        )
         api_logger.exception(
-            "[bold red]API failed[/] %s [white]%s[/] elapsed=[bold]%.0fms[/]",
+            "[bold red]API failed[/] %s [white]%s[/] elapsed=[bold]%.0fms[/] request_id=%s",
             request.method,
             request.url.path,
             elapsed_ms,
+            request_id,
         )
         raise
 
     elapsed_ms = (time.perf_counter() - started) * 1000
+    route = _route_template(request)
+    if route not in {"/metrics", "/api/health", "/api/health/ready"}:
+        increment(
+            "canary_http_requests_total",
+            method=request.method,
+            route=route,
+            status_class=f"{response.status_code // 100}xx",
+        )
+        observe(
+            "canary_http_request_duration_seconds",
+            elapsed_ms / 1000,
+            method=request.method,
+            route=route,
+        )
+    response.headers["X-Request-ID"] = request_id
     if _should_log_request(request, response.status_code, elapsed_ms):
         api_logger.info(
             "[bold magenta]API[/] %s [white]%s[/] -> [bold]%s[/] elapsed=%.0fms",
@@ -131,3 +164,11 @@ async def request_log_middleware(
             elapsed_ms,
         )
     return response
+
+
+def _route_template(request: Request) -> str:
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    # Never fall back to the raw URL: project/scene IDs would create unbounded
+    # Prometheus cardinality. Unmatched requests share one stable label.
+    return str(path) if path else "unmatched"

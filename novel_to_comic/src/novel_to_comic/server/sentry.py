@@ -4,9 +4,9 @@ Activated by setting ``SENTRY_DSN``. No DSN → complete no-op (and never raises
 so dev/test runs are unaffected. The ``before_send`` hook scrubs auth headers and
 the session cookie so bearer tokens never leave the process.
 
-Performance tracing is left off by default (``SENTRY_TRACES_SAMPLE_RATE=0``) —
-traces are handled by Langfuse/OTel (see telemetry.py) to avoid double-sending.
-Error capture is the only thing Sentry owns.
+Performance tracing is left off by default (``SENTRY_TRACES_SAMPLE_RATE=0``).
+When enabled, health checks, polling, static assets, and the metrics scrape are
+filtered so the free allowance focuses on customer actions.
 """
 
 from __future__ import annotations
@@ -28,6 +28,27 @@ _SENSITIVE_HEADERS = {
     "x-supabase-key",
     "set-cookie",
 }
+
+_TRACE_EXCLUDED_PATHS = {"/metrics", "/api/health", "/api/health/ready"}
+
+
+def _configured_trace_rate() -> float:
+    try:
+        return min(1.0, max(0.0, float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.0"))))
+    except ValueError:
+        logger.warning("Invalid SENTRY_TRACES_SAMPLE_RATE; defaulting to 0.0")
+        return 0.0
+
+
+def _traces_sampler(sampling_context: dict) -> float:
+    """Skip scraper/polling noise and sample customer requests at the configured rate."""
+    scope = sampling_context.get("asgi_scope") or {}
+    path = str(scope.get("path") or "")
+    if path in _TRACE_EXCLUDED_PATHS or path.endswith(("/status", "/events", "/generation-jobs")):
+        return 0.0
+    if any(fragment in path for fragment in ("/files/", "/static/")):
+        return 0.0
+    return _configured_trace_rate()
 
 
 def _scrub_event(event: dict, _hint: dict) -> dict:
@@ -68,17 +89,11 @@ def configure_sentry() -> bool:
         return False
 
     try:
-        sample_rate = float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.0"))
-    except ValueError:
-        logger.warning("Invalid SENTRY_TRACES_SAMPLE_RATE; defaulting to 0.0")
-        sample_rate = 0.0
-
-    try:
         sentry_sdk.init(
             dsn=dsn,
             environment=os.environ.get("CANARY_ENV", "dev"),
             release=os.environ.get("CANARY_VERSION", "0.1.0"),
-            traces_sample_rate=sample_rate,
+            traces_sampler=_traces_sampler,
             # Never send PII — user_id (UUID) is enough context; emails/IP stay local.
             send_default_pii=False,
             before_send=_scrub_event,

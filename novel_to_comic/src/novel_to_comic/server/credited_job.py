@@ -84,7 +84,7 @@ async def run_credited_stage(
     state: PipelineState,
     stage: str,
     run: Callable[[], Awaitable[None]],
-) -> None:
+) -> str:
     """Reserve credits for a stage, run it inside an ai_request_context, release the hold.
 
     Raises CreditReservationDenied when the reservation cannot be placed
@@ -116,6 +116,7 @@ async def run_credited_stage(
             job_id=job_id,
         ):
             await run()
+        return job_id
     finally:
         if reservation_id:
             release_reservation(db, reservation_id)

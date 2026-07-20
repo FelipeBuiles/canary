@@ -57,6 +57,7 @@ from ..generation_jobs import (
     generation_semaphore_for_config,
     prune_finished_generation_jobs,
 )
+from ..product_events import capture_server_event
 
 router = APIRouter()
 logger = logging.getLogger("canary.styles")
@@ -967,7 +968,12 @@ async def generate_style_validation(
 
 
 @router.patch("/styles/active")
-def set_active_style(project_id: str, body: dict, project=Depends(get_project)):
+def set_active_style(
+    project_id: str,
+    body: dict,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
     project_dir, config, state = project
 
     suggestions = load_suggestions(project_dir)
@@ -990,4 +996,11 @@ def set_active_style(project_id: str, body: dict, project=Depends(get_project)):
     result = {"status": "updated", "index": index, "style_template": template}
     if suggestion_id:
         result["id"] = suggestions[index - 1].get("id")
+    if isinstance(user_id, str):
+        capture_server_event(
+            "style_selected",
+            user_id=user_id,
+            project_id=project_id,
+            properties={"style_id": str(result.get("id") or index)},
+        )
     return result

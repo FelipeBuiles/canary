@@ -22,6 +22,7 @@ from ..generation_jobs import find_active_generation_job
 from novel_to_comic.frozen_requests import invalidate_prepared_requests
 from ..panel_acceptance import accept_panel, clear_panel_acceptance, is_panel_accepted
 from ..panel_flags import clear_panel_flag, flag_panel, is_panel_flagged
+from ..product_events import capture_server_event
 
 router = APIRouter()
 
@@ -445,9 +446,21 @@ def unaccept_image_panel(scene_id: str, panel_number: int, project=Depends(get_p
 
 
 @router.post("/images/{scene_id}/{panel_number}/flag")
-def flag_image_panel(scene_id: str, panel_number: int, project=Depends(get_project)):
+def flag_image_panel(
+    scene_id: str,
+    panel_number: int,
+    project_id: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
     project_dir, config, state = project
     entry = flag_panel(project_dir, scene_id, panel_number)
+    capture_server_event(
+        "panel_flagged",
+        user_id=user_id,
+        project_id=project_id,
+        properties={},
+    )
     return {
         "scene_id": scene_id,
         "panel_number": panel_number,

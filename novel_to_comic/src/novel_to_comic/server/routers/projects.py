@@ -58,6 +58,7 @@ from ..credits import (
 from ..db import get_db
 from ..deps import get_project, get_projects_dir, project_key
 from ..ratelimit import cost_limit, create_limit, limiter
+from ..product_events import capture_server_event
 from .styles import clear_style_failures_after_selection, is_style_selected
 from ..generation_jobs import (
     enqueue_generation_job,
@@ -556,6 +557,14 @@ async def create_project(
             500, "Failed to register project. Please try again."
         ) from exc
 
+    capture_server_event(
+        "project_created",
+        user_id=user_id,
+        project_id=project_id,
+        request_id=getattr(request.state, "request_id", None),
+        properties={"source": "upload", "file_type": suffix.lstrip(".")},
+    )
+
     return {"id": project_id, "name": slug, "project_name": name, "status": "created"}
 
 
@@ -902,6 +911,14 @@ async def import_short_story(
         raise HTTPException(
             500, "Failed to register project. Please try again."
         ) from exc
+
+    capture_server_event(
+        "project_created",
+        user_id=user_id,
+        project_id=project_id,
+        request_id=getattr(request.state, "request_id", None),
+        properties={"source": "sample", "file_type": "txt"},
+    )
 
     return {
         "id": project_id,

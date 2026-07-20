@@ -16,6 +16,7 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `GET` | `/api/credits/pricing-reference` | `pricing_reference` | `credits.py` |
 | `GET` | `/api/credits/balance` | `balance` | `credits.py` |
 | `GET` | `/api/credits/history` | `history` | `credits.py` |
+| `POST` | `/api/events` | `ingest_web_event` | `events.py` |
 | `POST` | `/api/projects/{project}/export` | `trigger_export` | `export.py` |
 | `GET` | `/api/projects/{project}/export/{fmt}` | `download_export` | `export.py` |
 | `GET` | `/api/labs/models` | `list_models` | `labs.py` |
@@ -48,13 +49,29 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `GET` | `/api/projects/{project}/files/{file_path:path}` | `serve_file` | `pages.py` |
 | `GET` | `/api/projects/{project}/estimate` | `estimate_stage_cost` | `pipeline.py` |
 | `GET` | `/api/projects/{project}/regen-estimate` | `regen_panel_estimate` | `pipeline.py` |
+| `GET` | `/api/projects/{project}/asset-regen-estimate` | `regen_cast_asset_estimate` | `pipeline.py` |
+| `GET` | `/api/projects/{project}/generation-requests/preview` | `preview_generation_request` | `pipeline.py` |
+| `POST` | `/api/projects/{project}/generation-requests/prepare` | `prepare_generation_request` | `pipeline.py` |
+| `GET` | `/api/projects/{project}/generation-requests/{request_id}` | `get_generation_request` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/run` | `run_pipeline` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/regen-extract` | `regen_extract` | `pipeline.py` |
 | `GET` | `/api/projects/{project}/events` | `event_stream` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/regen` | `regen_panel` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/regen-instructed` | `regen_panel_with_instruction` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/regen-ref` | `regen_ref` | `pipeline.py` |
+| `POST` | `/api/projects/{project}/regen-state-ref` | `regen_state_ref` | `pipeline.py` |
+| `GET` | `/api/projects/{project}/character-ref-versions` | `get_character_ref_versions` | `pipeline.py` |
+| `POST` | `/api/projects/{project}/character-ref-versions/restore` | `restore_character_ref_version` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/regen-plate` | `regen_plate` | `pipeline.py` |
+| `GET` | `/api/projects/{project}/location-plate-versions` | `get_location_plate_versions` | `pipeline.py` |
+| `POST` | `/api/projects/{project}/location-plate-versions/restore` | `restore_location_plate_version` | `pipeline.py` |
+| `POST` | `/api/projects/{project}/locations/{loc_id}/states/{state_id}/regenerate` | `regenerate_location_state` | `pipeline.py` |
+| `POST` | `/api/projects/{project}/characters/{char_id}/states/{state_id}/regenerate` | `regenerate_character_state` | `pipeline.py` |
+| `POST` | `/api/projects/{project}/characters/{char_id}/states/{state_id}/regenerate-instructed` | `regenerate_character_state_instructed` | `pipeline.py` |
+| `POST` | `/api/projects/{project}/locations/{loc_id}/states/{state_id}/regenerate-instructed` | `regenerate_location_state_instructed` | `pipeline.py` |
+| `GET` | `/api/projects/{project}/{kind}s/{entity_id}/states/{state_id}/versions` | `get_state_asset_versions` | `pipeline.py` |
+| `POST` | `/api/projects/{project}/{kind}s/{entity_id}/states/{state_id}/versions/{version}/restore` | `restore_state_asset_version` | `pipeline.py` |
+| `GET` | `/api/projects/{project}/{kind}s/{entity_id}/states/{state_id}/metadata` | `get_state_asset_metadata` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/regen-ref-instructed` | `regen_ref_with_instruction` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/regen-plate-instructed` | `regen_plate_with_instruction` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/regen-prop` | `regen_prop` | `pipeline.py` |
@@ -67,6 +84,7 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `POST` | `/api/projects` | `create_project` | `projects.py` |
 | `GET` | `/api/projects` | `list_projects` | `projects.py` |
 | `GET` | `/api/projects/{project_id}/status` | `project_status` | `projects.py` |
+| `GET` | `/api/projects/{project_id}/cover-estimate` | `project_cover_estimate` | `projects.py` |
 | `POST` | `/api/projects/{project_id}/cover` | `generate_cover` | `projects.py` |
 | `DELETE` | `/api/projects/{project_id}` | `delete_project` | `projects.py` |
 | `GET` | `/api/projects/short-stories` | `list_short_stories` | `projects.py` |
@@ -95,8 +113,12 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `POST` | `/api/projects/{project}/images/{scene_id}/{panel_number}/versions/{version}/restore` | `restore_image_panel_version` | `stages.py` |
 | `GET` | `/api/styles/styles` | `get_styles` | `styles.py` |
 | `GET` | `/api/styles/styles/suggest-estimate` | `suggest_estimate` | `styles.py` |
+| `GET` | `/api/styles/styles/sample-estimate` | `style_sample_estimate` | `styles.py` |
+| `GET` | `/api/styles/styles/direction-estimate` | `style_direction_estimate` | `styles.py` |
+| `POST` | `/api/styles/styles/direction` | `create_style_direction` | `styles.py` |
 | `POST` | `/api/styles/styles/suggest` | `suggest_styles` | `styles.py` |
 | `POST` | `/api/styles/styles/generate-samples` | `generate_style_samples` | `styles.py` |
+| `POST` | `/api/styles/styles/validation` | `generate_style_validation` | `styles.py` |
 | `PATCH` | `/api/styles/styles/active` | `set_active_style` | `styles.py` |
 
 ## SSE Streaming

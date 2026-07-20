@@ -69,6 +69,8 @@ from ..generation_jobs import (
 )
 from ..panel_acceptance import clear_panel_acceptance
 from ..panel_flags import clear_panel_flag
+from ..product_events import capture_server_event
+from ..metrics import increment, observe
 
 router = APIRouter()
 logger = logging.getLogger("canary.pipeline")
@@ -306,11 +308,19 @@ async def _run_stage_with_credits(
     app_state,
     pkey: str,
     *,
+    rerun: bool = False,
     retry_failed: bool = False,
 ):
     """Run the stage behind a credit guarantee, then auto-chain."""
+    started = time.perf_counter()
+    capture_server_event(
+        "stage_started",
+        user_id=user_id,
+        project_id=project_id,
+        properties={"stage": stage, "rerun": rerun, "retry_failed": retry_failed},
+    )
     try:
-        await run_credited_stage(
+        job_id = await run_credited_stage(
             user_id=user_id,
             project_id=project_id,
             project_dir=project_dir,
@@ -343,9 +353,68 @@ async def _run_stage_with_credits(
             event["required_credits"] = denied.detail.get("required_credits")
             event["shortfall_credits"] = denied.detail.get("shortfall_credits")
         queue.put_nowait(event)
+        capture_server_event(
+            "stage_failed",
+            user_id=user_id,
+            project_id=project_id,
+            properties={"stage": stage, "error_type": "credit_reservation_denied"},
+        )
+        increment("canary_stage_runs_total", stage=stage, outcome="failed")
+        observe(
+            "canary_stage_duration_seconds",
+            time.perf_counter() - started,
+            stage=stage,
+            outcome="failed",
+        )
         return
+    except Exception as exc:
+        capture_server_event(
+            "stage_failed",
+            user_id=user_id,
+            project_id=project_id,
+            properties={"stage": stage, "error_type": type(exc).__name__},
+        )
+        increment("canary_stage_runs_total", stage=stage, outcome="failed")
+        observe(
+            "canary_stage_duration_seconds",
+            time.perf_counter() - started,
+            stage=stage,
+            outcome="failed",
+        )
+        raise
 
     s = state.stages[stage]
+    if s.status == StageStatus.FAILED:
+        capture_server_event(
+            "stage_failed",
+            user_id=user_id,
+            project_id=project_id,
+            job_id=job_id,
+            properties={"stage": stage, "error_type": s.error_code or "stage_failed"},
+        )
+        increment("canary_stage_runs_total", stage=stage, outcome="failed")
+        observe(
+            "canary_stage_duration_seconds",
+            time.perf_counter() - started,
+            stage=stage,
+            outcome="failed",
+        )
+        return
+    outcome = "awaiting_review" if s.status == StageStatus.AWAITING_REVIEW else "succeeded"
+    capture_server_event(
+        "stage_succeeded",
+        user_id=user_id,
+        project_id=project_id,
+        job_id=job_id,
+        properties={"stage": stage, "outcome": outcome},
+    )
+    increment("canary_stage_runs_total", stage=stage, outcome=outcome)
+    observe(
+        "canary_stage_duration_seconds",
+        time.perf_counter() - started,
+        stage=stage,
+        outcome=outcome,
+    )
 
     # Auto-chain: if the stage completed (not awaiting_review, not failed),
     # automatically run the next stages in the chain.
@@ -365,6 +434,7 @@ async def _run_stage_with_credits(
                 project_id,
                 app_state,
                 pkey,
+                rerun=rerun,
             )
             # Stop if the chained stage failed or hit a review checkpoint
             if state.stages[next_stage].status in (
@@ -800,6 +870,7 @@ async def run_pipeline(
         project_id,
         request.app.state,
         pkey,
+        rerun=rerun,
         retry_failed=retry_failed,
     )
 
@@ -861,6 +932,7 @@ async def regen_extract(
         project_id,
         request.app.state,
         pkey,
+        rerun=True,
     )
     task = asyncio.create_task(_run_job(pkey, request, job))
     running[pkey] = task
@@ -1075,6 +1147,14 @@ async def regen_panel(
         # before the job starts running (the runner clears it again for safety).
         clear_panel_acceptance(project_dir, scene_id, panel_number)
         clear_panel_flag(project_dir, scene_id, panel_number)
+        capture_server_event(
+            "panel_regenerated",
+            user_id=user_id,
+            project_id=project_id,
+            job_id=job.id,
+            request_id=getattr(request.state, "request_id", None),
+            properties={"mode": "prepared" if prepared_request_id else "standard"},
+        )
     return {
         "status": "queued",
         "job": generation_job_payload(request.app, job),
@@ -1104,7 +1184,7 @@ async def regen_panel_with_instruction(
 
     from novel_to_comic.prompt_instructions import apply_asset_instruction
 
-    return await apply_asset_instruction(
+    result = await apply_asset_instruction(
         config=config,
         project_dir=project_dir,
         db=get_db(),
@@ -1116,6 +1196,14 @@ async def regen_panel_with_instruction(
         app=request.app,
         image_model_alias=body.image_model_alias,
     )
+    capture_server_event(
+        "panel_regenerated",
+        user_id=user_id,
+        project_id=project_id,
+        request_id=getattr(request.state, "request_id", None),
+        properties={"mode": "instructed"},
+    )
+    return result
 
 
 @router.post("/regen-ref")
@@ -1537,7 +1625,12 @@ def get_generation_jobs(
 
 
 @router.post("/approve/{stage}")
-def approve(stage: str, project_id: str, project=Depends(get_project)):
+def approve(
+    stage: str,
+    project_id: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
     project_dir, config, state = project
     if stage not in STAGE_NAMES:
         raise HTTPException(400, f"Unknown stage: {stage}")
@@ -1550,6 +1643,12 @@ def approve(stage: str, project_id: str, project=Depends(get_project)):
     except ValueError as e:
         raise HTTPException(409, str(e))
     save_state(state, project_dir)
+    capture_server_event(
+        "stage_approved",
+        user_id=user_id,
+        project_id=project_id,
+        properties={"stage": stage},
+    )
     return {"status": "approved", "stage": stage}
 
 

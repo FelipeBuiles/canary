@@ -104,6 +104,10 @@ def test_checkout_webhook_credits_paid_session_once():
             "status": "settled",
             "description": "Credit purchase — 1,200 credits",
             "stripe_payment_intent_id": "pi_paid",
+            "stripe_checkout_session_id": "cs_test_paid",
+            "credit_package_id": "starter",
+            "gross_amount_cents": 1200,
+            "currency": "usd",
         },
         on_conflict="stripe_payment_intent_id",
         ignore_duplicates=True,
@@ -127,6 +131,28 @@ def test_checkout_webhook_duplicate_conflict_is_a_clean_noop():
         billing._handle_checkout_completed(session)
 
     table.upsert.return_value.execute.assert_called_once_with()
+
+
+def test_checkout_webhook_persists_signed_stripe_amount_and_currency():
+    session = {
+        "id": "cs_test_cad",
+        "payment_status": "paid",
+        "payment_intent": "pi_cad",
+        "amount_total": 1675,
+        "currency": "CAD",
+        "metadata": {"user_id": "user-1", "package": "starter"},
+    }
+    table = MagicMock()
+    table.upsert.return_value.execute.return_value.data = []
+    db = MagicMock()
+    db.table.return_value = table
+
+    with patch.object(billing, "get_db", return_value=db):
+        billing._handle_checkout_completed(session)
+
+    payload = table.upsert.call_args.args[0]
+    assert payload["gross_amount_cents"] == 1675
+    assert payload["currency"] == "cad"
 
 
 def test_checkout_origin_uses_configured_url_in_production(monkeypatch):
@@ -184,6 +210,18 @@ def test_sentry_scrubs_operations_token():
 
     assert scrubbed["request"]["headers"]["X-Canary-Ops-Token"] == "[Filtered]"
     assert scrubbed["request"]["headers"]["Accept"] == "application/json"
+
+
+def test_sentry_trace_sampler_filters_operational_noise(monkeypatch):
+    monkeypatch.setenv("SENTRY_TRACES_SAMPLE_RATE", "0.05")
+
+    assert sentry_module._traces_sampler({"asgi_scope": {"path": "/metrics"}}) == 0
+    assert sentry_module._traces_sampler(
+        {"asgi_scope": {"path": "/api/projects/abc/status"}}
+    ) == 0
+    assert sentry_module._traces_sampler(
+        {"asgi_scope": {"path": "/api/projects/abc/run"}}
+    ) == 0.05
 
 
 def test_readiness_fails_closed_when_production_config_is_missing(monkeypatch):

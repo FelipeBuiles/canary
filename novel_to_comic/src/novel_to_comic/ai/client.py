@@ -465,6 +465,21 @@ def _finalize_event(
         and usage_has_billable_activity(usage)
         and (status == "succeeded" or (config is not None and _should_bill_failed(config, usage)))
     )
+    try:
+        from novel_to_comic.server.metrics import record_ai_call
+
+        request_context = current_ai_request_context()
+        record_ai_call(
+            provider=usage.provider if usage else _provider_from_model(provider_model),
+            model=model_alias,
+            operation=operation,
+            status=status,
+            stage=request_context.stage,
+            cost_usd=cost_usd,
+        )
+    except Exception:
+        # Metrics are optional and must not interfere with usage settlement.
+        pass
     update: dict[str, Any] = {
         "finished_at": datetime.datetime.now(datetime.UTC).isoformat(),
         "status": status,
@@ -743,6 +758,15 @@ def _settle_event_usage(usage: UsageRecord, *, feature: str, status: str) -> Non
             getattr(usage, "cost_usd", 0.0) or 0.0,
             exc_info=True,
         )
+        try:
+            from novel_to_comic.server.metrics import increment
+
+            increment(
+                "canary_credit_debit_failures_total",
+                stage=ctx.stage or "none",
+            )
+        except Exception:
+            pass
         return
 
 
