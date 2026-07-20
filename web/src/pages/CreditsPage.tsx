@@ -12,6 +12,7 @@ import { Skeleton } from "../components/ui/Skeleton";
 import { CreditAmount } from "../components/ui/CreditAmount";
 import { SectionHeader } from "../components/composites";
 import { groupRunsByStage, type StageLedgerGroup } from "../lib/creditsHistory";
+import { trackProductEvent } from "../api/events";
 
 function formatWhen(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
@@ -230,6 +231,8 @@ function StageLedgerSection({
 export function CreditsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const successParam = searchParams.get("success");
+  const cancelledParam = searchParams.get("cancelled");
+  const cancelledPackage = searchParams.get("package");
   const qc = useQueryClient();
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
 
@@ -248,6 +251,16 @@ export function CreditsPage() {
   const [showDevContent] = useShowDevContent();
 
   const didRefresh = useRef(false);
+  const didTrackCancellation = useRef(false);
+  useEffect(() => {
+    if (cancelledParam && !didTrackCancellation.current) {
+      didTrackCancellation.current = true;
+      void trackProductEvent("checkout_cancelled", {
+        properties: { package_id: cancelledPackage ?? "unknown" },
+      });
+    }
+  }, [cancelledPackage, cancelledParam]);
+
   useEffect(() => {
     if (successParam && !didRefresh.current) {
       didRefresh.current = true;

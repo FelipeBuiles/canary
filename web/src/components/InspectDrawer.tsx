@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   usePanelSummaries,
   usePanelsForScene,
@@ -14,6 +14,7 @@ import { rerunStageForDrawer, type DrawerKind } from "../lib/stations";
 import { cn } from "../lib/cn";
 import { Button } from "./ui/Button";
 import { RerunStageAction } from "./composites";
+import { trackProductEvent } from "../api/events";
 
 interface InspectDrawerProps {
   project: string;
@@ -288,6 +289,15 @@ function InspectDrawerRerun({ project, kind }: { project: string; kind: DrawerKi
  * prompts). Opens over the content area; never blocks progression.
  */
 export function InspectDrawer({ project, kind, onClose }: InspectDrawerProps) {
+  useEffect(() => {
+    if (kind) {
+      void trackProductEvent("inspect_drawer_opened", {
+        projectId: project,
+        properties: { drawer: kind },
+      });
+    }
+  }, [kind, project]);
+
   if (!kind) return null;
   const meta = DRAWER_META[kind];
 

@@ -28,6 +28,7 @@ from .routers import (
     config,
     credits,
     export,
+    events,
     labs,
     pages,
     pipeline,
@@ -35,6 +36,7 @@ from .routers import (
     stages,
     styles,
 )
+from .metrics import metrics_response
 
 
 class SPAStaticFiles(StaticFiles):
@@ -74,6 +76,22 @@ class SPAStaticFiles(StaticFiles):
             # Looks like a client-side route — serve the SPA shell so the
             # browser's history/router can render it.
             return await super().get_response("index.html", scope)
+
+
+class MetricsAwareTrustedHostMiddleware(TrustedHostMiddleware):
+    """Keep host validation everywhere except Fly's internal metrics scrape.
+
+    Fly scrapes the Machine directly on the configured port and does not
+    document a stable Host header. The metrics payload is aggregate-only, so
+    allowing that one path avoids coupling scraping to public-host validation
+    without weakening any customer or operator endpoint.
+    """
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "http" and scope.get("path") == "/metrics":
+            await self.app(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
 log = logging.getLogger(__name__)
 
 
@@ -269,7 +287,10 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     if allowed_hosts_raw:
         allowed_hosts = [h.strip() for h in allowed_hosts_raw.split(",") if h.strip()]
         if allowed_hosts:
-            app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+            app.add_middleware(
+                MetricsAwareTrustedHostMiddleware,
+                allowed_hosts=allowed_hosts,
+            )
     configure_rate_limiting(app)
 
     # Shared state for SSE streaming and concurrency control
@@ -337,6 +358,12 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
             content={"status": "ok" if ok else "error", "checks": checks},
         )
 
+    @app.get("/metrics", include_in_schema=False)
+    def prometheus_metrics():
+        # Aggregate-only endpoint scraped by Fly. It intentionally contains no
+        # customer, project, request, prompt, or path-parameter labels.
+        return metrics_response(app)
+
     @app.get(
         "/api/ops/deployment-status",
         tags=["operations"],
@@ -349,6 +376,7 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     # Routers
     app.include_router(credits.router, prefix="/api/credits", tags=["credits"])
     app.include_router(billing.router, prefix="/api/billing", tags=["billing"])
+    app.include_router(events.router, prefix="/api/events", tags=["analytics"])
     app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
     app.include_router(
         pipeline.router,

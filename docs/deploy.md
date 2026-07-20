@@ -157,6 +157,8 @@ fly deploy \
   --build-arg VITE_SUPABASE_PUBLISHABLE_KEY=<anon/publishable key, NOT service_role> \
   --build-arg VITE_CANARY_ENV=production
   # --build-arg VITE_SENTRY_DSN=<frontend DSN>   # optional
+  # --build-arg VITE_SENTRY_TRACES_SAMPLE_RATE=0.05
+  # --build-arg VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE=0
 
 # 2c. Verify boot
 fly logs -a canary-web
@@ -345,7 +347,8 @@ One consolidated set, since the proxy and web app share a container:
 - **Web-app layer:** `LITELLM_API_KEY` (== `LITELLM_MASTER_KEY`), `SUPABASE_URL`,
   `SUPABASE_SECRET_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
   `CANARY_OPS_TOKEN`,
-  `SENTRY_DSN` (optional — omit if invalid), `LANGFUSE_*` /
+  `SENTRY_DSN` and `SENTRY_TRACES_SAMPLE_RATE` (optional — omit the DSN to
+  disable), `LANGFUSE_*` /
   `OTEL_EXPORTER_OTLP_ENDPOINT` (optional).
 
 Provider keys never leave the container or reach the browser — the proxy is
@@ -361,5 +364,7 @@ policy, worker counts, body limits, and timeouts.
 ### `canary-web` — build args (via `fly deploy --build-arg`)
 
 `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` (anon, not service_role),
-`VITE_CANARY_ENV=production`, `VITE_SENTRY_DSN` (optional). These are inlined
+`VITE_CANARY_ENV=production`, `VITE_SENTRY_DSN`,
+`VITE_SENTRY_TRACES_SAMPLE_RATE`, and
+`VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE` (all Sentry values optional). These are inlined
 into the JS bundle by Vite at build time and are not available at runtime.

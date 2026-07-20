@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from ..auth import get_current_user
 from ..branding import get_branding
 from ..db import get_db
+from ..product_events import capture_server_event
 
 router = APIRouter()
 logger = logging.getLogger("pulp.billing")
@@ -156,7 +157,7 @@ async def create_checkout(
             }],
             mode="payment",
             success_url=f"{origin}/credits?success=true",
-            cancel_url=f"{origin}/credits",
+            cancel_url=f"{origin}/credits?cancelled=true&package={package_id}",
             metadata={"user_id": user_id, "package": package_id},
         )
         if branding.terms_url:
@@ -168,6 +169,16 @@ async def create_checkout(
     except stripe.error.StripeError as exc:
         raise _wrap_stripe_error(exc) from exc
 
+    capture_server_event(
+        "checkout_started",
+        user_id=user_id,
+        request_id=getattr(request.state, "request_id", None),
+        properties={
+            "package_id": package_id,
+            "gross_amount_cents": pkg["price_cents"],
+            "currency": "usd",
+        },
+    )
     return {"url": session.url}
 
 
@@ -253,6 +264,10 @@ def _handle_checkout_completed(session: dict) -> None:
         )
         return
     credits = CREDIT_PACKAGES[package_id]["credits"]
+    gross_amount_cents = session.get("amount_total")
+    if not isinstance(gross_amount_cents, int) or gross_amount_cents < 0:
+        gross_amount_cents = CREDIT_PACKAGES[package_id]["price_cents"]
+    currency = str(session.get("currency") or "usd").lower()
     db = get_db()
 
     # Atomic idempotency: the unique payment-intent constraint decides which
@@ -265,12 +280,26 @@ def _handle_checkout_completed(session: dict) -> None:
             "status": "settled",
             "description": f"Credit purchase — {CREDIT_PACKAGES[package_id]['label']}",
             "stripe_payment_intent_id": payment_intent_id,
+            "stripe_checkout_session_id": session.get("id"),
+            "credit_package_id": package_id,
+            "gross_amount_cents": gross_amount_cents,
+            "currency": currency,
         },
         on_conflict="stripe_payment_intent_id",
         ignore_duplicates=True,
     ).execute()
 
     if response.data:
+        capture_server_event(
+            "credits_purchased",
+            user_id=user_id,
+            properties={
+                "package_id": package_id,
+                "credits": credits,
+                "gross_amount_cents": gross_amount_cents,
+                "currency": currency,
+            },
+        )
         logger.info(
             "Added %d credits for user %s (payment_intent %s)",
             credits,

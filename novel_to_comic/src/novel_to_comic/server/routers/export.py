@@ -17,6 +17,7 @@ from novel_to_comic.storage import export_url, r2_configured, upload_export
 from ..auth import get_current_user
 from ..deps import get_project
 from ..ratelimit import export_limit, limiter
+from ..product_events import capture_server_event
 
 router = APIRouter()
 
@@ -25,6 +26,7 @@ router = APIRouter()
 @limiter.limit(export_limit)
 async def trigger_export(
     request: Request,
+    project_id: str,
     format: str = Query("pdf"),
     force: bool = Query(False),
     project=Depends(get_project),
@@ -55,6 +57,13 @@ async def trigger_export(
         url = None
         if r2_configured():
             url = upload_export(user_id, project_dir.name, f"comic.{fmt}", export_path.read_bytes())
+        capture_server_event(
+            "export_succeeded",
+            user_id=user_id,
+            project_id=project_id,
+            request_id=getattr(request.state, "request_id", None),
+            properties={"format": fmt, "cached": True},
+        )
         return {"status": "exists", "path": f"comic.{fmt}", "url": url}
 
     # Concurrency guard: composing the same project concurrently is wasted work
@@ -75,6 +84,13 @@ async def trigger_export(
         if r2_configured():
             url = upload_export(user_id, project_dir.name, f"comic.{fmt}", export_path.read_bytes())
 
+    capture_server_event(
+        "export_succeeded",
+        user_id=user_id,
+        project_id=project_id,
+        request_id=getattr(request.state, "request_id", None),
+        properties={"format": fmt, "cached": False},
+    )
     return {"status": "done", "path": f"comic.{fmt}", "url": url}
 
 

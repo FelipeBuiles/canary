@@ -101,6 +101,15 @@ async def get_current_user(
             options={"verify_aud": expected_audience is not None},
         )
         user_id = payload["sub"]
+        request.state.user_id = user_id
+        try:
+            import sentry_sdk
+
+            sentry_sdk.set_user({"id": user_id})
+            sentry_sdk.set_tag("request_id", getattr(request.state, "request_id", "unknown"))
+        except Exception:
+            # Error reporting is optional and must never affect authentication.
+            pass
         # Refresh the HttpOnly session cookie so browser-native consumers
         # (img, EventSource, etc.) that can only use cookies stay authenticated.
         response.set_cookie(
