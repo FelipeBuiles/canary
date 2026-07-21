@@ -17,12 +17,17 @@ interface TailGeometry {
   target: { x: number; y: number; panelX: number; panelY: number } | null;
 }
 
-function inferredSpeakerTarget(element: HTMLElement, panel: HTMLElement, bubble: TailBubble) {
-  const sideX = bubble.side === "right" ? 0.76 : bubble.side === "center" ? 0.5 : 0.24;
+function inferredSpeakerTarget(
+  element: HTMLElement,
+  panel: HTMLElement,
+  side: TailBubble["side"],
+  tailDirection: TailBubble["tail_direction"],
+) {
+  const sideX = side === "right" ? 0.76 : side === "center" ? 0.5 : 0.24;
   const bubbleCenterY = element.offsetTop + element.offsetHeight / 2;
-  const proxyPanelY = bubble.tail_direction === "up"
+  const proxyPanelY = tailDirection === "up"
     ? panel.clientHeight * 0.32
-    : bubble.tail_direction === "down"
+    : tailDirection === "down"
       ? panel.clientHeight * 0.68
       : bubbleCenterY < panel.clientHeight * 0.55
         ? panel.clientHeight * 0.68
@@ -64,7 +69,7 @@ export function SpeakerTail({ bubble, selected = false }: SvgTailProps) {
       if (!panel) return;
       const target = bubble.tail_x != null && bubble.tail_y != null
         ? { x: bubble.tail_x - element.offsetLeft, y: bubble.tail_y - element.offsetTop }
-        : inferredSpeakerTarget(element, panel, bubble);
+        : inferredSpeakerTarget(element, panel, bubble.side, bubble.tail_direction);
       const measuredTarget = {
         ...target,
         panelX: target.x + element.offsetLeft,
@@ -97,45 +102,44 @@ export function SpeakerTail({ bubble, selected = false }: SvgTailProps) {
   if (bubble.type === "narration") return null;
 
   return (
-    <svg ref={ref} className="speaker-tail" aria-hidden="true">
-      {geometry.fillPath && <path className="tail-fill" d={geometry.fillPath} fill="var(--bubble-bg)" />}
-      {geometry.outlinePath && (
-        <path
-          className="tail-outline"
-          d={geometry.outlinePath}
-          fill="none"
-          stroke="var(--bubble-border)"
-          strokeWidth="var(--bubble-border-width)"
-          vectorEffect="non-scaling-stroke"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
-      )}
-      {geometry.dots.map((dot, index) => (
-        <circle
-          key={index}
-          className="thought-dot"
-          cx={dot.cx}
-          cy={dot.cy}
-          r={dot.radius}
-          fill="var(--bubble-bg)"
-          stroke="var(--bubble-border)"
-          strokeWidth="var(--bubble-border-width)"
-          vectorEffect="non-scaling-stroke"
-        />
-      ))}
+    <>
+      <svg ref={ref} className="speaker-tail" aria-hidden="true">
+        {geometry.fillPath && <path className="tail-fill" d={geometry.fillPath} fill="var(--bubble-bg)" />}
+        {geometry.outlinePath && (
+          <path
+            className="tail-outline"
+            d={geometry.outlinePath}
+            fill="none"
+            stroke="var(--bubble-border)"
+            strokeWidth="var(--bubble-border-width)"
+            vectorEffect="non-scaling-stroke"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+        )}
+        {geometry.dots.map((dot, index) => (
+          <circle
+            key={index}
+            className="thought-dot"
+            cx={dot.cx}
+            cy={dot.cy}
+            r={dot.radius}
+            fill="var(--bubble-bg)"
+            stroke="var(--bubble-border)"
+            strokeWidth="var(--bubble-border-width)"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+      </svg>
       {selected && geometry.target && (
-        <circle
+        <span
           className="tail-target-handle"
           data-tail-handle
           data-tail-panel-x={geometry.target.panelX}
           data-tail-panel-y={geometry.target.panelY}
-          cx={geometry.target.x}
-          cy={geometry.target.y}
-          r={9}
-          vectorEffect="non-scaling-stroke"
+          style={{ left: geometry.target.x, top: geometry.target.y }}
         />
       )}
-    </svg>
+    </>
   );
 }

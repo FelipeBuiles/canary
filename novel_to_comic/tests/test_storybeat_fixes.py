@@ -1,8 +1,10 @@
 """Regression tests for the story-extraction → panel → layout review fixes."""
 
 from novel_to_comic.layout_planning import (
+    LAYOUT_PRESET_GEOMETRIES,
     LayoutPlan,
     repaginate_layout_plan,
+    select_layout_template,
 )
 from novel_to_comic.models.layout_plan import (
     LayoutPlanMetadata,
@@ -343,3 +345,13 @@ def test_repaginate_uses_matching_layout_template():
     assert page.layout_template == "stacked_2"
     # Second panel occupies the lower half, not a quarter of an oversized grid.
     assert page.panel_geometries[1].region == [0.0, 0.5, 1.0, 0.5]
+
+
+def test_three_standard_panels_avoid_ultra_narrow_generation_slots():
+    panels = [_panel(1), _panel(2), _panel(3)]
+
+    template_name = select_layout_template(panels)
+    regions = LAYOUT_PRESET_GEOMETRIES[template_name]
+
+    assert template_name != "vertical_trio"
+    assert min(width / height for (_x, _y, width, height), _polygon in regions) >= 0.5
