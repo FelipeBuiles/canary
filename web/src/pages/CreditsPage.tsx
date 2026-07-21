@@ -11,15 +11,29 @@ import { Button } from "../components/ui/Button";
 import { Skeleton } from "../components/ui/Skeleton";
 import { CreditAmount } from "../components/ui/CreditAmount";
 import { SectionHeader } from "../components/composites";
-import { groupRunsByStage, type StageLedgerGroup } from "../lib/creditsHistory";
+import { groupRunsByDay, runActivityLabel, type LedgerDayGroup } from "../lib/creditsHistory";
 import { trackProductEvent } from "../api/events";
 
-function formatWhen(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
+function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString(undefined, {
     hour: "2-digit",
     minute: "2-digit",
+  });
+}
+
+function formatDay(iso: string): string {
+  const date = new Date(iso);
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const dayDifference = Math.round((startOfToday.getTime() - startOfDate.getTime()) / 86_400_000);
+  if (dayDifference === 0) return "Today";
+  if (dayDifference === 1) return "Yesterday";
+  return date.toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
   });
 }
 
@@ -58,13 +72,7 @@ function StatusBadge({ status }: { status: CreditLedgerRun["status"] }) {
       </span>
     );
   }
-  if (status === "complete") {
-    return (
-      <span className="bg-archive-sage px-2 py-1 font-meta text-[0.5rem] font-bold tracking-[0.08em] text-bristol">
-        COMPLETE
-      </span>
-    );
-  }
+  if (status === "complete") return null;
   return (
     <span className="bg-hero-red px-2 py-1 font-meta text-[0.5rem] font-bold tracking-[0.08em] text-bristol">
       FAILED
@@ -84,6 +92,8 @@ function LedgerRunRow({
   const [expanded, setExpanded] = useState(false);
   const settled = run.rows.filter((row) => row.status === "settled");
   const detailsId = `ledger-run-${run.run_id}`;
+  const isPurchase = run.credits_added > 0;
+  const projectLabel = run.project_id ? (projectName ?? "Project no longer available") : null;
 
   return (
     <div className="border-t border-ink-black/10 first:border-t-0">
@@ -93,61 +103,58 @@ function LedgerRunRow({
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
         aria-controls={detailsId}
-        className="flex w-full flex-wrap items-start gap-3 bg-bristol px-4 py-4 text-left transition-colors hover:bg-pulp-paper sm:flex-nowrap sm:px-5"
+        className="flex w-full flex-wrap items-center gap-3 bg-bristol px-4 py-4 text-left transition-colors hover:bg-pulp-paper sm:flex-nowrap sm:px-5"
       >
         {/* Chevron */}
-        <span className="mt-0.5 shrink-0 text-ink-muted">
-          {expanded ? "▼" : "▶"}
+        <span className="shrink-0 text-ink-muted">
+          <Icon name="chevron-down" size={16} className={cn("transition-transform", !expanded && "-rotate-90")} />
         </span>
 
         {/* Label block */}
         <div className="min-w-0 flex-1">
           <div className="font-body text-[0.9rem] font-semibold text-ink-black/82">
-            {projectName ?? (run.credits_added > 0 ? "Credit purchase" : "Account activity")}
+            {runActivityLabel(run)}
           </div>
-          <div className="mt-0.5 flex items-center gap-2">
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+            {projectLabel && (
+              <span className="font-body text-[0.76rem] font-semibold text-ink-muted">
+                {projectLabel}
+              </span>
+            )}
+            {projectLabel && <span aria-hidden="true" className="text-ink-black/25">·</span>}
             <span className="font-body text-[0.72rem] font-semibold text-ink-muted">
-              {formatWhen(run.started_at)}
+              {formatTime(run.started_at)}
             </span>
             <StatusBadge status={run.status} />
           </div>
         </div>
 
-        {/* Credit columns */}
-        <div className="flex w-full shrink-0 items-center justify-between gap-3 border-t border-ink-black/10 pt-3 font-meta text-[0.7rem] tabular-nums text-ink-muted sm:w-auto sm:justify-start sm:border-0 sm:pt-0">
-          {run.estimate_credits > 0 && (
-            <span>
-              <span className="text-[0.54rem] font-bold tracking-[0.06em] text-ink-muted">HELD </span>
-              <CreditAmount value={run.estimate_credits} showMark showLabel={false} />
-            </span>
-          )}
-          {run.credits_added > 0 ? (
-            <span className="font-bold text-archive-sage">
-              <span className="text-[0.54rem] font-bold tracking-[0.06em]">ADDED </span>
-              <CreditAmount value={run.credits_added} sign="+" showMark showLabel={false} />
-            </span>
-          ) : run.status !== "in_flight" ? (
-            <span className={cn(run.actual_credits > 0 ? "font-bold text-ink-black" : "text-ink-muted")}>
-              <span className="text-[0.54rem] font-bold tracking-[0.06em] text-ink-muted">USED </span>
-              {run.actual_credits > 0 ? <CreditAmount value={run.actual_credits} showMark showLabel={false} /> : "—"}
+        {/* Net credit change is the primary accounting fact. */}
+        <div className="flex basis-full items-baseline justify-start gap-2 pl-7 font-meta tabular-nums sm:ml-auto sm:w-auto sm:basis-auto sm:justify-end sm:pl-0">
+          {isPurchase ? (
+            <CreditAmount value={run.credits_added} sign="+" className="text-[0.82rem] font-bold text-archive-sage" />
+          ) : run.actual_credits > 0 ? (
+            <CreditAmount value={run.actual_credits} sign="-" className="text-[0.82rem] font-bold text-ink-black" />
+          ) : run.status === "in_flight" ? (
+            <span className="text-[0.72rem] font-bold text-ink-muted">
+              <CreditAmount value={run.estimate_credits} /> held
             </span>
           ) : (
-            <span className="text-ink-muted">
-              <span className="text-[0.54rem] font-bold tracking-[0.06em]">USED </span>—
-            </span>
-          )}
-          {run.returned_credits > 0 && (
-            <span className="text-archive-sage">
-              <span className="text-[0.54rem] font-bold tracking-[0.06em]">RETURNED </span>
-              <CreditAmount value={run.returned_credits} showMark showLabel={false} />
-            </span>
+            <span className="text-[0.72rem] font-bold text-ink-muted">No charge</span>
           )}
         </div>
       </button>
 
       {/* Expanded child rows */}
-      {expanded && settled.length > 0 && (
+      {expanded && (
         <div id={detailsId} className="bg-surface-container">
+          {(run.estimate_credits > 0 || run.returned_credits > 0) && (
+            <div className="flex flex-wrap gap-x-5 gap-y-1 border-t border-ink-black/8 px-5 py-3 pl-14 font-body text-[0.74rem] font-semibold text-ink-muted">
+              <span>Estimated hold <CreditAmount value={run.estimate_credits} /></span>
+              {run.status !== "in_flight" && <span>Final charge <CreditAmount value={run.actual_credits} /></span>}
+              {run.returned_credits > 0 && <span>Released <CreditAmount value={run.returned_credits} /></span>}
+            </div>
+          )}
           {settled.map((tx, i) => (
             <div
               key={tx.id}
@@ -173,8 +180,6 @@ function LedgerRunRow({
                 <CreditAmount
                   value={Math.abs(tx.amount_credits)}
                   sign={tx.amount_credits > 0 ? "+" : "-"}
-                  showMark
-                  showLabel={false}
                 />
               </div>
             </div>
@@ -185,41 +190,39 @@ function LedgerRunRow({
   );
 }
 
-function StageLedgerSection({
+function DayLedgerSection({
   group,
   projectNameMap,
   showDevContent,
 }: {
-  group: StageLedgerGroup;
+  group: LedgerDayGroup;
   projectNameMap: Map<string, string>;
   showDevContent: boolean;
 }) {
   return (
-    <section className="border-[2px] border-ink-black/10 bg-surface-container">
-      <div className="flex flex-wrap items-baseline justify-between gap-3 bg-ink-black px-5 py-3 text-bristol">
+    <section aria-labelledby={`ledger-day-${group.key}`}>
+      <div className="mb-2 flex flex-wrap items-end justify-between gap-3 px-1">
         <div>
-          <h3 className="font-body text-[0.9rem] font-bold">{group.label}</h3>
-          <p className="mt-0.5 font-body text-[0.68rem] font-semibold text-bristol/65">
-            {group.runs.length} {group.runs.length === 1 ? "run" : "runs"}
+          <h3 id={`ledger-day-${group.key}`} className="font-body text-[1rem] font-bold text-ink-black">
+            {formatDay(group.latestAt)}
+          </h3>
+          <p className="mt-0.5 font-body text-[0.72rem] font-semibold text-ink-muted">
+            {group.runs.length} {group.runs.length === 1 ? "activity" : "activities"}
           </p>
         </div>
-        <div className="font-meta text-[0.68rem] font-bold tracking-[0.06em] tabular-nums">
-          {group.creditsAdded > 0 ? "ADDED " : "USED "}
-          <CreditAmount
-            value={group.creditsAdded > 0 ? group.creditsAdded : group.actualCredits}
-            sign={group.creditsAdded > 0 ? "+" : undefined}
-            showMark
-            showLabel={false}
-            className="ml-1"
-          />
+        <div className="flex w-full flex-wrap justify-start gap-x-4 gap-y-1 font-meta text-[0.68rem] font-bold tabular-nums text-ink-muted sm:w-auto sm:justify-end">
+          {group.actualCredits > 0 && <span><CreditAmount value={group.actualCredits} /> used</span>}
+          {group.creditsAdded > 0 && (
+            <span className="text-archive-sage"><CreditAmount value={group.creditsAdded} sign="+" /> added</span>
+          )}
         </div>
       </div>
-      <div>
+      <div className="border-[2px] border-ink-black/10 bg-surface-container">
         {group.runs.map((run) => (
           <LedgerRunRow
             key={run.run_id}
             run={run}
-            projectName={run.project_id ? (projectNameMap.get(run.project_id) ?? run.project_id.slice(0, 8)) : null}
+            projectName={run.project_id ? (projectNameMap.get(run.project_id) ?? null) : null}
             showDevContent={showDevContent}
           />
         ))}
@@ -276,7 +279,7 @@ export function CreditsPage() {
   const projectNameMap = useMemo(() => {
     const map = new Map<string, string>();
     for (const p of projects ?? []) {
-      map.set(p.id, p.name);
+      map.set(p.id, p.project_name);
     }
     return map;
   }, [projects]);
@@ -293,7 +296,7 @@ export function CreditsPage() {
     () => projectFilter ? runs.filter((run) => run.project_id === projectFilter) : runs,
     [runs, projectFilter],
   );
-  const stageGroups = useMemo(() => groupRunsByStage(visibleRuns), [visibleRuns]);
+  const dayGroups = useMemo(() => groupRunsByDay(visibleRuns), [visibleRuns]);
 
   const credits = balance?.balance_credits ?? 0;
 
@@ -428,19 +431,25 @@ export function CreditsPage() {
       </section>
 
       <section className="mt-14">
-        <div className="mb-4 flex flex-wrap items-end justify-between gap-3 border-b-[3px] border-ink-black pb-4">
-          <h2 className="font-display text-[1.9rem] font-black uppercase leading-none tracking-[-0.035em] text-ink-black">
-            History
-          </h2>
+        <div className="mb-4 flex flex-col items-stretch justify-between gap-3 border-b-[3px] border-ink-black pb-4 sm:flex-row sm:items-end">
+          <div>
+            <h2 className="font-display text-[1.9rem] font-black uppercase leading-none tracking-[-0.035em] text-ink-black">
+              History
+            </h2>
+            <p className="mt-1.5 font-body text-[0.78rem] font-semibold text-ink-muted">
+              Newest first. Open an activity to see how its charge was calculated.
+            </p>
+          </div>
           {filterProjectIds.length > 0 && (
             <Select
               aria-label="Filter history by project"
               size="sm"
               value={projectFilter ?? ""}
               onValueChange={(value) => setProjectFilter(value || null)}
+              className="w-full sm:w-auto"
               options={[
-                { value: "", label: "ALL PROJECTS" },
-                ...filterProjectIds.map((id) => ({ value: id, label: projectNameMap.get(id) ?? id.slice(0, 8) })),
+                { value: "", label: "All projects" },
+                ...filterProjectIds.map((id) => ({ value: id, label: projectNameMap.get(id) ?? "Project no longer available" })),
               ]}
             />
           )}
@@ -449,7 +458,7 @@ export function CreditsPage() {
           <div className="space-y-2">
             {[1, 2, 3].map((i) => <Skeleton key={i} className="h-14" />)}
           </div>
-        ) : stageGroups.length === 0 ? (
+        ) : dayGroups.length === 0 ? (
           <div className="space-y-3">
             <div className="border-[2px] border-ink-black/12 bg-surface-container px-5 py-8 font-body text-[0.9rem] font-semibold text-ink-muted">
               {projectFilter
@@ -470,8 +479,8 @@ export function CreditsPage() {
           </div>
         ) : (
           <div className="space-y-5">
-            {stageGroups.map((group) => (
-              <StageLedgerSection
+            {dayGroups.map((group) => (
+              <DayLedgerSection
                 key={group.key}
                 group={group}
                 projectNameMap={projectNameMap}

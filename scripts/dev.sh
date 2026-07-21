@@ -197,6 +197,8 @@ if [ "$MODE" = "live" ]; then
 
   if http_ok "$LITELLM_URL/health/liveliness"; then
     ok "LiteLLM ($LITELLM_URL)"
+  elif [ "$CHECK_ONLY" = false ] && [ "$required_failed" = false ]; then
+    wait_for_http "LiteLLM" "$LITELLM_URL/health/liveliness" || required_failed=true
   else
     failed "LiteLLM HTTP health ($LITELLM_URL/health/liveliness)"
     required_failed=true
