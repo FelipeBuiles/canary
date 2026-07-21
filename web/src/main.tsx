@@ -5,9 +5,11 @@ import { BrowserRouter } from "react-router-dom";
 import { App } from "./App";
 import { queryClient } from "./api/queryClient";
 import { initSentry } from "./sentry";
+import { installChunkLoadRecovery } from "./lib/chunkLoadRecovery";
 import "./index.css";
 
 initSentry();
+installChunkLoadRecovery();
 
 createRoot(document.getElementById("root")!).render(
 	<StrictMode>

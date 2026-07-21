@@ -1,6 +1,7 @@
 """Export trigger and file download."""
 
 import asyncio
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, RedirectResponse
@@ -20,6 +21,43 @@ from ..ratelimit import export_limit, limiter
 from ..product_events import capture_server_event
 
 router = APIRouter()
+log = logging.getLogger(__name__)
+
+_RENDERER_STARTUP_MARKERS = (
+    "browsertype.launch",
+    "chromium is not installed",
+    "executable doesn't exist",
+    "error while loading shared libraries",
+    "playwright install",
+)
+
+
+def _raise_actionable_export_error(exc: Exception) -> None:
+    """Translate known renderer failures without hiding unexpected defects."""
+    message = str(exc)
+    if any(marker in message.lower() for marker in _RENDERER_STARTUP_MARKERS):
+        log.exception("Export renderer failed to start")
+        raise HTTPException(
+            503,
+            {
+                "message": (
+                    "The export renderer is temporarily unavailable. "
+                    "Please try again shortly."
+                ),
+                "error": "export_renderer_unavailable",
+            },
+        ) from exc
+    if isinstance(exc, ValueError) and message.startswith(
+        "Lettering preflight blocked export:"
+    ):
+        raise HTTPException(
+            422,
+            {
+                "message": message,
+                "error": "lettering_preflight_blocked",
+            },
+        ) from exc
+    raise exc
 
 
 @router.post("/")
@@ -38,7 +76,10 @@ async def trigger_export(
     if fmt not in ("pdf", "cbz"):
         raise HTTPException(400, "Format must be 'pdf' or 'cbz'")
 
-    lettering_issues = await inspect_project_lettering(project_dir)
+    try:
+        lettering_issues = await inspect_project_lettering(project_dir)
+    except Exception as exc:
+        _raise_actionable_export_error(exc)
     if not allow_issues and has_blocking_lettering_issues(lettering_issues):
         blocking = [issue.as_dict() for issue in lettering_issues if issue.severity == "error"]
         locations = sorted({
@@ -90,7 +131,17 @@ async def trigger_export(
         # The stage expects a StageRuntime, not a raw PipelineState — passing the
         # state directly crashes on the first ctx.log() call.
         ctx = StageRuntime("compose", state, project_dir)
-        await s8_compose.run(config, project_dir, ctx, formats=[fmt], rebuild=False)
+        try:
+            await s8_compose.run(
+                config,
+                project_dir,
+                ctx,
+                formats=[fmt],
+                rebuild=False,
+                allow_lettering_issues=allow_issues,
+            )
+        except Exception as exc:
+            _raise_actionable_export_error(exc)
 
         if not export_path.exists():
             raise HTTPException(500, f"Export failed — {fmt} file not created")
