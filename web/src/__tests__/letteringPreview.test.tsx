@@ -11,6 +11,13 @@ describe("LetteringPreview", () => {
     expect((screen.getByText("…something is wrong.").closest(".bubble") as HTMLElement).style.top).toBe("350px");
     expect(screen.getByText("KRAK!").style.bottom).toBe("28px");
     expect(container.querySelectorAll(".letter-shape")).toHaveLength(3);
-    expect(container.querySelector(".auto-tail")).not.toBeNull();
+    expect(container.querySelectorAll(".speaker-tail")).toHaveLength(2);
+    expect(container.querySelector(".tail-outline")).not.toBeNull();
+    expect(container.querySelectorAll(".thought-dot")).toHaveLength(4);
+
+    const thought = screen.getByText("…something is wrong.").closest(".thought");
+    expect(thought?.querySelector(".letter-shape path")?.getAttribute("d")).toMatch(
+      /^M18 2 C8 2 2 10 2 22/,
+    );
   });
 });

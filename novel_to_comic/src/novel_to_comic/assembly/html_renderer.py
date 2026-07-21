@@ -225,14 +225,14 @@ body {
     font-size: clamp(40px, 5cqw, max(40px, var(--caption-font-size)));
   }
   .bubble {
-    font-size: clamp(44px, 5.5cqw, max(44px, var(--bubble-font-size)));
+    font-size: clamp(40px, 5.5cqw, max(40px, var(--bubble-font-size)));
   }
 }
 .bubble.right  { align-self: flex-end; }
 .bubble.center { align-self: center; max-width: var(--bubble-center-width); }
 .bubble.full-width { align-self: stretch; max-width: 100%; text-align: center; }
 
-/* SVG balloon bodies: restrained speech, soft thought, cut-paper narration. */
+/* SVG balloon bodies: restrained speech, smooth thought, cut-paper narration. */
 .letter-shape {
   position: absolute;
   inset: 0;
@@ -264,13 +264,13 @@ body {
 
 .bubble.thought {
   min-height: 96px;
-  padding: 34px 42px 48px;
+  padding: 22px 30px 32px;
   display: flex;
   align-items: center;
 }
 
 .bubble.thought .letter-content {
-  width: 80%;
+  width: 88%;
   margin-inline: auto;
 }
 
@@ -289,53 +289,18 @@ body {
   .bubble.thought { max-width: 84%; }
 }
 
-.bubble.thought::after {
-  content: '';
+/* Measured speaker indicators. Their fill overlaps the balloon edge while only
+   the outer curves are stroked, so the tail reads as part of the outline. */
+.speaker-tail {
   position: absolute;
-  bottom: -13px;
-  left: 22px;
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: var(--bubble-bg);
-  border: var(--bubble-border-width) solid var(--bubble-border);
-  z-index: 0;
-  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.18);
-}
-.bubble.thought::before {
-  content: '';
-  position: absolute;
-  bottom: -24px;
-  left: 12px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--bubble-bg);
-  border: var(--bubble-border-width) solid var(--bubble-border);
-  z-index: 0;
-  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.18);
-}
-.bubble.thought.right::after { left: auto; right: 22px; }
-.bubble.thought.right::before { left: auto; right: 12px; }
-.bubble.thought.center::after { left: calc(50% - 6px); }
-.bubble.thought.center::before { left: calc(50% - 3px); }
-
-/* Curved speech tails. The body overlaps the tail base for one continuous ink line. */
-.auto-tail {
-  position: absolute;
-  width: 54px;
-  height: 46px;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
   overflow: visible;
   pointer-events: none;
-  z-index: 0;
+  z-index: 1;
 }
-.bubble.speech.tail-down .auto-tail { top: calc(100% - 24px); }
-.bubble.speech.tail-up .auto-tail { bottom: calc(100% - 24px); transform: scaleY(-1); }
-.bubble.speech.left .auto-tail { left: 35%; }
-.bubble.speech.right .auto-tail { right: 35%; transform: scaleX(-1); }
-.bubble.speech.right.tail-up .auto-tail { transform: scale(-1, -1); }
-.bubble.speech.center .auto-tail { left: 50%; transform: translateX(-50%); }
-.bubble.speech.center.tail-up .auto-tail { transform: translateX(-50%) scaleY(-1); }
 
 /* Speaker label */
 .speaker {
@@ -354,20 +319,6 @@ body {
 .bubble.pinned {
   position: absolute;
   /* left, top, width set via inline style */
-}
-
-/* ── SVG tail (replaces CSS pseudo-element tails for pinned bubbles) ── */
-.bubble.svg-tail::before,
-.bubble.svg-tail::after { display: none; }
-.bubble .tail-svg {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 1px;
-  height: 1px;
-  overflow: visible;
-  pointer-events: none;
-  z-index: 0;
 }
 
 /* ── Narration caption — pinned variant ── */
@@ -482,7 +433,7 @@ _THEME_HEADER = """\
  *    --bubble-bg               background (#FFFFFF)
  *    --bubble-border           border colour (#1A1A1A)
  *    --bubble-border-width     (2px)
- *    --bubble-font-size        (48px)
+ *    --bubble-font-size        (44px)
  *    --bubble-padding          (18px 26px)
  *    --bubble-max-width        max % of panel width (52%)
  *    --bubble-center-width     max % for centred bubbles (68%)
@@ -522,7 +473,7 @@ def write_theme_css(project_dir: Path, theme_name: str) -> Path:
         if theme_vars:
             var_lines = "\n".join(f"  {k}: {v};" for k, v in theme_vars.items())
         else:
-            var_lines = "  /* base defaults active — uncomment to override: */\n  /* --bubble-font-size: 48px; */"
+            var_lines = "  /* base defaults active — uncomment to override: */\n  /* --bubble-font-size: 44px; */"
         path.write_text(_THEME_HEADER.format(theme_name=theme_name, var_lines=var_lines))
     return path
 
@@ -562,19 +513,26 @@ def _font_face(
     )
 
 
-def _svg_tail(bubble: Bubble) -> str:
-    """Render a measured pinned-tail host targeting panel-relative coordinates."""
-    if bubble.tail_x is None or bubble.tail_y is None:
-        return ""
-    if bubble.x is None or bubble.y is None:
-        return ""
-    return (
-        f'<svg class="tail-svg" data-tail-x="{bubble.tail_x:.2f}" '
-        f'data-tail-y="{bubble.tail_y:.2f}" aria-hidden="true">'
-        '<path class="tail-path" fill="var(--bubble-bg)" '
+def _speaker_tail_svg(bubble: Bubble) -> str:
+    """Render a measured speaker indicator for automatic or explicit targets."""
+    target_attrs = ""
+    if bubble.tail_x is not None and bubble.tail_y is not None:
+        target_attrs = f' data-tail-x="{bubble.tail_x:.2f}" data-tail-y="{bubble.tail_y:.2f}"'
+    circles = "".join(
+        '<circle class="thought-dot" fill="var(--bubble-bg)" '
         'stroke="var(--bubble-border)" stroke-width="var(--bubble-border-width)" '
-        'vector-effect="non-scaling-stroke" stroke-linejoin="round"/>'
-        f'</svg>'
+        'vector-effect="non-scaling-stroke"/>'
+        for _ in range(4)
+    )
+    return (
+        f'<svg class="speaker-tail" data-tail-kind="{_e(bubble.type)}" '
+        f'data-tail-side="{_e(bubble.side)}" '
+        f'data-tail-direction="{_e(bubble.tail_direction)}"{target_attrs} aria-hidden="true">'
+        '<path class="tail-fill" fill="var(--bubble-bg)"/>'
+        '<path class="tail-outline" fill="none" stroke="var(--bubble-border)" '
+        'stroke-width="var(--bubble-border-width)" vector-effect="non-scaling-stroke" '
+        'stroke-linejoin="round" stroke-linecap="round"/>'
+        f'{circles}</svg>'
     )
 
 
@@ -584,12 +542,10 @@ _SPEECH_SHAPE_PATH = (
     "C3 98 0 95 0 88 L0 12 C0 5 1 2 4 1 Z"
 )
 _THOUGHT_SHAPE_PATH = (
-    "M4 50 C-2 39 1 27 10 22 C7 10 17 2 29 6 "
-    "C38 -1 52 0 59 7 C71 1 85 5 89 16 "
-    "C99 19 102 32 95 41 C102 50 100 62 92 68 "
-    "C96 80 85 91 73 88 C65 98 50 100 41 92 "
-    "C29 98 16 92 13 82 C2 81 -3 69 3 59 "
-    "C-1 56 -1 52 4 50 Z"
+    "M18 2 C8 2 2 10 2 22 L2 78 "
+    "C2 90 8 98 18 98 L82 98 "
+    "C92 98 98 90 98 78 L98 22 "
+    "C98 10 92 2 82 2 Z"
 )
 _NARRATION_SHAPE_PATH = "M2 4 L96 2 L99 88 L92 98 L3 96 Z"
 
@@ -653,33 +609,66 @@ _PINNED_TAIL_SCRIPT = """\
       host.style.top = `${clamp(host.offsetTop, safeGutter, maxTop)}px`;
     });
   };
-  const pathFor = (width, height, targetX, targetY) => {
+  const attachmentFor = (width, height, targetX, targetY) => {
     const dx = targetX - width / 2;
     const dy = targetY - height / 2;
-    const halfBase = Math.max(8, Math.min(16, Math.min(width, height) * 0.12));
+    const distance = Math.max(1, Math.hypot(dx, dy));
+    const unit = [dx / distance, dy / distance];
+    const halfBase = Math.max(10, Math.min(18, Math.min(width, height) * 0.11));
+    let anchor;
     let first;
     let second;
     if (Math.abs(dx) / Math.max(width, 1) > Math.abs(dy) / Math.max(height, 1)) {
-      const edgeX = dx < 0 ? width * 0.06 : width * 0.94;
-      const anchorY = clamp(targetY, height * 0.25, height * 0.75);
+      const edgeX = dx < 0 ? width * 0.02 : width * 0.98;
+      const projectedY = height / 2 + dy * ((edgeX - width / 2) / (dx || 1));
+      const anchorY = clamp(projectedY, height * 0.24, height * 0.76);
+      anchor = [edgeX, anchorY];
       first = [edgeX, anchorY - halfBase];
       second = [edgeX, anchorY + halfBase];
     } else {
-      const edgeY = dy < 0 ? height * 0.08 : height * 0.92;
-      const anchorX = clamp(targetX, width * 0.25, width * 0.75);
+      const edgeY = dy < 0 ? height * 0.02 : height * 0.98;
+      const projectedX = width / 2 + dx * ((edgeY - height / 2) / (dy || 1));
+      const anchorX = clamp(projectedX, width * 0.22, width * 0.78);
+      anchor = [anchorX, edgeY];
       first = [anchorX - halfBase, edgeY];
       second = [anchorX + halfBase, edgeY];
     }
+    return { anchor, first, second, unit };
+  };
+  const speechGeometryFor = (width, height, targetX, targetY) => {
+    const { first, second, unit } = attachmentFor(width, height, targetX, targetY);
+    const distance = Math.max(1, Math.hypot(targetX - first[0], targetY - first[1]));
+    const innerFirst = [first[0] - unit[0] * 7, first[1] - unit[1] * 7];
+    const innerSecond = [second[0] - unit[0] * 7, second[1] - unit[1] * 7];
     const c1 = [
-      first[0] + (targetX - first[0]) * 0.38,
-      first[1] + (targetY - first[1]) * 0.38,
+      first[0] + unit[0] * distance * 0.42,
+      first[1] + unit[1] * distance * 0.42,
     ];
     const c2 = [
-      second[0] + (targetX - second[0]) * 0.7,
-      second[1] + (targetY - second[1]) * 0.7,
+      second[0] + (targetX - second[0]) * 0.72,
+      second[1] + (targetY - second[1]) * 0.72,
     ];
-    return `M ${first[0]} ${first[1]} Q ${c1[0]} ${c1[1]} ${targetX} ${targetY} ` +
-      `Q ${c2[0]} ${c2[1]} ${second[0]} ${second[1]} Z`;
+    return {
+      fill: `M ${innerFirst[0]} ${innerFirst[1]} L ${first[0]} ${first[1]} ` +
+        `C ${c1[0]} ${c1[1]} ${targetX} ${targetY} ${targetX} ${targetY} ` +
+        `C ${targetX} ${targetY} ${c2[0]} ${c2[1]} ${second[0]} ${second[1]} ` +
+        `L ${innerSecond[0]} ${innerSecond[1]} Z`,
+      outline: `M ${first[0]} ${first[1]} C ${c1[0]} ${c1[1]} ` +
+        `${targetX} ${targetY} ${targetX} ${targetY} C ${targetX} ${targetY} ` +
+        `${c2[0]} ${c2[1]} ${second[0]} ${second[1]}`,
+    };
+  };
+  const thoughtDotsFor = (width, height, targetX, targetY) => {
+    const { anchor, unit } = attachmentFor(width, height, targetX, targetY);
+    const start = [anchor[0] + unit[0] * 5, anchor[1] + unit[1] * 5];
+    const end = [targetX - unit[0] * 3, targetY - unit[1] * 3];
+    const stops = [0, 0.34, 0.68, 1];
+    const radii = [11, 8, 5.5, 3.5];
+    return stops.map((stop, index) => ({
+      cx: start[0] + (end[0] - start[0]) * stop,
+      cy: start[1] + (end[1] - start[1]) * stop,
+      radius: radii[index],
+    }));
   };
   const update = () => {
     fitPinnedLettering();
@@ -696,13 +685,55 @@ _PINNED_TAIL_SCRIPT = """\
       );
       flow.style.top = `${Math.max(14, captionBottom + (captionBottom ? 24 : 0))}px`;
     });
-    document.querySelectorAll('.tail-svg').forEach((svg) => {
+    document.querySelectorAll('.speaker-tail').forEach((svg) => {
       const bubble = svg.parentElement;
-      const path = svg.querySelector('.tail-path');
-      if (!bubble || !path) return;
-      const targetX = Number(svg.dataset.tailX) - bubble.offsetLeft;
-      const targetY = Number(svg.dataset.tailY) - bubble.offsetTop;
-      path.setAttribute('d', pathFor(bubble.offsetWidth, bubble.offsetHeight, targetX, targetY));
+      const panel = bubble && bubble.closest('.panel');
+      if (!bubble || !panel) return;
+      const hasExplicitTarget = svg.dataset.tailX !== undefined && svg.dataset.tailY !== undefined;
+      const sideX = svg.dataset.tailSide === 'right' ? 0.76 : svg.dataset.tailSide === 'center' ? 0.5 : 0.24;
+      const bubbleCenterY = bubble.offsetTop + bubble.offsetHeight / 2;
+      const direction = svg.dataset.tailDirection;
+      const targetPanelY = direction === 'up'
+        ? panel.clientHeight * 0.32
+        : direction === 'down'
+          ? panel.clientHeight * 0.68
+          : bubbleCenterY < panel.clientHeight * 0.55
+            ? panel.clientHeight * 0.68
+            : panel.clientHeight * 0.32;
+      const center = { x: bubble.offsetWidth / 2, y: bubble.offsetHeight / 2 };
+      const proxy = {
+        x: panel.clientWidth * sideX - bubble.offsetLeft,
+        y: targetPanelY - bubble.offsetTop,
+      };
+      const dx = proxy.x - center.x;
+      const dy = proxy.y - center.y;
+      const distance = Math.max(1, Math.hypot(dx, dy));
+      const pointerLength = Math.max(90, Math.min(220, Math.min(panel.clientWidth, panel.clientHeight) * 0.18));
+      const targetX = hasExplicitTarget
+        ? Number(svg.dataset.tailX) - bubble.offsetLeft
+        : center.x + (dx / distance) * pointerLength;
+      const targetY = hasExplicitTarget
+        ? Number(svg.dataset.tailY) - bubble.offsetTop
+        : center.y + (dy / distance) * pointerLength;
+      const fill = svg.querySelector('.tail-fill');
+      const outline = svg.querySelector('.tail-outline');
+      const dots = Array.from(svg.querySelectorAll('.thought-dot'));
+      if (svg.dataset.tailKind === 'thought') {
+        if (fill) fill.setAttribute('d', '');
+        if (outline) outline.setAttribute('d', '');
+        thoughtDotsFor(bubble.offsetWidth, bubble.offsetHeight, targetX, targetY).forEach((dot, index) => {
+          const circle = dots[index];
+          if (!circle) return;
+          circle.setAttribute('cx', dot.cx);
+          circle.setAttribute('cy', dot.cy);
+          circle.setAttribute('r', dot.radius);
+        });
+      } else {
+        dots.forEach((circle) => circle.setAttribute('r', '0'));
+        const geometry = speechGeometryFor(bubble.offsetWidth, bubble.offsetHeight, targetX, targetY);
+        if (fill) fill.setAttribute('d', geometry.fill);
+        if (outline) outline.setAttribute('d', geometry.outline);
+      }
     });
   };
   window.__verifyLetteringSafeAreas = verifySafeAreas;
@@ -740,38 +771,6 @@ def _bubble_shape_svg(bubble: Bubble) -> str:
     )
 
 
-def _auto_tail_svg() -> str:
-    """Return a gently curved tail; CSS orients it by side and direction."""
-    return (
-        '<svg class="auto-tail" viewBox="0 0 54 46" '
-        'preserveAspectRatio="none" aria-hidden="true">'
-        '<path d="M13 0 C13 15 7 32 2 44 C16 37 29 21 36 0 Z" '
-        'fill="var(--bubble-bg)" stroke="var(--bubble-border)" '
-        'stroke-width="var(--bubble-border-width)" vector-effect="non-scaling-stroke" '
-        'stroke-linejoin="round" stroke-linecap="round"/></svg>'
-    )
-
-
-def _resolve_tail_direction(bubble: Bubble) -> str:
-    """Resolve 'auto' tail direction based on bubble position.
-
-    Auto-layout bubbles sit in the upper reading flow, so their tails point
-    down toward characters in the panel.
-
-    For pinned bubbles, auto checks whether the bubble is in the top or
-    bottom half of the panel (using a 400px threshold — roughly half a
-    typical panel height of ~800-1200px in the 2480x3508 page).
-    """
-    direction = getattr(bubble, "tail_direction", "auto")
-    if direction != "auto":
-        return direction
-    if bubble.y is None:
-        return "down"
-    if bubble.y is not None and bubble.y < 400:
-        return "down"  # bubble near top → tail points down toward character below
-    return "up"
-
-
 def _caption_zone_class(preferred_zone: str | None) -> str:
     zone = preferred_zone or "top"
     if zone == "none":
@@ -784,7 +783,6 @@ def _bubble_html(bubble: Bubble) -> str:
     is_narration = bubble.type == "narration"
     classes = ["caption", bubble.type] if is_narration else ["bubble", bubble.type, bubble.side]
     inline: list[str] = []
-    has_svg_tail = False
 
     if bubble.full_width:
         classes.append("full-width")
@@ -815,13 +813,6 @@ def _bubble_html(bubble: Bubble) -> str:
     if getattr(bubble, "border_width", None) is not None:
         width_var = "--caption-border-width" if is_narration else "--bubble-border-width"
         inline.append(f"{width_var}: {bubble.border_width}px")
-    if bubble.tail_x is not None and bubble.tail_y is not None and not is_narration:
-        classes.append("svg-tail")
-        has_svg_tail = True
-    elif bubble.type == "speech":
-        # Add tail direction class for CSS pseudo-element tails
-        classes.append(f"tail-{_resolve_tail_direction(bubble)}")
-
     style_attr = f' style="{_e("; ".join(inline))}"' if inline else ""
     cls = " ".join(classes)
 
@@ -829,12 +820,7 @@ def _bubble_html(bubble: Bubble) -> str:
     if bubble.speaker_name and not is_narration:
         speaker_html = f'<span class="speaker">{_e(bubble.speaker_name)}:</span>'
 
-    if has_svg_tail:
-        tail_html = _svg_tail(bubble)
-    elif bubble.type == "speech":
-        tail_html = _auto_tail_svg()
-    else:
-        tail_html = ""
+    tail_html = "" if is_narration else _speaker_tail_svg(bubble)
     content = f'<span class="letter-content">{speaker_html}{_e(bubble.text)}</span>'
     return (
         f'<div class="{cls}" data-id="{_e(bubble.id)}"{style_attr}>'

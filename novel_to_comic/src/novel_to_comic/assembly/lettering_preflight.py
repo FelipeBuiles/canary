@@ -19,7 +19,7 @@ from .lettering_style import load_lettering_style
 
 
 WARNING_COVERAGE_RATIO = 0.25
-MAX_COVERAGE_RATIO = 0.32
+MAX_COVERAGE_RATIO = 0.40
 MAX_AUTO_STACK_RATIO = 0.40
 
 
@@ -71,11 +71,15 @@ def classify_lettering_metrics(
             issues.append(
                 LetteringPreflightIssue(
                     code="lettering_overflow",
-                    severity="error",
+                    # DOM bounds include rotated caption corners and strokes,
+                    # so a reported crossing is not necessarily visible
+                    # clipping. Surface it for review; reserve blocking for
+                    # measurable layout failures such as an oversized stack.
+                    severity="warning",
                     bubble_ids=panel.overflowing_bubble_ids,
                     message=(
-                        f"Panel {panel.panel_number} has lettering outside its panel bounds. "
-                        "Shorten, split, or reposition the text before export."
+                        f"Panel {panel.panel_number} may have lettering close to its panel edge. "
+                        "Review the rendered page before export."
                     ),
                     **base,
                 )

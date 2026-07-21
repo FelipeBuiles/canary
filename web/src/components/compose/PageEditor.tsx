@@ -32,6 +32,7 @@ interface PageEditorProps {
     x: number,
     y: number,
   ) => void;
+  onTailDragEnd?: (panelId: string, bubbleId: string, tailX: number, tailY: number) => void;
   onLetteringIssues?: (pageNumber: number, issues: ComposeIssue[]) => void;
 }
 
@@ -47,6 +48,18 @@ interface ElementDragState {
 }
 
 interface ElementDragPreview extends ElementDragState {
+  dx: number;
+  dy: number;
+}
+
+interface TailDragState {
+  panelId: string;
+  bubbleId: string;
+  startClientX: number;
+  startClientY: number;
+  startTailX: number;
+  startTailY: number;
+  scale: number;
   dx: number;
   dy: number;
 }
@@ -80,23 +93,28 @@ export function PageEditor({
   onPanelReframeStart,
   onPanelReframeDragEnd,
   onDragEnd,
+  onTailDragEnd,
   onLetteringIssues,
 }: PageEditorProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const scaleRef = useRef(0);
   const dragRef = useRef<ElementDragState | null>(null);
+  const tailDragRef = useRef<TailDragState | null>(null);
   const panelDragRef = useRef<PanelReframeDrag | null>(null);
   const [dragPreview, setDragPreview] = useState<ElementDragPreview | null>(null);
+  const [tailDragPreview, setTailDragPreview] = useState<TailDragState | null>(null);
   const [panelDragPreview, setPanelDragPreview] = useState<PanelReframeDrag | null>(null);
   // Committed drag state persists the optimistic position until the server responds,
   // preventing the rubberband snap between pointerUp and the next page data update.
   const [committedDrag, setCommittedDrag] = useState<ElementDragPreview | null>(null);
+  const [committedTailDrag, setCommittedTailDrag] = useState<TailDragState | null>(null);
   const [committedPanelDrag, setCommittedPanelDrag] = useState<PanelReframeDrag | null>(null);
   const [previousPage, setPreviousPage] = useState(page);
 
   if (previousPage !== page) {
     setPreviousPage(page);
     setCommittedDrag(null);
+    setCommittedTailDrag(null);
     setCommittedPanelDrag((committed) => {
       if (!committed) return null;
       return panelReframeHasSettled(page, committed) ? null : committed;
@@ -115,7 +133,36 @@ export function PageEditor({
       const canvas = canvasRef.current;
       const scale = scaleRef.current;
 
-      // 1) Bubble click
+      // 1) Selected bubble's speaker-target handle
+      const tailHandle = closest(target, "[data-tail-handle]");
+      if (tailHandle && canvas && scale && onTailDragEnd) {
+        const bubbleEl = closest(tailHandle, "[data-id][data-editor-selectable]");
+        const panelEl = closest(tailHandle, "[data-panel-id]");
+        const bubbleId = bubbleEl?.getAttribute("data-id");
+        const panelId = panelEl?.getAttribute("data-panel-id");
+        const startTailX = Number(tailHandle.getAttribute("data-tail-panel-x"));
+        const startTailY = Number(tailHandle.getAttribute("data-tail-panel-y"));
+        if (bubbleId && panelId && Number.isFinite(startTailX) && Number.isFinite(startTailY)) {
+          onSelect(panelId, "bubble", bubbleId);
+          const state: TailDragState = {
+            panelId,
+            bubbleId,
+            startClientX: e.clientX,
+            startClientY: e.clientY,
+            startTailX,
+            startTailY,
+            scale,
+            dx: 0,
+            dy: 0,
+          };
+          tailDragRef.current = state;
+          setTailDragPreview(state);
+          canvas.setPointerCapture(e.pointerId);
+        }
+        return;
+      }
+
+      // 2) Bubble click
       const bubbleEl = closest(target, "[data-id][data-editor-selectable]");
       if (bubbleEl) {
         const bubbleId = bubbleEl.getAttribute("data-id")!;
@@ -142,7 +189,7 @@ export function PageEditor({
         return;
       }
 
-      // 2) SFX click
+      // 3) SFX click
       const sfxEl = closest(target, "[data-sfx][data-editor-selectable]");
       if (sfxEl) {
         const panelId = sfxEl.getAttribute("data-sfx")!;
@@ -171,7 +218,7 @@ export function PageEditor({
         return;
       }
 
-      // 3) Panel background click → arm reframe mode; drag only starts if already armed
+      // 4) Panel background click → arm reframe mode; drag only starts if already armed
       const panelEl = closest(target, "[data-panel-id]");
       if (panelEl) {
         const panelId = panelEl.getAttribute("data-panel-id")!;
@@ -198,13 +245,18 @@ export function PageEditor({
         return;
       }
 
-      // 4) Empty canvas → deselect
+      // 5) Empty canvas → deselect
       onDeselect();
     },
-    [onSelect, onDeselect, onPanelReframeStart, onDragEnd, page.panels, reframePanelId],
+    [onSelect, onDeselect, onPanelReframeStart, onDragEnd, onTailDragEnd, page.panels, reframePanelId],
   );
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    const tail = tailDragRef.current;
+    if (tail) {
+      setTailDragPreview({ ...tail, dx: e.clientX - tail.startClientX, dy: e.clientY - tail.startClientY });
+      return;
+    }
     const ds = dragRef.current;
     if (ds) {
       setDragPreview({ ...ds, dx: e.clientX - ds.startClientX, dy: e.clientY - ds.startClientY });
@@ -219,6 +271,27 @@ export function PageEditor({
   const handlePointerUp = useCallback(
     (e: React.PointerEvent) => {
       const canvas = canvasRef.current;
+
+      const tail = tailDragRef.current;
+      if (tail && onTailDragEnd) {
+        const dx = e.clientX - tail.startClientX;
+        const dy = e.clientY - tail.startClientY;
+        if (exceedsThreshold(dx, dy)) {
+          onTailDragEnd(
+            tail.panelId,
+            tail.bubbleId,
+            tail.startTailX + dx / tail.scale,
+            tail.startTailY + dy / tail.scale,
+          );
+          setCommittedTailDrag({ ...tail, dx, dy });
+        }
+        tailDragRef.current = null;
+        setTailDragPreview(null);
+        if (canvas?.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+        return;
+      }
+      tailDragRef.current = null;
+      setTailDragPreview(null);
 
       // Element drag end
       const ds = dragRef.current;
@@ -256,19 +329,26 @@ export function PageEditor({
         if (canvas?.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
       }
     },
-    [onDragEnd, onPanelReframeDragEnd],
+    [onDragEnd, onPanelReframeDragEnd, onTailDragEnd],
   );
 
   const handlePointerCancel = useCallback((e: React.PointerEvent) => {
     dragRef.current = null;
+    tailDragRef.current = null;
     panelDragRef.current = null;
     setDragPreview(null);
+    setTailDragPreview(null);
     setPanelDragPreview(null);
     const canvas = canvasRef.current;
     if (canvas?.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
   }, []);
 
-  const displayPage = buildDisplayPage(page, dragPreview ?? committedDrag, panelDragPreview ?? committedPanelDrag);
+  const displayPage = buildDisplayPage(
+    page,
+    dragPreview ?? committedDrag,
+    panelDragPreview ?? committedPanelDrag,
+    tailDragPreview ?? committedTailDrag,
+  );
 
   useEffect(() => {
     if (!onLetteringIssues) return;
@@ -357,12 +437,23 @@ function buildDisplayPage(
   page: ComicPage,
   elementDrag: ElementDragPreview | null,
   panelDrag: PanelReframeDrag | null,
+  tailDrag: TailDragState | null,
 ): ComicPage {
-  if (!elementDrag && !panelDrag) return page;
+  if (!elementDrag && !panelDrag && !tailDrag) return page;
 
   return {
     ...page,
     panels: page.panels.map((panel) => {
+      if (tailDrag && panel.id === tailDrag.panelId) {
+        const tailX = tailDrag.startTailX + tailDrag.dx / tailDrag.scale;
+        const tailY = tailDrag.startTailY + tailDrag.dy / tailDrag.scale;
+        return {
+          ...panel,
+          bubbles: panel.bubbles.map((bubble) =>
+            bubble.id === tailDrag.bubbleId ? { ...bubble, tail_x: tailX, tail_y: tailY } : bubble,
+          ),
+        };
+      }
       // Optimistic element drag
       if (elementDrag && panel.id === elementDrag.panelId) {
         const x = elementDrag.startPanelX + elementDrag.dx / elementDrag.scale;

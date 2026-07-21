@@ -27,8 +27,17 @@ def test_coverage_between_target_and_limit_is_a_warning():
     ]
 
 
-def test_coverage_over_limit_blocks_export():
-    issues = classify_lettering_metrics([_metrics(coverage_ratio=0.33)])
+def test_visually_acceptable_caption_coverage_is_advisory():
+    issues = classify_lettering_metrics([_metrics(coverage_ratio=0.38)])
+
+    assert [(issue.code, issue.severity) for issue in issues] == [
+        ("lettering_obscures_art", "warning"),
+    ]
+    assert has_blocking_lettering_issues(issues) is False
+
+
+def test_extreme_art_coverage_still_blocks_export():
+    issues = classify_lettering_metrics([_metrics(coverage_ratio=0.41)])
 
     assert [(issue.code, issue.severity) for issue in issues] == [
         ("lettering_obscures_art", "error"),
@@ -36,7 +45,7 @@ def test_coverage_over_limit_blocks_export():
     assert has_blocking_lettering_issues(issues) is True
 
 
-def test_overflow_and_tall_auto_stack_are_blocking_errors():
+def test_overflow_is_advisory_but_tall_auto_stack_still_blocks():
     issues = classify_lettering_metrics([
         _metrics(
             max_auto_stack_ratio=0.41,
@@ -48,7 +57,10 @@ def test_overflow_and_tall_auto_stack_are_blocking_errors():
         "lettering_overflow",
         "lettering_stack_too_tall",
     }
-    assert all(issue.severity == "error" for issue in issues)
+    assert [(issue.code, issue.severity) for issue in issues] == [
+        ("lettering_overflow", "warning"),
+        ("lettering_stack_too_tall", "error"),
+    ]
 
 
 def test_text_close_to_shape_edge_is_an_advisory_warning():

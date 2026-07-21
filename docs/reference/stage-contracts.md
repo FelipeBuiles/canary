@@ -257,9 +257,11 @@ state.
   export.
 - It treats `Bubble.x/y` and `Sfx.x/y` as panel-relative pixel coordinates.
   `null` means CSS auto-layout; numbers mean the editor pinned the element.
-- It supports pinned SVG speech tails with `tail_x` / `tail_y` panel-relative
-  target points. When those are missing, speech bubbles use CSS tails with
-  `tail_direction` (`auto`, `up`, or `down`).
+- Speech and thought indicators share measured SVG geometry. `tail_x` / `tail_y`
+  are exact panel-relative speaker targets and can be dragged in the page editor.
+  When missing, the indicator stays compact and aims toward the planner-owned
+  speaker side; `tail_direction` (`auto`, `up`, or `down`) controls its vertical
+  fallback direction.
 - It exposes three web-editor tabs: Pages for page/bubble/SFX placement, Script
   for text review and translation, and Export for spread review and PDF/CBZ.
   Book-wide lettering is chosen at the Look stage and re-tuned from the Book

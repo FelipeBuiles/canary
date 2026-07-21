@@ -181,12 +181,13 @@ class Bubble(BaseModel):
     x: float | None = None
     y: float | None = None
     width: float | None = None                          # explicit width override
-    # SVG tail target — null = use CSS upward-pointing tail; float = draw SVG
-    # triangle from bubble edge toward this panel-relative point
+    # Speaker-indicator target in panel-relative pixels. Null uses the planned
+    # speaker side as a compact directional fallback; numbers land exactly on
+    # the user-positioned target.
     tail_x: float | None = None
     tail_y: float | None = None
-    # Tail direction: "auto" picks up/down based on bubble position in panel,
-    # "up"/"down" forces direction. Only affects CSS tails (non-SVG).
+    # Tail direction: "auto" picks up/down based on bubble position in panel;
+    # "up"/"down" forces the automatic target direction.
     tail_direction: Literal["auto", "up", "down"] = "auto"
     # Optional per-bubble typography and shape overrides. None means inherit
     # the active page/theme CSS variables.

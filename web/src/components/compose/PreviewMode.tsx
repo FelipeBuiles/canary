@@ -27,8 +27,7 @@ interface PreviewModeProps {
   exportError: string | null;
   issues: ComposeIssue[];
   onPageSelect: (idx: number) => void;
-  onExport: (format: "pdf" | "cbz") => void;
-  onReviewLettering: () => void;
+  onExport: (format: "pdf" | "cbz", allowIssues?: boolean) => void;
   onOutputLanguageChange: (lang: "en" | "es" | "fr") => void;
   onTranslateBubbles: (lang: "en" | "es" | "fr") => void;
 }
@@ -60,19 +59,13 @@ export function PreviewMode({
   issues,
   onPageSelect,
   onExport,
-  onReviewLettering,
   onOutputLanguageChange,
   onTranslateBubbles,
 }: PreviewModeProps) {
   const [exportDrawerFormat, setExportDrawerFormat] = useState<"pdf" | "cbz" | null>(null);
   const blockingIssues = issues.filter((i) => i.severity === "error");
-  const blockingLetteringIssues = blockingIssues.filter((issue) => issue.type.startsWith("lettering_"));
 
   function handleExportClick(format: "pdf" | "cbz") {
-    if (blockingLetteringIssues.length > 0) {
-      onReviewLettering();
-      return;
-    }
     if (blockingIssues.length > 0 || issues.length > 0) {
       setExportDrawerFormat(format);
     } else {
@@ -148,7 +141,7 @@ export function PreviewMode({
           confirmLabel={`EXPORT ${exportDrawerFormat?.toUpperCase()} ANYWAY`}
           busy={isExporting}
           onConfirm={() => {
-            if (exportDrawerFormat) onExport(exportDrawerFormat);
+            if (exportDrawerFormat) onExport(exportDrawerFormat, true);
             setExportDrawerFormat(null);
           }}
           onClose={() => setExportDrawerFormat(null)}

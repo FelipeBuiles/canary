@@ -61,7 +61,7 @@ def test_pinned_narration_keeps_caption_style(tmp_path: Path):
     html = build_page_html(page, tmp_path)
 
     assert 'class="caption narration pinned"' in html
-    assert '<svg class="tail-svg"' not in html
+    assert '<svg class="speaker-tail"' not in html
 
 
 def test_pinned_bubble_coordinates_are_clamped_inside_panel(tmp_path: Path):
@@ -137,10 +137,11 @@ def test_balloon_geometry_is_compact_and_panel_responsive(tmp_path: Path):
 
     html = build_page_html(page, tmp_path)
 
+    assert "--bubble-font-size: 44px" in html
     assert "--bubble-padding: 18px 26px" in html
-    assert "padding: 34px 42px 48px" in html
+    assert "padding: 22px 30px 32px" in html
     assert ".bubble.thought { max-width: 84%; }" in html
-    assert "width: 80%" in html
+    assert "width: 88%" in html
 
 
 def test_semantic_balloon_shapes_and_upper_flow_render(tmp_path: Path):
@@ -164,8 +165,9 @@ def test_semantic_balloon_shapes_and_upper_flow_render(tmp_path: Path):
     html = build_page_html(page, tmp_path)
 
     assert 'class="panel has-top-captions"' in html
-    assert 'class="bubble speech left tail-down"' in html
-    assert 'class="auto-tail"' in html
+    assert 'class="bubble speech left"' in html
+    assert html.count('class="speaker-tail"') == 2
+    assert 'data-tail-kind="thought"' in html
     assert _speech_path() in html
     assert _thought_path() in html
     assert _narration_path() in html
@@ -198,8 +200,10 @@ def test_pinned_speech_tail_uses_measured_panel_target(tmp_path: Path):
 
     html = build_page_html(page, tmp_path)
 
-    assert 'class="tail-svg" data-tail-x="640.00" data-tail-y="520.00"' in html
-    assert "bubble.offsetWidth, bubble.offsetHeight, targetX, targetY" in html
+    assert 'data-tail-x="640.00" data-tail-y="520.00"' in html
+    assert 'class="tail-fill"' in html
+    assert 'class="tail-outline"' in html
+    assert "speechGeometryFor(bubble.offsetWidth, bubble.offsetHeight, targetX, targetY)" in html
 
 
 def test_multiline_text_is_verified_inside_actual_svg_fill(tmp_path: Path):
@@ -260,7 +264,7 @@ def _speech_path() -> str:
 
 
 def _thought_path() -> str:
-    return "M4 50 C-2 39 1 27 10 22 C7 10"
+    return "M18 2 C8 2 2 10 2 22"
 
 
 def _narration_path() -> str:

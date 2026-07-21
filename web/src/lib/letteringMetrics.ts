@@ -2,7 +2,7 @@ import type { ComicPage } from "../types/api";
 import type { ComposeIssue } from "./issueEngine";
 
 export const LETTERING_WARNING_COVERAGE = 0.25;
-export const LETTERING_MAX_COVERAGE = 0.32;
+export const LETTERING_MAX_COVERAGE = 0.4;
 export const LETTERING_MAX_AUTO_STACK = 0.4;
 
 export interface PanelLetteringMetrics {
@@ -89,8 +89,8 @@ export function classifyLetteringMetrics(metrics: PanelLetteringMetrics[]): Comp
       issues.push({
         id: issueId("lettering_overflow", panel.pageNumber, panel.panelId),
         type: "lettering_overflow",
-        severity: "error",
-        message: `Panel ${panel.panelNumber} has lettering outside its panel bounds.`,
+        severity: "warning",
+        message: `Panel ${panel.panelNumber} may have lettering close to its panel edge.`,
         pageNumber: panel.pageNumber,
         panelId: panel.panelId,
         bubbleId: panel.overflowingBubbleIds[0],

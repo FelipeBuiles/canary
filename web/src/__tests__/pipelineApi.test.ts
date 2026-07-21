@@ -9,6 +9,7 @@ import {
   regenPanelWithInstruction,
 } from "../api/pipeline";
 import { createStyleDirection, fetchStyleSampleEstimate, generateStyleSamples, generateStyleValidation, setActiveStyle, suggestStyles } from "../api/styles";
+import { triggerExport } from "../api/pages";
 import { apiFetch } from "../api/client";
 
 vi.mock("../api/client", () => ({
@@ -153,6 +154,15 @@ describe("panel regeneration API", () => {
           panel_number: 1,
         }),
       },
+    );
+  });
+
+  it("sends the explicit issue override for export anyway", async () => {
+    await triggerExport("proj one", "pdf", true);
+
+    expect(mockedApiFetch).toHaveBeenCalledWith(
+      "/projects/proj%20one/export/?format=pdf&allow_issues=true",
+      { method: "POST" },
     );
   });
 });
