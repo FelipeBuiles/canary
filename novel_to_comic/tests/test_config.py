@@ -216,16 +216,23 @@ class TestGptImage2Alias:
         )
 
 
-def test_prompt_aliases_use_ga_vertex_flash_lite():
+def test_gemini_text_aliases_use_latest_flash_tiers():
     gateway_config = Path(__file__).resolve().parents[2] / "litellm" / "config.yaml"
     data = yaml.safe_load(gateway_config.read_text())
-    prompt_models = {
-        item["litellm_params"]["model"]
+    models = {
+        item["model_name"]: item["litellm_params"]["model"]
         for item in data["model_list"]
-        if str(item.get("model_name", "")).startswith("prompt-")
+        if str(item.get("model_name", "")).startswith(("extract-", "panel-", "prompt-"))
     }
 
-    assert prompt_models == {"vertex_ai/gemini-3.1-flash-lite"}
+    assert models["extract-fast"] == "vertex_ai/gemini-3.5-flash-lite"
+    assert models["extract-balanced"] == "vertex_ai/gemini-3.6-flash"
+    assert models["panel-fast"] == "vertex_ai/gemini-3.5-flash-lite"
+    assert models["panel-balanced"] == "vertex_ai/gemini-3.6-flash"
+    assert models["panel-quality"] == "vertex_ai/gemini-3.6-flash"
+    assert {
+        model for alias, model in models.items() if alias.startswith("prompt-")
+    } == {"vertex_ai/gemini-3.5-flash-lite"}
 
 
 class TestReveModelAlias:

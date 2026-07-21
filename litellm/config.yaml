@@ -2,7 +2,7 @@ model_list:
   # ─── Stage 1: full-novel extraction ───────────────────────────────────────
   - model_name: extract-fast
     litellm_params:
-      model: vertex_ai/gemini-3.1-flash-lite-preview
+      model: vertex_ai/gemini-3.5-flash-lite
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       # Canary adapts public-domain literature (Grimm, Lovecraft, …) whose
@@ -22,7 +22,7 @@ model_list:
           threshold: "OFF"
   - model_name: extract-balanced
     litellm_params:
-      model: vertex_ai/gemini-3.5-flash
+      model: vertex_ai/gemini-3.6-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
@@ -50,46 +50,46 @@ model_list:
   # ─── Stage 4: layout / panel planning ─────────────────────────────────────
   - model_name: panel-fast
     litellm_params:
-      model: vertex_ai/gemini-3.1-flash-lite-preview
+      model: vertex_ai/gemini-3.5-flash-lite
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
   - model_name: panel-balanced
     litellm_params:
-      model: vertex_ai/gemini-3.5-flash
+      model: vertex_ai/gemini-3.6-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
   # Panel planning is templated reasoning over already-extracted data; Gemini
-  # 3.5 Flash validates the layout JSON reliably at ~6x less than gpt-5.4.
+  # 3.6 Flash is the workhorse text tier for structured layout generation.
   - model_name: panel-quality
     litellm_params:
-      model: vertex_ai/gemini-3.5-flash
+      model: vertex_ai/gemini-3.6-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
 
   # ─── Stage 5: image-prompt assembly (template filling) ────────────────────
   # Prompt models now serve explicit style suggestions and instructed rewrites;
-  # production panel prompt assembly is deterministic. Use the GA Flash-Lite
-  # route for these bounded, high-volume transformations.
+  # production panel prompt assembly is deterministic. Use the latest
+  # Flash-Lite route for these bounded, high-volume transformations.
   - model_name: prompt-fast
     litellm_params:
-      model: vertex_ai/gemini-3.1-flash-lite
+      model: vertex_ai/gemini-3.5-flash-lite
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
       reasoning_effort: "disable"
   - model_name: prompt-balanced
     litellm_params:
-      model: vertex_ai/gemini-3.1-flash-lite
+      model: vertex_ai/gemini-3.5-flash-lite
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
       reasoning_effort: "disable"
   - model_name: prompt-quality
     litellm_params:
-      model: vertex_ai/gemini-3.1-flash-lite
+      model: vertex_ai/gemini-3.5-flash-lite
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
