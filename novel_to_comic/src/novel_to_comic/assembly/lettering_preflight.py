@@ -109,7 +109,7 @@ def classify_lettering_metrics(
                     bubble_ids=(),
                     message=(
                         f"Panel {panel.panel_number} lettering covers "
-                        f"{panel.coverage_ratio:.0%} of the art area (maximum {MAX_COVERAGE_RATIO:.0%})."
+                        f"{panel.coverage_ratio:.1%} of the art area (maximum {MAX_COVERAGE_RATIO:.0%})."
                     ),
                     **base,
                 )
@@ -135,7 +135,7 @@ def classify_lettering_metrics(
                     bubble_ids=(),
                     message=(
                         f"Panel {panel.panel_number} automatic lettering stack uses "
-                        f"{panel.max_auto_stack_ratio:.0%} of the panel height (maximum {MAX_AUTO_STACK_RATIO:.0%})."
+                        f"{panel.max_auto_stack_ratio:.1%} of the panel height (maximum {MAX_AUTO_STACK_RATIO:.0%})."
                     ),
                     **base,
                 )

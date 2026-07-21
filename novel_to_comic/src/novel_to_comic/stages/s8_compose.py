@@ -32,6 +32,7 @@ from novel_to_comic.assembly.html_renderer import (
     render_html_to_png,
 )
 from novel_to_comic.assembly.lettering_preflight import (
+    LetteringPreflightIssue,
     PanelLetteringMetrics,
     classify_lettering_metrics,
     has_blocking_lettering_issues,
@@ -269,6 +270,25 @@ def _do_exports(page_paths: list[Path], exports_dir: Path, formats: list[str]) -
             console.log(f"[green]CBZ:[/green] {cbz_path}")
 
 
+def _enforce_lettering_preflight(
+    lettering_issues: list[LetteringPreflightIssue],
+    *,
+    allow_lettering_issues: bool,
+) -> None:
+    """Block normal exports while honoring the user's explicit override."""
+    if allow_lettering_issues or not has_blocking_lettering_issues(lettering_issues):
+        return
+
+    blocking = [issue for issue in lettering_issues if issue.severity == "error"]
+    summary = "; ".join(
+        f"page {issue.page_number}, panel {issue.panel_number}: {issue.message}"
+        for issue in blocking[:8]
+    )
+    if len(blocking) > 8:
+        summary += f"; and {len(blocking) - 8} more"
+    raise ValueError(f"Lettering preflight blocked export: {summary}")
+
+
 # ── Render: ComicPage JSON → HTML → PNG → exports ────────────────────────────
 
 async def _render_and_export(
@@ -280,6 +300,8 @@ async def _render_and_export(
     exports_dir: Path,
     export_formats: list[str],
     ctx: StageRuntime,
+    *,
+    allow_lettering_issues: bool = False,
 ) -> None:
     """Render each page JSON to HTML + PNG, then write PDF/CBZ exports."""
     lettering = load_lettering_style(project_dir)
@@ -326,15 +348,10 @@ async def _render_and_export(
                     progress.advance(task)
 
     lettering_issues = classify_lettering_metrics(lettering_metrics)
-    if has_blocking_lettering_issues(lettering_issues):
-        blocking = [issue for issue in lettering_issues if issue.severity == "error"]
-        summary = "; ".join(
-            f"page {issue.page_number}, panel {issue.panel_number}: {issue.message}"
-            for issue in blocking[:8]
-        )
-        if len(blocking) > 8:
-            summary += f"; and {len(blocking) - 8} more"
-        raise ValueError(f"Lettering preflight blocked export: {summary}")
+    _enforce_lettering_preflight(
+        lettering_issues,
+        allow_lettering_issues=allow_lettering_issues,
+    )
 
     _do_exports(png_paths, exports_dir, export_formats)
     for fmt in export_formats:
@@ -350,6 +367,7 @@ async def run(
     ctx: StageRuntime,
     formats: list[str] | None = None,
     rebuild: bool = True,
+    allow_lettering_issues: bool = False,
 ) -> None:
     """Compose stage: build ComicPage JSON (if rebuild=True), then render to PNG/PDF/CBZ."""
     export_formats = formats or ["pdf", "cbz"]
@@ -424,6 +442,7 @@ async def run(
             await _render_and_export(
                 json_paths, html_dir, png_dir, project_dir,
                 custom_css, exports_dir, export_formats, ctx,
+                allow_lettering_issues=allow_lettering_issues,
             )
 
             console.print(
@@ -445,6 +464,7 @@ async def run(
             await _render_and_export(
                 json_paths, html_dir, png_dir, project_dir,
                 custom_css, exports_dir, export_formats, ctx,
+                allow_lettering_issues=allow_lettering_issues,
             )
             console.print("[green]Compose stage complete.[/green]")
 
