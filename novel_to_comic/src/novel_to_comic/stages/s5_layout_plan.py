@@ -478,14 +478,19 @@ def _validate_llm_specs(specs: list[LLMPanelSpec], beats: list[ScreenplayBeat]) 
             )
 
         dialogue_words = sum(_dialogue_word_count(beats[idx - 1]) for idx in spec.beat_indices)
-        if dialogue_words > _MAX_DIALOGUE_WORDS_PER_PANEL:
+        if dialogue_count > 1 and dialogue_words > _MAX_DIALOGUE_WORDS_PER_PANEL:
             raise ValueError(
                 f"panel {panel_number} contains {dialogue_words} dialogue words; "
                 f"maximum is {_MAX_DIALOGUE_WORDS_PER_PANEL}"
             )
 
+        narration_count = sum(
+            1
+            for idx in spec.beat_indices
+            if beats[idx - 1].type == "narration"
+        )
         narration_words = sum(_narration_word_count(beats[idx - 1]) for idx in spec.beat_indices)
-        if narration_words > _MAX_NARRATION_WORDS_PER_PANEL:
+        if narration_count > 1 and narration_words > _MAX_NARRATION_WORDS_PER_PANEL:
             raise ValueError(
                 f"panel {panel_number} contains {narration_words} narration words; "
                 f"maximum is {_MAX_NARRATION_WORDS_PER_PANEL}"
@@ -782,6 +787,11 @@ def _autosplit_overflow_panels(
             for idx in spec.beat_indices
             if 1 <= idx <= len(beats)
         )
+        narration_count = sum(
+            1
+            for idx in spec.beat_indices
+            if 1 <= idx <= len(beats) and beats[idx - 1].type == "narration"
+        )
         narration_words = sum(
             _narration_word_count(beats[idx - 1])
             for idx in spec.beat_indices
@@ -790,8 +800,8 @@ def _autosplit_overflow_panels(
         if (
             visual_count > _MAX_VISUAL_PER_PANEL
             or dialogue_count > _MAX_DIALOGUE_PER_PANEL
-            or dialogue_words > _MAX_DIALOGUE_WORDS_PER_PANEL
-            or narration_words > _MAX_NARRATION_WORDS_PER_PANEL
+            or (dialogue_count > 1 and dialogue_words > _MAX_DIALOGUE_WORDS_PER_PANEL)
+            or (narration_count > 1 and narration_words > _MAX_NARRATION_WORDS_PER_PANEL)
         ):
             chunks = _split_panel_to_caps(spec, beats)
             new_specs.extend(chunks)

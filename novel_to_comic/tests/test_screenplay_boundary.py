@@ -102,6 +102,18 @@ def test_user_content_surfaces_next_scene_marker():
     assert "Dungeon Floor 1" in content
 
 
+def test_user_content_treats_lettering_budget_as_advisory():
+    content = _build_user_content(
+        "scene prose here",
+        _bible_with_two_scenes(),
+        "scene_001",
+        max_words_per_bubble=18,
+    )
+
+    assert "Aim for 18 words or fewer" in content
+    assert "Never split or truncate" in content
+
+
 def test_enforce_scene_boundary_trims_overflow_beats():
     bible = _bible_with_two_scenes()
     screenplay = Screenplay(
