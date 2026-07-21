@@ -391,12 +391,13 @@ font_size: int | None
 
 ### Bubble tails
 
-Pinned bubbles can use SVG tails by setting `tail_x` and `tail_y` to a
-panel-relative target point. The React editor (`SvgTail.tsx`) and Python
-renderer (`html_renderer.py`) both render those target-point tails and suppress
-the CSS pseudo-element tail. Bubbles without target points use CSS tails and
-`tail_direction`; `auto` points down when a pinned bubble sits near the top of
-the panel and up otherwise.
+Speech and thought bubbles use the same measured SVG speaker-indicator system in
+the React editor (`SvgTail.tsx`) and Python renderer (`html_renderer.py`). Exact
+`tail_x` / `tail_y` panel-relative targets are draggable in the page editor.
+Without an exact target, indicators stay compact and aim toward the planned
+speaker side; `tail_direction` controls the automatic vertical direction.
+Speech tails use a fill-overlap plus two open outline curves so no base seam is
+drawn across the balloon edge. Thought dots follow the same target vector.
 
 ### Compose room tabs
 

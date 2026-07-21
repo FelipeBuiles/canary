@@ -909,8 +909,8 @@ export function useTranslateSinglePageBubbles() {
 
 export function useExport() {
   return useMutation({
-    mutationFn: ({ project, format }: { project: string; format: "pdf" | "cbz" }) =>
-      triggerExport(project, format),
+    mutationFn: ({ project, format, allowIssues = false }: { project: string; format: "pdf" | "cbz"; allowIssues?: boolean }) =>
+      triggerExport(project, format, allowIssues),
   });
 }
 

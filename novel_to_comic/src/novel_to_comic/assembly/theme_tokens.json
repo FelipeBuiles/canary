@@ -13,7 +13,7 @@
     "--bubble-bg": "#FFFFFF",
     "--bubble-border": "#1A1A1A",
     "--bubble-border-width": "2px",
-    "--bubble-font-size": "48px",
+    "--bubble-font-size": "44px",
     "--bubble-padding": "18px 26px",
     "--bubble-max-width": "52%",
     "--bubble-center-width": "68%",
@@ -56,7 +56,7 @@
       "--caption-border": "#000000",
       "--caption-color": "#000000",
       "--bubble-border": "#000000",
-      "--bubble-font-size": "48px",
+      "--bubble-font-size": "44px",
       "--sfx-color": "#000000",
       "--sfx-shadow": "transparent"
     },

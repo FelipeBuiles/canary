@@ -301,7 +301,7 @@ function BubbleInspector({
   const isPinned = bubble.x != null && bubble.y != null;
 
   const tv = resolveThemeVars("default");
-  const themeFs = parseInt(tv["--bubble-font-size"] ?? "64");
+  const themeFs = parseInt(tv["--bubble-font-size"] ?? "44");
   const themeBorder = parseInt(tv["--bubble-border-width"] ?? "2");
 
   const effectiveFs = bubble.font_size ?? themeFs;
@@ -367,6 +367,30 @@ function BubbleInspector({
               PINNED · ({Math.round(bubble.x!)}, {Math.round(bubble.y!)})
             </div>
             <Button variant="secondary" size="xs" onClick={onUnpin}>UNPIN (AUTO)</Button>
+          </div>
+        )}
+
+        {bubble.type !== "narration" && (
+          <div>
+            <div className="mb-1 font-meta text-[0.55rem] tracking-[0.12em] text-ink-black/40">
+              {bubble.tail_x != null && bubble.tail_y != null
+                ? `SPEAKER TARGET · (${Math.round(bubble.tail_x)}, ${Math.round(bubble.tail_y)})`
+                : "SPEAKER TARGET · AUTO"}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="font-meta text-[0.52rem] tracking-[0.08em] text-ink-black/55">
+                DRAG THE RED TARGET ON THE PAGE
+              </span>
+              {bubble.tail_x != null && bubble.tail_y != null && (
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  onClick={() => onUpdate({ tail_x: null, tail_y: null })}
+                >
+                  RESET
+                </Button>
+              )}
+            </div>
           </div>
         )}
 

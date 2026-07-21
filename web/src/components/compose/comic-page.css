@@ -301,14 +301,14 @@
     font-size: clamp(40px, 5cqw, max(40px, var(--caption-font-size)));
   }
   .bubble {
-    font-size: clamp(44px, 5.5cqw, max(44px, var(--bubble-font-size)));
+    font-size: clamp(40px, 5.5cqw, max(40px, var(--bubble-font-size)));
   }
 }
 .bubble.right  { align-self: flex-end; }
 .bubble.center { align-self: center; max-width: var(--bubble-center-width); }
 .bubble.full-width { align-self: stretch; max-width: 100%; text-align: center; }
 
-/* SVG balloon bodies: restrained speech, soft thought, cut-paper narration. */
+/* SVG balloon bodies: restrained speech, smooth thought, cut-paper narration. */
 .letter-shape {
   position: absolute;
   inset: 0;
@@ -342,13 +342,13 @@
 
 .bubble.thought {
   min-height: 96px;
-  padding: 34px 42px 48px;
+  padding: 22px 30px 32px;
   display: flex;
   align-items: center;
 }
 
 .bubble.thought .letter-content {
-  width: 80%;
+  width: 88%;
   margin-inline: auto;
 }
 
@@ -366,55 +366,26 @@
   .bubble.thought { max-width: 84%; }
 }
 
-.bubble.thought::after {
-  content: '';
+/* Measured speaker indicators. Their fill overlaps the balloon edge while only
+   the outer curves are stroked, so the tail reads as part of the outline. */
+.speaker-tail {
   position: absolute;
-  bottom: -13px;
-  left: 22px;
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: var(--bubble-bg);
-  border: var(--bubble-border-width) solid var(--bubble-border);
-  z-index: 0;
-  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.18);
-}
-.bubble.thought::before {
-  content: '';
-  position: absolute;
-  bottom: -24px;
-  left: 12px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--bubble-bg);
-  border: var(--bubble-border-width) solid var(--bubble-border);
-  z-index: 0;
-  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.18);
-}
-
-.bubble.thought.right::after { left: auto; right: 22px; }
-.bubble.thought.right::before { left: auto; right: 12px; }
-.bubble.thought.center::after { left: calc(50% - 6px); }
-.bubble.thought.center::before { left: calc(50% - 3px); }
-
-/* Curved speech tails. The body overlaps the tail base for one continuous ink line. */
-.auto-tail {
-  position: absolute;
-  width: 54px;
-  height: 46px;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
   overflow: visible;
   pointer-events: none;
-  z-index: 0;
+  z-index: 1;
 }
 
-.bubble.speech.tail-down .auto-tail { top: calc(100% - 24px); }
-.bubble.speech.tail-up .auto-tail { bottom: calc(100% - 24px); transform: scaleY(-1); }
-.bubble.speech.left .auto-tail { left: 35%; }
-.bubble.speech.right .auto-tail { right: 35%; transform: scaleX(-1); }
-.bubble.speech.right.tail-up .auto-tail { transform: scale(-1, -1); }
-.bubble.speech.center .auto-tail { left: 50%; transform: translateX(-50%); }
-.bubble.speech.center.tail-up .auto-tail { transform: translateX(-50%) scaleY(-1); }
+.tail-target-handle {
+  fill: var(--bubble-bg);
+  stroke: #b51822;
+  stroke-width: 3px;
+  cursor: crosshair;
+  pointer-events: all;
+}
 
 /* Speaker label */
 .speaker {
@@ -433,20 +404,6 @@
 .bubble.pinned {
   position: absolute;
   /* left, top, width set via inline style */
-}
-
-/* ── SVG tail (replaces CSS pseudo-element tails for pinned bubbles) ── */
-.bubble.svg-tail::before,
-.bubble.svg-tail::after { display: none; }
-.bubble .tail-svg {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 1px;
-  height: 1px;
-  overflow: visible;
-  pointer-events: none;
-  z-index: 0;
 }
 
 /* ── Narration caption — pinned variant ── */

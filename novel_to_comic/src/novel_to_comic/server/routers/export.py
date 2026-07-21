@@ -29,6 +29,7 @@ async def trigger_export(
     project_id: str,
     format: str = Query("pdf"),
     force: bool = Query(False),
+    allow_issues: bool = Query(False),
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
@@ -38,12 +39,26 @@ async def trigger_export(
         raise HTTPException(400, "Format must be 'pdf' or 'cbz'")
 
     lettering_issues = await inspect_project_lettering(project_dir)
-    if has_blocking_lettering_issues(lettering_issues):
+    if not allow_issues and has_blocking_lettering_issues(lettering_issues):
         blocking = [issue.as_dict() for issue in lettering_issues if issue.severity == "error"]
+        locations = sorted({
+            (issue.page_number, issue.panel_number)
+            for issue in lettering_issues
+            if issue.severity == "error"
+        })
+        location_summary = ", ".join(
+            f"page {page}, panel {panel}" for page, panel in locations[:3]
+        )
+        if len(locations) > 3:
+            location_summary += f", and {len(locations) - 3} more"
         raise HTTPException(
             422,
             {
-                "message": "Fix the clipped or art-obscuring lettering before export.",
+                "message": (
+                    f"Export is blocked by {len(blocking)} lettering "
+                    f"issue{'s' if len(blocking) != 1 else ''} at {location_summary}. "
+                    "Review them or choose Export Anyway."
+                ),
                 "issues": blocking,
             },
         )

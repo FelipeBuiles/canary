@@ -1,20 +1,12 @@
 import { useLayoutEffect, useRef } from "react";
 import type { Bubble } from "../../types/api";
-import { AutoSpeechTail, BalloonShape } from "./BalloonShape";
+import { BalloonShape } from "./BalloonShape";
 import { verifyLetteringSafeArea } from "./letteringSafeArea";
-import { SvgTail } from "./SvgTail";
+import { SpeakerTail } from "./SvgTail";
 
 interface BubbleElementProps {
   bubble: Bubble;
   selected: boolean;
-}
-
-/** Resolve 'auto' tail direction based on bubble position. */
-function resolveTailDirection(bubble: Bubble): "up" | "down" {
-  if (bubble.tail_direction !== "auto") return bubble.tail_direction;
-  if (bubble.y == null) return "down";
-  if (bubble.y != null && bubble.y < 400) return "down";
-  return "up";
 }
 
 function bubbleStyle(bubble: Bubble): React.CSSProperties | undefined {
@@ -62,7 +54,6 @@ export function BubbleElement({ bubble, selected }: BubbleElementProps) {
   const ref = useRef<HTMLDivElement>(null);
   const isPinned = bubble.x != null && bubble.y != null;
   const isNarration = bubble.type === "narration";
-  const hasSvgTail = bubble.tail_x != null && bubble.tail_y != null;
 
   // Build class list
   const classes: string[] = [];
@@ -74,8 +65,6 @@ export function BubbleElement({ bubble, selected }: BubbleElementProps) {
 
   if (isPinned) classes.push("pinned");
   if (bubble.full_width) classes.push("full-width");
-  if (hasSvgTail && !isNarration) classes.push("svg-tail");
-  else if (bubble.type === "speech") classes.push(`tail-${resolveTailDirection(bubble)}`);
   if (selected) classes.push("selected");
 
   useLayoutEffect(() => {
@@ -123,8 +112,7 @@ export function BubbleElement({ bubble, selected }: BubbleElementProps) {
         )}
         {bubble.text}
       </span>
-      {hasSvgTail && !isNarration && <SvgTail bubble={bubble} />}
-      {!hasSvgTail && bubble.type === "speech" && <AutoSpeechTail />}
+      {!isNarration && <SpeakerTail bubble={bubble} selected={selected} />}
     </div>
   );
 }

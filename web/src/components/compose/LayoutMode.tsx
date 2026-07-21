@@ -26,6 +26,7 @@ interface LayoutModeProps {
   onSelect: (panelId: string, type: "bubble" | "sfx", elementId: string) => void;
   onDeselect: () => void;
   onDragEnd: (panelId: string, type: "bubble" | "sfx", elementId: string, x: number, y: number) => void;
+  onTailDragEnd: (panelId: string, bubbleId: string, tailX: number, tailY: number) => void;
   onZoomChange: (z: number) => void;
   onUpdatePanel: (panelId: string, patch: Partial<PagePanel>) => void;
   onUpdateBubble: (panelId: string, bubbleId: string, patch: Partial<Bubble>) => void;
@@ -59,6 +60,7 @@ export function LayoutMode({
   onSelect,
   onDeselect,
   onDragEnd,
+  onTailDragEnd,
   onZoomChange,
   onUpdatePanel,
   onUpdateBubble,
@@ -256,6 +258,7 @@ export function LayoutMode({
                 onPanelReframeStart={onPanelReframeStart}
                 onPanelReframeDragEnd={onPanelReframeDragEnd}
                 onDragEnd={onDragEnd}
+                onTailDragEnd={onTailDragEnd}
                 onLetteringIssues={onLetteringIssues}
               />
             ) : null}

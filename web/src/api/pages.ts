@@ -79,8 +79,10 @@ export function translateSinglePageBubbles(
 export function triggerExport(
   project: string,
   format: "pdf" | "cbz",
+  allowIssues = false,
 ): Promise<{ status: string; path: string; url: string | null }> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/export/?format=${format}`, {
+  const allowQuery = allowIssues ? "&allow_issues=true" : "";
+  return apiFetch(`/projects/${encodeURIComponent(project)}/export/?format=${format}${allowQuery}`, {
     method: "POST",
   });
 }

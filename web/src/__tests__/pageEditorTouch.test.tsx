@@ -21,6 +21,9 @@ vi.mock("../components/compose/ComicPageCanvas", () => ({
     <div data-panel-id="panel-1">
       <div data-id="bubble-1" data-editor-selectable>
         Move me
+        <svg>
+          <circle data-tail-handle data-tail-panel-x="300" data-tail-panel-y="400" />
+        </svg>
       </div>
     </div>
   ),
@@ -108,5 +111,37 @@ describe("PageEditor touch dragging", () => {
 
     expect(editor.releasePointerCapture).toHaveBeenCalledWith(9);
     expect(onDragEnd).not.toHaveBeenCalled();
+  });
+
+  it("drags the selected bubble's target directly onto the speaker", () => {
+    const onTailDragEnd = vi.fn();
+    const { container } = render(
+      <PageEditor
+        page={PAGE}
+        project="proj"
+        zoom={1}
+        onZoomChange={() => {}}
+        selectedId="bubble-1"
+        selectedType="bubble"
+        reframePanelId={null}
+        onSelect={() => {}}
+        onDeselect={() => {}}
+        onPanelReframeStart={() => {}}
+        onPanelReframeDragEnd={() => {}}
+        onTailDragEnd={onTailDragEnd}
+      />,
+    );
+
+    const editor = container.querySelector<HTMLElement>(".page-editor")!;
+    editor.setPointerCapture = vi.fn();
+    editor.hasPointerCapture = vi.fn(() => true);
+    editor.releasePointerCapture = vi.fn();
+    const handle = container.querySelector("[data-tail-handle]")!;
+
+    fireEvent.pointerDown(handle, { pointerId: 11, pointerType: "touch", clientX: 10, clientY: 15 });
+    fireEvent.pointerMove(editor, { pointerId: 11, pointerType: "touch", clientX: 30, clientY: 45 });
+    fireEvent.pointerUp(editor, { pointerId: 11, pointerType: "touch", clientX: 30, clientY: 45 });
+
+    expect(onTailDragEnd).toHaveBeenCalledWith("panel-1", "bubble-1", 500, 700);
   });
 });

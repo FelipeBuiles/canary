@@ -217,6 +217,13 @@ export function ComposeRoom() {
     else handleUpdateSfx(panelId, parseSfxIndex(elementId), { x, y });
   }
 
+  function handleTailDragEnd(panelId: string, bubbleId: string, tailX: number, tailY: number) {
+    handleUpdateBubble(panelId, bubbleId, {
+      tail_x: Math.round(tailX),
+      tail_y: Math.round(tailY),
+    });
+  }
+
   // ── Add elements ─────────────────────────────────────────────────────────
   function handleAddBubble(bubbleType: "speech" | "thought" | "narration") {
     if (!page || !id || !safePage) return;
@@ -267,12 +274,12 @@ export function ComposeRoom() {
   // ── Export / style / translate ───────────────────────────────────────────
   const [exportSuccess, setExportSuccess] = useState<{ format: "pdf" | "cbz"; url: string } | null>(null);
 
-  function handleExport(format: "pdf" | "cbz") {
+  function handleExport(format: "pdf" | "cbz", allowIssues = false) {
     if (!id) return;
     setExportSuccess(null);
     setExportError(null);
     exportMut.mutate(
-      { project: id, format },
+      { project: id, format, allowIssues },
       {
         onSuccess: (result) => { setExportSuccess({ format, url: result.url ?? downloadExportUrl(id, format) }); },
         onError: (error) => setExportError(error.message.replace(/^API \d+:\s*/, "")),
@@ -457,6 +464,7 @@ export function ComposeRoom() {
               onSelect={handleSelect}
               onDeselect={handleDeselect}
               onDragEnd={handleDragEnd}
+              onTailDragEnd={handleTailDragEnd}
               onZoomChange={(z) => setZoom(clampZoom(z))}
               onUpdatePanel={handleUpdatePanel}
               onUpdateBubble={handleUpdateBubble}
@@ -503,7 +511,6 @@ export function ComposeRoom() {
           issues={issues}
           onPageSelect={(idx) => setPageNum(idx + 1)}
           onExport={handleExport}
-          onReviewLettering={() => { setTab("pages"); setIssuesOpen(true); }}
           onOutputLanguageChange={handleOutputLanguageChange}
           onTranslateBubbles={handleTranslateBubbles}
         />

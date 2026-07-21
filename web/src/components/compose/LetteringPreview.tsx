@@ -1,8 +1,9 @@
 import { useLayoutEffect, useRef } from "react";
 import type { LetteringStyle } from "../../types/api";
 import { resolveLetteringVars } from "./themes";
-import { AutoSpeechTail, BalloonShape } from "./BalloonShape";
+import { BalloonShape } from "./BalloonShape";
 import { verifyLetteringSafeAreas } from "./letteringSafeArea";
+import { SpeakerTail } from "./SvgTail";
 import "./comic-page.css";
 
 // Render a real-proportioned mini panel at native sizes, then scale the whole
@@ -47,6 +48,7 @@ export function LetteringPreview({ lettering }: { lettering: LetteringStyle | un
         }}
       >
         <div
+          className="panel"
           style={{
             position: "relative",
             width: "100%",
@@ -62,14 +64,15 @@ export function LetteringPreview({ lettering }: { lettering: LetteringStyle | un
             <BalloonShape type="narration" />
             <span className="letter-content">A quiet street, just past midnight.</span>
           </div>
-          <div className="bubble speech left tail-down" style={{ position: "absolute", left: 34, top: 225 }}>
+          <div className="bubble speech left" style={{ position: "absolute", left: 34, top: 225 }}>
             <BalloonShape type="speech" />
             <span className="letter-content">Who&apos;s there?</span>
-            <AutoSpeechTail />
+            <SpeakerTail bubble={{ type: "speech", side: "left", tail_direction: "down", tail_x: null, tail_y: null }} />
           </div>
-          <div className="bubble thought" style={{ position: "absolute", right: 32, top: 350, maxWidth: 350 }}>
+          <div className="bubble thought right" style={{ position: "absolute", right: 32, top: 350, maxWidth: 350 }}>
             <BalloonShape type="thought" />
             <span className="letter-content">…something is wrong.</span>
+            <SpeakerTail bubble={{ type: "thought", side: "right", tail_direction: "down", tail_x: null, tail_y: null }} />
           </div>
           <div
             className="sfx"

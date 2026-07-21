@@ -18,10 +18,17 @@ describe("classifyLetteringMetrics", () => {
     ]);
   });
 
-  it("reports clipping and an oversized automatic stack as errors", () => {
+  it("blocks when lettering covers more than 40% of the art", () => {
+    expect(classifyLetteringMetrics([{ ...base, coverageRatio: 0.41 }])).toMatchObject([
+      { type: "lettering_obscures_art", severity: "error" },
+    ]);
+  });
+
+  it("keeps panel-edge crossings advisory while an oversized automatic stack blocks", () => {
     const issues = classifyLetteringMetrics([
       {
         ...base,
+        coverageRatio: 0.38,
         maxAutoStackRatio: 0.41,
         overflowingBubbleIds: ["scene_001-p1-b0"],
       },
@@ -29,8 +36,13 @@ describe("classifyLetteringMetrics", () => {
 
     expect(issues.map((issue) => issue.type)).toEqual([
       "lettering_overflow",
+      "lettering_obscures_art",
       "lettering_stack_too_tall",
     ]);
-    expect(issues.every((issue) => issue.severity === "error")).toBe(true);
+    expect(issues.map((issue) => issue.severity)).toEqual([
+      "warning",
+      "warning",
+      "error",
+    ]);
   });
 });
