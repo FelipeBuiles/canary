@@ -112,7 +112,10 @@ _TEMPLATE_SELECTION: dict[tuple[int, bool], str] = {
     (1, True):  "single",
     (2, False): "stacked_2",
     (2, True):  "hero_top_2",
-    (3, False): "vertical_trio",
+    # Three full-height columns create ~0.33:1 slots, but our narrowest image
+    # generation output is 0.75:1. Use one wide panel over two balanced panels
+    # so generated compositions do not depend on destructive side-cropping.
+    (3, False): "hero_top_3",
     (3, True):  "hero_top_3",
     (4, False): "2x2",
     (4, True):  "hero_top_4",

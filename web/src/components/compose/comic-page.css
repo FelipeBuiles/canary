@@ -380,11 +380,18 @@
 }
 
 .tail-target-handle {
-  fill: var(--bubble-bg);
-  stroke: #b51822;
-  stroke-width: 3px;
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  transform: translate(-50%, -50%);
+  border: 3px solid #b51822;
+  border-radius: 50%;
+  background: var(--bubble-bg);
   cursor: crosshair;
-  pointer-events: all;
+  pointer-events: auto;
+  touch-action: none;
+  z-index: 3;
 }
 
 /* Speaker label */

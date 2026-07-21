@@ -33,4 +33,27 @@ describe("BubbleElement", () => {
     expect(bubble.style.left).toBe("8px");
     expect(bubble.style.top).toBe("8px");
   });
+
+  it("renders an inside-bubble tail target above the tail SVG so it remains draggable", () => {
+    const bubble = {
+      ...pinnedThought,
+      type: "speech" as const,
+      x: 20,
+      y: 20,
+      tail_x: 40,
+      tail_y: 40,
+    };
+
+    const { container } = render(
+      <div className="panel">
+        <BubbleElement bubble={bubble} selected />
+      </div>,
+    );
+
+    const handle = container.querySelector("[data-tail-handle]");
+    const tailSvg = container.querySelector(".speaker-tail");
+    expect(handle).not.toBeNull();
+    expect(tailSvg).not.toBeNull();
+    expect(tailSvg?.contains(handle)).toBe(false);
+  });
 });
