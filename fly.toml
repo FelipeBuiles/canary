@@ -11,7 +11,8 @@ primary_region = 'iad'
 
 [env]
   AI_BILL_FAILED_REQUESTS = 'provider_usage_only'
-  CANARY_ALLOWED_HOSTS = 'canary-web.fly.dev'
+  CANARY_ALLOWED_HOSTS = 'canary-web.fly.dev,scenewright.ink,www.scenewright.ink'
+  SCENEWRIGHT_APP_URL = 'https://scenewright.ink'
   CANARY_COOKIE_SECURE = 'true'
   CANARY_ENV = 'production'
   CANARY_GENERATION_JOB_TIMEOUT_SECONDS = '900'
@@ -22,7 +23,6 @@ primary_region = 'iad'
   LITELLM_BASE_URL = 'http://127.0.0.1:4000'
   PULP_CREDITS_PER_PROVIDER_USD = '100'
   PULP_MODEL_COST_MARKUP = '2.0'
-  SCENEWRIGHT_APP_URL = 'https://canary-web.fly.dev'
 
 [[mounts]]
   source = 'canary_projects'
@@ -60,10 +60,10 @@ primary_region = 'iad'
 
 [[vm]]
   size = 'shared-cpu-2x'
-  memory = '4gb'
+  memory = '2gb'
   cpu_kind = 'shared'
   cpus = 2
-  memory_mb = 4096
+  memory_mb = 2048
 
 [[metrics]]
   port = 8000

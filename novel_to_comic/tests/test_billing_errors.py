@@ -6,6 +6,7 @@ nothing. These tests pin the contract that Stripe errors map to informative
 HTTP responses. Stripe itself is mocked so no key or network is needed.
 """
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -80,8 +81,31 @@ def test_checkout_rejects_unknown_package_before_calling_stripe():
     mock_create.assert_not_called()
 
 
+def test_checkout_always_requires_terms_consent(monkeypatch):
+    """Legal consent must not disappear when an optional env var is unset."""
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_fake")
+    monkeypatch.delenv("SCENEWRIGHT_TERMS_URL", raising=False)
+
+    with patch.object(
+        billing.stripe.checkout.Session,
+        "create",
+        return_value=SimpleNamespace(url="https://checkout.stripe.test/session"),
+    ) as mock_create, patch.object(billing, "capture_server_event"):
+        result = asyncio.run(
+            billing.create_checkout(
+                request=_Request(), body={"package": "starter"}, user_id="u1"
+            )
+        )
+
+    assert result == {"url": "https://checkout.stripe.test/session"}
+    kwargs = mock_create.call_args.kwargs
+    assert kwargs["consent_collection"] == {"terms_of_service": "required"}
+    assert "terms_of_service_url" not in kwargs
+
+
 class _Request:
     """Minimal stand-in for starlette.Request — only headers are read."""
 
     def __init__(self, origin: str = "https://canary-web.fly.dev"):
         self.headers = {"origin": origin}
+        self.state = SimpleNamespace(request_id="req-test")

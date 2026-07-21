@@ -36,6 +36,19 @@ def _stripe() -> None:
     stripe.api_key = key
 
 
+def _stripe_icon_url() -> str:
+    """Return the public Scenewright mark used by Stripe Checkout.
+
+    Stripe fetches URL-hosted branding from its servers, so this must be a
+    publicly reachable HTTPS URL in production. Keep it configurable for
+    staging or a future dedicated billing asset.
+    """
+    return os.environ.get(
+        "SCENEWRIGHT_STRIPE_ICON_URL",
+        "https://app.scenewright.ink/favicon.svg",
+    ).strip()
+
+
 def _stripe_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {k: _stripe_value(v) for k, v in value.items()}
@@ -138,33 +151,47 @@ async def create_checkout(
     origin = _checkout_origin(request)
 
     try:
-        # Build the checkout payload. ToS consent is conditional: only enabled
-        # when SCENEWRIGHT_TERMS_URL is set AND published in the Stripe Dashboard
-        # (dashboard.stripe.com/settings/public). Stripe rejects the consent field
-        # if the Dashboard ToS URL isn't configured — and most sandbox/test accounts
-        # haven't completed their business profile, so requiring ToS consent during
-        # development is impractical. Leaving SCENEWRIGHT_TERMS_URL unset skips
-        # consent collection entirely (browsewrap ToS on signup still applies).
+        # Require payment-time consent for every credit purchase. Stripe records
+        # the acceptance on the Checkout Session and renders the Terms and Privacy
+        # links configured in the Stripe Dashboard's public business settings.
         kwargs: dict[str, Any] = dict(
             payment_method_types=["card"],
             line_items=[{
                 "price_data": {
                     "currency": "usd",
-                    "product_data": {"name": f"{branding.product_name} — {pkg['credits']} credits ({pkg['label']})"},
+                    "product_data": {
+                        "name": f"{branding.product_name} {package_id.title()} — {pkg['credits']:,} credits",
+                        "description": "One-time credit pack. Credits never expire.",
+                    },
                     "unit_amount": pkg["price_cents"],
                 },
                 "quantity": 1,
             }],
             mode="payment",
+            consent_collection={"terms_of_service": "required"},
+            branding_settings={
+                "display_name": branding.product_name,
+                "background_color": "#fcfaed",
+                "button_color": "#b51822",
+                "font_family": "be_vietnam_pro",
+                "border_style": "rectangular",
+                "icon": {
+                    "type": "url",
+                    "url": _stripe_icon_url(),
+                },
+            },
+            custom_text={
+                "submit": {
+                    "message": "Your credits are added after Stripe confirms your payment.",
+                },
+                "after_submit": {
+                    "message": "Return to Scenewright to see your updated credit balance.",
+                },
+            },
             success_url=f"{origin}/credits?success=true",
             cancel_url=f"{origin}/credits?cancelled=true&package={package_id}",
             metadata={"user_id": user_id, "package": package_id},
         )
-        if branding.terms_url:
-            # Require explicit ToS consent at payment time. Stripe records the
-            # acceptance; this is the strongest consent signal we collect
-            # (stronger than the browsewrap text on signup).
-            kwargs["consent_collection"] = {"terms_of_service": "required"}
         session = stripe.checkout.Session.create(**kwargs)
     except stripe.error.StripeError as exc:
         raise _wrap_stripe_error(exc) from exc

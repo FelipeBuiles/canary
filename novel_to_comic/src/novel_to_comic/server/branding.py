@@ -32,7 +32,7 @@ class Branding:
     support_email: str
     #: DMCA / legal notices contact (often the same address as support).
     legal_email: str
-    #: Optional URL the Stripe checkout flow points users at for ToS.
+    #: Canonical public Terms URL used by legal and billing configuration.
     terms_url: str
 
     def __post_init__(self) -> None:
@@ -48,21 +48,17 @@ def get_branding() -> Branding:
       SCENEWRIGHT_PRODUCT_NAME  — product/brand name (default: Scenewright)
       SCENEWRIGHT_SUPPORT_EMAIL — support + abuse contact (default: hello@...)
       SCENEWRIGHT_LEGAL_EMAIL   — DMCA / legal notices (default: legal@...)
-      SCENEWRIGHT_TERMS_URL     — ToS URL for Stripe Checkout consent.
+      SCENEWRIGHT_TERMS_URL     — canonical public ToS URL.
 
-    SCENEWRIGHT_TERMS_URL defaults to *empty* (ToS consent disabled). Setting
-    it enables payment-time consent in the Stripe Checkout flow AND requires
-    you to configure the same URL in the Stripe Dashboard
-    (dashboard.stripe.com/settings/public) — Stripe won't accept the consent
-    field otherwise. Leave it unset while developing without real business
-    details configured; set it once your Stripe account is live and the
-    Dashboard ToS is published.
+    Stripe Checkout consent is always required for credit purchases. Configure
+    the Terms and Privacy URLs in the Stripe Dashboard's public business
+    settings; Stripe uses those Dashboard values when rendering Checkout.
     """
     product = _env("SCENEWRIGHT_PRODUCT_NAME", "Scenewright")
     domain = "scenewright.ink"
     support = _env("SCENEWRIGHT_SUPPORT_EMAIL", f"hello@{domain}")
     legal = _env("SCENEWRIGHT_LEGAL_EMAIL", f"legal@{domain}")
-    terms = _env("SCENEWRIGHT_TERMS_URL", "")
+    terms = _env("SCENEWRIGHT_TERMS_URL", "https://scenewright.ink/legal/terms")
     return Branding(
         product_name=product,
         support_email=support,

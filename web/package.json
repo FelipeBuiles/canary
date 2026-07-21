@@ -4,6 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "brand:build": "node --experimental-strip-types brand-system/src/build.ts",
+    "brand:check": "tsc -p brand-system/tsconfig.json && node --experimental-strip-types brand-system/src/validate.ts",
+    "brand:preview": "npm run brand:build && vite --open /brand-system/preview/",
     "sync-tokens": "node scripts/sync-tokens.mjs",
     "dev": "npm run sync-tokens && vite",
     "build": "npm run sync-tokens && tsc -b && vite build",
@@ -37,6 +40,7 @@
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
     "jsdom": "^29.0.2",
+    "sharp": "^0.35.3",
     "tailwindcss": "^4.2.2",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.0",

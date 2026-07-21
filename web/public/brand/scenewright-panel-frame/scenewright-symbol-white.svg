@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="title desc">
+  <title id="title">Scenewright white symbol</title>
+  <desc id="desc">A one-color white editorial panel symbol with a transparent S cut through it.</desc>
+    <path d="M17.5 47 H20.5 V20.5 H47 V17.5 H17.5 Z" fill="#ffffff" />
+    <path d="M53 17.5 H82.5 V47 H79.5 V20.5 H53 Z" fill="#ffffff" />
+    <path d="M17.5 53 H20.5 V79.5 H47 V82.5 H17.5 Z" fill="#ffffff" />
+    <path d="M79.5 53 H82.5 V82.5 H53 V79.5 H79.5 Z" fill="#ffffff" />
+    <rect x="49.5" y="6.5" width="1" height="8" fill="#ffffff" />
+    <rect x="85.5" y="49.5" width="8" height="1" fill="#ffffff" />
+    <rect x="49.5" y="85.5" width="1" height="8" fill="#ffffff" />
+    <rect x="6.5" y="49.5" width="8" height="1" fill="#ffffff" />
+    <path d="M24 24 H76 V76 H24 Z M39 36.5 L76 36.5 L76 44 L39 41 Z M24 55 L62 59 L62 64.5 L24 64.5 Z" fill="#ffffff" fill-rule="evenodd" clip-rule="evenodd" />
+</svg>

@@ -27,7 +27,7 @@ export function LegalLayout({
     <div className="min-h-svh bg-ink-black text-pulp-paper">
       <header className="flex h-14 items-center border-b-[2px] border-ink-black bg-bristol px-4 text-ink-black">
         <Link to="/" className="flex items-center gap-2.5">
-          <BrandMark className="h-7 w-7 shrink-0" />
+          <BrandMark className="h-8 w-8 shrink-0" variant="micro" />
           <span className="font-display text-[1.05rem] font-black uppercase leading-none tracking-[-0.03em]">
             {branding.product_name}
           </span>

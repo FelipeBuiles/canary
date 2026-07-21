@@ -3,8 +3,8 @@ import { Link, Navigate, useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
 import { useAuth } from "../../hooks/useAuth";
 import { Button } from "../../components/ui/Button";
-import { cn } from "../../lib/cn";
 import { BrandMark } from "../../components/BrandMark";
+import { cn } from "../../lib/cn";
 
 type AuthMode = "signin" | "signup";
 
@@ -95,7 +95,8 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
 
   return (
     <div className="flex min-h-svh flex-col bg-ink-black text-pulp-paper">
-      <header className="flex h-14 shrink-0 items-center border-b-[2px] border-ink-black bg-bristol px-4 text-ink-black">
+      <header className="flex h-14 shrink-0 items-center gap-2.5 border-b-[2px] border-ink-black bg-bristol px-4 text-ink-black">
+        <BrandMark className="h-8 w-8 shrink-0" variant="micro" />
         <div className="font-display text-[1.05rem] font-black uppercase leading-none tracking-[-0.03em]">
           Scenewright
         </div>
@@ -110,7 +111,7 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_1px_1px,rgba(252,250,237,0.09)_1px,transparent_0)] [background-size:28px_28px]" />
           <div className="relative">
             <div className="flex items-center gap-4 text-pulp-paper">
-              <BrandMark className="h-10 w-10 shrink-0" />
+              <BrandMark className="h-12 w-12 shrink-0" variant="reversed" />
               <div className="font-meta text-[0.7rem] font-bold uppercase tracking-[0.48em] text-hero-red">
                 Scenewright
               </div>
