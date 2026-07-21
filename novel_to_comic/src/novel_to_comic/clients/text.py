@@ -18,7 +18,9 @@ _TEXT_PROVIDERS = ("gemini", "anthropic", "openai", "openrouter")
 MODEL_REGISTRY: dict[str, str] = {
     # Google Gemini
     "gemini-3.1-pro-preview": "gemini",
+    "gemini-3.6-flash": "gemini",
     "gemini-3.5-flash": "gemini",
+    "gemini-3.5-flash-lite": "gemini",
     "gemini-3.1-flash-preview": "gemini",
     "gemini-3.1-flash-lite-preview": "gemini",
     "gemini-2.5-pro": "gemini",
