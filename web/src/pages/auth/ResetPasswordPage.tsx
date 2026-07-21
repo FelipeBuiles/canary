@@ -50,7 +50,7 @@ export function ResetPasswordPage() {
     <div className="flex min-h-svh flex-col bg-ink-black text-pulp-paper">
       <header className="flex h-14 shrink-0 items-center border-b-[2px] border-ink-black bg-bristol px-4 text-ink-black">
         <Link to="/" className="flex items-center gap-2.5">
-          <BrandMark className="h-7 w-7 text-hero-red" />
+          <BrandMark className="h-8 w-8 shrink-0" variant="micro" />
           <span className="font-display text-[1.05rem] font-black uppercase leading-none tracking-[-0.03em]">
             Scenewright
           </span>
@@ -66,7 +66,7 @@ export function ResetPasswordPage() {
             className="relative w-full space-y-5 border-[3px] border-ink-black bg-bristol p-8 text-ink-black"
           >
           <div className="flex flex-col items-center gap-3 pb-2 text-center">
-            <BrandMark className="h-10 w-10" />
+            <BrandMark className="h-12 w-12" variant="primary" />
             <h1 className="font-display text-[1.4rem] font-black uppercase tracking-[-0.02em] text-ink-black">
               Set a new password
             </h1>

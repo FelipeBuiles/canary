@@ -398,6 +398,13 @@ def test_production_docker_build_fails_without_supabase_build_args():
     assert '[ -z "$VITE_SUPABASE_PUBLISHABLE_KEY" ]' in dockerfile
 
 
+def test_production_docker_installs_playwright_system_dependencies():
+    root = Path(__file__).resolve().parents[2]
+    dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "playwright install --with-deps chromium" in dockerfile
+
+
 def test_bundled_fonts_have_real_sfnt_headers():
     root = Path(__file__).resolve().parents[2]
     fonts = root / "novel_to_comic" / "src" / "novel_to_comic" / "fonts"

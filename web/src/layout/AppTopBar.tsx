@@ -6,8 +6,8 @@ import { useAuth } from "../hooks/useAuth";
 import { useCountUp } from "../hooks/useCountUp";
 import { useTopBarSlotRegister } from "./TopBarSlot";
 import { cn } from "../lib/cn";
-import { BrandMark } from "../components/BrandMark";
 import { CreditAmount, CreditMark } from "../components/ui/CreditAmount";
+import { BrandMark } from "../components/BrandMark";
 
 function initials(email?: string | null) {
   if (!email) return "JP";
@@ -56,7 +56,7 @@ export function AppTopBar() {
       ) : (
         <div className="flex min-w-0 flex-1 items-center gap-4 px-4">
           <Link to="/" className="flex items-center gap-2.5">
-            <BrandMark className="h-7 w-7 shrink-0 text-hero-red" />
+            <BrandMark className="h-8 w-8 shrink-0" variant="micro" />
             <span className="font-display text-[1.05rem] font-black uppercase leading-none tracking-[-0.03em]">
               Scenewright
             </span>

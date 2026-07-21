@@ -266,8 +266,9 @@ When you're ready to drop the gating posture and open to the public:
 - [ ] Set `SCENEWRIGHT_APP_URL=https://app.<yourdomain>` and add the custom
       hostname to `CANARY_ALLOWED_HOSTS`, then redeploy. Stripe return URLs never
       reflect the request's `Origin` header.
-- [ ] Set `SCENEWRIGHT_TERMS_URL=https://<domain>/legal/terms` so Stripe
-      checkout captures enforceable ToS consent.
+- [ ] In Stripe Dashboard public business settings, publish the production
+      Terms and Privacy URLs. Credit checkout always requires explicit Terms
+      acceptance and Stripe renders the legal-policy links from those settings.
 - [ ] Update Supabase **Site URL** and **Redirect URLs** to the production
       domain.
 - [ ] Configure custom SMTP in Supabase for deliverability.
@@ -289,11 +290,13 @@ the secret with `fly secrets unset SENTRY_DSN -a canary-web`.
 
 ### Boot-loop: OOM on `canary-web` (litellm proxy resident)
 
-`Out of memory: Killed process (litellm) total-vm:~926MB` → the machine can't
-fit both the proxy's resident baseline (~870 MB) and Playwright/Chromium plus
-uvicorn. `fly.toml` pins `memory = '4gb'`; do not drop below 3 GB. The
-proxy's 870 MB is *idle baseline* — request handling grows on top of it, and
-the compose stage spawns a Chromium process that peaks near 500 MB.
+`Out of memory: Killed process (litellm) total-vm:~926MB` → the machine couldn't
+fit both the proxy's then-resident baseline (~870 MB) and Playwright/Chromium
+plus uvicorn. The proxy footprint has since fallen substantially and `fly.toml`
+now pins `memory = '2gb'`. Treat 2 GB as a monitored floor: validate a full
+draw plus compose/export after memory or dependency changes, alert on
+`fly_instance_exit_oom`, and restore 4 GB if available memory approaches
+256 MiB. The compose stage can add a Chromium process that peaks near 500 MB.
 
 If you see OOMs mid-generation specifically, Playwright is the likeliest
 culprit, not litellm.

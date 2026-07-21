@@ -57,10 +57,10 @@
 }
 
 .landing-brand__mark {
+  display: block;
   width: 34px;
   height: 34px;
   flex: none;
-  color: var(--landing-red);
 }
 
 .landing-brand > span,
@@ -1022,15 +1022,15 @@
   padding: clamp(5rem, 10vw, 11rem) max(2rem, calc((100vw - var(--landing-max)) / 2));
 }
 
-.landing-final__mark {
-  width: 54px;
-  height: 54px;
-  color: var(--landing-red);
-}
-
 .landing-final h2 {
   max-width: 14ch;
   margin-top: 2.2rem;
+}
+
+.landing-final__mark {
+  display: block;
+  width: 54px;
+  height: 54px;
 }
 
 .landing-final > p {
@@ -1077,9 +1077,10 @@
 }
 
 .landing-footer__mark {
+  display: block;
   width: 34px;
   height: 34px;
-  color: var(--landing-red);
+  flex: none;
 }
 
 .landing-footer small {
@@ -1225,11 +1226,6 @@
   .landing-brand small,
   .landing-header .landing-cta--small {
     display: none;
-  }
-
-  .landing-brand__mark {
-    width: 30px;
-    height: 30px;
   }
 
   .landing-brand strong {
@@ -1392,6 +1388,11 @@
 
   .landing-brand strong {
     font-size: 0.86rem;
+  }
+
+  .landing-brand__mark {
+    width: 30px;
+    height: 30px;
   }
 
   .landing-language button {

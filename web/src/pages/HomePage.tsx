@@ -141,7 +141,7 @@ export function HomePage() {
 
       <header className="landing-header">
         <Link className="landing-brand" to="/" aria-label="Scenewright home">
-          <BrandMark className="landing-brand__mark" />
+          <BrandMark className="landing-brand__mark" variant="micro" />
           <span>
             <strong>Scenewright</strong>
             <small>{copy.footer.line}</small>
@@ -339,7 +339,7 @@ export function HomePage() {
         </section>
 
         <section className="landing-final" aria-labelledby="landing-final-title">
-          <BrandMark className="landing-final__mark" />
+          <BrandMark className="landing-final__mark" variant="primary" />
           <h2 id="landing-final-title">{copy.final.title}</h2>
           <p>{copy.final.body}</p>
           <div>
@@ -356,7 +356,7 @@ export function HomePage() {
 
       <footer className="landing-footer">
         <div>
-          <BrandMark className="landing-footer__mark" />
+          <BrandMark className="landing-footer__mark" variant="reversed" />
           <span>
             <strong>Scenewright</strong>
             <small>{copy.footer.line}</small>

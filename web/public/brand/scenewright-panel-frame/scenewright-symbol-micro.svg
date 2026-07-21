@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="title desc">
+  <title id="title">Scenewright micro symbol</title>
+  <desc id="desc">A simplified S-in-panel symbol optimized for favicon sizes.</desc>
+    <path d="M12 12 H88 V88 H12 Z M18 18 V82 H82 V18 Z" fill="#1b1c15" fill-rule="evenodd" clip-rule="evenodd" />
+    <rect x="22" y="22" width="56" height="56" fill="#b51822" stroke="none" shape-rendering="crispEdges" />
+    <path d="M38 34 L78 34 L78 46 L38 41 Z M22 53 L62 59 L62 67 L22 67 Z" fill="#fcfaed" />
+</svg>
