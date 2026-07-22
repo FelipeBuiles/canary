@@ -73,6 +73,19 @@ describe("stationDestination", () => {
 });
 
 describe("getStationState", () => {
+  it("does not keep Story in review after a downstream station has progressed", async () => {
+    const { getStationState } = await import("../lib/stations");
+    const story = STATIONS.find((station) => station.key === "story")!;
+    const status = projectStatus({
+      extract: stage("awaiting_review"),
+      style: stage("complete"),
+      cast: stage("failed"),
+      adapt: stage("pending"),
+    });
+
+    expect(getStationState(story, status)).toBe("done");
+  });
+
   it("shows running when an active stage follows an earlier failure", async () => {
     const { getStationState } = await import("../lib/stations");
     const panels = STATIONS.find((station) => station.key === "panels")!;

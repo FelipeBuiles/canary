@@ -66,8 +66,9 @@ export function PanelPreparationChecklist({
   preparation,
 }: PanelPreparationChecklistProps) {
   const { t } = useI18n();
-  const { steps, completedCount, isReady, failedStage, runningStage } = preparation;
-  const failed = failedStage !== null;
+  const { steps, completedCount, isReady, failedStage, runningStage, blockedByStage } = preparation;
+  const blocked = blockedByStage !== null;
+  const failed = failedStage !== null || blocked;
 
   const kicker = isReady
     ? "PANEL PREPARATION COMPLETE"
@@ -76,16 +77,22 @@ export function PanelPreparationChecklist({
       : "PRESS RUNNING";
   const title = isReady
     ? "READY TO DRAW"
+    : blocked
+      ? "CAST NEEDS ATTENTION"
     : failed
       ? "PANEL PREPARATION NEEDS ATTENTION"
       : "PREPARING YOUR PANELS";
   const description = isReady
     ? "Your panel plan and image instructions are ready. Start drawing when you are ready."
+    : blocked
+      ? "Finish the interrupted cast references before preparing panels."
     : failed
       ? "One preparation step did not finish. Retry it to continue from where the press stopped."
       : "Scenewright is planning how your story becomes comic panels. This usually takes a few minutes.";
   const liveSummary = isReady
     ? t("Panel preparation complete. Ready to draw.")
+    : blocked
+      ? t("Cast references need attention before panel preparation can start.")
     : failedStage
       ? `${t(STEP_COPY[failedStage].title)} — ${t("STOPPED")}`
       : runningStage

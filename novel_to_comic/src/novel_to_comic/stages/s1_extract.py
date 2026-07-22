@@ -381,6 +381,69 @@ def _find_quote_position(text: str, quote: str, start: int = 0) -> int:
     return _fuzzy_find_quote(norm_text, norm_quote, start)
 
 
+_SENTENCE_CLOSERS = {'"', "'", "\u2019", "\u201d", ")", "]"}
+_PERIOD_ABBREVIATIONS = {
+    "dr", "jr", "mr", "mrs", "ms", "prof", "sr", "st", "vs",
+}
+
+
+def _sentence_end_after(text: str, start: int) -> int | None:
+    """Return the end of the first sentence ending at or after ``start``.
+
+    The model-provided quote is only an anchor. Walking the source text makes
+    the excerpt shown in the Story room deterministic and prevents a fixed
+    character limit from leaving a dangling half-phrase.
+    """
+    for match in re.finditer(r"[.!?]", text[start:]):
+        punctuation = start + match.start()
+        mark = text[punctuation]
+
+        if mark == ".":
+            if punctuation > 0 and punctuation + 1 < len(text):
+                if text[punctuation - 1].isdigit() and text[punctuation + 1].isdigit():
+                    continue
+            word_match = re.search(r"([A-Za-z]+)$", text[:punctuation])
+            if word_match and word_match.group(1).lower() in _PERIOD_ABBREVIATIONS:
+                continue
+
+        end = punctuation + 1
+        while end < len(text) and text[end] in _SENTENCE_CLOSERS:
+            end += 1
+
+        following = text[end:].lstrip()
+        if not following or following[0].isupper() or following[0].isdigit():
+            return end
+
+    return None
+
+
+def _complete_source_start_quotes(story_bible: StoryBible, novel_text: str) -> None:
+    """Extend each scene's source anchor through its opening sentence.
+
+    ``source_start_quote`` remains verbatim source text and continues to serve
+    as the scene-boundary anchor. This post-processing repairs both older
+    fixed-length model output and occasional future model truncation.
+    """
+    search_from = 0
+    for scene in story_bible.scenes:
+        quote = scene.source_start_quote.strip()
+        if not quote:
+            continue
+
+        position = novel_text.find(quote, search_from)
+        if position == -1:
+            position = _find_quote_position(novel_text, quote, start=search_from)
+        if position == -1:
+            continue
+
+        if not re.search(r"[.!?][\"'\u2019\u201d)\]]*$", quote):
+            quote_end = position + len(quote)
+            sentence_end = _sentence_end_after(novel_text, quote_end)
+            if sentence_end is not None:
+                scene.source_start_quote = novel_text[position:sentence_end].strip()
+        search_from = position + 1
+
+
 def _write_scene_files(story_bible: StoryBible, novel_text: str, scenes_dir: Path) -> None:
     """Write individual scene text files using verbatim quote anchors.
 
@@ -479,6 +542,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
         ctx.log(f"Calling {config.effective_extraction_model()}...")
         extract_result = await _extract_with_retry(config, system_prompt, novel_text)
         story_bible = extract_result.value
+        _complete_source_start_quotes(story_bible, novel_text)
         console.print(
             f"[green]Extracted:[/green] {len(story_bible.characters)} characters, "
             f"{len(story_bible.locations)} locations, {len(story_bible.scenes)} scenes"

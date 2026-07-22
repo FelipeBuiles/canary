@@ -82,12 +82,16 @@ export function StaleStripe({
   onReset,
   continuing,
   resetting,
+  stageLabel = "DRAW",
+  itemLabel = "panels",
 }: {
   lastProgressAt: string | null;
   onContinue: () => void;
   onReset: () => void;
   continuing: boolean;
   resetting: boolean;
+  stageLabel?: string;
+  itemLabel?: string;
 }) {
   const ago = lastProgressAt ? formatRelative(Date.parse(lastProgressAt)) : null;
   const busy = continuing || resetting;
@@ -100,7 +104,7 @@ export function StaleStripe({
         {ago ? `Last progress ${ago} ago — server may have stopped.` : "Server may have stopped working on this stage."}
       </div>
       <div className="mt-1 text-[0.7rem] leading-snug text-ink-black/65">
-        Continue asks the server to resume pending panels and keeps generated art.
+        Continue asks the server to resume pending {itemLabel} and keeps generated art.
       </div>
       <button
         type="button"
@@ -108,7 +112,7 @@ export function StaleStripe({
         disabled={busy}
         className="mt-2 w-full border-[2px] border-ink-black bg-narrator-gold px-3 py-1.5 font-meta text-[0.6rem] tracking-[0.14em] text-ink-black transition-colors hover:bg-bristol disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {continuing ? "CONTINUING..." : "CONTINUE DRAW"}
+        {continuing ? "CONTINUING..." : `CONTINUE ${stageLabel}`}
       </button>
       <button
         type="button"

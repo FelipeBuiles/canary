@@ -71,4 +71,21 @@ describe("StaleStripe", () => {
     expect(screen.getByRole("button", { name: "CONTINUING..." })).toHaveProperty("disabled", true);
     expect(screen.getByRole("button", { name: "RESET STAGE" })).toHaveProperty("disabled", true);
   });
+
+  it("describes resumable cast work without panel-specific language", () => {
+    render(
+      <StaleStripe
+        lastProgressAt={null}
+        onContinue={() => undefined}
+        onReset={() => undefined}
+        continuing={false}
+        resetting={false}
+        stageLabel="CAST"
+        itemLabel="cast images"
+      />,
+    );
+
+    expect(screen.getByText("Continue asks the server to resume pending cast images and keeps generated art.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "CONTINUE CAST" })).toBeTruthy();
+  });
 });

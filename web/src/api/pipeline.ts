@@ -150,6 +150,17 @@ export function regenStateRef(
   );
 }
 
+export function regenLocationState(
+  project: string,
+  locId: string,
+  stateId: string,
+): Promise<{ status: string; job: GenerationJob; loc_id: string }> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(project)}/locations/${encodeURIComponent(locId)}/states/${encodeURIComponent(stateId)}/regenerate`,
+    { method: "POST" },
+  );
+}
+
 export function getCharacterRefVersions(
   project: string,
   charId: string,

@@ -7,6 +7,7 @@ import {
   prepareGenerationRequest,
   regenPanel,
   regenPanelWithInstruction,
+  regenLocationState,
 } from "../api/pipeline";
 import { createStyleDirection, fetchStyleSampleEstimate, generateStyleSamples, generateStyleValidation, setActiveStyle, suggestStyles } from "../api/styles";
 import { triggerExport } from "../api/pages";
@@ -71,6 +72,15 @@ describe("panel regeneration API", () => {
 
     expect(mockedApiFetch).toHaveBeenCalledWith(
       "/projects/proj%20one/asset-regen-estimate?asset_type=character&asset_id=char_001&state_id=winter_coat",
+    );
+  });
+
+  it("regenerates a location appearance through its state endpoint", async () => {
+    await regenLocationState("proj one", "great hall", "after fire");
+
+    expect(mockedApiFetch).toHaveBeenCalledWith(
+      "/projects/proj%20one/locations/great%20hall/states/after%20fire/regenerate",
+      { method: "POST" },
     );
   });
 

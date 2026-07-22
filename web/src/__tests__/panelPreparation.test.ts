@@ -46,6 +46,20 @@ function projectStatus(stages: ProjectStatus["stages"]): ProjectStatus {
 }
 
 describe("getPanelPreparationState", () => {
+  it("reports a failed Cast checkpoint instead of pretending preparation is starting", () => {
+    const preparation = getPanelPreparationState(projectStatus({
+      cast: stage("failed", { error: "location state image did not finish" }),
+      adapt: stage("pending"),
+      plan: stage("pending"),
+      storyboard: stage("pending"),
+      direct: stage("pending"),
+    }));
+
+    expect(preparation.blockedByStage).toBe("cast");
+    expect(preparation.runningStage).toBeNull();
+    expect(preparation.isReady).toBe(false);
+  });
+
   it("derives completed, running, and waiting steps without combining totals", () => {
     const preparation = getPanelPreparationState(projectStatus({
       adapt: stage("complete", { items_done: 12, items_total: 12 }),

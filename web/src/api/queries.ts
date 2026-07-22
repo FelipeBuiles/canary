@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listProjects, getProjectStatus, createProject, deleteProject, fetchProjectCoverEstimate, generateProjectCover, listShortStories, importStory } from "./projects";
-import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenStateRef, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate, fetchAssetRegenEstimate, getCharacterRefVersions, restoreCharacterRefVersion, previewGenerationRequest, prepareGenerationRequest, getGenerationRequest } from "./pipeline";
+import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenStateRef, regenLocationState, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate, fetchAssetRegenEstimate, getCharacterRefVersions, restoreCharacterRefVersion, previewGenerationRequest, prepareGenerationRequest, getGenerationRequest } from "./pipeline";
 import type { ConfigOverrides, StoryBible, ProjectStatus, StageInfo, ImageStatus, CreditBalance, CostEstimate } from "../types/api";
 import { reconcileStatusPoll } from "../lib/stageProgress";
 import { getBalance, getCreditHistory, getPricingReference } from "./credits";
@@ -454,6 +454,13 @@ export function useRegenStateRef() {
   return useMutation({
     mutationFn: ({ project, charId, stateId }: { project: string; charId: string; stateId: string }) =>
       regenStateRef(project, charId, stateId),
+  });
+}
+
+export function useRegenLocationState() {
+  return useMutation({
+    mutationFn: ({ project, locId, stateId }: { project: string; locId: string; stateId: string }) =>
+      regenLocationState(project, locId, stateId),
   });
 }
 

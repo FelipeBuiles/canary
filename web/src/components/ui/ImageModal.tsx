@@ -73,7 +73,7 @@ export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar,
     >
       <div
         ref={dialogRef}
-        className={`flex max-h-[94vh] w-full flex-col border-[2px] border-ink-black bg-bristol shadow-ink ${sidebar ? "max-w-[1300px]" : "max-w-[1100px]"}`}
+        className={`flex max-h-[calc(100dvh-2rem)] w-full flex-col overflow-hidden border-[2px] border-ink-black bg-bristol shadow-ink sm:max-h-[94vh] ${sidebar ? "max-w-[1300px]" : "max-w-[1100px]"}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Title bar */}
@@ -100,8 +100,14 @@ export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar,
         </div>
 
         {/* Body: image + optional sidebar */}
-        <div className={`min-h-0 flex-1 ${sidebar ? "flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(300px,360px)]" : "flex flex-col"}`}>
-          <div className="flex min-h-[36vh] items-center justify-center bg-ink-black lg:min-h-[60vh]">
+        <div
+          data-testid="image-modal-body"
+          className={`min-h-0 flex-1 overflow-hidden ${sidebar ? "flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(300px,360px)]" : "flex flex-col"}`}
+        >
+          <div
+            data-testid="image-modal-image-pane"
+            className="flex h-[36dvh] min-h-0 shrink-0 items-center justify-center overflow-hidden bg-ink-black lg:h-auto lg:min-h-[60vh] lg:shrink"
+          >
             {imageAvailable ? (
               <LazyImage
                 src={src}
@@ -116,7 +122,7 @@ export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar,
             )}
           </div>
           {sidebar && (
-            <div className="max-h-[42vh] overflow-y-auto border-t-[2px] border-ink-black bg-bristol p-5 lg:max-h-none lg:border-l-[2px] lg:border-t-0">
+            <div className="min-h-0 flex-1 overflow-y-auto border-t-[2px] border-ink-black bg-bristol p-5 lg:max-h-none lg:border-l-[2px] lg:border-t-0">
               {sidebar}
             </div>
           )}

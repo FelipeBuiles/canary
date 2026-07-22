@@ -184,6 +184,8 @@ export function DrawRoom() {
   const { data: status } = useProjectStatus(id);
   const panelPreparation = getPanelPreparationState(status);
   const failedPreparationStage = panelPreparation.failedStage;
+  const blockedPreparationStage = panelPreparation.blockedByStage;
+  const preparationRetryStage = failedPreparationStage ?? blockedPreparationStage;
   const { data: images, isLoading } = useImages(
     id,
     regeningKeys.length > 0 || status?.stages?.draw?.status === "running" ? 2000 : undefined,
@@ -244,8 +246,8 @@ export function DrawRoom() {
   const { data: composeEstimate } = useStageEstimate(id, "compose");
   const { data: preparationRetryEstimate } = useStageEstimate(
     id,
-    failedPreparationStage ?? undefined,
-    failedPreparationStage !== null,
+    preparationRetryStage ?? undefined,
+    preparationRetryStage !== null,
   );
   const { data: projectConfig } = useProjectConfig(id);
   // A zero draw estimate means the prompt inputs were not visible to the
@@ -480,9 +482,9 @@ export function DrawRoom() {
   }
 
   function handleRetryPreparation() {
-    if (!id || !failedPreparationStage) return;
-    handleRun(id, failedPreparationStage, {
-      actionLabel: "Retry panel preparation",
+    if (!id || !preparationRetryStage) return;
+    handleRun(id, preparationRetryStage, {
+      actionLabel: blockedPreparationStage ? "Resume cast characters & places" : "Retry panel preparation",
     });
   }
 
@@ -605,17 +607,19 @@ export function DrawRoom() {
             busy={isPipelineRunning}
           />
         )}
-        {id && !isDrawRunning && !upstreamReady && failedPreparationStage && (
+        {id && !isDrawRunning && !upstreamReady && preparationRetryStage && (
           <ApprovalBar
-            next={t("Panel preparation stopped. Retry the interrupted step to continue")}
+            next={blockedPreparationStage
+              ? t("Finish the interrupted cast references before preparing panels.")
+              : t("Panel preparation stopped. Retry the interrupted step to continue")}
             estimateCredits={preparationRetryEstimate?.estimate_credits}
-            primaryLabel={t("↺ RETRY PANEL PREPARATION")}
+            primaryLabel={blockedPreparationStage ? t("↺ RESUME CAST") : t("↺ RETRY PANEL PREPARATION")}
             onPrimary={handleRetryPreparation}
             primaryDisabled={isPipelineRunning}
             busy={isPipelineRunning}
           />
         )}
-        {id && !isDrawRunning && !upstreamReady && !failedPreparationStage && (
+        {id && !isDrawRunning && !upstreamReady && !preparationRetryStage && (
           <ApprovalBar
             next={t("Scenewright is preparing the panel plan and image instructions")}
             primaryLabel={t("PREPARING…")}

@@ -8,6 +8,7 @@ import {
   useStoryBible,
   useRegenRef,
   useRegenStateRef,
+  useRegenLocationState,
   useCharacterRefVersions,
   useRestoreCharacterRefVersion,
   useRegenRefWithInstruction,
@@ -17,6 +18,7 @@ import {
   useRegenPropWithInstruction,
   useAssetRegenEstimate,
   useImageGenerationMeta,
+  useResetStale,
 } from "../../api/queries";
 import { ApprovalBar, ConfirmDrawer, RegenAction, RoomHeader, RoomShell, RerunStageAction, StagePlaceholder, SectionHeader, EntityCard } from "../../components/composites";
 import { useRunAction } from "../../hooks/useRunAction";
@@ -30,6 +32,8 @@ import type { AppearanceState, Character, GenerationJob, Location, Prop } from "
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { useI18n } from "../../i18n";
 import { FlowingDotsPlaceholder } from "../../components/ui/FlowingDotsPlaceholder";
+import { StaleStripe } from "../../components/draw/LiveCockpit";
+import { getCastCheckpointAction } from "../../lib/castCheckpoint";
 
 function queuedLabel(job: GenerationJob | null) {
   if (!job) return "QUEUED";
@@ -700,6 +704,145 @@ function CharacterCastCard({
   );
 }
 
+function LocationStateTile({
+  projectName,
+  locId,
+  state,
+}: {
+  projectName: string;
+  locId: string;
+  state: AppearanceState;
+}) {
+  const { t } = useI18n();
+  const [imgFailed, setImgFailed] = useState(false);
+  const [timestamp, setTimestamp] = useState(() => Date.now());
+  const [activeJob, setActiveJob] = useState<GenerationJob | null>(null);
+  const [regenError, setRegenError] = useState<string | null>(null);
+  const [confirmRegen, setConfirmRegen] = useState(false);
+  const regenState = useRegenLocationState();
+  const { data: generationJobs } = useGenerationJobs(projectName, activeJob ? [activeJob.id] : []);
+  const { data: regenEstimate } = useAssetRegenEstimate(projectName, "location", locId, state.id);
+
+  useEffect(() => {
+    const job = generationJobs?.jobs[0];
+    if (!job) return;
+    const timer = window.setTimeout(() => {
+      if (job.status === "complete") {
+        setTimestamp(Date.now());
+        setImgFailed(false);
+        setActiveJob(null);
+        setRegenError(null);
+      } else if (job.status === "failed") {
+        setActiveJob(null);
+        setRegenError(job.error ?? "Regeneration failed");
+      } else {
+        setActiveJob(job);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [generationJobs]);
+
+  const imageUrl = `/api/projects/${encodeURIComponent(projectName)}/files/plates/${encodeURIComponent(state.id)}.png?t=${timestamp}`;
+  const busy = regenState.isPending || !!activeJob;
+  const isQueued = activeJob?.status === "queued" || (activeJob && activeJob.queue_position);
+
+  const startRegen = () => {
+    setConfirmRegen(false);
+    setRegenError(null);
+    regenState.mutate(
+      { project: projectName, locId, stateId: state.id },
+      {
+        onSuccess: (data) => setActiveJob(data.job),
+        onError: (err) => {
+          if (maybeShowInsufficientCredits(err, { actionLabel: "Regenerate location appearance", onRetry: startRegen })) return;
+          setRegenError(err.message);
+        },
+      },
+    );
+  };
+
+  return (
+    <div className="w-[132px] max-w-full">
+      <div className="relative aspect-[16/9] w-full overflow-hidden border-[2px] border-ink-black/15 bg-surface-container">
+        {busy ? (
+          <FlowingDotsPlaceholder
+            compact
+            aspect="16 / 9"
+            className="h-full !border-0"
+            label={isQueued ? t("QUEUED") : t("DRAWING…")}
+          />
+        ) : imgFailed ? (
+          <div className="flex h-full w-full items-center justify-center px-2 text-center">
+            <span className="font-meta text-[0.46rem] leading-tight tracking-[0.12em] text-hero-red">{t("NOT GENERATED")}</span>
+          </div>
+        ) : (
+          <img
+            src={imageUrl}
+            alt={`${state.label} location reference`}
+            className="h-full w-full object-cover"
+            onError={() => setImgFailed(true)}
+          />
+        )}
+      </div>
+      <div className="mt-1 truncate font-meta text-[0.46rem] tracking-[0.1em] text-ink-black/70" title={state.label}>
+        {state.label}
+      </div>
+      <button
+        type="button"
+        onClick={() => setConfirmRegen(true)}
+        disabled={busy || !regenEstimate}
+        className="mt-1 min-h-11 w-full border-[1.5px] border-ink-black/25 bg-bristol px-2 py-1.5 font-meta text-[0.5rem] tracking-[0.12em] text-ink-black/70 transition-colors hover:border-ink-black hover:text-ink-black disabled:opacity-50"
+      >
+        {busy ? queuedLabel(activeJob) : imgFailed ? t("GENERATE") : t("REGENERATE")}
+      </button>
+      {regenError && <div className="mt-1 text-[0.5rem] leading-tight text-hero-red">{regenError}</div>}
+      <ConfirmDrawer
+        open={confirmRegen}
+        title={imgFailed ? t("Generate image") : t("Try another version")}
+        body={imgFailed
+          ? t("Scenewright will create this image from its saved visual brief.")
+          : t("Scenewright will create a new image from the same saved brief. The current version stays in history.")}
+        cost={regenEstimate}
+        confirmLabel={imgFailed ? t("GENERATE IMAGE") : t("TRY ANOTHER VERSION")}
+        onConfirm={startRegen}
+        onClose={() => setConfirmRegen(false)}
+        busy={busy}
+      />
+    </div>
+  );
+}
+
+function LocationAppearanceStatesPanel({
+  projectName,
+  locId,
+  states,
+}: {
+  projectName: string;
+  locId: string;
+  states: AppearanceState[] | undefined;
+}) {
+  const { t } = useI18n();
+  const significant = (states ?? []).filter((state) => state.visually_significant);
+  if (significant.length === 0) return null;
+  return (
+    <div>
+      <div className="mb-1.5 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">
+        {t("ALTERNATE APPEARANCES")}
+      </div>
+      <div className="flex flex-wrap gap-3">
+        {significant.map((state) => (
+          <LocationStateTile
+            key={state.id}
+            projectName={projectName}
+            locId={locId}
+            state={state}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function LocationPlateCard({
   location,
   projectName,
@@ -925,6 +1068,11 @@ function LocationPlateCard({
               lastInstruction={lastAddendum}
               onRegenerate={startRegen}
               onRegenerateWithInstruction={submitInstruction}
+            />
+            <LocationAppearanceStatesPanel
+              projectName={projectName}
+              locId={location.id}
+              states={location.appearance_states}
             />
             <div>
               <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">VISUAL ANCHOR</div>
@@ -1205,6 +1353,7 @@ export function CastRoom() {
   const { data: bible, isLoading } = useStoryBible(id);
   const { data: status } = useProjectStatus(id);
   const approveStage = useApproveStage();
+  const { mutate: resetStale, isPending: isResetting } = useResetStale();
   const { handleRun, isPending: isPipelineRunning } = useRunAction();
   // The estimate for "adapt" covers the whole auto chain: adapt → plan →
   // storyboard → direct (the backend sums chained stages).
@@ -1213,7 +1362,11 @@ export function CastRoom() {
   const stageRegenerating = isCastStageRunning;
   const stageInfo = status?.stages?.cast;
   const stageStatus = stageInfo?.status ?? "pending";
+  const checkpointAction = getCastCheckpointAction(stageStatus);
+  const isStageStuck = !!stageInfo?.stale;
+  const lastProgressAt = stageInfo?.last_progress_at ?? null;
   const needsApproval = stageStatus === "awaiting_review";
+  const { data: castResumeEstimate } = useStageEstimate(id, "cast", checkpointAction === "resume");
   const adaptStarted = status?.stages?.adapt?.status != null && status.stages.adapt.status !== "pending";
   const autoStartedCast = useRef<string | null>(null);
 
@@ -1229,7 +1382,12 @@ export function CastRoom() {
 
   function handleContinueToPanels() {
     if (!id) return;
-    if (needsApproval) {
+    if (checkpointAction === "resume") {
+      // A normal stage run preserves successful cast artifacts. The Cast
+      // stage skips existing files and generates only what the interrupted
+      // run left behind.
+      handleRun(id, "cast", { actionLabel: "Resume cast characters & places" });
+    } else if (checkpointAction === "approve") {
       approveStage.mutate(
         { project: id, stage: "cast" },
         {
@@ -1241,9 +1399,19 @@ export function CastRoom() {
           },
         },
       );
-    } else {
+    } else if (checkpointAction === "continue") {
       navigate(`/project/${id}/draw`);
     }
+  }
+
+  function handleResetStale() {
+    if (!id) return;
+    resetStale({ project: id });
+  }
+
+  function handleContinueStale() {
+    if (!id) return;
+    handleRun(id, "cast", { actionLabel: "Continue CAST" });
   }
 
   if (isLoading || (!bible && stageStatus !== "pending")) {
@@ -1281,6 +1449,18 @@ export function CastRoom() {
         title="CONFIRM CHARACTERS & PLACES"
         lead="These references guide every panel. Open only the people or places that need a fix."
       />
+
+      {isStageStuck && (
+        <StaleStripe
+          lastProgressAt={lastProgressAt}
+          onContinue={handleContinueStale}
+          onReset={handleResetStale}
+          continuing={isPipelineRunning}
+          resetting={isResetting}
+          stageLabel="CAST"
+          itemLabel="cast images"
+        />
+      )}
 
       <section className="space-y-10">
         <div>
@@ -1337,16 +1517,26 @@ export function CastRoom() {
       </section>
 
       <ApprovalBar
-        next={needsApproval
+        next={checkpointAction === "resume"
+          ? "Some cast references did not finish — resume from the missing images"
+          : needsApproval
           ? "Scenewright plans shots and writes prompts — automatically"
           : stageStatus === "complete"
             ? "Draw your panels at the Panels station"
             : "Scenewright is drawing your cast"}
-        estimateCredits={needsApproval ? chainEstimate?.estimate_credits : null}
-        primaryLabel={needsApproval ? "LOOKS RIGHT — CONTINUE →" : "GO TO PANELS →"}
+        estimateCredits={checkpointAction === "resume"
+          ? castResumeEstimate?.estimate_credits
+          : needsApproval
+            ? chainEstimate?.estimate_credits
+            : null}
+        primaryLabel={checkpointAction === "resume"
+          ? "↺ RESUME CAST"
+          : needsApproval
+            ? "LOOKS RIGHT — CONTINUE →"
+            : "GO TO PANELS →"}
         onPrimary={handleContinueToPanels}
-        primaryDisabled={approveStage.isPending || isPipelineRunning || isCastStageRunning || stageStatus === "pending"}
-        busy={approveStage.isPending}
+        primaryDisabled={approveStage.isPending || isPipelineRunning || checkpointAction === "wait"}
+        busy={approveStage.isPending || isPipelineRunning}
         secondary={<RerunStageAction project={id} stage="cast" label="cast" disabled={stageRegenerating} />}
       />
     </RoomShell>

@@ -23,6 +23,7 @@ export interface PanelPreparationState {
   isReady: boolean;
   failedStage: PanelPreparationStage | null;
   runningStage: PanelPreparationStage | null;
+  blockedByStage: "cast" | null;
 }
 
 function hasFailed(info: StageInfo | undefined): boolean {
@@ -63,11 +64,21 @@ export function getPanelPreparationState(
     };
   });
 
+  const preparationStarted = PANEL_PREPARATION_STAGES.some(
+    (stage) => hasProgressed(status?.stages[stage]),
+  );
+  const blockedByStage = !preparationStarted
+    && status?.stages.cast?.status === "failed"
+    && !status.stages.cast.approved
+    ? "cast"
+    : null;
+
   return {
     steps,
     completedCount: steps.filter((step) => step.state === "done").length,
     isReady: steps.every((step) => step.state === "done"),
     failedStage: steps.find((step) => step.state === "failed")?.stage ?? null,
     runningStage: steps.find((step) => step.state === "running")?.stage ?? null,
+    blockedByStage,
   };
 }

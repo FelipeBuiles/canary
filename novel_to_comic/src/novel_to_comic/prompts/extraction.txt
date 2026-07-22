@@ -80,7 +80,7 @@ Given the complete text of a novel, output a single JSON object matching the sch
       "summary": "2-3 sentence summary of what happens.",
       "scene_type": "action",
       "narrative_beat": "inciting_incident",
-      "source_start_quote": "Copy verbatim the first 60-80 characters of this scene, exactly as they appear in the original text — including punctuation and capitalisation.",
+      "source_start_quote": "Copy verbatim the complete opening sentence of this scene, exactly as it appears in the original text — including punctuation and capitalisation. Never stop mid-sentence.",
       "transient_objects": [
         {
           "id": "trans_001",
@@ -130,7 +130,7 @@ Given the complete text of a novel, output a single JSON object matching the sch
 - narrative_arcs[].title: SHORT string — e.g. "Setup", "Confrontation", "Resolution".
 - characters[].distinguishing_features: ARRAY of strings — e.g. ["long red hair", "scar on chin"]. NOT a single string.
 - characters[].baseline_affect: STRING or null. A stable, low-intensity demeanor separate from physical identity and from scene reactions.
-- scenes[].source_start_quote: VERBATIM string — copy the first 60-80 characters of that scene exactly as they appear in the text. Do NOT paraphrase or summarise. Do NOT count characters.
+- scenes[].source_start_quote: VERBATIM string — copy the complete opening sentence of that scene exactly as it appears in the text. Do NOT paraphrase, summarise, or stop mid-sentence.
 - characters[].appearance_states, locations[].appearance_states: ARRAY (may be empty) of alternate-look objects. See APPEARANCE TIMELINE rules below.
 - characters[].appearance_timeline, locations[].appearance_timeline: ARRAY (may be empty) of activations, each {state_id, at:{scene_id, beat}, transition?}, ordered by story position. See APPEARANCE TIMELINE rules below.
 - scenes[].transient_objects: ARRAY (may be empty). See TRANSIENT OBJECTS rules below.
@@ -207,7 +207,7 @@ APPEARANCE TIMELINE (characters[] and locations[] — how a look changes over th
 
 SCENES
 - A new scene starts when ANY of the following changes: location, location appearance state, POV character, OR a significant time jump (>30 min, "later that day", flashback to earlier).
-- source_start_quote: copy the first 60-80 characters of the scene VERBATIM from the text — exact words, punctuation, capitalisation. This is used to locate the scene in the source file. Do NOT invent or paraphrase this field.
+- source_start_quote: copy the complete opening sentence of the scene VERBATIM from the text — exact words, punctuation, capitalisation. This is used both to locate the scene in the source file and as its displayed excerpt. Do NOT invent, paraphrase, or stop mid-sentence.
 - A character's or location's CHANGED appearance is NOT recorded on the scene. It lives on the entity's appearance_states + appearance_timeline (see APPEARANCE TIMELINE), which resolve per panel automatically.
 - Target 5-15 scenes for a short story, 30-60 for a full novel. Be exhaustive — cover the ENTIRE novel from first page to last.
 - Each scene should yield 3-8 comic panels. If a scene is too long OR spans an in/out transition OR jumps locations, SPLIT it.

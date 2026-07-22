@@ -71,6 +71,25 @@ describe("ImageModal", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it("clips the mobile image and sidebar panes to separate scroll regions", () => {
+    render(
+      <I18nProvider>
+        <ImageModal
+          isOpen
+          onClose={() => undefined}
+          src="/tall-sheet.png"
+          alt="Tall reference sheet"
+          sidebar={<div>Appearance controls</div>}
+        />
+      </I18nProvider>,
+    );
+
+    const body = screen.getByTestId("image-modal-body");
+    const imagePane = screen.getByTestId("image-modal-image-pane");
+    expect(body.className).toContain("overflow-hidden");
+    expect(imagePane.className).toContain("overflow-hidden");
+  });
+
   it("moves focus into the dialog and restores it to the opener", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
