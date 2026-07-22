@@ -1,4 +1,4 @@
-import type { ProjectStatus, StageName, StageStatus } from "../types/api";
+import { STAGE_ORDER, type ProjectStatus, type StageName, type StageStatus } from "../types/api";
 
 /**
  * The 4 user-facing stations — a UI grouping over the 9 backend stages.
@@ -103,8 +103,8 @@ export function getStationState(station: Station, status: ProjectStatus | undefi
   const allStages = station.substeps.flatMap((s) => s.backendStages);
   const gatedStages = station.substeps.filter((s) => s.kind === "gated").flatMap((s) => s.backendStages);
   const gatedStageSuperseded = (stage: StageName) => {
-    const index = gatedStages.indexOf(stage);
-    return index >= 0 && gatedStages
+    const index = STAGE_ORDER.indexOf(stage);
+    return index >= 0 && STAGE_ORDER
       .slice(index + 1)
       .some((laterStage) => stageStatusOf(status, laterStage) !== "pending");
   };
@@ -120,7 +120,9 @@ export function getStationState(station: Station, status: ProjectStatus | undefi
     if (!stageFailed(status, stage)) return false;
     return !gatedStageSuperseded(stage);
   })) return "failed";
-  if (gatedStages.some((s) => stageStatusOf(status, s) === "awaiting_review")) return "review";
+  if (gatedStages.some((s) =>
+    stageStatusOf(status, s) === "awaiting_review" && !gatedStageSuperseded(s)
+  )) return "review";
   if (gatedStages.every((s) => stageStatusOf(status, s) === "complete" || gatedStageSuperseded(s))) return "done";
   return "wait";
 }

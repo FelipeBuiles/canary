@@ -9,6 +9,7 @@ const runningPreparation: PanelPreparationState = {
   isReady: false,
   failedStage: null,
   runningStage: "plan",
+  blockedByStage: null,
   steps: [
     { stage: "adapt", state: "done", itemsDone: 12, itemsTotal: 12 },
     { stage: "plan", state: "running", itemsDone: 4, itemsTotal: 12 },
@@ -48,6 +49,25 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("PanelPreparationChecklist", () => {
+  it("shows the upstream Cast failure instead of claiming the press is running", () => {
+    renderChecklist({
+      ...runningPreparation,
+      completedCount: 0,
+      runningStage: null,
+      blockedByStage: "cast",
+      steps: runningPreparation.steps.map((step) => ({
+        ...step,
+        state: "waiting",
+        itemsDone: 0,
+        itemsTotal: 0,
+      })),
+    });
+
+    expect(screen.getByRole("heading", { name: "CAST NEEDS ATTENTION" })).toBeTruthy();
+    expect(screen.getByText("Finish the interrupted cast references before preparing panels.")).toBeTruthy();
+    expect(screen.queryByText("You can leave this page — preparation continues in the background.")).toBeNull();
+  });
+
   it("shows one stable checklist with local progress only on the running step", () => {
     renderChecklist(runningPreparation);
 
@@ -64,6 +84,7 @@ describe("PanelPreparationChecklist", () => {
       isReady: true,
       failedStage: null,
       runningStage: null,
+      blockedByStage: null,
       steps: runningPreparation.steps.map((step) => ({ ...step, state: "done" })),
     });
 

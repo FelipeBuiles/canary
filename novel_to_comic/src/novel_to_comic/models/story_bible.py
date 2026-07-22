@@ -83,7 +83,7 @@ class Scene(BaseModel):
     summary: str  # 2-3 sentence summary
     scene_type: str  # "action", "dialogue", "emotional", "transition"
     narrative_beat: str  # "inciting_incident", "climax", "resolution", etc.
-    source_start_quote: str  # verbatim first ~60 chars of this scene in the novel text
+    source_start_quote: str  # verbatim opening sentence of this scene in the novel text
     # Per-character and per-location appearance change is modeled on the entity
     # itself (appearance_states + appearance_timeline), resolved per panel by
     # novel_to_comic.appearance — not as per-scene override fields.

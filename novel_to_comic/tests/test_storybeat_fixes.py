@@ -15,7 +15,11 @@ from novel_to_comic.models.layout_plan import (
 from novel_to_comic.models.appearance import AppearanceState, StateActivation, StoryPosition
 from novel_to_comic.models.panel import Screenplay, ScreenplayBeat
 from novel_to_comic.models.story_bible import Location, Scene, StoryBible
-from novel_to_comic.stages.s1_extract import _find_quote_position, _write_scene_files
+from novel_to_comic.stages.s1_extract import (
+    _complete_source_start_quotes,
+    _find_quote_position,
+    _write_scene_files,
+)
 from novel_to_comic.stages.s4_screenplay import _annotate_transition_beats
 from novel_to_comic.stages.s5_layout_plan import (
     _apply_screenplay_transition_boundaries,
@@ -69,6 +73,51 @@ def test_find_quote_position_fuzzy_rejects_weak_matches():
     text = "An entirely different passage about ships and storms on the open sea."
     quote = "the quiet library at midnight held seventeen sleeping cats"
     assert _find_quote_position(text, quote) == -1
+
+
+def test_complete_source_start_quotes_extends_truncated_excerpt_to_sentence_end():
+    novel = (
+        "After changing at Ipswich, a little local train deposited me at a small, "
+        "deserted station some miles from the village. I drove to the old house."
+    )
+    bible = StoryBible(
+        title="The Brazilian Cat",
+        author="Arthur Conan Doyle",
+        total_scenes=1,
+        characters=[],
+        locations=[Location(id="loc_001", name="Station", visual_anchor="x", mood="m")],
+        scenes=[
+            _scene(
+                "scene_001",
+                "After changing at Ipswich, a little local train deposited me at a small, deserted",
+            )
+        ],
+        narrative_arcs=[],
+    )
+
+    _complete_source_start_quotes(bible, novel)
+
+    assert bible.scenes[0].source_start_quote == (
+        "After changing at Ipswich, a little local train deposited me at a small, "
+        "deserted station some miles from the village."
+    )
+
+
+def test_complete_source_start_quotes_keeps_already_complete_sentence():
+    novel = "The rain stopped. Arthur opened the gate."
+    bible = StoryBible(
+        title="t",
+        author="a",
+        total_scenes=1,
+        characters=[],
+        locations=[Location(id="loc_001", name="Gate", visual_anchor="x", mood="m")],
+        scenes=[_scene("scene_001", "The rain stopped.")],
+        narrative_arcs=[],
+    )
+
+    _complete_source_start_quotes(bible, novel)
+
+    assert bible.scenes[0].source_start_quote == "The rain stopped."
 
 
 def _scene(sid: str, quote: str) -> Scene:
