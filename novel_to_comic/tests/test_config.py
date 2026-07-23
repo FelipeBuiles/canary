@@ -234,6 +234,23 @@ def test_gemini_text_aliases_use_latest_flash_tiers():
         model for alias, model in models.items() if alias.startswith("prompt-")
     } == {"vertex_ai/gemini-3.5-flash-lite"}
 
+    text_params = {
+        item["model_name"]: item["litellm_params"]
+        for item in data["model_list"]
+        if str(item.get("model_name", "")).startswith(("panel-", "prompt-"))
+    }
+    assert {
+        alias: params.get("reasoning_effort")
+        for alias, params in text_params.items()
+    } == {
+        "panel-fast": "disable",
+        "panel-balanced": "disable",
+        "panel-quality": "disable",
+        "prompt-fast": "disable",
+        "prompt-balanced": "disable",
+        "prompt-quality": "disable",
+    }
+
 
 class TestReveModelAlias:
     def test_quality_alias_is_not_reve_model(self):

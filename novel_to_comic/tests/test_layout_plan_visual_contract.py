@@ -1,12 +1,17 @@
+import asyncio
+
 import pytest
 
+from novel_to_comic.config import Config
 from novel_to_comic.models.layout_plan import LLMPanelSpec
-from novel_to_comic.models.panel import ScreenplayBeat
+from novel_to_comic.models.panel import Screenplay, ScreenplayBeat
 from novel_to_comic.models.story_bible import Prop, StoryBible
 from novel_to_comic.stages.s5_layout_plan import (
+    estimate_cost,
     _importance_aware_paginate,
     _llm_spec_to_planned_panel,
     _scene_planning_user_content,
+    _plan_scene_llm,
     _validate_llm_specs,
 )
 
@@ -350,3 +355,101 @@ def test_scene_planning_prompt_includes_story_props():
 
     assert "Story props:" in user_content
     assert "prop_key (Brass key): small tarnished brass key" in user_content
+
+
+def test_scene_planner_caps_completion_after_reasoning_is_disabled(monkeypatch):
+    screenplay = Screenplay(
+        scene_id="scene_001",
+        location_id="loc_001",
+        characters=[],
+        beats=[ScreenplayBeat(type="action", content="Mara studies the lock.")],
+    )
+    captured = {}
+
+    async def fake_generate_validated_json(*_args, **kwargs):
+        captured.update(kwargs)
+        return type("Outcome", (), {
+            "value": ([LLMPanelSpec(beat_indices=[1], lighting="daylight")], []),
+            "usage_records": [],
+        })()
+
+    monkeypatch.setattr(
+        "novel_to_comic.stages.s5_layout_plan.generate_validated_json",
+        fake_generate_validated_json,
+    )
+
+    asyncio.run(_plan_scene_llm(Config(), screenplay, _story_bible(), []))
+
+    assert captured["max_output_tokens"] == 16_384
+
+
+def test_scene_planner_repairs_parseable_cap_violation_without_paid_retry(monkeypatch):
+    from novel_to_comic.usage import ApiResult
+
+    screenplay = Screenplay(
+        scene_id="scene_001",
+        location_id="loc_001",
+        characters=["char_001"],
+        beats=[
+            ScreenplayBeat(
+                type="dialogue",
+                character_id="char_001",
+                content="One two three four five six seven eight nine ten eleven twelve thirteen.",
+            ),
+            ScreenplayBeat(
+                type="dialogue",
+                character_id="char_001",
+                content="Fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one twenty-two twenty-three twenty-four twenty-five.",
+            ),
+        ],
+    )
+    calls = 0
+
+    async def fake_generate_json(**_kwargs):
+        nonlocal calls
+        calls += 1
+        return ApiResult(
+            value={
+                "panels": [{"beat_indices": [1, 2], "lighting": "daylight"}],
+                "narration_decisions": [],
+            }
+        )
+
+    monkeypatch.setattr(
+        "novel_to_comic.clients.structured_call.generate_json",
+        fake_generate_json,
+    )
+    warnings: list[str] = []
+
+    specs, _ = asyncio.run(
+        _plan_scene_llm(Config(), screenplay, _story_bible(), warnings)
+    )
+
+    assert calls == 1
+    assert [spec.beat_indices for spec in specs] == [[1], [2]]
+    assert any("repaired locally" in warning for warning in warnings)
+
+
+def test_plan_estimate_budgets_realistic_structured_output(tmp_path, monkeypatch):
+    from novel_to_comic import artifacts
+
+    bible = _bible_for_splash_demote().model_copy(
+        update={"scenes": _bible_for_splash_demote().scenes[:1], "total_scenes": 1}
+    )
+    screenplay_dir = tmp_path / "screenplays"
+    screenplay_dir.mkdir()
+    (screenplay_dir / "scene_001.json").write_text('{"beats": []}')
+    monkeypatch.setattr(artifacts, "read_story_bible_safe", lambda _path: bible)
+    output_budgets: list[int] = []
+
+    def fake_estimate_text_cost(_model, _input, output_chars=0):
+        output_budgets.append(output_chars)
+        return 1.0
+
+    monkeypatch.setattr(
+        "novel_to_comic.usage.estimate_text_cost",
+        fake_estimate_text_cost,
+    )
+
+    assert estimate_cost(Config(), tmp_path, None) == 1.0
+    assert output_budgets == [16_384]

@@ -2,7 +2,9 @@
 
 import pytest
 from pathlib import Path
+from types import SimpleNamespace
 
+from novel_to_comic.server import metrics
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.state import PipelineState, StageStatus, create_initial_state
 
@@ -34,6 +36,23 @@ class TestBeginCompleteLifecycle:
         ctx.begin(total=3)
         ctx.complete()
         assert state.stages["plan"].status == StageStatus.COMPLETE
+
+    def test_complete_records_and_warns_on_stage_cost_drift(self, tmp_path, caplog):
+        metrics.reset_metrics_for_tests()
+        state = _state(tmp_path)
+        ctx = StageRuntime("plan", state, tmp_path)
+        ctx.begin(total=1, estimated_cost_usd=0.1)
+        ctx.record_item_done(cost=0.3)
+
+        with caplog.at_level("WARNING", logger="canary.stage_cost"):
+            ctx.complete()
+
+        app = SimpleNamespace(
+            state=SimpleNamespace(generation_jobs={}, generation_queue=None)
+        )
+        rendered = metrics.render_metrics(app)
+        assert 'canary_stage_cost_ratio_sum{stage="plan"} 3' in rendered
+        assert "Stage cost exceeded estimate" in caplog.text
 
     def test_fail_sets_failed_status(self, tmp_path):
         state = _state(tmp_path)
