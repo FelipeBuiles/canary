@@ -37,6 +37,10 @@ _COUNTERS: dict[str, tuple[str, tuple[str, ...]]] = {
     "canary_stage_runs_total": ("Pipeline stage runs", ("stage", "outcome")),
     "canary_ai_calls_total": ("AI provider calls", ("provider", "model", "operation", "status")),
     "canary_ai_provider_cost_usd_total": ("Recent provider cost in USD", ("provider", "model", "stage")),
+    "canary_ai_input_tokens_total": ("AI input tokens", ("provider", "model", "stage")),
+    "canary_ai_output_tokens_total": ("AI completion tokens including reasoning", ("provider", "model", "stage")),
+    "canary_ai_reasoning_tokens_total": ("AI hidden reasoning tokens", ("provider", "model", "stage")),
+    "canary_structured_call_attempts_total": ("Structured model call attempts", ("feature", "attempt")),
     "canary_credit_debit_failures_total": ("Provider charges that failed customer debit", ("stage",)),
 }
 
@@ -50,6 +54,11 @@ _HISTOGRAMS: dict[str, tuple[str, tuple[str, ...], tuple[float, ...]]] = {
         "Pipeline stage duration",
         ("stage", "outcome"),
         (1, 5, 15, 30, 60, 120, 300, 600, 900, 1800),
+    ),
+    "canary_stage_cost_ratio": (
+        "Actual provider cost divided by estimated provider cost",
+        ("stage",),
+        (0.5, 0.75, 1, 1.25, 1.5, 2, 3, 5, 10),
     ),
 }
 
@@ -75,7 +84,18 @@ def observe(name: str, value: float, **labels: Any) -> None:
         histogram.observe(max(0.0, float(value)))
 
 
-def record_ai_call(*, provider: str | None, model: str, operation: str, status: str, stage: str | None, cost_usd: float | None) -> None:
+def record_ai_call(
+    *,
+    provider: str | None,
+    model: str,
+    operation: str,
+    status: str,
+    stage: str | None,
+    cost_usd: float | None,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    reasoning_tokens: int = 0,
+) -> None:
     safe_provider = provider or "unknown"
     safe_stage = stage or "none"
     increment(
@@ -93,6 +113,21 @@ def record_ai_call(*, provider: str | None, model: str, operation: str, status: 
             model=model,
             stage=safe_stage,
         )
+    token_labels = {"provider": safe_provider, "model": model, "stage": safe_stage}
+    if input_tokens > 0:
+        increment("canary_ai_input_tokens_total", amount=input_tokens, **token_labels)
+    if output_tokens > 0:
+        increment("canary_ai_output_tokens_total", amount=output_tokens, **token_labels)
+    if reasoning_tokens > 0:
+        increment("canary_ai_reasoning_tokens_total", amount=reasoning_tokens, **token_labels)
+
+
+def record_structured_attempt(*, feature: str, retry: bool) -> None:
+    increment(
+        "canary_structured_call_attempts_total",
+        feature=feature,
+        attempt="retry" if retry else "initial",
+    )
 
 
 def _escape(value: str) -> str:

@@ -469,6 +469,9 @@ def _finalize_event(
         from novel_to_comic.server.metrics import record_ai_call
 
         request_context = current_ai_request_context()
+        response_usage = (response_data or {}).get("usage") or {}
+        completion_details = response_usage.get("completion_tokens_details") or {}
+        reasoning_tokens = int(completion_details.get("reasoning_tokens") or 0)
         record_ai_call(
             provider=usage.provider if usage else _provider_from_model(provider_model),
             model=model_alias,
@@ -476,7 +479,23 @@ def _finalize_event(
             status=status,
             stage=request_context.stage,
             cost_usd=cost_usd,
+            input_tokens=usage.input_tokens if usage else 0,
+            output_tokens=usage.output_tokens if usage else 0,
+            reasoning_tokens=reasoning_tokens,
         )
+        if (
+            request_context.stage == "plan"
+            and usage is not None
+            and usage.output_tokens > 0
+            and reasoning_tokens / usage.output_tokens >= 0.25
+        ):
+            logger.warning(
+                "High plan reasoning-token ratio model=%s reasoning=%d output=%d ratio=%.2f",
+                model_alias,
+                reasoning_tokens,
+                usage.output_tokens,
+                reasoning_tokens / usage.output_tokens,
+            )
     except Exception:
         # Metrics are optional and must not interfere with usage settlement.
         pass
@@ -836,6 +855,8 @@ async def generate_structured_object(
             "Image-based PDFs are not supported by the LiteLLM gateway path. "
             "Extract text locally or add OCR preprocessing before Stage 1."
         )
+    base_user_content = user_content
+    attempt_user_content = user_content
     last_exc: json.JSONDecodeError | None = None
     last_text: str = ""
     for attempt in range(_JSON_PARSE_MAX_RETRIES + 1):
@@ -843,7 +864,7 @@ async def generate_structured_object(
             config=config,
             model=model,
             system_prompt=system_prompt,
-            user_content=user_content,
+            user_content=attempt_user_content,
             temperature=temperature,
             max_output_tokens=max_output_tokens,
             json_mode=True,
@@ -865,6 +886,21 @@ async def generate_structured_object(
                 exc.msg,
                 exc.pos,
             )
+            if attempt < _JSON_PARSE_MAX_RETRIES:
+                limit_note = ""
+                if str(data.get("finish_reason") or "").lower() in {
+                    "length", "max_tokens", "max_token", "max_output_tokens"
+                }:
+                    limit_note = (
+                        " Your previous response reached the output token limit; "
+                        "use shorter field values so the complete object fits."
+                    )
+                attempt_user_content = (
+                    f"{base_user_content}\n\n"
+                    "Your previous response was not valid JSON. Return a fresh, complete "
+                    "JSON object with no markdown or commentary."
+                    f"{limit_note} JSON parser error: {exc.msg} at character {exc.pos}."
+                )
     assert last_exc is not None  # loop runs at least once
     raise _format_json_parse_failure(
         last_exc, last_text, model, feature, _JSON_PARSE_MAX_RETRIES + 1
@@ -1000,7 +1036,11 @@ async def _chat_completion(
             langfuse_output=_truncate_for_log(text),
             started_at=started_at,
         )
-        return {"text": text, "usage": usage}
+        return {
+            "text": text,
+            "usage": usage,
+            "finish_reason": choice.get("finish_reason"),
+        }
     except asyncio.CancelledError as exc:
         _finalize_event(
             event_id=event_id,

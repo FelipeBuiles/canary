@@ -54,20 +54,23 @@ model_list:
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
+      reasoning_effort: "disable"
   - model_name: panel-balanced
     litellm_params:
       model: vertex_ai/gemini-3.6-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
-  # Panel planning is templated reasoning over already-extracted data; Gemini
-  # 3.6 Flash is the workhorse text tier for structured layout generation.
+      reasoning_effort: "disable"
+  # Panel planning is structured transformation over already-extracted data;
+  # hidden model reasoning is disabled to avoid billing invisible token spend.
   - model_name: panel-quality
     litellm_params:
       model: vertex_ai/gemini-3.6-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
+      reasoning_effort: "disable"
 
   # ─── Stage 5: image-prompt assembly (template filling) ────────────────────
   # Prompt models now serve explicit style suggestions and instructed rewrites;

@@ -241,6 +241,60 @@
       ],
       "fieldConfig": { "defaults": { "unit": "s", "decimals": 1, "min": 0, "color": { "mode": "continuous-GrYlRd" } }, "overrides": [] },
       "options": { "displayMode": "basic", "minVizHeight": 18, "minVizWidth": 8, "namePlacement": "auto", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showUnfilled": true, "sizing": "auto", "valueMode": "color" }
+    },
+    {
+      "id": 13,
+      "title": "Plan reasoning share",
+      "description": "Hidden reasoning tokens as a percentage of all plan completion tokens. Reasoning is disabled for panel routes; any sustained non-zero value needs investigation.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 5, "w": 8, "x": 0, "y": 26 },
+      "targets": [
+        {
+          "expr": "100 * sum(increase(canary_ai_reasoning_tokens_total{app=\"canary-web\",stage=\"plan\"}[$__range])) / clamp_min(sum(increase(canary_ai_output_tokens_total{app=\"canary-web\",stage=\"plan\"}[$__range])), 1)",
+          "legendFormat": "reasoning share",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "decimals": 1, "min": 0, "max": 100, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 5 }, { "color": "red", "value": 20 }] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name", "wideLayout": true }
+    },
+    {
+      "id": 14,
+      "title": "Plan structured retries",
+      "description": "Retry attempts as a percentage of all plan structured-call attempts. Local deterministic repair should keep this near zero.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 5, "w": 8, "x": 8, "y": 26 },
+      "targets": [
+        {
+          "expr": "100 * sum(increase(canary_structured_call_attempts_total{app=\"canary-web\",feature=\"plan.scene_layout\",attempt=\"retry\"}[$__range])) / clamp_min(sum(increase(canary_structured_call_attempts_total{app=\"canary-web\",feature=\"plan.scene_layout\"}[$__range])), 1)",
+          "legendFormat": "retry share",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "decimals": 1, "min": 0, "max": 100, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 5 }, { "color": "red", "value": 15 }] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name", "wideLayout": true }
+    },
+    {
+      "id": 15,
+      "title": "Plan estimate drift",
+      "description": "95th-percentile actual-to-estimated provider-cost ratio for completed plan stages. Above 1.25 means the reservation buffer is no longer covering observed cost.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 5, "w": 8, "x": 16, "y": 26 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (increase(canary_stage_cost_ratio_bucket{app=\"canary-web\",stage=\"plan\"}[$__range])))",
+          "legendFormat": "actual / estimate",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 2, "min": 0, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1.25 }, { "color": "red", "value": 2 }] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name", "wideLayout": true }
     }
   ],
   "refresh": "30s",
@@ -252,5 +306,5 @@
   "timezone": "browser",
   "title": "Canary operations",
   "uid": "canary-application",
-  "version": 2
+  "version": 3
 }

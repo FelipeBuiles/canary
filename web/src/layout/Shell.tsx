@@ -19,7 +19,7 @@ export function Shell() {
 
   return (
     <TopBarSlotProvider>
-      <div className="flex h-screen flex-col bg-surface-container md:flex-row">
+      <div className="flex h-dvh flex-col bg-surface-container md:flex-row">
         <a
           href="#main-content"
           className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:bg-hero-red focus:px-4 focus:py-2 focus:text-bristol focus:font-meta focus:text-[0.6rem] focus:tracking-[0.18em] focus:outline-none"

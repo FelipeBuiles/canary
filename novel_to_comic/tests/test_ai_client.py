@@ -100,7 +100,7 @@ def test_generate_structured_object_retries_then_succeeds_on_malformed_json(monk
         {
             "id": "resp_1",
             "model": "openai/gpt-5.4-mini",
-            "choices": [{"message": {"content": '{"ok": tru'}}],
+            "choices": [{"message": {"content": '{"ok": tru'}, "finish_reason": "length"}],
             "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
         },
         {
@@ -110,10 +110,11 @@ def test_generate_structured_object_retries_then_succeeds_on_malformed_json(monk
             "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
         },
     ]
-    calls = {"n": 0}
+    calls = {"n": 0, "payloads": []}
 
     class _SeqClient:
         async def post(self, url, **kwargs):
+            calls["payloads"].append(kwargs["json"])
             i = calls["n"]
             calls["n"] += 1
             return _FakeResponse(payloads[i])
@@ -135,6 +136,10 @@ def test_generate_structured_object_retries_then_succeeds_on_malformed_json(monk
 
     assert result.value == {"ok": True}
     assert calls["n"] == 2
+    retry_message = calls["payloads"][1]["messages"][1]["content"]
+    assert "previous response was not valid JSON" in retry_message
+    assert "reached the output token limit" in retry_message
+    assert "Expecting value" in retry_message
 
 
 def test_generate_structured_object_raises_with_context_after_exhausting_retries(monkeypatch, _patch_events):

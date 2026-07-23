@@ -42,8 +42,10 @@ export function AppTopBar() {
   return (
     <header
       className={cn(
-        "relative z-40 flex shrink-0 items-stretch border-b-[2px] border-ink-black bg-bristol text-ink-black",
-        inProject ? "h-shell-top" : "h-14",
+        "relative z-40 shrink-0 items-stretch border-b-[2px] border-ink-black bg-bristol text-ink-black",
+        // Mobile project navigation already carries the project and station,
+        // so the room masthead only needs a compact title/account row there.
+        inProject ? "flex h-14 md:h-shell-top" : "flex h-14",
       )}
     >
       {inProject ? (

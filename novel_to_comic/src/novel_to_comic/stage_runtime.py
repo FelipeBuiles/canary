@@ -26,6 +26,7 @@ clean exit; on exception it calls ``fail`` and re-raises.
 from __future__ import annotations
 
 from contextlib import contextmanager
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Generator
 
@@ -44,6 +45,9 @@ from novel_to_comic.state import (
 
 if TYPE_CHECKING:
     from novel_to_comic.usage import UsageRecord
+
+
+logger = logging.getLogger("canary.stage_cost")
 
 
 class StageRuntime:
@@ -96,6 +100,23 @@ class StageRuntime:
     def complete(self) -> None:
         complete_stage(self._state, self.name)
         s = self._state.stages[self.name]
+        if s.estimated_cost_usd > 0:
+            ratio = s.cost_usd / s.estimated_cost_usd
+            try:
+                from novel_to_comic.server.metrics import observe
+
+                observe("canary_stage_cost_ratio", ratio, stage=self.name)
+            except Exception:
+                pass
+            if ratio > 2:
+                logger.warning(
+                    "Stage cost exceeded estimate stage=%s actual_usd=%.6f "
+                    "estimated_usd=%.6f ratio=%.2f",
+                    self.name,
+                    s.cost_usd,
+                    s.estimated_cost_usd,
+                    ratio,
+                )
         self._emit({
             "type": "stage_complete",
             "stage": self.name,

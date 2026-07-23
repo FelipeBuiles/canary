@@ -1,9 +1,9 @@
 """Stage 5: Screenplay -> LayoutPlan JSON.
 
 Calls the panel model once per scene to merge beats intelligently, vary shot
-types, set lighting/mood, and flag page breaks. On validator rejection the
-call is retried with the violation fed back to the model; persistent failures
-raise.
+types, set lighting/mood, and flag page breaks. Parseable panel-cap violations
+are repaired deterministically without another paid call. Other validator
+rejections are retried with the violation fed back to the model.
 
 After scene planning, a cross-scene transition post-processing pass sets
 ``transition_in`` / ``transition_out`` at scene boundaries based on whether
@@ -81,9 +81,8 @@ console = Console()
 logger = logging.getLogger("canary.plan")
 
 # Safety caps on panel aggregation. These are upper bounds the LLM must respect;
-# the prompt asks for restraint well below these values. Violations trigger a
-# retry with the error fed back to the model, then deterministic auto-split as
-# a last resort.
+# the prompt asks for restraint well below these values. Parseable violations
+# are auto-split deterministically before any paid retry.
 _MAX_VISUAL_PER_PANEL = 7
 _MAX_DIALOGUE_PER_PANEL = 4
 _MAX_DIALOGUE_WORDS_PER_PANEL = 24
@@ -96,6 +95,8 @@ _BEATS_PER_PANEL_AVG = 3.0
 # Each retry uses a higher temperature to escape repeated-answer loops.
 _PLAN_RETRY_ATTEMPTS = 2
 _PLAN_RETRY_TEMPERATURES = (0.4, 0.6, 0.8)
+_PLAN_MAX_OUTPUT_TOKENS = 16_384
+_PLAN_ESTIMATED_OUTPUT_CHARS = 16_384
 
 # ---------------------------------------------------------------------------
 # System prompt for the LLM scene planner
@@ -831,14 +832,13 @@ async def _plan_scene_llm(
     warnings: list[str],
     usage_records: list[UsageRecord] | None = None,
 ) -> tuple[list[LLMPanelSpec], list[LLMNarrationDecisionSpec]]:
-    """Call the panel model and validate its output, retrying on validation errors.
+    """Call the panel model and validate its output, repairing before retrying.
 
     The retry feeds the validation error back to the model along with its prior
-    response so it can correct the specific violation. Each retry escalates the
-    temperature to escape repeated-answer loops. If every retry still fails on
-    cap violations and the last response parsed cleanly, the offending panels
-    are auto-split deterministically and a warning is recorded. Only non-cap
-    failures (parse errors, schema violations) raise after retries.
+    response so it can correct the specific violation. Parseable cap violations
+    are auto-split immediately. Each remaining retry escalates the temperature
+    to escape repeated-answer loops. Only non-repairable failures raise after
+    retries.
     """
     visual_beat_count = max(1, _visual_beat_count(screenplay.beats))
     narration_beat_count = sum(1 for beat in screenplay.beats if beat.type == "narration")
@@ -863,6 +863,23 @@ async def _plan_scene_llm(
             raise ValueError("LLM returned empty panel list")
         _validate_llm_specs(specs, screenplay.beats)
 
+    def repair(
+        parsed: tuple[list[LLMPanelSpec], list[LLMNarrationDecisionSpec]],
+        _error: Exception,
+    ) -> tuple[list[LLMPanelSpec], list[LLMNarrationDecisionSpec]] | None:
+        specs, narration_specs = parsed
+        split_specs, split_narration, panels_split = _autosplit_overflow_panels(
+            specs, narration_specs, screenplay.beats,
+        )
+        if panels_split <= 0:
+            return None
+        _validate_llm_specs(split_specs, screenplay.beats)
+        warnings.append(
+            f"{screenplay.scene_id}: repaired locally by splitting "
+            f"{panels_split} over-cap panel(s); no model retry needed."
+        )
+        return split_specs, split_narration
+
     total_attempts = _PLAN_RETRY_ATTEMPTS + 1
     try:
         outcome = await generate_validated_json(
@@ -874,10 +891,11 @@ async def _plan_scene_llm(
             correction=lambda raw, exc: _correction_user_content(base_user, raw, str(exc)),
             label=f"LLM plan for {screenplay.scene_id}",
             feature="plan.scene_layout",
-            max_output_tokens=16384,
+            max_output_tokens=_PLAN_MAX_OUTPUT_TOKENS,
             retries=_PLAN_RETRY_ATTEMPTS,
             temperatures=_PLAN_RETRY_TEMPERATURES,
             validate=validate,
+            repair=repair,
         )
     except StructuredCallError as call_error:
         if usage_records is not None:
@@ -1727,6 +1745,7 @@ async def run(
         estimated += estimate_text_cost(
             config.effective_panel_model(),
             _PLAN_SCENE_SYSTEM + "\n" + sp_text,
+            output_chars=_PLAN_ESTIMATED_OUTPUT_CHARS,
         )
 
     with ctx.execute(total=len(ids), estimated_cost_usd=estimated):
@@ -1785,7 +1804,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
         total += estimate_text_cost(
             config.effective_panel_model(),
             _PLAN_SCENE_SYSTEM + "\n" + sp_text,
-            output_chars=8000,
+            output_chars=_PLAN_ESTIMATED_OUTPUT_CHARS,
         )
     return total
 

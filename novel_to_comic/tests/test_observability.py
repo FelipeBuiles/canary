@@ -83,7 +83,11 @@ def test_prometheus_metrics_are_aggregate_and_low_cardinality():
         status="succeeded",
         stage="draw",
         cost_usd=0.125,
+        input_tokens=100,
+        output_tokens=80,
+        reasoning_tokens=50,
     )
+    metrics.record_structured_attempt(feature="plan.scene_layout", retry=True)
     app = SimpleNamespace(
         state=SimpleNamespace(
             generation_jobs={
@@ -100,8 +104,20 @@ def test_prometheus_metrics_are_aggregate_and_low_cardinality():
     assert 'canary_generation_jobs{status="queued"} 1' in rendered
     assert "canary_generation_queue_items 3" in rendered
     assert "canary_ai_provider_cost_usd_total" in rendered
+    assert 'canary_ai_reasoning_tokens_total{provider="gemini",model="image-quality",stage="draw"} 50' in rendered
+    assert 'canary_ai_output_tokens_total{provider="gemini",model="image-quality",stage="draw"} 80' in rendered
+    assert 'canary_structured_call_attempts_total{feature="plan.scene_layout",attempt="retry"} 1' in rendered
     assert "user_id" not in rendered
     assert "project_id=\"" not in rendered
+
+
+def test_operations_dashboard_surfaces_plan_cost_regression_signals():
+    dashboard = (Path(__file__).parents[2] / "ops" / "grafana" / "canary-application.json").read_text()
+
+    assert "canary_ai_reasoning_tokens_total" in dashboard
+    assert "canary_ai_output_tokens_total" in dashboard
+    assert "canary_structured_call_attempts_total" in dashboard
+    assert "canary_stage_cost_ratio" in dashboard
 
 
 def test_schema_contains_observability_tables_and_operator_views():

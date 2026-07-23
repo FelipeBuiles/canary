@@ -1,11 +1,12 @@
 """Schema-validated model calls with correction-feedback retry.
 
-The "call model → parse → validate → feed errors back → retry" loop that
-stages otherwise hand-roll lives here. Callers supply a ``parse`` callable
-that turns raw JSON into a typed value (raising on bad shape) and a
-``correction`` callable that builds the next user message from the failed
-output and its error. Temperature follows a ladder clamped at its last rung,
-so a single-element ladder means a constant temperature.
+The "call model → parse → validate → repair locally or retry" loop that stages
+otherwise hand-roll lives here. Callers supply a ``parse`` callable that turns
+raw JSON into a typed value (raising on bad shape), an optional deterministic
+``repair`` callable, and a ``correction`` callable that builds the next user
+message from the failed output and its error. Temperature follows a ladder
+clamped at its last rung, so a single-element ladder means a constant
+temperature.
 """
 
 from __future__ import annotations
@@ -70,8 +71,9 @@ async def generate_validated_json(
     retries: int = 2,
     temperatures: Sequence[float] = (0.4,),
     validate: Callable[[T], None] | None = None,
+    repair: Callable[[T, Exception], T | None] | None = None,
 ) -> StructuredCallOutcome[T]:
-    """Generate JSON and re-prompt with the validation error until it parses.
+    """Generate JSON, prefer deterministic repair, then re-prompt if necessary.
 
     Raises StructuredCallError once ``retries`` corrections are exhausted.
     """
@@ -91,20 +93,41 @@ async def generate_validated_json(
             max_output_tokens=max_output_tokens,
             feature=feature,
         )
+        try:
+            from novel_to_comic.server.metrics import record_structured_attempt
+
+            record_structured_attempt(feature=feature, retry=attempt > 0)
+        except Exception:
+            pass
         if api_result.usage is not None:
             usage_records.append(api_result.usage)
+        parsed_this_attempt: T | None = None
         try:
-            parsed = parse(api_result.value)
-            last_parsed = parsed
+            parsed_this_attempt = parse(api_result.value)
+            last_parsed = parsed_this_attempt
             if validate is not None:
-                validate(parsed)
+                validate(parsed_this_attempt)
             if attempt > 0:
                 logger.info("%s recovered on retry %d", label, attempt)
             return StructuredCallOutcome(
-                value=parsed, usage_records=usage_records, attempts=attempt + 1
+                value=parsed_this_attempt, usage_records=usage_records, attempts=attempt + 1
             )
         except Exception as exc:
             last_error = exc
+            if repair is not None and parsed_this_attempt is not None:
+                try:
+                    repaired = repair(parsed_this_attempt, exc)
+                    if repaired is not None:
+                        if validate is not None:
+                            validate(repaired)
+                        logger.info("%s repaired locally after attempt %d", label, attempt + 1)
+                        return StructuredCallOutcome(
+                            value=repaired,
+                            usage_records=usage_records,
+                            attempts=attempt + 1,
+                        )
+                except Exception:
+                    logger.debug("%s local repair did not validate", label, exc_info=True)
             logger.warning(
                 "%s rejected on attempt %d/%d: %s",
                 label, attempt + 1, total_attempts, exc,
