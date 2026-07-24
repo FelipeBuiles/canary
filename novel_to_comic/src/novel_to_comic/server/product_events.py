@@ -28,6 +28,7 @@ SERVER_EVENT_PROPERTIES: dict[str, frozenset[str]] = {
     "panel_regenerated": frozenset({"mode"}),
     "checkout_started": frozenset({"package_id", "gross_amount_cents", "currency"}),
     "credits_purchased": frozenset({"package_id", "credits", "gross_amount_cents", "currency"}),
+    "refund_completed": frozenset({"credits", "gross_amount_cents", "currency"}),
     "export_succeeded": frozenset({"format", "cached"}),
 }
 
@@ -90,4 +91,3 @@ def capture_server_event(event_name: str, **kwargs: Any) -> None:
         record_product_event(event_name, source="server", **kwargs)
     except Exception as exc:  # noqa: BLE001 - telemetry is intentionally non-blocking
         logger.warning("Product event capture failed event=%s: %s", event_name, exc)
-

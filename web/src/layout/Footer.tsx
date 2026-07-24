@@ -3,10 +3,11 @@ import { useProjectStatus } from "../api/queries";
 import { STAGE_ORDER } from "../types/api";
 import { getBackendStageUiLabel, getUiCompletedCount, UI_STAGES } from "../lib/uiStages";
 import { getCachedBranding } from "../lib/legal";
+import { SupportLink } from "../components/SupportLink";
 
 export function Footer() {
-  const { name } = useParams();
-  const { data: status } = useProjectStatus(name);
+  const { id } = useParams();
+  const { data: status } = useProjectStatus(id);
   const branding = getCachedBranding();
 
   const completedStages = status
@@ -62,6 +63,17 @@ export function Footer() {
         >
           REPORT ABUSE
         </a>
+        <SupportLink
+          diagnostics={{
+            releaseSha: import.meta.env.VITE_CANARY_VERSION,
+            projectId: id,
+            stationOrStage: activeStage,
+            errorCategory: "pipeline_help",
+          }}
+          className="font-meta text-[0.5rem] tracking-[0.14em] text-narrator-gold transition-colors hover:text-bristol"
+        >
+          NEED HELP?
+        </SupportLink>
       </div>
     </footer>
   );

@@ -30,6 +30,7 @@ from .routers import (
     export,
     events,
     labs,
+    operator_billing,
     pages,
     pipeline,
     projects,
@@ -37,6 +38,7 @@ from .routers import (
     styles,
 )
 from .metrics import metrics_response
+from .release import release_identity
 
 
 class SPAStaticFiles(StaticFiles):
@@ -274,6 +276,11 @@ async def _lifespan(app: FastAPI):
 def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app = FastAPI(title="Scenewright", lifespan=_lifespan)
     app.middleware("http")(request_log_middleware)
+    env = (os.environ.get("CANARY_ENV") or os.environ.get("ENV") or "dev").lower()
+    if env == "production":
+        from .security_headers import security_headers_middleware
+
+        app.middleware("http")(security_headers_middleware)
     # Defense-in-depth body-size cap on every non-exempt route. Runs before
     # route handlers so an oversized JSON POST is rejected before any work.
     from .body_limit import body_size_limit_middleware
@@ -315,6 +322,7 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app.state.light_generation_semaphores[5] = app.state.light_generation_semaphore
     app.state.generation_queue = get_global_queue()
     app.state.generation_jobs = _global_jobs
+    app.state.user_generation_semaphores: dict[str, asyncio.Semaphore] = {}
     app.state.generation_job_timeout_seconds = max(
         1,
         int(os.environ.get("CANARY_GENERATION_JOB_TIMEOUT_SECONDS", "900")),
@@ -334,6 +342,10 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         # Liveness: always ok and cheap. Never depend on external services here —
         # a slow dependency must not make the load balancer kill a healthy instance.
         return {"status": "ok"}
+
+    @app.get("/api/version", tags=["meta"])
+    def api_version():
+        return release_identity()
 
     @app.get("/api/branding", tags=["meta"])
     def branding():
@@ -376,6 +388,11 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     # Routers
     app.include_router(credits.router, prefix="/api/credits", tags=["credits"])
     app.include_router(billing.router, prefix="/api/billing", tags=["billing"])
+    app.include_router(
+        operator_billing.router,
+        prefix="/api/ops/billing",
+        tags=["operations"],
+    )
     app.include_router(events.router, prefix="/api/events", tags=["analytics"])
     app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
     app.include_router(

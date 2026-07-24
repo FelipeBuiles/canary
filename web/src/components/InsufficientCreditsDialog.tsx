@@ -15,6 +15,7 @@ import {
 } from "../lib/creditsPurchase";
 import { useInsufficientCreditsStore } from "../store/insufficientCredits";
 import { CreditAmount } from "./ui/CreditAmount";
+import { SupportLink } from "./SupportLink";
 
 export function InsufficientCreditsDialog() {
   const open = useInsufficientCreditsStore((s) => s.open);
@@ -249,6 +250,13 @@ export function InsufficientCreditsDialog() {
             >
               View billing →
             </a>
+            <SupportLink
+              diagnostics={{
+                releaseSha: import.meta.env.VITE_CANARY_VERSION,
+                errorCategory: "insufficient_credits",
+              }}
+              className="font-meta text-[0.62rem] tracking-[0.14em] uppercase text-hero-red hover:text-ink-black"
+            />
             <div className="flex flex-wrap items-center gap-3">
               <Button variant="outline" size="md" onClick={close} disabled={checkout.isPending}>
                 Not now

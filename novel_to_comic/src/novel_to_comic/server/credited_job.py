@@ -215,6 +215,7 @@ def enqueue_credited_job(
         label=label,
         payload=payload,
         runner=_runner,
+        user_id=user_id,
         semaphore=semaphore,
     )
     return job, True

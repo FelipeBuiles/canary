@@ -754,6 +754,7 @@ async def apply_asset_instruction(
             label=f"{asset_type.capitalize()} ref / {asset_id}" if asset_type != "location" else f"Location plate / {asset_id}",
             payload={payload_key: job_asset_id},
             runner=_runner,
+            user_id=user_id,
             semaphore=generation_semaphore_for_config(app, config),
         )
 

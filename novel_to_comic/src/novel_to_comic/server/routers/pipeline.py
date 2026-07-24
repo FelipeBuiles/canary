@@ -444,10 +444,13 @@ async def _run_stage_with_credits(
                 break
 
 
-async def _run_job(pkey: str, request: Request, job):
+async def _run_job(pkey: str, user_id: str, request: Request, job):
     """Wrap a pipeline task so lifecycle cleanup is consistent."""
     try:
-        await job
+        from ..generation_jobs import user_generation_semaphore
+
+        async with user_generation_semaphore(request.app, user_id):
+            await job
     finally:
         queue = request.app.state.event_queues.get(pkey)
         if queue is not None:
@@ -874,7 +877,7 @@ async def run_pipeline(
         retry_failed=retry_failed,
     )
 
-    task = asyncio.create_task(_run_job(pkey, request, job))
+    task = asyncio.create_task(_run_job(pkey, user_id, request, job))
 
     running[pkey] = task
     logger.info(

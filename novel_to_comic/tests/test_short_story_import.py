@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from starlette.requests import Request
 
 from novel_to_comic.config import load_config
@@ -58,6 +59,14 @@ def _make_http_client_mock(response_mock: MagicMock) -> MagicMock:
     """Build a MagicMock that works as `async with httpx.AsyncClient() as client`."""
     client = MagicMock()
     client.get = AsyncMock(return_value=response_mock)
+    async def _bytes():
+        yield response_mock.content
+
+    response_mock.aiter_bytes = _bytes
+    stream_context = MagicMock()
+    stream_context.__aenter__ = AsyncMock(return_value=response_mock)
+    stream_context.__aexit__ = AsyncMock(return_value=False)
+    client.stream.return_value = stream_context
 
     # Make the class itself work as an async context manager
     cls_mock = MagicMock()
@@ -131,6 +140,41 @@ def test_import_short_story_handles_onlinereader_url(tmp_path: Path):
     state = load_state(project_dir)
     assert state.project_name == "Test Dystopia"
     assert state.novel_path == str(project_dir / "input" / "2br02b.txt")
+
+
+def test_import_short_story_rejects_decompression_bomb_without_project(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("CANARY_MAX_REMOTE_DECOMPRESSED_CHARACTERS", "10")
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.content = gzip.compress(b"x" * 100)
+    async_client_cls = _make_http_client_mock(mock_resp)
+    mock_db = MagicMock()
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value.data = []
+
+    with (
+        patch(
+            "novel_to_comic.server.routers.projects.httpx.AsyncClient",
+            async_client_cls,
+        ),
+        patch(
+            "novel_to_comic.server.routers.projects.get_db",
+            return_value=mock_db,
+        ),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        asyncio.run(
+            import_short_story(
+                request=_request(),
+                payload=ImportStoryRequest(name="Too Large", url_or_code="large"),
+                projects_dir=tmp_path,
+                user_id="user789",
+            )
+        )
+
+    assert exc_info.value.status_code == 413
+    assert not (tmp_path / "user789" / "too-large").exists()
 
 
 def test_import_short_story_handles_raw_code(tmp_path: Path):
