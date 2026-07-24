@@ -16,6 +16,7 @@ from novel_to_comic.clients.structured_call import (
     generate_validated_json,
 )
 from novel_to_comic.config import Config
+from novel_to_comic.input_limits import read_source
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.text_utils import has_offscreen_marker
@@ -39,60 +40,9 @@ def estimate_story_bible_output_chars(novel_text: str | bytes | int) -> int:
     return output_tokens * 4
 
 
-def _read_novel(novel_path: Path) -> str | bytes:
-    """Read novel text from EPUB, PDF, or plain text.
-
-    For image-based PDFs where text extraction yields nothing, returns the raw
-    PDF bytes so the caller can pass them directly to Gemini's native PDF
-    understanding instead of failing with an empty prompt.
-    """
-    if novel_path.suffix.lower() == ".epub":
-        return _read_epub(novel_path)
-    elif novel_path.suffix.lower() == ".pdf":
-        text = _read_pdf(novel_path)
-        if not text.strip():
-            return novel_path.read_bytes()
-        return text
-    return novel_path.read_text(encoding="utf-8", errors="replace")
-
-def _read_pdf(pdf_path: Path) -> str:
-    """Extract text content from a PDF file."""
-    from pypdf import PdfReader
-    reader = PdfReader(str(pdf_path))
-    text_parts = []
-    for page in reader.pages:
-        text = page.extract_text()
-        if text:
-            text_parts.append(text)
-    return "\n\n".join(text_parts)
-
-def _read_epub(epub_path: Path) -> str:
-    """Extract text content from an EPUB file."""
-    import ebooklib
-    from ebooklib import epub
-    from html.parser import HTMLParser
-
-    class _TextExtractor(HTMLParser):
-        def __init__(self):
-            super().__init__()
-            self.parts: list[str] = []
-
-        def handle_data(self, data: str) -> None:
-            self.parts.append(data)
-
-    book = epub.read_epub(str(epub_path))
-    full_text: list[str] = []
-    for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
-        extractor = _TextExtractor()
-        raw_bytes = item.get_content()
-        decoded = raw_bytes.decode("utf-8", errors="replace")
-        if "\ufffd" in decoded:
-            console.print("[yellow]Warning: EPUB item contained non-UTF-8 bytes; some content may be garbled.[/yellow]")
-        extractor.feed(decoded)
-        text = "".join(extractor.parts).strip()
-        if text:
-            full_text.append(text)
-    return "\n\n".join(full_text)
+def _read_novel(novel_path: Path) -> str:
+    """Read a source using the same budgets enforced during upload."""
+    return read_source(novel_path)
 
 
 def _normalize_narrative_arcs(arcs: list[dict]) -> list[dict]:
@@ -578,19 +528,14 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     if not novel_path.is_absolute():
         novel_path = project_dir / novel_path
     try:
-        raw = novel_path.read_bytes()
+        novel_text = read_source(novel_path)
     except Exception:
-        raw = b""
-    try:
-        novel_text = raw.decode("utf-8")
-        input_payload: str | int = PROMPT_PATH.read_text() + "\n" + novel_text
-    except UnicodeDecodeError:
         novel_text = ""
-        input_payload = len(raw)
+    input_payload: str | int = PROMPT_PATH.read_text() + "\n" + novel_text
     return estimate_text_cost(
         config.effective_extraction_model(),
         input_payload,
-        output_chars=estimate_story_bible_output_chars(novel_text or len(raw)),
+        output_chars=estimate_story_bible_output_chars(novel_text),
     )
 
 

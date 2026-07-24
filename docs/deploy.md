@@ -128,9 +128,15 @@ echo "GCP_CREDENTIALS_B64=$(base64 < litellm/gcp-credentials.json)" >> ~/.config
 
 `canary-web` will 500 on every query without these.
 
+Database changes are a separately reviewed production operation. CI never
+receives a production Postgres connection string and never applies this file
+automatically. Before running it, review the exact diff, confirm a current
+backup, and record the operator and result in the release evidence.
+
 ```bash
-# 1a. Apply the canonical schema (idempotent — IF NOT EXISTS throughout)
-psql "<prod database url>" -f docs/supabase-schema.sql
+# 1a. Apply the reviewed canonical schema manually
+psql "<prod database url>" --set ON_ERROR_STOP=1 --single-transaction \
+  --file docs/supabase-schema.sql
 ```
 
 In the **Supabase dashboard → Authentication → URL Configuration**:
@@ -153,6 +159,8 @@ fly secrets import -a canary-web < ~/.config/canary/canary-web.env
 #     These are inlined into the JS bundle at BUILD time (the browser talks to
 #     Supabase directly), so they CANNOT be runtime fly secrets.
 fly deploy \
+  --build-arg CANARY_VERSION="$(git rev-parse HEAD)" \
+  --build-arg CANARY_BUILD_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --build-arg VITE_SUPABASE_URL=https://<project>.supabase.co \
   --build-arg VITE_SUPABASE_PUBLISHABLE_KEY=<anon/publishable key, NOT service_role> \
   --build-arg VITE_CANARY_ENV=production
@@ -190,6 +198,53 @@ absent. In `CANARY_ENV=production`, missing or partial dependency configuration
 is an error and the endpoint returns HTTP 503. Keeping this deep check out of
 the routing path prevents a transient provider outage from making the only
 Machine unroutable.
+
+`GET /api/version` is the public release-identity contract. After every deploy,
+verify that `git_sha` matches the exact green CI revision and record the
+`build_timestamp`. The backend and frontend receive the same
+`CANARY_VERSION`, which is also used for Sentry release grouping.
+
+### Pilot maintenance-window deployment
+
+1. Announce the maintenance window and stop admitting new generation work.
+2. Run `scripts/check_deploy_safe.py` until it reports `safe_to_deploy: true`.
+3. Confirm every CI job is green for the exact local `HEAD`.
+4. Record the current Fly release/image as the rollback target.
+5. Deploy with the release build arguments shown above.
+6. Verify `/api/version`, `/api/health`, and `/api/health/ready`.
+7. Complete a short signed-in smoke test, then reopen generation work.
+
+Copy `docs/ops/release-evidence-template.md` for each customer-facing release.
+
+### CI-managed production deployment
+
+Run the `CI` workflow manually against `main` to request a production release.
+The manual dispatch is the operator's confirmation that the maintenance window
+is active. The `Deploy production` job starts only after the backend, frontend,
+and production-image jobs pass for the exact SHA; it then:
+
+1. Refuses to continue unless `/api/ops/deployment-status` reports idle.
+2. Deploys the exact tested SHA with immutable release metadata.
+3. Verifies `/api/version`, liveness, readiness, and security headers.
+
+The workflow deliberately has no production database credential and cannot
+apply schema changes. If a release requires a database change, complete the
+reviewed manual operation in Step 1 before dispatching the deployment.
+
+Configure a GitHub environment named `production`, limit it to the `main`
+branch, and add these environment secrets:
+
+- `FLY_API_TOKEN` — an app-scoped deploy token for `canary-web`.
+- `CANARY_OPS_TOKEN` — the same value configured on the Fly app.
+- `VITE_SUPABASE_URL` — the public production project URL.
+- `VITE_SUPABASE_PUBLISHABLE_KEY` — the browser-safe publishable key.
+- `VITE_SENTRY_DSN` — optional frontend Sentry DSN.
+
+Do not store the Supabase service-role key as a `VITE_*` value. The deploy job
+does not open a maintenance window or block new work by itself. Do not change
+the workflow to deploy automatically on every push until a server-enforced
+drain mode exists. If the repository plan supports required environment
+reviewers, enabling one adds a useful second approval.
 
 ### Check whether a deploy is safe
 

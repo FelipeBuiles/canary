@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 from novel_to_comic.server import app as app_module
 from novel_to_comic.server import deployment_status as deployment_status_module
@@ -108,6 +109,7 @@ def test_checkout_webhook_credits_paid_session_once():
             "credit_package_id": "starter",
             "gross_amount_cents": 1200,
             "currency": "usd",
+            "offer_version": "legacy",
         },
         on_conflict="stripe_payment_intent_id",
         ignore_duplicates=True,
@@ -212,6 +214,30 @@ def test_sentry_scrubs_operations_token():
     assert scrubbed["request"]["headers"]["Accept"] == "application/json"
 
 
+def test_sentry_scrubs_creative_payloads_provider_data_and_signed_urls():
+    event = {
+        "request": {
+            "data": {"manuscript": "private prose"},
+            "url": "https://assets.example/panel.png?X-Amz-Signature=secret",
+        },
+        "contexts": {
+            "generation": {
+                "prompt": "private prompt",
+                "visual_anchor": "verbatim private anchor",
+                "provider_response": {"raw": "private provider payload"},
+            }
+        },
+    }
+
+    scrubbed = sentry_module._scrub_event(event, {})
+
+    assert scrubbed["request"]["data"] == "[Filtered]"
+    assert scrubbed["request"]["url"] == "https://assets.example/panel.png"
+    assert scrubbed["contexts"]["generation"]["prompt"] == "[Filtered]"
+    assert scrubbed["contexts"]["generation"]["visual_anchor"] == "[Filtered]"
+    assert scrubbed["contexts"]["generation"]["provider_response"] == "[Filtered]"
+
+
 def test_sentry_trace_sampler_filters_operational_noise(monkeypatch):
     monkeypatch.setenv("SENTRY_TRACES_SAMPLE_RATE", "0.05")
 
@@ -310,6 +336,57 @@ def test_readiness_endpoint_uses_http_200_on_success(tmp_path: Path):
     assert response.status_code == 200
 
 
+def test_public_version_endpoint_reports_build_identity(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("CANARY_VERSION", "abc123")
+    monkeypatch.setenv("CANARY_BUILD_TIMESTAMP", "2026-07-24T12:00:00Z")
+    client = TestClient(app_module.create_app(tmp_path, dev=True))
+
+    response = client.get("/api/version")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "application_version": "0.1.0",
+        "git_sha": "abc123",
+        "build_timestamp": "2026-07-24T12:00:00Z",
+    }
+
+
+@pytest.mark.parametrize(
+    ("path", "expected_status"),
+    [
+        ("/api/health", 200),
+        ("/missing-api-route", 200),  # SPA fallback response
+        ("/api/missing", 404),
+    ],
+)
+def test_production_security_headers_cover_success_and_errors(
+    tmp_path: Path,
+    monkeypatch,
+    path: str,
+    expected_status: int,
+):
+    monkeypatch.setenv("CANARY_ENV", "production")
+    client = TestClient(app_module.create_app(tmp_path, dev=False))
+
+    response = client.get(path)
+
+    assert response.status_code == expected_status
+    assert response.headers["strict-transport-security"].startswith("max-age=")
+    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
+    assert "camera=()" in response.headers["permissions-policy"]
+
+
+def test_security_headers_are_not_forced_in_local_development(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("CANARY_ENV", "dev")
+    client = TestClient(app_module.create_app(tmp_path, dev=True))
+
+    response = client.get("/api/health")
+
+    assert "strict-transport-security" not in response.headers
+
+
 def test_deployment_activity_reports_idle_app(tmp_path: Path):
     app = app_module.create_app(tmp_path, dev=True)
     app.state.generation_jobs = {}
@@ -396,6 +473,15 @@ def test_production_docker_build_fails_without_supabase_build_args():
 
     assert '[ -z "$VITE_SUPABASE_URL" ]' in dockerfile
     assert '[ -z "$VITE_SUPABASE_PUBLISHABLE_KEY" ]' in dockerfile
+
+
+def test_production_docker_plumbs_one_release_into_backend_and_frontend():
+    root = Path(__file__).resolve().parents[2]
+    dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
+
+    assert dockerfile.count("ARG CANARY_VERSION=unknown") == 2
+    assert 'ENV CANARY_VERSION="$CANARY_VERSION"' in dockerfile
+    assert 'VITE_CANARY_VERSION="$CANARY_VERSION"' in dockerfile
 
 
 def test_production_docker_installs_playwright_system_dependencies():

@@ -115,6 +115,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      - name: Prepare build metadata
+        id: build_meta
+        run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Build image
         uses: docker/build-push-action@v7
         with:
@@ -125,8 +129,105 @@ jobs:
           # The frontend stage inlines VITE_* at build time; supply placeholders
           # so the build succeeds. Values are irrelevant for a smoke test.
           build-args: |
+            CANARY_VERSION=${{ github.sha }}
+            CANARY_BUILD_TIMESTAMP=${{ steps.build_meta.outputs.timestamp }}
             VITE_SUPABASE_URL=https://ci-smoke.supabase.co
             VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_ci_smoke
             VITE_CANARY_ENV=production
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy production
+    needs: [backend, web, docker]
+    # GitHub's required-reviewer environment rule is not available on every
+    # repository plan. Keep production human-triggered until Canary has a true
+    # server-enforced drain mode; workflow_dispatch still runs every CI gate
+    # before this job can start.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://scenewright.ink
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      SCENEWRIGHT_APP_URL: https://scenewright.ink
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate deployment configuration
+        env:
+          CANARY_OPS_TOKEN: ${{ secrets.CANARY_OPS_TOKEN }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          missing=()
+          for name in FLY_API_TOKEN CANARY_OPS_TOKEN VITE_SUPABASE_URL \
+            VITE_SUPABASE_PUBLISHABLE_KEY; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing production secrets: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Set up Fly CLI
+        uses: superfly/flyctl-actions/setup-flyctl@master
+        with:
+          version: 0.4.49
+
+      - name: Confirm production is idle
+        env:
+          CANARY_OPS_TOKEN: ${{ secrets.CANARY_OPS_TOKEN }}
+        run: python scripts/check_deploy_safe.py
+
+      - name: Record rollback target
+        run: |
+          {
+            echo "## Production deployment"
+            echo
+            echo "- Source SHA: \`${GITHUB_SHA}\`"
+            echo "- Previous Fly release:"
+            echo '```'
+            flyctl releases -a canary-web | head -n 3
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prepare release metadata
+        id: release
+        run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy exact tested revision
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+        run: |
+          flyctl deploy --remote-only -a canary-web \
+            --build-arg "CANARY_VERSION=${GITHUB_SHA}" \
+            --build-arg "CANARY_BUILD_TIMESTAMP=${{ steps.release.outputs.timestamp }}" \
+            --build-arg "VITE_SUPABASE_URL=${VITE_SUPABASE_URL}" \
+            --build-arg "VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}" \
+            --build-arg "VITE_CANARY_ENV=production" \
+            --build-arg "VITE_SENTRY_DSN=${VITE_SENTRY_DSN}"
+
+      - name: Verify deployed release
+        env:
+          EXPECTED_CANARY_VERSION: ${{ github.sha }}
+        run: python scripts/verify_deployment.py
+
+      - name: Record deployed release
+        if: success()
+        run: |
+          {
+            echo
+            echo "- Deployment verification: passed"
+            echo "- Public URL: https://scenewright.ink"
+          } >> "$GITHUB_STEP_SUMMARY"

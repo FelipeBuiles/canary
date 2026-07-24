@@ -29,6 +29,13 @@ CREDIT_PACKAGES: dict[str, dict] = {
 }
 
 
+def _offer_version() -> str:
+    return (
+        os.environ.get("CANARY_OFFER_VERSION", "public-credit-offer-v1").strip()
+        or "public-credit-offer-v1"
+    )[:120]
+
+
 def _stripe() -> None:
     key = os.environ.get("STRIPE_SECRET_KEY", "")
     if not key:
@@ -128,10 +135,13 @@ def _checkout_origin(request: Request) -> str:
 @router.get("/packages")
 def list_packages():
     """Return available credit packages — used by the frontend to render buy buttons."""
-    return {"packages": [
-        {"id": k, **{kk: vv for kk, vv in v.items()}}
-        for k, v in CREDIT_PACKAGES.items()
-    ]}
+    return {
+        "offer_version": _offer_version(),
+        "packages": [
+            {"id": k, **{kk: vv for kk, vv in v.items()}}
+            for k, v in CREDIT_PACKAGES.items()
+        ],
+    }
 
 
 @router.post("/checkout")
@@ -190,7 +200,11 @@ async def create_checkout(
             },
             success_url=f"{origin}/credits?success=true",
             cancel_url=f"{origin}/credits?cancelled=true&package={package_id}",
-            metadata={"user_id": user_id, "package": package_id},
+            metadata={
+                "user_id": user_id,
+                "package": package_id,
+                "offer_version": _offer_version(),
+            },
         )
         session = stripe.checkout.Session.create(**kwargs)
     except stripe.error.StripeError as exc:
@@ -276,6 +290,7 @@ def _handle_checkout_completed(session: dict) -> None:
     metadata = session.get("metadata") or {}
     user_id = metadata.get("user_id")
     package_id = metadata.get("package")
+    offer_version = str(metadata.get("offer_version") or "legacy").strip()[:120]
 
     if not user_id or package_id not in CREDIT_PACKAGES:
         logger.warning(
@@ -311,6 +326,7 @@ def _handle_checkout_completed(session: dict) -> None:
             "credit_package_id": package_id,
             "gross_amount_cents": gross_amount_cents,
             "currency": currency,
+            "offer_version": offer_version,
         },
         on_conflict="stripe_payment_intent_id",
         ignore_duplicates=True,

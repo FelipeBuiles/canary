@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import gzip
 import json
 import logging
 import os
 import re
 import shutil
+import tempfile
 import time
 from datetime import datetime, timezone
 from json import JSONDecodeError
@@ -30,6 +30,12 @@ from pydantic import BaseModel
 from novel_to_comic.ai import ai_request_context
 from novel_to_comic.config import Config, mock_mode_active, save_config
 from novel_to_comic.generation_input import GenerationPromptInput
+from novel_to_comic.input_limits import (
+    InputLimitError,
+    InputLimits,
+    decode_remote_story,
+    read_source,
+)
 from novel_to_comic.models.prompt import ImagePrompt, PromptAnchor
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.non_panel_generation import (
@@ -406,7 +412,7 @@ def _rows(resp) -> list[dict]:
 
 def _max_upload_bytes() -> int:
     """Hard cap on uploaded novel size, before any bytes are persisted."""
-    return _env_int("CANARY_MAX_UPLOAD_MB", 10) * 1024 * 1024
+    return InputLimits.from_env().upload_bytes
 
 
 def _max_projects_per_user() -> int:
@@ -483,14 +489,48 @@ async def create_project(
             f"Unsupported file type: {suffix}. Accepted: {', '.join(sorted(_ALLOWED_EXTENSIONS))}",
         )
 
-    # Build project directory (user-scoped to prevent cross-user collisions)
+    overrides = {}
+    if config_overrides:
+        try:
+            overrides = json.loads(config_overrides)
+        except JSONDecodeError:
+            raise HTTPException(400, "Invalid JSON in config_overrides") from None
+    try:
+        config = Config(**overrides)
+    except Exception as exc:
+        raise HTTPException(400, "Invalid project configuration.") from exc
+
+    # Resolve the final path before staging, but do not create any project
+    # state until the source has passed the same extraction budgets as Stage 1.
     slug = _slugify(name)
     project_dir = projects_dir / user_id / slug
     if project_dir.exists():
         raise HTTPException(409, f"Project '{slug}' already exists")
 
-    # Create directory structure
-    project_dir.mkdir(parents=True)
+    user_dir = projects_dir / user_id
+    user_dir.mkdir(parents=True, exist_ok=True)
+    staging_dir = Path(tempfile.mkdtemp(prefix=".incoming-", dir=user_dir))
+    safe_filename = Path(file.filename or f"source{suffix}").name
+    staged_source = staging_dir / safe_filename
+    try:
+        _save_upload_capped(file, staged_source)
+        read_source(staged_source)
+    except InputLimitError as exc:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    except HTTPException:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise
+    except Exception:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise
+
+    try:
+        project_dir.mkdir()
+    except FileExistsError:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise HTTPException(409, f"Project '{slug}' already exists") from None
+
     for subdir in [
         "input",
         "scenes",
@@ -507,22 +547,9 @@ async def create_project(
     ]:
         (project_dir / subdir).mkdir()
 
-    # Save uploaded file (size-capped to prevent disk exhaustion)
-    dst = project_dir / "input" / (file.filename or "novel")
-    try:
-        _save_upload_capped(file, dst)
-    except HTTPException:
-        shutil.rmtree(project_dir, ignore_errors=True)
-        raise
-
-    # Build config with optional overrides
-    overrides = {}
-    if config_overrides:
-        try:
-            overrides = json.loads(config_overrides)
-        except JSONDecodeError:
-            raise HTTPException(400, "Invalid JSON in config_overrides") from None
-    config = Config(**overrides)
+    dst = project_dir / "input" / safe_filename
+    shutil.move(str(staged_source), dst)
+    shutil.rmtree(staging_dir, ignore_errors=True)
     save_config(config, project_dir)
 
     # Create state
@@ -734,6 +761,7 @@ async def generate_cover(
         label=f"{state.project_name} cover",
         payload={"path": "cover/cover.png"},
         runner=_runner,
+        user_id=user_id,
         semaphore=generation_semaphore_for_config(request.app, config),
     )
     return {
@@ -799,6 +827,23 @@ class ImportStoryRequest(BaseModel):
     config_overrides: str | None = None
 
 
+async def _download_remote_story(url: str) -> bytes:
+    """Stream a remote story while enforcing the compressed-byte budget."""
+    limit = InputLimits.from_env().remote_compressed_bytes
+    content = bytearray()
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        async with client.stream("GET", url) as response:
+            response.raise_for_status()
+            async for chunk in response.aiter_bytes():
+                content.extend(chunk)
+                if len(content) > limit:
+                    raise InputLimitError(
+                        "Remote story exceeds the compressed download limit.",
+                        status_code=413,
+                    )
+    return bytes(content)
+
+
 @router.post("/import-story")
 @limiter.limit(create_limit)
 async def import_short_story(
@@ -833,20 +878,27 @@ async def import_short_story(
 
     story_url = f"https://www.libraryofshortstories.com/storiesgzip/{story_code}.txt"
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.get(story_url)
-            r.raise_for_status()
-            content_bytes = r.content
-            if content_bytes.startswith(b"\x1f\x8b"):
-                story_text = gzip.decompress(content_bytes).decode("utf-8")
-            else:
-                story_text = r.text
+        content_bytes = await _download_remote_story(story_url)
+        story_text = decode_remote_story(content_bytes)
+    except InputLimitError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to fetch story text from %s", story_url)
         raise HTTPException(502, f"Failed to download story text: {exc}") from exc
 
     if not story_text.strip():
         raise HTTPException(400, "Story content is empty")
+
+    overrides = {}
+    if payload.config_overrides:
+        try:
+            overrides = json.loads(payload.config_overrides)
+        except JSONDecodeError:
+            raise HTTPException(400, "Invalid JSON in config_overrides") from None
+    try:
+        config = Config(**overrides)
+    except Exception as exc:
+        raise HTTPException(400, "Invalid project configuration.") from exc
 
     slug = _slugify(payload.name)
     project_dir = projects_dir / user_id / slug
@@ -873,13 +925,6 @@ async def import_short_story(
     dst = project_dir / "input" / f"{story_code}.txt"
     dst.write_text(story_text, encoding="utf-8")
 
-    overrides = {}
-    if payload.config_overrides:
-        try:
-            overrides = json.loads(payload.config_overrides)
-        except JSONDecodeError:
-            raise HTTPException(400, "Invalid JSON in config_overrides") from None
-    config = Config(**overrides)
     save_config(config, project_dir)
 
     state = create_initial_state(payload.name, str(dst))

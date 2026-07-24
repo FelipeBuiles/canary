@@ -2,7 +2,12 @@ import asyncio
 import logging
 from types import SimpleNamespace
 
-from novel_to_comic.server.generation_jobs import GenerationJob, _looks_like_timeout_cancellation, generation_worker
+from novel_to_comic.server.generation_jobs import (
+    GenerationJob,
+    _looks_like_timeout_cancellation,
+    generation_worker,
+    user_generation_semaphore,
+)
 
 
 class _OneJobQueue:
@@ -95,3 +100,27 @@ def test_generation_job_recognizes_provider_cancel_after_worker_timeout():
 
     assert _looks_like_timeout_cancellation(exc, elapsed=600.0, timeout_seconds=600)
     assert not _looks_like_timeout_cancellation(exc, elapsed=20.0, timeout_seconds=600)
+
+
+def test_per_user_generation_semaphore_serializes_same_user(monkeypatch):
+    monkeypatch.setenv("CANARY_MAX_ACTIVE_GENERATION_JOBS_PER_USER", "1")
+    app = SimpleNamespace(
+        state=SimpleNamespace(user_generation_semaphores={})
+    )
+    active = 0
+    peak = 0
+
+    async def work():
+        nonlocal active, peak
+        async with user_generation_semaphore(app, "user-1"):
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+
+    async def run():
+        await asyncio.gather(work(), work(), work())
+
+    asyncio.run(run())
+
+    assert peak == 1

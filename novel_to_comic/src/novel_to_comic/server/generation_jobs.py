@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import time
 import uuid
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Literal
@@ -65,6 +67,7 @@ class GenerationJob:
     payload: dict[str, Any]
     sequence: int
     runner: GenerationJobRunner
+    user_id: str | None = None
     semaphore: asyncio.Semaphore | None = None
     status: GenerationJobStatus = "queued"
     queued_at: datetime = field(default_factory=_now)
@@ -80,6 +83,7 @@ def enqueue_generation_job(
     label: str,
     payload: dict[str, Any],
     runner: GenerationJobRunner,
+    user_id: str | None = None,
     semaphore: asyncio.Semaphore | None = None,
 ) -> GenerationJob:
     global _global_sequence
@@ -94,6 +98,7 @@ def enqueue_generation_job(
         payload=payload,
         sequence=sequence,
         runner=runner,
+        user_id=user_id,
         semaphore=semaphore,
     )
 
@@ -176,9 +181,27 @@ async def generation_worker(app: FastAPI) -> None:
 
     while True:
         job: GenerationJob = await app.state.generation_queue.get()
+        if job.user_id:
+            user_semaphore = user_generation_semaphore(app, job.user_id)
+            if user_semaphore.locked():
+                # Do not let one user's queued batch occupy every worker while
+                # waiting for that same user's active slot. Requeue it behind
+                # other users so the process remains fair.
+                app.state.generation_queue.put_nowait(job)
+                app.state.generation_queue.task_done()
+                await asyncio.sleep(0.05)
+                continue
         started = time.perf_counter()
         try:
-            if job.semaphore is None:
+            semaphores: list[asyncio.Semaphore] = []
+            if job.user_id:
+                semaphores.append(user_generation_semaphore(app, job.user_id))
+            if job.semaphore is not None and job.semaphore not in semaphores:
+                semaphores.append(job.semaphore)
+
+            async with AsyncExitStack() as stack:
+                for semaphore in semaphores:
+                    await stack.enter_async_context(semaphore)
                 job.status = "running"
                 job.started_at = _now()
                 logger.info(
@@ -189,18 +212,6 @@ async def generation_worker(app: FastAPI) -> None:
                     job.id[:8],
                 )
                 await _run_job(job)
-            else:
-                async with job.semaphore:
-                    job.status = "running"
-                    job.started_at = _now()
-                    logger.info(
-                        "[bold cyan]Job start[/] project=[white]%s[/] kind=[cyan]%s[/] label=%s id=[dim]%s[/]",
-                        job.project_name,
-                        job.kind,
-                        job.label,
-                        job.id[:8],
-                    )
-                    await _run_job(job)
             job.status = "complete"
             logger.info(
                 "[bold green]Job complete[/] project=[white]%s[/] kind=[cyan]%s[/] "
@@ -247,6 +258,26 @@ async def generation_worker(app: FastAPI) -> None:
             app.state.generation_queue.task_done()
 
 
+def _per_user_generation_limit() -> int:
+    try:
+        return max(
+            1,
+            int(os.environ.get("CANARY_MAX_ACTIVE_GENERATION_JOBS_PER_USER", "1")),
+        )
+    except (TypeError, ValueError):
+        return 1
+
+
+def user_generation_semaphore(app: FastAPI, user_id: str) -> asyncio.Semaphore:
+    """Return the process-local active-job ceiling for one authenticated user."""
+    semaphores = app.state.user_generation_semaphores
+    semaphore = semaphores.get(user_id)
+    if semaphore is None:
+        semaphore = asyncio.Semaphore(_per_user_generation_limit())
+        semaphores[user_id] = semaphore
+    return semaphore
+
+
 def generation_semaphore_for_config(app: FastAPI | None, config: Config) -> asyncio.Semaphore:
     if config.dev_mode:
         concurrency = config.effective_image_concurrency()
@@ -271,4 +302,3 @@ def prune_finished_generation_jobs(app: FastAPI | None, max_finished: int = 200)
     )
     for job in finished[:-max_finished]:
         jobs.pop(job.id, None)
-

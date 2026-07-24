@@ -23,6 +23,7 @@ create table if not exists public.credit_ledger (
   stage                     text,
   description               text,
   stripe_payment_intent_id  text        unique,
+  stripe_refund_id          text        unique,
   usage_call_id             text        unique,
   provider                  text,
   model                     text,
@@ -97,6 +98,29 @@ create table if not exists public.product_events (
                                       check (jsonb_typeof(properties_json) = 'object')
 );
 
+-- Operator-authorized exception refunds. The row is written before calling
+-- Stripe so retries can recover a Stripe-success/local-write-failure split.
+create table if not exists public.credit_refunds (
+  id                        uuid        primary key default gen_random_uuid(),
+  stripe_payment_intent_id  text        not null unique,
+  stripe_refund_id          text        unique,
+  ledger_grant_id           uuid        not null references public.credit_ledger(id),
+  user_id                   uuid        not null references auth.users(id) on delete restrict,
+  operator                  text        not null,
+  reason                    text        not null,
+  amount_cents              integer     not null check (amount_cents > 0),
+  credits_reversed          integer     not null check (credits_reversed > 0),
+  status                    text        not null
+                                        check (status in (
+                                          'pending',
+                                          'stripe_succeeded',
+                                          'completed'
+                                        )),
+  created_at                timestamptz not null default now(),
+  updated_at                timestamptz not null default now(),
+  completed_at              timestamptz
+);
+
 -- One-time migration for databases created by earlier drafts of this schema.
 do $$ begin
   if exists (
@@ -126,7 +150,157 @@ alter table public.credit_ledger
   add column if not exists stripe_checkout_session_id text,
   add column if not exists credit_package_id text,
   add column if not exists gross_amount_cents integer,
-  add column if not exists currency text;
+  add column if not exists currency text,
+  add column if not exists offer_version text,
+  add column if not exists stripe_refund_id text,
+  add column if not exists refund_record_id uuid;
+
+do $$ begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'credit_ledger_refund_record_id_fkey'
+  ) then
+    alter table public.credit_ledger
+      add constraint credit_ledger_refund_record_id_fkey
+      foreign key (refund_record_id) references public.credit_refunds(id);
+  end if;
+end $$;
+
+create unique index if not exists credit_ledger_stripe_refund_id_idx
+  on public.credit_ledger (stripe_refund_id)
+  where stripe_refund_id is not null;
+
+create unique index if not exists credit_ledger_refund_record_id_idx
+  on public.credit_ledger (refund_record_id)
+  where refund_record_id is not null;
+
+-- Atomically lock the user's ledger, re-check that the grant is unused, and
+-- place a negative reservation before Stripe is called. This closes the race
+-- where generation could consume credits between an application-side check
+-- and the refund.
+create or replace function public.prepare_credit_refund(
+  p_payment_intent_id text,
+  p_operator text,
+  p_reason text
+)
+returns setof public.credit_refunds
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_grant public.credit_ledger%rowtype;
+  v_refund public.credit_refunds%rowtype;
+  v_balance integer;
+begin
+  select * into v_grant
+  from public.credit_ledger
+  where stripe_payment_intent_id = p_payment_intent_id
+  for update;
+
+  if not found
+     or v_grant.amount_credits <= 0
+     or v_grant.status != 'settled'
+     or v_grant.gross_amount_cents is null
+     or v_grant.gross_amount_cents <= 0 then
+    raise exception 'Original credit grant is missing or ambiguous';
+  end if;
+
+  perform pg_advisory_xact_lock(hashtextextended(v_grant.user_id::text, 0));
+
+  select * into v_refund
+  from public.credit_refunds
+  where stripe_payment_intent_id = p_payment_intent_id;
+  if found then
+    return next v_refund;
+    return;
+  end if;
+
+  if exists (
+    select 1
+    from public.credit_ledger
+    where user_id = v_grant.user_id
+      and created_at > v_grant.created_at
+      and amount_credits < 0
+      and status != 'released'
+  ) then
+    raise exception 'Credits may have been consumed after this purchase';
+  end if;
+
+  select coalesce(sum(
+    case when status != 'released' then amount_credits else 0 end
+  ), 0)::integer
+  into v_balance
+  from public.credit_ledger
+  where user_id = v_grant.user_id;
+
+  if v_balance < v_grant.amount_credits then
+    raise exception 'Insufficient unused balance for automatic refund';
+  end if;
+
+  insert into public.credit_refunds (
+    stripe_payment_intent_id, ledger_grant_id, user_id, operator, reason,
+    amount_cents, credits_reversed, status
+  ) values (
+    p_payment_intent_id, v_grant.id, v_grant.user_id, p_operator, p_reason,
+    v_grant.gross_amount_cents, v_grant.amount_credits, 'pending'
+  )
+  returning * into v_refund;
+
+  insert into public.credit_ledger (
+    user_id, amount_credits, status, description, operation,
+    gross_amount_cents, currency, refund_record_id
+  ) values (
+    v_grant.user_id, -v_grant.amount_credits, 'reserved',
+    'Refund hold — ' || p_payment_intent_id, 'refund_hold',
+    -v_grant.gross_amount_cents, coalesce(v_grant.currency, 'usd'), v_refund.id
+  );
+
+  return next v_refund;
+end;
+$$;
+
+create or replace function public.complete_credit_refund(
+  p_refund_record_id uuid,
+  p_stripe_refund_id text,
+  p_completed_at timestamptz
+)
+returns setof public.credit_refunds
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_refund public.credit_refunds%rowtype;
+begin
+  select * into v_refund
+  from public.credit_refunds
+  where id = p_refund_record_id
+  for update;
+  if not found then
+    raise exception 'Refund recovery record not found';
+  end if;
+
+  update public.credit_ledger
+  set status = 'settled',
+      stripe_refund_id = p_stripe_refund_id,
+      operation = 'refund',
+      description = 'Credit reversal — refund ' || p_stripe_refund_id
+  where refund_record_id = p_refund_record_id;
+  if not found then
+    raise exception 'Refund credit hold not found';
+  end if;
+
+  update public.credit_refunds
+  set status = 'completed',
+      stripe_refund_id = p_stripe_refund_id,
+      completed_at = p_completed_at,
+      updated_at = now()
+  where id = p_refund_record_id
+  returning * into v_refund;
+
+  return next v_refund;
+end;
+$$;
 
 alter table public.ai_usage_events
   add column if not exists provider_cost_usd numeric(12, 6),
@@ -468,6 +642,7 @@ alter table public.projects enable row level security;
 alter table public.credit_ledger enable row level security;
 alter table public.ai_usage_events enable row level security;
 alter table public.product_events enable row level security;
+alter table public.credit_refunds enable row level security;
 
 -- Projects: users see only their own; public projects visible to all.
 do $$ begin
@@ -522,12 +697,14 @@ grant select on public.credit_ledger to authenticated;
 grant select on public.ai_usage_events to authenticated;
 
 revoke all on public.product_events from public, anon, authenticated;
+revoke all on public.credit_refunds from public, anon, authenticated;
 revoke all on public.ops_ai_cost_daily from public, anon, authenticated;
 revoke all on public.ops_usage_reconciliation from public, anon, authenticated;
 revoke all on public.ops_unit_economics_daily from public, anon, authenticated;
 revoke all on public.ops_product_funnel_daily from public, anon, authenticated;
 
 grant all on public.product_events to service_role;
+grant all on public.credit_refunds to service_role;
 grant select on public.ops_ai_cost_daily to service_role;
 grant select on public.ops_usage_reconciliation to service_role;
 grant select on public.ops_unit_economics_daily to service_role;
@@ -546,3 +723,13 @@ grant execute on function public.settle_model_usage_credits(
   uuid, uuid, uuid, text, text, text, text, text, text, text, integer, integer,
   integer, numeric, text, text, numeric, numeric, boolean
 ) to service_role;
+
+revoke all on function public.prepare_credit_refund(text, text, text)
+  from public, anon, authenticated;
+grant execute on function public.prepare_credit_refund(text, text, text)
+  to service_role;
+
+revoke all on function public.complete_credit_refund(uuid, text, timestamptz)
+  from public, anon, authenticated;
+grant execute on function public.complete_credit_refund(uuid, text, timestamptz)
+  to service_role;

@@ -565,6 +565,7 @@ async def create_style_direction(
             request.app, project_name=pkey, kind="style_sample",
             label=candidate["label"], payload={"id": candidate["id"], "index": index},
             runner=_runner,
+            user_id=user_id,
             semaphore=generation_semaphore_for_config(request.app, config),
         )
     except BaseException:
@@ -854,6 +855,7 @@ async def generate_style_samples(
             label=f"style {idx}",
             payload={"index": idx},
             runner=_runner,
+            user_id=user_id,
             semaphore=generation_semaphore_for_config(request.app, sample_config),
         )
         jobs.append(generation_job_payload(request.app, job))
@@ -954,6 +956,7 @@ async def generate_style_validation(
             request.app, project_name=pkey, kind="style_validation",
             label=f"{suggestion['label']} validation",
             payload=payload, runner=_runner,
+            user_id=user_id,
             semaphore=generation_semaphore_for_config(request.app, sample_config),
         )
     except BaseException:

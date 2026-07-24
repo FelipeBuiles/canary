@@ -2,7 +2,23 @@
 
 ## Status
 
-Proposed (2026-07-18).
+Proposed (2026-07-18), amended 2026-07-24.
+
+### 2026-07-24 access amendment
+
+The first cohort remains invitation-led operationally, but access is no longer
+invitation-gated in the product:
+
+- public account creation and normal authenticated use remain available;
+- no `pilot_members` authorization dependency is required for project,
+  generation, regeneration, or export routes;
+- the sample-story catalog and import workflow remain available, subject to the
+  same input-safety and billing controls as uploaded sources.
+
+This amendment overrides contradictory invite-only and sample-disablement
+tasks, tests, and exit criteria below. Cohort capacity is managed by outreach
+and operator support, not by denying product access to other authenticated
+users.
 
 This plan turns the findings in
 [`docs/proposals/scenewright-prelaunch-acquisition-2026-07-18.html`](../../proposals/scenewright-prelaunch-acquisition-2026-07-18.html)
@@ -47,9 +63,11 @@ These are implementation constraints, not open questions for each slice.
 - **Capacity:** ten total customers, admitted two at a time.
 - **Language:** English only for the first cohort. The app may retain other
   languages, but the offer and support commitment are English-only.
-- **Access:** Supabase admin invitation; public account creation disabled.
-- **Sample library:** disabled for the pilot. It is not free, it adds a remote
-  import surface, and it confuses the paid first-run contract.
+- **Access:** public account creation and normal authenticated product access
+  remain available. The Founding Author Lab is invitation-led, not
+  authorization-gated.
+- **Sample library:** enabled. Remote imports must use the same bounded input
+  budgets and paid-stage disclosures as uploaded sources.
 - **Support:** operator-assisted and asynchronous, with a published response
   target. This is a product pilot, not a zero-touch launch.
 - **Brand:** no public promotion or brand spend until the SceneWrite /

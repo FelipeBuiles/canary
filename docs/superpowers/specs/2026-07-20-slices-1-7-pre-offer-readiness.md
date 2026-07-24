@@ -1,6 +1,18 @@
 # Slices 1–7 — Pre-Offer Readiness
 
-Status: Proposed (2026-07-20)
+Status: Proposed (2026-07-20), amended 2026-07-24
+
+## 2026-07-24 Access Amendment
+
+The Founding Author Lab remains invitation-led as a recruitment and support
+program, but the application itself is not invitation-gated. Public signup and
+normal authenticated use remain available, and the sample-story catalog/import
+workflow remains enabled. No pilot-membership authorization dependency is
+required. Sample imports must satisfy the shared input budgets and normal
+billing rules.
+
+This amendment supersedes the invite-only authorization, disabled-signup, and
+disabled-sample requirements elsewhere in this proposed specification.
 
 ## Problem Statement
 
@@ -27,11 +39,11 @@ Record only privacy-safe cohort events and bounded feedback. Prove the complete 
 5. As an operator, I want Sentry release tags to use the deployed SHA, so that an alert maps to the code that produced it.
 6. As an operator, I want a maintenance-window deploy procedure that waits for active work to drain, so that deployment does not interrupt generation.
 7. As an operator, I want a release evidence record with a rollback target, so that a bad deployment can be reversed deliberately.
-8. As an invited author, I want only an admin invitation to grant pilot access, so that the paid workflow is not open to arbitrary accounts.
-9. As an invited author, I want to confirm my invitation, create a password, sign in, and reset my password on the production domain, so that access is usable without operator intervention for routine account actions.
-10. As an unauthorised user, I want project, generation, regeneration, and export requests denied consistently, so that authentication alone cannot grant paid workflow access.
-11. As an operator, I want pilot capacity reserved in waves of two and capped at ten paid customers, so that admissions cannot exceed support capacity.
-12. As an invited author, I want the sample library/import surface unavailable during the pilot, so that the first-run contract is about paid credits and my own source.
+8. As an author, I want to create an account, sign in, and reset my password on the production domain without an invitation.
+9. As an operator, I want Founding Author Lab participation tracked separately from ordinary authenticated product access.
+10. As an authenticated user, I want project, generation, regeneration, and export requests isolated to my account.
+11. As an operator, I want pilot outreach managed in waves of two and capped at ten supported customers without blocking other authenticated users.
+12. As an author, I want the sample library/import surface available with the same input-safety and billing controls as uploaded sources.
 13. As an author, I want the Starter price and quantity fetched from the server, so that displayed billing terms cannot drift from Stripe or the ledger.
 14. As an author, I want repeated Starter purchases to add exactly 1,200 credits each, so that additional purchases are predictable.
 15. As an operator, I want duplicate, unpaid, failed, and out-of-order payment notifications handled safely, so that money and credits remain reconciled.
@@ -76,9 +88,12 @@ Record only privacy-safe cohort events and bounded feedback. Prove the complete 
 - The application exposes non-sensitive version, git SHA, and build timestamp metadata. The Docker build receives the SHA through `CANARY_VERSION`, and Sentry uses the same release identity.
 - Deployment is a manual, maintenance-window operation: announce, stop new pilot work, wait for the activity endpoint to become idle, deploy the green SHA, verify readiness and identity, and reopen work.
 - A release evidence record captures source SHA, CI evidence, image/deployment identifier, deployed SHA, health/readiness result, operator, timestamp, and rollback target.
-- Pilot mode is explicit. Supabase public email signup is disabled, admin invitations are used, and an active pilot-member authorization is required for project creation, generation, regeneration, and export.
+- Founding Author Lab participation is tracked for cohort reporting but does
+  not authorize ordinary product access. Public email signup and normal
+  authenticated use remain available.
 - Pilot membership records cohort, source code, admission time, status, offer version, internal-note reference, and separate consent timestamps. Internal notes never contain creative content.
-- The remote sample library and import endpoints are unavailable in pilot mode; there is no hidden live endpoint behind a removed tab.
+- The remote sample library and import endpoints remain available and use the
+  shared compressed-byte, decompressed-character, and extraction budgets.
 - Billing continues to use server-sourced package data, existing credit reservations, exactly-once settlement, and the ledger. Repeated Starter packs are allowed. Refunds are operator-only exceptions or legally required reversals and must reconcile Stripe and the ledger idempotently.
 - Production security headers include HSTS, deliberate CSP and `frame-ancestors`, `nosniff`, referrer policy, and permissions policy. CSP allowances are limited to required application, Supabase, Stripe, Sentry, image, and font origins.
 - Trusted proxy behavior is verified against real forwarded requests. Expensive work has both existing process/IP controls and a per-user active-job ceiling.
@@ -95,7 +110,10 @@ Record only privacy-safe cohort events and bounded feedback. Prove the complete 
 - Mock mode exercises the complete web journey and failure states without provider spend. One real-provider journey runs on the deployed application using a public-domain or explicitly licensed 6–12-page source.
 - The proof package records source length, station duration, provider cost, settled credits, retries, flags, continuity misses, operator minutes, export counts, artifacts, and release SHA. It includes 30–50 accepted panels across recurring characters and locations.
 - Proof thresholds are predeclared: no cross-user, auth, billing, reservation, or missing-export errors; every failed item recoverable without restarting the whole project; no accepted lettering inside panel images; repairable visual misses; and economics that fit the Starter offer or cause the offer to be resized before sale.
-- A read-only pre-offer checker verifies deployed/CI SHA, health/readiness, headers, pilot mode, sample disablement, contacts, Sentry, Stripe mode, idle deployment status, and supplied manual evidence identifiers without printing secrets or mutating production.
+- A read-only pre-offer checker verifies deployed/CI SHA, health/readiness,
+  headers, contacts, Sentry, Stripe mode, idle deployment status, sample-import
+  safety, and supplied manual evidence identifiers without printing secrets or
+  mutating production.
 - Outreach is authorized only by a documented GO for two users after the checker, two-user matrix, internal live purchase/refund, mock journey, real-provider proof, and every manual checklist item pass.
 - After GO, invite two authors at a time. Do not invite the next wave until both current users export, withdraw, or are explicitly closed after support follow-up. Stop for cross-user exposure, billing mismatch, project loss, material legal/abuse incident, invalid economics, or operator overload.
 
@@ -131,5 +149,4 @@ Record only privacy-safe cohort events and bounded feedback. Prove the complete 
 - Slice 6 must test the integrated result of Slices 2–5. Slice 7 is the only authorization to begin customer outreach.
 - The plan's proposed 6–12-page reader-magnet language is retained as an illustrative use case only; the enforceable commercial unit remains 1,200 credits per Starter purchase.
 - The first ten customers are a learning cohort. After the cohort, choose whether to expand, repeat after fixes, change the offer/ideal customer profile, or stop.
-
 

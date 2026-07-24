@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+from urllib.parse import urlsplit, urlunsplit
 
 logger = logging.getLogger("canary.sentry")
 
@@ -30,6 +31,40 @@ _SENSITIVE_HEADERS = {
 }
 
 _TRACE_EXCLUDED_PATHS = {"/metrics", "/api/health", "/api/health/ready"}
+
+_SENSITIVE_KEY_FRAGMENTS = {
+    "authorization",
+    "cookie",
+    "token",
+    "secret",
+    "password",
+    "prompt",
+    "visual_anchor",
+    "manuscript",
+    "novel_text",
+    "screenplay",
+    "provider_response",
+    "image_data",
+    "base64",
+}
+
+
+def _scrub_value(value, *, key: str = ""):
+    lowered = key.lower()
+    if any(fragment in lowered for fragment in _SENSITIVE_KEY_FRAGMENTS):
+        return "[Filtered]"
+    if isinstance(value, dict):
+        return {
+            item_key: _scrub_value(item_value, key=str(item_key))
+            for item_key, item_value in value.items()
+        }
+    if isinstance(value, list):
+        return [_scrub_value(item) for item in value[:100]]
+    if isinstance(value, str) and value.startswith(("http://", "https://")):
+        parts = urlsplit(value)
+        if parts.query:
+            return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    return value
 
 
 def _configured_trace_rate() -> float:
@@ -52,8 +87,9 @@ def _traces_sampler(sampling_context: dict) -> float:
 
 
 def _scrub_event(event: dict, _hint: dict) -> dict:
-    """Strip auth headers/cookies from the captured request before it ships."""
+    """Strip credentials, creative payloads, provider data, and signed URLs."""
     try:
+        event = _scrub_value(event)
         request = event.get("request")
         if isinstance(request, dict):
             headers = request.get("headers")
@@ -67,6 +103,8 @@ def _scrub_event(event: dict, _hint: dict) -> dict:
                 for key in list(cookies):
                     if key == "pulp_session":
                         cookies[key] = "[Filtered]"
+            if "data" in request:
+                request["data"] = "[Filtered]"
     except Exception:  # noqa: BLE001 - scrubbing must never drop the event
         pass
     return event
