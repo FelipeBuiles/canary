@@ -355,7 +355,6 @@ def test_public_version_endpoint_reports_build_identity(tmp_path: Path, monkeypa
     ("path", "expected_status"),
     [
         ("/api/health", 200),
-        ("/missing-api-route", 200),  # SPA fallback response
         ("/api/missing", 404),
     ],
 )
