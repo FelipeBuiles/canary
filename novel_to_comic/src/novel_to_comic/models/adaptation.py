@@ -40,8 +40,13 @@ class AdaptationBrief(RevisionedArtifact):
     story_promises: tuple[str, ...] = ()
     themes: tuple[str, ...] = ()
     point_of_view: str = ""
+    narrator_treatment: str = ""
     tone: str = ""
+    ambiguities: tuple[str, ...] = ()
+    motifs: tuple[str, ...] = ()
     protected_language: tuple[str, ...] = ()
+    essential_events: tuple[str, ...] = ()
+    character_turns: tuple[str, ...] = ()
     transformation_level: Literal[
         "faithful", "medium_specific", "transformative"
     ] = "medium_specific"
@@ -58,7 +63,11 @@ class AdaptationBrief(RevisionedArtifact):
                 "story_promises": self.story_promises,
                 "themes": self.themes,
                 "point_of_view": self.point_of_view,
+                "narrator_treatment": self.narrator_treatment,
                 "tone": self.tone,
+                "essential_events": self.essential_events,
+                "character_turns": self.character_turns,
+                "desired_emphasis": self.desired_emphasis,
             }
             missing = [name for name, value in required.items() if not value]
             if missing:

@@ -6,6 +6,7 @@ until the atomic pipeline cutover.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import TypeVar
 
@@ -109,6 +110,15 @@ class TargetArtifacts:
         return self.project_dir / "exports"
 
     def write_source(self, source: SourceDocument) -> None:
+        if self.source_path.exists():
+            current = self.read_source()
+            if (
+                current.source_sha256 != source.source_sha256
+                or current.units != source.units
+            ):
+                raise ValueError(
+                    "immutable source text and source units cannot be overwritten"
+                )
         self._write_model(self.source_path, source)
 
     def read_source(self) -> SourceDocument:
@@ -119,6 +129,21 @@ class TargetArtifacts:
 
     def read_brief(self) -> AdaptationBrief:
         return self._read_model("adaptation_brief", self.brief_path, AdaptationBrief)
+
+    def invalidate_after_brief(self) -> None:
+        """Remove target artifacts whose authority depends on Brief content."""
+
+        for path in (
+            self.project_dir / "adapt",
+            self.project_dir / "plan",
+            self.project_dir / "draw",
+            self.project_dir / "finish",
+            self.exports_dir,
+        ):
+            if path.is_dir():
+                shutil.rmtree(path)
+            elif path.exists():
+                path.unlink()
 
     def write_adaptation(self, adaptation: BookAdaptation) -> None:
         self._write_model(self.adaptation_path, adaptation)

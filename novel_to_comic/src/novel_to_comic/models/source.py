@@ -3,8 +3,69 @@
 from __future__ import annotations
 
 import hashlib
+import re
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+_TITLE_ABBREVIATIONS = {
+    "dr",
+    "jr",
+    "mr",
+    "mrs",
+    "ms",
+    "prof",
+    "sr",
+    "st",
+    "vs",
+}
+_SENTENCE_CLOSERS = {'"', "'", "\u2019", "\u201d", ")", "]"}
+
+
+def sentence_end_offsets(text: str) -> tuple[int, ...]:
+    """Return exact unit ends after sentence punctuation and trailing space."""
+
+    offsets: list[int] = []
+    index = 0
+    while index < len(text):
+        mark = text[index]
+        if mark not in ".!?":
+            index += 1
+            continue
+
+        if mark == ".":
+            if (
+                index > 0
+                and index + 1 < len(text)
+                and text[index - 1].isdigit()
+                and text[index + 1].isdigit()
+            ):
+                index += 1
+                continue
+            word_match = re.search(r"([A-Za-z]+)$", text[:index])
+            if (
+                word_match
+                and word_match.group(1).lower() in _TITLE_ABBREVIATIONS
+            ):
+                index += 1
+                continue
+            while index + 1 < len(text) and text[index + 1] == ".":
+                index += 1
+
+        end = index + 1
+        while end < len(text) and text[end] in _SENTENCE_CLOSERS:
+            end += 1
+        if end < len(text) and not text[end].isspace():
+            index = end
+            continue
+        while end < len(text) and text[end].isspace():
+            end += 1
+        offsets.append(end)
+        index = end
+
+    if not offsets or offsets[-1] != len(text):
+        offsets.append(len(text))
+    return tuple(offsets)
 
 
 class SourceUnit(BaseModel):
@@ -25,6 +86,21 @@ class SourceUnit(BaseModel):
         return self
 
 
+class SourceContextReference(BaseModel):
+    """A labeled, non-owning reference to source units outside primary coverage."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    label: str = Field(min_length=1)
+    unit_ids: tuple[str, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _unit_ids_are_unique(self) -> "SourceContextReference":
+        if len(self.unit_ids) != len(set(self.unit_ids)):
+            raise ValueError("context reference source unit IDs must be unique")
+        return self
+
+
 class SourceScene(BaseModel):
     """A primary contiguous range plus optional non-owning context units."""
 
@@ -34,7 +110,7 @@ class SourceScene(BaseModel):
     title: str = Field(min_length=1)
     first_unit_id: str = Field(min_length=1)
     last_unit_id: str = Field(min_length=1)
-    context_unit_ids: tuple[str, ...] = ()
+    context: tuple[SourceContextReference, ...] = ()
 
     def unit_ids(self, document: "SourceDocument") -> list[str]:
         index = {unit.id: position for position, unit in enumerate(document.units)}
@@ -80,15 +156,38 @@ class SourceDocument(BaseModel):
             expected_start = unit.end_offset
         if expected_start != len(self.text):
             raise ValueError("source units must cover the complete source text")
+        valid_ends = set(sentence_end_offsets(self.text))
+        if any(unit.end_offset not in valid_ends for unit in self.units):
+            raise ValueError("source unit boundaries must be sentence-aligned")
+
+        scene_ids = [scene.id for scene in self.scenes]
+        if len(scene_ids) != len(set(scene_ids)):
+            raise ValueError("source scene IDs must be unique")
 
         ownership = {unit_id: 0 for unit_id in ids}
+        expected_scene_start = 0
         for scene in self.scenes:
-            for context_id in scene.context_unit_ids:
-                if context_id not in ownership:
-                    raise ValueError(
-                        f"scene {scene.id!r} references unknown context unit {context_id!r}"
-                    )
-            for unit_id in scene.unit_ids(self):
+            primary_unit_ids = scene.unit_ids(self)
+            primary_unit_id_set = set(primary_unit_ids)
+            for reference in scene.context:
+                for context_id in reference.unit_ids:
+                    if context_id not in ownership:
+                        raise ValueError(
+                            f"scene {scene.id!r} references unknown context unit "
+                            f"{context_id!r}"
+                        )
+                    if context_id in primary_unit_id_set:
+                        raise ValueError(
+                            f"scene {scene.id!r} context must point outside its "
+                            "primary range"
+                        )
+            first_index = ids.index(primary_unit_ids[0])
+            if first_index != expected_scene_start:
+                raise ValueError(
+                    "primary source-scene ranges must be complete and ordered"
+                )
+            expected_scene_start += len(primary_unit_ids)
+            for unit_id in primary_unit_ids:
                 ownership[unit_id] += 1
 
         incorrectly_owned = [
