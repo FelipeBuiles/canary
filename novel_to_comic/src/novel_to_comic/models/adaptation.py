@@ -1,0 +1,191 @@
+"""Book-level story adaptation contracts for the full-page pipeline."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class RevisionedArtifact(BaseModel):
+    """Immutable artifact whose hash changes with any authored content."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    revision: int = Field(ge=1)
+    content_sha256: str = ""
+
+    @model_validator(mode="after")
+    def _verify_content_hash(self) -> "RevisionedArtifact":
+        payload = self.model_dump(mode="json", exclude={"content_sha256"})
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        digest = hashlib.sha256(encoded).hexdigest()
+        if self.content_sha256 and self.content_sha256 != digest:
+            raise ValueError("content_sha256 does not match artifact content")
+        object.__setattr__(self, "content_sha256", digest)
+        return self
+
+
+class AdaptationBrief(RevisionedArtifact):
+    """Human-approved book-level constraints for the adaptation."""
+
+    status: Literal["draft", "approved"] = "draft"
+    story_promises: tuple[str, ...] = ()
+    themes: tuple[str, ...] = ()
+    point_of_view: str = ""
+    tone: str = ""
+    protected_language: tuple[str, ...] = ()
+    transformation_level: Literal[
+        "faithful", "medium_specific", "transformative"
+    ] = "medium_specific"
+    desired_emphasis: tuple[str, ...] = ()
+    target_page_min: int = Field(ge=1)
+    target_page_max: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def _validate_brief(self) -> "AdaptationBrief":
+        if self.target_page_min > self.target_page_max:
+            raise ValueError("target_page_min cannot exceed target_page_max")
+        if self.status == "approved":
+            required = {
+                "story_promises": self.story_promises,
+                "themes": self.themes,
+                "point_of_view": self.point_of_view,
+                "tone": self.tone,
+            }
+            missing = [name for name, value in required.items() if not value]
+            if missing:
+                raise ValueError(
+                    "approved adaptation brief is incomplete: " + ", ".join(missing)
+                )
+        return self
+
+
+class NarrativeTreatment(BaseModel):
+    """The adaptation's global dramatic reasoning before page allocation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    causal_spine: tuple[str, ...] = Field(min_length=1)
+    character_arcs: tuple[str, ...] = ()
+    reveals: tuple[str, ...] = ()
+    reactions: tuple[str, ...] = ()
+    aftermath: tuple[str, ...] = ()
+
+
+class LetteringItem(BaseModel):
+    """Complete, final wording for one lettering element."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(min_length=1)
+    kind: Literal["dialogue", "thought", "caption", "sfx"]
+    text: str = Field(min_length=1)
+    speaker: str | None = None
+    source_unit_ids: tuple[str, ...] = ()
+
+
+class AppearanceChange(BaseModel):
+    """A story-state change downstream stages must render consistently."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    entity_id: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+
+
+class AdaptedBeat(BaseModel):
+    """One ordered story beat, independent of pages or panels."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(min_length=1)
+    order: int = Field(ge=1)
+    summary: str = Field(min_length=1)
+    narrative_function: Literal[
+        "establisher",
+        "initial",
+        "prolongation",
+        "peak",
+        "release",
+        "transition",
+    ]
+    source_unit_ids: tuple[str, ...] = Field(min_length=1)
+    lettering: tuple[LetteringItem, ...] = ()
+    appearance_changes: tuple[AppearanceChange, ...] = ()
+
+
+class AdaptationLedgerEntry(BaseModel):
+    """Explicit accounting for one source unit's adapted disposition."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source_unit_id: str = Field(min_length=1)
+    disposition: Literal[
+        "depicted",
+        "dialogue",
+        "thought",
+        "caption",
+        "visual_motif",
+        "compressed_into",
+        "intentionally_omitted",
+    ]
+    adapted_beat_ids: tuple[str, ...] = ()
+    reason: str | None = None
+    preserved_function: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_disposition(self) -> "AdaptationLedgerEntry":
+        if self.disposition in {"compressed_into", "intentionally_omitted"}:
+            if not self.reason:
+                raise ValueError(f"{self.disposition} requires a reason")
+        elif not self.adapted_beat_ids:
+            raise ValueError(f"{self.disposition} requires an adapted beat")
+        return self
+
+
+class BookAdaptation(RevisionedArtifact):
+    """Canonical book-level adaptation, before page allocation."""
+
+    source_sha256: str = Field(min_length=64, max_length=64)
+    brief_revision: int = Field(ge=1)
+    brief_sha256: str = Field(min_length=64, max_length=64)
+    treatment: NarrativeTreatment
+    beats: tuple[AdaptedBeat, ...] = Field(min_length=1)
+    ledger: tuple[AdaptationLedgerEntry, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_book(self) -> "BookAdaptation":
+        beat_ids = [beat.id for beat in self.beats]
+        if len(beat_ids) != len(set(beat_ids)):
+            raise ValueError("adapted beat IDs must be unique")
+        if [beat.order for beat in self.beats] != list(
+            range(1, len(self.beats) + 1)
+        ):
+            raise ValueError("adapted beat order must be consecutive")
+
+        lettering_ids = [
+            item.id for beat in self.beats for item in beat.lettering
+        ]
+        if len(lettering_ids) != len(set(lettering_ids)):
+            raise ValueError("lettering IDs must be unique")
+
+        known_beats = set(beat_ids)
+        source_unit_ids = [entry.source_unit_id for entry in self.ledger]
+        if len(source_unit_ids) != len(set(source_unit_ids)):
+            raise ValueError("adaptation ledger source units must be unique")
+        for entry in self.ledger:
+            unknown = set(entry.adapted_beat_ids) - known_beats
+            if unknown:
+                raise ValueError(
+                    f"ledger entry {entry.source_unit_id!r} references unknown beats: "
+                    + ", ".join(sorted(unknown))
+                )
+        return self
