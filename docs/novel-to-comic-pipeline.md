@@ -3,6 +3,10 @@
 > **Status: Current (2026-07-18).** This is the product-level pipeline
 > overview. For exact I/O, use `docs/reference/stage-contracts.md`; for agent
 > implementation guidance, use `docs/reference/agent-context.md`.
+>
+> **Accepted replacement:** the current panel pipeline will be replaced by
+> `docs/superpowers/specs/2026-07-25-full-page-generation-design.md`. Treat this
+> document as implemented behavior, not future design guidance.
 
 A 9-stage Python/FastAPI/React application that converts a novel
 (EPUB, TXT, or PDF) into a graphic novel (PDF/CBZ), using LLMs for story

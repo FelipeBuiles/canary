@@ -38,7 +38,8 @@ is implemented in `s6_storyboard.py`.
 **UI stations (frontend grouping only):** The web UI presents the 9 backend
 stages as 4 user-facing "stations" (implemented June 2026). Backend stages stay
 discrete — stations are presentation/navigation only, never backend
-consolidation. Plan + status: `docs/proposals/four-station-redesign.md`.
+consolidation. The mapping in `web/src/lib/stations.ts` is authoritative for
+the implemented UI.
 
 | Station | Backend stages | User gate |
 |---|---|---|
@@ -50,6 +51,11 @@ consolidation. Plan + status: `docs/proposals/four-station-redesign.md`.
 Auto stages never block: they run as a chain after cast approval and surface
 as read-only inspect drawers (placeholder shown if not yet generated). Stage
 order is unchanged — do not reorder stages for the UI.
+
+**Accepted replacement architecture (not yet implemented):**
+`docs/superpowers/specs/2026-07-25-full-page-generation-design.md` and its
+implementation plan replace the panel-era design. Work on that migration must
+not preserve or extend legacy panel stages for compatibility.
 
 Key invariants of the implemented redesign:
 
