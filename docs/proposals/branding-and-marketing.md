@@ -1,5 +1,11 @@
 # Canary — Product Naming & Marketing Strategy
 
+> **Architecture warning (2026-07-25):** retain this document for audience,
+> naming, trust, and positioning research only. References to a nine-stage
+> pipeline, per-panel generation/revision, or deterministic lettering are
+> superseded by
+> `docs/superpowers/specs/2026-07-25-full-page-generation-design.md`.
+
 > Deep research (competitive landscape + market demand + naming/domain/trademark
 > clearance) and a full go-to-market plan for the lean / pre-revenue tier. Dated
 > 2026-07-02.
@@ -26,8 +32,9 @@ launch hypotheses below have already moved.
 - Position Scenewright as an instrument the author directs, not a black-box
   replacement for the author.
 - Whole-manuscript ingestion, four creative checkpoints, reference-guided
-  continuity, per-panel correction, final lettering, and PDF/CBZ export are
-  implemented product truths.
+  continuity, correction, final lettering, and PDF/CBZ export are implemented
+  product truths. The correction and rendering unit is changing from panels to
+  complete pages.
 - The rights posture is real but must stay precise: the author retains the
   manuscript; Scenewright makes no ownership claim over generated output;
   copyrightability of purely generated material remains case-specific.

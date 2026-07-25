@@ -2,7 +2,9 @@
 
 > Current-state review, updated 2026-07-13. This document is the launch gate;
 > [the deploy runbook](../deploy.md) is the operational procedure and
-> [the pricing proposal](pricing-and-margin.md) is the unit-economics decision.
+> [the pricing proposal](pricing-and-margin.md) is the current-pipeline
+> unit-economics decision. Full-page economics must be revalidated before that
+> architecture launches.
 
 ## Verdict
 
