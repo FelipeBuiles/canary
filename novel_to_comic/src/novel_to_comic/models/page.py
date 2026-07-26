@@ -7,6 +7,58 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from novel_to_comic.models.adaptation import LetteringItem, RevisionedArtifact
+from novel_to_comic.models.validation import EditorialIssue
+
+
+class ApprovedPageRange(BaseModel):
+    """The human-approved page-count bounds Plan must respect."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    minimum: int = Field(ge=1)
+    maximum: int = Field(ge=1)
+    approved: Literal[True] = True
+
+    @model_validator(mode="after")
+    def _validate_range(self) -> "ApprovedPageRange":
+        if self.minimum > self.maximum:
+            raise ValueError("minimum cannot exceed maximum")
+        return self
+
+
+class ApprovedVisualReference(BaseModel):
+    """One Cast-approved visual authority available to page planning."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(min_length=1)
+    entity_id: str = Field(min_length=1)
+    appearance_state_id: str | None = None
+    visual_anchor: str = Field(min_length=1)
+    approved: Literal[True] = True
+
+
+class ApprovedVisualReferenceInventory(BaseModel):
+    """The complete approved entity and appearance-state inventory."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    references: tuple[ApprovedVisualReference, ...] = ()
+
+    @model_validator(mode="after")
+    def _validate_inventory(self) -> "ApprovedVisualReferenceInventory":
+        reference_ids = [reference.id for reference in self.references]
+        if len(reference_ids) != len(set(reference_ids)):
+            raise ValueError("approved visual reference IDs must be unique")
+        authority_keys = [
+            (reference.entity_id, reference.appearance_state_id)
+            for reference in self.references
+        ]
+        if len(authority_keys) != len(set(authority_keys)):
+            raise ValueError(
+                "each entity appearance state must have one approved reference"
+            )
+        return self
 
 
 class PinnedGeometry(BaseModel):
@@ -26,6 +78,15 @@ class PinnedGeometry(BaseModel):
         return self
 
 
+class AuthorGeometryPin(BaseModel):
+    """An explicit author constraint attached to one adapted beat."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    beat_id: str = Field(min_length=1)
+    geometry: PinnedGeometry
+
+
 class PageContent(BaseModel):
     """One ordered semantic unit of page content, not a panel render."""
 
@@ -39,6 +100,14 @@ class PageContent(BaseModel):
     entity_ids: tuple[str, ...] = ()
     appearance_state_ids: tuple[str, ...] = ()
     pinned_geometry: PinnedGeometry | None = None
+
+    @model_validator(mode="after")
+    def _validate_references(self) -> "PageContent":
+        if len(self.entity_ids) != len(set(self.entity_ids)):
+            raise ValueError("page-scoped entity IDs must be unique")
+        if len(self.appearance_state_ids) != len(set(self.appearance_state_ids)):
+            raise ValueError("page-scoped appearance-state IDs must be unique")
+        return self
 
 
 class ComicPage(RevisionedArtifact):
@@ -60,6 +129,7 @@ class ComicPage(RevisionedArtifact):
         "transition",
     ]
     density_intent: Literal["sparse", "standard", "dense"]
+    rhythm_intent: str = ""
     layout_intent: str = ""
     content: tuple[PageContent, ...] = Field(min_length=1)
     reading_order: tuple[str, ...] = Field(min_length=1)
@@ -111,7 +181,9 @@ class BookPlan(RevisionedArtifact):
     adaptation_sha256: str = Field(min_length=64, max_length=64)
     target_page_min: int = Field(ge=1)
     target_page_max: int = Field(ge=1)
+    rhythm_summary: str = ""
     pages: tuple[PlannedPageRevision, ...] = Field(min_length=1)
+    editorial_issues: tuple[EditorialIssue, ...] = ()
 
     @model_validator(mode="after")
     def _validate_plan(self) -> "BookPlan":
@@ -122,4 +194,6 @@ class BookPlan(RevisionedArtifact):
             raise ValueError("planned page numbers must be consecutive")
         if not self.target_page_min <= len(self.pages) <= self.target_page_max:
             raise ValueError("planned page count is outside the approved target range")
+        if any(issue.owner_stage != "plan" for issue in self.editorial_issues):
+            raise ValueError("book-plan editorial issues must be owned by Plan")
         return self
