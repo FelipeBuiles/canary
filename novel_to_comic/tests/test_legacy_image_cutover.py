@@ -45,7 +45,11 @@ def test_reve_handler_requires_wire_and_has_no_provider_prompt_mutations():
     assert '"Reference images:' not in source
 
 
-def test_vertex_handler_requires_wire_and_has_no_raw_prompt_fallback():
+def test_vertex_handler_requires_a_frozen_request_and_has_no_raw_prompt_fallback():
     source = (HANDLERS / "vertex_multimodal.py").read_text()
-    assert "Vertex image requests require canary_wire_request" in source
+    assert (
+        "Vertex image requests require a frozen wire or complete-page request"
+        in source
+    )
+    assert "canary_complete_page_request" in source
     assert "The following reference images guide this illustration" not in source

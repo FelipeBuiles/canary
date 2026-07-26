@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import json
 import logging
 import mimetypes
 import os
@@ -215,23 +217,48 @@ class VertexMultimodalLLM(CustomLLM):
         location = _vertex_location(optional_params)
         requested_aspect = _requested_aspect(optional_params)
         wire_payload = optional_params.get("canary_wire_request")
-        if not wire_payload:
-            raise ValueError("Vertex image requests require canary_wire_request")
-        from litellm_handlers.provider_wire import (
-            exact_vertex_contents,
-            parse_provider_wire,
-            verify_wire_images,
-        )
-
-        manifest = parse_provider_wire(wire_payload)
-        verify_wire_images(manifest, image)
         parts: list[types.Part] = []
         for item in image:
             part = _part(item)
             if part is not None:
                 parts.append(part)
         ref_count = len(parts)
-        contents = exact_vertex_contents(manifest, parts)
+        page_payload = optional_params.get("canary_complete_page_request")
+        if page_payload:
+            manifest = _parse_complete_page_request(page_payload)
+            _verify_complete_page_images(manifest, image)
+            if prompt != manifest["prompt"]:
+                raise ValueError("complete-page prompt differs from frozen request")
+            if _vertex_model(model) != manifest["model"]:
+                raise ValueError("complete-page model differs from frozen request")
+            expected_aspect = (
+                manifest["output_width"] / manifest["output_height"]
+            )
+            if (
+                requested_aspect is None
+                or abs((requested_aspect / expected_aspect) - 1.0) > 0.001
+            ):
+                raise ValueError("complete-page geometry differs from frozen request")
+            idempotency_key = optional_params.get("canary_idempotency_key")
+            if idempotency_key != manifest["request_sha256"]:
+                raise ValueError(
+                    "complete-page idempotency key differs from frozen request"
+                )
+            contents = _exact_complete_page_contents(manifest, parts)
+        elif wire_payload:
+            from litellm_handlers.provider_wire import (
+                exact_vertex_contents,
+                parse_provider_wire,
+                verify_wire_images,
+            )
+
+            manifest = parse_provider_wire(wire_payload)
+            verify_wire_images(manifest, image)
+            contents = exact_vertex_contents(manifest, parts)
+        else:
+            raise ValueError(
+                "Vertex image requests require a frozen wire or complete-page request"
+            )
         client = genai.Client(vertexai=True, project=project, location=location)
         try:
             config_kwargs: dict[str, Any] = {
@@ -307,6 +334,81 @@ class VertexMultimodalLLM(CustomLLM):
         model_response._hidden_params["actual_height"] = actual_height
         model_response._hidden_params["requested_aspect"] = requested_aspect
         return model_response
+
+
+def _parse_complete_page_request(payload: str) -> dict[str, Any]:
+    """Validate the frozen application request without importing application code."""
+
+    try:
+        manifest = json.loads(payload)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid complete-page request JSON") from exc
+    supplied = manifest.get("request_sha256")
+    projection = dict(manifest)
+    projection.pop("request_sha256", None)
+    actual = hashlib.sha256(
+        json.dumps(
+            projection,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    if supplied != actual:
+        raise ValueError("complete-page request identity mismatch")
+    if manifest.get("artifact_kind") != "complete_page":
+        raise ValueError("Vertex production request must be a complete page")
+    references = manifest.get("references")
+    if not isinstance(references, list):
+        raise ValueError("complete-page references must be an ordered list")
+    if [reference.get("order") for reference in references] != list(
+        range(1, len(references) + 1)
+    ):
+        raise ValueError("complete-page reference order is invalid")
+    return manifest
+
+
+def _verify_complete_page_images(
+    manifest: dict[str, Any],
+    images: list[Any],
+) -> None:
+    references = manifest["references"]
+    if len(references) != len(images):
+        raise ValueError("complete-page reference count mismatch")
+    for reference, image in zip(references, images, strict=True):
+        data = _read_bytes(image)
+        if data is None:
+            raise ValueError(
+                f"complete-page reference {reference['order']} is unreadable"
+            )
+        if hashlib.sha256(data).hexdigest() != reference["content_sha256"]:
+            raise ValueError(
+                f"complete-page reference {reference['order']} digest mismatch"
+            )
+
+
+def _exact_complete_page_contents(
+    manifest: dict[str, Any],
+    image_parts: list[Any],
+) -> list[Any]:
+    references = manifest["references"]
+    if len(references) != len(image_parts):
+        raise ValueError("complete-page reference count mismatch")
+    contents: list[Any] = []
+    for reference, part in zip(references, image_parts, strict=True):
+        contents.extend(
+            (
+                part,
+                (
+                    f"Reference {reference['order']} for entity "
+                    f"{reference['entity_id']!r}; appearance_state_id="
+                    f"{reference.get('appearance_state_id')!r}; visual_anchor="
+                    f"{reference['visual_anchor']}"
+                ),
+            )
+        )
+    contents.append(manifest["prompt"])
+    return contents
 
 
 _ROLE_PREFIX = "__role_"

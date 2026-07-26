@@ -36,6 +36,7 @@ from novel_to_comic.models.draw import (
     PageReference,
     PageRenderRevision,
     RenderAnalysis,
+    RetryProvenance,
 )
 from novel_to_comic.models.finish import (
     FinishPreflight,
@@ -778,7 +779,7 @@ def test_validation_has_only_blocking_or_editorial_categories_and_no_score() -> 
 def _page_profile() -> PageCapabilityProfile:
     return PageCapabilityProfile(
         id="nano_banana_pro_page_v1",
-        provider="vertex",
+        provider="vertex-multimodal",
         model="gemini-3-pro-image-preview",
         exact_visible_lettering=True,
         max_image_references=8,
@@ -795,7 +796,11 @@ def _page_profile() -> PageCapabilityProfile:
 def _page_request() -> FrozenPageGenerationRequest:
     return FrozenPageGenerationRequest.compile(
         page=_comic_page(),
-        profile=_page_profile(),
+        edition=BookEdition(
+            revision=1,
+            id="edition_001",
+            capability_profile=_page_profile(),
+        ),
         prompt="Render one complete comic page.",
         references=[
             PageReference(
@@ -804,8 +809,10 @@ def _page_request() -> FrozenPageGenerationRequest:
                 media_type="image/png",
                 content_sha256="a" * 64,
                 visual_anchor="weathered face; left eyebrow scar",
+                entity_id="character_witness",
             )
         ],
+        retry=RetryProvenance(attempt=1),
     )
 
 

@@ -16,6 +16,7 @@ from novel_to_comic.models.adaptation import AdaptationBrief, BookAdaptation
 from novel_to_comic.models.draw import (
     BookEdition,
     FrozenPageGenerationRequest,
+    PageGenerationProvenance,
     PageIssue,
     RenderAnalysis,
 )
@@ -92,6 +93,15 @@ class TargetArtifacts:
             / f"analysis_{render_revision:03d}.json"
         )
 
+    def provenance_path(self, page_number: int, render_revision: int) -> Path:
+        return (
+            self.project_dir
+            / "draw"
+            / "pages"
+            / f"page_{page_number:03d}"
+            / f"provenance_{render_revision:03d}.json"
+        )
+
     def issues_path(self, page_number: int) -> Path:
         return (
             self.project_dir
@@ -164,7 +174,7 @@ class TargetArtifacts:
         return self._read_model("book_plan", self.plan_path, BookPlan)
 
     def write_book_edition(self, edition: BookEdition) -> None:
-        self._write_model(self.book_edition_path, edition)
+        self._write_immutable_model(self.book_edition_path, edition, BookEdition)
 
     def read_book_edition(self) -> BookEdition:
         return self._read_model("book_edition", self.book_edition_path, BookEdition)
@@ -175,9 +185,10 @@ class TargetArtifacts:
         *,
         request_revision: int,
     ) -> None:
-        self._write_model(
+        self._write_immutable_model(
             self.request_path(request.page_number, request_revision),
             request,
+            FrozenPageGenerationRequest,
         )
 
     def read_request(
@@ -198,6 +209,10 @@ class TargetArtifacts:
         if not image:
             raise ValueError("page render image cannot be empty")
         path = self.render_path(page_number, render_revision)
+        if path.exists():
+            if path.read_bytes() != image:
+                raise ValueError("immutable page render cannot be overwritten")
+            return
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(image)
 
@@ -206,6 +221,25 @@ class TargetArtifacts:
         if not path.exists():
             raise ArtifactMissing("page_render", path)
         return path.read_bytes()
+
+    def write_provenance(self, provenance: PageGenerationProvenance) -> None:
+        path = self.provenance_path(
+            provenance.render.page_number,
+            provenance.render.revision,
+        )
+        self._write_immutable_model(path, provenance, PageGenerationProvenance)
+
+    def read_provenance(
+        self,
+        page_number: int,
+        render_revision: int,
+    ) -> PageGenerationProvenance:
+        path = self.provenance_path(page_number, render_revision)
+        return self._read_model(
+            "page_generation_provenance",
+            path,
+            PageGenerationProvenance,
+        )
 
     def write_analysis(self, analysis: RenderAnalysis) -> None:
         path = self.analysis_path(analysis.page_number, analysis.render_revision)
@@ -242,6 +276,20 @@ class TargetArtifacts:
     def _write_model(path: Path, artifact: BaseModel) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(artifact.model_dump_json(indent=2))
+
+    @classmethod
+    def _write_immutable_model(
+        cls,
+        path: Path,
+        artifact: BaseModel,
+        model_type: type[ArtifactModel],
+    ) -> None:
+        if path.exists():
+            current = model_type.model_validate_json(path.read_text())
+            if current != artifact:
+                raise ValueError(f"immutable artifact cannot be overwritten: {path}")
+            return
+        cls._write_model(path, artifact)
 
     @staticmethod
     def _read_model(
