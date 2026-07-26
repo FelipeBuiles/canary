@@ -1,0 +1,303 @@
+{
+  "adaptation": {
+    "revision": 1,
+    "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "brief_revision": 1,
+    "brief_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "treatment": {
+      "causal_spine": [
+        "The Alert approaches the risen city.",
+        "Cthulhu rises above the yacht.",
+        "Johansen escapes.",
+        "The immediate danger recedes.",
+        "The encounter permanently changes Johansen."
+      ],
+      "reveals": ["Cthulhu rises above the yacht."],
+      "reactions": ["Johansen orders the Alert astern."],
+      "consequences": ["The Alert escapes into open water."],
+      "aftermath": ["Johansen never recovers from the encounter."],
+      "relative_emphasis": [
+        "Give approach, Peak, escape, Release, and aftermath distinct page weight."
+      ]
+    },
+    "beats": [
+      {
+        "id": "beat_approach",
+        "order": 1,
+        "summary": "The Alert creeps toward the black reef.",
+        "narrative_function": "prolongation",
+        "story_functions": ["causal_event"],
+        "source_unit_ids": ["source_000001"],
+        "lettering": [
+          {
+            "id": "lettering_approach",
+            "kind": "caption",
+            "text": "The Alert crept toward the black reef.",
+            "source_unit_ids": ["source_000001"]
+          }
+        ]
+      },
+      {
+        "id": "beat_peak",
+        "order": 2,
+        "summary": "Cthulhu rises above the yacht.",
+        "narrative_function": "peak",
+        "story_functions": ["reveal"],
+        "source_unit_ids": ["source_000002"],
+        "lettering": [
+          {
+            "id": "lettering_peak",
+            "kind": "caption",
+            "text": "Then Cthulhu rose above the yacht.",
+            "source_unit_ids": ["source_000002"]
+          }
+        ]
+      },
+      {
+        "id": "beat_escape",
+        "order": 3,
+        "summary": "Johansen orders the Alert astern.",
+        "narrative_function": "initial",
+        "story_functions": ["reaction", "causal_event"],
+        "source_unit_ids": ["source_000003"],
+        "lettering": [
+          {
+            "id": "lettering_escape",
+            "kind": "dialogue",
+            "text": "“Full steam astern!”",
+            "speaker": "Johansen",
+            "source_unit_ids": ["source_000003"]
+          }
+        ]
+      },
+      {
+        "id": "beat_release",
+        "order": 4,
+        "summary": "The Alert reaches open water.",
+        "narrative_function": "release",
+        "story_functions": ["consequence"],
+        "source_unit_ids": ["source_000004"],
+        "lettering": [
+          {
+            "id": "lettering_release",
+            "kind": "caption",
+            "text": "The churned sea swallowed the wake.",
+            "source_unit_ids": ["source_000004"]
+          }
+        ]
+      },
+      {
+        "id": "beat_aftermath",
+        "order": 5,
+        "summary": "Johansen carries the encounter home.",
+        "narrative_function": "release",
+        "story_functions": ["aftermath", "character_turn"],
+        "source_unit_ids": ["source_000005"],
+        "lettering": [
+          {
+            "id": "lettering_aftermath",
+            "kind": "caption",
+            "text": "Johansen never recovered from what he had seen.",
+            "source_unit_ids": ["source_000005"]
+          }
+        ]
+      }
+    ],
+    "ledger": [
+      {
+        "source_unit_id": "source_000001",
+        "disposition": "caption",
+        "adapted_beat_ids": ["beat_approach"],
+        "preserved_function": "The approach remains explicit."
+      },
+      {
+        "source_unit_id": "source_000002",
+        "disposition": "caption",
+        "adapted_beat_ids": ["beat_peak"],
+        "preserved_function": "The supernatural reveal remains explicit."
+      },
+      {
+        "source_unit_id": "source_000003",
+        "disposition": "dialogue",
+        "adapted_beat_ids": ["beat_escape"],
+        "preserved_function": "Johansen's immediate reaction remains explicit."
+      },
+      {
+        "source_unit_id": "source_000004",
+        "disposition": "caption",
+        "adapted_beat_ids": ["beat_release"],
+        "preserved_function": "The escape consequence remains explicit."
+      },
+      {
+        "source_unit_id": "source_000005",
+        "disposition": "caption",
+        "adapted_beat_ids": ["beat_aftermath"],
+        "preserved_function": "The lasting aftermath remains explicit."
+      }
+    ]
+  },
+  "references": {
+    "references": [
+      {
+        "id": "ref_johansen",
+        "entity_id": "character_johansen",
+        "visual_anchor": "gaunt Norwegian sailor; rain-dark pea coat"
+      },
+      {
+        "id": "ref_cthulhu",
+        "entity_id": "character_cthulhu",
+        "visual_anchor": "mountainous cephalopod entity; vast membranous wings"
+      },
+      {
+        "id": "ref_alert",
+        "entity_id": "location_alert",
+        "visual_anchor": "small steam yacht; black hull; single funnel"
+      }
+    ]
+  },
+  "target_range": {
+    "minimum": 5,
+    "maximum": 5
+  },
+  "plan_response": {
+    "rhythm_summary": "approach → Peak → escape → Release → aftermath",
+    "pages": [
+      {
+        "page_number": 1,
+        "page_turn_role": "setup",
+        "spread_role": "right",
+        "emphasis": "prolongation",
+        "density_intent": "sparse",
+        "rhythm_intent": "approach",
+        "layout_intent": "A low horizon prolongs the yacht's approach.",
+        "content": [
+          {
+            "id": "page_001_content_001",
+            "order": 1,
+            "beat_ids": ["beat_approach"],
+            "visual_intent": "The Alert is dwarfed by the black reef.",
+            "lettering": [
+              {
+                "id": "lettering_approach",
+                "kind": "caption",
+                "text": "The Alert crept toward the black reef.",
+                "source_unit_ids": ["source_000001"]
+              }
+            ],
+            "entity_ids": ["location_alert"]
+          }
+        ],
+        "reading_order": ["page_001_content_001", "lettering_approach"]
+      },
+      {
+        "page_number": 2,
+        "page_turn_role": "reveal",
+        "spread_role": "left",
+        "emphasis": "peak",
+        "density_intent": "sparse",
+        "rhythm_intent": "Peak",
+        "layout_intent": "The revealed scale dominates the page.",
+        "content": [
+          {
+            "id": "page_002_content_001",
+            "order": 1,
+            "beat_ids": ["beat_peak"],
+            "visual_intent": "Cthulhu towers above the yacht.",
+            "lettering": [
+              {
+                "id": "lettering_peak",
+                "kind": "caption",
+                "text": "Then Cthulhu rose above the yacht.",
+                "source_unit_ids": ["source_000002"]
+              }
+            ],
+            "entity_ids": ["character_cthulhu", "location_alert"]
+          }
+        ],
+        "reading_order": ["page_002_content_001", "lettering_peak"]
+      },
+      {
+        "page_number": 3,
+        "page_turn_role": "cliffhanger",
+        "spread_role": "right",
+        "emphasis": "initial",
+        "density_intent": "dense",
+        "rhythm_intent": "escape",
+        "layout_intent": "A sharp directional reversal accelerates the escape.",
+        "content": [
+          {
+            "id": "page_003_content_001",
+            "order": 1,
+            "beat_ids": ["beat_escape"],
+            "visual_intent": "Johansen wheels the Alert away.",
+            "lettering": [
+              {
+                "id": "lettering_escape",
+                "kind": "dialogue",
+                "text": "“Full steam astern!”",
+                "speaker": "Johansen",
+                "source_unit_ids": ["source_000003"]
+              }
+            ],
+            "entity_ids": ["character_johansen", "location_alert"]
+          }
+        ],
+        "reading_order": ["page_003_content_001", "lettering_escape"]
+      },
+      {
+        "page_number": 4,
+        "page_turn_role": "release",
+        "spread_role": "left",
+        "emphasis": "release",
+        "density_intent": "standard",
+        "rhythm_intent": "Release",
+        "layout_intent": "Open water widens around the receding wake.",
+        "content": [
+          {
+            "id": "page_004_content_001",
+            "order": 1,
+            "beat_ids": ["beat_release"],
+            "visual_intent": "The wake disappears into the churned sea.",
+            "lettering": [
+              {
+                "id": "lettering_release",
+                "kind": "caption",
+                "text": "The churned sea swallowed the wake.",
+                "source_unit_ids": ["source_000004"]
+              }
+            ],
+            "entity_ids": ["location_alert"]
+          }
+        ],
+        "reading_order": ["page_004_content_001", "lettering_release"]
+      },
+      {
+        "page_number": 5,
+        "page_turn_role": "transition",
+        "spread_role": "right",
+        "emphasis": "release",
+        "density_intent": "sparse",
+        "rhythm_intent": "aftermath",
+        "layout_intent": "Negative space isolates Johansen after the account.",
+        "content": [
+          {
+            "id": "page_005_content_001",
+            "order": 1,
+            "beat_ids": ["beat_aftermath"],
+            "visual_intent": "Johansen sits alone after returning home.",
+            "lettering": [
+              {
+                "id": "lettering_aftermath",
+                "kind": "caption",
+                "text": "Johansen never recovered from what he had seen.",
+                "source_unit_ids": ["source_000005"]
+              }
+            ],
+            "entity_ids": ["character_johansen"]
+          }
+        ],
+        "reading_order": ["page_005_content_001", "lettering_aftermath"]
+      }
+    ]
+  }
+}
