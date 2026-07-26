@@ -8,6 +8,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from novel_to_comic.models.validation import EditorialIssue
+
 
 class RevisionedArtifact(BaseModel):
     """Immutable artifact whose hash changes with any authored content."""
@@ -84,9 +86,15 @@ class NarrativeTreatment(BaseModel):
 
     causal_spine: tuple[str, ...] = Field(min_length=1)
     character_arcs: tuple[str, ...] = ()
+    essential_events: tuple[str, ...] = ()
+    character_turns: tuple[str, ...] = ()
     reveals: tuple[str, ...] = ()
     reactions: tuple[str, ...] = ()
+    consequences: tuple[str, ...] = ()
+    transitions: tuple[str, ...] = ()
     aftermath: tuple[str, ...] = ()
+    motifs: tuple[str, ...] = ()
+    relative_emphasis: tuple[str, ...] = ()
 
 
 class LetteringItem(BaseModel):
@@ -107,7 +115,26 @@ class AppearanceChange(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     entity_id: str = Field(min_length=1)
+    from_state_id: str | None = None
+    to_state_id: str = Field(min_length=1)
     description: str = Field(min_length=1)
+
+
+class ContinuityTransition(BaseModel):
+    """An explicit change needed to follow place, time, knowledge, or emotion."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    dimension: Literal["time", "place", "knowledge", "emotional_state"]
+    from_state: str = Field(min_length=1)
+    to_state: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_change(self) -> "ContinuityTransition":
+        if self.from_state == self.to_state:
+            raise ValueError("continuity transition must change state")
+        return self
 
 
 class AdaptedBeat(BaseModel):
@@ -126,8 +153,22 @@ class AdaptedBeat(BaseModel):
         "release",
         "transition",
     ]
+    story_functions: tuple[
+        Literal[
+            "causal_event",
+            "reveal",
+            "reaction",
+            "consequence",
+            "transition",
+            "aftermath",
+            "character_turn",
+        ],
+        ...,
+    ] = ()
+    brief_requirements: tuple[str, ...] = ()
     source_unit_ids: tuple[str, ...] = Field(min_length=1)
     lettering: tuple[LetteringItem, ...] = ()
+    transitions: tuple[ContinuityTransition, ...] = ()
     appearance_changes: tuple[AppearanceChange, ...] = ()
 
 
@@ -155,7 +196,17 @@ class AdaptationLedgerEntry(BaseModel):
         if self.disposition in {"compressed_into", "intentionally_omitted"}:
             if not self.reason:
                 raise ValueError(f"{self.disposition} requires a reason")
-        elif not self.adapted_beat_ids:
+        if self.disposition == "compressed_into" and not self.adapted_beat_ids:
+            raise ValueError("compressed_into requires an adapted-beat destination")
+        if self.disposition == "intentionally_omitted" and self.adapted_beat_ids:
+            raise ValueError(
+                "intentionally_omitted cannot have an adapted-beat destination"
+            )
+        if (
+            self.disposition
+            not in {"compressed_into", "intentionally_omitted"}
+            and not self.adapted_beat_ids
+        ):
             raise ValueError(f"{self.disposition} requires an adapted beat")
         return self
 
@@ -169,6 +220,7 @@ class BookAdaptation(RevisionedArtifact):
     treatment: NarrativeTreatment
     beats: tuple[AdaptedBeat, ...] = Field(min_length=1)
     ledger: tuple[AdaptationLedgerEntry, ...] = Field(min_length=1)
+    editorial_issues: tuple[EditorialIssue, ...] = ()
 
     @model_validator(mode="after")
     def _validate_book(self) -> "BookAdaptation":
