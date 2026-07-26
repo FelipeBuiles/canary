@@ -269,7 +269,7 @@ class TestEnqueueCreditedJob:
 
         # Setup initial state with a failed item
         state = create_initial_state("proj", "novel.txt")
-        state.stages["draw"].items_failed = ["scene_001/panel_001"]
+        state.stages["draw"].items_failed = ["page_001"]
         state.stages["draw"].items_done = 5
         state.stages["draw"].items_total = 10
         save_state(state, tmp_path)
@@ -292,9 +292,9 @@ class TestEnqueueCreditedJob:
                 project_id="p1",
                 project_dir=tmp_path,
                 stage="draw",
-                kind="panel_regen",
-                label="panel",
-                payload={"scene_id": "scene_001", "panel_number": 1},
+                kind="complete_page_draw",
+                label="page",
+                payload={"page_number": 1},
                 work=_work,
                 debit_description="regen",
             )
@@ -303,5 +303,5 @@ class TestEnqueueCreditedJob:
 
         # Verify the item has been removed from items_failed in state.json
         loaded_state = load_state(tmp_path)
-        assert "scene_001/panel_001" not in loaded_state.stages["draw"].items_failed
+        assert "page_001" not in loaded_state.stages["draw"].items_failed
         assert loaded_state.stages["draw"].items_done == 6

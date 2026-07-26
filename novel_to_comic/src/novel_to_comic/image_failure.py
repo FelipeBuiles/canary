@@ -1,4 +1,4 @@
-"""Shared classification and user-facing copy for panel image failures."""
+"""Shared classification and user-facing copy for image-generation failures."""
 
 from __future__ import annotations
 

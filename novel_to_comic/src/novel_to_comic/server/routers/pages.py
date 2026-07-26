@@ -1,997 +1,337 @@
-"""ComicPage JSON CRUD, HTML preview, and project file serving."""
+"""Complete-page Draw and review-by-exception routes."""
 
-import hashlib
-import json
-import mimetypes
-import re
-from datetime import datetime, timezone
-from pathlib import Path
+from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
-from pydantic import ValidationError
+import uuid
 
-from novel_to_comic import artifacts
-from novel_to_comic.config import Config, LANGUAGE_NAMES, mock_mode_active, save_config
-from novel_to_comic.ai import ai_request_context
-from novel_to_comic.assembly.html_renderer import build_page_html, THEMES, FONT_PAIRS
-from novel_to_comic.layout_planning import (
-    apply_page_layout_preset,
-    apply_panel_override,
-    dump_structural_response,
-    load_layout_plan,
-    persist_projected_pages,
-    repaginate_layout_plan,
-    reorder_planned_pages,
-    save_layout_plan,
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+
+from novel_to_comic.models.draw import PageIssue, RetryProvenance
+from novel_to_comic.page_drawing import (
+    GoogleVertexCompletePageTransport,
+    VertexCompletePageAdapter,
+    compile_page_generation_request,
+    enqueue_complete_page_draw,
 )
-from novel_to_comic.models.comic_page import (
-    BUBBLE_PRESETS,
-    Bubble,
-    ComicPage,
-    Sfx,
-    normalize_sfx_text,
+from novel_to_comic.page_review import (
+    accept_editorial_page_issue,
+    build_correction_request,
+    record_page_issue,
+    summarize_page_issues,
 )
-from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.models.lettering import LetteringStyle
-from novel_to_comic.assembly.lettering_style import load_lettering_style, save_lettering_style
+from novel_to_comic.stages.s5_plan import (
+    approved_reference_files,
+    approved_visual_inventory,
+)
+from novel_to_comic.state import StageStatus, complete_stage, load_state, save_state
+from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 
 from ..auth import get_current_user
-from ..credits import assert_sufficient_credits, debit_model_usage
-from ..db import get_db
-from ..deps import get_project
+from ..deps import get_project, project_key
+from ..generation_jobs import generation_job_payload
+
 
 router = APIRouter()
 
 
-def _pages_dir(project_dir: Path) -> Path:
-    return artifacts.compose_pages_dir(project_dir)
+class PageIssueCreate(BaseModel):
+    issue_type: str
+    classification: str = "editorial_issue"
+    correction_kind: str = "render_fidelity"
+    correction_owner: str = "draw"
+    evidence: tuple[str, ...]
+    requested_correction: str
+    source_unit_ids: tuple[str, ...] = ()
+    adapted_beat_ids: tuple[str, ...] = ()
+    lettering_item_ids: tuple[str, ...] = ()
+    detected_region_ids: tuple[str, ...] = ()
+    entity_ids: tuple[str, ...] = ()
+    appearance_state_ids: tuple[str, ...] = ()
 
 
-def _load_page(project_dir: Path, page_num: int) -> ComicPage:
-    if not artifacts.compose_page_path(project_dir, page_num).exists():
-        raise HTTPException(404, f"Page {page_num} not found")
-    return artifacts.read_compose_page(project_dir, page_num)
-
-
-def _load_story_bible(project_dir: Path) -> StoryBible:
-    if not artifacts.story_bible_path(project_dir).exists():
-        raise HTTPException(404, "Story bible not found")
-    return artifacts.read_story_bible(project_dir)
-
-
-def _project_structural_pages(project_dir: Path, config: Config) -> list[ComicPage]:
-    story_bible = _load_story_bible(project_dir)
-    return persist_projected_pages(project_dir, story_bible)
-
-
-STYLE_VAR_ALLOWLIST = {
-    "--panel-border",
-    "--panel-border-width",
-    "--panel-bg",
-    "--caption-bg",
-    "--caption-border",
-    "--caption-color",
-    "--caption-font-size",
-    "--bubble-bg",
-    "--bubble-border",
-    "--bubble-border-width",
-    "--bubble-font-size",
-    "--bubble-padding",
-    "--bubble-max-width",
-    "--bubble-center-width",
-    "--speaker-color",
-    "--speaker-font-size",
-    "--sfx-color",
-    "--sfx-shadow",
-    "--sfx-font-size",
-    "--page-num-color",
-    "--page-num-font-size",
-}
-
-
-def _sanitize_style_vars(raw: dict) -> dict[str, str]:
-    color_keys = {
-        "--panel-border",
-        "--panel-bg",
-        "--caption-bg",
-        "--caption-border",
-        "--caption-color",
-        "--bubble-bg",
-        "--bubble-border",
-        "--speaker-color",
-        "--sfx-color",
-        "--sfx-shadow",
-        "--page-num-color",
-    }
-    px_ranges = {
-        "--panel-border-width": (1, 12),
-        "--caption-font-size": (14, 160),
-        "--bubble-border-width": (1, 10),
-        "--bubble-font-size": (16, 200),
-        "--speaker-font-size": (8, 60),
-        "--sfx-font-size": (20, 260),
-        "--page-num-font-size": (10, 80),
-    }
-    pct_ranges = {
-        "--bubble-max-width": (38, 95),
-        "--bubble-center-width": (45, 98),
-    }
-
-    def _fmt_num(value: float) -> str:
-        return str(int(value)) if float(value).is_integer() else f"{value:.2f}".rstrip("0").rstrip(".")
-
-    def _parse_px(text: str) -> float | None:
-        match = re.fullmatch(r"(\d+(?:\.\d+)?)px", text)
-        if not match:
-            return None
-        return float(match.group(1))
-
-    def _parse_pct(text: str) -> float | None:
-        match = re.fullmatch(r"(\d+(?:\.\d+)?)%", text)
-        if not match:
-            return None
-        return float(match.group(1))
-
-    def _is_color(text: str) -> bool:
-        return bool(re.fullmatch(r"(?:#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}|transparent)", text))
-
-    def _sanitize_value(key: str, text: str) -> str | None:
-        if key in color_keys:
-            return text if _is_color(text) else None
-        if key in px_ranges:
-            n = _parse_px(text)
-            if n is None:
-                return None
-            lo, hi = px_ranges[key]
-            if n < lo or n > hi:
-                return None
-            return f"{_fmt_num(n)}px"
-        if key in pct_ranges:
-            n = _parse_pct(text)
-            if n is None:
-                return None
-            lo, hi = pct_ranges[key]
-            if n < lo or n > hi:
-                return None
-            return f"{_fmt_num(n)}%"
-        if key == "--bubble-padding":
-            parts = text.split()
-            if len(parts) not in (1, 2):
-                return None
-            parsed: list[float] = []
-            for part in parts:
-                n = _parse_px(part)
-                if n is None or n < 3 or n > 28:
-                    return None
-                parsed.append(n)
-            return " ".join(f"{_fmt_num(n)}px" for n in parsed)
+def _latest_provenance(target: TargetArtifacts, page_number: int):
+    revisions = target.provenance_revisions(page_number)
+    if not revisions:
         return None
-
-    clean: dict[str, str] = {}
-    for key, value in raw.items():
-        if key not in STYLE_VAR_ALLOWLIST:
-            continue
-        if not isinstance(value, str):
-            continue
-        value = value.strip()
-        if not value or len(value) > 96:
-            continue
-        if any(token in value.lower() for token in ("url(", "expression(", "javascript:", "</")):
-            continue
-        sanitized = _sanitize_value(key, value)
-        if sanitized is not None:
-            clean[key] = sanitized
-    return clean
+    return target.read_provenance(page_number, revisions[-1])
 
 
-FONT_PAIR_MOODS = {
-    "golden-age": "classic four-color comic - punchy display + clean comic lettering",
-    "manga": "manga / anime ink - bold display + rounded gothic lettering",
-    "horror": "gritty horror - dripping display + typewriter lettering",
-    "painterly": "painterly / literary - brush display + elegant serif lettering",
-    "kids": "friendly all-ages - rounded display + soft rounded lettering",
-    "sci-fi": "technical sci-fi - angular geometric display + techy lettering",
-}
-
-PRESET_LABELS = {
-    "default": ("Default", "Clean classic comic lettering."),
-    "noir": ("Noir", "High-contrast monochrome - pale captions on dark ink."),
-    "manga": ("Manga", "Crisp black-and-white manga lettering."),
-    "vintage": ("Vintage", "Warm aged-paper Golden-Age treatment."),
-    "painted": ("Painted", "Soft painterly tones for illustrated art."),
-}
-
-PRESET_FONT_PAIR = {
-    "default": "golden-age",
-    "noir": "golden-age",
-    "manga": "manga",
-    "vintage": "golden-age",
-    "painted": "painterly",
-}
-
-
-def _style_hash(template: str) -> str:
-    return hashlib.sha256((template or "").encode("utf-8")).hexdigest()[:16]
-
-
-def _fallback_theme_and_pair(style_template: str) -> tuple[str, str]:
-    """Keyword map from an image style to a (theme, font_pair) fallback."""
-    low = (style_template or "").lower()
-    if any(w in low for w in ("noir", "monochrome", "black and white", "grayscale", "shadow")):
-        return "noir", "golden-age"
-    if any(w in low for w in ("horror", "gothic", "grim", "eerie", "macabre", "creepy")):
-        return "noir", "horror"
-    if any(w in low for w in ("manga", "anime", "shonen", "shojo", "ink", "screentone", "japanese")):
-        return "manga", "manga"
-    if any(w in low for w in ("vintage", "retro", "golden age", "silver age", "risograph", "poster", "pulp")):
-        return "vintage", "golden-age"
-    if any(w in low for w in ("watercolor", "painted", "painterly", "gouache", "oil", "pastel")):
-        return "painted", "painterly"
-    if any(w in low for w in ("kids", "children", "cartoon", "cute", "whimsical", "all-ages")):
-        return "default", "kids"
-    if any(w in low for w in ("sci-fi", "scifi", "cyberpunk", "futuristic", "space", "mecha", "neon")):
-        return "default", "sci-fi"
-    return "default", "golden-age"
-
-
-async def _generate_lettering_style(config: Config, *, reroll: bool = False) -> tuple[dict, object | None]:
-    """Ask the model for a base theme, a curated font pair, and CSS-var overrides
-    that match the image-generation style. Returns (fields, usage)."""
-    from novel_to_comic.clients import text
-
-    fb_theme, fb_pair = _fallback_theme_and_pair(config.style_template)
-
-    system = (
-        "You are a comic book lettering and production designer. Given an image "
-        "generation style, choose a base theme, a font pair, and CSS custom property "
-        "values for panel borders, narration captions, speech bubbles, thought "
-        "bubbles, SFX, and page numbers. Return JSON only. Use readable lettering "
-        "with strong contrast. Font sizes are optional and already tuned for a "
-        "hi-res canvas — only override them to nudge legibility (e.g. bigger SFX), "
-        "and keep values within the documented ranges. The font pair controls type "
-        "and must not be changed. Do not use url(), external assets, gradients, or "
-        "CSS functions except simple px/% values."
-    )
-    pairs = "\n".join(f"- {k}: {v}" for k, v in FONT_PAIR_MOODS.items())
-    user = (
-        f"Image generation style:\n{config.style_template}\n\n"
-        f"Choose theme (one of): {', '.join(THEMES)}\n"
-        f"Choose font_pair (one of):\n{pairs}\n\n"
-        "Return an object with: label (short), rationale (one sentence on why it "
-        "fits the art), theme, font_pair, and a vars object. The vars object may "
-        "include only these keys:\n"
-        f"{', '.join(sorted(STYLE_VAR_ALLOWLIST))}\n\n"
-        'Example: {"label":"Noir Lettering","rationale":"Pale captions read against '
-        'heavy blacks.","theme":"noir","font_pair":"golden-age","vars":'
-        '{"--panel-border":"#E6E6E6","--bubble-bg":"#F2F2F2"}}'
-    )
+def _issues(target: TargetArtifacts, page_number: int):
     try:
-        api_result = await text.generate_json(
-            config=config,
-            model=config.effective_prompt_model(),
-            system_prompt=system,
-            user_content=user,
-            temperature=0.85 if reroll else 0.45,
-            max_output_tokens=4096,
-            feature="compose.lettering_style",
-        )
-        result = api_result.value
-        usage = api_result.usage
-    except Exception:
-        return {
-            "theme": fb_theme,
-            "font_pair": fb_pair,
-            "vars": {},
-            "label": "Auto Lettering",
-            "rationale": "Tuned to your selected style.",
-            "source": "fallback",
-        }, None
-
-    if not isinstance(result, dict):
-        result = {}
-    theme = result.get("theme")
-    font_pair = result.get("font_pair")
-    raw_vars = result.get("vars")
-    return {
-        "theme": theme if theme in THEMES else fb_theme,
-        "font_pair": font_pair if font_pair in FONT_PAIRS else fb_pair,
-        "vars": _sanitize_style_vars(raw_vars if isinstance(raw_vars, dict) else {}),
-        "label": str(result.get("label") or "Matched Lettering")[:80],
-        "rationale": str(result.get("rationale") or "")[:240],
-        "source": "ai",
-    }, usage
+        return target.read_issues(page_number)
+    except ArtifactMissing:
+        return ()
 
 
-async def _translate_text_items(config: Config, items: list[dict]) -> tuple[dict[str, str], object | None]:
-    """Translate editable lettering text items and return {id: translated_text}."""
-    if not items:
-        return {}, None
-
-    from novel_to_comic.clients import text
-
-    system = (
-        "You are a literary comic localization editor. Translate only user-facing comic lettering "
-        f"into natural {config.language_name()}. Preserve tone, character voice, punctuation intent, "
-        "speaker names, IDs, JSON keys, and item order. Do not summarize, omit, or add dialogue. "
-        "Return JSON only."
-    )
-    user = (
-        f"Target language: {config.language_name()} ({config.language_code()})\n\n"
-        "Translate each item's text field. Return exactly this shape:\n"
-        '{"items":[{"id":"same id","text":"translated text"}]}\n\n'
-        f"Items:\n{json.dumps(items, ensure_ascii=False)}"
-    )
-    api_result = await text.generate_json(
-        config=config,
-        model=config.effective_prompt_model(),
-        system_prompt=system,
-        user_content=user,
-        temperature=0.2,
-        max_output_tokens=6000,
-        feature="compose.translate_text",
-    )
-    result = api_result.value
-    if isinstance(result, dict):
-        raw_items = result.get("items", [])
-    elif isinstance(result, list):
-        raw_items = result
-    else:
-        raw_items = []
-    translations: dict[str, str] = {}
-    for item in raw_items:
-        if not isinstance(item, dict):
-            continue
-        item_id = str(item.get("id", ""))
-        item_text = item.get("text")
-        if item_id and isinstance(item_text, str):
-            translations[item_id] = item_text
-    return translations, api_result.usage
-
-
-# ── Pages CRUD ───────────────────────────────────────────────────────────────
-
-
-@router.get("/pages/")
-def list_pages(project=Depends(get_project)):
-    project_dir, config, state = project
-    if not _pages_dir(project_dir).exists():
-        return []
-    return _page_summaries(project_dir)
-
-
-def _page_summaries(project_dir: Path) -> list[dict]:
-    pd = _pages_dir(project_dir)
-    pages = []
-    for f in sorted(pd.glob("page_*.json")):
-        cp = ComicPage.model_validate_json(f.read_text())
-        pages.append({
-            "page_number": cp.page_number,
-            "panel_count": len(cp.panels),
-            "layout": cp.layout,
-        })
-    return pages
-
-
-# ── Fixed-path routes ─────────────────────────────────────────────────────────
-# These MUST be registered before the dynamic /pages/{page_num} routes below:
-# FastAPI matches in registration order, and /pages/{page_num} would otherwise
-# swallow them and 422 on the int conversion.
-
-
-@router.get("/pages/bubble-presets")
-def get_bubble_presets(project=Depends(get_project)):
-    """Return the current bubble preset map."""
-    return BUBBLE_PRESETS
-
-
-# ── Per-page routes ───────────────────────────────────────────────────────────
-
-
-@router.get("/pages/{page_num}")
-def get_page(page_num: int, project=Depends(get_project)):
-    project_dir, config, state = project
-    cp = _load_page(project_dir, page_num)
-    return cp.model_dump()
-
-
-_VALID_LAYOUTS = {"1", "2", "3", "4", "5", "6", "many"}
-
-
-def _next_bubble_id(panel) -> str:
-    """Generate a bubble ID that cannot collide with existing ones.
-
-    ``len(bubbles) + 1`` collides after deletions (b1,b3 + new "b3"), so scan
-    for the highest existing ``-b<N>`` suffix instead.
-    """
-    max_idx = 0
-    for b in panel.bubbles:
-        m = re.search(r"-b(\d+)$", b.id)
-        if m:
-            max_idx = max(max_idx, int(m.group(1)))
-    return f"{panel.id}-b{max_idx + 1}"
-
-
-@router.patch("/pages/{page_num}")
-def update_page(page_num: int, body: dict, project=Depends(get_project)):
-    project_dir, config, state = project
-    cp = _load_page(project_dir, page_num)
-
-    try:
-        _apply_page_patch(cp, body)
-    except ValidationError as exc:
-        # Field assignments are validated (validate_assignment) so a bad patch
-        # is rejected here instead of being written to disk, where it would
-        # make the page JSON permanently unloadable.
-        raise HTTPException(422, str(exc)) from exc
-
-    artifacts.write_compose_page(project_dir, page_num, cp)
-    return cp.model_dump()
-
-
-def _apply_page_patch(cp: ComicPage, body: dict) -> None:
-    # Apply top-level fields
-    if "layout" in body:
-        if str(body["layout"]) not in _VALID_LAYOUTS:
-            raise HTTPException(400, f"Invalid layout. Must be one of: {', '.join(sorted(_VALID_LAYOUTS))}")
-        cp.layout = str(body["layout"])
-
-    # Apply per-panel bubble/sfx updates
-    if "panels" in body:
-        panel_map = {p.id: p for p in cp.panels}
-        for panel_patch in body["panels"]:
-            panel = panel_map.get(panel_patch.get("id", ""))
-            if not panel:
-                continue
-            if "image_offset_x" in panel_patch:
-                panel.image_offset_x = panel_patch["image_offset_x"]
-            if "image_offset_y" in panel_patch:
-                panel.image_offset_y = panel_patch["image_offset_y"]
-            if "image_scale" in panel_patch:
-                panel.image_scale = panel_patch["image_scale"]
-
-            # ── Remove bubbles ──
-            remove_ids = panel_patch.get("remove_bubble_ids", [])
-            if remove_ids:
-                panel.bubbles = [b for b in panel.bubbles if b.id not in remove_ids]
-
-            # ── Update or add bubbles ──
-            if "bubbles" in panel_patch:
-                bubble_map = {b.id: b for b in panel.bubbles}
-                for bp in panel_patch["bubbles"]:
-                    bubble = bubble_map.get(bp.get("id", ""))
-                    if bubble:
-                        for field in (
-                            "x", "y", "width", "side", "text", "type",
-                            "tail_x", "tail_y", "tail_direction",
-                            "full_width",
-                            "font_family", "font_size", "font_color",
-                            "fill_color", "border_color", "border_width",
-                        ):
-                            if field in bp:
-                                setattr(bubble, field, bp[field])
-                    else:
-                        # New bubble — generate a non-colliding stable ID
-                        new_id = bp.get("id", "")
-                        if not new_id or new_id.startswith("new-"):
-                            new_id = _next_bubble_id(panel)
-                        panel.bubbles.append(Bubble(
-                            id=new_id,
-                            type=bp.get("type", "speech"),
-                            text=bp.get("text", ""),
-                            side=bp.get("side", "left"),
-                            font_family=bp.get("font_family"),
-                            font_size=bp.get("font_size"),
-                            font_color=bp.get("font_color"),
-                            fill_color=bp.get("fill_color"),
-                            border_color=bp.get("border_color"),
-                            border_width=bp.get("border_width"),
-                        ))
-
-            # ── Reorder bubbles ──
-            if "bubble_order" in panel_patch:
-                order = panel_patch["bubble_order"]
-                id_to_bubble = {b.id: b for b in panel.bubbles}
-                ordered = [id_to_bubble[bid] for bid in order if bid in id_to_bubble]
-                remaining = [b for b in panel.bubbles if b.id not in set(order)]
-                panel.bubbles = ordered + remaining
-
-            # ── Remove SFX ──
-            # remove_sfx: true            → clear all SFX on the panel
-            # remove_sfx: <int index>     → remove a single SFX by index
-            if "remove_sfx" in panel_patch:
-                target = panel_patch["remove_sfx"]
-                if target is True:
-                    panel.sfx = []
-                elif isinstance(target, int) and 0 <= target < len(panel.sfx):
-                    panel.sfx.pop(target)
-
-            # ── Update or create SFX ──
-            # sfx: { ...fields }                → update SFX at sfx_index (default 0),
-            #                                     create one if list is empty
-            # sfx: [ {...}, {...} ]             → replace whole list
-            elif "sfx" in panel_patch:
-                sfx_data = panel_patch["sfx"]
-                if isinstance(sfx_data, list):
-                    panel.sfx = [Sfx.model_validate(item) for item in sfx_data]
-                else:
-                    idx = panel_patch.get("sfx_index", 0)
-                    if 0 <= idx < len(panel.sfx):
-                        target_sfx = panel.sfx[idx]
-                        for field in ("x", "y", "rotation", "font_size", "text", "kind", "intensity", "anchor"):
-                            if field in sfx_data:
-                                value = sfx_data[field]
-                                if field == "text":
-                                    value = normalize_sfx_text(value) or value
-                                setattr(target_sfx, field, value)
-                    else:
-                        sfx_text = normalize_sfx_text(sfx_data.get("text")) or "SFX!"
-                        new_sfx = Sfx.model_validate({**sfx_data, "text": sfx_text})
-                        panel.sfx.append(new_sfx)
-
-
-@router.get("/lettering-style")
-def get_lettering_style(project=Depends(get_project)):
-    """Return the project-level lettering style (golden-age default if unset)."""
-    project_dir, config, state = project
-    return load_lettering_style(project_dir).model_dump()
-
-
-@router.post("/lettering-style/generate")
-async def generate_lettering_style(
-    project_id: str,
-    body: dict | None = None,
-    project=Depends(get_project),
-    user_id: str = Depends(get_current_user),
+def _draw_success_callback(
+    request: Request,
+    *,
+    pkey: str,
+    project_dir,
 ):
-    """Auto-match lettering to the active image style. Cached by style-template
-    hash; re-selecting the same style is free unless reroll is set."""
-    project_dir, config, state = project
-    reroll = bool((body or {}).get("reroll"))
-    cur_hash = _style_hash(config.style_template)
-    existing = load_lettering_style(project_dir)
-    if (
-        not reroll
-        and existing.mode == "auto"
-        and existing.source == "ai"
-        and existing.style_template_hash == cur_hash
-    ):
-        return existing.model_dump()
-
-    # Credit pre-check: one short LLM call (debited on success below). Floor at
-    # 1 credit so a zero-balance user is blocked before the call is made.
-    assert_sufficient_credits(
-        get_db(), user_id, 0 if mock_mode_active(config) else 1,
-        action="lettering_style_generate",
-    )
-
-    with ai_request_context(
-        user_id=user_id,
-        project_id=project_id,
-        project_name=project_dir.name,
-        workspace_id=str(project_dir.parent),
-        stage="style",
-    ):
-        gen, usage = await _generate_lettering_style(config, reroll=reroll)
-    if usage:
-        debit_model_usage(
-            get_db(),
-            user_id,
-            project_id,
-            usage,
-            stage="style",
-            description="Model call: lettering style",
+    def callback(provenance) -> None:
+        state = load_state(project_dir)
+        target = TargetArtifacts(project_dir)
+        plan = target.read_plan()
+        rendered = sum(
+            bool(target.provenance_revisions(page.page_number))
+            for page in plan.pages
         )
-
-    ls = LetteringStyle(
-        mode="auto",
-        preset=None,
-        theme=gen["theme"],
-        font_pair=gen["font_pair"],
-        vars=gen["vars"],
-        label=gen["label"],
-        rationale=gen["rationale"],
-        source=gen["source"],
-        style_template_hash=cur_hash,
-        generated_at=datetime.now(timezone.utc).isoformat(),
-    )
-    save_lettering_style(project_dir, ls)
-    return ls.model_dump()
-
-
-@router.put("/lettering-style")
-def set_lettering_style(body: dict, project=Depends(get_project)):
-    """Set lettering intent: a named preset (no AI) or flip back to auto."""
-    project_dir, config, state = project
-    mode = body.get("mode", "auto")
-    if mode == "preset":
-        preset = body.get("preset", "default")
-        if preset not in THEMES:
-            raise HTTPException(400, f"Invalid preset. Must be one of: {', '.join(THEMES.keys())}")
-        label, rationale = PRESET_LABELS.get(preset, (preset.title(), ""))
-        ls = LetteringStyle(
-            mode="preset",
-            preset=preset,
-            theme=preset,
-            font_pair=PRESET_FONT_PAIR.get(preset, "golden-age"),
-            vars={},
-            label=label,
-            rationale=rationale,
-            source="preset",
-            style_template_hash=_style_hash(config.style_template),
-            generated_at=datetime.now(timezone.utc).isoformat(),
-        )
-        save_lettering_style(project_dir, ls)
-        return ls.model_dump()
-
-    existing = load_lettering_style(project_dir)
-    existing.mode = "auto"
-    save_lettering_style(project_dir, existing)
-    return existing.model_dump()
-
-
-@router.post("/pages/apply-bubble-preset")
-def apply_bubble_preset(body: dict, project=Depends(get_project)):
-    """Apply a bubble preset to all bubbles of that type across all pages."""
-    project_dir, config, state = project
-    preset_name = body.get("preset_name", "")
-    if preset_name not in BUBBLE_PRESETS:
-        raise HTTPException(400, f"Invalid preset. Must be one of: {', '.join(BUBBLE_PRESETS.keys())}")
-
-    preset = BUBBLE_PRESETS[preset_name]
-    pd = _pages_dir(project_dir)
-    page_paths = sorted(pd.glob("page_*.json"))
-    if not page_paths:
-        raise HTTPException(404, "No pages found")
-
-    updated_bubbles = 0
-    for path in page_paths:
-        cp = ComicPage.model_validate_json(path.read_text())
-        changed = False
-        for panel in cp.panels:
-            for bubble in panel.bubbles:
-                if bubble.type == preset_name:
-                    for field, value in preset.items():
-                        if field == "border_width":
-                            bubble.border_width = int(value)
-                        elif field == "border_color":
-                            bubble.border_color = value
-                        elif field == "fill_color":
-                            bubble.fill_color = value
-                    changed = True
-                    updated_bubbles += 1
-        if changed:
-            path.write_text(cp.model_dump_json(indent=2))
-
-    return {"status": "ok", "preset_name": preset_name, "updated_bubbles": updated_bubbles}
-
-
-@router.post("/pages/translate-bubbles")
-async def translate_page_bubbles(
-    body: dict,
-    project_id: str,
-    project=Depends(get_project),
-    user_id: str = Depends(get_current_user),
-):
-    """Translate all existing editable bubble/narration text across assembled pages."""
-    project_dir, config, state = project
-    target_language = body.get("target_language")
-    if target_language is not None:
-        if target_language not in LANGUAGE_NAMES:
-            raise HTTPException(400, "target_language must be one of: en, es, fr")
-        config.target_language = target_language
-        save_config(config, project_dir)
-
-    pd = _pages_dir(project_dir)
-    page_paths = sorted(pd.glob("page_*.json"))
-    if not page_paths:
-        raise HTTPException(404, "No pages found")
-
-    # Credit pre-check: translating every bubble across every page can be a
-    # large LLM call. Floor at 1 credit/page so the cost scales with book size
-    # and a zero-balance user is blocked before the call.
-    assert_sufficient_credits(
-        get_db(), user_id,
-        0 if mock_mode_active(config) else max(1, len(page_paths)),
-        action="translate_bubbles",
-    )
-
-    pages = [ComicPage.model_validate_json(path.read_text()) for path in page_paths]
-    items: list[dict] = []
-    for cp in pages:
-        for panel in cp.panels:
-            for bubble in panel.bubbles:
-                text = bubble.text.strip()
-                if text:
-                    items.append({
-                        "id": f"{cp.page_number}:{panel.id}:{bubble.id}",
-                        "type": bubble.type,
-                        "speaker": bubble.speaker_name,
-                        "text": bubble.text,
-                    })
-
-    with ai_request_context(
-        user_id=user_id,
-        project_id=project_id,
-        project_name=project_dir.name,
-        workspace_id=str(project_dir.parent),
-        stage="compose",
-    ):
-        translations, usage = await _translate_text_items(config, items)
-    if usage:
-        debit_model_usage(
-            get_db(),
-            user_id,
-            project_id,
-            usage,
-            stage="compose",
-            description="Model call: translate bubbles",
-        )
-    updated = 0
-    for cp, path in zip(pages, page_paths):
-        changed = False
-        for panel in cp.panels:
-            for bubble in panel.bubbles:
-                item_id = f"{cp.page_number}:{panel.id}:{bubble.id}"
-                translated = translations.get(item_id)
-                if translated and translated != bubble.text:
-                    bubble.text = translated
-                    changed = True
-                    updated += 1
-        if changed:
-            path.write_text(cp.model_dump_json(indent=2))
-
-    return {
-        "status": "updated",
-        "target_language": config.language_code(),
-        "updated": updated,
-        "pages": _page_summaries(project_dir),
-    }
-
-
-@router.post("/pages/{page_num}/translate-bubbles")
-async def translate_single_page_bubbles(
-    page_num: int,
-    body: dict,
-    project_id: str,
-    project=Depends(get_project),
-    user_id: str = Depends(get_current_user),
-):
-    """Translate bubble/narration text for a single page."""
-    project_dir, config, state = project
-    target_language = body.get("target_language")
-    if target_language is not None:
-        if target_language not in LANGUAGE_NAMES:
-            raise HTTPException(400, "target_language must be one of: en, es, fr")
-        config.target_language = target_language
-        save_config(config, project_dir)
-
-    cp = _load_page(project_dir, page_num)
-    items: list[dict] = []
-
-    # Credit pre-check: one page's worth of translation is a single LLM call;
-    # floor at 1 credit so a zero-balance user is blocked before the call.
-    assert_sufficient_credits(
-        get_db(), user_id, 0 if mock_mode_active(config) else 1,
-        action="translate_bubbles",
-    )
-
-    for panel in cp.panels:
-        for bubble in panel.bubbles:
-            text = bubble.text.strip()
-            if text:
-                items.append({
-                    "id": f"{cp.page_number}:{panel.id}:{bubble.id}",
-                    "type": bubble.type,
-                    "speaker": bubble.speaker_name,
-                    "text": bubble.text,
-                })
-
-    with ai_request_context(
-        user_id=user_id,
-        project_id=project_id,
-        project_name=project_dir.name,
-        workspace_id=str(project_dir.parent),
-        stage="compose",
-    ):
-        translations, usage = await _translate_text_items(config, items)
-    if usage:
-        debit_model_usage(
-            get_db(),
-            user_id,
-            project_id,
-            usage,
-            stage="compose",
-            description=f"Model call: translate page {page_num}",
-        )
-    updated = 0
-    for panel in cp.panels:
-        for bubble in panel.bubbles:
-            item_id = f"{cp.page_number}:{panel.id}:{bubble.id}"
-            translated = translations.get(item_id)
-            if translated and translated != bubble.text:
-                bubble.text = translated
-                updated += 1
-
-    if updated:
-        artifacts.write_compose_page(project_dir, page_num, cp)
-
-    return {
-        "status": "ok",
-        "target_language": config.language_code(),
-        "updated": updated,
-        "page": cp.model_dump(),
-    }
-
-
-LAYOUT_PRESETS: dict[str, list[tuple[str, str]]] = {
-    "2x2": [("1/2", "1/2"), ("2/3", "1/2"), ("1/2", "2/3"), ("2/3", "2/3")],
-    "2x3": [("1/2", "1/2"), ("2/3", "1/2"), ("1/2", "2/3"), ("2/3", "2/3"), ("1/2", "3/4"), ("2/3", "3/4")],
-    "3x2": [("1/3", "1/2"), ("2/4", "1/2"), ("1/3", "2/3"), ("2/4", "2/3"), ("1/3", "3/4"), ("2/4", "3/4")],
-    "splash+4": [("1/3", "1/3"), ("1/2", "3/4"), ("2/3", "3/4"), ("1/2", "4/5"), ("2/3", "4/5")],
-    "wide_opening": [("1/3", "1/2")],
-}
-
-
-@router.post("/pages/{page_num}/reflow")
-def reflow_single_page(page_num: int, body: dict, project=Depends(get_project)):
-    """Apply a planner-backed layout preset to a single page, then reproject."""
-    project_dir, config, state = project
-    preset_name = body.get("layout_preset", "")
-    if preset_name not in LAYOUT_PRESETS:
-        raise HTTPException(400, f"Invalid layout preset. Must be one of: {', '.join(LAYOUT_PRESETS.keys())}")
-    plan = load_layout_plan(project_dir)
-    try:
-        apply_page_layout_preset(plan, page_num, preset_name)
-    except KeyError as exc:
-        raise HTTPException(404, f"Page {page_num} not found in layout plan") from exc
-    save_layout_plan(project_dir, plan)
-    _project_structural_pages(project_dir, config)
-    return _load_page(project_dir, page_num).model_dump()
-
-
-@router.post("/pages/reflow")
-def reflow_pages(body: dict, project=Depends(get_project)):
-    """Repaginate through the planner, then regenerate projected pages."""
-    project_dir, config, state = project
-    panels_per_page = int(body.get("panels_per_page", 0))
-    if panels_per_page < 1 or panels_per_page > 6:
-        raise HTTPException(400, "panels_per_page must be between 1 and 6")
-    plan = load_layout_plan(project_dir)
-    repaginate_layout_plan(plan, panels_per_page=panels_per_page)
-    save_layout_plan(project_dir, plan)
-    _project_structural_pages(project_dir, config)
-    return _page_summaries(project_dir)
-
-
-@router.put("/pages/{page_num}")
-def replace_page(page_num: int, body: dict, project=Depends(get_project)):
-    """Full page replacement (used by undo/redo)."""
-    project_dir, config, state = project
-    try:
-        cp = ComicPage.model_validate(body)
-    except ValidationError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    cp.page_number = page_num
-    if not artifacts.compose_page_path(project_dir, page_num).exists():
-        raise HTTPException(404, f"Page {page_num} not found")
-    artifacts.write_compose_page(project_dir, page_num, cp)
-    return cp.model_dump()
-
-
-@router.post("/pages/reorder")
-def reorder_panels(body: dict, project=Depends(get_project)):
-    """Reorder panels within and across pages.
-
-    Body: { "pages": [{ "page_number": N, "panel_ids": ["id1", "id2"] }, ...] }
-    """
-    project_dir, config, state = project
-    pages_spec = body.get("pages", [])
-    if not pages_spec:
-        raise HTTPException(400, "Provide non-empty 'pages' list")
-
-    plan = load_layout_plan(project_dir)
-    try:
-        reorder_planned_pages(plan, pages_spec)
-    except KeyError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(400, f"Invalid pages spec: {exc}") from exc
-    save_layout_plan(project_dir, plan)
-    pages = _project_structural_pages(project_dir, config)
-    return dump_structural_response(plan, pages)
-
-
-@router.post("/pages/structural")
-def apply_structural_operation(body: dict, project=Depends(get_project)):
-    """Apply planner-backed structural edits from Compose and reproject pages."""
-    project_dir, config, state = project
-    operation = body.get("operation", "")
-    if not operation:
-        raise HTTPException(400, "Missing operation")
-
-    plan = load_layout_plan(project_dir)
-
-    try:
-        if operation == "panel_override":
-            panel_id = body.get("planned_panel_id", "")
-            if not panel_id:
-                raise HTTPException(400, "planned_panel_id is required")
-            apply_panel_override(
-                plan,
-                panel_id,
-                importance=body.get("importance"),
-                shape_intent=body.get("shape_intent"),
-                generation_mode=body.get("generation_mode"),
+        draw_state = state.stages["draw"]
+        draw_state.items_done = rendered
+        if rendered == len(plan.pages) and draw_state.status == StageStatus.RUNNING:
+            complete_stage(state, "draw")
+        save_state(state, project_dir)
+        queue = request.app.state.event_queues.get(pkey)
+        if queue is not None:
+            queue.put_nowait(
+                {
+                    "type": "page_done",
+                    "stage": "draw",
+                    "page_number": provenance.render.page_number,
+                    "revision": provenance.render.revision,
+                    "status": "ok",
+                    "duration_ms": provenance.render.latency_ms,
+                    "error": None,
+                }
             )
-        elif operation == "page_layout_preset":
-            page_number = int(body.get("page_number", 0))
-            preset_name = body.get("layout_preset", "")
-            if preset_name not in LAYOUT_PRESETS:
-                raise HTTPException(400, f"Invalid layout preset. Must be one of: {', '.join(LAYOUT_PRESETS.keys())}")
-            apply_page_layout_preset(plan, page_number, preset_name)
-        elif operation == "repaginate":
-            panels_per_page = int(body.get("panels_per_page", 0))
-            if panels_per_page < 1 or panels_per_page > 6:
-                raise HTTPException(400, "panels_per_page must be between 1 and 6")
-            repaginate_layout_plan(plan, panels_per_page=panels_per_page)
-        elif operation == "reorder":
-            pages_spec = body.get("pages", [])
-            if not pages_spec:
-                raise HTTPException(400, "Provide non-empty 'pages' list")
-            reorder_planned_pages(plan, pages_spec)
-        else:
-            raise HTTPException(400, f"Unknown operation: {operation}")
-    except KeyError as exc:
+
+    return callback
+
+
+@router.get("/pages")
+def list_pages(project=Depends(get_project)):
+    project_dir, _config, _state = project
+    target = TargetArtifacts(project_dir)
+    try:
+        plan = target.read_plan()
+    except ArtifactMissing as exc:
         raise HTTPException(404, str(exc)) from exc
-
-    save_layout_plan(project_dir, plan)
-    pages = _project_structural_pages(project_dir, config)
-    response = dump_structural_response(plan, pages)
-    page_number = body.get("page_number")
-    if isinstance(page_number, (int, float)):
-        page = next((page for page in pages if page.page_number == int(page_number)), None)
-        if page is not None:
-            response["page"] = page.model_dump()
-    return response
-
-
-# ── HTML preview ─────────────────────────────────────────────────────────────
+    return {
+        "pages": [
+            {
+                "page": target.read_page(selected.page_number),
+                "active_render": _latest_provenance(target, selected.page_number),
+                "issues": _issues(target, selected.page_number),
+            }
+            for selected in plan.pages
+        ],
+        "issue_summary": summarize_page_issues(target),
+    }
 
 
-@router.get("/pages/{page_num}/preview")
-def page_preview(page_num: int, project_id: str, project=Depends(get_project)):
-    project_dir, config, state = project
-    cp = _load_page(project_dir, page_num)
+@router.get("/pages/{page_number}")
+def get_page(page_number: int, project=Depends(get_project)):
+    project_dir, _config, _state = project
+    target = TargetArtifacts(project_dir)
+    try:
+        page = target.read_page(page_number)
+    except ArtifactMissing as exc:
+        raise HTTPException(404, str(exc)) from exc
+    revisions = target.provenance_revisions(page_number)
+    return {
+        "page": page,
+        "renders": [
+            target.read_provenance(page_number, revision) for revision in revisions
+        ],
+        "analyses": [
+            target.read_analysis(page_number, revision)
+            for revision in revisions
+            if target.analysis_path(page_number, revision).exists()
+        ],
+        "issues": _issues(target, page_number),
+    }
 
-    custom_css = ""
-    lettering = load_lettering_style(project_dir)
 
-    html = build_page_html(
-        cp,
-        project_dir,
-        custom_css,
-        image_url_fn=lambda rel: f"/api/projects/{project_id}/files/{rel}",
-        font_url_fn=lambda filename: f"/static/fonts/{filename}",
-        lettering=lettering,
+@router.get("/pages/{page_number}/renders/{revision}")
+def get_page_render(
+    page_number: int,
+    revision: int,
+    project=Depends(get_project),
+):
+    project_dir, _config, _state = project
+    path = TargetArtifacts(project_dir).render_path(page_number, revision)
+    if not path.exists():
+        raise HTTPException(404, "Page render not found")
+    return FileResponse(path, media_type="image/png")
+
+
+@router.post("/pages/{page_number}/generate")
+def generate_page(
+    page_number: int,
+    request: Request,
+    project_id: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
+    project_dir, config, _state = project
+    target = TargetArtifacts(project_dir)
+    try:
+        page = target.read_page(page_number)
+        edition = target.read_book_edition()
+        compiled = compile_page_generation_request(
+            page,
+            edition,
+            approved_visual_inventory(project_dir),
+            approved_reference_files(project_dir),
+            retry=RetryProvenance(attempt=1),
+        )
+    except (ArtifactMissing, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    revisions = target.provenance_revisions(page_number)
+    if revisions:
+        raise HTTPException(
+            409,
+            "Page already has a render; create an issue and request a correction.",
+        )
+    adapter = VertexCompletePageAdapter(GoogleVertexCompletePageTransport(config))
+    pkey = project_key(user_id, project_id)
+    queue = request.app.state.event_queues.get(pkey)
+    if queue is not None:
+        queue.put_nowait(
+            {"type": "page_start", "stage": "draw", "page_number": page_number}
+        )
+    job, _created = enqueue_complete_page_draw(
+        request.app,
+        project_name=pkey,
+        user_id=user_id,
+        project_id=project_id,
+        project_dir=project_dir,
+        compiled=compiled,
+        adapter=adapter,
+        artifacts=target,
+        request_revision=1,
+        render_revision=1,
+        on_success=_draw_success_callback(
+            request,
+            pkey=pkey,
+            project_dir=project_dir,
+        ),
     )
-    return HTMLResponse(html)
+    return {"status": "queued", "job": generation_job_payload(request.app, job)}
 
 
-# ── File serving (images, refs, plates, etc.) ────────────────────────────────
+@router.post("/pages/{page_number}/issues")
+def create_page_issue(
+    page_number: int,
+    body: PageIssueCreate,
+    project=Depends(get_project),
+):
+    project_dir, _config, _state = project
+    target = TargetArtifacts(project_dir)
+    active = _latest_provenance(target, page_number)
+    if active is None:
+        raise HTTPException(409, "Page has no render to review")
+    try:
+        issue = PageIssue.model_validate(
+            {
+                "id": f"page-issue-{uuid.uuid4().hex}",
+                **body.model_dump(),
+                "page_number": page_number,
+                "render_revision": active.render.revision,
+                "status": "open",
+            }
+        )
+        return record_page_issue(target, issue)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
-@router.get("/files/{file_path:path}")
-def serve_file(file_path: str, project=Depends(get_project)):
-    project_dir, config, state = project
-    full = (project_dir / file_path).resolve()
+def _find_issue(target: TargetArtifacts, page_number: int, issue_id: str) -> PageIssue:
+    issue = next(
+        (item for item in _issues(target, page_number) if item.id == issue_id),
+        None,
+    )
+    if issue is None:
+        raise HTTPException(404, "Page issue not found")
+    return issue
 
-    # Path traversal guard — is_relative_to, not a string prefix check, so a
-    # sibling dir like "demo-private" can't slip past the guard for "demo".
-    if not full.is_relative_to(project_dir.resolve()):
-        raise HTTPException(403, "Access denied")
-    if not full.is_file():
-        raise HTTPException(404, "File not found")
 
-    media_type = mimetypes.guess_type(str(full))[0] or "application/octet-stream"
-    return FileResponse(full, media_type=media_type, headers={"Cache-Control": "no-cache"})
+@router.post("/pages/{page_number}/issues/{issue_id}/accept")
+def accept_page_issue(
+    page_number: int,
+    issue_id: str,
+    project=Depends(get_project),
+):
+    project_dir, _config, _state = project
+    try:
+        return accept_editorial_page_issue(
+            TargetArtifacts(project_dir),
+            issue_id=issue_id,
+            page_number=page_number,
+        )
+    except (ArtifactMissing, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/pages/{page_number}/issues/{issue_id}/correct")
+def correct_page_issue(
+    page_number: int,
+    issue_id: str,
+    request: Request,
+    project_id: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
+    project_dir, config, _state = project
+    target = TargetArtifacts(project_dir)
+    issue = _find_issue(target, page_number, issue_id)
+    try:
+        page = target.read_page(page_number)
+        edition = target.read_book_edition()
+        parent = target.read_provenance(
+            page_number,
+            issue.render_revision,
+        ).render
+        correction = build_correction_request(
+            issue=issue,
+            page=page,
+            parent=parent,
+            profile=edition.capability_profile,
+            artifacts=target,
+        )
+        revisions = target.provenance_revisions(page_number)
+        next_revision = max(revisions, default=0) + 1
+        compiled = compile_page_generation_request(
+            page,
+            edition,
+            approved_visual_inventory(project_dir),
+            approved_reference_files(project_dir),
+            retry=RetryProvenance(attempt=1),
+            correction=correction,
+            edit_source_bytes=target.read_render(
+                page_number,
+                issue.render_revision,
+            ),
+        )
+    except (ArtifactMissing, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    adapter = VertexCompletePageAdapter(GoogleVertexCompletePageTransport(config))
+    pkey = project_key(user_id, project_id)
+    queue = request.app.state.event_queues.get(pkey)
+    if queue is not None:
+        queue.put_nowait(
+            {"type": "page_start", "stage": "draw", "page_number": page_number}
+        )
+    job, _created = enqueue_complete_page_draw(
+        request.app,
+        project_name=pkey,
+        user_id=user_id,
+        project_id=project_id,
+        project_dir=project_dir,
+        compiled=compiled,
+        adapter=adapter,
+        artifacts=target,
+        request_revision=next_revision,
+        render_revision=next_revision,
+        parent_render_revision=issue.render_revision,
+        issue=issue,
+        on_success=_draw_success_callback(
+            request,
+            pkey=pkey,
+            project_dir=project_dir,
+        ),
+    )
+    return {"status": "queued", "job": generation_job_payload(request.app, job)}

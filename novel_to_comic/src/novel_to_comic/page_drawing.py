@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Callable, Protocol
 
 from novel_to_comic.config import (
     COMPLETE_PAGE_BASE_COST_USD,
@@ -582,6 +582,8 @@ def enqueue_complete_page_draw(
     request_revision: int,
     render_revision: int,
     parent_render_revision: int | None = None,
+    issue: PageIssue | None = None,
+    on_success: Callable[[PageGenerationProvenance], None] | None = None,
 ) -> tuple[GenerationJob, bool]:
     """Estimate, reserve, execute, settle, and release one complete-page job."""
 
@@ -599,14 +601,26 @@ def enqueue_complete_page_draw(
     )
 
     async def _work() -> ApiResult[PageGenerationProvenance]:
-        provenance = await draw_complete_page(
-            compiled,
-            adapter=adapter,
-            artifacts=artifacts,
-            request_revision=request_revision,
-            render_revision=render_revision,
-            parent_render_revision=parent_render_revision,
-        )
+        if issue is None:
+            provenance = await draw_complete_page(
+                compiled,
+                adapter=adapter,
+                artifacts=artifacts,
+                request_revision=request_revision,
+                render_revision=render_revision,
+                parent_render_revision=parent_render_revision,
+            )
+        else:
+            provenance = await correct_complete_page(
+                compiled,
+                issue=issue,
+                adapter=adapter,
+                artifacts=artifacts,
+                request_revision=request_revision,
+                render_revision=render_revision,
+            )
+        if on_success is not None:
+            on_success(provenance)
         return ApiResult(
             value=provenance,
             usage=provenance.usage,
@@ -627,6 +641,7 @@ def enqueue_complete_page_draw(
             "page_number": compiled.request.page_number,
             "request_sha256": compiled.request.request_sha256,
             "retry_attempt": compiled.request.retry.attempt,
+            "issue_id": issue.id if issue is not None else None,
         },
         work=_work,
         debit_description=f"Complete page {compiled.request.page_number}",

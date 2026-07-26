@@ -35,12 +35,12 @@ FailedRequestBillingPolicy = Literal["provider_usage_only", "never", "estimate_a
 GATEWAY_EXTRACT_FAST = "extract-fast"
 GATEWAY_EXTRACT_BALANCED = "extract-balanced"
 GATEWAY_EXTRACT_QUALITY = "extract-quality"
-GATEWAY_SCREENPLAY_FAST = "screenplay-fast"
-GATEWAY_SCREENPLAY_BALANCED = "screenplay-balanced"
-GATEWAY_SCREENPLAY_QUALITY = "screenplay-quality"
-GATEWAY_PANEL_FAST = "panel-fast"
-GATEWAY_PANEL_BALANCED = "panel-balanced"
-GATEWAY_PANEL_QUALITY = "panel-quality"
+GATEWAY_ADAPT_FAST = "adapt-fast"
+GATEWAY_ADAPT_BALANCED = "adapt-balanced"
+GATEWAY_ADAPT_QUALITY = "adapt-quality"
+GATEWAY_PLAN_FAST = "plan-fast"
+GATEWAY_PLAN_BALANCED = "plan-balanced"
+GATEWAY_PLAN_QUALITY = "plan-quality"
 GATEWAY_PROMPT_FAST = "prompt-fast"
 GATEWAY_PROMPT_BALANCED = "prompt-balanced"
 GATEWAY_PROMPT_QUALITY = "prompt-quality"
@@ -126,22 +126,22 @@ def config_for_image_model_alias(config: "Config", alias: str | None) -> "Config
 _QUALITY_PRESETS: dict[QualityPreset, dict[str, str]] = {
     "fast": {
         "extract": GATEWAY_EXTRACT_FAST,
-        "adapt": GATEWAY_SCREENPLAY_FAST,
-        "plan": GATEWAY_PANEL_FAST,
+        "adapt": GATEWAY_ADAPT_FAST,
+        "plan": GATEWAY_PLAN_FAST,
         "prompt": GATEWAY_PROMPT_FAST,
         "image": GATEWAY_IMAGE_FAST,
     },
     "balanced": {
         "extract": GATEWAY_EXTRACT_BALANCED,
-        "adapt": GATEWAY_SCREENPLAY_BALANCED,
-        "plan": GATEWAY_PANEL_BALANCED,
+        "adapt": GATEWAY_ADAPT_BALANCED,
+        "plan": GATEWAY_PLAN_BALANCED,
         "prompt": GATEWAY_PROMPT_BALANCED,
         "image": GATEWAY_IMAGE_BALANCED,
     },
     "quality": {
         "extract": GATEWAY_EXTRACT_QUALITY,
-        "adapt": GATEWAY_SCREENPLAY_QUALITY,
-        "plan": GATEWAY_PANEL_QUALITY,
+        "adapt": GATEWAY_ADAPT_QUALITY,
+        "plan": GATEWAY_PLAN_QUALITY,
         "prompt": GATEWAY_PROMPT_QUALITY,
         "image": GATEWAY_IMAGE_QUALITY,
     },
@@ -149,8 +149,8 @@ _QUALITY_PRESETS: dict[QualityPreset, dict[str, str]] = {
 
 _QUALITY_PRESET_FIELDS: dict[str, str] = {
     "extract": "extraction_model",
-    "adapt": "screenplay_model",
-    "plan": "panel_model",
+    "adapt": "adapt_model",
+    "plan": "plan_model",
     "prompt": "prompt_model",
     "image": "image_model",
 }
@@ -204,14 +204,14 @@ class Config(BaseModel):
     # Model choices. Runtime AI calls use intent+preset gateway aliases.
     # Per-stage fields default to the "balanced" alias; quality_preset overrides them.
     extraction_model: str = GATEWAY_EXTRACT_BALANCED
-    screenplay_model: str = GATEWAY_SCREENPLAY_BALANCED
-    panel_model: str = GATEWAY_PANEL_BALANCED
+    adapt_model: str = GATEWAY_ADAPT_BALANCED
+    plan_model: str = GATEWAY_PLAN_BALANCED
     prompt_model: str = GATEWAY_PROMPT_BALANCED
     image_provider: Literal["gemini", "openai", "openrouter", "together", "reve"] = "gemini"
     image_model: str = GATEWAY_IMAGE_QUALITY
     fallback_image_model: str = GATEWAY_IMAGE_FAST
 
-    # Output language for generated screenplay dialogue, panel text, and prompt artifacts.
+    # Output language for generated book text and visual assets.
     target_language: str = "en"
 
     # Dev/demo mode — lowers image generation resolution/steps and prefers the
@@ -232,7 +232,6 @@ class Config(BaseModel):
     image_steps: int = 28
     image_quality: str = "medium"  # OpenAI GPT Image quality: auto | low | medium | high
     flux_guidance_scale: float = 3.5
-    continuity_mode: str = "hybrid"  # off | text_only | ref_only | hybrid
 
     # Max panel/cast images generated in parallel. None → per-provider default:
     # Gemini/Vertex routes use GEMINI_IMAGE_CONCURRENCY_DEFAULT, everything
@@ -250,18 +249,6 @@ class Config(BaseModel):
     # deterministic first-character/first-location body when disabled or when
     # the call fails.
     style_sample_brief_enabled: bool = True
-
-    # LLM layout pass: decompose each panel's structured spec into a flat map
-    # of labelled, bounded regions (via prompt_model) for layout-aware image
-    # models. Only runs when the effective image model is Reve; generation
-    # falls back to the flat prompt when disabled, when the pass fails, or for
-    # any other image model.
-    #
-    # Default OFF: Reve documents render_layout as experimental, so rollout is
-    # explicit while we collect visual-quality evidence. When enabled, panel
-    # requests use the compiled layout wire and Reve's
-    # /v2/image/render_layout endpoint; failures fall back to v2 create.
-    layout_prompts_enabled: bool = False
 
     # Negative prompt — only applied for Together AI / SDXL models (Gemini native ignores it)
     # Keep style-neutral: no photorealistic/cartoon terms here. Put those in config.yaml
@@ -289,9 +276,6 @@ class Config(BaseModel):
     )
 
     # Pipeline settings
-    max_panels_per_scene: int = 8
-    max_panels_per_page: int = 6    # how many panels appear on each assembled page
-    max_words_per_bubble: int = 18
     parallel_batch_size: int = 5
     max_concurrent_requests: int = 5
     cost_limit_usd: Optional[float] = None
@@ -336,10 +320,10 @@ class Config(BaseModel):
     def effective_extraction_model(self) -> str:
         return self._effective_stage_model("extract")
 
-    def effective_screenplay_model(self) -> str:
+    def effective_adapt_model(self) -> str:
         return self._effective_stage_model("adapt")
 
-    def effective_panel_model(self) -> str:
+    def effective_plan_model(self) -> str:
         return self._effective_stage_model("plan")
 
     def effective_prompt_model(self) -> str:
@@ -478,13 +462,13 @@ quality_preset: {"null" if config.quality_preset is None else f'"{config.quality
 # Stage 1 – full-novel extraction
 extraction_model: "{config.extraction_model}"
 
-# Stage 3 – screenplay adaptation (creative writing quality matters here)
-screenplay_model: "{config.screenplay_model}"
+# Book-level adaptation model
+adapt_model: "{config.adapt_model}"
 
-# Stage 4 – layout planning model (also used for panel breakdown in storyboard stage)
-panel_model: "{config.panel_model}"
+# Global page-planning model
+plan_model: "{config.plan_model}"
 
-# Stage 5 – image prompt assembly (template filling)
+# Cast asset prompt model
 prompt_model: "{config.prompt_model}"
 
 # Image generation provider/model. Runtime AI calls use gateway aliases.
@@ -513,20 +497,14 @@ dev_image_concurrency: {config.dev_image_concurrency}
 # ---------------------------------------------------------------------------
 # Image generation settings
 # ---------------------------------------------------------------------------
-image_width: {config.image_width}       # pixels — 1024 recommended for square panels
-image_height: {config.image_height}     # pixels — same as width for 1:1 square panels
+image_width: {config.image_width}
+image_height: {config.image_height}
 image_steps: {config.image_steps}       # inference steps — 28 is a good balance
 image_quality: "{config.image_quality}"  # OpenAI GPT Image only: auto | low | medium | high
 flux_guidance_scale: {config.flux_guidance_scale}  # 3.5–4.5 recommended for FLUX.2 Pro
-continuity_mode: "{config.continuity_mode}"  # off | text_only | ref_only | hybrid
 # image_concurrency: 3  # parallel image generations; unset → provider default
 #                       # (Gemini/Vertex: 3, others: max_concurrent_requests)
 negative_prompt: "{config.negative_prompt}"  # applied to Together AI models only
-
-# Layout-aware image prompting. Reve's render_layout endpoint is experimental.
-# When enabled, newly compiled Reve panel requests use structural regions and
-# fall back to standard v2 create if layout transport fails.
-layout_prompts_enabled: {str(config.layout_prompts_enabled).lower()}
 
 # ---------------------------------------------------------------------------
 # Style template — THIS IS THE MOST IMPORTANT SETTING
@@ -557,20 +535,11 @@ style_template: |
 # ---------------------------------------------------------------------------
 # Pipeline settings
 # ---------------------------------------------------------------------------
-# Max panels produced per scene (3–8 recommended; action scenes can go higher)
-max_panels_per_scene: {config.max_panels_per_scene}
-
-# Max panels per comic page (4–6 recommended)
-max_panels_per_page: {config.max_panels_per_page}
-
-# Max words per speech bubble before the screenplay stage splits dialogue
-max_words_per_bubble: {config.max_words_per_bubble}
-
-# How many scenes to process in parallel (stages 3–5)
+# How many independent items to process in parallel
 # Reduce if you hit rate limits
 parallel_batch_size: {config.parallel_batch_size}
 
-# How many image generation requests to fire simultaneously (stage 6)
+# How many image generation requests to fire simultaneously
 # Together AI default rate limit: 10 req/s — keep this at 5 to be safe
 max_concurrent_requests: {config.max_concurrent_requests}
 

@@ -1,4 +1,4 @@
-"""Shared compile, freeze, transport, and provenance lifecycle for assets."""
+"""Style/Cast asset compile, freeze, transport, and provenance lifecycle."""
 
 from __future__ import annotations
 
@@ -35,7 +35,8 @@ from novel_to_comic.provider_wire import ProviderWireRequest, compile_provider_w
 from novel_to_comic.usage import ApiResult, estimate_image_cost
 
 AssetKind = Literal[
-    "panel", "style_sample", "character_ref", "location_plate", "prop_ref", "project_cover",
+    "style_sample", "character_ref", "location_plate", "prop_ref", "project_cover",
+    "labs_image",
 ]
 
 
@@ -223,7 +224,6 @@ def compile_non_panel_request(
         controls=controls,
         asset_kind=input_data.asset_kind,
         asset_identity=input_data.asset_identity,
-        layout_enabled=getattr(config, "layout_prompts_enabled", False),
     )
     return NonPanelRequest(
         input=input_data,

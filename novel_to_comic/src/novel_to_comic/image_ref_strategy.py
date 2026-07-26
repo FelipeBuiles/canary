@@ -171,53 +171,6 @@ class RefStrategy:
     def _seedream(self) -> bool:
         return is_seedream_model(self.model)
 
-    # ------------------------------------------------------------------
-    # Draw: panel reference selection
-    # ------------------------------------------------------------------
-
-    def select_panel_refs(
-        self,
-        refs: list[RefImage],
-        composition: str | None = None,
-        primary_poses: dict[str, str] | None = None,
-    ) -> list[RefImage]:
-        """Reduce candidate refs to the set this model route should receive.
-
-        Input and output follow the canonical upload order from
-        ``order_refs_for_upload`` — the returned list IS the upload order
-        assumed by ``render_generation_prompt``. ``primary_poses`` carries the
-        user-chosen canonical crop per character (char dir name → pose stem).
-        """
-        if self._reve:
-            return _reve_refs(refs, composition, primary_poses)
-        if self._gpt_image_2:
-            selected_paths = set(
-                _gpt_image_2_subject_refs(
-                    [ref.path for ref in refs if ref.role in {"subject", "prop"}]
-                )
-            )
-            return [ref for ref in refs if ref.path in selected_paths]
-        if self._seedream:
-            return refs[:10]
-        return refs
-
-    def use_prev_panel_image(self, prev_transition_type: str | None) -> bool:
-        """True if the previous panel's image should be used as a style reference.
-
-        Hard cuts (smash cut, fade to, cut to, scene change, time jump) can make
-        the previous panel image actively harmful - the model might blend the
-        previous scene into the new one. Smooth continuations should stay
-        text-only: previous-panel image refs are strong edit inputs and can
-        override character identity, scale, and composition. Reserve image
-        continuity for intentional match cuts.
-        """
-        if not prev_transition_type:
-            return False
-        transition_type = (prev_transition_type or "").strip().lower()
-        if self._gpt_image_2:
-            return False
-        return transition_type == "match_cut"
-
     def use_location_plate_refs(self) -> bool:
         # GPT Image 2 processes every supplied image at high fidelity, so location
         # plates can leak repeated background textures into panels. Keep locations
@@ -262,10 +215,10 @@ class RefStrategy:
         # composition for every route — falling back to the (square) panel
         # config dimensions produced a composition/dimension contradiction.
         # GPT Image 2 keeps its verified 1536x1024 size; other routes use the
-        # canonical landscape plate dimensions from panel_aspect.
+        # canonical landscape plate dimensions from image_geometry.
         if self._gpt_image_2:
             return _GPT_LOCATION_PLATE_WIDTH, _GPT_LOCATION_PLATE_HEIGHT
-        from novel_to_comic.panel_aspect import location_plate_dimensions as _plate_dims
+        from novel_to_comic.image_geometry import location_plate_dimensions as _plate_dims
         return _plate_dims()
 
     def include_dimensions_in_asset_meta(self) -> bool:

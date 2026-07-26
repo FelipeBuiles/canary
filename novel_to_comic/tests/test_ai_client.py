@@ -76,7 +76,7 @@ def test_generate_structured_object_returns_dict_and_usage(monkeypatch, _patch_e
     result = asyncio.run(
         client.generate_structured_object(
             config=Config(),
-            model="panel-balanced",
+            model="plan-balanced",
             system_prompt="Return JSON.",
             user_content="{}",
             feature="test.json",
@@ -87,7 +87,7 @@ def test_generate_structured_object_returns_dict_and_usage(monkeypatch, _patch_e
     assert result.usage is not None
     assert result.usage.call_id
     assert result.usage.provider == "openai"
-    assert result.usage.model == "panel-balanced"
+    assert result.usage.model == "plan-balanced"
     assert result.usage.provider_model == "openai/gpt-5.4-mini"
     assert result.usage.input_tokens == 10
     assert result.usage.output_tokens == 3
@@ -127,7 +127,7 @@ def test_generate_structured_object_retries_then_succeeds_on_malformed_json(monk
     result = asyncio.run(
         client.generate_structured_object(
             config=Config(),
-            model="panel-balanced",
+            model="plan-balanced",
             system_prompt="Return JSON.",
             user_content="{}",
             feature="test.json",
@@ -155,7 +155,7 @@ def test_generate_structured_object_raises_with_context_after_exhausting_retries
         asyncio.run(
             client.generate_structured_object(
                 config=Config(),
-                model="panel-balanced",
+                model="plan-balanced",
                 system_prompt="Return JSON.",
                 user_content="{}",
                 feature="test.json",
@@ -164,7 +164,7 @@ def test_generate_structured_object_raises_with_context_after_exhausting_retries
 
     msg = str(exc_info.value)
     assert "malformed JSON" in msg
-    assert "panel-balanced" in msg
+    assert "plan-balanced" in msg
     assert "tru" in msg
     assert isinstance(exc_info.value.__cause__, __import__("json").JSONDecodeError)
 
@@ -180,7 +180,7 @@ def test_generate_text_does_not_store_prompt_in_params(monkeypatch, _patch_event
     asyncio.run(
         client.generate_text(
             config=Config(),
-            model="screenplay-balanced",
+            model="adapt-balanced",
             system_prompt="system secret",
             user_content="user secret",
             feature="test.text",
@@ -237,7 +237,7 @@ def test_extract_usage_preserves_litellm_response_cost():
             "_hidden_params": {"response_cost": 0.0042},
         },
         "event_1",
-        "panel-balanced",
+        "plan-balanced",
         "text",
     )
 

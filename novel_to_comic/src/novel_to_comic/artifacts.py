@@ -4,12 +4,8 @@ Every stage reads inputs and writes outputs through these functions. Path
 construction knowledge lives here and nowhere else — if a directory layout
 changes, this is the only file that needs updating.
 
-Conventions:
-- Read functions raise ArtifactMissing when the file does not exist.
-- Write functions create parent directories automatically.
-- List functions return only artifacts that exist on disk.
-- Panel numbers match PlannedPanel.panel_number (1-indexed, zero-padded to 3 digits).
-- Page numbers are 1-indexed, zero-padded to 3 digits.
+This module owns Story, Style, and Cast assets. Full-page pipeline artifacts
+live behind :class:`novel_to_comic.target_artifacts.TargetArtifacts`.
 """
 
 from __future__ import annotations
@@ -19,10 +15,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from novel_to_comic.models.comic_page import ComicPage
-    from novel_to_comic.models.layout_plan import LayoutPlan
-    from novel_to_comic.models.panel import PanelBreakdown, Screenplay
-    from novel_to_comic.models.prompt import ImagePrompt
     from novel_to_comic.models.story_bible import StoryBible
 
 
@@ -68,189 +60,7 @@ def write_story_bible(project_dir: Path, bible: "StoryBible") -> None:
 
 
 # ---------------------------------------------------------------------------
-# Scene text
-# ---------------------------------------------------------------------------
-
-def scene_text_path(project_dir: Path, scene_id: str) -> Path:
-    return project_dir / "scenes" / f"{scene_id}.txt"
-
-
-def read_scene_text(project_dir: Path, scene_id: str) -> str:
-    path = scene_text_path(project_dir, scene_id)
-    if not path.exists():
-        raise ArtifactMissing("scene_text", path)
-    return path.read_text()
-
-
-def write_scene_text(project_dir: Path, scene_id: str, text: str) -> None:
-    path = scene_text_path(project_dir, scene_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
-
-
-# ---------------------------------------------------------------------------
-# Screenplay
-# ---------------------------------------------------------------------------
-
-def screenplay_path(project_dir: Path, scene_id: str) -> Path:
-    return project_dir / "screenplays" / f"{scene_id}.json"
-
-
-def read_screenplay(project_dir: Path, scene_id: str) -> "Screenplay":
-    from novel_to_comic.models.panel import Screenplay
-    path = screenplay_path(project_dir, scene_id)
-    if not path.exists():
-        raise ArtifactMissing("screenplay", path)
-    return Screenplay.model_validate_json(path.read_text())
-
-
-def write_screenplay(project_dir: Path, scene_id: str, screenplay: "Screenplay") -> None:
-    path = screenplay_path(project_dir, scene_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(screenplay.model_dump_json(indent=2))
-
-
-def list_screenplays(project_dir: Path) -> list["Screenplay"]:
-    from novel_to_comic.models.panel import Screenplay
-    sp_dir = project_dir / "screenplays"
-    if not sp_dir.exists():
-        return []
-    results = []
-    for p in sorted(sp_dir.glob("*.json")):
-        try:
-            results.append(Screenplay.model_validate_json(p.read_text()))
-        except Exception:
-            pass
-    return results
-
-
-# ---------------------------------------------------------------------------
-# Layout plan
-# ---------------------------------------------------------------------------
-
-def layout_plan_path(project_dir: Path) -> Path:
-    return project_dir / "plan" / "layout_plan.json"
-
-
-def read_layout_plan(project_dir: Path) -> "LayoutPlan":
-    from novel_to_comic.models.layout_plan import LayoutPlan
-    path = layout_plan_path(project_dir)
-    if not path.exists():
-        raise ArtifactMissing("layout_plan", path)
-    return LayoutPlan.model_validate_json(path.read_text())
-
-
-def write_layout_plan(project_dir: Path, plan: "LayoutPlan") -> None:
-    path = layout_plan_path(project_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(plan.model_dump_json(indent=2))
-
-
-# ---------------------------------------------------------------------------
-# Panel breakdown (storyboard)
-# ---------------------------------------------------------------------------
-
-def panel_breakdown_path(project_dir: Path, scene_id: str, panel_number: int) -> Path:
-    return project_dir / "storyboard" / scene_id / f"panel_{panel_number:03d}.json"
-
-
-def read_panel_breakdown(project_dir: Path, scene_id: str, panel_number: int) -> "PanelBreakdown":
-    from novel_to_comic.models.panel import PanelBreakdown
-    path = panel_breakdown_path(project_dir, scene_id, panel_number)
-    if not path.exists():
-        raise ArtifactMissing("panel_breakdown", path)
-    return PanelBreakdown.model_validate_json(path.read_text())
-
-
-def write_panel_breakdown(
-    project_dir: Path, scene_id: str, panel_number: int, breakdown: "PanelBreakdown"
-) -> None:
-    path = panel_breakdown_path(project_dir, scene_id, panel_number)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(breakdown.model_dump_json(indent=2))
-
-
-# ---------------------------------------------------------------------------
-# Image prompts (direct)
-# ---------------------------------------------------------------------------
-
-def panel_prompt_path(project_dir: Path, scene_id: str, panel_number: int) -> Path:
-    return project_dir / "direct" / scene_id / f"panel_{panel_number:03d}.json"
-
-
-def read_panel_prompt(project_dir: Path, scene_id: str, panel_number: int) -> "ImagePrompt":
-    from novel_to_comic.models.prompt import ImagePrompt
-    path = panel_prompt_path(project_dir, scene_id, panel_number)
-    if not path.exists():
-        raise ArtifactMissing("panel_prompt", path)
-    return ImagePrompt.model_validate_json(path.read_text())
-
-
-def write_panel_prompt(
-    project_dir: Path, scene_id: str, panel_number: int, prompt: "ImagePrompt"
-) -> None:
-    path = panel_prompt_path(project_dir, scene_id, panel_number)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(prompt.model_dump_json(indent=2))
-
-
-def list_panel_prompts(project_dir: Path, scene_id: str) -> list["ImagePrompt"]:
-    from novel_to_comic.models.prompt import ImagePrompt
-    scene_dir = project_dir / "direct" / scene_id
-    if not scene_dir.exists():
-        return []
-    results = []
-    for p in sorted(scene_dir.glob("panel_*.json")):
-        try:
-            results.append(ImagePrompt.model_validate_json(p.read_text()))
-        except Exception:
-            pass
-    return results
-
-
-def list_all_panel_prompts(project_dir: Path) -> list["ImagePrompt"]:
-    from novel_to_comic.models.prompt import ImagePrompt
-    prompts_dir = project_dir / "direct"
-    if not prompts_dir.exists():
-        return []
-    results = []
-    for p in sorted(prompts_dir.glob("*/panel_*.json")):
-        try:
-            results.append(ImagePrompt.model_validate_json(p.read_text()))
-        except Exception:
-            pass
-    return results
-
-
-def panel_prompt_instructions_path(project_dir: Path, scene_id: str, panel_number: int) -> Path:
-    return project_dir / "direct" / scene_id / f"panel_{panel_number:03d}.instructions.jsonl"
-
-
-# ---------------------------------------------------------------------------
-# Panel images (draw)
-# ---------------------------------------------------------------------------
-
-def panel_image_path(project_dir: Path, scene_id: str, panel_number: int) -> Path:
-    return project_dir / "draw" / scene_id / f"panel_{panel_number:03d}.png"
-
-
-def panel_image_meta_path(project_dir: Path, scene_id: str, panel_number: int) -> Path:
-    return project_dir / "draw" / scene_id / f"panel_{panel_number:03d}.png.meta.json"
-
-
-def panel_image_failure_path(project_dir: Path, scene_id: str, panel_number: int) -> Path:
-    return project_dir / "draw" / scene_id / f"panel_{panel_number:03d}.png.failure.json"
-
-
-def list_panel_images(project_dir: Path, scene_id: str) -> list[Path]:
-    scene_dir = project_dir / "draw" / scene_id
-    if not scene_dir.exists():
-        return []
-    return sorted(scene_dir.glob("panel_*.png"))
-
-
-# ---------------------------------------------------------------------------
-# Asset sidecar helpers (shared by refs, plates, draw images)
+# Asset sidecar helpers (shared by refs and plates)
 # ---------------------------------------------------------------------------
 
 def asset_meta_path(output_path: Path) -> Path:
@@ -259,17 +69,6 @@ def asset_meta_path(output_path: Path) -> Path:
 
 def asset_failure_path(output_path: Path) -> Path:
     return output_path.with_suffix(f"{output_path.suffix}.failure.json")
-
-
-def asset_layout_echo_path(output_path: Path) -> Path:
-    """Sidecar holding the layout the image model actually generated."""
-    return output_path.with_suffix(f"{output_path.suffix}.layout.json")
-
-
-def write_asset_layout_echo(output_path: Path, layout: dict) -> None:
-    path = asset_layout_echo_path(output_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(layout, indent=2, sort_keys=True))
 
 
 def read_asset_meta(output_path: Path) -> dict:
@@ -478,54 +277,6 @@ def style_validation_path(project_dir: Path, suggestion_id: str) -> Path:
     if not base.is_relative_to(root) or candidate.parent != base:
         raise ValueError("style validation path escapes project")
     return candidate
-
-
-# ---------------------------------------------------------------------------
-# Compose pages
-# ---------------------------------------------------------------------------
-
-def compose_page_path(project_dir: Path, page_number: int) -> Path:
-    return project_dir / "compose" / "pages" / f"page_{page_number:03d}.json"
-
-
-def compose_page_html_path(project_dir: Path, page_number: int) -> Path:
-    return project_dir / "compose" / "html" / f"page_{page_number:03d}.html"
-
-
-def compose_page_png_path(project_dir: Path, page_number: int) -> Path:
-    return project_dir / "compose" / "pages" / f"page_{page_number:03d}.png"
-
-
-def read_compose_page(project_dir: Path, page_number: int) -> "ComicPage":
-    from novel_to_comic.models.comic_page import ComicPage
-    path = compose_page_path(project_dir, page_number)
-    if not path.exists():
-        raise ArtifactMissing("compose_page", path)
-    return ComicPage.model_validate_json(path.read_text())
-
-
-def write_compose_page(project_dir: Path, page_number: int, page: "ComicPage") -> None:
-    path = compose_page_path(project_dir, page_number)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(page.model_dump_json(indent=2))
-
-
-def compose_pages_dir(project_dir: Path) -> Path:
-    return project_dir / "compose" / "pages"
-
-
-def list_compose_pages(project_dir: Path) -> list["ComicPage"]:
-    from novel_to_comic.models.comic_page import ComicPage
-    pages_dir = compose_pages_dir(project_dir)
-    if not pages_dir.exists():
-        return []
-    results = []
-    for p in sorted(pages_dir.glob("page_*.json")):
-        try:
-            results.append(ComicPage.model_validate_json(p.read_text()))
-        except Exception:
-            pass
-    return results
 
 
 # ---------------------------------------------------------------------------

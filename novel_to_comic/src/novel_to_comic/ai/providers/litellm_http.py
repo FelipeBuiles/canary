@@ -13,7 +13,7 @@ import httpx
 from novel_to_comic.ai.errors import AIRefusalError, AITransportError
 from novel_to_comic.ai.providers.base import ProviderRawResult
 from novel_to_comic.config import Config, is_gpt_image_2
-from novel_to_comic.panel_aspect import aspect_for_dimensions, generation_shape_for_aspect
+from novel_to_comic.image_geometry import aspect_for_dimensions, generation_shape_for_aspect
 from novel_to_comic.provider_wire import ProviderWireRequest, materialize_wire_references
 
 

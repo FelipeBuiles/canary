@@ -75,7 +75,7 @@ def cost_limit() -> str:
 def export_limit() -> str:
     """Per-IP limit for PDF/CBZ export (CPU + memory bound, no credit charge).
 
-    Export re-runs the full compose stage on every call; without a cap a script
+    Export re-runs Finish packaging on every call; without a cap a script
     looping export on a large project can saturate the single uvicorn worker.
     Default is intentionally low (3/min) since each call renders every page.
     """

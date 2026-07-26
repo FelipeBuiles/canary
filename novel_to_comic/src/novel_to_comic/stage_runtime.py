@@ -154,30 +154,29 @@ class StageRuntime:
     def log(self, message: str, level: str = "info") -> None:
         self._emit({"type": "log", "stage": self.name, "level": level, "message": message})
 
-    def emit_panel_start(self, scene_id: str, panel_number: int) -> None:
+    def emit_page_start(self, page_number: int) -> None:
         from datetime import datetime, timezone
         self._emit({
-            "type": "panel_start",
+            "type": "page_start",
             "stage": self.name,
-            "scene_id": scene_id,
-            "panel_number": panel_number,
+            "page_number": page_number,
             "started_at": datetime.now(timezone.utc).isoformat(),
         })
 
-    def emit_panel_done(
+    def emit_page_done(
         self,
-        scene_id: str,
-        panel_number: int,
+        page_number: int,
         *,
+        revision: int,
         status: str,
         duration_ms: int,
         error: str | None = None,
     ) -> None:
         self._emit({
-            "type": "panel_done",
+            "type": "page_done",
             "stage": self.name,
-            "scene_id": scene_id,
-            "panel_number": panel_number,
+            "page_number": page_number,
+            "revision": revision,
             "status": status,
             "duration_ms": duration_ms,
             "error": error,

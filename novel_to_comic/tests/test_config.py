@@ -13,9 +13,9 @@ from novel_to_comic.config import (
     GATEWAY_IMAGE_BALANCED,
     GATEWAY_IMAGE_FAST,
     GATEWAY_IMAGE_QUALITY,
-    GATEWAY_PANEL_BALANCED,
+    GATEWAY_PLAN_BALANCED,
     GATEWAY_PROMPT_BALANCED,
-    GATEWAY_SCREENPLAY_BALANCED,
+    GATEWAY_ADAPT_BALANCED,
     config_for_image_model_alias,
     image_model_aliases,
     LANGUAGE_NAMES,
@@ -51,10 +51,6 @@ class TestConfigDefaults:
         cfg = Config()
         assert cfg.target_language == "en"
 
-    def test_max_panels_per_scene_default_reasonable(self):
-        cfg = Config()
-        assert cfg.max_panels_per_scene == 8
-
     def test_negative_prompt_is_populated(self):
         cfg = Config()
         assert len(cfg.negative_prompt) > 0
@@ -77,14 +73,11 @@ class TestConfigDefaults:
     def test_gateway_aliases_are_default_models(self):
         cfg = Config()
         assert cfg.extraction_model == GATEWAY_EXTRACT_BALANCED
-        assert cfg.screenplay_model == GATEWAY_SCREENPLAY_BALANCED
-        assert cfg.panel_model == GATEWAY_PANEL_BALANCED
+        assert cfg.adapt_model == GATEWAY_ADAPT_BALANCED
+        assert cfg.plan_model == GATEWAY_PLAN_BALANCED
         assert cfg.prompt_model == GATEWAY_PROMPT_BALANCED
         assert cfg.image_model == GATEWAY_IMAGE_QUALITY
         assert cfg.fallback_image_model == GATEWAY_IMAGE_FAST
-
-    def test_layout_prompts_default_to_disabled(self):
-        assert Config().layout_prompts_enabled is False
 
     def test_litellm_defaults_are_populated(self):
         cfg = Config()
@@ -222,14 +215,14 @@ def test_gemini_text_aliases_use_latest_flash_tiers():
     models = {
         item["model_name"]: item["litellm_params"]["model"]
         for item in data["model_list"]
-        if str(item.get("model_name", "")).startswith(("extract-", "panel-", "prompt-"))
+        if str(item.get("model_name", "")).startswith(("extract-", "plan-", "prompt-"))
     }
 
     assert models["extract-fast"] == "vertex_ai/gemini-3.5-flash-lite"
     assert models["extract-balanced"] == "vertex_ai/gemini-3.6-flash"
-    assert models["panel-fast"] == "vertex_ai/gemini-3.5-flash-lite"
-    assert models["panel-balanced"] == "vertex_ai/gemini-3.6-flash"
-    assert models["panel-quality"] == "vertex_ai/gemini-3.6-flash"
+    assert models["plan-fast"] == "vertex_ai/gemini-3.5-flash-lite"
+    assert models["plan-balanced"] == "vertex_ai/gemini-3.6-flash"
+    assert models["plan-quality"] == "vertex_ai/gemini-3.6-flash"
     assert {
         model for alias, model in models.items() if alias.startswith("prompt-")
     } == {"vertex_ai/gemini-3.5-flash-lite"}
@@ -237,15 +230,15 @@ def test_gemini_text_aliases_use_latest_flash_tiers():
     text_params = {
         item["model_name"]: item["litellm_params"]
         for item in data["model_list"]
-        if str(item.get("model_name", "")).startswith(("panel-", "prompt-"))
+        if str(item.get("model_name", "")).startswith(("plan-", "prompt-"))
     }
     assert {
         alias: params.get("reasoning_effort")
         for alias, params in text_params.items()
     } == {
-        "panel-fast": "disable",
-        "panel-balanced": "disable",
-        "panel-quality": "disable",
+        "plan-fast": "disable",
+        "plan-balanced": "disable",
+        "plan-quality": "disable",
         "prompt-fast": "disable",
         "prompt-balanced": "disable",
         "prompt-quality": "disable",
@@ -402,7 +395,7 @@ class TestLoadConfig:
 
 class TestSaveConfig:
     def test_roundtrip(self):
-        cfg = Config(dev_mode=True, target_language="fr", layout_prompts_enabled=True)
+        cfg = Config(dev_mode=True, target_language="fr")
         with tempfile.TemporaryDirectory() as tmpdir:
             save_config(cfg, Path(tmpdir))
             path = Path(tmpdir) / "config.yaml"
@@ -411,6 +404,5 @@ class TestSaveConfig:
             assert "fr" in content
             assert "dev_mode: true" in content
             assert "image_model: \"image-quality\"" in content
-            assert "layout_prompts_enabled: true" in content
             loaded, _ = load_config(Path(tmpdir))
-            assert loaded.layout_prompts_enabled is True
+            assert loaded.target_language == "fr"
