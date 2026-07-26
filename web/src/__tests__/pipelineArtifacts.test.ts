@@ -2,33 +2,31 @@ import { describe, expect, it } from "vitest";
 import { completedStageArtifactQueryKeys } from "../lib/pipelineArtifacts";
 
 describe("completedStageArtifactQueryKeys", () => {
-  it("invalidates screenplay list and scene queries when adapt completes", () => {
+  it("invalidates the book adaptation when adapt completes", () => {
     expect(completedStageArtifactQueryKeys("proj", "adapt")).toEqual([
-      ["project", "proj", "screenplays"],
+      ["project", "proj", "adaptation"],
     ]);
   });
 
   it("maps each stage to the artifact query its room reads", () => {
     expect(completedStageArtifactQueryKeys("proj", "extract")).toEqual([
-      ["project", "proj", "story-bible"],
+      ["project", "proj", "story"],
+    ]);
+    expect(completedStageArtifactQueryKeys("proj", "brief")).toEqual([
+      ["project", "proj", "story"],
     ]);
     expect(completedStageArtifactQueryKeys("proj", "style")).toEqual([
       ["project", "proj", "styles"],
     ]);
     expect(completedStageArtifactQueryKeys("proj", "plan")).toEqual([
-      ["project", "proj", "plan"],
-    ]);
-    expect(completedStageArtifactQueryKeys("proj", "storyboard")).toEqual([
-      ["project", "proj", "storyboard"],
-    ]);
-    expect(completedStageArtifactQueryKeys("proj", "direct")).toEqual([
-      ["project", "proj", "direct"],
+      ["project", "proj", "book-plan"],
+      ["project", "proj", "complete-pages"],
     ]);
     expect(completedStageArtifactQueryKeys("proj", "draw")).toEqual([
-      ["project", "proj", "draw"],
+      ["project", "proj", "complete-pages"],
     ]);
-    expect(completedStageArtifactQueryKeys("proj", "compose")).toEqual([
-      ["project", "proj", "pages"],
+    expect(completedStageArtifactQueryKeys("proj", "finish")).toEqual([
+      ["project", "proj", "finish-preflight"],
     ]);
   });
 });

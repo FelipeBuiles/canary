@@ -4,17 +4,6 @@ import { AuthGuard } from "./components/AuthGuard";
 import { LoadingBlock } from "./components/ui/StateBlock";
 import { useAuth } from "./hooks/useAuth";
 import { I18nProvider } from "./i18n";
-import { useShowDevContent } from "./lib/devContent";
-
-/**
- * Machine-artifact rooms (script, shot plan, prompts) are demoted behind Dev
- * Content — their content surfaces through inspect drawers and the panel
- * modal's Prompt tab. Deep links still work for debugging.
- */
-function DevRoom({ children }: { children: ReactElement }) {
-  const [showDevContent] = useShowDevContent();
-  return showDevContent ? children : lazyRoute(NavigateToRoom);
-}
 
 const Shell = lazy(() => import("./layout/Shell").then(({ Shell }) => ({ default: Shell })));
 const ProjectRooms = lazy(() =>
@@ -44,19 +33,16 @@ const ProjectSettingsPage = lazy(() =>
 const NavigateToRoom = lazy(() =>
   import("./pages/NavigateToRoom").then(({ NavigateToRoom }) => ({ default: NavigateToRoom })),
 );
-const StoryBibleRoom = lazy(() =>
-  import("./pages/rooms/StoryBibleRoom").then(({ StoryBibleRoom }) => ({ default: StoryBibleRoom })),
+const StoryRoom = lazy(() =>
+  import("./pages/rooms/StoryRoom").then(({ StoryRoom }) => ({ default: StoryRoom })),
 );
 const StyleRoom = lazy(() => import("./pages/rooms/StyleRoom").then(({ StyleRoom }) => ({ default: StyleRoom })));
 const CastRoom = lazy(() => import("./pages/rooms/CastRoom").then(({ CastRoom }) => ({ default: CastRoom })));
-const AdaptRoom = lazy(() => import("./pages/rooms/AdaptRoom").then(({ AdaptRoom }) => ({ default: AdaptRoom })));
-const ShotPlanRoom = lazy(() =>
-  import("./pages/rooms/ShotPlanRoom").then(({ ShotPlanRoom }) => ({ default: ShotPlanRoom })),
+const PagesRoom = lazy(() =>
+  import("./pages/rooms/PagesRoom").then(({ PagesRoom }) => ({ default: PagesRoom })),
 );
-const DirectRoom = lazy(() => import("./pages/rooms/DirectRoom").then(({ DirectRoom }) => ({ default: DirectRoom })));
-const DrawRoom = lazy(() => import("./pages/rooms/DrawRoom").then(({ DrawRoom }) => ({ default: DrawRoom })));
-const ComposeRoom = lazy(() =>
-  import("./pages/rooms/ComposeRoom").then(({ ComposeRoom }) => ({ default: ComposeRoom })),
+const BookRoom = lazy(() =>
+  import("./pages/rooms/BookRoom").then(({ BookRoom }) => ({ default: BookRoom })),
 );
 const NotFound = lazy(() => import("./pages/NotFound").then(({ NotFound }) => ({ default: NotFound })));
 
@@ -120,13 +106,10 @@ export function App() {
           <Route path="project/:id/settings" element={lazyRoute(ProjectSettingsPage)} />
           <Route path="project/:id" element={lazyRoute(ProjectRooms)}>
             <Route index element={lazyRoute(NavigateToRoom)} />
-            <Route path="extract" element={lazyRoute(StoryBibleRoom)} />
+            <Route path="story" element={lazyRoute(StoryRoom)} />
             <Route path="cast" element={lazyRoute(CastRoom)} />
-            <Route path="adapt" element={<DevRoom>{lazyRoute(AdaptRoom)}</DevRoom>} />
-            <Route path="shot-plan" element={<DevRoom>{lazyRoute(ShotPlanRoom)}</DevRoom>} />
-            <Route path="direct" element={<DevRoom>{lazyRoute(DirectRoom)}</DevRoom>} />
-            <Route path="draw" element={lazyRoute(DrawRoom)} />
-            <Route path="compose" element={lazyRoute(ComposeRoom)} />
+            <Route path="pages" element={lazyRoute(PagesRoom)} />
+            <Route path="book" element={lazyRoute(BookRoom)} />
             <Route path="styles" element={lazyRoute(StyleRoom)} />
             <Route path="*" element={lazyRoute(NavigateToRoom)} />
           </Route>

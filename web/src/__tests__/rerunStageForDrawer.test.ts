@@ -2,13 +2,12 @@ import { describe, it, expect } from "vitest";
 import { rerunStageForDrawer, STATIONS, type DrawerKind } from "../lib/stations";
 import { RERUN_IMPACT } from "../lib/rerunImpact";
 
-const DRAWER_KINDS: DrawerKind[] = ["script", "shot-plan", "prompts"];
+const DRAWER_KINDS: DrawerKind[] = ["adaptation", "page-plan"];
 
 describe("rerunStageForDrawer", () => {
   it("maps each auto-step drawer to the first backend stage of its substep", () => {
-    expect(rerunStageForDrawer("script")).toBe("adapt");
-    expect(rerunStageForDrawer("shot-plan")).toBe("plan");
-    expect(rerunStageForDrawer("prompts")).toBe("direct");
+    expect(rerunStageForDrawer("adaptation")).toBe("adapt");
+    expect(rerunStageForDrawer("page-plan")).toBe("plan");
   });
 
   it("returns a stage that has a rerun-impact entry (so RerunStageAction can render)", () => {

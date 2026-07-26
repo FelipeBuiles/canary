@@ -4,22 +4,20 @@ export function completedStageArtifactQueryKeys(
 ): unknown[][] {
   switch (stage) {
     case "extract":
+    case "brief":
+      return [["project", projectId, "story"]];
     case "cast":
       return [["project", projectId, "story-bible"]];
     case "style":
       return [["project", projectId, "styles"]];
     case "adapt":
-      return [["project", projectId, "screenplays"]];
+      return [["project", projectId, "adaptation"]];
     case "plan":
-      return [["project", projectId, "plan"]];
-    case "storyboard":
-      return [["project", projectId, "storyboard"]];
-    case "direct":
-      return [["project", projectId, "direct"]];
+      return [["project", projectId, "book-plan"], ["project", projectId, "complete-pages"]];
     case "draw":
-      return [["project", projectId, "draw"]];
-    case "compose":
-      return [["project", projectId, "pages"]];
+      return [["project", projectId, "complete-pages"]];
+    case "finish":
+      return [["project", projectId, "finish-preflight"]];
     default:
       return [];
   }

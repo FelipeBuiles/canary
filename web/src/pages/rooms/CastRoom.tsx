@@ -32,7 +32,7 @@ import type { AppearanceState, Character, GenerationJob, Location, Prop } from "
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { useI18n } from "../../i18n";
 import { FlowingDotsPlaceholder } from "../../components/ui/FlowingDotsPlaceholder";
-import { StaleStripe } from "../../components/draw/LiveCockpit";
+import { StaleStageNotice } from "../../components/composites";
 import { getCastCheckpointAction } from "../../lib/castCheckpoint";
 
 function queuedLabel(job: GenerationJob | null) {
@@ -1355,8 +1355,7 @@ export function CastRoom() {
   const approveStage = useApproveStage();
   const { mutate: resetStale, isPending: isResetting } = useResetStale();
   const { handleRun, isPending: isPipelineRunning } = useRunAction();
-  // The estimate for "adapt" covers the whole auto chain: adapt → plan →
-  // storyboard → direct (the backend sums chained stages).
+  // The estimate for Adapt covers the automatic Adapt → Plan chain.
   const { data: chainEstimate } = useStageEstimate(id, "adapt");
   const isCastStageRunning = status?.stages?.cast?.status === "running";
   const stageRegenerating = isCastStageRunning;
@@ -1367,7 +1366,6 @@ export function CastRoom() {
   const lastProgressAt = stageInfo?.last_progress_at ?? null;
   const needsApproval = stageStatus === "awaiting_review";
   const { data: castResumeEstimate } = useStageEstimate(id, "cast", checkpointAction === "resume");
-  const adaptStarted = status?.stages?.adapt?.status != null && status.stages.adapt.status !== "pending";
   const autoStartedCast = useRef<string | null>(null);
 
   // Manual ref generation writes the assets but does not advance the cast
@@ -1380,7 +1378,7 @@ export function CastRoom() {
     handleRun(id, "cast", { actionLabel: "Cast characters & places" });
   }, [id, bible, status?.style_selected, stageStatus, handleRun]);
 
-  function handleContinueToPanels() {
+  function handleContinueToPages() {
     if (!id) return;
     if (checkpointAction === "resume") {
       // A normal stage run preserves successful cast artifacts. The Cast
@@ -1392,15 +1390,12 @@ export function CastRoom() {
         { project: id, stage: "cast" },
         {
           onSuccess: () => {
-            // Cast approval kicks the auto chain; the user watches it from
-            // the Panels station, where "Draw all panels" comes next.
-            if (!adaptStarted) handleRun(id, "adapt", { actionLabel: "Plan shots and write prompts" });
-            navigate(`/project/${id}/draw`);
+            navigate(`/project/${id}/pages`);
           },
         },
       );
     } else if (checkpointAction === "continue") {
-      navigate(`/project/${id}/draw`);
+      navigate(`/project/${id}/pages`);
     }
   }
 
@@ -1447,11 +1442,11 @@ export function CastRoom() {
       <RoomHeader
         kicker="LOOK"
         title="CONFIRM CHARACTERS & PLACES"
-        lead="These references guide every panel. Open only the people or places that need a fix."
+        lead="These approved references guide every complete page. Open only the people or places that need a fix."
       />
 
       {isStageStuck && (
-        <StaleStripe
+        <StaleStageNotice
           lastProgressAt={lastProgressAt}
           onContinue={handleContinueStale}
           onReset={handleResetStale}
@@ -1520,9 +1515,9 @@ export function CastRoom() {
         next={checkpointAction === "resume"
           ? "Some cast references did not finish — resume from the missing images"
           : needsApproval
-          ? "Scenewright plans shots and writes prompts — automatically"
+          ? "Scenewright adapts the book and plans complete pages — automatically"
           : stageStatus === "complete"
-            ? "Draw your panels at the Panels station"
+            ? "Review complete pages at the Pages station"
             : "Scenewright is drawing your cast"}
         estimateCredits={checkpointAction === "resume"
           ? castResumeEstimate?.estimate_credits
@@ -1533,8 +1528,8 @@ export function CastRoom() {
           ? "↺ RESUME CAST"
           : needsApproval
             ? "LOOKS RIGHT — CONTINUE →"
-            : "GO TO PANELS →"}
-        onPrimary={handleContinueToPanels}
+            : "GO TO PAGES →"}
+        onPrimary={handleContinueToPages}
         primaryDisabled={approveStage.isPending || isPipelineRunning || checkpointAction === "wait"}
         busy={approveStage.isPending || isPipelineRunning}
         secondary={<RerunStageAction project={id} stage="cast" label="cast" disabled={stageRegenerating} />}

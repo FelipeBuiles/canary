@@ -1,6 +1,6 @@
 /**
  * Stage progress reconciliation — the single owner of how pipeline progress
- * reaches the query cache and the draw progress store.
+ * reaches the query cache.
  *
  * Two feeds cross this seam:
  *  - SSE events flow through `applyPipelineEvent` (called by the pipeline
@@ -15,7 +15,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { completedStageArtifactQueryKeys } from "./pipelineArtifacts";
 import { applyStageEventToProjectStatus } from "./pipelineStatusEvents";
-import { useDrawProgressStore } from "../store/drawProgress";
 import type { PipelineEvent, ProjectStatus } from "../types/api";
 
 export function statusQueryKey(projectId: string) {
@@ -73,44 +72,14 @@ function applyStatusPatch(queryClient: QueryClient, projectId: string, event: Pi
   }
 }
 
-function applyDrawProgress(queryClient: QueryClient, projectId: string, event: PipelineEvent) {
-  if (event.stage !== "draw") return;
-  const drawProgress = useDrawProgressStore.getState();
-
-  if (event.type === "panel_start"
-      && event.scene_id != null
-      && event.panel_number != null
-      && event.started_at) {
-    drawProgress.applyPanelStart(projectId, event.scene_id, event.panel_number, event.started_at);
-    return;
-  }
-  if (event.type === "panel_done"
-      && event.scene_id != null
-      && event.panel_number != null
-      && event.status
-      && event.duration_ms != null) {
-    drawProgress.applyPanelDone(
-      projectId,
-      event.scene_id,
-      event.panel_number,
-      event.status,
-      event.duration_ms,
-      event.error ?? null,
-    );
-    void queryClient.invalidateQueries({ queryKey: ["project", projectId, "images"] });
-    return;
-  }
-  if (event.type === "stage_complete" || event.type === "stage_fail") {
-    drawProgress.clear(projectId);
-  }
-}
-
-/** Route one SSE event into the query cache and the draw progress store. */
+/** Route one SSE event into the query cache. */
 export function applyPipelineEvent(
   queryClient: QueryClient,
   projectId: string,
   event: PipelineEvent,
 ): void {
   applyStatusPatch(queryClient, projectId, event);
-  applyDrawProgress(queryClient, projectId, event);
+  if (event.stage === "draw" && event.type === "page_done") {
+    void queryClient.invalidateQueries({ queryKey: ["project", projectId, "complete-pages"] });
+  }
 }
