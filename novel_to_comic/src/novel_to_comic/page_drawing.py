@@ -33,7 +33,9 @@ from novel_to_comic.models.draw import (
     PageCapabilityProfile,
     PageGenerationProvenance,
     PageReference,
+    PageIssue,
     PageRenderRevision,
+    PageRenderCorrection,
     RetryProvenance,
 )
 from novel_to_comic.models.page import (
@@ -65,6 +67,7 @@ class CompiledPageGeneration:
 
     request: FrozenPageGenerationRequest
     reference_bytes: tuple[bytes, ...]
+    edit_source_bytes: bytes | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +79,7 @@ class PreparedVertexPageRequest:
     prompt: str
     references: tuple[PageReference, ...]
     reference_bytes: tuple[bytes, ...]
+    edit_source_bytes: bytes | None
     width: int
     height: int
     media_type: str
@@ -196,6 +200,7 @@ def _selected_authorities(
 def _compile_prompt(
     page: ComicPage,
     references: tuple[PageReference, ...],
+    correction: PageRenderCorrection | None = None,
 ) -> str:
     payload = {
         "canonical_comic_page": page.model_dump(mode="json"),
@@ -208,6 +213,9 @@ def _compile_prompt(
             }
             for reference in references
         ],
+        "complete_page_correction": (
+            correction.model_dump(mode="json") if correction is not None else None
+        ),
     }
     return (
         "Render exactly one complete, fully lettered comic page from the canonical "
@@ -230,6 +238,8 @@ def compile_page_generation_request(
     reference_files: Mapping[str, ApprovedReferenceFile],
     *,
     retry: RetryProvenance,
+    correction: PageRenderCorrection | None = None,
+    edit_source_bytes: bytes | None = None,
 ) -> CompiledPageGeneration:
     """Compile one immutable request from canonical Plan and Cast authority."""
 
@@ -240,6 +250,24 @@ def compile_page_generation_request(
     )
     if retry.attempt > selected_edition.capability_profile.max_attempts:
         raise ValueError("retry attempt exceeds the edition capability profile")
+    if correction is None and edit_source_bytes is not None:
+        raise ValueError("initial generation cannot have an edit source")
+    if correction is not None:
+        if correction.mode not in selected_edition.capability_profile.editing_modes:
+            raise ValueError("correction mode is unsupported by the edition profile")
+        if (
+            correction.page_number != page.page_number
+            or correction.comic_page_revision != page.revision
+            or correction.comic_page_sha256 != page.content_sha256
+        ):
+            raise ValueError("correction is stale for the canonical ComicPage")
+        if edit_source_bytes is None:
+            raise ValueError("complete-page correction requires its parent page bytes")
+        if (
+            hashlib.sha256(edit_source_bytes).hexdigest()
+            != correction.parent_render_image_sha256
+        ):
+            raise ValueError("edit source bytes do not match correction lineage")
     authorities = _selected_authorities(page, inventory)
     references: list[PageReference] = []
     loaded: list[bytes] = []
@@ -269,17 +297,19 @@ def compile_page_generation_request(
                 appearance_state_id=authority.appearance_state_id,
             )
         )
-    prompt = _compile_prompt(page, tuple(references))
+    prompt = _compile_prompt(page, tuple(references), correction)
     request = FrozenPageGenerationRequest.compile(
         page=page,
         edition=selected_edition,
         prompt=prompt,
         references=references,
         retry=retry,
+        correction=correction,
     )
     return CompiledPageGeneration(
         request=request,
         reference_bytes=tuple(loaded),
+        edit_source_bytes=edit_source_bytes,
     )
 
 
@@ -304,12 +334,23 @@ class VertexCompletePageAdapter:
                 raise ValueError(
                     f"selected reference {reference.order} bytes changed after compilation"
                 )
+        if request.correction is None and compiled.edit_source_bytes is not None:
+            raise ValueError("initial generation cannot submit an edit source")
+        if request.correction is not None:
+            if compiled.edit_source_bytes is None:
+                raise ValueError("complete-page correction is missing its edit source")
+            if (
+                hashlib.sha256(compiled.edit_source_bytes).hexdigest()
+                != request.correction.parent_render_image_sha256
+            ):
+                raise ValueError("complete-page edit source changed after compilation")
         return PreparedVertexPageRequest(
             request_sha256=request.request_sha256,
             model=request.model,
             prompt=request.prompt,
             references=request.references,
             reference_bytes=compiled.reference_bytes,
+            edit_source_bytes=compiled.edit_source_bytes,
             width=request.output_width,
             height=request.output_height,
             media_type=request.output_media_type,
@@ -357,7 +398,20 @@ class GoogleVertexCompletePageTransport:
         event_id = uuid.uuid4().hex
         url = f"{ai_client._base_url(self._config)}/v1/images/edits"
         headers = ai_client._headers(self._config, event_id)
-        files = [
+        files = []
+        if request.edit_source_bytes is not None:
+            files.append(
+                (
+                    "image",
+                    (
+                        "complete-page-edit-source.png",
+                        request.edit_source_bytes,
+                        "image/png",
+                    ),
+                )
+            )
+        files.extend(
+            [
             (
                 "image",
                 (
@@ -371,7 +425,8 @@ class GoogleVertexCompletePageTransport:
                 request.reference_bytes,
                 strict=True,
             )
-        ]
+            ]
+        )
         started = time.perf_counter()
         response = await ai_client._post_with_retry(
             url,
@@ -437,6 +492,13 @@ async def draw_complete_page(
 ) -> PageGenerationProvenance:
     """Persist and execute exactly one complete-page request."""
 
+    correction = compiled.request.correction
+    if correction is None and parent_render_revision is not None:
+        raise ValueError("initial page generation cannot cite correction lineage")
+    if correction is not None and (
+        parent_render_revision != correction.parent_render_revision
+    ):
+        raise ValueError("complete-page correction must cite its exact parent render")
     prepared = adapter.prepare(compiled)
     artifacts.write_request(
         compiled.request,
@@ -469,6 +531,41 @@ async def draw_complete_page(
         provider_request_id=provider_result.provider_request_id,
     )
     artifacts.write_provenance(provenance)
+    return provenance
+
+
+async def correct_complete_page(
+    compiled: CompiledPageGeneration,
+    *,
+    issue: PageIssue,
+    adapter: VertexCompletePageAdapter,
+    artifacts: TargetArtifacts,
+    request_revision: int,
+    render_revision: int,
+) -> PageGenerationProvenance:
+    """Produce and link one complete revised page for a Draw-owned issue."""
+
+    correction = compiled.request.correction
+    if correction is None or correction.issue_id != issue.id:
+        raise ValueError("compiled request does not correct the supplied page issue")
+    if issue.correction_owner != "draw":
+        raise ValueError("copy changes must return to Adapt and Plan")
+    provenance = await draw_complete_page(
+        compiled,
+        adapter=adapter,
+        artifacts=artifacts,
+        request_revision=request_revision,
+        render_revision=render_revision,
+        parent_render_revision=correction.parent_render_revision,
+    )
+    from novel_to_comic.page_review import resolve_page_issue
+
+    resolve_page_issue(
+        artifacts,
+        issue_id=issue.id,
+        page_number=issue.page_number,
+        resolution_revision=render_revision,
+    )
     return provenance
 
 
