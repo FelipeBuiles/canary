@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from novel_to_comic.models.adaptation import LetteringItem, RevisionedArtifact
 from novel_to_comic.models.page import ComicPage
+from novel_to_comic.models.validation import InvariantFailure
 from novel_to_comic.usage import UsageRecord
 
 
@@ -118,6 +119,7 @@ class FrozenPageGenerationRequest(BaseModel):
     estimated_cost_usd: Decimal = Field(ge=0)
     artifact_kind: Literal["complete_page"] = "complete_page"
     retry: RetryProvenance
+    correction: PageRenderCorrection | None = None
 
     @classmethod
     def compile(
@@ -128,6 +130,7 @@ class FrozenPageGenerationRequest(BaseModel):
         prompt: str,
         references: list[PageReference] | tuple[PageReference, ...],
         retry: RetryProvenance,
+        correction: PageRenderCorrection | None = None,
     ) -> "FrozenPageGenerationRequest":
         profile = edition.capability_profile
         if len(prompt) > profile.max_prompt_characters:
@@ -158,6 +161,7 @@ class FrozenPageGenerationRequest(BaseModel):
                 + profile.price_per_reference_usd * len(references)
             ),
             retry=retry,
+            correction=correction,
         )
 
     @model_validator(mode="after")
@@ -168,6 +172,12 @@ class FrozenPageGenerationRequest(BaseModel):
         reference_ids = [reference.id for reference in self.references]
         if len(reference_ids) != len(set(reference_ids)):
             raise ValueError("page reference IDs must be unique")
+        if self.correction is not None and (
+            self.correction.page_number != self.page_number
+            or self.correction.comic_page_revision != self.comic_page_revision
+            or self.correction.comic_page_sha256 != self.comic_page_sha256
+        ):
+            raise ValueError("correction lineage must match the frozen ComicPage")
 
         digest = _content_hash(self, "request_sha256")
         if self.request_sha256 and self.request_sha256 != digest:
@@ -255,6 +265,60 @@ class ObservedRegion(BaseModel):
     polygon: tuple[tuple[float, float], ...] = Field(min_length=3)
 
 
+class OCRTextObservation(BaseModel):
+    """One ordered OCR observation from a complete page render."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+    detected_region_id: str | None = None
+
+
+class OCRExtraction(BaseModel):
+    """Deterministic adapter output; all geometry remains derived evidence."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    lettering: tuple[OCRTextObservation, ...] = ()
+    observed_regions: tuple[ObservedRegion, ...] = ()
+    observed_reading_order: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _validate_evidence_references(self) -> "OCRExtraction":
+        observation_ids = [item.id for item in self.lettering]
+        if len(observation_ids) != len(set(observation_ids)):
+            raise ValueError("OCR observation IDs must be unique")
+        region_ids = [region.id for region in self.observed_regions]
+        if len(region_ids) != len(set(region_ids)):
+            raise ValueError("observed region IDs must be unique")
+        known_regions = set(region_ids)
+        if any(
+            item.detected_region_id not in known_regions
+            for item in self.lettering
+            if item.detected_region_id is not None
+        ):
+            raise ValueError("OCR observation cites an unknown detected region")
+        if len(self.observed_reading_order) != len(
+            set(self.observed_reading_order)
+        ):
+            raise ValueError("observed reading-order IDs must be unique")
+        if any(item not in known_regions for item in self.observed_reading_order):
+            raise ValueError("observed reading order cites an unknown region")
+        return self
+
+
+class LetteringMatch(BaseModel):
+    """Exact canonical-to-observed match evidence in page reading order."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    lettering_item_id: str = Field(min_length=1)
+    observation_id: str = Field(min_length=1)
+    canonical_text: str = Field(min_length=1)
+    observed_text: str = Field(min_length=1)
+
+
 class RenderAnalysis(BaseModel):
     """Derived observations used to validate a complete page render."""
 
@@ -263,10 +327,88 @@ class RenderAnalysis(BaseModel):
     page_number: int = Field(ge=1)
     render_revision: int = Field(ge=1)
     render_image_sha256: str = Field(min_length=64, max_length=64)
+    punctuation_policy: Literal["unicode_typographic_punctuation_v1"] = (
+        "unicode_typographic_punctuation_v1"
+    )
     recognized_lettering: dict[str, str] = Field(default_factory=dict)
+    ocr_observations: tuple[OCRTextObservation, ...] = ()
+    lettering_matches: tuple[LetteringMatch, ...] = ()
     observed_regions: tuple[ObservedRegion, ...] = ()
     observed_reading_order: tuple[str, ...] = ()
+    invariant_failures: tuple[InvariantFailure, ...] = ()
     evidence: tuple[str, ...] = ()
+
+    @property
+    def lettering_valid(self) -> bool:
+        return not self.invariant_failures
+
+
+class PageRenderCorrection(BaseModel):
+    """One Draw-owned instruction whose output is still a complete page."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    issue_id: str = Field(min_length=1)
+    page_number: int = Field(ge=1)
+    comic_page_revision: int = Field(ge=1)
+    comic_page_sha256: str = Field(min_length=64, max_length=64)
+    parent_render_revision: int = Field(ge=1)
+    parent_render_image_sha256: str = Field(min_length=64, max_length=64)
+    mode: Literal["instructed", "region_targeted"]
+    instruction: str = Field(min_length=1)
+    detected_region_ids: tuple[str, ...] = ()
+    artifact_kind: Literal["complete_page"] = "complete_page"
+
+    @model_validator(mode="after")
+    def _validate_mode(self) -> "PageRenderCorrection":
+        if self.mode == "region_targeted" and not self.detected_region_ids:
+            raise ValueError("region-targeted correction requires a detected region")
+        if self.mode == "instructed" and self.detected_region_ids:
+            raise ValueError("instructed correction cannot carry detected regions")
+        return self
+
+
+class PageCorrectionIntent(BaseModel):
+    """Validated routing decision before render lineage is attached."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    issue_id: str = Field(min_length=1)
+    page_number: int = Field(ge=1)
+    parent_render_revision: int = Field(ge=1)
+    mode: Literal["instructed", "region_targeted"]
+    instruction: str = Field(min_length=1)
+    detected_region_ids: tuple[str, ...] = ()
+    artifact_kind: Literal["complete_page"] = "complete_page"
+
+
+class AdaptCopyCorrectionRequest(BaseModel):
+    """A wording request returned to Adapt; Draw never rewrites canonical copy."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    issue_id: str = Field(min_length=1)
+    page_number: int = Field(ge=1)
+    owner_stage: Literal["adapt"] = "adapt"
+    requested_change: str = Field(min_length=1)
+    source_unit_ids: tuple[str, ...] = ()
+    adapted_beat_ids: tuple[str, ...] = ()
+    lettering_item_ids: tuple[str, ...] = ()
+    requires_replan: Literal[True] = True
+
+
+class PageIssueSummary(BaseModel):
+    """Review-by-exception state; pages have no separate acceptance record."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    unresolved_issue_ids: tuple[str, ...] = ()
+    blocking_issue_ids: tuple[str, ...] = ()
+    accepted_editorial_issue_ids: tuple[str, ...] = ()
+
+    @property
+    def can_continue(self) -> bool:
+        return not self.blocking_issue_ids
 
 
 class PageIssue(BaseModel):
@@ -276,6 +418,11 @@ class PageIssue(BaseModel):
 
     id: str = Field(min_length=1)
     issue_type: str = Field(min_length=1)
+    classification: Literal["invariant_failure", "editorial_issue"] = (
+        "editorial_issue"
+    )
+    correction_kind: Literal["render_fidelity", "copy_change"] = "render_fidelity"
+    correction_owner: Literal["adapt", "draw"] = "draw"
     page_number: int = Field(ge=1)
     render_revision: int = Field(ge=1)
     evidence: tuple[str, ...] = Field(min_length=1)
@@ -291,6 +438,12 @@ class PageIssue(BaseModel):
 
     @model_validator(mode="after")
     def _validate_resolution(self) -> "PageIssue":
+        if self.classification == "invariant_failure" and self.status == "accepted":
+            raise ValueError("an invariant failure cannot be deliberately accepted")
+        if self.correction_owner == "adapt" and self.correction_kind != "copy_change":
+            raise ValueError("only a copy change may be routed to Adapt")
+        if self.correction_kind == "copy_change" and self.correction_owner != "adapt":
+            raise ValueError("copy changes must be routed to Adapt")
         if self.status == "resolved" and self.resolution_revision is None:
             raise ValueError("resolved page issue requires a resolution revision")
         if self.status != "resolved" and self.resolution_revision is not None:

@@ -243,7 +243,7 @@ class TargetArtifacts:
 
     def write_analysis(self, analysis: RenderAnalysis) -> None:
         path = self.analysis_path(analysis.page_number, analysis.render_revision)
-        self._write_model(path, analysis)
+        self._write_immutable_model(path, analysis, RenderAnalysis)
 
     def read_analysis(
         self,
