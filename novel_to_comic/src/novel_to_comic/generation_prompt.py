@@ -1,7 +1,7 @@
 """Canonical prompt-body projection (Slice 02).
 
 Renders a deterministic prompt-body projection from the owned sections of an
-``ImagePrompt``:
+``GenerationPromptInput``:
 
 - Protected verbatim anchors (character identity on subjects, location/prop
   anchors) — emitted unchanged.
@@ -24,11 +24,12 @@ is regenerated from typed fields on every render.
 
 from __future__ import annotations
 
-from novel_to_comic.models.prompt import ImagePrompt, PromptAnchor, PromptSubject
+from novel_to_comic.generation_input import GenerationPromptInput
+from novel_to_comic.models.generation import PromptAnchor, PromptSubject
 from novel_to_comic.text_utils import clean as _clean
 
 # Generated system-constraint lines. These are typed invariants, not editable
-# prose — the canonical projection emits them from the ImagePrompt's typed
+# prose — the canonical projection emits them from typed generation input
 # fields on every render.
 _NARRATION_NOTE = (
     "narration caption will be lettered in post-production only; "
@@ -100,16 +101,37 @@ _CHARACTER_VALUE_STYLE_LOCK = (
     "the character's clothing and skin are predominantly light",
 )
 
-# Character-count / figure / instant / no-lettering labels follow the prompting
-# module's i18n label table. The canonical projection reuses them so the
-# constraint vocabulary stays in one place.
-from novel_to_comic.prompting import _PROMPT_LABELS  # noqa: E402
+_ENGLISH_LABELS = {
+    "composition": "Composition",
+    "setting": "Setting",
+    "lighting": "Lighting",
+    "mood": "Mood",
+    "key_props": "Key props",
+    "key_objects": "Key objects",
+    "must_show": "Must show",
+    "expression": "expression",
+    "position": "position",
+    "wardrobe_override": (
+        "current wardrobe (overrides any clothing mentioned above)"
+    ),
+    "character": "character",
+    "characters": "characters",
+    "one_body": "one body per listed character",
+    "single_instant": "single frozen instant, not a sequence or split-screen",
+    "no_lettering": (
+        "no text, captions, speech balloons, or lettering anywhere in the image"
+    ),
+    "style_authority": (
+        "Use the selected visual style above as authoritative if later prompt "
+        "text conflicts."
+    ),
+}
 
 
-def _labels(prompt: ImagePrompt) -> dict[str, str]:
-    # Language is not carried on ImagePrompt today; the canonical projection
+def _labels(prompt: GenerationPromptInput) -> dict[str, str]:
+    # Language is not carried on generation input today; the canonical projection
     # uses English labels (the default). Slice 06 (prompt hygiene) may revisit.
-    return _PROMPT_LABELS["en"]
+    return _ENGLISH_LABELS
 
 
 def _character_anchor_lines(subjects: list[PromptSubject]) -> list[str]:
@@ -138,7 +160,7 @@ def _location_prop_anchor_lines(anchors: list[PromptAnchor]) -> list[str]:
     return lines
 
 
-def _appearance_lock_clauses(prompt: ImagePrompt) -> list[str]:
+def _appearance_lock_clauses(prompt: GenerationPromptInput) -> list[str]:
     """Hard-constraint clauses for entities in a non-base, visually-significant
     appearance state (characters and the location)."""
     clauses: list[str] = []
@@ -172,7 +194,7 @@ def _appearance_lock_clauses(prompt: ImagePrompt) -> list[str]:
 
 
 def generate_system_constraints(
-    prompt: ImagePrompt,
+    prompt: GenerationPromptInput,
     *,
     asset_kind: str = "panel",
     has_style_reference: bool = False,
@@ -236,7 +258,7 @@ def generate_system_constraints(
     return lines
 
 
-def render_canonical_body(prompt: ImagePrompt) -> str:
+def render_canonical_body(prompt: GenerationPromptInput) -> str:
     """Render the deterministic canonical prompt-body projection.
 
     Combines the owned sections into a single semicolon- and period-delimited

@@ -19,9 +19,9 @@ from novel_to_comic.generation_input import GenerationPromptInput
 from novel_to_comic.image_ref_strategy import RefStrategy
 from novel_to_comic.events import make_progress
 from novel_to_comic.models.appearance import AppearanceState
-from novel_to_comic.models.prompt import PromptAnchor, PromptSubject
+from novel_to_comic.models.generation import PromptAnchor, PromptSubject
 from novel_to_comic.models.story_bible import Character, Prop, StoryBible
-from novel_to_comic.panel_versions import record_asset_version
+from novel_to_comic.asset_versions import record_asset_version
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.state_assets import (
     StateAssetGenerationSpec,
@@ -29,7 +29,7 @@ from novel_to_comic.state_assets import (
     build_location_state_spec,
     mark_dependent_states_stale,
 )
-from novel_to_comic.non_panel_generation import (
+from novel_to_comic.asset_generation import (
     AbstractStyleProofInput,
     CanonicalCharacterReferenceInput,
     CanonicalLocationPlateInput,
@@ -112,7 +112,7 @@ _SHEET_POSE_BOXES: dict[str, tuple[float, float, float, float]] = {
 
 
 def _crop_sheet_to_poses(sheet_path: Path) -> None:
-    """Crop a two-view character reference sheet into panel-ready PNGs.
+    """Crop a two-view character reference sheet into reusable reference PNGs.
 
     The combined generation keeps identity coherent across portrait and body
     views, while the derived crops prevent the sheet layout leaking into panel
@@ -1423,7 +1423,7 @@ def estimate_state_reference_count(
 
 def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
     from novel_to_comic.usage import estimate_image_cost
-    from novel_to_comic.non_panel_generation import estimate_non_panel_request
+    from novel_to_comic.asset_generation import estimate_non_panel_request
 
     story_bible = artifacts.read_story_bible_safe(project_dir)
     if story_bible is None:

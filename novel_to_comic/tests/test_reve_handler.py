@@ -6,6 +6,7 @@ covers the v2 create fallback used for ordinary generation/edit requests.
 
 import asyncio
 import base64
+import hashlib
 import sys
 from pathlib import Path
 
@@ -20,6 +21,56 @@ from litellm_handlers.reve_provider import (  # noqa: E402
 )
 
 _PNG_B64 = base64.b64encode(b"\x89PNG\r\n\x1a\nfakepng").decode("ascii")
+
+
+def _compiled(tmp_path, *, model, count):
+    from novel_to_comic.compiled_request import compile_generation_request
+    from novel_to_comic.generation_input import GenerationPromptInput
+    from novel_to_comic.image_models import image_model_profile
+    from novel_to_comic.image_references import (
+        AuthorityScope,
+        ReferenceAsset,
+        ReferencePlan,
+        selection_fingerprint_hex,
+    )
+
+    selected = []
+    for index in range(count):
+        path = tmp_path / f"reference_{index}.png"
+        path.write_bytes(f"reference {index}".encode())
+        selected.append(
+            ReferenceAsset(
+                path=path,
+                role="style",
+                entity_id=None,
+                appearance_state_id=None,
+                authority_scope=AuthorityScope.CONTEXTUAL,
+                preserve_facets=(),
+                ignore_facets=(),
+                pose=None,
+                content_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+                lineage_parent_sha256=None,
+            )
+        )
+    selected_tuple = tuple(selected)
+    profile = image_model_profile(model)
+    return compile_generation_request(
+        prompt=GenerationPromptInput(
+            full_prompt="A complete illustrated page.",
+            width=1152,
+            height=2048,
+        ),
+        reference_plan=ReferencePlan(
+            expected_route=profile.route,
+            selected=selected_tuple,
+            dropped=(),
+            selection_fingerprint=selection_fingerprint_hex(selected_tuple),
+        ),
+        route_profile=profile,
+        requested_alias=model,
+        configured_provider_model=model,
+        asset_kind="labs_image",
+    )
 
 
 class _MockResponse:
@@ -49,7 +100,6 @@ def _capture_post(monkeypatch, payload=None):
 
 
 def test_create_uses_v2_prompt_aspect_and_fit_postprocessing(monkeypatch, tmp_path):
-    from test_provider_wire import _compiled
     from novel_to_comic.image_models import GATEWAY_IMAGE_REVE
     from novel_to_comic.provider_wire import compile_provider_wire_request
 
@@ -78,7 +128,6 @@ def test_create_uses_v2_prompt_aspect_and_fit_postprocessing(monkeypatch, tmp_pa
 
 
 def test_edit_uses_v2_raw_references_and_frame_markers(monkeypatch, tmp_path):
-    from test_provider_wire import _compiled
     from novel_to_comic.image_models import GATEWAY_IMAGE_REVE
     from novel_to_comic.provider_wire import compile_provider_wire_request
 
@@ -114,7 +163,6 @@ def test_edit_uses_v2_raw_references_and_frame_markers(monkeypatch, tmp_path):
 
 
 def test_content_violation_raises(monkeypatch, tmp_path):
-    from test_provider_wire import _compiled
     from novel_to_comic.image_models import GATEWAY_IMAGE_REVE
     from novel_to_comic.provider_wire import compile_provider_wire_request
 

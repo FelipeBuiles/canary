@@ -34,28 +34,28 @@ model_list:
       safety_settings: *vertex_safety_off
 
   # ─── Stage 3: screenplay / dialogue adaptation ────────────────────────────
-  - model_name: screenplay-fast
+  - model_name: adapt-fast
     litellm_params:
       model: anthropic/claude-haiku-4-5
       api_key: os.environ/ANTHROPIC_API_KEY
-  - model_name: screenplay-balanced
+  - model_name: adapt-balanced
     litellm_params:
       model: anthropic/claude-sonnet-4-6
       api_key: os.environ/ANTHROPIC_API_KEY
-  - model_name: screenplay-quality
+  - model_name: adapt-quality
     litellm_params:
       model: anthropic/claude-opus-4-7
       api_key: os.environ/ANTHROPIC_API_KEY
 
   # ─── Stage 4: layout / panel planning ─────────────────────────────────────
-  - model_name: panel-fast
+  - model_name: plan-fast
     litellm_params:
       model: vertex_ai/gemini-3.5-flash-lite
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
       reasoning_effort: "disable"
-  - model_name: panel-balanced
+  - model_name: plan-balanced
     litellm_params:
       model: vertex_ai/gemini-3.6-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
@@ -64,7 +64,7 @@ model_list:
       reasoning_effort: "disable"
   # Panel planning is structured transformation over already-extracted data;
   # hidden model reasoning is disabled to avoid billing invisible token spend.
-  - model_name: panel-quality
+  - model_name: plan-quality
     litellm_params:
       model: vertex_ai/gemini-3.6-flash
       vertex_project: os.environ/VERTEXAI_PROJECT

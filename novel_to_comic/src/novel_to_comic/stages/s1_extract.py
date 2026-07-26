@@ -394,67 +394,6 @@ def _complete_source_start_quotes(story_bible: StoryBible, novel_text: str) -> N
         search_from = position + 1
 
 
-def _write_scene_files(story_bible: StoryBible, novel_text: str, scenes_dir: Path) -> None:
-    """Write individual scene text files using verbatim quote anchors.
-
-    For each scene, source_start_quote is searched in the novel text to find
-    the exact byte offset. Scenes are sorted by their found position, and each
-    scene runs from its anchor to the next scene's anchor (last scene runs to
-    end of text).
-
-    Anchors are resolved monotonically: each scene's quote is searched at or
-    after the previous scene's anchor, so a short or repeated opening phrase
-    cannot match an earlier passage and silently reorder scene boundaries.
-    A quote found only *before* the previous anchor indicates extraction
-    disorder and is treated as missing (with a loud warning).
-
-    Scenes whose quote cannot be found receive a fallback text block instead
-    of novel prose.
-    """
-    scenes_dir.mkdir(parents=True, exist_ok=True)
-
-    positions: list[tuple[int, object]] = []
-    missing: list = []
-    search_from = 0
-
-    for scene in story_bible.scenes:
-        pos = _find_quote_position(novel_text, scene.source_start_quote, start=search_from)
-        if pos == -1 and search_from > 0:
-            # Diagnose: does the quote exist earlier in the text? That means
-            # the bible's scene order disagrees with the novel — surface it.
-            earlier = _find_quote_position(novel_text, scene.source_start_quote)
-            if earlier != -1:
-                console.print(
-                    f"[yellow]  ⚠ Quote for {scene.id} ({scene.title!r}) only matches "
-                    f"BEFORE the previous scene's anchor — scene order may be wrong. "
-                    f"Using summary fallback.[/yellow]"
-                )
-                missing.append(scene)
-                continue
-        if pos == -1:
-            missing.append(scene)
-            console.print(
-                f"[yellow]  ⚠ Could not locate quote for {scene.id} "
-                f"({scene.title!r}) — will use summary fallback[/yellow]"
-            )
-        else:
-            positions.append((pos, scene))
-            search_from = pos + 1
-
-    positions.sort(key=lambda x: x[0])
-
-    # Write scenes with found positions
-    for i, (start, scene) in enumerate(positions):
-        end = positions[i + 1][0] if i + 1 < len(positions) else len(novel_text)
-        scene_text = novel_text[start:end].strip()
-        (scenes_dir / f"{scene.id}.txt").write_text(scene_text)
-
-    # Write fallback files for unlocated scenes
-    for scene in missing:
-        fallback = f"[Scene: {scene.title}]\n\n{scene.summary}"
-        (scenes_dir / f"{scene.id}.txt").write_text(fallback)
-
-
 async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBible:
     """Execute Stage 1: Extract Story Bible from the novel."""
     with ctx.execute(total=4):
@@ -507,7 +446,14 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
         ctx.progress(3, 4)
 
         artifacts.write_story_bible(project_dir, story_bible)
-        _write_scene_files(story_bible, novel_text, project_dir / "scenes")
+        from novel_to_comic.source_extraction import produce_source_document
+        from novel_to_comic.target_artifacts import TargetArtifacts
+
+        produce_source_document(
+            TargetArtifacts(project_dir),
+            novel_text,
+            story_bible,
+        )
 
         ctx.record_item_done(usage=extract_result.usage)
         ctx.progress(4, 4)
@@ -542,13 +488,13 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
 STAGE = Stage(
     name="extract",
     run=run,
-    outputs=lambda d: [artifacts.story_bible_path(d)],
-    # Style samples survive a re-extract (cascade starts at "refs"), so the
-    # user's selected style isn't lost when the bible is regenerated.
+    outputs=lambda d: [
+        artifacts.story_bible_path(d),
+        d / "source" / "source.json",
+    ],
     clean_paths=lambda d: [
         artifacts.story_bible_path(d),
-        d / "scenes",
-        *clean_cascade(d, "refs"),
+        *clean_cascade(d, "source"),
     ],
     estimate_cost=estimate_cost,
 )

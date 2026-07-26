@@ -13,8 +13,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
-
-from novel_to_comic.assembly.html_renderer import FONTS_DIR
 from novel_to_comic.model_costs import DEFAULT_COST_MAP_PATH, refresh_litellm_cost_cache
 from novel_to_comic.usage import audit_pricing
 
@@ -39,6 +37,8 @@ from .routers import (
 )
 from .metrics import metrics_response
 from .release import release_identity
+
+FONTS_DIR = Path(__file__).resolve().parents[1] / "fonts"
 
 
 class SPAStaticFiles(StaticFiles):

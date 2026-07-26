@@ -16,8 +16,8 @@ from novel_to_comic import artifacts
 from novel_to_comic.clients import text as text_client
 from novel_to_comic.config import Config
 from novel_to_comic.generation_input import GenerationPromptInput
-from novel_to_comic.models.prompt import PromptAnchor, PromptSubject
-from novel_to_comic.non_panel_generation import (
+from novel_to_comic.models.generation import PromptAnchor, PromptSubject
+from novel_to_comic.asset_generation import (
     AbstractStyleProofInput,
     asset_matches_request,
     compile_non_panel_request,
@@ -26,8 +26,10 @@ from novel_to_comic.non_panel_generation import (
     submit_non_panel_request,
 )
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.prompt_assembly import normalize_prose_brief
-from novel_to_comic.prompting import style_sample_fallback_brief
+from novel_to_comic.style_briefing import (
+    normalize_prose_brief,
+    style_sample_fallback_brief,
+)
 from novel_to_comic.stage_runtime import StageRuntime
 
 logger = logging.getLogger(__name__)
@@ -557,7 +559,7 @@ def build_style_sample_request(
     composition: str | None = None,
 ):
     """Compile the canonical, fingerprintable request for one style proof."""
-    from novel_to_comic.panel_aspect import style_proof_dimensions
+    from novel_to_comic.image_geometry import style_proof_dimensions
 
     width, height = style_proof_dimensions()
     character = bible.characters[0] if bible.characters else None
@@ -865,7 +867,7 @@ from novel_to_comic.state import PipelineState  # noqa: E402
 
 
 def _style_sample_estimate(config: Config, project_dir: Path, bible: StoryBible, template: str, identity: str):
-    from novel_to_comic.panel_aspect import style_proof_dimensions
+    from novel_to_comic.image_geometry import style_proof_dimensions
 
     brief = None
     brief_path = artifacts.style_sample_brief_path(project_dir)

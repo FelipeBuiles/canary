@@ -181,10 +181,9 @@ def enqueue_credited_job(
                     elif kind == "prop_ref_regen":
                         item_id = payload.get("prop_id")
                 elif stage == "draw":
-                    scene_id = payload.get("scene_id")
-                    panel_number = payload.get("panel_number")
-                    if scene_id and panel_number is not None:
-                        item_id = f"{scene_id}/panel_{panel_number:03d}"
+                    page_number = payload.get("page_number")
+                    if page_number is not None:
+                        item_id = f"page_{int(page_number):03d}"
 
                 if item_id and item_id in stage_state.items_failed:
                     stage_state.items_failed.remove(item_id)

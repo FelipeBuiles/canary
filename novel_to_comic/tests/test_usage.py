@@ -94,7 +94,7 @@ def test_per_megapixel_image_pricing_rounds_output_and_references():
 def test_provider_reported_cost_wins_over_cached_pricing():
     usage = UsageRecord(
         provider="openai",
-        model="panel-balanced",
+        model="plan-balanced",
         provider_model="openai/gpt-5.4-mini",
         operation="text",
         input_tokens=1000,
@@ -173,7 +173,7 @@ def test_debit_model_usage_persists_pricing_snapshot():
     db = _Db()
     usage = UsageRecord(
         provider="openai",
-        model="panel-balanced",
+        model="plan-balanced",
         provider_model="openai/gpt-5.4-mini",
         operation="text",
         input_tokens=1000,

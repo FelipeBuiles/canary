@@ -424,7 +424,7 @@ def test_generate_sample_image_uses_brief_and_writes_meta(tmp_path):
 
     sample_path = tmp_path / "samples" / "style_1.png"
     with patch(
-        "novel_to_comic.non_panel_generation.execute_frozen_request",
+            "novel_to_comic.asset_generation.execute_frozen_request",
         new=AsyncMock(side_effect=_fake_execute_frozen_request),
     ):
         asyncio.run(
@@ -460,7 +460,7 @@ def test_sample_freshness_uses_compiled_request_fingerprint(tmp_path):
         return ApiResult(value=output_path, usage=None)
 
     with patch(
-        "novel_to_comic.non_panel_generation.execute_frozen_request",
+            "novel_to_comic.asset_generation.execute_frozen_request",
         new=AsyncMock(side_effect=_fake_execute_frozen_request),
     ), patch(
         "novel_to_comic.clients.text.generate_text",
@@ -488,7 +488,7 @@ def test_fallback_brief_proof_is_fresh_without_brief_cache(tmp_path):
         return ApiResult(value=output_path, usage=None)
 
     with patch(
-        "novel_to_comic.non_panel_generation.execute_frozen_request",
+            "novel_to_comic.asset_generation.execute_frozen_request",
         new=AsyncMock(side_effect=_fake_execute_frozen_request),
     ):
         asyncio.run(generate_sample_image(

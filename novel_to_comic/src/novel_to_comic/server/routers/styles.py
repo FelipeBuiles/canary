@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import logging
+import shutil
 import warnings
 from pathlib import Path
 
@@ -16,10 +17,11 @@ from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.config import Config, mock_mode_active, save_config
 from novel_to_comic.image_models import image_model_profile_for_config
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.non_panel_generation import asset_matches_request
+from novel_to_comic.asset_generation import asset_matches_request
 from novel_to_comic.state import (
-    StageStatus, begin_stage, complete_stage, fail_stage, record_item_done, save_state,
+    StageState, StageStatus, begin_stage, complete_stage, fail_stage, record_item_done, save_state,
 )
+from novel_to_comic.stages import REGISTRY
 from novel_to_comic.stages.s2_style import (
     STYLE_VALIDATION_ACTION,
     STYLE_VALIDATION_COMPOSITION,
@@ -991,9 +993,20 @@ def set_active_style(
         raise HTTPException(400, f"Index {index} out of range (1-{len(suggestions)})")
 
     template = suggestions[index - 1].get("template", config.style_template)
+    changed = template.strip() != config.style_template.strip()
     config = config.model_copy(update={"style_template": template})
     save_config(config, project_dir)
-    if clear_style_failures_after_selection(state):
+    if changed:
+        clear_style_failures_after_selection(state)
+        for stage in ("cast", "adapt", "plan", "draw", "finish"):
+            state.stages[stage] = StageState()
+        for path in REGISTRY["cast"].clean_paths(project_dir):
+            if path.is_dir():
+                shutil.rmtree(path)
+            elif path.exists():
+                path.unlink()
+        save_state(state, project_dir)
+    elif clear_style_failures_after_selection(state):
         save_state(state, project_dir)
 
     result = {"status": "updated", "index": index, "style_template": template}

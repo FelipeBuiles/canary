@@ -13,9 +13,8 @@ stage_complete   stage: str, done: int, total: int
 stage_fail       stage: str, message: str
 log              stage: str, level: str, message: str
                    level one of: "info" | "warn" | "error" | "dim" | "bold"
-panel_start      stage: str, scene_id: str, panel_number: int,
-                 started_at: str (ISO-8601 UTC)
-panel_done       stage: str, scene_id: str, panel_number: int,
+page_start       stage: str, page_number: int, started_at: str (ISO-8601 UTC)
+page_done        stage: str, page_number: int, revision: int,
                  status: "ok" | "failed", duration_ms: int,
                  error: str | None
 

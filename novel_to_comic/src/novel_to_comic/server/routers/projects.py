@@ -9,7 +9,6 @@ import re
 import shutil
 import tempfile
 import time
-from datetime import datetime, timezone
 from json import JSONDecodeError
 from pathlib import Path
 from typing import cast
@@ -36,9 +35,9 @@ from novel_to_comic.input_limits import (
     decode_remote_story,
     read_source,
 )
-from novel_to_comic.models.prompt import ImagePrompt, PromptAnchor
+from novel_to_comic.models.generation import PromptAnchor
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.non_panel_generation import (
+from novel_to_comic.asset_generation import (
     ProjectCoverInput,
     compile_non_panel_request,
     style_reference_plan,
@@ -46,13 +45,13 @@ from novel_to_comic.non_panel_generation import (
 )
 from novel_to_comic.state import (
     STAGE_NAMES,
-    StageStatus,
     create_initial_state,
     is_stale,
     load_state,
     save_state,
 )
 from novel_to_comic.usage import estimate_image_cost
+from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 
 from ..auth import get_current_user
 from ..credits import (
@@ -82,96 +81,6 @@ _story_catalog_last_fetch: float = 0.0
 _CACHE_EXPIRY: int = 86400  # 24 hours
 
 
-def _draw_prompt_files(project_dir: Path, config: Config) -> list[Path]:
-    prompts_dir = project_dir / "direct"
-    if not prompts_dir.exists():
-        return []
-    scene_dirs = sorted(d for d in prompts_dir.iterdir() if d.is_dir())
-    if config.dev_mode:
-        scene_dirs = scene_dirs[:1]
-    return [
-        prompt
-        for scene_dir in scene_dirs
-        for prompt in sorted(scene_dir.glob("panel_*.json"))
-    ]
-
-
-def _draw_output_path_for_prompt(project_dir: Path, prompt_path: Path) -> Path | None:
-    try:
-        prompt = ImagePrompt.model_validate_json(prompt_path.read_text())
-        return (
-            project_dir
-            / "draw"
-            / prompt.scene_id
-            / f"panel_{prompt.panel_number:03d}.png"
-        )
-    except Exception:
-        match = re.match(r"panel_(\d+)$", prompt_path.stem)
-        if not match:
-            return None
-        return (
-            project_dir
-            / "draw"
-            / prompt_path.parent.name
-            / f"panel_{int(match.group(1)):03d}.png"
-        )
-
-
-def _reconcile_completed_draw_stage(
-    project_dir: Path, config: Config, state, *, is_running: bool
-) -> bool:
-    """Recover draw state when images were written but the final state save was missed."""
-    draw_state = state.stages["draw"]
-    if is_running or draw_state.status != StageStatus.RUNNING:
-        return False
-
-    prompt_files = _draw_prompt_files(project_dir, config)
-    if not prompt_files:
-        return False
-
-    output_paths = [
-        output_path
-        for prompt_path in prompt_files
-        if (output_path := _draw_output_path_for_prompt(project_dir, prompt_path))
-        is not None
-    ]
-    if len(output_paths) != len(prompt_files):
-        return False
-
-    completed_paths = [
-        output_path
-        for output_path in output_paths
-        if output_path.exists()
-        and not output_path.with_suffix(f"{output_path.suffix}.failure.json").exists()
-    ]
-    if len(completed_paths) != len(prompt_files):
-        return False
-
-    draw_state.items_done = len(completed_paths)
-    draw_state.items_total = len(prompt_files)
-    draw_state.items_failed = []
-    draw_state.status = StageStatus.AWAITING_REVIEW
-    draw_state.finished_at = draw_state.finished_at or datetime.now(timezone.utc)
-    draw_state.error = None
-    return True
-
-
-def _assemble_artifact_error(project_dir: Path) -> str | None:
-    """Return a user-facing reason when a completed assemble stage is unusable."""
-    page_json = list((project_dir / "compose" / "pages").glob("page_*.json"))
-    if page_json:
-        return None
-
-    legacy_png = list((project_dir / "pages").glob("page_*.png"))
-    if legacy_png:
-        return (
-            "Missing editable page JSON in assembly/pages. Found legacy rendered "
-            "PNGs in pages/. Re-run the assemble stage with the current pipeline."
-        )
-
-    return "Missing editable page JSON in assembly/pages. Re-run the assemble stage."
-
-
 def _stage_payload(
     project_dir: Path,
     name: str,
@@ -183,12 +92,6 @@ def _stage_payload(
     s = state.stages[name]
     status = s.status.value
     error = s.error
-
-    if name == "compose" and status == "complete":
-        artifact_error = _assemble_artifact_error(project_dir)
-        if artifact_error:
-            status = "failed"
-            error = artifact_error
 
     # Ground truth for liveness: if the asyncio task is alive, the stage
     # cannot be stale regardless of how long it's been since the last
@@ -217,6 +120,28 @@ def _stage_payload(
         "stale": stale,
         "in_flight": in_flight or [],
     }
+
+
+def _target_page_count(project_dir: Path) -> int:
+    try:
+        return len(TargetArtifacts(project_dir).read_plan().pages)
+    except (ArtifactMissing, ValueError):
+        return 0
+
+
+def _target_issue_summary(project_dir: Path) -> dict:
+    from novel_to_comic.page_review import summarize_page_issues
+
+    return summarize_page_issues(TargetArtifacts(project_dir)).model_dump(
+        mode="json"
+    )
+
+
+def _finish_ready(project_dir: Path) -> bool:
+    try:
+        return TargetArtifacts(project_dir).read_preflight().ready_to_export
+    except (ArtifactMissing, ValueError):
+        return False
 
 
 def _is_project_running(user_id: str, project_id: str, request: Request) -> bool:
@@ -533,15 +458,15 @@ async def create_project(
 
     for subdir in [
         "input",
-        "scenes",
+        "source",
+        "brief",
+        "samples",
         "refs",
         "plates",
         "adapt",
         "plan",
-        "storyboard",
-        "direct",
         "draw",
-        "compose",
+        "finish",
         "exports",
         "cover",
     ]:
@@ -637,6 +562,9 @@ def list_projects(
                 "furthest_stage": furthest,
                 "is_running": _is_project_running(user_id, row["id"], request),
                 "has_cover": _cover_path(d).exists(),
+                "page_count": _target_page_count(d),
+                "page_issue_summary": _target_issue_summary(d),
+                "finish_ready": _finish_ready(d),
                 "cover_job": generation_job_payload(request.app, cover_job)
                 if cover_job
                 else None,
@@ -655,26 +583,14 @@ def project_status(
     project_dir, config, state = project
     running = _is_project_running(user_id, project_id, request)
 
-    # Reconcile draw stage only when a task was running and has just finished.
-    # This avoids mutating state on every GET /status poll.
-    if not running and _reconcile_completed_draw_stage(
-        project_dir, config, state, is_running=False
-    ):
-        save_state(state, project_dir)
     style_selected = is_style_selected(project_dir, config)
     if style_selected and clear_style_failures_after_selection(state):
         save_state(state, project_dir)
 
-    pkey = project_key(user_id, project_id)
-    draw_in_flight = list(
-        getattr(request.app.state, "draw_in_flight", {}).get(pkey, [])
-    )
-
     stages = {}
     for name in STAGE_NAMES:
-        in_flight = draw_in_flight if name == "draw" else None
         stages[name] = _stage_payload(
-            project_dir, name, state, is_task_alive=running, in_flight=in_flight
+            project_dir, name, state, is_task_alive=running
         )
     total_estimated = sum(state.stages[n].estimated_cost_usd for n in STAGE_NAMES)
     db_row = (
@@ -701,6 +617,9 @@ def project_status(
         "is_public": share_info.get("is_public", False),
         "share_token": share_info.get("share_token"),
         "stages": stages,
+        "page_count": _target_page_count(project_dir),
+        "page_issue_summary": _target_issue_summary(project_dir),
+        "finish_ready": _finish_ready(project_dir),
     }
 
 
@@ -908,15 +827,15 @@ async def import_short_story(
     project_dir.mkdir(parents=True)
     for subdir in [
         "input",
-        "scenes",
+        "source",
+        "brief",
+        "samples",
         "refs",
         "plates",
         "adapt",
         "plan",
-        "storyboard",
-        "direct",
         "draw",
-        "compose",
+        "finish",
         "exports",
         "cover",
     ]:

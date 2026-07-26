@@ -11,7 +11,7 @@ Locations use the SAME model — an ``AppearanceState`` catalog plus an
 ``appearance_timeline`` — resolved per panel by ``appearance.active_state``.
 This is the one mechanism for every entity whose visible look changes over the
 story; the draw stage still keys per-state location plates off the resolved
-``ImagePrompt.location_state_id``.
+the book adaptation and page plan.
 """
 
 from typing import Optional
@@ -58,7 +58,7 @@ class AppearanceState(BaseModel):
     visual_anchor: str
     visually_significant: bool = False
     # Optional stable demeanor specific to this appearance state. Transient
-    # beat-level reactions still belong in panel expression direction.
+    # beat-level reactions still belong in page-level acting direction.
     baseline_affect: Optional[str] = None
     # True only when this state explicitly matches the canonical visual look.
     # Reference selection must never infer equivalence from an id or label.

@@ -7,15 +7,15 @@ from novel_to_comic.config import Config
 from novel_to_comic.generation_input import GenerationPromptInput
 from novel_to_comic.image_models import image_model_profile_for_config
 from novel_to_comic.image_references import ReferencePlan
-from novel_to_comic.models.prompt import PromptAnchor
-from novel_to_comic.non_panel_generation import (
+from novel_to_comic.models.generation import PromptAnchor
+from novel_to_comic.asset_generation import (
     AbstractStyleProofInput,
     CanonicalLocationPlateInput,
     compile_non_panel_request,
     common_image_provenance,
     submit_non_panel_request,
 )
-from novel_to_comic.panel_versions import record_asset_version, restore_asset_version
+from novel_to_comic.asset_versions import record_asset_version, restore_asset_version
 from novel_to_comic.usage import ApiResult
 
 
@@ -181,7 +181,7 @@ def test_non_panel_submission_freezes_before_transport_and_persists_provenance(t
         return ApiResult(value=output_path)
 
     monkeypatch.setattr(
-        "novel_to_comic.non_panel_generation.execute_frozen_request",
+        "novel_to_comic.asset_generation.execute_frozen_request",
         fake_execute_frozen_request,
     )
     submission = asyncio.run(submit_non_panel_request(
@@ -216,7 +216,7 @@ def test_non_panel_failure_persists_request_provenance_without_provider_result(t
         raise RuntimeError(f"provider failed for {kwargs['output_path']}")
 
     monkeypatch.setattr(
-        "novel_to_comic.non_panel_generation.execute_frozen_request",
+        "novel_to_comic.asset_generation.execute_frozen_request",
         fake_execute_frozen_request,
     )
     with pytest.raises(RuntimeError):
@@ -246,9 +246,9 @@ def test_asset_restore_only_reactivates_archived_bytes_and_metadata(tmp_path, mo
     def _paid_call(*args, **kwargs):
         raise AssertionError("restore must not compile, freeze, or call a provider")
 
-    monkeypatch.setattr("novel_to_comic.non_panel_generation.compile_non_panel_request", _paid_call)
-    monkeypatch.setattr("novel_to_comic.non_panel_generation.submit_frozen_request", _paid_call)
-    monkeypatch.setattr("novel_to_comic.non_panel_generation.execute_frozen_request", _paid_call)
+    monkeypatch.setattr("novel_to_comic.asset_generation.compile_non_panel_request", _paid_call)
+    monkeypatch.setattr("novel_to_comic.asset_generation.submit_frozen_request", _paid_call)
+    monkeypatch.setattr("novel_to_comic.asset_generation.execute_frozen_request", _paid_call)
 
     restore_asset_version(output_path, tmp_path, 1)
 

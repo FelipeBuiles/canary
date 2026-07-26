@@ -10,12 +10,12 @@ aliases:
   extract-fast: vertex_ai/gemini-3.5-flash-lite
   extract-balanced: vertex_ai/gemini-3.6-flash
   extract-quality: vertex_ai/gemini-3.1-pro-preview
-  screenplay-fast: anthropic/claude-haiku-4-5
-  screenplay-balanced: anthropic/claude-sonnet-4-6
-  screenplay-quality: anthropic/claude-opus-4-7
-  panel-fast: vertex_ai/gemini-3.5-flash-lite
-  panel-balanced: vertex_ai/gemini-3.6-flash
-  panel-quality: vertex_ai/gemini-3.6-flash
+  adapt-fast: anthropic/claude-haiku-4-5
+  adapt-balanced: anthropic/claude-sonnet-4-6
+  adapt-quality: anthropic/claude-opus-4-7
+  plan-fast: vertex_ai/gemini-3.5-flash-lite
+  plan-balanced: vertex_ai/gemini-3.6-flash
+  plan-quality: vertex_ai/gemini-3.6-flash
   prompt-fast: vertex_ai/gemini-3.5-flash-lite
   prompt-balanced: vertex_ai/gemini-3.5-flash-lite
   prompt-quality: vertex_ai/gemini-3.5-flash-lite

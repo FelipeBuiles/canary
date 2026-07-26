@@ -1,8 +1,4 @@
-"""Typed access to the full-page pipeline's canonical artifact tree.
-
-This module is intentionally separate from the active legacy artifact helpers
-until the atomic pipeline cutover.
-"""
+"""Typed access to the active full-page pipeline's canonical artifact tree."""
 
 from __future__ import annotations
 

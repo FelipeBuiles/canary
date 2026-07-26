@@ -1,12 +1,11 @@
-"""Canonical panel generation aspect helpers."""
+"""Canonical image-generation aspect helpers."""
 
 from __future__ import annotations
 
-import math
 from typing import Literal
 
 GenerationShape = Literal["portrait", "landscape", "square"]
-GenerationAspectSource = Literal["page_geometry", "panel_shape", "shot_default"]
+GenerationAspectSource = Literal["asset_geometry", "page_geometry"]
 
 PORTRAIT_SIZE = (768, 1024)
 SQUARE_SIZE = (1024, 1024)
@@ -25,16 +24,6 @@ STYLE_PROOF_ASPECT = 0.8  # 4:5 portrait
 #: generation dimensions must agree with that promised composition.
 LOCATION_PLATE_SIZE = (1344, 768)
 LOCATION_PLATE_ASPECT = 1.75  # 16:9-ish wide plate (1344/768 = 1.75)
-
-# Reve's layout endpoints use a pixel coordinate frame rather than accepting a
-# separate aspect-ratio parameter on render_layout.  The API requires supplied
-# layout frames to use 32px multiples and keeps them in this area range.  The
-# panel itself is still stored/rendered at the normal application dimensions;
-# this is only the high-resolution coordinate frame for the layout contract.
-REVE_LAYOUT_MIN_PIXELS = 3072 * 2560
-REVE_LAYOUT_MAX_PIXELS = 4096 * 4096
-REVE_LAYOUT_MAX_DIMENSION = 4096
-REVE_LAYOUT_MIN_DIMENSION = 32
 
 
 def generation_shape_for_aspect(aspect_ratio: float | None) -> GenerationShape:
@@ -68,41 +57,6 @@ def aspect_for_dimensions(width: int | None, height: int | None) -> float | None
     if not width or not height or width <= 0 or height <= 0:
         return None
     return width / height
-
-
-def dimensions_for_reve_layout(width: int | None, height: int | None) -> tuple[int, int]:
-    """Return a valid Reve v2 layout coordinate frame for a target aspect.
-
-    ``render_layout`` reads the output aspect from ``layout.width`` and
-    ``layout.height``.  The frame therefore needs to preserve the panel's
-    aspect while satisfying Reve's 32px-multiple and pixel-area constraints.
-    Canary's panel shapes stay within the range where a 4096px long edge can
-    satisfy those constraints without changing the intended composition.
-    """
-    aspect = aspect_for_dimensions(width, height) or 1.0
-    # Extreme aspect ratios are not produced by the panel planner. Clamp them
-    # to a layout-safe range rather than emitting a frame Reve will reject.
-    aspect = min(2.0, max(0.5, aspect))
-
-    if aspect >= 1.0:
-        frame_width = REVE_LAYOUT_MAX_DIMENSION
-        frame_height = round(frame_width / aspect / 32) * 32
-    else:
-        frame_height = REVE_LAYOUT_MAX_DIMENSION
-        frame_width = round(frame_height * aspect / 32) * 32
-
-    frame_width = max(REVE_LAYOUT_MIN_DIMENSION, min(REVE_LAYOUT_MAX_DIMENSION, frame_width))
-    frame_height = max(REVE_LAYOUT_MIN_DIMENSION, min(REVE_LAYOUT_MAX_DIMENSION, frame_height))
-
-    # The supported panel aspect range already clears the minimum. Keep this
-    # guard for callers with unusual dimensions and make the fallback
-    # deterministic if rounding ever puts a frame below Reve's lower bound.
-    if frame_width * frame_height < REVE_LAYOUT_MIN_PIXELS:
-        scale = math.sqrt(REVE_LAYOUT_MIN_PIXELS / (frame_width * frame_height))
-        frame_width = min(REVE_LAYOUT_MAX_DIMENSION, round(frame_width * scale / 32) * 32)
-        frame_height = min(REVE_LAYOUT_MAX_DIMENSION, round(frame_height * scale / 32) * 32)
-
-    return frame_width, frame_height
 
 
 def aspect_within_tolerance(

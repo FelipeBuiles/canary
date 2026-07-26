@@ -17,18 +17,17 @@ def _state(tmp_path: Path) -> PipelineState:
 class TestBeginCompleteLifecycle:
     def test_begin_sets_running_status(self, tmp_path):
         state = _state(tmp_path)
-        ctx = StageRuntime("extract", state, tmp_path)
+        ctx = StageRuntime("brief", state, tmp_path)
         ctx.begin(total=4)
-        assert state.stages["extract"].status == StageStatus.RUNNING
-        assert state.stages["extract"].items_total == 4
+        assert state.stages["brief"].status == StageStatus.RUNNING
+        assert state.stages["brief"].items_total == 4
 
     def test_complete_sets_awaiting_review_for_checkpoint(self, tmp_path):
         state = _state(tmp_path)
-        ctx = StageRuntime("extract", state, tmp_path)
+        ctx = StageRuntime("brief", state, tmp_path)
         ctx.begin(total=4)
         ctx.complete()
-        # extract is a checkpoint stage
-        assert state.stages["extract"].status == StageStatus.AWAITING_REVIEW
+        assert state.stages["brief"].status == StageStatus.AWAITING_REVIEW
 
     def test_complete_sets_complete_for_non_checkpoint(self, tmp_path):
         state = _state(tmp_path)
@@ -174,44 +173,43 @@ class TestUsageRecording:
         assert state.stages["draw"].estimated_cost_usd == pytest.approx(1.23)
 
 
-class TestPanelEvents:
-    def test_emit_panel_start_includes_scene_panel_and_iso_timestamp(self, tmp_path):
+class TestPageEvents:
+    def test_emit_page_start_includes_page_and_iso_timestamp(self, tmp_path):
         events = []
         state = _state(tmp_path)
         ctx = StageRuntime("draw", state, tmp_path, on_event=events.append)
-        ctx.emit_panel_start("scene_03", 7)
-        evt = next(e for e in events if e["type"] == "panel_start")
+        ctx.emit_page_start(7)
+        evt = next(e for e in events if e["type"] == "page_start")
         assert evt["stage"] == "draw"
-        assert evt["scene_id"] == "scene_03"
-        assert evt["panel_number"] == 7
+        assert evt["page_number"] == 7
         # ISO-8601 with timezone
         assert "T" in evt["started_at"]
         assert evt["started_at"].endswith("+00:00") or evt["started_at"].endswith("Z")
 
-    def test_emit_panel_done_ok(self, tmp_path):
+    def test_emit_page_done_ok(self, tmp_path):
         events = []
         state = _state(tmp_path)
         ctx = StageRuntime("draw", state, tmp_path, on_event=events.append)
-        ctx.emit_panel_done("scene_03", 7, status="ok", duration_ms=14320)
-        evt = next(e for e in events if e["type"] == "panel_done")
+        ctx.emit_page_done(7, revision=1, status="ok", duration_ms=14320)
+        evt = next(e for e in events if e["type"] == "page_done")
         assert evt["status"] == "ok"
         assert evt["duration_ms"] == 14320
         assert evt["error"] is None
 
-    def test_emit_panel_done_failed_carries_error(self, tmp_path):
+    def test_emit_page_done_failed_carries_error(self, tmp_path):
         events = []
         state = _state(tmp_path)
         ctx = StageRuntime("draw", state, tmp_path, on_event=events.append)
-        ctx.emit_panel_done(
-            "scene_01", 2, status="failed", duration_ms=812, error="provider blocked"
+        ctx.emit_page_done(
+            2, revision=2, status="failed", duration_ms=812, error="provider blocked"
         )
-        evt = next(e for e in events if e["type"] == "panel_done")
+        evt = next(e for e in events if e["type"] == "page_done")
         assert evt["status"] == "failed"
         assert evt["error"] == "provider blocked"
 
-    def test_panel_helpers_are_noop_without_callback(self, tmp_path):
+    def test_page_helpers_are_noop_without_callback(self, tmp_path):
         # Should not raise when no on_event is wired (CLI mode).
         state = _state(tmp_path)
         ctx = StageRuntime("draw", state, tmp_path)
-        ctx.emit_panel_start("scene_01", 1)
-        ctx.emit_panel_done("scene_01", 1, status="ok", duration_ms=100)
+        ctx.emit_page_start(1)
+        ctx.emit_page_done(1, revision=1, status="ok", duration_ms=100)
