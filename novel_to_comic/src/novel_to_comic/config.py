@@ -67,6 +67,19 @@ SEEDREAM_ALIASES: frozenset[str] = frozenset(
 # parallel without tripping the limiter.
 GEMINI_IMAGE_CONCURRENCY_DEFAULT = 3
 
+# Ticket 04 complete-page production profile. Draw capability selection is
+# intentionally edition-wide and does not consult the legacy quality aliases.
+COMPLETE_PAGE_PROVIDER = "vertex-multimodal"
+COMPLETE_PAGE_MODEL = "gemini-3-pro-image-preview"
+COMPLETE_PAGE_PROFILE_ID = "nano-banana-pro-complete-page-v1"
+COMPLETE_PAGE_MAX_REFERENCES = 8
+COMPLETE_PAGE_OUTPUT_WIDTH = 2048
+COMPLETE_PAGE_OUTPUT_HEIGHT = 3072
+COMPLETE_PAGE_MAX_PROMPT_CHARACTERS = 32_000
+COMPLETE_PAGE_MAX_ATTEMPTS = 3
+COMPLETE_PAGE_BASE_COST_USD = "0.134"
+COMPLETE_PAGE_REFERENCE_COST_USD = "0.00112"
+
 
 def is_gpt_image_2(model: str) -> bool:
     """True if `model` is classified as the GPT Image 2 route."""
