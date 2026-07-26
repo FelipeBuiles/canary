@@ -119,6 +119,32 @@ class TargetArtifacts:
     def exports_dir(self) -> Path:
         return self.project_dir / "exports"
 
+    def normalized_page_path(self, page_number: int) -> Path:
+        return self.project_dir / "finish" / "pages" / f"page_{page_number:03d}.png"
+
+    def export_path(self, format: str) -> Path:
+        if format not in {"pdf", "cbz"}:
+            raise ValueError("target export format must be 'pdf' or 'cbz'")
+        return self.exports_dir / f"comic.{format}"
+
+    def provenance_revisions(self, page_number: int) -> tuple[int, ...]:
+        page_dir = self.project_dir / "draw" / "pages" / f"page_{page_number:03d}"
+        revisions: list[int] = []
+        for path in page_dir.glob("provenance_*.json"):
+            suffix = path.stem.removeprefix("provenance_")
+            if suffix.isdigit():
+                revisions.append(int(suffix))
+        return tuple(sorted(revisions))
+
+    def render_revisions(self, page_number: int) -> tuple[int, ...]:
+        page_dir = self.project_dir / "draw" / "pages" / f"page_{page_number:03d}"
+        revisions: list[int] = []
+        for path in page_dir.glob("render_*.png"):
+            suffix = path.stem.removeprefix("render_")
+            if suffix.isdigit():
+                revisions.append(int(suffix))
+        return tuple(sorted(revisions))
+
     def write_source(self, source: SourceDocument) -> None:
         if self.source_path.exists():
             current = self.read_source()
