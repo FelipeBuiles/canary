@@ -24,7 +24,7 @@ import { Shell } from "../layout/Shell";
 describe("mobile project shell", () => {
   it("compresses the desktop room masthead on mobile project routes", () => {
     const { getByRole } = render(
-      <MemoryRouter initialEntries={["/project/demo/draw"]}>
+      <MemoryRouter initialEntries={["/project/demo/pages"]}>
         <I18nProvider>
           <TopBarSlotProvider>
             <AppTopBar />
@@ -39,7 +39,7 @@ describe("mobile project shell", () => {
 
   it("tracks the visible mobile viewport so the approval footer stays on screen", () => {
     const { container } = render(
-      <MemoryRouter initialEntries={["/project/demo/draw"]}>
+      <MemoryRouter initialEntries={["/project/demo/pages"]}>
         <I18nProvider>
           <Shell />
         </I18nProvider>

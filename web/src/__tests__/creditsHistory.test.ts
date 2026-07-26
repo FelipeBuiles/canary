@@ -57,7 +57,7 @@ describe("credits history hierarchy", () => {
     expect(groups[0].runs[0].run_id).toBe("purchase");
   });
 
-  it("uses author-facing action labels and panel counts", () => {
+  it("uses author-facing action labels and complete-page counts", () => {
     const drawRun = run({
       stage: "draw",
       rows: [
@@ -66,7 +66,7 @@ describe("credits history hierarchy", () => {
       ],
     });
 
-    expect(runActivityLabel(drawRun)).toBe("Draw 2 panels");
+    expect(runActivityLabel(drawRun)).toBe("Draw 2 pages");
     expect(runActivityLabel(run({ stage: "cast" }))).toBe("Create characters & places");
     expect(runActivityLabel(run({ stage: null, credits_added: 1200 }))).toBe("Credit purchase");
   });

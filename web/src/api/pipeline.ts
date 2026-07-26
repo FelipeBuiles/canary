@@ -2,66 +2,12 @@ import { apiFetch } from "./client";
 import type {
   CharacterRefVersionsResponse,
   GenerationJob,
-  InstructedPanelRegenResponse,
   InstructedPlateRegenResponse,
   InstructedPropRegenResponse,
   InstructedRefRegenResponse,
   StageCostEstimate,
-  RegenCostEstimate,
   AssetRegenCostEstimate,
-  GenerationRequestPreview,
 } from "../types/api";
-
-function generationRequestPath(project: string, suffix: string) {
-  return `/projects/${encodeURIComponent(project)}/generation-requests${suffix}`;
-}
-
-export function previewGenerationRequest(
-  project: string,
-  sceneId: string,
-  panelNumber: number,
-  imageModelAlias?: string | null,
-  devContent = false,
-  preparedRequestId?: string | null,
-): Promise<GenerationRequestPreview> {
-  const params = new URLSearchParams({
-    scene_id: sceneId,
-    panel_number: String(panelNumber),
-  });
-  if (imageModelAlias) params.set("image_model_alias", imageModelAlias);
-  if (preparedRequestId) params.set("prepared_request_id", preparedRequestId);
-  if (devContent) params.set("dev_content", "1");
-  return apiFetch<GenerationRequestPreview>(
-    `${generationRequestPath(project, "/preview")}?${params.toString()}`,
-  );
-}
-
-export function prepareGenerationRequest(
-  project: string,
-  sceneId: string,
-  panelNumber: number,
-  imageModelAlias?: string | null,
-): Promise<GenerationRequestPreview> {
-  return apiFetch<GenerationRequestPreview>(generationRequestPath(project, "/prepare"), {
-    method: "POST",
-    body: JSON.stringify({
-      scene_id: sceneId,
-      panel_number: panelNumber,
-      ...(imageModelAlias ? { image_model_alias: imageModelAlias } : {}),
-    }),
-  });
-}
-
-export function getGenerationRequest(
-  project: string,
-  requestId: string,
-  devContent = false,
-): Promise<GenerationRequestPreview> {
-  const query = devContent ? "?dev_content=1" : "";
-  return apiFetch<GenerationRequestPreview>(
-    `${generationRequestPath(project, `/${encodeURIComponent(requestId)}`)}${query}`,
-  );
-}
 
 export function runPipeline(
   project: string,
@@ -77,46 +23,6 @@ export function runPipeline(
   return apiFetch(`/projects/${encodeURIComponent(project)}/run${query ? `?${query}` : ""}`, {
     method: "POST",
   });
-}
-
-export function regenPanel(
-  project: string,
-  sceneId: string,
-  panelNumber: number,
-  imageModelAlias?: string | null,
-  preparedRequestId?: string | null,
-): Promise<{ status: string; job: GenerationJob; scene_id: string; panel_number: number; planned_panel_id?: string | null; request_id?: string | null }> {
-  const params = new URLSearchParams({
-    scene_id: sceneId,
-    panel_number: String(panelNumber),
-  });
-  if (imageModelAlias) params.set("image_model_alias", imageModelAlias);
-  if (preparedRequestId) params.set("prepared_request_id", preparedRequestId);
-  return apiFetch(
-    `/projects/${encodeURIComponent(project)}/regen?${params.toString()}`,
-    { method: "POST" },
-  );
-}
-
-export function regenPanelWithInstruction(
-  project: string,
-  sceneId: string,
-  panelNumber: number,
-  instruction: string,
-  imageModelAlias?: string | null,
-): Promise<InstructedPanelRegenResponse> {
-  return apiFetch(
-    `/projects/${encodeURIComponent(project)}/regen-instructed`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        scene_id: sceneId,
-        panel_number: panelNumber,
-        instruction,
-        ...(imageModelAlias ? { image_model_alias: imageModelAlias } : {}),
-      }),
-    },
-  );
 }
 
 export function getGenerationJobs(
@@ -285,22 +191,6 @@ export function fetchStageEstimate(
 ): Promise<StageCostEstimate> {
   return apiFetch(
     `/projects/${encodeURIComponent(project)}/estimate?stage=${encodeURIComponent(stage)}`,
-  );
-}
-
-export function fetchRegenEstimate(
-  project: string,
-  sceneId: string,
-  panelNumber: number,
-  imageModelAlias?: string | null,
-): Promise<RegenCostEstimate> {
-  const params = new URLSearchParams({
-    scene_id: sceneId,
-    panel_number: String(panelNumber),
-  });
-  if (imageModelAlias) params.set("image_model_alias", imageModelAlias);
-  return apiFetch(
-    `/projects/${encodeURIComponent(project)}/regen-estimate?${params.toString()}`,
   );
 }
 

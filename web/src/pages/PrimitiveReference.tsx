@@ -7,7 +7,6 @@ import { Icon } from "../components/ui/Icon";
 import { IconButton } from "../components/ui/IconButton";
 import { LoadingBlock, StateBlock } from "../components/ui/StateBlock";
 import { RerunDrawer } from "../components/composites";
-import { ShotDiagram } from "../components/ui/ShotDiagram";
 import { Skeleton } from "../components/ui/Skeleton";
 import { StatusPill } from "../components/ui/StatusPill";
 import { Surface, SurfaceHeader } from "../components/ui/Surface";
@@ -169,16 +168,6 @@ export function PrimitiveReference() {
             </div>
           </div>
           <div>
-            <div className="ui-kicker mb-2">SHOT DIAGRAM</div>
-            <div className="flex flex-wrap gap-4">
-              {["extreme-wide", "wide", "medium-close", "close-up", "extreme-close", "?"].map(
-                (s) => (
-                  <ShotDiagram key={s} shot={s} />
-                ),
-              )}
-            </div>
-          </div>
-          <div>
             <div className="ui-kicker mb-2">DESTRUCTIVE ACTION</div>
             <div className="flex flex-wrap items-center gap-3">
               <DestructiveButton size="xs">↺ Rerun XS</DestructiveButton>
@@ -195,9 +184,9 @@ export function PrimitiveReference() {
       <RerunDrawer
         open={rerunOpen}
         stageName="Extract"
-        impactStages={["cast", "adapt", "storyboard", "direct", "draw", "compose"]}
+        impactStages={["brief", "style", "cast", "adapt", "plan", "draw", "finish"]}
         cost={{ stage: "extract", estimate_credits: 200, reserved_credits: 250, reservation_multiplier: 1.25, confidence: "usually_within_estimate" }}
-        itemsAtRisk="46 generated panels will be lost."
+        itemsAtRisk="24 complete page renders will be lost."
         onConfirm={() => setRerunOpen(false)}
         onClose={() => setRerunOpen(false)}
       />

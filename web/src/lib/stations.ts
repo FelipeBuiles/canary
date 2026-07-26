@@ -1,7 +1,7 @@
 import { STAGE_ORDER, type ProjectStatus, type StageName, type StageStatus } from "../types/api";
 
 /**
- * The 4 user-facing stations — a UI grouping over the 9 backend stages.
+ * The 4 user-facing stations — a UI grouping over the 8 backend stages.
  * Backend stages stay discrete (see AGENTS.md); this module is the only
  * place that knows how they roll up into stations.
  *
@@ -10,8 +10,8 @@ import { STAGE_ORDER, type ProjectStatus, type StageName, type StageStatus } fro
  * never block progression.
  */
 
-export type StationKey = "story" | "look" | "panels" | "book";
-export type DrawerKind = "script" | "shot-plan" | "prompts";
+export type StationKey = "story" | "look" | "pages" | "book";
+export type DrawerKind = "adaptation" | "page-plan";
 
 export interface StationSubstep {
   key: string;
@@ -39,11 +39,10 @@ export const STATIONS: Station[] = [
     key: "story",
     number: "01",
     label: "Story",
-    routes: ["extract", "adapt"],
-    primaryRoute: "extract",
+    routes: ["story"],
+    primaryRoute: "story",
     substeps: [
-      { key: "extract", label: "What Scenewright found", kind: "gated", backendStages: ["extract"], route: "extract" },
-      { key: "script", label: "Story draft", kind: "auto", backendStages: ["adapt"], drawer: "script" },
+      { key: "brief", label: "Story & brief", kind: "gated", backendStages: ["extract", "brief"], route: "story" },
     ],
   },
   {
@@ -58,25 +57,25 @@ export const STATIONS: Station[] = [
     ],
   },
   {
-    key: "panels",
+    key: "pages",
     number: "03",
-    label: "Panels",
-    routes: ["draw", "shot-plan", "direct"],
-    primaryRoute: "draw",
+    label: "Pages",
+    routes: ["pages"],
+    primaryRoute: "pages",
     substeps: [
-      { key: "shot-plan", label: "Panel plan", kind: "auto", backendStages: ["plan", "storyboard"], drawer: "shot-plan" },
-      { key: "prompts", label: "Image instructions", kind: "auto", backendStages: ["direct"], drawer: "prompts" },
-      { key: "draw", label: "Draw panels", kind: "gated", backendStages: ["draw"], route: "draw" },
+      { key: "adapt", label: "Book adaptation", kind: "auto", backendStages: ["adapt"], drawer: "adaptation" },
+      { key: "plan", label: "Page plan", kind: "auto", backendStages: ["plan"], drawer: "page-plan" },
+      { key: "draw", label: "Complete pages", kind: "gated", backendStages: ["draw"], route: "pages" },
     ],
   },
   {
     key: "book",
     number: "04",
     label: "Book",
-    routes: ["compose"],
-    primaryRoute: "compose",
+    routes: ["book"],
+    primaryRoute: "book",
     substeps: [
-      { key: "compose", label: "Pages & export", kind: "gated", backendStages: ["compose"], route: "compose" },
+      { key: "finish", label: "Preflight & export", kind: "gated", backendStages: ["finish"], route: "book" },
     ],
   },
 ];
@@ -189,13 +188,12 @@ export function rerunStageForDrawer(kind: DrawerKind): StageName {
  * machine-artifact rooms.
  */
 export const BACKEND_STAGE_TO_STATION_ROUTE: Record<StageName, string> = {
-  extract: "extract",
+  extract: "story",
+  brief: "story",
   style: "styles",
   cast: "cast",
-  adapt: "draw",
-  plan: "draw",
-  storyboard: "draw",
-  direct: "draw",
-  draw: "draw",
-  compose: "compose",
+  adapt: "pages",
+  plan: "pages",
+  draw: "pages",
+  finish: "book",
 };

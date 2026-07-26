@@ -103,7 +103,7 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
     hero: {
       label: "A graphic-novel studio for novelists",
       title: "Turn your novel into a graphic novel you direct.",
-      body: "Upload a finished manuscript. Shape the cast and visual style, review only the panels that need you, then letter and export the book as PDF or CBZ.",
+      body: "Upload a finished manuscript. Shape the adaptation, cast, and visual style, review complete comic pages by exception, then export the verified book as PDF or CBZ.",
       primaryCta: "Start with a sample story",
       secondaryCta: "See the four decisions",
       formats: "AI-assisted visual adaptation · EPUB, PDF or TXT in · PDF or CBZ out",
@@ -135,36 +135,36 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
         },
         {
           number: "03",
-          label: "Panels",
+          label: "Pages",
           title: "Fix by exception",
-          body: "The adaptation and panel plan run in the background. Flag only what misses, then revise or regenerate one panel.",
+          body: "The adaptation and page plan run in the background. Review complete page revisions and correct only what misses.",
         },
         {
           number: "04",
           label: "Book",
           title: "Finish the edition",
-          body: "Adjust framing, lettering and effects, then export the finished issue as PDF or CBZ.",
+          body: "Run final preflight, resolve any returned corrections, then export the verified edition as PDF or CBZ.",
         },
       ],
     },
     continuity: {
       title: "Keep the cast. Keep the world. Keep the thread.",
-      body: "Approved character references and location plates travel with panel generation, alongside context from the previous panel. Every new image starts with more than a standalone prompt.",
+      body: "Approved character references, location plates, and book-level continuity guide every complete page. Every new page starts with more than a standalone prompt.",
       promise: "Built for long-form continuity",
       sample: "Development reference set · not customer work",
       captions: ["Character reference", "Recurring location", "Character reference"],
       details: [
         {
           title: "Character references",
-          body: "Approved poses travel with every panel where that character appears.",
+          body: "Approved poses guide every complete page where that character appears.",
         },
         {
           title: "Location plates",
           body: "Recurring places keep the visual anchors you approved.",
         },
         {
-          title: "Panel context",
-          body: "The previous image helps the next panel stay inside the same scene.",
+          title: "Page continuity",
+          body: "Book-level story state helps each complete page stay consistent with the pages around it.",
         },
       ],
       alts: [
@@ -177,9 +177,9 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       title: "The tool takes the workload. You keep the creative decisions.",
       body: "Scenewright is built as an instrument for an author—not a slot machine that replaces one.",
       youLabel: "You direct",
-      youItems: ["The story and source text", "The look and cast", "What gets revised", "The final arrangement and lettering"],
+      youItems: ["The story and source text", "The look and cast", "What gets corrected", "The final issue decisions"],
       toolLabel: "Scenewright drafts",
-      toolItems: ["The story bible", "The adaptation and panel plan", "Image directions and panels", "The first assembled pages"],
+      toolItems: ["The story bible and brief", "The adaptation and page plan", "Complete comic pages", "Verified PDF and CBZ editions"],
       disclosure: "Scenewright uses third-party generative models to assist with adaptation and illustration. Your manuscript stays yours, and we claim no ownership over generated output. Purely generated imagery may have limited copyright protection.",
       termsLink: "Read the full rights and copyright terms",
     },
@@ -196,15 +196,15 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       items: [
         {
           question: "Can I upload a full novel?",
-          answer: "Yes. Scenewright accepts EPUB, PDF and TXT manuscripts and breaks the work into scenes before planning panels and pages.",
+          answer: "Yes. Scenewright accepts EPUB, PDF and TXT manuscripts, adapts the story, and plans the complete book page by page.",
         },
         {
           question: "Can I change what it makes?",
-          answer: "Yes. You approve the story, look, cast and finished panels; you can revise or regenerate one panel, adjust framing and lettering, and rearrange the final pages.",
+          answer: "Yes. You approve the story, look and cast, then review complete page revisions, request corrections, and decide which editorial issues to accept.",
         },
         {
           question: "Will every character look perfectly identical?",
-          answer: "No generative system can promise perfect continuity. Scenewright improves it with approved character references, location plates and previous-panel context, then gives you focused tools to fix misses.",
+          answer: "No generative system can promise perfect continuity. Scenewright improves it with approved character references, location plates and book-level story state, then lets you correct complete pages that miss.",
         },
         {
           question: "Who owns the manuscript and output?",
@@ -246,7 +246,7 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
     hero: {
       label: "Un estudio de novela gráfica para novelistas",
       title: "Convierte tu novela en una novela gráfica que tú diriges.",
-      body: "Sube un manuscrito terminado. Define el reparto y el estilo visual, revisa solo las viñetas que te necesiten y termina la rotulación antes de exportar en PDF o CBZ.",
+      body: "Sube un manuscrito terminado. Define la adaptación, el reparto y el estilo visual, revisa páginas completas por excepción y exporta el libro verificado en PDF o CBZ.",
       primaryCta: "Empieza con un cuento de muestra",
       secondaryCta: "Conoce las cuatro decisiones",
       formats: "Adaptación visual asistida por IA · EPUB, PDF o TXT de entrada · PDF o CBZ de salida",
@@ -278,36 +278,36 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
         },
         {
           number: "03",
-          label: "Viñetas",
+          label: "Páginas",
           title: "Corrige por excepción",
-          body: "La adaptación y el plan de viñetas avanzan en segundo plano. Marca solo lo que falla y rehace una sola viñeta.",
+          body: "La adaptación y el plan de páginas avanzan en segundo plano. Revisa páginas completas y corrige solo lo que falla.",
         },
         {
           number: "04",
           label: "Libro",
           title: "Termina la edición",
-          body: "Ajusta el encuadre, la rotulación y los efectos; después exporta la edición final en PDF o CBZ.",
+          body: "Ejecuta la verificación final, resuelve las correcciones devueltas y exporta la edición en PDF o CBZ.",
         },
       ],
     },
     continuity: {
       title: "Conserva el reparto. Conserva el mundo. Conserva el hilo.",
-      body: "Las referencias de personajes y lugares aprobadas acompañan la generación de cada viñeta, junto con el contexto de la anterior. Cada nueva imagen parte de mucho más que un prompt aislado.",
+      body: "Las referencias de personajes y lugares aprobadas, junto con la continuidad del libro, guían cada página completa. Cada página parte de mucho más que un prompt aislado.",
       promise: "Pensado para la continuidad de largo formato",
       sample: "Referencias de desarrollo · no es trabajo de un cliente",
       captions: ["Referencia de personaje", "Lugar recurrente", "Referencia de personaje"],
       details: [
         {
           title: "Referencias de personajes",
-          body: "Las poses aprobadas acompañan cada viñeta donde aparece el personaje.",
+          body: "Las poses aprobadas guían cada página completa donde aparece el personaje.",
         },
         {
           title: "Lugares de referencia",
           body: "Los lugares recurrentes conservan los rasgos visuales que aprobaste.",
         },
         {
-          title: "Contexto de viñeta",
-          body: "La imagen anterior ayuda a que la siguiente permanezca en la misma escena.",
+          title: "Continuidad de página",
+          body: "El estado narrativo del libro mantiene cada página coherente con las que la rodean.",
         },
       ],
       alts: [
@@ -320,9 +320,9 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       title: "La herramienta asume la carga. Tú conservas las decisiones creativas.",
       body: "Scenewright está hecho como instrumento para el autor, no como una máquina que lo sustituye.",
       youLabel: "Tú diriges",
-      youItems: ["La historia y el texto original", "El estilo y el reparto", "Qué se corrige", "La composición y rotulación finales"],
+      youItems: ["La historia y el texto original", "El estilo y el reparto", "Qué se corrige", "Las decisiones finales sobre incidencias"],
       toolLabel: "Scenewright prepara",
-      toolItems: ["La biblia de la historia", "La adaptación y el plan de viñetas", "Las instrucciones de imagen y viñetas", "Las primeras páginas montadas"],
+      toolItems: ["La biblia y el enfoque", "La adaptación y el plan de páginas", "Páginas completas de cómic", "Ediciones PDF y CBZ verificadas"],
       disclosure: "Scenewright usa modelos generativos de terceros para ayudar con la adaptación y la ilustración. Tu manuscrito sigue siendo tuyo y no reclamamos propiedad sobre el resultado generado. Las imágenes puramente generadas pueden tener protección de autor limitada.",
       termsLink: "Lee todos los términos sobre derechos y autoría",
     },
@@ -339,15 +339,15 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       items: [
         {
           question: "¿Puedo subir una novela completa?",
-          answer: "Sí. Scenewright acepta manuscritos EPUB, PDF y TXT y divide la obra en escenas antes de planificar viñetas y páginas.",
+          answer: "Sí. Scenewright acepta manuscritos EPUB, PDF y TXT, adapta la historia y planifica el libro página a página.",
         },
         {
           question: "¿Puedo cambiar lo que produce?",
-          answer: "Sí. Apruebas la historia, el estilo, el reparto y las viñetas; puedes rehacer una viñeta, ajustar el encuadre y la rotulación, y reorganizar las páginas finales.",
+          answer: "Sí. Apruebas la historia, el estilo y el reparto; después revisas páginas completas, solicitas correcciones y decides qué incidencias editoriales aceptar.",
         },
         {
           question: "¿Cada personaje será perfectamente idéntico?",
-          answer: "Ningún sistema generativo puede prometer continuidad perfecta. Scenewright la refuerza con referencias aprobadas, lugares recurrentes y el contexto de la viñeta anterior, además de herramientas para corregir fallos.",
+          answer: "Ningún sistema generativo puede prometer continuidad perfecta. Scenewright la refuerza con referencias aprobadas, lugares recurrentes y el estado narrativo del libro, y permite corregir páginas completas.",
         },
         {
           question: "¿Quién posee el manuscrito y el resultado?",
@@ -389,7 +389,7 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
     hero: {
       label: "Un studio de roman graphique pour les romanciers",
       title: "Transformez votre roman en roman graphique, sous votre direction.",
-      body: "Importez un manuscrit achevé. Façonnez les personnages et le style, révisez seulement les cases qui en ont besoin, puis finalisez le lettrage et exportez en PDF ou CBZ.",
+      body: "Importez un manuscrit achevé. Façonnez l’adaptation, les personnages et le style, révisez les pages complètes par exception, puis exportez le livre vérifié en PDF ou CBZ.",
       primaryCta: "Commencer avec un récit exemple",
       secondaryCta: "Voir les quatre décisions",
       formats: "Adaptation visuelle assistée par IA · EPUB, PDF ou TXT en entrée · PDF ou CBZ en sortie",
@@ -421,36 +421,36 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
         },
         {
           number: "03",
-          label: "Cases",
+          label: "Pages",
           title: "Corrigez par exception",
-          body: "L’adaptation et le découpage avancent en arrière-plan. Signalez seulement ce qui manque, puis révisez ou régénérez une seule case.",
+          body: "L’adaptation et le plan des pages avancent en arrière-plan. Révisez les pages complètes et corrigez seulement ce qui manque.",
         },
         {
           number: "04",
           label: "Livre",
           title: "Finalisez l’édition",
-          body: "Ajustez le cadrage, le lettrage et les effets, puis exportez l’édition en PDF ou CBZ.",
+          body: "Lancez le contrôle final, résolvez les corrections renvoyées, puis exportez l’édition en PDF ou CBZ.",
         },
       ],
     },
     continuity: {
       title: "Gardez les personnages. Gardez l’univers. Gardez le fil.",
-      body: "Les références approuvées des personnages et des lieux accompagnent la génération de chaque case, avec le contexte de la case précédente. Chaque nouvelle image part de bien plus qu’un prompt isolé.",
+      body: "Les références approuvées des personnages et des lieux, ainsi que la continuité du livre, guident chaque page complète. Chaque page part de bien plus qu’un prompt isolé.",
       promise: "Pensé pour la continuité au long cours",
       sample: "Références de développement · pas un projet client",
       captions: ["Référence de personnage", "Lieu récurrent", "Référence de personnage"],
       details: [
         {
           title: "Références des personnages",
-          body: "Les poses approuvées accompagnent chaque case où le personnage apparaît.",
+          body: "Les poses approuvées guident chaque page complète où le personnage apparaît.",
         },
         {
           title: "Planches de lieux",
           body: "Les lieux récurrents conservent les repères visuels que vous avez approuvés.",
         },
         {
-          title: "Contexte de case",
-          body: "L’image précédente aide la suivante à rester dans la même scène.",
+          title: "Continuité de page",
+          body: "L’état narratif du livre maintient chaque page cohérente avec celles qui l’entourent.",
         },
       ],
       alts: [
@@ -463,9 +463,9 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       title: "L’outil prend en charge le travail. Vous gardez les choix créatifs.",
       body: "Scenewright est conçu comme l’instrument d’un auteur, pas comme une machine qui le remplace.",
       youLabel: "Vous dirigez",
-      youItems: ["Le récit et le texte source", "Le style et les personnages", "Ce qui doit être repris", "La composition et le lettrage finaux"],
+      youItems: ["Le récit et le texte source", "Le style et les personnages", "Ce qui doit être corrigé", "Les décisions finales sur les problèmes"],
       toolLabel: "Scenewright prépare",
-      toolItems: ["La bible narrative", "L’adaptation et le découpage", "Les directives d’image et les cases", "Les premières pages assemblées"],
+      toolItems: ["La bible narrative et le brief", "L’adaptation et le plan des pages", "Les pages complètes de la BD", "Les éditions PDF et CBZ vérifiées"],
       disclosure: "Scenewright utilise des modèles génératifs tiers pour aider à l’adaptation et à l’illustration. Votre manuscrit reste à vous et nous ne revendiquons aucun droit de propriété sur les sorties générées. Une image purement générée peut bénéficier d’une protection limitée.",
       termsLink: "Lire les conditions complètes sur les droits et le copyright",
     },
@@ -482,15 +482,15 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       items: [
         {
           question: "Puis-je importer un roman entier ?",
-          answer: "Oui. Scenewright accepte les manuscrits EPUB, PDF et TXT, puis découpe l’œuvre en scènes avant de planifier les cases et les pages.",
+          answer: "Oui. Scenewright accepte les manuscrits EPUB, PDF et TXT, adapte le récit et planifie le livre page par page.",
         },
         {
           question: "Puis-je modifier le résultat ?",
-          answer: "Oui. Vous approuvez le récit, le style, les personnages et les cases; vous pouvez reprendre une case, ajuster le cadrage et le lettrage, puis réorganiser les pages finales.",
+          answer: "Oui. Vous approuvez le récit, le style et les personnages, puis révisez les pages complètes, demandez des corrections et décidez quels problèmes éditoriaux accepter.",
         },
         {
           question: "Chaque personnage sera-t-il parfaitement identique ?",
-          answer: "Aucun système génératif ne peut promettre une continuité parfaite. Scenewright la renforce avec des références approuvées, des lieux récurrents et le contexte de la case précédente, puis vous aide à corriger les écarts.",
+          answer: "Aucun système génératif ne peut promettre une continuité parfaite. Scenewright la renforce avec des références approuvées, des lieux récurrents et l’état narratif du livre, puis permet de corriger les pages complètes.",
         },
         {
           question: "À qui appartiennent le manuscrit et le résultat ?",

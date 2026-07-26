@@ -16,6 +16,8 @@ vi.mock("../api/queries", () => ({
   useProjects: () => ({
     data: [{ id: "demo", project_name: "The Last Incantation" }],
   }),
+  useAdaptation: () => ({ data: undefined }),
+  useBookPlan: () => ({ data: undefined }),
 }));
 
 import { SideNav } from "../layout/SideNav";

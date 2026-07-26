@@ -57,7 +57,7 @@ describe("Library first-run (Issue #0)", () => {
     // The 4 stations render as a teaching strip.
     expect(screen.getByText("Story")).toBeTruthy();
     expect(screen.getByText("Look")).toBeTruthy();
-    expect(screen.getByText("Panels")).toBeTruthy();
+    expect(screen.getByText("Pages")).toBeTruthy();
     expect(screen.getByText("Book")).toBeTruthy();
     expect(screen.getByRole("button", { name: "START NEW PROJECT" })).toBeTruthy();
     // The Studio Telemetry widget no longer exists anywhere.

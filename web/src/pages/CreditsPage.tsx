@@ -51,10 +51,8 @@ function perThousand(pkg: CreditPackage) {
 function childRowLabel(tx: CreditTransaction): string {
   const feature = (tx.description ?? "").replace(/^Model call(?: \w+)?:\s*/i, "").trim();
   const labels: Record<string, string> = {
-    "prompt.visual_brief": "Compose panel image instruction",
-    "prompt.layout": "Plan panel regions",
     "style.sample": "Render style proof",
-    "draw.panel_image": "Draw panel",
+    "draw.complete_page": "Draw complete page",
   };
   if (labels[feature]) return labels[feature];
   if (feature) return feature.replaceAll(".", " ");

@@ -38,8 +38,8 @@ function status(): ProjectStatus {
     is_public: false,
     share_token: null,
     stages: {
-      compose: stage("pending"),
-      direct: stage("pending"),
+      brief: stage("pending"),
+      finish: stage("pending"),
       draw: stage("pending"),
     },
   };
@@ -49,12 +49,12 @@ describe("applyStageEventToProjectStatus", () => {
   it("applies stage_begin totals to the running stage", () => {
     const next = applyStageEventToProjectStatus(status(), {
       type: "stage_begin",
-      stage: "compose",
+      stage: "finish",
       total: 12,
     });
 
     expect(next?.is_running).toBe(true);
-    expect(next?.stages.compose).toMatchObject({
+    expect(next?.stages.finish).toMatchObject({
       status: "running",
       items_done: 0,
       items_total: 12,
@@ -65,18 +65,18 @@ describe("applyStageEventToProjectStatus", () => {
 
   it("applies stage_progress without waiting for status polling", () => {
     const current = status();
-    current.stages.compose = stage("running", 12);
+    current.stages.finish = stage("running", 12);
 
     const next = applyStageEventToProjectStatus(current, {
       type: "stage_progress",
-      stage: "compose",
+      stage: "finish",
       done: 5,
       total: 12,
     });
 
-    expect(next?.stages.compose.items_done).toBe(5);
-    expect(next?.stages.compose.items_total).toBe(12);
-    expect(next?.stages.compose.status).toBe("running");
+    expect(next?.stages.finish.items_done).toBe(5);
+    expect(next?.stages.finish.items_total).toBe(12);
+    expect(next?.stages.finish.status).toBe("running");
   });
 
   it("marks completed checkpoint stages as awaiting review", () => {
@@ -98,31 +98,31 @@ describe("applyStageEventToProjectStatus", () => {
 
   it("marks completed non-checkpoint stages as complete", () => {
     const current = status();
-    current.stages.compose = stage("running", 8);
+    current.stages.finish = stage("running", 8);
 
     const next = applyStageEventToProjectStatus(current, {
       type: "stage_complete",
-      stage: "compose",
+      stage: "finish",
       done: 8,
       total: 8,
     });
 
-    expect(next?.stages.compose.status).toBe("complete");
-    expect(next?.stages.compose.items_done).toBe(8);
+    expect(next?.stages.finish.status).toBe("complete");
+    expect(next?.stages.finish.items_done).toBe(8);
   });
 
-  it("marks direct complete without creating a review checkpoint", () => {
+  it("marks Brief complete as awaiting review", () => {
     const current = status();
-    current.stages.direct = stage("running", 4);
+    current.stages.brief = stage("running", 4);
 
     const next = applyStageEventToProjectStatus(current, {
       type: "stage_complete",
-      stage: "direct",
+      stage: "brief",
       done: 4,
       total: 4,
     });
 
-    expect(next?.stages.direct.status).toBe("complete");
+    expect(next?.stages.brief.status).toBe("awaiting_review");
   });
 
   it("marks failed stages with the streamed error", () => {

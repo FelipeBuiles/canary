@@ -6,11 +6,10 @@ import {
 import { BACKEND_STAGE_TO_UI_ROUTE, UI_STAGES } from "../lib/uiStages";
 
 describe("STAGE_ORDER", () => {
-  it("contains the nine pipeline stages in order", () => {
-    expect(STAGE_ORDER).toHaveLength(9);
-    expect(STAGE_ORDER[0]).toBe("extract");
-    expect(STAGE_ORDER[1]).toBe("style");
-    expect(STAGE_ORDER[STAGE_ORDER.length - 1]).toBe("compose");
+  it("contains the eight page-generation stages in order", () => {
+    expect(STAGE_ORDER).toEqual([
+      "extract", "brief", "style", "cast", "adapt", "plan", "draw", "finish",
+    ]);
   });
 
   it("matches STAGE_DISPLAY_NAMES keys", () => {
@@ -30,34 +29,28 @@ describe("STAGE_DISPLAY_NAMES", () => {
     expect(STAGE_DISPLAY_NAMES.extract).toBe("EXTRACT");
   });
 
-  it("compose maps to COMPOSE", () => {
-    expect(STAGE_DISPLAY_NAMES.compose).toBe("COMPOSE");
+  it("finish maps to FINISH", () => {
+    expect(STAGE_DISPLAY_NAMES.finish).toBe("FINISH");
   });
 });
 
 describe("UI_STAGES", () => {
-  it("contains one user-facing shot plan stage and no plan/storyboard UI stages", () => {
-    const keys = UI_STAGES.map((stage) => stage.key);
-    expect(keys.filter((key) => key === "shot-plan")).toHaveLength(1);
-    expect(keys).not.toContain("plan");
-    expect(keys).not.toContain("storyboard");
+  it("contains only the four target stations", () => {
+    expect(UI_STAGES.map((stage) => stage.key)).toEqual(["story", "look", "pages", "book"]);
   });
 
-  it("maps plan and storyboard backend stages to the shot plan route", () => {
-    expect(BACKEND_STAGE_TO_UI_ROUTE.plan).toBe("shot-plan");
-    expect(BACKEND_STAGE_TO_UI_ROUTE.storyboard).toBe("shot-plan");
+  it("maps automatic page work to Pages", () => {
+    expect(BACKEND_STAGE_TO_UI_ROUTE.adapt).toBe("pages");
+    expect(BACKEND_STAGE_TO_UI_ROUTE.plan).toBe("pages");
+    expect(BACKEND_STAGE_TO_UI_ROUTE.draw).toBe("pages");
   });
 
-  it("uses product vocabulary for visible stages", () => {
+  it("uses target product vocabulary", () => {
     expect(UI_STAGES.map((stage) => stage.label)).toEqual([
-      "Extract",
-      "Look & Feel",
-      "Cast & Places",
-      "Script",
-      "Shot Plan",
-      "Prompt Review",
-      "Generate Panels",
-      "Letter & Compose",
+      "Story",
+      "Look",
+      "Pages",
+      "Book",
     ]);
   });
 });

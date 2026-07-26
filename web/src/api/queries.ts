@@ -1,36 +1,31 @@
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listProjects, getProjectStatus, createProject, deleteProject, fetchProjectCoverEstimate, generateProjectCover, listShortStories, importStory } from "./projects";
-import { runPipeline, approveStage, regenPanel, regenPanelWithInstruction, regenRef, regenStateRef, regenLocationState, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchRegenEstimate, fetchAssetRegenEstimate, getCharacterRefVersions, restoreCharacterRefVersion, previewGenerationRequest, prepareGenerationRequest, getGenerationRequest } from "./pipeline";
-import type { ConfigOverrides, StoryBible, ProjectStatus, StageInfo, ImageStatus, CreditBalance, CostEstimate } from "../types/api";
+import { runPipeline, approveStage, regenRef, regenStateRef, regenLocationState, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchAssetRegenEstimate, getCharacterRefVersions, restoreCharacterRefVersion } from "./pipeline";
+import type { AdaptationBrief, ConfigOverrides, StoryBible, ProjectStatus, StageInfo, CreditBalance, CostEstimate } from "../types/api";
 import { reconcileStatusPoll } from "../lib/stageProgress";
 import { getBalance, getCreditHistory, getPricingReference } from "./credits";
 import { getPackages, createCheckout } from "./billing";
 import {
   getStoryBible,
+  getStory,
+  updateBrief,
   updateStoryBible,
-  listScreenplays,
-  getScreenplay,
-  getLayoutPlan,
-  estimateNarrationDecisionImpact,
-  updateNarrationDecision,
-  listPanelSummaries,
-  getPanelsForScene,
-  updatePanel,
-  listPromptSummaries,
-  getPromptsForScene,
-  updatePrompt,
-  listImages,
   getImageGenerationMeta,
-  getPanelImageVersions,
-  restorePanelImageVersion,
-  acceptImagePanel,
-  unacceptImagePanel,
-  flagImagePanel,
-  unflagImagePanel,
   getPrimaryRefs,
   setPrimaryRef,
 } from "./stages";
-import { listPages, getPage, updatePage, replacePage, getLetteringStyle, generateLetteringStyle, setLetteringStyle, translatePageBubbles, translateSinglePageBubbles, triggerExport } from "./pages";
+import {
+  acceptPageIssue,
+  correctPageIssue,
+  createPageIssue,
+  generateCompletePage,
+  getAdaptation,
+  getBookPlan,
+  getCompletePage,
+  getFinishPreflight,
+  listCompletePages,
+  triggerExport,
+} from "./pages";
 import { createStyleDirection, generateStyleValidation, getStyles, suggestStyles, fetchStyleDirectionEstimate, fetchSuggestStylesEstimate, fetchStyleSampleEstimate, generateStyleSamples, setActiveStyle } from "./styles";
 import { getProjectConfig, updateProjectConfig } from "./config";
 import {
@@ -260,114 +255,11 @@ export function useApproveStage() {
   });
 }
 
-export function useRegenPanel() {
-  return useMutation({
-    mutationFn: ({
-      project,
-      sceneId,
-      panelNumber,
-      imageModelAlias,
-      preparedRequestId,
-    }: {
-      project: string;
-      sceneId: string;
-      panelNumber: number;
-      imageModelAlias?: string | null;
-      preparedRequestId?: string | null;
-    }) => regenPanel(project, sceneId, panelNumber, imageModelAlias, preparedRequestId),
-    // No cache invalidation here — DrawRoom detects completion via images polling
-    // and busts the cache itself to avoid the panel disappearing mid-regen.
-  });
-}
-
-export function useGenerationRequestPreview(
-  project: string | undefined,
-  sceneId: string | undefined,
-  panelNumber: number | undefined,
-  imageModelAlias?: string | null,
-  devContent = false,
-  preparedRequestId?: string | null,
-  enabled = true,
-) {
-  return useQuery({
-    queryKey: ["project", project, "generation-request-preview", sceneId, panelNumber, imageModelAlias ?? "", preparedRequestId ?? "", devContent],
-    queryFn: () => previewGenerationRequest(project!, sceneId!, panelNumber!, imageModelAlias, devContent, preparedRequestId),
-    enabled: !!project && !!sceneId && panelNumber != null && enabled,
-    staleTime: 5_000,
-  });
-}
-
-export function useGenerationRequest(
-  project: string | undefined,
-  requestId: string | null | undefined,
-  devContent = false,
-) {
-  return useQuery({
-    queryKey: ["project", project, "generation-request", requestId, devContent],
-    queryFn: () => getGenerationRequest(project!, requestId!, devContent),
-    enabled: !!project && !!requestId,
-  });
-}
-
-export function usePrepareGenerationRequest() {
-  return useMutation({
-    mutationFn: ({ project, sceneId, panelNumber, imageModelAlias }: {
-      project: string;
-      sceneId: string;
-      panelNumber: number;
-      imageModelAlias?: string | null;
-    }) => prepareGenerationRequest(project, sceneId, panelNumber, imageModelAlias),
-  });
-}
-
-export function useRegenPanelWithInstruction() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      project,
-      sceneId,
-      panelNumber,
-      instruction,
-      imageModelAlias,
-    }: {
-      project: string;
-      sceneId: string;
-      panelNumber: number;
-      instruction: string;
-      imageModelAlias?: string | null;
-    }) => regenPanelWithInstruction(project, sceneId, panelNumber, instruction, imageModelAlias),
-    onSuccess: (data, { project, sceneId }) => {
-      qc.setQueryData<import("../types/api").ImagePrompt[]>(
-        ["project", project, "direct", sceneId],
-        (existing) => existing?.map((prompt) =>
-          prompt.panel_number === data.panel_number ? data.prompt : prompt
-        ),
-      );
-      qc.invalidateQueries({ queryKey: ["project", project, "direct", sceneId] });
-    },
-  });
-}
-
 export function useStageEstimate(project: string | undefined, stage: string | undefined, enabled = true) {
   return useQuery({
     queryKey: ["project", project, "estimate", stage],
     queryFn: () => fetchStageEstimate(project!, stage!),
     enabled: !!project && !!stage && enabled,
-    staleTime: 60_000,
-  });
-}
-
-export function useRegenEstimate(
-  project: string | undefined,
-  sceneId: string | undefined,
-  panelNumber: number | undefined,
-  imageModelAlias?: string | null,
-  enabled = true,
-) {
-  return useQuery({
-    queryKey: ["project", project, "regen-estimate", sceneId, panelNumber, imageModelAlias ?? ""],
-    queryFn: () => fetchRegenEstimate(project!, sceneId!, panelNumber!, imageModelAlias),
-    enabled: !!project && !!sceneId && panelNumber != null && enabled,
     staleTime: 60_000,
   });
 }
@@ -384,39 +276,6 @@ export function useAssetRegenEstimate(
     queryFn: () => fetchAssetRegenEstimate(project!, assetType, assetId!, stateId),
     enabled: !!project && !!assetId && enabled,
     staleTime: 60_000,
-  });
-}
-
-export function useNarrationDecisionImpact(
-  project: string | undefined,
-  beatId: string | undefined,
-  patch: Partial<import("../types/api").NarrationDecision> | null,
-  enabled = true,
-) {
-  return useQuery({
-    queryKey: ["project", project, "narration-impact", beatId, patch],
-    queryFn: () => estimateNarrationDecisionImpact(project!, beatId!, patch ?? {}),
-    enabled: !!project && !!beatId && !!patch && enabled,
-    staleTime: 15_000,
-  });
-}
-
-export function useUpdateNarrationDecision() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      project,
-      beatId,
-      patch,
-    }: {
-      project: string;
-      beatId: string;
-      patch: Partial<import("../types/api").NarrationDecision>;
-    }) => updateNarrationDecision(project, beatId, patch),
-    onSuccess: (_data, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "plan"] });
-      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
-    },
   });
 }
 
@@ -536,6 +395,33 @@ export function useGenerationJobs(project: string | undefined, ids: string[]) {
 
 // ── Story Bible (EXTRACT) ─────────────────────────────────────────────────────
 
+export function useStory(project: string | undefined) {
+  return useQuery({
+    queryKey: ["project", project, "story"],
+    queryFn: () => getStory(project!),
+    enabled: !!project,
+  });
+}
+
+export function useUpdateBrief() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      project,
+      expectedRevision,
+      changes,
+    }: {
+      project: string;
+      expectedRevision: number;
+      changes: Partial<AdaptationBrief>;
+    }) => updateBrief(project, expectedRevision, changes),
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "story"] });
+      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+    },
+  });
+}
+
 export function useStoryBible(project: string | undefined, enabled = true) {
   return useQuery({
     queryKey: ["project", project, "story-bible"],
@@ -555,99 +441,6 @@ export function useUpdateStoryBible() {
   });
 }
 
-// ── Screenplays (ADAPT) ───────────────────────────────────────────────────────
-
-export function useScreenplays(project: string | undefined) {
-  return useQuery({
-    queryKey: ["project", project, "screenplays"],
-    queryFn: () => listScreenplays(project!),
-    enabled: !!project,
-  });
-}
-
-export function useScreenplay(
-  project: string | undefined,
-  sceneId: string | null | undefined,
-) {
-  return useQuery({
-    queryKey: ["project", project, "screenplays", sceneId],
-    queryFn: () => getScreenplay(project!, sceneId!),
-    enabled: !!project && !!sceneId,
-  });
-}
-
-export function useLayoutPlan(project: string | undefined) {
-  return useQuery({
-    queryKey: ["project", project, "plan"],
-    queryFn: () => getLayoutPlan(project!),
-    enabled: !!project,
-  });
-}
-
-// ── Panels (STORYBOARD) ───────────────────────────────────────────────────────
-
-export function usePanelSummaries(project: string | undefined) {
-  return useQuery({
-    queryKey: ["project", project, "storyboard"],
-    queryFn: () => listPanelSummaries(project!),
-    enabled: !!project,
-  });
-}
-
-export function usePanelsForScene(
-  project: string | undefined,
-  sceneId: string | null | undefined,
-) {
-  return useQuery({
-    queryKey: ["project", project, "storyboard", sceneId],
-    queryFn: () => getPanelsForScene(project!, sceneId!),
-    enabled: !!project && !!sceneId,
-  });
-}
-
-export function useUpdatePanel() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ project, sceneId, data }: { project: string; sceneId: string; data: import("../types/api").PanelBreakdown }) =>
-      updatePanel(project, sceneId, data.panel_number, data),
-    onSuccess: (_data, { project, sceneId }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "storyboard", sceneId] });
-    },
-  });
-}
-
-// ── Prompts (DIRECT) ──────────────────────────────────────────────────────────
-
-export function usePromptSummaries(project: string | undefined) {
-  return useQuery({
-    queryKey: ["project", project, "direct"],
-    queryFn: () => listPromptSummaries(project!),
-    enabled: !!project,
-  });
-}
-
-export function usePromptsForScene(
-  project: string | undefined,
-  sceneId: string | null | undefined,
-) {
-  return useQuery({
-    queryKey: ["project", project, "direct", sceneId],
-    queryFn: () => getPromptsForScene(project!, sceneId!),
-    enabled: !!project && !!sceneId,
-  });
-}
-
-export function useUpdatePrompt() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ project, sceneId, panelNumber, fields }: { project: string; sceneId: string; panelNumber: number; fields: Partial<import("../types/api").ImagePrompt> }) =>
-      updatePrompt(project, sceneId, panelNumber, fields),
-    onSuccess: (_data, { project, sceneId }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "direct", sceneId] });
-    },
-  });
-}
-
 export function useImageGenerationMeta(
   project: string | undefined,
   relativeImagePath: string | undefined,
@@ -658,43 +451,6 @@ export function useImageGenerationMeta(
     queryKey: ["project", project, "image-generation-meta", relativeImagePath, revision],
     queryFn: () => getImageGenerationMeta(project!, relativeImagePath!),
     enabled: !!project && !!relativeImagePath && enabled,
-  });
-}
-
-export function usePanelImageVersions(
-  project: string | undefined,
-  sceneId: string | undefined,
-  panelNumber: number | undefined,
-  enabled = true,
-) {
-  return useQuery({
-    queryKey: ["project", project, "panel-image-versions", sceneId, panelNumber],
-    queryFn: () => getPanelImageVersions(project!, sceneId!, panelNumber!),
-    enabled: !!project && !!sceneId && !!panelNumber && enabled,
-    retry: false,
-  });
-}
-
-export function useRestorePanelImageVersion() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      project,
-      sceneId,
-      panelNumber,
-      version,
-    }: {
-      project: string;
-      sceneId: string;
-      panelNumber: number;
-      version: number;
-    }) => restorePanelImageVersion(project, sceneId, panelNumber, version),
-    onSuccess: (_data, { project, sceneId, panelNumber }) => {
-      const panelRelPath = `draw/${sceneId}/panel_${String(panelNumber).padStart(3, "0")}.png`;
-      qc.invalidateQueries({ queryKey: ["project", project, "draw"] });
-      qc.invalidateQueries({ queryKey: ["project", project, "image-generation-meta", panelRelPath] });
-      qc.invalidateQueries({ queryKey: ["project", project, "panel-image-versions", sceneId, panelNumber] });
-    },
   });
 }
 
@@ -732,68 +488,6 @@ export function useRestoreCharacterRefVersion() {
   });
 }
 
-// ── Images (DRAW) ─────────────────────────────────────────────────────────────
-
-export function useImages(project: string | undefined, refetchInterval?: number) {
-  return useQuery({
-    queryKey: ["project", project, "draw"],
-    queryFn: () => listImages(project!),
-    enabled: !!project,
-    refetchInterval,
-  });
-}
-
-export function useAcceptPanel() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ project, sceneId, panelNumber }: { project: string; sceneId: string; panelNumber: number }) =>
-      acceptImagePanel(project, sceneId, panelNumber),
-    onSuccess: (_data, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "draw"] });
-    },
-  });
-}
-
-export function useUnacceptPanel() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ project, sceneId, panelNumber }: { project: string; sceneId: string; panelNumber: number }) =>
-      unacceptImagePanel(project, sceneId, panelNumber),
-    onSuccess: (_data, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "draw"] });
-    },
-  });
-}
-
-export function useSetPanelFlag() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ project, sceneId, panelNumber, flagged }: { project: string; sceneId: string; panelNumber: number; flagged: boolean }) =>
-      flagged
-        ? flagImagePanel(project, sceneId, panelNumber)
-        : unflagImagePanel(project, sceneId, panelNumber),
-    onMutate: async ({ project, sceneId, panelNumber, flagged }) => {
-      // Optimistic toggle — flagging is instant, no confirmation.
-      await qc.cancelQueries({ queryKey: ["project", project, "draw"] });
-      const previous = qc.getQueryData<ImageStatus[]>(["project", project, "draw"]);
-      qc.setQueryData<ImageStatus[]>(["project", project, "draw"], (old) =>
-        old?.map((img) =>
-          img.scene_id === sceneId && img.panel_number === panelNumber
-            ? { ...img, flagged }
-            : img,
-        ),
-      );
-      return { previous };
-    },
-    onError: (_err, { project }, context) => {
-      if (context?.previous) qc.setQueryData(["project", project, "draw"], context.previous);
-    },
-    onSettled: (_data, _err, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "draw"] });
-    },
-  });
-}
-
 export function usePrimaryRefs(project: string | undefined) {
   return useQuery({
     queryKey: ["project", project, "primary-refs"],
@@ -813,111 +507,115 @@ export function useSetPrimaryRef() {
   });
 }
 
-// ── Pages (COMPOSE) ───────────────────────────────────────────────────────────
+// ── Complete pages and Finish ─────────────────────────────────────────────────
 
-export function usePages(project: string | undefined) {
+export function useAdaptation(project: string | undefined) {
   return useQuery({
-    queryKey: ["project", project, "pages"],
-    queryFn: () => listPages(project!),
+    queryKey: ["project", project, "adaptation"],
+    queryFn: () => getAdaptation(project!),
     enabled: !!project,
   });
 }
 
-export function usePage(project: string | undefined, pageNum: number | undefined) {
+export function useBookPlan(project: string | undefined) {
   return useQuery({
-    queryKey: ["project", project, "pages", pageNum],
-    queryFn: () => getPage(project!, pageNum!),
-    enabled: !!project && !!pageNum,
-  });
-}
-
-export function useUpdatePage() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ project, pageNum, data }: { project: string; pageNum: number; data: Partial<import("../types/api").ComicPage> }) =>
-      updatePage(project, pageNum, data),
-    onSuccess: (data, { project, pageNum }) => {
-      // Populate the specific page cache directly — avoids the refetch that causes
-      // the rubber-band snap when dragging bubbles.
-      qc.setQueryData(["project", project, "pages", pageNum], data);
-      // Only invalidate the summary list (exact match skips the per-page query).
-      qc.invalidateQueries({ queryKey: ["project", project, "pages"], exact: true });
-    },
-  });
-}
-
-export function useReplacePage() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ project, pageNum, data }: { project: string; pageNum: number; data: import("../types/api").ComicPage }) =>
-      replacePage(project, pageNum, data),
-    onSuccess: (_data, { project, pageNum }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "pages", pageNum] });
-      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
-    },
-  });
-}
-
-export function useLetteringStyle(project?: string) {
-  return useQuery({
-    queryKey: ["project", project, "lettering-style"],
-    queryFn: () => getLetteringStyle(project!),
+    queryKey: ["project", project, "book-plan"],
+    queryFn: () => getBookPlan(project!),
     enabled: !!project,
   });
 }
 
-export function useGenerateLetteringStyle() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ project, reroll }: { project: string; reroll?: boolean }) =>
-      generateLetteringStyle(project, reroll),
-    onSuccess: (_data, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "lettering-style"] });
-      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
-    },
+export function useCompletePages(project: string | undefined) {
+  return useQuery({
+    queryKey: ["project", project, "complete-pages"],
+    queryFn: () => listCompletePages(project!),
+    enabled: !!project,
   });
 }
 
-export function useTranslatePageBubbles() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ project, targetLanguage }: { project: string; targetLanguage?: "en" | "es" | "fr" }) =>
-      translatePageBubbles(project, targetLanguage),
-    onSuccess: (_data, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
-      qc.invalidateQueries({ queryKey: ["project", project, "config"] });
-    },
+export function useCompletePage(project: string | undefined, pageNumber: number | undefined) {
+  return useQuery({
+    queryKey: ["project", project, "complete-pages", pageNumber],
+    queryFn: () => getCompletePage(project!, pageNumber!),
+    enabled: !!project && pageNumber != null,
   });
 }
 
-export function useSetLetteringStyle() {
+function invalidatePageReview(qc: ReturnType<typeof useQueryClient>, project: string, pageNumber?: number) {
+  qc.invalidateQueries({ queryKey: ["project", project, "complete-pages"] });
+  if (pageNumber != null) {
+    qc.invalidateQueries({ queryKey: ["project", project, "complete-pages", pageNumber] });
+  }
+  qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+}
+
+export function useGenerateCompletePage() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ project, mode, preset }: { project: string; mode: "auto" | "preset"; preset?: string }) =>
-      setLetteringStyle(project, { mode, preset }),
-    onSuccess: (_data, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "lettering-style"] });
-      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
-    },
+    mutationFn: ({ project, pageNumber }: { project: string; pageNumber: number }) =>
+      generateCompletePage(project, pageNumber),
+    onSettled: (_data, _error, { project, pageNumber }) =>
+      invalidatePageReview(qc, project, pageNumber),
   });
 }
 
-export function useTranslateSinglePageBubbles() {
+export function useCreatePageIssue() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ project, pageNum, targetLanguage }: { project: string; pageNum: number; targetLanguage?: "en" | "es" | "fr" }) =>
-      translateSinglePageBubbles(project, pageNum, targetLanguage),
-    onSuccess: (_data, { project, pageNum }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "pages", pageNum] });
-      qc.invalidateQueries({ queryKey: ["project", project, "pages"] });
-    },
+    mutationFn: ({
+      project,
+      pageNumber,
+      requestedCorrection,
+    }: {
+      project: string;
+      pageNumber: number;
+      requestedCorrection: string;
+    }) => createPageIssue(project, pageNumber, requestedCorrection),
+    onSuccess: (_data, { project, pageNumber }) =>
+      invalidatePageReview(qc, project, pageNumber),
+  });
+}
+
+export function useAcceptPageIssue() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, pageNumber, issueId }: { project: string; pageNumber: number; issueId: string }) =>
+      acceptPageIssue(project, pageNumber, issueId),
+    onSuccess: (_data, { project, pageNumber }) =>
+      invalidatePageReview(qc, project, pageNumber),
+  });
+}
+
+export function useCorrectPageIssue() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, pageNumber, issueId }: { project: string; pageNumber: number; issueId: string }) =>
+      correctPageIssue(project, pageNumber, issueId),
+    onSettled: (_data, _error, { project, pageNumber }) =>
+      invalidatePageReview(qc, project, pageNumber),
+  });
+}
+
+export function useFinishPreflight(project: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ["project", project, "finish-preflight"],
+    queryFn: () => getFinishPreflight(project!),
+    enabled: !!project && enabled,
+    retry: false,
   });
 }
 
 export function useExport() {
+  const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ project, format, allowIssues = false }: { project: string; format: "pdf" | "cbz"; allowIssues?: boolean }) =>
-      triggerExport(project, format, allowIssues),
+    mutationFn: ({ project, format, force = false }: { project: string; format: "pdf" | "cbz"; force?: boolean }) =>
+      triggerExport(project, format, force),
+    onSuccess: (result, { project }) => {
+      if (result.preflight) {
+        qc.setQueryData(["project", project, "finish-preflight"], result.preflight);
+      }
+      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+    },
   });
 }
 

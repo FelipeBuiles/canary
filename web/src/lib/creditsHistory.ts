@@ -45,13 +45,12 @@ export function groupRunsByDay(
 
 const STAGE_ACTIVITY_LABELS: Record<string, string> = {
   extract: "Analyze story",
+  brief: "Set adaptation brief",
   style: "Create art style",
   cast: "Create characters & places",
   adapt: "Adapt story",
   plan: "Plan pages",
-  storyboard: "Break down panels",
-  direct: "Prepare image instructions",
-  compose: "Compose book",
+  finish: "Finish book",
 };
 
 /** Describe what the author asked Scenewright to do, not the internal stage. */
@@ -63,9 +62,9 @@ export function runActivityLabel(run: CreditLedgerRun): string {
       (total, row) => total + (row.status === "settled" && row.amount_credits < 0 ? (row.image_count ?? 0) : 0),
       0,
     );
-    if (imageCount === 1) return "Draw panel";
-    if (imageCount > 1) return `Draw ${imageCount} panels`;
-    return "Draw panels";
+    if (imageCount === 1) return "Draw page";
+    if (imageCount > 1) return `Draw ${imageCount} pages`;
+    return "Draw pages";
   }
 
   if (run.stage && STAGE_ACTIVITY_LABELS[run.stage]) {

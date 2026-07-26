@@ -14,9 +14,6 @@ import {
   useProjectConfig,
   useStoryBible,
   useProjectStatus,
-  useLetteringStyle,
-  useGenerateLetteringStyle,
-  useSetLetteringStyle,
   useStyleDirectionEstimate,
   useGenerateProjectCover,
   useProjectCoverEstimate,
@@ -32,7 +29,6 @@ import { useApproveStage, useStageEstimate } from "../../api/queries";
 import { useRunAction } from "../../hooks/useRunAction";
 import { useI18n } from "../../i18n";
 import { FlowingDotsPlaceholder } from "../../components/ui/FlowingDotsPlaceholder";
-import { LetteringChooser } from "../../components/compose/LetteringChooser";
 import { StyleDirectionComposer, type StyleDirectionMode } from "../../components/style/StyleDirectionComposer";
 import {
   useStyleGenStore,
@@ -69,7 +65,7 @@ function buildFallbackStyleSamplePrompt(suggestion: StyleSuggestion, storyBible:
     "Medium shot, eye-level camera, dramatic lighting. " +
     "Portrait 4:5 aspect ratio. Fill the entire frame edge to edge - " +
     "no letterboxing, no pillarboxing, no border margins. " +
-    "No text. No speech bubbles. No captions. Single panel only."
+    "No text. No speech balloons. No captions. Single illustration only."
   );
 }
 
@@ -347,9 +343,6 @@ export function StyleRoom() {
     refetch: refetchStyles,
   } = useStyles(id);
   const { data: projectConfig } = useProjectConfig(id);
-  const { data: lettering } = useLetteringStyle(id);
-  const generateLettering = useGenerateLetteringStyle();
-  const setLettering = useSetLetteringStyle();
   const { data: storyBible } = useStoryBible(id);
   const { data: status } = useProjectStatus(id);
   const suggestStyles = useSuggestStyles();
@@ -374,7 +367,6 @@ export function StyleRoom() {
   const [showSuggestConfirm, setShowSuggestConfirm] = useState(false);
   const [showDirectionComposer, setShowDirectionComposer] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
-  const [showLetteringControls, setShowLetteringControls] = useState(false);
   const [pendingCustomInput, setPendingCustomInput] = useState<{
     direction: string;
     image: File | null;
@@ -492,15 +484,6 @@ export function StyleRoom() {
     if (last.type !== "stage_progress" && last.type !== "stage_complete") return;
     refetchStyles();
   }, [events, refetchStyles]);
-
-  // Auto-tune lettering once when a style is selected but not yet matched.
-  const autoLetteringRef = useRef(false);
-  useEffect(() => {
-    if (!id || !styleSelected || !lettering) return;
-    if (lettering.label || autoLetteringRef.current) return;
-    autoLetteringRef.current = true;
-    generateLettering.mutate({ project: id });
-  }, [id, styleSelected, lettering, generateLettering]);
 
   if (isLoading) {
     return <RoomShell project={id ?? ""} isLoading loadingText="MIXING PALETTES…" />;
@@ -807,37 +790,6 @@ export function StyleRoom() {
             </p>
           )}
 
-          {styleSelected && (
-            <Surface border="soft" shadow="none" padding="md" className="mt-10">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <div className="font-meta text-[0.68rem] font-bold tracking-[0.1em] text-ink-black/60">{t("LETTERING")}</div>
-                  <p className="mt-1 text-[0.86rem] text-ink-black/72">
-                    {lettering?.label ? `${t("Matched automatically:")} ${lettering.label}` : t("Lettering will be matched automatically to the selected style.")}
-                  </p>
-                </div>
-                <Button variant="outline" size="sm" onClick={() => setShowLetteringControls((visible) => !visible)}>
-                  {showLetteringControls ? t("HIDE CONTROLS") : t("CUSTOMIZE")}
-                </Button>
-              </div>
-              {showLetteringControls && (
-                <LetteringChooser
-                  lettering={lettering}
-                  isGenerating={generateLettering.isPending || setLettering.isPending}
-                  disabled={styleActionsDisabled}
-                  onMatchMyStyle={() =>
-                    id &&
-                    setLettering.mutate(
-                      { project: id, mode: "auto" },
-                      { onSuccess: () => generateLettering.mutate({ project: id }) },
-                    )
-                  }
-                  onReroll={() => id && generateLettering.mutate({ project: id, reroll: true })}
-                  onSelectPreset={(preset) => id && setLettering.mutate({ project: id, mode: "preset", preset })}
-                />
-              )}
-            </Surface>
-          )}
         </>
       )}
 
