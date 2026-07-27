@@ -18,11 +18,7 @@ if TYPE_CHECKING:
     from novel_to_comic.models.story_bible import StoryBible
 
 
-class ArtifactMissing(Exception):
-    def __init__(self, name: str, path: Path) -> None:
-        super().__init__(f"Artifact '{name}' not found: {path}")
-        self.name = name
-        self.path = path
+from novel_to_comic.target_artifacts import ArtifactMissing
 
 
 # ---------------------------------------------------------------------------
