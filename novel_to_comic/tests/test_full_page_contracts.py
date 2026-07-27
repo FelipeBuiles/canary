@@ -792,6 +792,70 @@ def test_inferred_brief_is_always_a_non_authoritative_draft() -> None:
     assert proposed.status == "draft"
 
 
+def _inferred_brief_content(**overrides) -> dict:
+    content = _approved_brief().model_dump(
+        exclude={"revision", "content_sha256", "status"}
+    )
+    content.update(overrides)
+    return content
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "themes",
+        "desired_emphasis",
+        "essential_events",
+        "protected_language",
+    ],
+)
+def test_a_single_string_where_a_list_belongs_is_not_a_failed_stage(
+    field: str,
+) -> None:
+    # Observed from the real extraction model: desired_emphasis came back as one
+    # sentence instead of an array. That is a formatting slip, not missing
+    # creative intent.
+    proposed = propose_brief(
+        _inferred_brief_content(**{field: "One sentence, not a list."})
+    )
+
+    assert getattr(proposed, field) == ("One sentence, not a list.",)
+
+
+@pytest.mark.parametrize(
+    ("described", "expected"),
+    [
+        (
+            "Faithful adaptation maintaining the nested testimony, adapted to "
+            "visual comic pacing.",
+            "faithful",
+        ),
+        ("Transformative reinvention of the framing device.", "transformative"),
+        ("Adapted for the comics medium.", "medium_specific"),
+    ],
+)
+def test_a_described_transformation_level_is_read_not_rejected(
+    described: str,
+    expected: str,
+) -> None:
+    proposed = propose_brief(
+        _inferred_brief_content(transformation_level=described)
+    )
+
+    assert proposed.transformation_level == expected
+
+
+def test_inferred_text_fields_accept_a_list_and_unknown_keys_are_dropped() -> None:
+    proposed = propose_brief(
+        _inferred_brief_content(
+            point_of_view=["First person", "retrospective testimony"],
+            unexpected_field="not part of the brief contract",
+        )
+    )
+
+    assert proposed.point_of_view == "First person; retrospective testimony"
+
+
 def test_brief_cannot_be_approved_without_desired_emphasis() -> None:
     payload = _approved_brief().model_dump()
     payload["desired_emphasis"] = []

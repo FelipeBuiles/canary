@@ -822,6 +822,7 @@ def test_producer_writes_one_book_artifact_and_records_model_usage(
     assert state.stages["adapt"].items_done == 2
     assert len(state.stages["adapt"].usage_log) == 2
     assert state.stages["adapt"].cost_usd > 0
+    assert state.stages["adapt"].cost_usd > 0
     assert state.stages["adapt"].estimated_cost_usd > 0
 
 
@@ -931,3 +932,120 @@ def test_adapted_beat_provenance_must_resolve_to_source_units() -> None:
     assert "unknown_source_provenance" in {
         failure.code for failure in result.invariant_failures
     }
+
+
+def test_a_schema_slip_is_repaired_instead_of_failing_the_stage(
+    tmp_path: Path,
+) -> None:
+    # A model returning one string where a list belongs is a formatting mistake,
+    # not a contract violation the user can act on.
+    expected = _book_adaptation()
+    beat = expected.beats[0].model_dump(mode="json")
+    responses = [
+        expected.treatment.model_dump(mode="json"),
+        {
+            "beats": [{**beat, "story_functions": "causal_event"}],
+            "ledger": [entry.model_dump(mode="json") for entry in expected.ledger],
+        },
+        {
+            "beats": [beat],
+            "ledger": [entry.model_dump(mode="json") for entry in expected.ledger],
+        },
+    ]
+    calls: list[dict] = []
+
+    async def generate(**request):
+        calls.append(request)
+        return ApiResult(
+            value=responses[len(calls) - 1],
+            usage=UsageRecord(
+                provider="mock",
+                model="gpt-4o-mini",
+                operation="text",
+                input_tokens=10,
+                output_tokens=5,
+                cost_usd=0.001,
+                cost_source="mock",
+            ),
+        )
+
+    produced = asyncio.run(
+        produce_book_adaptation(
+            _source_document(),
+            _story_bible(),
+            _approved_brief(),
+            artifacts=TargetArtifacts(tmp_path),
+            ctx=StageRuntime(
+                "adapt",
+                PipelineState(
+                    project_name="adapt-test",
+                    novel_path="novel.txt",
+                    created_at=datetime.now(timezone.utc),
+                ),
+                tmp_path,
+            ),
+            model="gpt-4o-mini",
+            generate=generate,
+        )
+    )
+
+    assert produced.beats == expected.beats
+    assert len(calls) == 3
+    assert "VALIDATION ERRORS" in calls[2]["user_content"]
+    assert "story_functions" in calls[2]["user_content"]
+
+
+def test_a_repaired_attempt_is_billed_without_inflating_progress(
+    tmp_path: Path,
+) -> None:
+    # The failed attempt was paid for, so its usage is in the audit log and its
+    # cost is in the stage total, but only the two real steps count as done.
+    expected = _book_adaptation()
+    broken = {
+        "beats": [
+            {**expected.beats[0].model_dump(mode="json"), "brief_requirements": []}
+        ],
+        "ledger": [entry.model_dump(mode="json") for entry in expected.ledger],
+    }
+    repaired = {
+        "beats": [beat.model_dump(mode="json") for beat in expected.beats],
+        "ledger": [entry.model_dump(mode="json") for entry in expected.ledger],
+    }
+    responses = [expected.treatment.model_dump(mode="json"), broken, repaired]
+    calls: list[dict] = []
+
+    async def generate(**request):
+        calls.append(request)
+        return ApiResult(
+            value=responses[len(calls) - 1],
+            usage=UsageRecord(
+                provider="mock",
+                model="gpt-4o-mini",
+                operation="text",
+                input_tokens=10,
+                output_tokens=5,
+                cost_usd=0.001,
+                cost_source="provider",
+            ),
+        )
+
+    state = PipelineState(
+        project_name="adapt-test",
+        novel_path="novel.txt",
+        created_at=datetime.now(timezone.utc),
+    )
+    asyncio.run(
+        produce_book_adaptation(
+            _source_document(),
+            _story_bible(),
+            _approved_brief(),
+            artifacts=TargetArtifacts(tmp_path),
+            ctx=StageRuntime("adapt", state, tmp_path),
+            model="gpt-4o-mini",
+            generate=generate,
+        )
+    )
+
+    assert len(state.stages["adapt"].usage_log) == 3
+    assert state.stages["adapt"].items_done == 2
+    assert state.stages["adapt"].cost_usd == pytest.approx(0.003)

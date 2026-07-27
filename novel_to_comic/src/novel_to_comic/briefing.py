@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Mapping
 from typing import Any, Awaitable, Callable
 
@@ -12,6 +13,8 @@ from novel_to_comic.models.adaptation import AdaptationBrief
 from novel_to_comic.models.source import SourceDocument
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.target_artifacts import TargetArtifacts
+
+logger = logging.getLogger("canary.briefing")
 
 
 class StoryDecision(BaseModel):
@@ -70,12 +73,77 @@ async def infer_brief(
     return propose_brief(inferred_content)
 
 
+_LIST_FIELDS = (
+    "story_promises",
+    "themes",
+    "ambiguities",
+    "motifs",
+    "protected_language",
+    "essential_events",
+    "character_turns",
+    "desired_emphasis",
+)
+_TEXT_FIELDS = ("point_of_view", "narrator_treatment", "tone")
+_TRANSFORMATION_LEVELS = ("faithful", "medium_specific", "transformative")
+_AUTHORED_FIELDS = ("revision", "status", "content_sha256")
+
+
+def _transformation_level(described: str) -> str:
+    """Map a described transformation level onto the contract's vocabulary.
+
+    The brief is a draft the Story station presents for approval, so reading the
+    model's own word is better than discarding what it said — the user sees the
+    result and can change it.
+    """
+
+    text = described.casefold()
+    if "transformative" in text or "reinvent" in text:
+        return "transformative"
+    if "faithful" in text:
+        return "faithful"
+    return "medium_specific"
+
+
+def normalize_inferred_brief(inferred_content: Mapping[str, Any], /) -> dict[str, Any]:
+    """Repair shape slips in inferred brief content without inventing intent.
+
+    A model asked for a list routinely returns one string, and asked for an enum
+    returns a sentence describing it. Those are formatting mistakes, not missing
+    creative intent, so they are corrected here rather than costing the user a
+    failed stage.
+    """
+
+    allowed = set(AdaptationBrief.model_fields) - set(_AUTHORED_FIELDS)
+    normalized = {
+        key: value for key, value in inferred_content.items() if key in allowed
+    }
+    for field in _LIST_FIELDS:
+        value = normalized.get(field)
+        if isinstance(value, str):
+            normalized[field] = (value,) if value.strip() else ()
+    for field in _TEXT_FIELDS:
+        value = normalized.get(field)
+        if isinstance(value, (list, tuple)):
+            normalized[field] = "; ".join(
+                str(item).strip() for item in value if str(item).strip()
+            )
+    level = normalized.get("transformation_level")
+    if isinstance(level, str) and level not in _TRANSFORMATION_LEVELS:
+        normalized["transformation_level"] = _transformation_level(level)
+        logger.info(
+            "Inferred transformation_level %r read as %r",
+            level,
+            normalized["transformation_level"],
+        )
+    return normalized
+
+
 def propose_brief(inferred_content: Mapping[str, Any], /) -> AdaptationBrief:
     """Parse inferred adaptation intent without allowing inference to approve it."""
 
     return AdaptationBrief.model_validate(
         {
-            **inferred_content,
+            **normalize_inferred_brief(inferred_content),
             "revision": 1,
             "status": "draft",
             "content_sha256": "",
