@@ -2,7 +2,65 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
+
 import httpx
+
+
+# Comparison-only normalizers.
+#
+# These fold representations that different producers spell differently: a model
+# writing an em dash as "--", an OCR engine reading "—" as "-", a balloon whose
+# wording is line-broken by the letterer. Every stage seam that compares text
+# from two independent producers must fold through the same function, or the two
+# sides disagree on formatting and a valid artifact blocks.
+#
+# They are NOT offset-preserving: ``…`` expands and whitespace collapses. Never
+# use them to locate text inside a source document — see
+# ``source_extraction._norm_quote_text`` for the offset-faithful variant.
+_TYPOGRAPHIC_EQUIVALENTS = {
+    "‘": "'",
+    "’": "'",
+    "‚": "'",
+    "‛": "'",
+    "“": '"',
+    "”": '"',
+    "′": "'",
+    "″": '"',
+    "–": "-",
+    "—": "-",
+    "―": "-",
+    "−": "-",
+    " ": " ",
+    "…": "...",
+}
+_TYPOGRAPHIC_TABLE = str.maketrans(_TYPOGRAPHIC_EQUIVALENTS)
+
+
+def normalize_typography(text: str) -> str:
+    """Fold quote, dash, ellipsis, and non-breaking-space variants."""
+
+    folded = unicodedata.normalize("NFC", text).translate(_TYPOGRAPHIC_TABLE)
+    return re.sub(r"-{2,}", "-", folded)
+
+
+def normalize_display_text(text: str) -> str:
+    """Canonical comparison form for lettering and other display wording."""
+
+    return " ".join(normalize_typography(text).split())
+
+
+def normalize_requirement(text: str) -> str:
+    """Canonical comparison form for brief requirements echoed by a model.
+
+    Requirement strings travel from the Brief through a treatment and back into
+    beat citations. Case, surrounding quotes, and terminal punctuation drift on
+    every hop and none of that drift changes the requirement's identity.
+    """
+
+    collapsed = normalize_display_text(text).casefold()
+    return collapsed.strip("\"'").strip().rstrip(".!?;:,").strip()
 
 
 OFFSCREEN_MARKERS = (

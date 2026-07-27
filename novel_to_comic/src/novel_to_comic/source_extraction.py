@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from difflib import SequenceMatcher
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from novel_to_comic.models.source import (
@@ -24,7 +27,9 @@ class SourceSceneAnchor(BaseModel):
     opening_quote: str = Field(min_length=1)
 
 
-def _source_units(text: str) -> tuple[SourceUnit, ...]:
+def source_units(text: str) -> tuple[SourceUnit, ...]:
+    """Segment the immutable source once into stable sentence-aligned units."""
+
     start = 0
     units: list[SourceUnit] = []
     for ordinal, end in enumerate(sentence_end_offsets(text), start=1):
@@ -41,6 +46,21 @@ def _source_units(text: str) -> tuple[SourceUnit, ...]:
     return tuple(units)
 
 
+def _semantic_start(unit: SourceUnit) -> int:
+    """Offset of the unit's first non-whitespace character."""
+
+    return unit.start_offset + len(unit.text) - len(unit.text.lstrip())
+
+
+def unit_index_at(units: tuple[SourceUnit, ...], position: int) -> int | None:
+    """Index of the unit owning ``position``, or ``None`` when out of range."""
+
+    for unit_index, unit in enumerate(units):
+        if unit.start_offset <= position < unit.end_offset:
+            return unit_index
+    return None
+
+
 def _unit_for_opening_quote(
     text: str,
     units: tuple[SourceUnit, ...],
@@ -53,19 +73,19 @@ def _unit_for_opening_quote(
         raise ValueError(
             f"scene {anchor.id!r} verbatim opening quote was not found in source"
         )
-    for unit_index, unit in enumerate(units):
-        semantic_start = unit.start_offset + len(unit.text) - len(unit.text.lstrip())
-        if position == semantic_start:
-            if anchor.opening_quote != unit.text.strip():
-                raise ValueError(
-                    f"scene {anchor.id!r} anchor must be the complete opening sentence"
-                )
-            return unit_index
-        if unit.start_offset <= position < unit.end_offset:
-            raise ValueError(
-                f"scene {anchor.id!r} opening quote creates a mid-sentence boundary"
-            )
-    raise ValueError(f"scene {anchor.id!r} opening quote is outside source units")
+    unit_index = unit_index_at(units, position)
+    if unit_index is None:
+        raise ValueError(f"scene {anchor.id!r} opening quote is outside source units")
+    unit = units[unit_index]
+    if position != _semantic_start(unit):
+        raise ValueError(
+            f"scene {anchor.id!r} opening quote creates a mid-sentence boundary"
+        )
+    if anchor.opening_quote != unit.text.strip():
+        raise ValueError(
+            f"scene {anchor.id!r} anchor must be the complete opening sentence"
+        )
+    return unit_index
 
 
 def build_source_document(
@@ -79,7 +99,7 @@ def build_source_document(
     if not scene_anchors:
         raise ValueError("at least one source scene anchor is required")
 
-    units = _source_units(text)
+    units = source_units(text)
     boundary_indexes: list[int] = []
     search_from = 0
     for anchor in scene_anchors:
@@ -94,8 +114,10 @@ def build_source_document(
         boundary_indexes.append(unit_index)
         search_from = units[unit_index].end_offset
 
-    if boundary_indexes[0] != 0:
-        raise ValueError("first scene must begin at the first source unit")
+    # Front matter ahead of the first anchored scene — title page, byline,
+    # epigraph, part or chapter heading — is still source that needs exactly one
+    # primary owner, so the opening scene owns it.
+    boundary_indexes[0] = 0
 
     scenes = []
     for index, anchor in enumerate(scene_anchors):
@@ -115,6 +137,139 @@ def build_source_document(
         )
 
     return SourceDocument(text=text, units=units, scenes=scenes)
+
+
+_QUOTE_SUBSTITUTIONS = str.maketrans(
+    {
+        "‘": "'",
+        "’": "'",
+        "“": '"',
+        "”": '"',
+        "–": "-",
+        "—": "-",
+    }
+)
+
+
+def _norm_quote_text(s: str) -> str:
+    """Normalise smart quotes and dashes the model may have substituted.
+
+    Every substitution is one character for one character: a match position in
+    the normalised copy is also a valid offset into the original source. An
+    earlier em-dash-to-``--`` expansion drifted each anchor by the number of
+    dashes preceding it, which silently moved scene boundaries.
+    """
+
+    return s.translate(_QUOTE_SUBSTITUTIONS)
+
+
+def _fuzzy_find_quote(norm_text: str, norm_quote: str, start: int = 0) -> int:
+    """Fuzzy-locate a quote whose exact prefix never matches.
+
+    Anchors candidate windows on individual words of the quote, then scores
+    each window with SequenceMatcher. Only a strong match (>0.85) is accepted
+    so a wrong-but-similar passage doesn't mis-anchor the scene.
+    """
+
+    probe = norm_quote[:60].lower()
+    if len(probe) < 20:
+        return -1
+    text_lower = norm_text.lower()
+    words = [w.strip("\"'.,;:!?") for w in probe.split()]
+    words = [w for w in words if len(w) >= 4]
+    if not words:
+        return -1
+
+    seen: set[int] = set()
+    best_pos = -1
+    best_ratio = 0.85
+    for word in words[:6]:
+        offset = probe.find(word)
+        idx = text_lower.find(word, start)
+        hops = 0
+        while idx != -1 and hops < 500:
+            window_start = idx - offset
+            if window_start >= start and window_start not in seen:
+                seen.add(window_start)
+                window = text_lower[window_start:window_start + len(probe)]
+                ratio = SequenceMatcher(None, probe, window).ratio()
+                if ratio > best_ratio or (
+                    ratio == best_ratio and best_pos != -1 and window_start < best_pos
+                ):
+                    best_pos = window_start
+                    best_ratio = ratio
+            hops += 1
+            idx = text_lower.find(word, idx + 1)
+    return best_pos
+
+
+def _find_quote_position(text: str, quote: str, start: int = 0) -> int:
+    """Locate a scene quote in the novel text at or after ``start``.
+
+    Tries progressively shorter prefixes so minor model transcription errors
+    (e.g. a misquoted word at the end) don't cause a miss, then falls back to
+    a fuzzy word-anchored search. Searching from ``start`` keeps anchors
+    monotonic: a short prefix like "The next morning" can't match an earlier
+    occurrence and silently reorder scenes. Returns -1 if nothing matches.
+    """
+
+    if not quote:
+        return -1
+
+    norm_text = _norm_quote_text(text)
+    norm_quote = _norm_quote_text(quote)
+    # A model that typed an em dash as "--" needs the doubled form collapsed to
+    # match the single-character normalisation above.
+    candidates = [norm_quote]
+    collapsed = re.sub(r"-{2,}", "-", norm_quote)
+    if collapsed != norm_quote:
+        candidates.append(collapsed)
+
+    for candidate in candidates:
+        for length in (len(candidate), 80, 60, 40, 25):
+            if length > len(candidate):
+                continue
+            position = norm_text.find(candidate[:length], start)
+            if position != -1:
+                return position
+
+    return _fuzzy_find_quote(norm_text, candidates[-1], start)
+
+
+def align_scene_anchors(story_bible: StoryBible, text: str) -> None:
+    """Snap every scene's source anchor onto the source unit that owns it.
+
+    ``source_start_quote`` stays verbatim source text and remains the scene
+    boundary anchor, but model output is only an approximation: it truncates
+    long sentences and occasionally starts mid-sentence. Replacing each anchor
+    with the exact text of its owning unit is what keeps the Story Bible and the
+    canonical `SourceDocument` in agreement — both read the same units, so no
+    second sentence-splitting heuristic can disagree with the first.
+    """
+
+    units = source_units(text)
+    search_from = 0
+    for scene in story_bible.scenes:
+        quote = scene.source_start_quote.strip()
+        if not quote:
+            continue
+
+        position = text.find(quote, search_from)
+        if position == -1:
+            position = _find_quote_position(text, quote, start=search_from)
+        if position == -1:
+            continue
+
+        unit_index = unit_index_at(units, position)
+        if unit_index is None:
+            continue
+        unit = units[unit_index]
+        aligned = unit.text.strip()
+        if not aligned:
+            continue
+
+        scene.source_start_quote = aligned
+        search_from = unit.end_offset
 
 
 def produce_source_document(

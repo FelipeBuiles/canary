@@ -12,6 +12,7 @@ import {
   useGenerationJobs,
   useProjectStatus,
   useRunPipeline,
+  useStageValidation,
 } from "../../api/queries";
 import { pageRenderUrl } from "../../api/pages";
 import {
@@ -27,7 +28,12 @@ import { FieldLabel, TextAreaField } from "../../components/ui/Field";
 import { StatusPill } from "../../components/ui/StatusPill";
 import { Surface } from "../../components/ui/Surface";
 import { useI18n } from "../../i18n";
-import type { CompletePageSummary, EditorialIssue, PageIssue } from "../../types/api";
+import type {
+  CompletePageSummary,
+  EditorialIssue,
+  PageIssue,
+  StageValidation,
+} from "../../types/api";
 
 function ExceptionList({ issues }: { issues: EditorialIssue[] }) {
   const { t } = useI18n();
@@ -49,6 +55,35 @@ function ExceptionList({ issues }: { issues: EditorialIssue[] }) {
           </Surface>
         ))}
       </div>
+    </section>
+  );
+}
+
+function BlockingFailureList({ validation }: { validation?: StageValidation }) {
+  const { t } = useI18n();
+  if (!validation || validation.invariant_failures.length === 0) return null;
+  return (
+    <section aria-label={t("WHAT MUST BE FIXED")}>
+      <SectionHeader
+        variant="underline"
+        title={t("WHAT MUST BE FIXED")}
+        description={t("These contract failures block the book and cannot be accepted.")}
+      />
+      <div className="grid gap-3">
+        {validation.invariant_failures.map((failure) => (
+          <Surface key={failure.id} tone="red" border="hard" shadow="paper-sm" padding="md">
+            <p className="font-body text-sm font-bold leading-6">{failure.message}</p>
+            <p className="mt-2 font-body text-xs leading-5 text-ink-black/70">
+              {failure.evidence.join(" · ")}
+            </p>
+          </Surface>
+        ))}
+      </div>
+      {validation.recommendations.length > 0 && (
+        <p className="mt-3 font-body text-sm leading-6">
+          {validation.recommendations.join(" ")}
+        </p>
+      )}
     </section>
   );
 }
@@ -264,6 +299,10 @@ export function PagesRoom() {
   const { data: status } = useProjectStatus(id);
   const { data: adaptation } = useAdaptation(id);
   const { data: plan } = useBookPlan(id);
+  const planFailed = status?.stages.plan?.status === "failed";
+  const adaptFailed = status?.stages.adapt?.status === "failed";
+  const { data: planValidation } = useStageValidation(id, "plan", planFailed);
+  const { data: adaptValidation } = useStageValidation(id, "adapt", adaptFailed);
   const { data, isLoading, error, refetch } = useCompletePages(id);
   const run = useRunPipeline();
   const generate = useGenerateCompletePage();
@@ -314,6 +353,7 @@ export function PagesRoom() {
           stage={status?.stages.plan?.status === "complete" ? "draw" : "plan"}
           status={status?.stages.plan?.status ?? "pending"}
         />
+        <BlockingFailureList validation={adaptValidation ?? planValidation} />
       </RoomShell>
     );
   }

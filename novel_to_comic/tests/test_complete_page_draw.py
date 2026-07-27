@@ -13,6 +13,9 @@ from PIL import Image
 from novel_to_comic.config import Config
 from novel_to_comic.models.adaptation import LetteringItem
 from novel_to_comic.models.draw import (
+    OCRExtraction,
+    OCRTextObservation,
+    PageRenderCorrection,
     BookEdition,
     CompletePageProviderResult,
     PageCapabilityProfile,
@@ -26,6 +29,7 @@ from novel_to_comic.models.page import (
 )
 from novel_to_comic.page_drawing import (
     ApprovedReferenceFile,
+    analyze_complete_page,
     GoogleVertexCompletePageTransport,
     VertexCompletePageAdapter,
     compile_page_generation_request,
@@ -426,8 +430,7 @@ def test_draw_persists_immutable_request_render_usage_cost_and_lineage(
             compiled,
             adapter=adapter,
             artifacts=artifacts,
-            request_revision=1,
-            render_revision=1,
+            page=_page(),
         )
     )
 
@@ -524,8 +527,7 @@ def test_complete_page_enqueue_uses_credited_lifecycle_and_persists_result(
             compiled=compiled,
             adapter=adapter,
             artifacts=artifacts,
-            request_revision=1,
-            render_revision=1,
+            page=_page(),
         )
         asyncio.run(job.runner())
 
@@ -534,6 +536,84 @@ def test_complete_page_enqueue_uses_credited_lifecycle_and_persists_result(
     debit.assert_called_once()
     release.assert_called_once()
     assert artifacts.read_render(7, 1) == b"complete-page-png"
+
+
+def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
+    tmp_path: Path,
+) -> None:
+    # Generating a page and reading it back are two provider calls. Both are
+    # billable, settled under one ledger job so credits round once.
+    app = _make_app()
+    compiled = _compile(tmp_path)
+    artifacts = TargetArtifacts(tmp_path / "project")
+    analysis_usage = UsageRecord(
+        provider="gemini",
+        model="ocr-balanced",
+        operation="text",
+        input_tokens=1200,
+        output_tokens=80,
+        cost_usd=0.004,
+        cost_source="provider",
+    )
+
+    class _OCR:
+        async def extract(self, image: bytes):
+            return ApiResult(
+                value=OCRExtraction(
+                    lettering=[
+                        OCRTextObservation(id="ocr-1", text="It was the same face.")
+                    ]
+                ),
+                usage=analysis_usage,
+            )
+
+    with (
+        patch("novel_to_comic.server.credited_job.get_db", return_value=object()),
+        patch(
+            "novel_to_comic.server.credited_job.reserve_credits",
+            return_value=("reservation-1", "ledger-job-1"),
+        ) as reserve,
+        patch("novel_to_comic.server.credited_job.release_reservation"),
+        patch("novel_to_comic.server.credited_job.debit_model_usage") as debit,
+        patch("novel_to_comic.server.credited_job.ai_request_context"),
+    ):
+        unanalysed, _ = enqueue_complete_page_draw(
+            app,
+            project_name="project",
+            user_id="user-1",
+            project_id="project-1",
+            project_dir=tmp_path / "project",
+            compiled=compiled,
+            adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
+            artifacts=TargetArtifacts(tmp_path / "unanalysed"),
+            page=_page(),
+        )
+        without_analysis = reserve.call_args.args[-1]
+        job, _ = enqueue_complete_page_draw(
+            app,
+            project_name="project-analysed",
+            user_id="user-1",
+            project_id="project-1",
+            project_dir=tmp_path / "project",
+            compiled=compiled,
+            adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
+            artifacts=artifacts,
+            page=_page(),
+            ocr=_OCR(),
+        )
+        with_analysis = reserve.call_args.args[-1]
+        asyncio.run(job.runner())
+
+    assert unanalysed is not job
+    assert with_analysis > without_analysis
+    debited = [call.args[3] for call in debit.call_args_list]
+    assert [usage.model for usage in debited] == [
+        "gemini-3-pro-image-preview",
+        "ocr-balanced",
+    ]
+    # One ledger job, so whole credits are rounded once across both calls.
+    assert {call.kwargs["job_id"] for call in debit.call_args_list} == {"ledger-job-1"}
+    assert artifacts.read_analysis(7, 1).analysis_usage == analysis_usage
 
 
 def test_reserved_generation_job_releases_without_debit_on_cancellation(
@@ -573,3 +653,261 @@ def test_reserved_generation_job_releases_without_debit_on_cancellation(
 
     debit.assert_not_called()
     release.assert_called_once()
+
+
+def _ordered_page(*, state_first: bool) -> ComicPage:
+    """One page showing Ward with a state and, elsewhere, without one."""
+
+    stated = PageContent(
+        id="content-state",
+        order=1 if state_first else 2,
+        beat_ids=["beat-1"],
+        visual_intent="Ward, bloodied, holds the idol.",
+        lettering=[
+            LetteringItem(
+                id="letter-1",
+                kind="caption",
+                text="It was the same face.",
+                source_unit_ids=["source-1"],
+            )
+        ],
+        entity_ids=["ward", "idol"],
+        appearance_state_ids=["ward-bloodied"],
+    )
+    plain = PageContent(
+        id="content-plain",
+        order=2 if state_first else 1,
+        beat_ids=["beat-2"],
+        visual_intent="Ward alone in the doorway.",
+        entity_ids=["ward"],
+    )
+    content = [stated, plain] if state_first else [plain, stated]
+    return ComicPage(
+        revision=2,
+        page_number=7,
+        adaptation_revision=3,
+        adaptation_sha256="a" * 64,
+        emphasis="peak",
+        density_intent="standard",
+        layout_intent="Two moments.",
+        content=content,
+        reading_order=[*(item.id for item in content), "letter-1"],
+    )
+
+
+def test_reference_selection_does_not_depend_on_page_content_order(
+    tmp_path: Path,
+) -> None:
+    # Selection is a property of the page. Deciding per content item silently
+    # dropped an approved base reference depending on traversal order.
+    files = _reference_files(tmp_path)
+    selected = []
+    for state_first in (True, False):
+        compiled = compile_page_generation_request(
+            _ordered_page(state_first=state_first),
+            _edition(),
+            _inventory(),
+            files,
+            retry=RetryProvenance(attempt=1),
+        )
+        selected.append(
+            sorted(reference.id for reference in compiled.request.references)
+        )
+
+    assert selected[0] == selected[1]
+    assert selected[0] == ["idol-ref", "ward-bloodied-ref", "ward-clean-ref"]
+
+
+def test_correction_revisions_are_allocated_when_the_job_runs(tmp_path: Path) -> None:
+    # Two corrections requested before either runs would otherwise both claim
+    # the same revision, and the second would die on the immutable-artifact
+    # guard after the route had already accepted it.
+    import hashlib
+
+    artifacts = TargetArtifacts(tmp_path / "project")
+    page = _page()
+    initial = asyncio.run(
+        draw_complete_page(
+            _compile(tmp_path),
+            adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
+            artifacts=artifacts,
+            page=page,
+        )
+    )
+    assert initial.render.revision == 1
+
+    correction = PageRenderCorrection(
+        issue_id="issue-hand",
+        page_number=7,
+        comic_page_revision=page.revision,
+        comic_page_sha256=page.content_sha256,
+        parent_render_revision=1,
+        parent_render_image_sha256=hashlib.sha256(b"complete-page-png").hexdigest(),
+        mode="instructed",
+        instruction="Correct the hand.",
+    )
+    corrected = asyncio.run(
+        draw_complete_page(
+            compile_page_generation_request(
+                page,
+                _edition(),
+                _inventory(),
+                _reference_files(tmp_path),
+                retry=RetryProvenance(attempt=1),
+                correction=correction,
+                edit_source_bytes=b"complete-page-png",
+            ),
+            adapter=VertexCompletePageAdapter(
+                _RecordingTransport(
+                    _provider_result().model_copy(
+                        update={"image_bytes": b"corrected-page-png"}
+                    )
+                )
+            ),
+            artifacts=artifacts,
+            page=page,
+            parent_render_revision=1,
+        )
+    )
+
+    assert corrected.render.revision == 2
+    assert corrected.render.parent_revision == 1
+    assert artifacts.provenance_revisions(7) == (1, 2)
+    assert artifacts.read_request(7, 2).correction == correction
+
+
+def test_draw_analyses_its_render_and_records_blocking_lettering_issues(
+    tmp_path: Path,
+) -> None:
+    # Without this wiring no analysis artifact exists at all, and Finish blocks
+    # every page for missing OCR status.
+    artifacts = TargetArtifacts(tmp_path / "project")
+    page = _page()
+
+    class _OCR:
+        async def extract(self, image: bytes):
+            assert image
+            return ApiResult(
+                value=OCRExtraction(
+                    lettering=[
+                        OCRTextObservation(id="ocr-1", text="It was the WRONG face.")
+                    ]
+                ),
+                usage=UsageRecord(
+                    provider="gemini",
+                    model="ocr-balanced",
+                    operation="text",
+                    input_tokens=1200,
+                    output_tokens=80,
+                    cost_usd=0.004,
+                    cost_source="provider",
+                ),
+            )
+
+    asyncio.run(
+        draw_complete_page(
+            _compile(tmp_path),
+            adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
+            artifacts=artifacts,
+            page=page,
+            ocr=_OCR(),
+        )
+    )
+
+    analysis = artifacts.read_analysis(7, 1)
+    assert [failure.code for failure in analysis.invariant_failures] == [
+        "misspelled_lettering"
+    ]
+    issues = artifacts.read_issues(7)
+    assert [issue.classification for issue in issues] == ["invariant_failure"]
+    assert issues[0].correction_owner == "draw"
+
+
+def test_a_stale_compiled_request_cannot_be_drawn(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="stale"):
+        asyncio.run(
+            draw_complete_page(
+                _compile(tmp_path),
+                adapter=VertexCompletePageAdapter(
+                    _RecordingTransport(_provider_result())
+                ),
+                artifacts=TargetArtifacts(tmp_path / "project"),
+                page=_page(revision=3),
+            )
+        )
+
+
+def test_a_failed_read_back_leaves_the_paid_render_recorded(tmp_path: Path) -> None:
+    # The image is already paid for when analysis runs. Losing its provenance
+    # would let the page be generated — and charged — a second time.
+    artifacts = TargetArtifacts(tmp_path / "project")
+
+    class _OCR:
+        async def extract(self, image: bytes):
+            raise RuntimeError("gateway rejected the vision request")
+
+    with pytest.raises(RuntimeError, match="gateway rejected"):
+        asyncio.run(
+            draw_complete_page(
+                _compile(tmp_path),
+                adapter=VertexCompletePageAdapter(
+                    _RecordingTransport(_provider_result())
+                ),
+                artifacts=artifacts,
+                page=_page(),
+                ocr=_OCR(),
+            )
+        )
+
+    assert artifacts.provenance_revisions(7) == (1,)
+    assert artifacts.read_render(7, 1) == b"complete-page-png"
+    assert not artifacts.analysis_path(7, 1).exists()
+
+
+def test_an_existing_render_can_be_analyzed_without_redrawing_it(
+    tmp_path: Path,
+) -> None:
+    artifacts = TargetArtifacts(tmp_path / "project")
+    page = _page()
+
+    class _OCR:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+        async def extract(self, image: bytes):
+            return ApiResult(
+                value=OCRExtraction(
+                    lettering=[OCRTextObservation(id="ocr-1", text=self.text)]
+                ),
+                usage=UsageRecord(
+                    provider="gemini",
+                    model="ocr-balanced",
+                    operation="text",
+                    input_tokens=1200,
+                    output_tokens=80,
+                ),
+            )
+
+    provenance = asyncio.run(
+        draw_complete_page(
+            _compile(tmp_path),
+            adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
+            artifacts=artifacts,
+            page=page,
+        )
+    )
+    assert not artifacts.analysis_path(7, 1).exists()
+
+    analysis = asyncio.run(
+        analyze_complete_page(
+            page=page,
+            render=provenance.render,
+            image=artifacts.read_render(7, 1),
+            ocr=_OCR("It was the same face."),
+            artifacts=artifacts,
+        )
+    )
+
+    assert analysis.lettering_valid is True
+    assert analysis.analysis_usage is not None
+    assert artifacts.read_analysis(7, 1) == analysis

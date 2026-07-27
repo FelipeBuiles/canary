@@ -7,6 +7,7 @@ import type {
   FinishPreflight,
   GenerationJob,
   PageIssue,
+  StageValidation,
 } from "../types/api";
 
 const projectPath = (project: string) => `/projects/${encodeURIComponent(project)}`;
@@ -17,6 +18,14 @@ export function getAdaptation(project: string): Promise<BookAdaptation> {
 
 export function getBookPlan(project: string): Promise<BookPlan> {
   return apiFetch(`${projectPath(project)}/book-plan`);
+}
+
+/** Adapt and Plan persist their own verdict so a block can explain itself. */
+export function getStageValidation(
+  project: string,
+  stage: "adapt" | "plan",
+): Promise<StageValidation> {
+  return apiFetch(`${projectPath(project)}/validation/${stage}`);
 }
 
 export function listCompletePages(project: string): Promise<CompletePagesResponse> {

@@ -15,7 +15,9 @@ pause for user review.
 
 **Stage validation** — The blocking invariants and non-blocking issues evaluated
 by the stage that owns an artifact. Finish independently preflights the book
-but does not duplicate every upstream validator.
+but does not duplicate every upstream validator. A stage that blocks persists
+its own verdict, including any recommendation, so the evidence outlives the
+failed run.
 
 **Invariant failure** — A provable violation of an artifact contract that
 blocks advancement, such as broken source coverage, mutated lettering, or
@@ -53,7 +55,9 @@ approved adaptation brief.
 **Plan stage** — The pipeline stage that translates the narrative treatment
 and book adaptation into canonical ComicPages, including page allocation,
 spread rhythm, page-turn intent, reading order, and semantic layout intent.
-It allocates Adapt's complete lettering without rewriting or shortening it.
+It allocates Adapt's complete lettering by citing lettering IDs; the wording
+itself is copied from the adaptation and is never restated, so it cannot be
+rewritten or shortened.
 
 **Finish stage** — The final pipeline stage, which verifies and corrects page
 renders, coordinates correction requests with Draw, performs production-safe
@@ -127,6 +131,17 @@ revision. Text embedded in a page render is not canonical copy.
 **Render analysis** — Derived observations about a page render, such as
 detected panel boundaries, reading order, and recognized lettering. It is
 validation evidence, not author intent.
+
+**Lettering comparison policy** — The single named rule for comparing canonical
+lettering with recognized lettering. It folds representation differences that
+carry no meaning — quote and dash forms, ellipses, line breaks introduced by
+the letterer, repeated whitespace — and nothing else. Case and wording
+differences remain defects.
+
+**Reading-order evidence** — Detected page geometry, not an OCR engine's own
+observation sequence. Only geometry that places canonical lettering in a
+contradicting order is a provable reading-order defect; an unexplained
+sequence difference is an editorial issue.
 
 **Panel crop** — A derived view cut from a page render for inspection,
 accessibility, or diagnosis. It is not an independently generated asset or a

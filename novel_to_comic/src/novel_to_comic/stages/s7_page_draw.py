@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from novel_to_comic.config import Config
+from novel_to_comic.config import PAGE_OCR_ESTIMATED_COST_USD, Config
 from novel_to_comic.page_drawing import production_page_capability_profile
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.state import PipelineState
@@ -33,7 +33,9 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     if not target.plan_path.exists():
         return 0.0
     profile = production_page_capability_profile()
-    return float(profile.price_per_page_usd) * len(target.read_plan().pages)
+    # Every page is generated and then read back, and both are billable.
+    per_page = float(profile.price_per_page_usd) + float(PAGE_OCR_ESTIMATED_COST_USD)
+    return per_page * len(target.read_plan().pages)
 
 
 STAGE = Stage(

@@ -2,7 +2,8 @@
 
 **Date:** 2026-07-25  
 **Status:** Ready for implementation  
-**Design:** [Full-page generation pipeline](../../specs/2026-07-25-full-page-generation-design.md)
+**Design:** ADRs 0003-0015 in [`docs/adr/`](../../../adr/) — the dated design
+document was removed once its decisions were recorded there.
 
 ## Purpose
 

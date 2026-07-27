@@ -497,37 +497,192 @@ def test_cthulhu_missing_reaction_or_aftermath_is_an_editorial_issue() -> None:
     assert "score" not in result.editorial_issues[0].model_dump()
 
 
-def test_intentional_omission_is_reviewable_with_cited_evidence() -> None:
+def _omission_source() -> SourceDocument:
+    sentences = (
+        "I saw the door open. ",
+        "The hall was cold. ",
+        "A clock ticked somewhere. ",
+        "Dust hung in the air. ",
+        "I fled into the rain.",
+    )
+    text = "".join(sentences)
+    units = []
+    start = 0
+    for ordinal, sentence in enumerate(sentences, start=1):
+        units.append(
+            SourceUnit(
+                id=f"source_{ordinal:06d}",
+                ordinal=ordinal,
+                start_offset=start,
+                end_offset=start + len(sentence),
+                text=sentence,
+            )
+        )
+        start += len(sentence)
+    return SourceDocument(
+        text=text,
+        units=units,
+        scenes=[
+            SourceScene(
+                id="scene_001",
+                title="The door",
+                first_unit_id="source_000001",
+                last_unit_id="source_000005",
+            )
+        ],
+    )
+
+
+def _omission_candidate(omitted: tuple[str, ...]) -> BookAdaptation:
+    source = _omission_source()
     payload = _book_adaptation().model_dump()
     payload["content_sha256"] = ""
-    payload["beats"][0]["source_unit_ids"] = ["source_000001"]
-    payload["beats"][0]["lettering"] = [payload["beats"][0]["lettering"][0]]
-    ledger = list(payload["ledger"])
-    ledger[1] = {
-        "source_unit_id": "source_000002",
-        "disposition": "intentionally_omitted",
-        "adapted_beat_ids": [],
-        "reason": "The flight already communicates immediate panic.",
-        "preserved_function": "The prose reaction is intentionally removed.",
-    }
-    payload["ledger"] = ledger
-    candidate = BookAdaptation.model_validate(payload)
+    payload["source_sha256"] = source.source_sha256
+    kept = [unit.id for unit in source.units if unit.id not in omitted]
+    payload["beats"][0]["source_unit_ids"] = kept
+    payload["beats"][0]["lettering"] = [
+        item
+        for item in payload["beats"][0]["lettering"]
+        if all(unit_id in kept for unit_id in item["source_unit_ids"])
+    ]
+    payload["ledger"] = [
+        {
+            "source_unit_id": unit.id,
+            "disposition": "intentionally_omitted"
+            if unit.id in omitted
+            else "caption",
+            "adapted_beat_ids": [] if unit.id in omitted else ["beat_0001"],
+            "reason": "Already carried by the surrounding art."
+            if unit.id in omitted
+            else None,
+            "preserved_function": "The prose detail is intentionally removed."
+            if unit.id in omitted
+            else "The testimony remains explicit.",
+        }
+        for unit in source.units
+    ]
+    return BookAdaptation.model_validate(payload)
+
+
+def _omission_issues(omitted: tuple[str, ...]) -> list:
+    return [
+        issue
+        for issue in validate_book_adaptation(
+            _omission_source(),
+            _approved_brief(),
+            _omission_candidate(omitted),
+        ).editorial_issues
+        if issue.code == "questionable_omission"
+    ]
+
+
+def test_a_reworded_requirement_is_covered_not_missing() -> None:
+    # The Brief, the treatment, and the beat citation are three model outputs.
+    # Requiring byte-identical echoes made a blocking failure out of ordinary
+    # rewording, with no repair available to the user.
+    payload = _book_adaptation().model_dump()
+    payload["content_sha256"] = ""
+    payload["treatment"]["essential_events"] = ["the witness sees the door open"]
+    payload["beats"][0]["brief_requirements"] = [
+        "“The witness sees the door open”",
+        "The witness abandons the investigation!",
+    ]
 
     result = validate_book_adaptation(
         _source_document(),
         _approved_brief(),
-        candidate,
+        BookAdaptation.model_validate(payload),
     )
 
-    issue = next(
-        issue
-        for issue in result.editorial_issues
-        if issue.code == "questionable_omission"
+    assert result.invariant_failures == ()
+
+
+def test_a_genuinely_uncovered_requirement_still_blocks() -> None:
+    payload = _book_adaptation().model_dump()
+    payload["content_sha256"] = ""
+    payload["beats"][0]["brief_requirements"] = [
+        "The witness abandons the investigation."
+    ]
+
+    result = validate_book_adaptation(
+        _source_document(),
+        _approved_brief(),
+        BookAdaptation.model_validate(payload),
     )
-    assert issue.source_unit_ids == ("source_000002",)
-    assert issue.evidence == (
-        "The flight already communicates immediate panic.",
-        "The prose reaction is intentionally removed.",
+
+    assert [failure.code for failure in result.invariant_failures] == [
+        "missing_essential_event"
+    ]
+
+
+def test_protected_language_survives_typographic_variance() -> None:
+    payload = _book_adaptation().model_dump()
+    payload["content_sha256"] = ""
+    payload["beats"][0]["lettering"][0]["text"] = "I saw the door\nopen."
+    brief = _approved_brief().model_dump()
+    brief["content_sha256"] = ""
+    brief["protected_language"] = ["I saw the door open."]
+    approved = AdaptationBrief.model_validate(brief)
+    payload["brief_sha256"] = approved.content_sha256
+
+    result = validate_book_adaptation(
+        _source_document(),
+        approved,
+        BookAdaptation.model_validate(payload),
+    )
+
+    assert [
+        failure.code
+        for failure in result.invariant_failures
+        if failure.code == "protected_language_missing"
+    ] == []
+
+
+def test_paraphrased_protected_language_still_blocks() -> None:
+    payload = _book_adaptation().model_dump()
+    payload["content_sha256"] = ""
+    payload["beats"][0]["lettering"][0]["text"] = "I watched the door swing wide."
+
+    result = validate_book_adaptation(
+        _source_document(),
+        _approved_brief(),
+        BookAdaptation.model_validate(payload),
+    )
+
+    assert "protected_language_missing" in [
+        failure.code for failure in result.invariant_failures
+    ]
+
+
+def test_an_isolated_ordinary_omission_is_not_an_editorial_exception() -> None:
+    # A faithful adaptation omits hundreds of ordinary source units. Reporting
+    # each one as an exception would bury the omissions that matter.
+    assert _omission_issues(("source_000003",)) == []
+
+
+def test_omitting_protected_language_is_reviewable_with_cited_evidence() -> None:
+    issues = _omission_issues(("source_000001",))
+
+    assert [issue.source_unit_ids for issue in issues] == [("source_000001",)]
+    assert issues[0].evidence[0] == (
+        "Protected phrase in the omitted unit: 'I saw the door open.'"
+    )
+
+
+def test_a_continuous_omitted_stretch_is_reviewable_as_one_exception() -> None:
+    issues = _omission_issues(
+        ("source_000002", "source_000003", "source_000004")
+    )
+
+    assert len(issues) == 1
+    assert issues[0].source_unit_ids == (
+        "source_000002",
+        "source_000003",
+        "source_000004",
+    )
+    assert issues[0].evidence == (
+        "3 consecutive source units were omitted, "
+        "source_000002 through source_000004.",
     )
 
 
@@ -653,10 +808,13 @@ def test_producer_writes_one_book_artifact_and_records_model_usage(
 
     assert produced == artifacts.read_adaptation()
     assert produced.beats == expected.beats
-    assert (tmp_path / "adapt").iterdir().__next__().name == "book.json"
+    # One adaptation authority, plus Adapt's own derived verdict on it. No
+    # per-scene screenplay outputs of any kind.
     assert sorted(path.name for path in (tmp_path / "adapt").iterdir()) == [
-        "book.json"
+        "book.json",
+        "validation.json",
     ]
+    assert artifacts.read_validation("adapt").invariant_failures == ()
     assert [call["feature"] for call in calls] == [
         "adapt.narrative_treatment",
         "adapt.book",
@@ -665,6 +823,71 @@ def test_producer_writes_one_book_artifact_and_records_model_usage(
     assert len(state.stages["adapt"].usage_log) == 2
     assert state.stages["adapt"].cost_usd > 0
     assert state.stages["adapt"].estimated_cost_usd > 0
+
+
+def test_a_blocked_adaptation_gets_one_repair_pass_with_its_failures(
+    tmp_path: Path,
+) -> None:
+    source = _source_document()
+    brief = _approved_brief()
+    expected = _book_adaptation()
+    broken = {
+        "beats": [
+            {
+                **expected.beats[0].model_dump(mode="json"),
+                "brief_requirements": [],
+            }
+        ],
+        "ledger": [entry.model_dump(mode="json") for entry in expected.ledger],
+    }
+    repaired = {
+        "beats": [beat.model_dump(mode="json") for beat in expected.beats],
+        "ledger": [entry.model_dump(mode="json") for entry in expected.ledger],
+    }
+    responses = [expected.treatment.model_dump(mode="json"), broken, repaired]
+    calls: list[dict] = []
+
+    async def generate(**request):
+        calls.append(request)
+        return ApiResult(
+            value=responses[len(calls) - 1],
+            usage=UsageRecord(
+                provider="mock",
+                model="gpt-4o-mini",
+                operation="text",
+                input_tokens=10,
+                output_tokens=5,
+                cost_usd=0.001,
+                cost_source="mock",
+            ),
+        )
+
+    artifacts = TargetArtifacts(tmp_path)
+    produced = asyncio.run(
+        produce_book_adaptation(
+            source,
+            _story_bible(),
+            brief,
+            artifacts=artifacts,
+            ctx=StageRuntime(
+                "adapt",
+                PipelineState(
+                    project_name="adapt-test",
+                    novel_path="novel.txt",
+                    created_at=datetime.now(timezone.utc),
+                ),
+                tmp_path,
+            ),
+            model="gpt-4o-mini",
+            generate=generate,
+        )
+    )
+
+    assert produced.beats == expected.beats
+    assert len(calls) == 3
+    # The repair pass must state the specific failure, not just "try again".
+    assert "missing_essential_event" in calls[2]["user_content"]
+    assert artifacts.read_validation("adapt").attempts == 2
 
 
 @pytest.mark.parametrize(

@@ -45,6 +45,8 @@ from novel_to_comic.models.finish import (
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 from novel_to_comic.source_extraction import (
     SourceSceneAnchor,
+    _find_quote_position,
+    align_scene_anchors,
     build_source_document,
     produce_source_document,
 )
@@ -237,6 +239,134 @@ def test_source_builder_rejects_a_truncated_opening_sentence_anchor() -> None:
                 )
             ],
         )
+
+
+_ANCHOR_ALIGNMENT_TEXT = (
+    "The Call of Cthulhu\nby H. P. Lovecraft\n\nI. The Horror in Clay\n\n"
+    "The most merciful thing in the world is inability. "
+    'The cry rose: "Cthulhu fhtagn. . . the stars were wrong." '
+    "Prof. Angell studied the tablet. "
+    "Then silence fell."
+)
+
+
+def _anchor_scene(scene_id: str, quote: str) -> Scene:
+    return Scene(
+        id=scene_id,
+        chapter=1,
+        title=scene_id,
+        location_id="location_room",
+        character_ids=[],
+        summary="A scene.",
+        scene_type="action",
+        narrative_beat="initial",
+        source_start_quote=quote,
+    )
+
+
+def _aligned_bible(text: str, quotes: list[str]) -> StoryBible:
+    story_bible = _story_bible().model_copy(
+        update={
+            "total_scenes": len(quotes),
+            "scenes": [
+                _anchor_scene(f"scene_{ordinal:03d}", quote)
+                for ordinal, quote in enumerate(quotes, start=1)
+            ],
+        }
+    )
+    align_scene_anchors(story_bible, text)
+    return story_bible
+
+
+def test_truncated_scene_anchors_align_to_complete_source_units() -> None:
+    story_bible = _aligned_bible(
+        _ANCHOR_ALIGNMENT_TEXT,
+        [
+            "The most merciful thing in the world is inability.",
+            'The cry rose: "Cthulhu fhtagn',
+            "Prof.",
+        ],
+    )
+
+    assert [scene.source_start_quote for scene in story_bible.scenes] == [
+        "The Horror in Clay\n\nThe most merciful thing in the world is inability.",
+        'The cry rose: "Cthulhu fhtagn.',
+        "Prof. Angell studied the tablet.",
+    ]
+
+
+def test_mid_sentence_scene_anchor_aligns_to_its_owning_source_unit() -> None:
+    story_bible = _aligned_bible(
+        _ANCHOR_ALIGNMENT_TEXT,
+        [
+            "The most merciful thing in the world is inability.",
+            "the stars were wrong",
+        ],
+    )
+
+    assert story_bible.scenes[1].source_start_quote == 'the stars were wrong." '.strip()
+
+
+def test_aligned_anchors_produce_a_valid_source_document(tmp_path) -> None:
+    story_bible = _aligned_bible(
+        _ANCHOR_ALIGNMENT_TEXT,
+        [
+            "The most merciful thing in the world is inability.",
+            'The cry rose: "Cthulhu fhtagn',
+            "Prof.",
+        ],
+    )
+
+    document = produce_source_document(
+        TargetArtifacts(tmp_path),
+        _ANCHOR_ALIGNMENT_TEXT,
+        story_bible,
+    )
+
+    covered = [
+        unit_id for scene in document.scenes for unit_id in scene.unit_ids(document)
+    ]
+    assert covered == [unit.id for unit in document.units]
+
+
+def test_front_matter_before_the_first_anchor_belongs_to_the_first_scene() -> None:
+    text = "PART ONE.\n\nThe door opened. Nothing moved."
+
+    document = build_source_document(
+        text,
+        [
+            SourceSceneAnchor(
+                id="scene_001",
+                title="The door",
+                opening_quote="The door opened.",
+            ),
+            SourceSceneAnchor(
+                id="scene_002",
+                title="Silence",
+                opening_quote="Nothing moved.",
+            ),
+        ],
+    )
+
+    assert document.scenes[0].first_unit_id == document.units[0].id
+    assert document.scenes[0].unit_ids(document) == [
+        "source_000001",
+        "source_000002",
+    ]
+
+
+def test_quote_positions_are_offsets_into_the_unmodified_source() -> None:
+    text = (
+        "The angles were wrong—utterly wrong—and he fled. "
+        "Later he wrote it down. "
+        "The dream returned."
+    )
+
+    # A misquoted final word forces the fuzzy path, which searches a
+    # dash-normalised copy of the source; that copy must stay offset-faithful.
+    position = _find_quote_position(text, "Later he wrote it downn")
+
+    assert text[position:].startswith("Later he wrote it down.")
 
 
 def test_extract_producer_writes_only_the_canonical_source_document(tmp_path) -> None:

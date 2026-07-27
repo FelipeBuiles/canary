@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from novel_to_comic.models.adaptation import LetteringItem, RevisionedArtifact
 from novel_to_comic.models.page import ComicPage
-from novel_to_comic.models.validation import InvariantFailure
+from novel_to_comic.models.validation import EditorialIssue, InvariantFailure
 from novel_to_comic.usage import UsageRecord
 
 
@@ -327,16 +327,19 @@ class RenderAnalysis(BaseModel):
     page_number: int = Field(ge=1)
     render_revision: int = Field(ge=1)
     render_image_sha256: str = Field(min_length=64, max_length=64)
-    punctuation_policy: Literal["unicode_typographic_punctuation_v1"] = (
-        "unicode_typographic_punctuation_v1"
-    )
+    punctuation_policy: Literal["typographic_lettering_v2"] = "typographic_lettering_v2"
     recognized_lettering: dict[str, str] = Field(default_factory=dict)
     ocr_observations: tuple[OCRTextObservation, ...] = ()
     lettering_matches: tuple[LetteringMatch, ...] = ()
     observed_regions: tuple[ObservedRegion, ...] = ()
     observed_reading_order: tuple[str, ...] = ()
     invariant_failures: tuple[InvariantFailure, ...] = ()
+    editorial_issues: tuple[EditorialIssue, ...] = ()
     evidence: tuple[str, ...] = ()
+    # Reading a page back is a second billable provider call. Its usage lives
+    # here, on the artifact written only once that call succeeded, rather than
+    # on generation provenance, which is recorded before the read happens.
+    analysis_usage: UsageRecord | None = None
 
     @property
     def lettering_valid(self) -> bool:

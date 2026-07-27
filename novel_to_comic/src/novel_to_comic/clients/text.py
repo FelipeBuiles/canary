@@ -46,6 +46,7 @@ MODEL_REGISTRY: dict[str, str] = {
     "prompt-fast": "litellm",
     "prompt-balanced": "litellm",
     "prompt-quality": "litellm",
+    "ocr-balanced": "litellm",
 }
 
 
@@ -68,6 +69,7 @@ async def generate_json(
     temperature: float = 0.7,
     max_output_tokens: int | None = None,
     feature: str = "text.generate_json",
+    image_attachments: tuple[tuple[bytes, str], ...] = (),
 ) -> ApiResult[dict]:
     """Generate structured JSON through the AI gateway."""
     return await generate_structured_object(
@@ -78,6 +80,7 @@ async def generate_json(
         temperature=temperature,
         max_output_tokens=max_output_tokens,
         feature=feature,
+        image_attachments=image_attachments,
     )
 
 

@@ -21,6 +21,7 @@ import {
   generateCompletePage,
   getAdaptation,
   getBookPlan,
+  getStageValidation,
   getCompletePage,
   getFinishPreflight,
   listCompletePages,
@@ -522,6 +523,19 @@ export function useBookPlan(project: string | undefined) {
     queryKey: ["project", project, "book-plan"],
     queryFn: () => getBookPlan(project!),
     enabled: !!project,
+  });
+}
+
+export function useStageValidation(
+  project: string | undefined,
+  stage: "adapt" | "plan",
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["project", project, "validation", stage],
+    queryFn: () => getStageValidation(project!, stage),
+    enabled: !!project && enabled,
+    retry: false,
   });
 }
 

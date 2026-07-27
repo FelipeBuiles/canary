@@ -42,9 +42,8 @@ generated panels are accepted by default and users flag the ones needing
 re-work. This grouping is presentation-only; backend stages remain discrete
 and ordered. `src/lib/stations.ts` is the implemented mapping.
 
-The accepted but not yet implemented replacement is the complete-page
-architecture in
-`docs/superpowers/specs/2026-07-25-full-page-generation-design.md`.
+The replacement complete-page architecture is recorded in ADRs 0003-0015
+(`docs/adr/`).
 
 Key pieces:
 

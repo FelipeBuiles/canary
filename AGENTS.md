@@ -52,10 +52,11 @@ Auto stages never block: they run as a chain after cast approval and surface
 as read-only inspect drawers (placeholder shown if not yet generated). Stage
 order is unchanged — do not reorder stages for the UI.
 
-**Accepted replacement architecture (not yet implemented):**
-`docs/superpowers/specs/2026-07-25-full-page-generation-design.md` and its
-implementation plan replace the panel-era design. Work on that migration must
-not preserve or extend legacy panel stages for compatibility.
+**Accepted replacement architecture:** the full-page pipeline recorded in
+ADRs 0003-0015 (`docs/adr/`) replaces the panel-era design; remaining migration
+work is tracked in
+`docs/superpowers/plans/2026-07-25-full-page-generation/README.md`. That
+migration must not preserve or extend legacy panel stages for compatibility.
 
 Key invariants of the implemented redesign:
 

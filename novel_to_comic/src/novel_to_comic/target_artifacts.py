@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import TypeVar
@@ -19,6 +20,7 @@ from novel_to_comic.models.draw import (
 from novel_to_comic.models.finish import FinishPreflight
 from novel_to_comic.models.page import BookPlan, ComicPage
 from novel_to_comic.models.source import SourceDocument
+from novel_to_comic.models.validation import StageValidation
 
 
 ArtifactModel = TypeVar("ArtifactModel", bound=BaseModel)
@@ -55,8 +57,22 @@ class TargetArtifacts:
     def plan_path(self) -> Path:
         return self.project_dir / "plan" / "book.json"
 
+    def validation_path(self, stage: str) -> Path:
+        if stage not in {"adapt", "plan"}:
+            raise ValueError("only Adapt and Plan persist a stage validation artifact")
+        return self.project_dir / stage / "validation.json"
+
     def page_path(self, page_number: int) -> Path:
         return self.project_dir / "plan" / "pages" / f"page_{page_number:03d}.json"
+
+    def page_revision_path(self, page_number: int, revision: int) -> Path:
+        return (
+            self.project_dir
+            / "plan"
+            / "pages"
+            / "revisions"
+            / f"page_{page_number:03d}_rev_{revision:03d}.json"
+        )
 
     @property
     def book_edition_path(self) -> Path:
@@ -184,10 +200,36 @@ class TargetArtifacts:
         return self._read_model("book_adaptation", self.adaptation_path, BookAdaptation)
 
     def write_page(self, page: ComicPage) -> None:
+        # The canonical path always holds the latest revision; each revision is
+        # also archived so a render citing a superseded ComicPage revision stays
+        # reconstructable after a copy correction replaces it. Re-planning the
+        # same revision legitimately rewrites its archive entry, so this is not
+        # an immutable write.
+        self._write_model(
+            self.page_revision_path(page.page_number, page.revision),
+            page,
+        )
         self._write_model(self.page_path(page.page_number), page)
 
     def read_page(self, page_number: int) -> ComicPage:
         return self._read_model("comic_page", self.page_path(page_number), ComicPage)
+
+    def read_page_revision(self, page_number: int, revision: int) -> ComicPage:
+        return self._read_model(
+            "comic_page_revision",
+            self.page_revision_path(page_number, revision),
+            ComicPage,
+        )
+
+    def write_validation(self, validation: StageValidation) -> None:
+        self._write_model(self.validation_path(validation.owner_stage), validation)
+
+    def read_validation(self, stage: str) -> StageValidation:
+        return self._read_model(
+            f"{stage}_validation",
+            self.validation_path(stage),
+            StageValidation,
+        )
 
     def write_plan(self, plan: BookPlan) -> None:
         self._write_model(self.plan_path, plan)
@@ -296,8 +338,12 @@ class TargetArtifacts:
 
     @staticmethod
     def _write_model(path: Path, artifact: BaseModel) -> None:
+        # Written through a temporary sibling: a crash mid-write would otherwise
+        # leave a truncated canonical artifact that no stage can read.
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(artifact.model_dump_json(indent=2))
+        temporary = path.with_name(f".{path.name}.tmp")
+        temporary.write_text(artifact.model_dump_json(indent=2))
+        os.replace(temporary, path)
 
     @classmethod
     def _write_immutable_model(

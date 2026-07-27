@@ -21,7 +21,7 @@ SERVER_EVENT_PROPERTIES: dict[str, frozenset[str]] = {
     "project_created": frozenset({"source", "file_type"}),
     "stage_started": frozenset({"stage", "rerun", "retry_failed"}),
     "stage_succeeded": frozenset({"stage", "outcome"}),
-    "stage_failed": frozenset({"stage", "error_type"}),
+    "stage_failed": frozenset({"stage", "outcome", "error_type"}),
     "stage_approved": frozenset({"stage"}),
     "style_selected": frozenset({"style_id"}),
     "panel_flagged": frozenset(),

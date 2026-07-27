@@ -482,6 +482,26 @@ export interface RenderAnalysis {
   evidence: string[];
 }
 
+export interface InvariantFailure {
+  id: string;
+  owner_stage: StageName;
+  code: string;
+  message: string;
+  source_unit_ids?: string[];
+  artifact_ids?: string[];
+  evidence: string[];
+  kind?: "invariant_failure";
+  blocking?: true;
+}
+
+export interface StageValidation {
+  owner_stage: StageName;
+  attempts: number;
+  invariant_failures: InvariantFailure[];
+  editorial_issues: EditorialIssue[];
+  recommendations: string[];
+}
+
 export interface BookAdaptation {
   revision: number;
   editorial_issues: EditorialIssue[];

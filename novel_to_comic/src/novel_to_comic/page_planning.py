@@ -19,10 +19,17 @@ from novel_to_comic.models.page import (
     PinnedGeometry,
     PlannedPageRevision,
 )
-from novel_to_comic.models.validation import EditorialIssue, InvariantFailure
+from novel_to_comic.models.validation import (
+    EditorialIssue,
+    InvariantFailure,
+    StageValidation,
+)
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import ApiResult, estimate_text_cost
+
+
+_MAX_PLAN_ATTEMPTS = 2
 
 
 class PlanValidation(BaseModel):
@@ -46,13 +53,20 @@ class PlanInvariantError(ValueError):
 
 
 class _PageContentDraft(BaseModel):
+    """Plan allocates lettering by ID; the wording itself is never restated.
+
+    Asking a model to copy every LetteringItem "byte-for-byte" made exact
+    lettering a validation problem. Citing IDs and letting code copy the
+    canonical item makes it a property of the artifact instead.
+    """
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     id: str = Field(min_length=1)
     order: int = Field(ge=1)
     beat_ids: tuple[str, ...] = Field(min_length=1)
     visual_intent: str = Field(min_length=1)
-    lettering: tuple[LetteringItem, ...] = ()
+    lettering_ids: tuple[str, ...] = ()
     entity_ids: tuple[str, ...] = ()
     appearance_state_ids: tuple[str, ...] = ()
 
@@ -114,9 +128,12 @@ def build_book_plan_prompt(
     }
     return (
         "Allocate the single ordered BookAdaptation globally into canonical comic "
-        "pages. Allocate every adapted beat exactly once and in order. Copy every "
-        "LetteringItem unchanged, byte-for-byte; never rewrite, shorten, clip, or "
-        "omit it. Pages may bridge source-scene boundaries. Own actual page count, "
+        "pages. Allocate every adapted beat exactly once and in order. Allocate "
+        "lettering by citing LetteringItem IDs in lettering_ids, on the same page "
+        "content item as the beat that owns them, in reading order; never copy, "
+        "rewrite, shorten, clip, or omit the wording itself. Every lettering ID of "
+        "an allocated beat must be cited exactly once. Pages may bridge "
+        "source-scene boundaries. Own actual page count, "
         "page and spread rhythm, page-turn intent, explicit reading order, narrative "
         "emphasis, semantic density and layout intent, and page-scoped approved "
         "entity and appearance-state IDs. Sparse, standard, and dense are semantic "
@@ -158,57 +175,47 @@ async def produce_book_plan(
         output_chars=max(8_000, len(adaptation.beats) * 2_000),
     )
     with ctx.execute(total=1, estimated_cost_usd=estimate):
-        result = await generate(
-            system_prompt=(
-                "You are the sole global page architect for a complete comic book."
-            ),
-            user_content=prompt,
-            json_schema=_BookPlanDraft.model_json_schema(),
-            feature="plan.book",
-        )
-        draft = _BookPlanDraft.model_validate(result.value)
-        ctx.record_item_done(usage=result.usage)
+        attempt_prompt = prompt
+        pages: tuple[ComicPage, ...] = ()
+        validation = PlanValidation()
+        for attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
+            result = await generate(
+                system_prompt=(
+                    "You are the sole global page architect for a complete comic book."
+                ),
+                user_content=attempt_prompt,
+                json_schema=_BookPlanDraft.model_json_schema(),
+                feature="plan.book",
+            )
+            draft = _BookPlanDraft.model_validate(result.value)
+            ctx.record_item_done(usage=result.usage)
+            try:
+                pages = _canonical_pages(adaptation, draft, pin_by_beat)
+            except PlanInvariantError as allocation_error:
+                validation = allocation_error.validation
+            else:
+                validation = validate_book_plan(
+                    adaptation,
+                    references,
+                    target_range,
+                    pages,
+                )
+                validation = PlanValidation(
+                    invariant_failures=validation.invariant_failures,
+                    editorial_issues=_merged_editorial_issues(
+                        validation.editorial_issues,
+                        draft.editorial_issues,
+                        adaptation=adaptation,
+                        pages=pages,
+                    ),
+                )
+            if not validation.invariant_failures:
+                break
+            if attempt < _MAX_PLAN_ATTEMPTS:
+                attempt_prompt = _repair_prompt(prompt, validation)
         ctx.progress(1, 1)
 
-        pages = tuple(
-            ComicPage(
-                revision=1,
-                page_number=page.page_number,
-                adaptation_revision=adaptation.revision,
-                adaptation_sha256=adaptation.content_sha256,
-                page_turn_role=page.page_turn_role,
-                spread_role=page.spread_role,
-                emphasis=page.emphasis,
-                density_intent=page.density_intent,
-                rhythm_intent=page.rhythm_intent,
-                layout_intent=page.layout_intent,
-                content=[
-                    PageContent(
-                        **content.model_dump(),
-                        pinned_geometry=_geometry_for_content(
-                            content.beat_ids,
-                            pin_by_beat,
-                        ),
-                    )
-                    for content in page.content
-                ],
-                reading_order=page.reading_order,
-            )
-            for page in draft.pages
-        )
-        validation = validate_book_plan(
-            adaptation,
-            references,
-            target_range,
-            pages,
-        )
-        validation = PlanValidation(
-            invariant_failures=validation.invariant_failures,
-            editorial_issues=(
-                *validation.editorial_issues,
-                *draft.editorial_issues,
-            ),
-        )
+        _persist_validation(artifacts, validation, attempts=attempt)
         if validation.invariant_failures:
             raise PlanInvariantError(validation)
 
@@ -233,6 +240,208 @@ async def produce_book_plan(
             artifacts.write_page(page)
         artifacts.write_plan(plan)
     return plan
+
+
+def _repair_prompt(prompt: str, validation: PlanValidation) -> str:
+    failures = "\n".join(
+        f"- [{failure.code}] {failure.message} " + " ".join(failure.evidence)
+        for failure in validation.invariant_failures
+    )
+    return (
+        f"{prompt}\n\nYour previous global page plan violated these blocking "
+        "contract requirements. Return one complete corrected JSON object that "
+        "resolves every one of them:\n"
+        f"{failures}"
+    )
+
+
+def _persist_validation(
+    artifacts: TargetArtifacts,
+    validation: PlanValidation,
+    *,
+    attempts: int,
+) -> None:
+    """Persist Plan's verdict, including any page-range recommendation.
+
+    A range conflict is the one blocking failure the user can actually act on,
+    and its recommendation only exists inside the failure evidence — so it is
+    written down before the stage raises.
+    """
+
+    recommendations = tuple(
+        evidence
+        for failure in validation.invariant_failures
+        if failure.code == "target_page_range_conflict"
+        for evidence in failure.evidence
+    )
+    artifacts.write_validation(
+        StageValidation(
+            owner_stage="plan",
+            attempts=attempts,
+            invariant_failures=validation.invariant_failures,
+            editorial_issues=validation.editorial_issues,
+            recommendations=recommendations,
+        )
+    )
+
+
+def _merged_editorial_issues(
+    derived: tuple[EditorialIssue, ...],
+    authored: tuple[EditorialIssue, ...],
+    *,
+    adaptation: BookAdaptation,
+    pages: tuple[ComicPage, ...],
+) -> tuple[EditorialIssue, ...]:
+    """Keep model-authored issues only when their citations actually resolve.
+
+    A reviewable exception is only useful if the user can open what it cites,
+    and a derived issue always wins an ID collision.
+    """
+
+    known_ids = {
+        *(beat.id for beat in adaptation.beats),
+        *(f"page_{page.page_number:03d}" for page in pages),
+        *(content.id for page in pages for content in page.content),
+        *(
+            lettering.id
+            for page in pages
+            for content in page.content
+            for lettering in content.lettering
+        ),
+    }
+    known_units = {
+        source_unit_id
+        for beat in adaptation.beats
+        for source_unit_id in beat.source_unit_ids
+    }
+    merged = {issue.id: issue for issue in derived}
+    for issue in authored:
+        if issue.id in merged:
+            continue
+        if any(artifact_id not in known_ids for artifact_id in issue.artifact_ids):
+            continue
+        if any(unit_id not in known_units for unit_id in issue.source_unit_ids):
+            continue
+        merged[issue.id] = issue
+    return tuple(merged.values())
+
+
+def _canonical_pages(
+    adaptation: BookAdaptation,
+    draft: "_BookPlanDraft",
+    pin_by_beat: dict[str, AuthorGeometryPin],
+) -> tuple[ComicPage, ...]:
+    """Materialize canonical pages, copying Adapt's lettering by ID."""
+
+    canonical_lettering: dict[str, LetteringItem] = {
+        item.id: item for beat in adaptation.beats for item in beat.lettering
+    }
+    owning_beat: dict[str, str] = {
+        item.id: beat.id for beat in adaptation.beats for item in beat.lettering
+    }
+    claimed: set[str] = set()
+    pages: list[ComicPage] = []
+    for page in draft.pages:
+        content_items: list[PageContent] = []
+        for content in page.content:
+            lettering: list[LetteringItem] = []
+            for lettering_id in content.lettering_ids:
+                item = canonical_lettering.get(lettering_id)
+                if item is None:
+                    raise PlanInvariantError(
+                        PlanValidation(
+                            invariant_failures=(
+                                InvariantFailure(
+                                    id=f"plan_failure_unknown_lettering_{lettering_id}",
+                                    owner_stage="plan",
+                                    code="unknown_lettering",
+                                    message=(
+                                        "Page content cites lettering absent from the "
+                                        "BookAdaptation."
+                                    ),
+                                    artifact_ids=[content.id, lettering_id],
+                                    evidence=[
+                                        f"Lettering {lettering_id!r} does not exist in "
+                                        f"Adapt revision {adaptation.revision}."
+                                    ],
+                                ),
+                            )
+                        )
+                    )
+                if lettering_id in claimed:
+                    raise PlanInvariantError(
+                        PlanValidation(
+                            invariant_failures=(
+                                InvariantFailure(
+                                    id=f"plan_failure_duplicate_lettering_{lettering_id}",
+                                    owner_stage="plan",
+                                    code="duplicate_lettering",
+                                    message="Lettering may be allocated to one page only.",
+                                    artifact_ids=[content.id, lettering_id],
+                                    evidence=[
+                                        f"Lettering {lettering_id!r} was already "
+                                        "allocated earlier in the book."
+                                    ],
+                                ),
+                            )
+                        )
+                    )
+                if owning_beat[lettering_id] not in content.beat_ids:
+                    raise PlanInvariantError(
+                        PlanValidation(
+                            invariant_failures=(
+                                InvariantFailure(
+                                    id=f"plan_failure_lettering_owner_{lettering_id}",
+                                    owner_stage="plan",
+                                    code="lettering_beat_mismatch",
+                                    message=(
+                                        "Lettering must be allocated with the beat that "
+                                        "owns it."
+                                    ),
+                                    artifact_ids=[
+                                        content.id,
+                                        lettering_id,
+                                        owning_beat[lettering_id],
+                                    ],
+                                    evidence=[
+                                        f"Lettering {lettering_id!r} belongs to beat "
+                                        f"{owning_beat[lettering_id]!r}, which content "
+                                        f"{content.id!r} does not carry."
+                                    ],
+                                ),
+                            )
+                        )
+                    )
+                claimed.add(lettering_id)
+                lettering.append(item)
+            payload = content.model_dump(exclude={"lettering_ids"})
+            content_items.append(
+                PageContent(
+                    **payload,
+                    lettering=tuple(lettering),
+                    pinned_geometry=_geometry_for_content(
+                        content.beat_ids,
+                        pin_by_beat,
+                    ),
+                )
+            )
+        pages.append(
+            ComicPage(
+                revision=1,
+                page_number=page.page_number,
+                adaptation_revision=adaptation.revision,
+                adaptation_sha256=adaptation.content_sha256,
+                page_turn_role=page.page_turn_role,
+                spread_role=page.spread_role,
+                emphasis=page.emphasis,
+                density_intent=page.density_intent,
+                rhythm_intent=page.rhythm_intent,
+                layout_intent=page.layout_intent,
+                content=content_items,
+                reading_order=page.reading_order,
+            )
+        )
+    return tuple(pages)
 
 
 def _validate_author_pins(
@@ -347,6 +556,48 @@ def validate_book_plan(
                 ],
             )
         )
+
+    # Ordered equality above proves no wording changed, but it flattens across
+    # pages: moving a balloon onto a neighbouring beat's content item preserves
+    # the flat order while lettering the wrong panel. Association is checked
+    # separately against the beat that owns each item.
+    owning_beat = {
+        item.id: beat.id for beat in adaptation.beats for item in beat.lettering
+    }
+    for page in pages:
+        for content in page.content:
+            misattached = [
+                item.id
+                for item in content.lettering
+                if owning_beat.get(item.id) not in content.beat_ids
+            ]
+            if misattached:
+                failures.append(
+                    InvariantFailure(
+                        id=f"plan_failure_lettering_beat_mismatch_{content.id}",
+                        owner_stage="plan",
+                        code="lettering_beat_mismatch",
+                        message="Lettering must stay with the beat that owns it.",
+                        artifact_ids=[
+                            content.id,
+                            *misattached,
+                            *(
+                                owning_beat[item_id]
+                                for item_id in misattached
+                                if item_id in owning_beat
+                            ),
+                        ],
+                        evidence=[
+                            f"Content {content.id!r} carries beats "
+                            f"{list(content.beat_ids)!r} but letters "
+                            f"{misattached!r}, owned by "
+                            + repr(
+                                [owning_beat.get(item_id) for item_id in misattached]
+                            )
+                            + "."
+                        ],
+                    )
+                )
 
     page_numbers = [page.page_number for page in pages]
     if page_numbers != list(range(1, len(pages) + 1)):
@@ -599,7 +850,24 @@ def validate_book_plan(
                     ],
                 )
             )
-        if peak_beats and release_beats:
+        # A page holding both a Peak and its Release is only a proportion
+        # problem when neither gets room of its own: sharing one content item,
+        # or a page with no space to separate them. Flagging every
+        # co-occurrence buries the pages that genuinely rush the beat.
+        shares_content = any(
+            any(beat_by_id.get(beat_id) in peak_beats for beat_id in content.beat_ids)
+            and any(
+                beat_by_id.get(beat_id) in release_beats
+                for beat_id in content.beat_ids
+            )
+            for content in page.content
+        )
+        crowded = (
+            shares_content
+            or page.density_intent == "dense"
+            or len(page.content) <= 2
+        )
+        if peak_beats and release_beats and crowded:
             peak_ids = [beat.id for beat in peak_beats]
             release_ids = [beat.id for beat in release_beats]
             issues.append(

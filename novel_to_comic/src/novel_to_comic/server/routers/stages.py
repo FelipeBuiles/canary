@@ -8,6 +8,11 @@ from pydantic import BaseModel, Field
 from novel_to_comic import artifacts
 from novel_to_comic.briefing import revise_persisted_brief
 from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.source_extraction import (
+    SourceSceneAnchor,
+    align_scene_anchors,
+    build_source_document,
+)
 from novel_to_comic.stages import REGISTRY
 from novel_to_comic.state import StageState, StageStatus, save_state
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
@@ -58,7 +63,34 @@ def get_story_bible(project=Depends(get_project)):
 def update_story_bible(body: dict, project=Depends(get_project)):
     project_dir, _config, state = project
     bible = StoryBible.model_validate(body)
+    target = TargetArtifacts(project_dir)
+    # Source scenes are derived from the bible's scene anchors, so an edited
+    # bible has to re-derive them or source.json keeps describing scenes that no
+    # longer exist. Rebuilt before the bible is written: an anchor that cannot
+    # resolve is rejected instead of persisted into a contradiction.
+    try:
+        source = target.read_source()
+    except ArtifactMissing:
+        source = None
+    if source is not None:
+        try:
+            align_scene_anchors(bible, source.text)
+            rebuilt = build_source_document(
+                source.text,
+                tuple(
+                    SourceSceneAnchor(
+                        id=scene.id,
+                        title=scene.title,
+                        opening_quote=scene.source_start_quote,
+                    )
+                    for scene in bible.scenes
+                ),
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
     artifacts.write_story_bible(project_dir, bible)
+    if source is not None:
+        target.write_source(rebuilt)
     for path in (
         project_dir / "brief",
         project_dir / "samples",
@@ -116,6 +148,19 @@ def update_brief(body: BriefEdit, project=Depends(get_project)):
             path.unlink()
     save_state(state, project_dir)
     return brief
+
+
+@router.get("/validation/{stage}")
+def get_stage_validation(stage: str, project=Depends(get_project)):
+    """Return a blocking stage's own evidence, including any recommendation."""
+
+    project_dir, _config, _state = project
+    if stage not in {"adapt", "plan"}:
+        raise HTTPException(404, f"Stage {stage!r} does not persist a validation")
+    try:
+        return TargetArtifacts(project_dir).read_validation(stage)
+    except ArtifactMissing as exc:
+        raise _not_found(exc) from exc
 
 
 @router.get("/adaptation")

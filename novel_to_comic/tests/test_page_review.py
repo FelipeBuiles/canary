@@ -34,12 +34,13 @@ from novel_to_comic.page_review import (
     accept_editorial_page_issue,
     analyze_page_render,
     build_correction_request,
+    record_analysis_issues,
     record_page_issue,
     request_issue_correction,
     summarize_page_issues,
 )
 from novel_to_comic.target_artifacts import TargetArtifacts
-from novel_to_comic.usage import UsageRecord
+from novel_to_comic.usage import ApiResult, UsageRecord
 
 
 def _page() -> ComicPage:
@@ -105,29 +106,63 @@ def _render(
 
 
 class _OCR:
-    def __init__(self, *texts: str) -> None:
-        self.texts = texts
+    """A stub whose observations each carry their own detected region.
 
-    def extract(self, image: bytes) -> OCRExtraction:
+    Real page OCR reports one region per balloon, and that geometry is what
+    lets Draw tell a genuine reading-order defect from an engine's sweep order.
+    ``shared_region`` models the opposite case: an engine that cannot separate
+    the balloons, and therefore cannot prove anything about their order.
+    """
+
+    def __init__(self, *texts: str, shared_region: bool = False) -> None:
+        self.texts = texts
+        self.shared_region = shared_region
+
+    def _region_id(self, index: int) -> str:
+        return "region-1" if self.shared_region else f"region-{index}"
+
+    async def extract(self, image: bytes) -> ApiResult[OCRExtraction]:
         assert image
-        regions = (
+        count = 1 if self.shared_region else len(self.texts)
+        band = 1 / max(1, count)
+        regions = tuple(
             ObservedRegion(
-                id="region-1",
-                polygon=((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)),
+                id=self._region_id(index),
+                polygon=(
+                    (0.0, (index - 1) * band),
+                    (1.0, (index - 1) * band),
+                    (1.0, index * band),
+                    (0.0, index * band),
+                ),
+            )
+            for index in range(1, count + 1)
+        )
+        return ApiResult(
+            value=OCRExtraction(
+                lettering=[
+                    OCRTextObservation(
+                        id=f"ocr-{index}",
+                        text=text,
+                        detected_region_id=self._region_id(index),
+                    )
+                    for index, text in enumerate(self.texts, start=1)
+                ],
+                observed_regions=regions,
+                observed_reading_order=[region.id for region in regions],
+            ),
+            usage=UsageRecord(
+                provider="gemini",
+                model="ocr-balanced",
+                operation="text",
+                input_tokens=1200,
+                output_tokens=80,
             ),
         )
-        return OCRExtraction(
-            lettering=[
-                OCRTextObservation(
-                    id=f"ocr-{index}",
-                    text=text,
-                    detected_region_id="region-1",
-                )
-                for index, text in enumerate(self.texts, start=1)
-            ],
-            observed_regions=regions,
-            observed_reading_order=["region-1"],
-        )
+
+
+def _analyze(**kwargs):
+    """Render analysis reads the page through an async provider seam."""
+    return asyncio.run(analyze_page_render(**kwargs)).analysis
 
 
 def test_cthulhu_page_34_exact_lettering_is_verified_without_mutating_page(
@@ -135,7 +170,7 @@ def test_cthulhu_page_34_exact_lettering_is_verified_without_mutating_page(
 ) -> None:
     page = _page()
     artifacts = TargetArtifacts(tmp_path)
-    analysis = analyze_page_render(
+    analysis = _analyze(
         page=page,
         render=_render(),
         image=b"page-34",
@@ -157,7 +192,7 @@ def test_cthulhu_page_34_exact_lettering_is_verified_without_mutating_page(
 def test_ocr_normalizes_only_the_explicit_punctuation_equivalences(
     tmp_path: Path,
 ) -> None:
-    analysis = analyze_page_render(
+    analysis = _analyze(
         page=_page(),
         render=_render(),
         image=b"page-34",
@@ -166,9 +201,9 @@ def test_ocr_normalizes_only_the_explicit_punctuation_equivalences(
     )
 
     assert analysis.lettering_valid is True
-    assert analysis.punctuation_policy == "unicode_typographic_punctuation_v1"
+    assert analysis.punctuation_policy == "typographic_lettering_v2"
 
-    wrong_case = analyze_page_render(
+    wrong_case = _analyze(
         page=_page(),
         render=_render(revision=2, parent=1, image=b"page-34-case"),
         image=b"page-34-case",
@@ -211,7 +246,7 @@ def test_ocr_mismatches_are_blocking_draw_invariants(
     observed: tuple[str, ...],
     expected_code: str,
 ) -> None:
-    analysis = analyze_page_render(
+    analysis = _analyze(
         page=_page(),
         render=_render(),
         image=b"page-34",
@@ -223,6 +258,123 @@ def test_ocr_mismatches_are_blocking_draw_invariants(
     assert expected_code in [failure.code for failure in analysis.invariant_failures]
     assert all(failure.owner_stage == "draw" for failure in analysis.invariant_failures)
     assert all(failure.blocking for failure in analysis.invariant_failures)
+
+
+@pytest.mark.parametrize(
+    "observed",
+    [
+        # An OCR engine reads an em dash as a hyphen and a curly apostrophe as
+        # a straight one; a letterer wraps a balloon across lines. None of that
+        # changes the words, so none of it may block a page.
+        ("The door opened...", "It wasn't a dream."),
+        ("The door opened…", "It wasn’t\na dream."),
+        ("The door  opened…", " It wasn't a dream. "),
+    ],
+)
+def test_formatting_variance_between_letterer_and_ocr_is_not_a_defect(
+    tmp_path: Path,
+    observed: tuple[str, ...],
+) -> None:
+    analysis = _analyze(
+        page=_page(),
+        render=_render(),
+        image=b"page-34",
+        ocr=_OCR(*observed),
+        artifacts=TargetArtifacts(tmp_path),
+    )
+
+    assert analysis.invariant_failures == ()
+    assert analysis.lettering_valid is True
+    assert analysis.recognized_lettering["letter-1"] == observed[0]
+
+
+def test_em_dash_wording_survives_an_ocr_hyphen(tmp_path: Path) -> None:
+    page = _page()
+    dashed = page.model_copy(
+        update={
+            "content": (
+                page.content[0].model_copy(
+                    update={
+                        "lettering": (
+                            page.content[0].lettering[0].model_copy(
+                                update={"text": "The door opened—slowly."}
+                            ),
+                            page.content[0].lettering[1],
+                        )
+                    }
+                ),
+            )
+        }
+    )
+    dashed = ComicPage.model_validate(
+        {**dashed.model_dump(), "content_sha256": ""}
+    )
+    render = _render().model_copy(
+        update={"comic_page_sha256": dashed.content_sha256}
+    )
+    render = PageRenderRevision.model_validate(render.model_dump())
+
+    analysis = _analyze(
+        page=dashed,
+        render=render,
+        image=b"page-34",
+        ocr=_OCR("The door opened-slowly.", "It wasn't a dream."),
+        artifacts=TargetArtifacts(tmp_path),
+    )
+
+    assert analysis.invariant_failures == ()
+
+
+def test_ocr_sweep_order_alone_is_an_editorial_issue_not_a_blocking_failure(
+    tmp_path: Path,
+) -> None:
+    # Both balloons landed in one detected region: the engine's own ordering is
+    # a heuristic sweep and proves nothing about the rendered reading order.
+    analysis = _analyze(
+        page=_page(),
+        render=_render(),
+        image=b"page-34",
+        ocr=_OCR(
+            "It wasn't a dream.",
+            "The door opened…",
+            shared_region=True,
+        ),
+        artifacts=TargetArtifacts(tmp_path),
+    )
+
+    assert analysis.invariant_failures == ()
+    assert [issue.code for issue in analysis.editorial_issues] == [
+        "unverified_lettering_order"
+    ]
+    assert all(not issue.blocking for issue in analysis.editorial_issues)
+    assert [match.lettering_item_id for match in analysis.lettering_matches] == [
+        "letter-1",
+        "letter-2",
+    ]
+
+
+def test_ocr_invariant_failures_become_page_issues_that_gate_book(
+    tmp_path: Path,
+) -> None:
+    # Without this the failure lives only in the derived analysis, and Continue
+    # to Book stays enabled on a page whose lettering is provably wrong.
+    artifacts = TargetArtifacts(tmp_path)
+    analysis = _analyze(
+        page=_page(),
+        render=_render(),
+        image=b"page-34",
+        ocr=_OCR("The door opened…"),
+        artifacts=artifacts,
+    )
+    recorded = record_analysis_issues(artifacts, analysis)
+
+    assert [issue.issue_type for issue in recorded] == ["missing_lettering"]
+    assert all(issue.classification == "invariant_failure" for issue in recorded)
+    summary = summarize_page_issues(artifacts, page_number=34)
+    assert summary.blocking_issue_ids == (recorded[0].id,)
+    assert summary.can_continue is False
+    # Re-analysing the same immutable render must not duplicate the issue.
+    assert record_analysis_issues(artifacts, analysis) == ()
 
 
 def test_invariant_page_issue_cannot_be_deliberately_accepted() -> None:
@@ -384,7 +536,7 @@ def test_correction_supersedes_without_overwriting_parent_or_creating_panels(
         status="open",
     )
     record_page_issue(artifacts, issue)
-    analyze_page_render(
+    _analyze(
         page=_page(),
         render=parent,
         image=parent_image,
@@ -430,6 +582,7 @@ def test_correction_supersedes_without_overwriting_parent_or_creating_panels(
             issue=issue,
             adapter=VertexCompletePageAdapter(_Transport()),
             artifacts=artifacts,
+            page=_page(),
             request_revision=2,
             render_revision=2,
         )

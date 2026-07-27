@@ -3,8 +3,7 @@
 > **Architecture warning (2026-07-25):** retain this document for audience,
 > naming, trust, and positioning research only. References to a nine-stage
 > pipeline, per-panel generation/revision, or deterministic lettering are
-> superseded by
-> `docs/superpowers/specs/2026-07-25-full-page-generation-design.md`.
+> superseded by the full-page architecture in ADRs 0003-0015 (`docs/adr/`).
 
 > Deep research (competitive landscape + market demand + naming/domain/trademark
 > clearance) and a full go-to-market plan for the lean / pre-revenue tier. Dated

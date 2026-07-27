@@ -141,8 +141,8 @@ def test_producer_allocates_global_book_once_and_persists_canonical_artifacts(
                         "visual_intent": (
                             "The yacht approaches the risen city, then wheels away."
                         ),
-                        "lettering": [
-                            item.model_dump(mode="json")
+                        "lettering_ids": [
+                            item.id
                             for beat in adaptation.beats
                             for item in beat.lettering
                         ],
@@ -252,6 +252,314 @@ def test_validation_separates_changed_lettering_from_broken_global_allocation() 
     )
 
 
+def test_lettering_allocated_to_the_wrong_beat_is_a_blocking_failure() -> None:
+    # Ordered equality across the whole book is blind to this: moving beat 2's
+    # balloon onto beat 1's content item preserves the flat lettering order
+    # while lettering the wrong panel.
+    adaptation = _adaptation()
+    lettering = [item for beat in adaptation.beats for item in beat.lettering]
+    content = [
+        PageContent(
+            id="page_001_content_001",
+            order=1,
+            beat_ids=["beat_0001"],
+            visual_intent="The Alert approaches.",
+            lettering=lettering,
+            entity_ids=["location_alert"],
+        ),
+        PageContent(
+            id="page_001_content_002",
+            order=2,
+            beat_ids=["beat_0002"],
+            visual_intent="Johansen hauls the wheel.",
+            entity_ids=["character_johansen"],
+        ),
+    ]
+    page = ComicPage(
+        page_number=1,
+        revision=1,
+        adaptation_revision=adaptation.revision,
+        adaptation_sha256=adaptation.content_sha256,
+        emphasis="release",
+        density_intent="standard",
+        layout_intent="Approach, then escape.",
+        content=content,
+        reading_order=[
+            "page_001_content_001",
+            *(item.id for item in lettering),
+            "page_001_content_002",
+        ],
+    )
+
+    validation = validate_book_plan(
+        adaptation,
+        _inventory(),
+        ApprovedPageRange(minimum=1, maximum=1),
+        [page],
+    )
+
+    failure = next(
+        failure
+        for failure in validation.invariant_failures
+        if failure.code == "lettering_beat_mismatch"
+    )
+    assert "lettering_0002" in failure.artifact_ids
+    assert "beat_0002" in failure.artifact_ids
+
+
+def test_plan_copies_adapt_lettering_from_the_cited_ids(tmp_path: Path) -> None:
+    """Plan cannot restate wording, so it cannot corrupt it."""
+
+    adaptation = _adaptation()
+    response = {
+        "rhythm_summary": "approach → escape",
+        "pages": [
+            {
+                "page_number": 1,
+                "page_turn_role": "release",
+                "spread_role": "single",
+                "emphasis": "release",
+                "density_intent": "standard",
+                "rhythm_intent": "approach gives way to escape",
+                "layout_intent": "Approach, then escape.",
+                "content": [
+                    {
+                        "id": "page_001_content_001",
+                        "order": 1,
+                        "beat_ids": ["beat_0001"],
+                        "visual_intent": "The Alert approaches.",
+                        "lettering_ids": ["lettering_0001"],
+                        "entity_ids": ["location_alert"],
+                    },
+                    {
+                        "id": "page_001_content_002",
+                        "order": 2,
+                        "beat_ids": ["beat_0002"],
+                        "visual_intent": "The Alert turns away.",
+                        "lettering_ids": ["lettering_0002"],
+                        "entity_ids": ["character_johansen", "location_alert"],
+                    },
+                ],
+                "reading_order": [
+                    "page_001_content_001",
+                    "lettering_0001",
+                    "page_001_content_002",
+                    "lettering_0002",
+                ],
+            }
+        ],
+    }
+
+    async def generate(**_kwargs):
+        return ApiResult(
+            value=response,
+            usage=UsageRecord(
+                provider="test",
+                model="test-planner",
+                operation="plan.book",
+                input_tokens=10,
+                output_tokens=5,
+                cost_usd=0.0,
+            ),
+        )
+
+    artifacts = TargetArtifacts(tmp_path)
+    asyncio.run(
+        produce_book_plan(
+            adaptation,
+            _inventory(),
+            ApprovedPageRange(minimum=1, maximum=1),
+            artifacts=artifacts,
+            ctx=StageRuntime(
+                "plan",
+                PipelineState(
+                    project_name="cthulhu",
+                    novel_path="novel.txt",
+                    created_at=datetime.now(timezone.utc),
+                ),
+                tmp_path,
+            ),
+            model="test-planner",
+            generate=generate,
+        )
+    )
+
+    page = artifacts.read_page(1)
+    assert [
+        item.model_dump() for content in page.content for item in content.lettering
+    ] == [
+        item.model_dump() for beat in adaptation.beats for item in beat.lettering
+    ]
+    assert artifacts.read_page_revision(1, 1) == page
+
+
+def test_lettering_cited_by_the_wrong_content_item_cannot_be_planned(
+    tmp_path: Path,
+) -> None:
+    adaptation = _adaptation()
+    response = {
+        "rhythm_summary": "approach → escape",
+        "pages": [
+            {
+                "page_number": 1,
+                "page_turn_role": "release",
+                "spread_role": "single",
+                "emphasis": "release",
+                "density_intent": "standard",
+                "rhythm_intent": "approach gives way to escape",
+                "layout_intent": "Approach, then escape.",
+                "content": [
+                    {
+                        "id": "page_001_content_001",
+                        "order": 1,
+                        "beat_ids": ["beat_0001", "beat_0002"],
+                        "visual_intent": "The approach and the escape.",
+                        "lettering_ids": ["lettering_0001", "lettering_0002"],
+                        "entity_ids": ["location_alert"],
+                    }
+                ],
+                "reading_order": [
+                    "page_001_content_001",
+                    "lettering_0001",
+                    "lettering_0002",
+                ],
+            }
+        ],
+    }
+    unknown = {
+        **response,
+        "pages": [
+            {
+                **response["pages"][0],
+                "content": [
+                    {
+                        **response["pages"][0]["content"][0],
+                        "lettering_ids": ["lettering_0001", "lettering_9999"],
+                    }
+                ],
+            }
+        ],
+    }
+
+    async def generate(**_kwargs):
+        return ApiResult(
+            value=unknown,
+            usage=UsageRecord(
+                provider="test",
+                model="test-planner",
+                operation="plan.book",
+                input_tokens=10,
+                output_tokens=5,
+                cost_usd=0.0,
+            ),
+        )
+
+    with pytest.raises(PlanInvariantError) as raised:
+        asyncio.run(
+            produce_book_plan(
+                adaptation,
+                _inventory(),
+                ApprovedPageRange(minimum=1, maximum=1),
+                artifacts=TargetArtifacts(tmp_path),
+                ctx=StageRuntime(
+                    "plan",
+                    PipelineState(
+                        project_name="cthulhu",
+                        novel_path="novel.txt",
+                        created_at=datetime.now(timezone.utc),
+                    ),
+                    tmp_path,
+                ),
+                model="test-planner",
+                generate=generate,
+            )
+        )
+
+    assert [
+        failure.code for failure in raised.value.validation.invariant_failures
+    ] == ["unknown_lettering"]
+
+
+def test_plan_persists_its_verdict_and_page_range_recommendation(
+    tmp_path: Path,
+) -> None:
+    adaptation = _adaptation()
+    response = {
+        "rhythm_summary": "approach → escape",
+        "pages": [
+            {
+                "page_number": page_number,
+                "page_turn_role": "release",
+                "spread_role": "single",
+                "emphasis": "release" if page_number == 2 else "prolongation",
+                "density_intent": "standard",
+                "rhythm_intent": "one beat per page",
+                "layout_intent": "One beat per page.",
+                "content": [
+                    {
+                        "id": f"page_{page_number:03d}_content_001",
+                        "order": 1,
+                        "beat_ids": [f"beat_000{page_number}"],
+                        "visual_intent": "A beat.",
+                        "lettering_ids": [f"lettering_000{page_number}"],
+                        "entity_ids": ["location_alert"],
+                    }
+                ],
+                "reading_order": [
+                    f"page_{page_number:03d}_content_001",
+                    f"lettering_000{page_number}",
+                ],
+            }
+            for page_number in (1, 2)
+        ],
+    }
+
+    async def generate(**_kwargs):
+        return ApiResult(
+            value=response,
+            usage=UsageRecord(
+                provider="test",
+                model="test-planner",
+                operation="plan.book",
+                input_tokens=10,
+                output_tokens=5,
+                cost_usd=0.0,
+            ),
+        )
+
+    artifacts = TargetArtifacts(tmp_path)
+    with pytest.raises(PlanInvariantError):
+        asyncio.run(
+            produce_book_plan(
+                adaptation,
+                _inventory(),
+                ApprovedPageRange(minimum=1, maximum=1),
+                artifacts=artifacts,
+                ctx=StageRuntime(
+                    "plan",
+                    PipelineState(
+                        project_name="cthulhu",
+                        novel_path="novel.txt",
+                        created_at=datetime.now(timezone.utc),
+                    ),
+                    tmp_path,
+                ),
+                model="test-planner",
+                generate=generate,
+            )
+        )
+
+    # The recommendation is the one thing the user can act on, so it has to
+    # outlive the raised exception.
+    validation = artifacts.read_validation("plan")
+    assert validation.owner_stage == "plan"
+    assert validation.attempts == 2
+    assert [failure.code for failure in validation.invariant_failures] == [
+        "target_page_range_conflict"
+    ]
+    assert "Recommend a minimum of 2 pages." in validation.recommendations[0]
+
+
 def test_coordinates_are_absent_unless_the_author_explicitly_pins_a_beat(
     tmp_path: Path,
 ) -> None:
@@ -273,9 +581,7 @@ def test_coordinates_are_absent_unless_the_author_explicitly_pins_a_beat(
                         "order": 1,
                         "beat_ids": ["beat_0001"],
                         "visual_intent": "The yacht approaches.",
-                        "lettering": [
-                            adaptation.beats[0].lettering[0].model_dump(mode="json")
-                        ],
+                        "lettering_ids": [adaptation.beats[0].lettering[0].id],
                         "entity_ids": ["location_alert"],
                     },
                     {
@@ -283,9 +589,7 @@ def test_coordinates_are_absent_unless_the_author_explicitly_pins_a_beat(
                         "order": 2,
                         "beat_ids": ["beat_0002"],
                         "visual_intent": "The yacht escapes.",
-                        "lettering": [
-                            adaptation.beats[1].lettering[0].model_dump(mode="json")
-                        ],
+                        "lettering_ids": [adaptation.beats[1].lettering[0].id],
                         "entity_ids": ["character_johansen", "location_alert"],
                     },
                 ],

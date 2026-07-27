@@ -22,13 +22,24 @@ from novel_to_comic import artifacts
 from novel_to_comic.stages import Stage, clean_cascade
 
 
+def reference_id(entity_id: str, appearance_state_id: str | None = None) -> str:
+    """The one spelling of an approved reference's identity.
+
+    The inventory Plan validates against and the Cast bytes Draw uploads are
+    matched by this string, so both sides must derive it from here rather than
+    formatting it independently.
+    """
+
+    return f"{entity_id}:{appearance_state_id or 'base'}"
+
+
 def approved_visual_inventory(project_dir: Path) -> ApprovedVisualReferenceInventory:
     bible = artifacts.read_story_bible(project_dir)
     references = []
     for entity in (*bible.characters, *bible.locations, *bible.props):
         references.append(
             ApprovedVisualReference(
-                id=f"{entity.id}:base",
+                id=reference_id(entity.id),
                 entity_id=entity.id,
                 visual_anchor=entity.visual_anchor,
             )
@@ -36,7 +47,7 @@ def approved_visual_inventory(project_dir: Path) -> ApprovedVisualReferenceInven
         for appearance in getattr(entity, "appearance_states", ()):
             references.append(
                 ApprovedVisualReference(
-                    id=f"{entity.id}:{appearance.id}",
+                    id=reference_id(entity.id, appearance.id),
                     entity_id=entity.id,
                     appearance_state_id=appearance.id,
                     visual_anchor=appearance.visual_anchor,
@@ -58,15 +69,15 @@ def approved_reference_files(
             if pose in artifacts.CHARACTER_REF_POSES
             else artifacts.character_ref_sheet_path(project_dir, character.id)
         )
-        files[f"{character.id}:base"] = ApprovedReferenceFile(
-            reference_id=f"{character.id}:base",
+        files[reference_id(character.id)] = ApprovedReferenceFile(
+            reference_id=reference_id(character.id),
             path=path,
             media_type="image/png",
         )
         for appearance in character.appearance_states:
-            reference_id = f"{character.id}:{appearance.id}"
-            files[reference_id] = ApprovedReferenceFile(
-                reference_id=reference_id,
+            state_reference = reference_id(character.id, appearance.id)
+            files[state_reference] = ApprovedReferenceFile(
+                reference_id=state_reference,
                 path=artifacts.character_state_ref_sheet_path(
                     project_dir,
                     character.id,
@@ -75,15 +86,15 @@ def approved_reference_files(
                 media_type="image/png",
             )
     for location in bible.locations:
-        files[f"{location.id}:base"] = ApprovedReferenceFile(
-            reference_id=f"{location.id}:base",
+        files[reference_id(location.id)] = ApprovedReferenceFile(
+            reference_id=reference_id(location.id),
             path=artifacts.location_plate_path(project_dir, location.id),
             media_type="image/png",
         )
         for appearance in location.appearance_states:
-            reference_id = f"{location.id}:{appearance.id}"
-            files[reference_id] = ApprovedReferenceFile(
-                reference_id=reference_id,
+            state_reference = reference_id(location.id, appearance.id)
+            files[state_reference] = ApprovedReferenceFile(
+                reference_id=state_reference,
                 path=artifacts.location_state_plate_path(
                     project_dir,
                     location.id,
@@ -92,8 +103,8 @@ def approved_reference_files(
                 media_type="image/png",
             )
     for prop in bible.props:
-        files[f"{prop.id}:base"] = ApprovedReferenceFile(
-            reference_id=f"{prop.id}:base",
+        files[reference_id(prop.id)] = ApprovedReferenceFile(
+            reference_id=reference_id(prop.id),
             path=artifacts.prop_ref_path(project_dir, prop.id),
             media_type="image/png",
         )

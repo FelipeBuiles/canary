@@ -19,6 +19,7 @@ aliases:
   prompt-fast: vertex_ai/gemini-3.5-flash-lite
   prompt-balanced: vertex_ai/gemini-3.5-flash-lite
   prompt-quality: vertex_ai/gemini-3.5-flash-lite
+  ocr-balanced: vertex_ai/gemini-3.6-flash
   image-fast: vertex_ai/gemini-3.1-flash-lite-image
   image-balanced: vertex_ai/gemini-3.1-flash-lite-image
   image-balanced-seedream-test: bytedance/seedream/v5/lite/edit
