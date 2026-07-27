@@ -7,6 +7,7 @@ import base64
 import hashlib
 import io
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,20 @@ def _json(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise HTTPException(404, f"Fixture artifact missing: {path.relative_to(path.parents[1])}")
     return json.loads(path.read_text())
+
+
+def _page_number(payload: dict[str, Any]) -> int:
+    """Read the page marker the OCR request carries for fixture resolution."""
+
+    for message in payload.get("messages") or ():
+        content = message.get("content")
+        parts = content if isinstance(content, list) else [{"text": content}]
+        for part in parts:
+            text = part.get("text") if isinstance(part, dict) else None
+            match = re.search(r"canary_page_number:\s*(\d+)", str(text or ""))
+            if match:
+                return int(match.group(1))
+    raise HTTPException(422, "Page OCR replay requires a canary_page_number marker")
 
 
 def _feature(payload: dict[str, Any]) -> str:
@@ -82,6 +97,13 @@ class TargetFixtureReplay:
                     "adaptation_sha256",
                 ):
                     page.pop(generated, None)
+                for content in page.get("content", ()):
+                    # Plan allocates lettering by ID; the fixture stores the
+                    # materialized canonical page.
+                    content["lettering_ids"] = [
+                        item["id"] for item in content.pop("lettering", ())
+                    ]
+                    content.pop("pinned_geometry", None)
                 pages.append(page)
             return {
                 "rhythm_summary": plan["rhythm_summary"],
@@ -89,6 +111,35 @@ class TargetFixtureReplay:
                 "editorial_issues": plan.get("editorial_issues", []),
             }
         raise HTTPException(422, f"No target fixture callback for feature {feature!r}")
+
+    def page_ocr(self, page_number: int) -> dict[str, Any]:
+        """Replay a flawless render: exactly the canonical lettering, in order."""
+
+        page = _json(
+            self.project_dir / "plan" / "pages" / f"page_{page_number:03d}.json"
+        )
+        by_id = {
+            item["id"]: item
+            for content in page.get("content", ())
+            for item in content.get("lettering", ())
+        }
+        ordered = [by_id[item_id] for item_id in page["reading_order"] if item_id in by_id]
+        total = max(1, len(ordered))
+        height = min(1.0, 1 / total)
+        return {
+            "lettering": [
+                {
+                    "text": item["text"],
+                    "box": {
+                        "x": 0.05,
+                        "y": min(0.99, round(index * height, 4)),
+                        "width": 0.9,
+                        "height": round(height * 0.9, 4) or 0.01,
+                    },
+                }
+                for index, item in enumerate(ordered)
+            ]
+        }
 
     def image(self, prompt: str, width: int, height: int) -> bytes:
         index = int(hashlib.sha256(prompt.encode()).hexdigest()[:12], 16)
@@ -113,10 +164,12 @@ def create_app(project_dir: Path) -> FastAPI:
 
     @app.post("/v1/chat/completions")
     async def chat(payload: dict[str, Any]) -> dict[str, Any]:
-        content = json.dumps(
-            replay.structured(_feature(payload)),
-            ensure_ascii=False,
-        )
+        feature = _feature(payload)
+        if feature == "draw.page_ocr":
+            value: Any = replay.page_ocr(_page_number(payload))
+        else:
+            value = replay.structured(feature)
+        content = json.dumps(value, ensure_ascii=False)
         return {
             "id": "target-fixture-chat",
             "object": "chat.completion",

@@ -18,7 +18,12 @@ from novel_to_comic.clients.structured_call import (
 from novel_to_comic.config import Config
 from novel_to_comic.input_limits import read_source
 from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.source_extraction import (
+    align_scene_anchors,
+    produce_source_document,
+)
 from novel_to_comic.stage_runtime import StageRuntime
+from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.text_utils import has_offscreen_marker
 from novel_to_comic.usage import ApiResult, estimate_text_cost, estimate_token_count
 
@@ -256,159 +261,6 @@ async def _extract_with_retry(
     return ApiResult(value=outcome.value, usage=usage)
 
 
-def _norm_quote_text(s: str) -> str:
-    """Normalise smart quotes / dashes the model may have substituted."""
-    return (
-        s.replace("\u2018", "'").replace("\u2019", "'")
-         .replace("\u201c", '"').replace("\u201d", '"')
-         .replace("\u2013", "-").replace("\u2014", "--")
-    )
-
-
-def _fuzzy_find_quote(norm_text: str, norm_quote: str, start: int = 0) -> int:
-    """Fuzzy-locate a quote whose exact prefix never matches.
-
-    Anchors candidate windows on individual words of the quote, then scores
-    each window with SequenceMatcher. Only a strong match (>0.85) is accepted
-    so a wrong-but-similar passage doesn't mis-anchor the scene.
-    """
-    from difflib import SequenceMatcher
-
-    probe = norm_quote[:60].lower()
-    if len(probe) < 20:
-        return -1
-    text_lower = norm_text.lower()
-    words = [w.strip("\"'.,;:!?") for w in probe.split()]
-    words = [w for w in words if len(w) >= 4]
-    if not words:
-        return -1
-
-    seen: set[int] = set()
-    best_pos = -1
-    best_ratio = 0.85
-    for word in words[:6]:
-        offset = probe.find(word)
-        idx = text_lower.find(word, start)
-        hops = 0
-        while idx != -1 and hops < 500:
-            window_start = idx - offset
-            if window_start >= start and window_start not in seen:
-                seen.add(window_start)
-                window = text_lower[window_start:window_start + len(probe)]
-                ratio = SequenceMatcher(None, probe, window).ratio()
-                if ratio > best_ratio or (
-                    ratio == best_ratio and best_pos != -1 and window_start < best_pos
-                ):
-                    best_pos = window_start
-                    best_ratio = ratio
-            hops += 1
-            idx = text_lower.find(word, idx + 1)
-    return best_pos
-
-
-def _find_quote_position(text: str, quote: str, start: int = 0) -> int:
-    """Locate a verbatim scene quote in the novel text at or after ``start``.
-
-    Tries progressively shorter prefixes so minor model transcription errors
-    (e.g. a misquoted word at the end) don't cause a miss, then falls back to
-    a fuzzy word-anchored search. Searching from ``start`` keeps anchors
-    monotonic: a short prefix like "The next morning" can't match an earlier
-    occurrence and silently reorder scenes. Returns -1 if nothing matches.
-    """
-    if not quote:
-        return -1
-
-    norm_text = _norm_quote_text(text)
-    norm_quote = _norm_quote_text(quote)
-
-    for length in (len(norm_quote), 80, 60, 40, 25):
-        if length > len(norm_quote):
-            continue
-        pos = norm_text.find(norm_quote[:length], start)
-        if pos != -1:
-            return pos
-
-    return _fuzzy_find_quote(norm_text, norm_quote, start)
-
-
-_SENTENCE_CLOSERS = {'"', "'", "\u2019", "\u201d", ")", "]"}
-_PERIOD_ABBREVIATIONS = {
-    "dr", "jr", "mr", "mrs", "ms", "prof", "sr", "st", "vs",
-}
-
-
-def _sentence_end_after(text: str, start: int) -> int | None:
-    """Return the end of the first sentence ending at or after ``start``.
-
-    The model-provided quote is only an anchor. Walking the source text makes
-    the excerpt shown in the Story room deterministic and prevents a fixed
-    character limit from leaving a dangling half-phrase.
-    """
-    for match in re.finditer(r"[.!?]", text[start:]):
-        punctuation = start + match.start()
-        mark = text[punctuation]
-
-        if mark == ".":
-            if punctuation > 0 and punctuation + 1 < len(text):
-                if text[punctuation - 1].isdigit() and text[punctuation + 1].isdigit():
-                    continue
-            word_match = re.search(r"([A-Za-z]+)$", text[:punctuation])
-            if word_match and word_match.group(1).lower() in _PERIOD_ABBREVIATIONS:
-                continue
-
-        end = punctuation + 1
-        while end < len(text) and text[end] in _SENTENCE_CLOSERS:
-            end += 1
-
-        following = text[end:].lstrip()
-        if not following or following[0].isupper() or following[0].isdigit():
-            return end
-
-    return None
-
-
-def _complete_source_start_quotes(story_bible: StoryBible, novel_text: str) -> None:
-    """Extend each scene's source anchor through its opening sentence.
-
-    ``source_start_quote`` remains verbatim source text and continues to serve
-    as the scene-boundary anchor. This post-processing repairs both older
-    fixed-length model output and occasional future model truncation.
-    """
-    from novel_to_comic.source_extraction import _source_units
-
-    units = _source_units(novel_text)
-    if not units:
-        return
-
-    search_from = 0
-    for scene in story_bible.scenes:
-        quote = scene.source_start_quote.strip()
-        if not quote:
-            continue
-
-        position = novel_text.find(quote, search_from)
-        if position == -1:
-            position = _find_quote_position(novel_text, quote, start=search_from)
-        if position == -1:
-            continue
-
-        matching_unit = None
-        for unit in units:
-            semantic_start = unit.start_offset + len(unit.text) - len(unit.text.lstrip())
-            if position == semantic_start:
-                matching_unit = unit
-                break
-            if unit.start_offset <= position < unit.end_offset:
-                matching_unit = unit
-                break
-
-        if matching_unit is not None:
-            scene.source_start_quote = matching_unit.text.strip()
-            search_from = matching_unit.end_offset
-        else:
-            search_from = position + 1
-
-
 async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBible:
     """Execute Stage 1: Extract Story Bible from the novel."""
     with ctx.execute(total=4):
@@ -446,7 +298,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
         ctx.log(f"Calling {config.effective_extraction_model()}...")
         extract_result = await _extract_with_retry(config, system_prompt, novel_text)
         story_bible = extract_result.value
-        _complete_source_start_quotes(story_bible, novel_text)
+        align_scene_anchors(story_bible, novel_text)
         console.print(
             f"[green]Extracted:[/green] {len(story_bible.characters)} characters, "
             f"{len(story_bible.locations)} locations, {len(story_bible.scenes)} scenes"
@@ -461,9 +313,6 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
         ctx.progress(3, 4)
 
         artifacts.write_story_bible(project_dir, story_bible)
-        from novel_to_comic.source_extraction import produce_source_document
-        from novel_to_comic.target_artifacts import TargetArtifacts
-
         produce_source_document(
             TargetArtifacts(project_dir),
             novel_text,

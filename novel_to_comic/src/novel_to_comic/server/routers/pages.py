@@ -12,9 +12,11 @@ from novel_to_comic.models.draw import PageIssue, RetryProvenance
 from novel_to_comic.page_drawing import (
     GoogleVertexCompletePageTransport,
     VertexCompletePageAdapter,
+    analyze_complete_page,
     compile_page_generation_request,
     enqueue_complete_page_draw,
 )
+from novel_to_comic.page_ocr import GatewayPageOCRAdapter
 from novel_to_comic.page_review import (
     accept_editorial_page_issue,
     build_correction_request,
@@ -65,6 +67,34 @@ def _issues(target: TargetArtifacts, page_number: int):
         return ()
 
 
+def _sync_draw_progress(project_dir) -> None:
+    """Reconcile Draw's stage state with the renders actually on disk.
+
+    Progress is recomputed from artifacts rather than incremented, so a state
+    write that loses a race with a concurrent job is corrected by the next call
+    instead of leaving Draw stuck in RUNNING with every page already drawn.
+    """
+
+    target = TargetArtifacts(project_dir)
+    try:
+        plan = target.read_plan()
+    except ArtifactMissing:
+        return
+    state = load_state(project_dir)
+    draw_state = state.stages["draw"]
+    rendered = sum(
+        bool(target.provenance_revisions(page.page_number)) for page in plan.pages
+    )
+    if draw_state.items_done == rendered and (
+        rendered < len(plan.pages) or draw_state.status != StageStatus.RUNNING
+    ):
+        return
+    draw_state.items_done = rendered
+    if rendered == len(plan.pages) and draw_state.status == StageStatus.RUNNING:
+        complete_stage(state, "draw")
+    save_state(state, project_dir)
+
+
 def _draw_success_callback(
     request: Request,
     *,
@@ -72,18 +102,7 @@ def _draw_success_callback(
     project_dir,
 ):
     def callback(provenance) -> None:
-        state = load_state(project_dir)
-        target = TargetArtifacts(project_dir)
-        plan = target.read_plan()
-        rendered = sum(
-            bool(target.provenance_revisions(page.page_number))
-            for page in plan.pages
-        )
-        draw_state = state.stages["draw"]
-        draw_state.items_done = rendered
-        if rendered == len(plan.pages) and draw_state.status == StageStatus.RUNNING:
-            complete_stage(state, "draw")
-        save_state(state, project_dir)
+        _sync_draw_progress(project_dir)
         queue = request.app.state.event_queues.get(pkey)
         if queue is not None:
             queue.put_nowait(
@@ -109,6 +128,7 @@ def list_pages(project=Depends(get_project)):
         plan = target.read_plan()
     except ArtifactMissing as exc:
         raise HTTPException(404, str(exc)) from exc
+    _sync_draw_progress(project_dir)
     return {
         "pages": [
             {
@@ -202,8 +222,8 @@ def generate_page(
         compiled=compiled,
         adapter=adapter,
         artifacts=target,
-        request_revision=1,
-        render_revision=1,
+        page=page,
+        ocr=GatewayPageOCRAdapter(config, page_number=page_number),
         on_success=_draw_success_callback(
             request,
             pkey=pkey,
@@ -211,6 +231,41 @@ def generate_page(
         ),
     )
     return {"status": "queued", "job": generation_job_payload(request.app, job)}
+
+
+@router.post("/pages/{page_number}/analyze")
+async def analyze_page(
+    page_number: int,
+    project=Depends(get_project),
+):
+    """Read an existing render back without regenerating the page.
+
+    Analysis runs automatically after every draw, but it is a second provider
+    call that can fail on its own. Recovering must not cost another page: this
+    re-reads the render already on disk.
+    """
+
+    project_dir, config, _state = project
+    target = TargetArtifacts(project_dir)
+    active = _latest_provenance(target, page_number)
+    if active is None:
+        raise HTTPException(409, "Page has no render to analyze")
+    try:
+        page = target.read_page(page_number)
+        image = target.read_render(page_number, active.render.revision)
+    except ArtifactMissing as exc:
+        raise HTTPException(409, str(exc)) from exc
+    try:
+        analysis = await analyze_complete_page(
+            page=page,
+            render=active.render,
+            image=image,
+            ocr=GatewayPageOCRAdapter(config, page_number=page_number),
+            artifacts=target,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return analysis
 
 
 @router.post("/pages/{page_number}/issues")
@@ -292,8 +347,6 @@ def correct_page_issue(
             profile=edition.capability_profile,
             artifacts=target,
         )
-        revisions = target.provenance_revisions(page_number)
-        next_revision = max(revisions, default=0) + 1
         compiled = compile_page_generation_request(
             page,
             edition,
@@ -324,8 +377,8 @@ def correct_page_issue(
         compiled=compiled,
         adapter=adapter,
         artifacts=target,
-        request_revision=next_revision,
-        render_revision=next_revision,
+        page=page,
+        ocr=GatewayPageOCRAdapter(config, page_number=page_number),
         parent_render_revision=issue.render_revision,
         issue=issue,
         on_success=_draw_success_callback(

@@ -24,6 +24,7 @@ from novel_to_comic.config import (
     COMPLETE_PAGE_PROFILE_ID,
     COMPLETE_PAGE_PROVIDER,
     COMPLETE_PAGE_REFERENCE_COST_USD,
+    PAGE_OCR_ESTIMATED_COST_USD,
     Config,
 )
 from novel_to_comic.models.draw import (
@@ -36,6 +37,7 @@ from novel_to_comic.models.draw import (
     PageIssue,
     PageRenderRevision,
     PageRenderCorrection,
+    RenderAnalysis,
     RetryProvenance,
 )
 from novel_to_comic.models.page import (
@@ -44,11 +46,12 @@ from novel_to_comic.models.page import (
     ComicPage,
 )
 from novel_to_comic.target_artifacts import TargetArtifacts
-from novel_to_comic.usage import ApiResult, calculate_cost
+from novel_to_comic.usage import ApiResult, UsageRecord, calculate_cost
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
+    from novel_to_comic.page_review import OCRAdapter
     from novel_to_comic.server.generation_jobs import GenerationJob
 
 
@@ -159,6 +162,15 @@ def _selected_authorities(
     page: ComicPage,
     inventory: ApprovedVisualReferenceInventory,
 ) -> tuple[ApprovedVisualReference, ...]:
+    """Resolve the page's approved authorities from the whole page at once.
+
+    Selection is a property of the page, not of the order its content items
+    happen to be listed in. Deciding per content item made the reference set
+    depend on traversal: an entity shown with an appearance state early and
+    without one later silently lost its base reference, while the reverse
+    ordering kept both.
+    """
+
     by_state = {
         reference.appearance_state_id: reference
         for reference in inventory.references
@@ -169,31 +181,38 @@ def _selected_authorities(
         for reference in inventory.references
         if reference.appearance_state_id is None
     }
-    selected: list[ApprovedVisualReference] = []
-    selected_ids: set[str] = set()
-    state_entities: set[str] = set()
+    # (entity_id, appearance_state_id | None) in first-citation order.
+    required: list[tuple[str, str | None]] = []
     for content in page.content:
+        stated_entities: set[str] = set()
         for state_id in content.appearance_state_ids:
             reference = by_state.get(state_id)
             if reference is None or reference.entity_id not in content.entity_ids:
                 raise ValueError(
                     f"page appearance state {state_id!r} has no approved entity authority"
                 )
-            state_entities.add(reference.entity_id)
-            if reference.id not in selected_ids:
-                selected.append(reference)
-                selected_ids.add(reference.id)
+            stated_entities.add(reference.entity_id)
+            if (reference.entity_id, state_id) not in required:
+                required.append((reference.entity_id, state_id))
         for entity_id in content.entity_ids:
-            if entity_id in state_entities:
+            if entity_id in stated_entities:
                 continue
-            reference = base_by_entity.get(entity_id)
-            if reference is None:
-                raise ValueError(
-                    f"page entity {entity_id!r} has no approved reference authority"
-                )
-            if reference.id not in selected_ids:
-                selected.append(reference)
-                selected_ids.add(reference.id)
+            if (entity_id, None) not in required:
+                required.append((entity_id, None))
+
+    selected: list[ApprovedVisualReference] = []
+    selected_ids: set[str] = set()
+    for entity_id, state_id in required:
+        reference = (
+            by_state[state_id] if state_id is not None else base_by_entity.get(entity_id)
+        )
+        if reference is None:
+            raise ValueError(
+                f"page entity {entity_id!r} has no approved reference authority"
+            )
+        if reference.id not in selected_ids:
+            selected.append(reference)
+            selected_ids.add(reference.id)
     return tuple(selected)
 
 
@@ -486,8 +505,10 @@ async def draw_complete_page(
     *,
     adapter: VertexCompletePageAdapter,
     artifacts: TargetArtifacts,
-    request_revision: int,
-    render_revision: int,
+    page: ComicPage,
+    ocr: "OCRAdapter | None" = None,
+    request_revision: int | None = None,
+    render_revision: int | None = None,
     parent_render_revision: int | None = None,
 ) -> PageGenerationProvenance:
     """Persist and execute exactly one complete-page request."""
@@ -499,7 +520,18 @@ async def draw_complete_page(
         parent_render_revision != correction.parent_render_revision
     ):
         raise ValueError("complete-page correction must cite its exact parent render")
+    if compiled.request.is_stale_for(page):
+        raise ValueError("compiled request is stale for the canonical ComicPage")
     prepared = adapter.prepare(compiled)
+    # Revisions are allocated here, inside the serialized job, not when the
+    # route was called: two corrections requested before either ran would
+    # otherwise both claim the same revision number and the second would die
+    # on the immutable-artifact guard.
+    next_revision = max(artifacts.provenance_revisions(compiled.request.page_number), default=0) + 1
+    if request_revision is None:
+        request_revision = next_revision
+    if render_revision is None:
+        render_revision = next_revision
     artifacts.write_request(
         compiled.request,
         request_revision=request_revision,
@@ -530,8 +562,64 @@ async def draw_complete_page(
         usage=provider_result.usage,
         provider_request_id=provider_result.provider_request_id,
     )
+    # Provenance is recorded before the page is read back. The image is already
+    # paid for at this point, so a failing analysis must never leave a render
+    # without its billing and lineage record — that would let the page be
+    # generated a second time and charged twice.
     artifacts.write_provenance(provenance)
+    if ocr is not None:
+        await analyze_complete_page(
+            page=page,
+            render=render,
+            image=provider_result.image_bytes,
+            ocr=ocr,
+            artifacts=artifacts,
+        )
     return provenance
+
+
+def _analysis_usage(
+    artifacts: TargetArtifacts,
+    provenance: PageGenerationProvenance,
+) -> tuple[UsageRecord, ...]:
+    """The billable read-back call for this render, if it happened."""
+
+    from novel_to_comic.target_artifacts import ArtifactMissing
+
+    try:
+        analysis = artifacts.read_analysis(
+            provenance.render.page_number,
+            provenance.render.revision,
+        )
+    except ArtifactMissing:
+        return ()
+    return () if analysis.analysis_usage is None else (analysis.analysis_usage,)
+
+
+async def analyze_complete_page(
+    *,
+    page: ComicPage,
+    render: PageRenderRevision,
+    image: bytes,
+    ocr: "OCRAdapter",
+    artifacts: TargetArtifacts,
+) -> RenderAnalysis:
+    """Read one existing render back and record its evidence and issues."""
+
+    from novel_to_comic.page_review import (
+        analyze_page_render,
+        record_analysis_issues,
+    )
+
+    analyzed = await analyze_page_render(
+        page=page,
+        render=render,
+        image=image,
+        ocr=ocr,
+        artifacts=artifacts,
+    )
+    record_analysis_issues(artifacts, analyzed.analysis)
+    return analyzed.analysis
 
 
 async def correct_complete_page(
@@ -540,8 +628,10 @@ async def correct_complete_page(
     issue: PageIssue,
     adapter: VertexCompletePageAdapter,
     artifacts: TargetArtifacts,
-    request_revision: int,
-    render_revision: int,
+    page: ComicPage,
+    ocr: "OCRAdapter | None" = None,
+    request_revision: int | None = None,
+    render_revision: int | None = None,
 ) -> PageGenerationProvenance:
     """Produce and link one complete revised page for a Draw-owned issue."""
 
@@ -554,6 +644,8 @@ async def correct_complete_page(
         compiled,
         adapter=adapter,
         artifacts=artifacts,
+        page=page,
+        ocr=ocr,
         request_revision=request_revision,
         render_revision=render_revision,
         parent_render_revision=correction.parent_render_revision,
@@ -564,7 +656,7 @@ async def correct_complete_page(
         artifacts,
         issue_id=issue.id,
         page_number=issue.page_number,
-        resolution_revision=render_revision,
+        resolution_revision=provenance.render.revision,
     )
     return provenance
 
@@ -579,8 +671,10 @@ def enqueue_complete_page_draw(
     compiled: CompiledPageGeneration,
     adapter: VertexCompletePageAdapter,
     artifacts: TargetArtifacts,
-    request_revision: int,
-    render_revision: int,
+    page: ComicPage,
+    ocr: "OCRAdapter | None" = None,
+    request_revision: int | None = None,
+    render_revision: int | None = None,
     parent_render_revision: int | None = None,
     issue: PageIssue | None = None,
     on_success: Callable[[PageGenerationProvenance], None] | None = None,
@@ -594,7 +688,8 @@ def enqueue_complete_page_draw(
     from novel_to_comic.server.credits import credit_estimate_for_provider_cost
 
     estimate = credit_estimate_for_provider_cost(
-        float(compiled.request.estimated_cost_usd),
+        float(compiled.request.estimated_cost_usd)
+        + (0.0 if ocr is None else float(PAGE_OCR_ESTIMATED_COST_USD)),
         "draw",
         reserve=True,
         zero_cost_estimate=0,
@@ -606,6 +701,8 @@ def enqueue_complete_page_draw(
                 compiled,
                 adapter=adapter,
                 artifacts=artifacts,
+                page=page,
+                ocr=ocr,
                 request_revision=request_revision,
                 render_revision=render_revision,
                 parent_render_revision=parent_render_revision,
@@ -616,6 +713,8 @@ def enqueue_complete_page_draw(
                 issue=issue,
                 adapter=adapter,
                 artifacts=artifacts,
+                page=page,
+                ocr=ocr,
                 request_revision=request_revision,
                 render_revision=render_revision,
             )
@@ -626,6 +725,7 @@ def enqueue_complete_page_draw(
             usage=provenance.usage,
             provider_request_id=provenance.provider_request_id,
             actual_provider_model=provenance.render.model,
+            additional_usage=_analysis_usage(artifacts, provenance),
         )
 
     return enqueue_reserved_generation_job(

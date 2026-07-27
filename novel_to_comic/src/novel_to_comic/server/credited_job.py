@@ -268,12 +268,17 @@ def enqueue_reserved_generation_job(
                 job_id=ledger_job_id,
             ):
                 result = await work()
-            if result.usage is not None:
+            # Every provider call this job made is settled under the same
+            # ledger job, which keeps one audit row per call while rounding
+            # whole credits once for the job as a whole.
+            for usage in (result.usage, *result.additional_usage):
+                if usage is None:
+                    continue
                 debit_model_usage(
                     get_db(),
                     user_id,
                     project_id,
-                    result.usage,
+                    usage,
                     stage=stage,
                     description=debit_description,
                     job_id=ledger_job_id,

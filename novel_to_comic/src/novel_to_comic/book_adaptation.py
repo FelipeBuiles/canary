@@ -18,10 +18,18 @@ from novel_to_comic.models.adaptation import (
 )
 from novel_to_comic.models.source import SourceDocument
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.models.validation import EditorialIssue, InvariantFailure
+from novel_to_comic.models.validation import (
+    EditorialIssue,
+    InvariantFailure,
+    StageValidation,
+)
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.target_artifacts import TargetArtifacts
+from novel_to_comic.text_utils import normalize_display_text, normalize_requirement
 from novel_to_comic.usage import ApiResult, estimate_text_cost
+
+
+_MAX_ADAPT_ATTEMPTS = 2
 
 
 class AdaptationValidation(BaseModel):
@@ -75,7 +83,9 @@ def build_narrative_treatment_prompt(
         "Create one book-wide narrative treatment for the complete adaptation. "
         "Account for the causal spine, essential events, character turns, reveals, "
         "reactions, consequences, transitions, aftermath, motifs, narrator voice, "
-        "and relative narrative emphasis. Use the approved target page range only "
+        "and relative narrative emphasis. Carry every approved essential event and "
+        "character turn from the brief into the matching treatment field using the "
+        "brief's own wording. Use the approved target page range only "
         "to guide proportional selection. Do not allocate pages, panels, layouts, "
         "or geometry. Do not create parallel per-scene adaptations or reconciliation "
         "work. Return only the narrative-treatment JSON object.\n"
@@ -110,7 +120,10 @@ def build_book_adaptation_prompt(
         "never return fragments or trailing-clipped display text. Preserve every "
         "protected-language string verbatim. Record causal events, reveals, "
         "reactions, consequences, transitions, aftermath, character turns, and "
-        "appearance-state changes explicitly. Cite source-unit provenance and "
+        "appearance-state changes explicitly. Copy each approved essential event "
+        "and character turn from the brief into brief_requirements on the beat "
+        "that carries it, using the brief's own wording. Cite source-unit "
+        "provenance and "
         "assign exactly one ledger disposition for every source unit. Compression "
         "requires a reason and an existing adapted-beat destination. Intentional "
         "omission requires a reason, the function intentionally removed, and no "
@@ -187,28 +200,42 @@ async def produce_book_adaptation(
                 output_chars=max(8_000, len(source.text) * 2),
             )
         )
-        book_result = await generate(
-            system_prompt=(
-                "You are the sole book-level Adapt writer. Return complete JSON."
-            ),
-            user_content=book_prompt,
-            json_schema=_BookDraft.model_json_schema(),
-            feature="adapt.book",
-        )
-        draft = _BookDraft.model_validate(book_result.value)
-        ctx.record_item_done(usage=book_result.usage)
+        attempt_prompt = book_prompt
+        candidate: BookAdaptation | None = None
+        validation = AdaptationValidation()
+        for attempt in range(1, _MAX_ADAPT_ATTEMPTS + 1):
+            book_result = await generate(
+                system_prompt=(
+                    "You are the sole book-level Adapt writer. Return complete JSON."
+                ),
+                user_content=attempt_prompt,
+                json_schema=_BookDraft.model_json_schema(),
+                feature="adapt.book",
+            )
+            draft = _BookDraft.model_validate(book_result.value)
+            ctx.record_item_done(usage=book_result.usage)
+            candidate = BookAdaptation(
+                revision=1,
+                source_sha256=source.source_sha256,
+                brief_revision=brief.revision,
+                brief_sha256=brief.content_sha256,
+                treatment=treatment,
+                beats=draft.beats,
+                ledger=draft.ledger,
+            )
+            validation = validate_book_adaptation(source, brief, candidate)
+            if not validation.invariant_failures:
+                break
+            if attempt < _MAX_ADAPT_ATTEMPTS:
+                # One repair pass with the exact failures. Most Adapt invariants
+                # are satisfiable by the same model given the specific evidence,
+                # and re-running the whole stage by hand costs the user the full
+                # generation again.
+                attempt_prompt = _repair_prompt(book_prompt, validation)
         ctx.progress(2, 2)
 
-        candidate = BookAdaptation(
-            revision=1,
-            source_sha256=source.source_sha256,
-            brief_revision=brief.revision,
-            brief_sha256=brief.content_sha256,
-            treatment=treatment,
-            beats=draft.beats,
-            ledger=draft.ledger,
-        )
-        validation = validate_book_adaptation(source, brief, candidate)
+        assert candidate is not None  # loop runs at least once
+        _persist_validation(artifacts, validation, attempts=attempt)
         if validation.invariant_failures:
             raise AdaptationInvariantError(validation)
         adaptation = BookAdaptation.model_validate(
@@ -221,6 +248,35 @@ async def produce_book_adaptation(
         artifacts.write_adaptation(adaptation)
 
     return adaptation
+
+
+def _repair_prompt(book_prompt: str, validation: AdaptationValidation) -> str:
+    failures = "\n".join(
+        f"- [{failure.code}] {failure.message} " + " ".join(failure.evidence)
+        for failure in validation.invariant_failures
+    )
+    return (
+        f"{book_prompt}\n\nYour previous book adaptation violated these blocking "
+        "contract requirements. Return one complete corrected JSON object that "
+        "resolves every one of them without dropping content you already had:\n"
+        f"{failures}"
+    )
+
+
+def _persist_validation(
+    artifacts: TargetArtifacts,
+    validation: AdaptationValidation,
+    *,
+    attempts: int,
+) -> None:
+    artifacts.write_validation(
+        StageValidation(
+            owner_stage="adapt",
+            attempts=attempts,
+            invariant_failures=validation.invariant_failures,
+            editorial_issues=validation.editorial_issues,
+        )
+    )
 
 
 def validate_book_adaptation(
@@ -326,11 +382,17 @@ def validate_book_adaptation(
         for beat in adaptation.beats
         for item in beat.lettering
     ]
-    complete_wording = "\n".join(item.text for item in lettering)
+    # Both sides are model output: the Brief inferred the phrase, Adapt wrote the
+    # balloon. They routinely disagree on quote style, dash form, and line
+    # wrapping while carrying identical words, so compare under the shared
+    # display-text policy instead of raw substring identity.
+    complete_wording = "\n".join(
+        normalize_display_text(item.text) for item in lettering
+    )
     missing_protected = [
         phrase
         for phrase in brief.protected_language
-        if phrase not in complete_wording
+        if normalize_display_text(phrase) not in complete_wording
     ]
     if missing_protected:
         failures.append(
@@ -346,8 +408,11 @@ def validate_book_adaptation(
             )
         )
 
+    # Requirement strings are echoed by a model two hops away from the Brief, so
+    # identity is compared on the normalized requirement, not the exact string.
+    # A reworded essential event is not a missing one.
     covered_requirements = {
-        requirement
+        normalize_requirement(requirement)
         for beat in adaptation.beats
         for requirement in beat.brief_requirements
     }
@@ -365,12 +430,16 @@ def validate_book_adaptation(
             "character turn",
         ),
     ):
+        treated = {
+            normalize_requirement(requirement)
+            for requirement in treatment_requirements
+        }
         missing_requirements = [
             requirement
             for requirement in requirements
             if (
-                requirement not in treatment_requirements
-                or requirement not in covered_requirements
+                normalize_requirement(requirement) not in treated
+                or normalize_requirement(requirement) not in covered_requirements
             )
         ]
         if missing_requirements:
@@ -471,21 +540,7 @@ def validate_book_adaptation(
                 )
             continuity_states[transition.dimension] = transition.to_state
 
-    for entry in adaptation.ledger:
-        if entry.disposition == "intentionally_omitted":
-            issues.append(
-                EditorialIssue(
-                    id=f"adapt_issue_questionable_omission_{entry.source_unit_id}",
-                    owner_stage="adapt",
-                    code="questionable_omission",
-                    message="An intentional omission is ready for editorial review.",
-                    source_unit_ids=[entry.source_unit_id],
-                    evidence=[
-                        entry.reason or "No omission reason was recorded.",
-                        entry.preserved_function,
-                    ],
-                )
-            )
+    issues.extend(_omission_issues(source, brief, adaptation))
 
     for index, beat in enumerate(adaptation.beats):
         if "reveal" not in beat.story_functions:
@@ -526,6 +581,87 @@ def validate_book_adaptation(
         invariant_failures=failures,
         editorial_issues=issues,
     )
+
+
+_OMITTED_RUN_THRESHOLD = 3
+
+
+def _omission_issues(
+    source: SourceDocument,
+    brief: AdaptationBrief,
+    adaptation: BookAdaptation,
+) -> list[EditorialIssue]:
+    """Surface omissions worth a human decision, not every omission.
+
+    Flagging each intentionally omitted unit turns review-by-exception into a
+    wall of noise on any real book: a faithful adaptation omits hundreds of
+    units. What deserves the user's attention is an omission that drops
+    protected language, or a long unbroken stretch of source that disappears.
+    """
+
+    ordinal_by_unit = {unit.id: unit.ordinal for unit in source.units}
+    text_by_unit = {unit.id: unit.text for unit in source.units}
+    omitted = sorted(
+        (
+            entry
+            for entry in adaptation.ledger
+            if entry.disposition == "intentionally_omitted"
+            and entry.source_unit_id in ordinal_by_unit
+        ),
+        key=lambda entry: ordinal_by_unit[entry.source_unit_id],
+    )
+    issues: list[EditorialIssue] = []
+    protected = [
+        normalize_display_text(phrase)
+        for phrase in brief.protected_language
+        if phrase.strip()
+    ]
+    for entry in omitted:
+        unit_text = normalize_display_text(text_by_unit[entry.source_unit_id])
+        dropped = [phrase for phrase in protected if phrase in unit_text]
+        if dropped:
+            issues.append(
+                EditorialIssue(
+                    id=f"adapt_issue_omitted_protected_language_{entry.source_unit_id}",
+                    owner_stage="adapt",
+                    code="questionable_omission",
+                    message="An omitted source unit carries protected language.",
+                    source_unit_ids=[entry.source_unit_id],
+                    evidence=[
+                        "Protected phrase in the omitted unit: " + repr(dropped[0]),
+                        entry.reason or "No omission reason was recorded.",
+                    ],
+                )
+            )
+
+    run: list[str] = []
+    runs: list[list[str]] = []
+    previous_ordinal: int | None = None
+    for entry in omitted:
+        ordinal = ordinal_by_unit[entry.source_unit_id]
+        if previous_ordinal is not None and ordinal == previous_ordinal + 1:
+            run.append(entry.source_unit_id)
+        else:
+            run = [entry.source_unit_id]
+            runs.append(run)
+        previous_ordinal = ordinal
+    for stretch in runs:
+        if len(stretch) < _OMITTED_RUN_THRESHOLD:
+            continue
+        issues.append(
+            EditorialIssue(
+                id=f"adapt_issue_questionable_omission_{stretch[0]}",
+                owner_stage="adapt",
+                code="questionable_omission",
+                message="A continuous stretch of source is intentionally omitted.",
+                source_unit_ids=stretch,
+                evidence=[
+                    f"{len(stretch)} consecutive source units were omitted, "
+                    f"{stretch[0]} through {stretch[-1]}.",
+                ],
+            )
+        )
+    return issues
 
 
 def _has_terminal_display_punctuation(text: str) -> bool:

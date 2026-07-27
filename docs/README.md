@@ -35,10 +35,12 @@ retained as current reference.
 Only active, accepted, or genuinely pending design work should remain under
 `docs/superpowers/`:
 
-- full-page pipeline design:
-  `docs/superpowers/specs/2026-07-25-full-page-generation-design.md`
 - full-page implementation plan:
   `docs/superpowers/plans/2026-07-25-full-page-generation/README.md`
+
+The full-page pipeline design itself is no longer kept as a document: its
+durable decisions are recorded as ADRs 0003–0015 in `docs/adr/`, and its
+contracts are enforced by implementation and tests.
 
 Completed implementation plans and superseded designs should be deleted once
 their durable contracts are represented by implementation, tests, reference

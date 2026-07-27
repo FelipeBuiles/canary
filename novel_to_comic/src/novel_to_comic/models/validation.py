@@ -34,3 +34,24 @@ class EditorialIssue(_ValidationResult):
 
     kind: Literal["editorial_issue"] = "editorial_issue"
     blocking: Literal[False] = False
+
+
+class StageValidation(BaseModel):
+    """One stage's own verdict on its artifact, persisted for review.
+
+    An invariant failure that only ever exists as a raised exception reaches the
+    user as a stage error string: the evidence, the cited IDs, and any
+    recommendation are lost. Stages that block therefore persist this first.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    owner_stage: StageName
+    attempts: int = Field(default=1, ge=1)
+    invariant_failures: tuple[InvariantFailure, ...] = ()
+    editorial_issues: tuple[EditorialIssue, ...] = ()
+    recommendations: tuple[str, ...] = ()
+
+    @property
+    def blocked(self) -> bool:
+        return bool(self.invariant_failures)

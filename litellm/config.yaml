@@ -98,6 +98,17 @@ model_list:
       safety_settings: *vertex_safety_off
       reasoning_effort: "disable"
 
+  # ─── Render analysis: reading a finished page's visible lettering ─────────
+  # Draw's exact-lettering invariant depends on this transcription, so the
+  # alias is deliberately single-tier: every edition reads its pages with the
+  # same model regardless of the project's quality preset.
+  - model_name: ocr-balanced
+    litellm_params:
+      model: vertex_ai/gemini-3.6-flash
+      vertex_project: os.environ/VERTEXAI_PROJECT
+      vertex_location: os.environ/VERTEXAI_LOCATION
+      safety_settings: *vertex_safety_off
+
   # ─── Image generation ─────────────────────────────────────────────────────
   - model_name: image-fast
     litellm_params:

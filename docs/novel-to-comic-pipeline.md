@@ -4,9 +4,9 @@
 > overview. For exact I/O, use `docs/reference/stage-contracts.md`; for agent
 > implementation guidance, use `docs/reference/agent-context.md`.
 >
-> **Accepted replacement:** the current panel pipeline will be replaced by
-> `docs/superpowers/specs/2026-07-25-full-page-generation-design.md`. Treat this
-> document as implemented behavior, not future design guidance.
+> **Accepted replacement:** the panel pipeline described here is replaced by
+> the full-page architecture in ADRs 0003-0015 (`docs/adr/`). Treat this
+> document as panel-era behavior, not current or future design guidance.
 
 A 9-stage Python/FastAPI/React application that converts a novel
 (EPUB, TXT, or PDF) into a graphic novel (PDF/CBZ), using LLMs for story

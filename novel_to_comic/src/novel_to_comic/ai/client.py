@@ -849,6 +849,7 @@ async def generate_structured_object(
     max_output_tokens: int | None = None,
     json_schema: dict[str, Any] | None = None,
     feature: str = "text.generate_json",
+    image_attachments: tuple[tuple[bytes, str], ...] = (),
 ) -> ApiResult[dict]:
     if isinstance(user_content, bytes):
         raise ValueError(
@@ -870,6 +871,7 @@ async def generate_structured_object(
             json_mode=True,
             json_schema=json_schema,
             feature=feature,
+            image_attachments=image_attachments,
         )
         text = _strip_code_fence(data["text"])
         try:
@@ -918,6 +920,7 @@ async def _chat_completion(
     json_mode: bool,
     feature: str,
     json_schema: dict[str, Any] | None = None,
+    image_attachments: tuple[tuple[bytes, str], ...] = (),
 ) -> dict[str, Any]:
     event_id = str(uuid.uuid4())
     operation = "text"
@@ -932,11 +935,25 @@ async def _chat_completion(
     effective_system = system_prompt
     if json_mode and "json" not in (system_prompt + user_content).lower():
         effective_system += "\n\nRespond with valid JSON."
+    # An image-reading call keeps ``user_content`` as its text part so cost
+    # estimation, request summaries, and Langfuse logging stay comparable with
+    # text-only calls; only the wire message becomes multimodal.
+    message_content: str | list[dict[str, Any]] = user_content
+    if image_attachments:
+        message_content = [{"type": "text", "text": user_content}]
+        for image_bytes, media_type in image_attachments:
+            encoded = base64.b64encode(image_bytes).decode()
+            message_content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{media_type};base64,{encoded}"},
+                }
+            )
     payload: dict[str, Any] = {
         "model": model,
         "messages": [
             {"role": "system", "content": effective_system},
-            {"role": "user", "content": user_content},
+            {"role": "user", "content": message_content},
         ],
         "metadata": metadata,
     }

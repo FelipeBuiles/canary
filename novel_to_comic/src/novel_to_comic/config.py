@@ -80,6 +80,15 @@ COMPLETE_PAGE_MAX_ATTEMPTS = 3
 COMPLETE_PAGE_BASE_COST_USD = "0.134"
 COMPLETE_PAGE_REFERENCE_COST_USD = "0.00112"
 
+# Ticket 05 render analysis. Reading a rendered page's visible lettering is a
+# vision-model task, kept in configuration so Draw never names a model inline.
+GATEWAY_PAGE_OCR = "ocr-balanced"
+
+# Reservation allowance for reading one page back. Analysis is a second billable
+# provider call, so a page's credit hold has to cover it; the settled debit
+# always comes from the usage the provider actually reported.
+PAGE_OCR_ESTIMATED_COST_USD = "0.004"
+
 
 def is_gpt_image_2(model: str) -> bool:
     """True if `model` is classified as the GPT Image 2 route."""
@@ -207,6 +216,7 @@ class Config(BaseModel):
     adapt_model: str = GATEWAY_ADAPT_BALANCED
     plan_model: str = GATEWAY_PLAN_BALANCED
     prompt_model: str = GATEWAY_PROMPT_BALANCED
+    page_ocr_model: str = GATEWAY_PAGE_OCR
     image_provider: Literal["gemini", "openai", "openrouter", "together", "reve"] = "gemini"
     image_model: str = GATEWAY_IMAGE_QUALITY
     fallback_image_model: str = GATEWAY_IMAGE_FAST
@@ -328,6 +338,15 @@ class Config(BaseModel):
 
     def effective_prompt_model(self) -> str:
         return self._effective_stage_model("prompt")
+
+    def effective_page_ocr_model(self) -> str:
+        """Render analysis is fidelity checking, not creative work.
+
+        It is deliberately outside the quality presets: a book generated with
+        the quality preset must not read its own pages with a different, more
+        forgiving model than a book generated with the fast preset.
+        """
+        return self.page_ocr_model
 
     def uses_gemini_image_provider(self) -> bool:
         return self.image_provider == "gemini"

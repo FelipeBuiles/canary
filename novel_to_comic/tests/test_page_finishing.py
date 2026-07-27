@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import zipfile
@@ -721,3 +722,125 @@ def test_invalid_embedded_color_profile_blocks_safe_normalization(
         for failure in result.preflight.pages[0].invariant_failures
     }
     assert not artifacts.export_path("pdf").exists()
+
+
+def test_a_drawn_page_reaches_export_without_hand_written_analysis(
+    tmp_path: Path,
+) -> None:
+    """Draw → render analysis → Finish, with nothing filled in by hand.
+
+    Finish requires exact OCR status on every active render, so an unwired
+    analysis step made export unreachable no matter how good the art was.
+    """
+
+    from novel_to_comic.models.draw import (
+        CompletePageProviderResult,
+        OCRExtraction,
+        OCRTextObservation,
+        RetryProvenance,
+    )
+    from novel_to_comic.models.page import ApprovedVisualReferenceInventory
+    from novel_to_comic.usage import ApiResult
+    from novel_to_comic.page_drawing import (
+        VertexCompletePageAdapter,
+        compile_page_generation_request,
+        draw_complete_page,
+        production_page_capability_profile,
+        select_book_edition,
+    )
+
+    profile = production_page_capability_profile()
+    edition = select_book_edition(edition_id="edition-1", profile=profile)
+    artifacts = TargetArtifacts(tmp_path)
+    adaptation = _adaptation()
+    page = _page(adaptation)
+    artifacts.write_adaptation(adaptation)
+    artifacts.write_page(page)
+    artifacts.write_plan(
+        BookPlan(
+            revision=1,
+            adaptation_revision=adaptation.revision,
+            adaptation_sha256=adaptation.content_sha256,
+            target_page_min=1,
+            target_page_max=1,
+            pages=[
+                PlannedPageRevision(
+                    page_number=1,
+                    revision=page.revision,
+                    content_sha256=page.content_sha256,
+                )
+            ],
+        )
+    )
+    artifacts.write_book_edition(edition)
+    image = _png_bytes(
+        (15, 35, 55),
+        size=(profile.output_width, profile.output_height),
+    )
+
+    class _Transport:
+        async def generate(self, request):
+            return CompletePageProviderResult(
+                artifact_kind="complete_page",
+                image_bytes=image,
+                media_type="image/png",
+                width=profile.output_width,
+                height=profile.output_height,
+                latency_ms=5,
+                actual_provider_model=f"vertex_ai/{profile.model}",
+                usage=UsageRecord(
+                    provider="gemini",
+                    model=profile.model,
+                    operation="image",
+                    image_count=1,
+                    cost_usd=0,
+                ),
+            )
+
+    class _OCR:
+        async def extract(self, image_bytes: bytes):
+            assert image_bytes == image
+            return ApiResult(
+                value=OCRExtraction(
+                    lettering=[OCRTextObservation(id="ocr-1", text="The door opened.")]
+                ),
+                usage=UsageRecord(
+                    provider="gemini",
+                    model="ocr-balanced",
+                    operation="text",
+                    input_tokens=1200,
+                    output_tokens=80,
+                ),
+            )
+
+    compiled = compile_page_generation_request(
+        page,
+        edition,
+        ApprovedVisualReferenceInventory(),
+        {},
+        retry=RetryProvenance(attempt=1),
+    )
+    asyncio.run(
+        draw_complete_page(
+            compiled,
+            adapter=VertexCompletePageAdapter(_Transport()),
+            artifacts=artifacts,
+            page=page,
+            ocr=_OCR(),
+        )
+    )
+
+    assert artifacts.read_analysis(1, 1).lettering_valid is True
+    # A clean render records no issue file at all.
+    assert not artifacts.issues_path(1).exists()
+
+    result = finish_book(
+        artifacts,
+        production=FinishProductionSpec(
+            canvas_width=profile.output_width,
+            canvas_height=profile.output_height,
+        ),
+    )
+
+    assert result.preflight.ready_to_export is True
+    assert [package.format for package in result.packages] == ["pdf", "cbz"]
