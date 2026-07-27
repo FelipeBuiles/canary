@@ -355,6 +355,85 @@ def test_front_matter_before_the_first_anchor_belongs_to_the_first_scene() -> No
     ]
 
 
+def test_an_unlocatable_scene_anchor_does_not_destroy_the_source_document(
+    tmp_path,
+) -> None:
+    # One hallucinated quote out of several is not a reason to lose the whole
+    # immutable source. Extract has no approval checkpoint, so a hard failure
+    # here leaves the user with nothing to inspect.
+    text = "The door opened. A light burned. Nothing moved."
+    story_bible = _aligned_bible(
+        text,
+        [
+            "The door opened.",
+            "A voice called from the cellar.",
+            "Nothing moved.",
+        ],
+    )
+
+    document = produce_source_document(TargetArtifacts(tmp_path), text, story_bible)
+
+    assert [scene.id for scene in document.scenes] == ["scene_001", "scene_003"]
+    assert document.scenes[0].unit_ids(document) == [
+        "source_000001",
+        "source_000002",
+    ]
+    covered = [
+        unit_id for scene in document.scenes for unit_id in scene.unit_ids(document)
+    ]
+    assert covered == [unit.id for unit in document.units]
+
+
+def test_alignment_reports_the_scenes_it_could_not_place() -> None:
+    text = "The door opened. A light burned. Nothing moved."
+    story_bible = _story_bible().model_copy(
+        update={
+            "total_scenes": 2,
+            "scenes": [
+                _anchor_scene("scene_001", "The door opened."),
+                _anchor_scene("scene_002", "A voice called from the cellar."),
+            ],
+        }
+    )
+
+    assert align_scene_anchors(story_bible, text) == ("scene_002",)
+
+
+def test_scenes_are_never_silently_reordered_to_fit_their_quotes() -> None:
+    # A scene whose quote sits before the previous boundary is a model ordering
+    # slip. Moving the boundary backwards would reorder the book, so the anchor
+    # is reported unresolved and its units stay with the preceding scene.
+    text = "The door opened. A light burned. Nothing moved."
+    story_bible = _story_bible().model_copy(
+        update={
+            "total_scenes": 2,
+            "scenes": [
+                _anchor_scene("scene_001", "Nothing moved."),
+                _anchor_scene("scene_002", "A light burned."),
+            ],
+        }
+    )
+
+    unresolved = align_scene_anchors(story_bible, text)
+
+    assert unresolved == ("scene_002",)
+    assert story_bible.scenes[1].source_start_quote == "A light burned."
+
+
+def test_a_source_with_no_locatable_anchor_at_all_still_fails(tmp_path) -> None:
+    story_bible = _aligned_bible(
+        "The door opened. Nothing moved.",
+        ["A voice called from the cellar."],
+    )
+
+    with pytest.raises(ValueError, match="no Story Bible scene anchor"):
+        produce_source_document(
+            TargetArtifacts(tmp_path),
+            "The door opened. Nothing moved.",
+            story_bible,
+        )
+
+
 def test_quote_positions_are_offsets_into_the_unmodified_source() -> None:
     text = (
         "The angles were wrong—utterly wrong—and he fled. "

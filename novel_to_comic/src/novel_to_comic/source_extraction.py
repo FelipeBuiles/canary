@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from difflib import SequenceMatcher
 
@@ -15,6 +16,8 @@ from novel_to_comic.models.source import (
 )
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.target_artifacts import TargetArtifacts
+
+logger = logging.getLogger("canary.source_extraction")
 
 
 class SourceSceneAnchor(BaseModel):
@@ -59,6 +62,44 @@ def unit_index_at(units: tuple[SourceUnit, ...], position: int) -> int | None:
         if unit.start_offset <= position < unit.end_offset:
             return unit_index
     return None
+
+
+def resolvable_anchors(
+    text: str,
+    scene_anchors: tuple[SourceSceneAnchor, ...] | list[SourceSceneAnchor],
+) -> tuple[tuple[SourceSceneAnchor, ...], tuple[str, ...]]:
+    """Split anchors into those that define a valid boundary and those that don't.
+
+    Scene anchors come from a model. One that cannot be located as a complete
+    unit start after the previous scene defines no boundary at all — but it must
+    not destroy the whole source document, so Extract drops it and the preceding
+    scene keeps those units. Callers that own their anchors keep using
+    ``build_source_document`` directly and still get a hard failure.
+    """
+
+    units = source_units(text)
+    kept: list[SourceSceneAnchor] = []
+    unresolved: list[str] = []
+    search_from = 0
+    previous_index: int | None = None
+    for anchor in scene_anchors:
+        try:
+            unit_index = _unit_for_opening_quote(
+                text,
+                units,
+                anchor,
+                search_from=search_from,
+            )
+        except ValueError:
+            unresolved.append(anchor.id)
+            continue
+        if previous_index is not None and unit_index <= previous_index:
+            unresolved.append(anchor.id)
+            continue
+        kept.append(anchor)
+        previous_index = unit_index
+        search_from = units[unit_index].end_offset
+    return tuple(kept), tuple(unresolved)
 
 
 def _unit_for_opening_quote(
@@ -236,7 +277,7 @@ def _find_quote_position(text: str, quote: str, start: int = 0) -> int:
     return _fuzzy_find_quote(norm_text, candidates[-1], start)
 
 
-def align_scene_anchors(story_bible: StoryBible, text: str) -> None:
+def align_scene_anchors(story_bible: StoryBible, text: str) -> tuple[str, ...]:
     """Snap every scene's source anchor onto the source unit that owns it.
 
     ``source_start_quote`` stays verbatim source text and remains the scene
@@ -245,31 +286,44 @@ def align_scene_anchors(story_bible: StoryBible, text: str) -> None:
     with the exact text of its owning unit is what keeps the Story Bible and the
     canonical `SourceDocument` in agreement — both read the same units, so no
     second sentence-splitting heuristic can disagree with the first.
+
+    Returns the IDs of scenes whose anchor could not be placed at all.
     """
 
     units = source_units(text)
     search_from = 0
+    previous_index = -1
+    unresolved: list[str] = []
     for scene in story_bible.scenes:
         quote = scene.source_start_quote.strip()
         if not quote:
+            unresolved.append(scene.id)
             continue
 
         position = text.find(quote, search_from)
         if position == -1:
             position = _find_quote_position(text, quote, start=search_from)
         if position == -1:
+            unresolved.append(scene.id)
             continue
 
+        # Searching forward from the previous boundary already guarantees a
+        # later position; the index check catches the remaining case where the
+        # fuzzy matcher lands inside the unit that boundary already owns.
         unit_index = unit_index_at(units, position)
-        if unit_index is None:
+        if unit_index is None or unit_index <= previous_index:
+            unresolved.append(scene.id)
             continue
         unit = units[unit_index]
         aligned = unit.text.strip()
         if not aligned:
+            unresolved.append(scene.id)
             continue
 
         scene.source_start_quote = aligned
+        previous_index = unit_index
         search_from = unit.end_offset
+    return tuple(unresolved)
 
 
 def produce_source_document(
@@ -278,9 +332,16 @@ def produce_source_document(
     story_bible: StoryBible,
     /,
 ) -> SourceDocument:
-    """Build and persist Extract's sole canonical source-text artifact."""
+    """Build and persist Extract's sole canonical source-text artifact.
 
-    document = build_source_document(
+    Anchors that define no valid boundary are dropped rather than failing the
+    stage: the source text, its units, and complete single-owner coverage are
+    the contract here, and one unplaceable scene quote out of twelve is not a
+    reason to lose all of it. Extract has no approval checkpoint, so a crash
+    here leaves the user with nothing to inspect or correct.
+    """
+
+    anchors, unresolved = resolvable_anchors(
         text,
         tuple(
             SourceSceneAnchor(
@@ -291,5 +352,15 @@ def produce_source_document(
             for scene in story_bible.scenes
         ),
     )
+    if not anchors:
+        raise ValueError(
+            "no Story Bible scene anchor could be located in the source text"
+        )
+    if unresolved:
+        logger.warning(
+            "Source scenes folded into the preceding scene, anchor not locatable: %s",
+            ", ".join(unresolved),
+        )
+    document = build_source_document(text, anchors)
     artifacts.write_source(document)
     return document

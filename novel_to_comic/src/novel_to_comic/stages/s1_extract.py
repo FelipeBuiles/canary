@@ -298,7 +298,20 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
         ctx.log(f"Calling {config.effective_extraction_model()}...")
         extract_result = await _extract_with_retry(config, system_prompt, novel_text)
         story_bible = extract_result.value
-        align_scene_anchors(story_bible, novel_text)
+        unresolved = align_scene_anchors(story_bible, novel_text)
+        if unresolved:
+            # The scene still exists in the Story Bible; only its source
+            # boundary is unknown, so its units stay with the preceding scene.
+            console.print(
+                "[yellow]Scene anchors not found in the source:[/yellow] "
+                + ", ".join(unresolved)
+            )
+            ctx.log(
+                f"{len(unresolved)} scene anchor(s) could not be located in the "
+                "source text and were merged into the preceding scene: "
+                + ", ".join(unresolved),
+                level="dim",
+            )
         console.print(
             f"[green]Extracted:[/green] {len(story_bible.characters)} characters, "
             f"{len(story_bible.locations)} locations, {len(story_bible.scenes)} scenes"
