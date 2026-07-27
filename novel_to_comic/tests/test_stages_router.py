@@ -197,3 +197,61 @@ def test_stage_validation_is_readable_after_a_blocking_stage(tmp_path: Path):
     assert response.status_code == 200
     assert response.json()["recommendations"] == ["Recommend a minimum of 44 pages."]
     assert client.get("/api/projects/test_project/validation/draw").status_code == 404
+
+
+def test_brief_stage_repairs_an_invalid_inference_with_one_retry(tmp_path: Path):
+    """Anything normalization cannot fix gets the errors fed back, once."""
+
+    import asyncio
+
+    from novel_to_comic.clients import structured_call
+    from novel_to_comic.stages import s2_brief
+    from novel_to_comic.stage_runtime import StageRuntime
+    from novel_to_comic.usage import ApiResult
+
+    project_dir, state, bible = _story_project(tmp_path)
+    complete = {
+        "story_promises": ["The witness never recovers."],
+        "themes": ["Knowledge has a cost."],
+        "point_of_view": "First person.",
+        "narrator_treatment": "Captions carry the testimony.",
+        "tone": "Cosmic dread.",
+        "essential_events": ["The door opens."],
+        "character_turns": ["The witness stops looking."],
+        "desired_emphasis": "Hold the aftermath.",
+        "transformation_level": "Faithful, adapted to comics.",
+        "target_page_min": 24,
+        "target_page_max": 32,
+    }
+    # The page range is required and cannot be invented deterministically, so
+    # the first response omits it and the repair pass supplies it.
+    responses = [
+        {key: value for key, value in complete.items() if key != "target_page_min"},
+        complete,
+    ]
+    prompts: list[str] = []
+
+    async def fake_generate_json(**kwargs):
+        prompts.append(kwargs["user_content"])
+        return ApiResult(value=responses[len(prompts) - 1])
+
+    original = structured_call.generate_json
+    structured_call.generate_json = fake_generate_json
+    try:
+        brief = asyncio.run(
+            s2_brief.run(
+                Config(),
+                project_dir,
+                StageRuntime("brief", state, project_dir),
+            )
+        )
+    finally:
+        structured_call.generate_json = original
+
+    assert len(prompts) == 2
+    assert "VALIDATION ERRORS" in prompts[1]
+    assert "target_page_min" in prompts[1]
+    assert brief.status == "draft"
+    assert brief.transformation_level == "faithful"
+    assert brief.desired_emphasis == ("Hold the aftermath.",)
+    assert TargetArtifacts(project_dir).read_brief() == brief

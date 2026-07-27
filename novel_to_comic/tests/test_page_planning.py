@@ -1171,3 +1171,84 @@ def test_pages_must_cite_the_canonical_book_adaptation_revision() -> None:
         f"{adaptation.content_sha256}; found {adaptation.revision + 1}/"
         f"{'f' * 64}.",
     )
+
+
+def test_a_schema_slip_in_the_plan_draft_is_repaired_not_fatal(tmp_path: Path) -> None:
+    adaptation = _adaptation()
+    page = {
+        "page_number": 1,
+        "page_turn_role": "release",
+        "spread_role": "single",
+        "emphasis": "release",
+        "density_intent": "standard",
+        "rhythm_intent": "approach gives way to escape",
+        "layout_intent": "Approach, then escape.",
+        "content": [
+            {
+                "id": "page_001_content_001",
+                "order": 1,
+                "beat_ids": ["beat_0001", "beat_0002"],
+                "visual_intent": "The approach, then the escape.",
+                "lettering_ids": ["lettering_0001", "lettering_0002"],
+                "entity_ids": ["character_johansen", "location_alert"],
+            }
+        ],
+        "reading_order": [
+            "page_001_content_001",
+            "lettering_0001",
+            "lettering_0002",
+        ],
+    }
+    responses = [
+        # beat_ids as a bare string: a shape slip, not a planning decision.
+        {
+            "rhythm_summary": "approach → escape",
+            "pages": [
+                {
+                    **page,
+                    "content": [{**page["content"][0], "beat_ids": "beat_0001"}],
+                }
+            ],
+        },
+        {"rhythm_summary": "approach → escape", "pages": [page]},
+    ]
+    calls: list[dict] = []
+
+    async def generate(**request):
+        calls.append(request)
+        return ApiResult(
+            value=responses[len(calls) - 1],
+            usage=UsageRecord(
+                provider="test",
+                model="test-planner",
+                operation="plan.book",
+                input_tokens=10,
+                output_tokens=5,
+                cost_usd=0.0,
+            ),
+        )
+
+    artifacts = TargetArtifacts(tmp_path)
+    plan = asyncio.run(
+        produce_book_plan(
+            adaptation,
+            _inventory(),
+            ApprovedPageRange(minimum=1, maximum=1),
+            artifacts=artifacts,
+            ctx=StageRuntime(
+                "plan",
+                PipelineState(
+                    project_name="cthulhu",
+                    novel_path="novel.txt",
+                    created_at=datetime.now(timezone.utc),
+                ),
+                tmp_path,
+            ),
+            model="test-planner",
+            generate=generate,
+        )
+    )
+
+    assert len(plan.pages) == 1
+    assert len(calls) == 2
+    assert "VALIDATION ERRORS" in calls[1]["user_content"]

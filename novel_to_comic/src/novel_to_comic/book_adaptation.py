@@ -6,7 +6,7 @@ import json
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from novel_to_comic.briefing import require_approved_brief
 from novel_to_comic.models.adaptation import (
@@ -170,16 +170,35 @@ async def produce_book_adaptation(
     )
 
     with ctx.execute(total=2, estimated_cost_usd=initial_estimate):
-        treatment_result = await generate(
-            system_prompt=(
-                "You are the book-level narrative architect for a comic adaptation."
-            ),
-            user_content=treatment_prompt,
-            json_schema=NarrativeTreatment.model_json_schema(),
-            feature="adapt.narrative_treatment",
-        )
-        treatment = NarrativeTreatment.model_validate(treatment_result.value)
-        ctx.record_item_done(usage=treatment_result.usage)
+        treatment_prompt_attempt = treatment_prompt
+        treatment: NarrativeTreatment | None = None
+        for attempt in range(1, _MAX_ADAPT_ATTEMPTS + 1):
+            treatment_result = await generate(
+                system_prompt=(
+                    "You are the book-level narrative architect for a comic adaptation."
+                ),
+                user_content=treatment_prompt_attempt,
+                json_schema=NarrativeTreatment.model_json_schema(),
+                feature="adapt.narrative_treatment",
+            )
+            # A retried attempt was still paid for, so its usage is recorded
+            # without counting a completed item.
+            if treatment_result.usage is not None:
+                ctx.record_api_usage(treatment_result.usage)
+            try:
+                treatment = NarrativeTreatment.model_validate(treatment_result.value)
+            except ValidationError as error:
+                if attempt == _MAX_ADAPT_ATTEMPTS:
+                    raise
+                treatment_prompt_attempt = _schema_repair_prompt(
+                    treatment_prompt,
+                    treatment_result.value,
+                    error,
+                )
+                continue
+            ctx.record_item_done()
+            break
+        assert treatment is not None  # the loop either binds it or raises
         ctx.progress(1, 2)
 
         book_prompt = build_book_adaptation_prompt(
@@ -212,8 +231,22 @@ async def produce_book_adaptation(
                 json_schema=_BookDraft.model_json_schema(),
                 feature="adapt.book",
             )
-            draft = _BookDraft.model_validate(book_result.value)
-            ctx.record_item_done(usage=book_result.usage)
+            if book_result.usage is not None:
+                ctx.record_api_usage(book_result.usage)
+            try:
+                draft = _BookDraft.model_validate(book_result.value)
+            except ValidationError as error:
+                # A shape slip is not a contract violation the user can act on;
+                # it is a formatting mistake, and re-running the whole stage by
+                # hand costs the full generation again.
+                if attempt == _MAX_ADAPT_ATTEMPTS:
+                    raise
+                attempt_prompt = _schema_repair_prompt(
+                    book_prompt,
+                    book_result.value,
+                    error,
+                )
+                continue
             candidate = BookAdaptation(
                 revision=1,
                 source_sha256=source.source_sha256,
@@ -225,6 +258,7 @@ async def produce_book_adaptation(
             )
             validation = validate_book_adaptation(source, brief, candidate)
             if not validation.invariant_failures:
+                ctx.record_item_done()
                 break
             if attempt < _MAX_ADAPT_ATTEMPTS:
                 # One repair pass with the exact failures. Most Adapt invariants
@@ -248,6 +282,18 @@ async def produce_book_adaptation(
         artifacts.write_adaptation(adaptation)
 
     return adaptation
+
+
+def _schema_repair_prompt(base_prompt: str, raw: object, error: Exception) -> str:
+    """Re-prompt with the exact schema errors from the previous payload."""
+
+    return (
+        f"{base_prompt}\n\nYour previous response did not match the required JSON "
+        "schema. Return one corrected, complete JSON object: use JSON arrays for "
+        "every list field and exactly one of the permitted values for every "
+        "enumerated field.\n\nYOUR PREVIOUS JSON:\n"
+        f"{json.dumps(raw, indent=2, default=str)}\n\nVALIDATION ERRORS:\n{error}"
+    )
 
 
 def _repair_prompt(book_prompt: str, validation: AdaptationValidation) -> str:

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from novel_to_comic import artifacts
 from novel_to_comic.briefing import build_brief_inference_prompt, propose_brief
-from novel_to_comic.clients.text import generate_json
+from novel_to_comic.clients.structured_call import (
+    StructuredCallError,
+    generate_validated_json,
+)
 from novel_to_comic.config import Config
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.state import PipelineState
@@ -23,17 +27,40 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
     prompt = build_brief_inference_prompt(source, story_bible)
     model = config.effective_extraction_model()
     estimate = estimate_text_cost(model, prompt, output_chars=8_000)
-    with ctx.execute(total=1, estimated_cost_usd=estimate):
-        result = await generate_json(
-            config,
-            model,
-            "Infer the adaptation brief. Return only the requested JSON object.",
-            prompt,
-            feature="brief.infer",
+    def correction(raw: object, error: Exception) -> str:
+        # Shape slips are repaired deterministically in propose_brief; anything
+        # still invalid needs the model, so it gets the exact errors rather than
+        # costing the user the whole stage.
+        return (
+            f"{prompt}\n\nYour previous response did not satisfy the adaptation "
+            "brief contract. Return one corrected JSON object; use exactly one of "
+            "'faithful', 'medium_specific', or 'transformative' for "
+            "transformation_level, and JSON arrays of strings for every list "
+            f"field.\n\nYOUR PREVIOUS JSON:\n{json.dumps(raw, indent=2, default=str)}"
+            f"\n\nVALIDATION ERRORS:\n{error}"
         )
-        brief = propose_brief(result.value)
+
+    with ctx.execute(total=1, estimated_cost_usd=estimate):
+        try:
+            outcome = await generate_validated_json(
+                config,
+                model=model,
+                system_prompt=(
+                    "Infer the adaptation brief. Return only the requested JSON object."
+                ),
+                user_content=prompt,
+                parse=propose_brief,
+                correction=correction,
+                label="Adaptation brief inference",
+                feature="brief.infer",
+            )
+        except StructuredCallError as exc:
+            raise exc.last_error from exc
+        brief = outcome.value
         target.write_brief(brief)
-        ctx.record_item_done(usage=result.usage)
+        ctx.record_item_done(
+            usage=outcome.usage_records[-1] if outcome.usage_records else None
+        )
         ctx.progress(1, 1)
     return brief
 

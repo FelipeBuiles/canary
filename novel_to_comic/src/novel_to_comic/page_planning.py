@@ -6,7 +6,7 @@ import json
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from novel_to_comic.models.adaptation import BookAdaptation, LetteringItem
 from novel_to_comic.models.page import (
@@ -187,8 +187,17 @@ async def produce_book_plan(
                 json_schema=_BookPlanDraft.model_json_schema(),
                 feature="plan.book",
             )
-            draft = _BookPlanDraft.model_validate(result.value)
-            ctx.record_item_done(usage=result.usage)
+            # A retried attempt was still paid for, so its usage is recorded
+            # without counting a completed item.
+            if result.usage is not None:
+                ctx.record_api_usage(result.usage)
+            try:
+                draft = _BookPlanDraft.model_validate(result.value)
+            except ValidationError as error:
+                if attempt == _MAX_PLAN_ATTEMPTS:
+                    raise
+                attempt_prompt = _schema_repair_prompt(prompt, result.value, error)
+                continue
             try:
                 pages = _canonical_pages(adaptation, draft, pin_by_beat)
             except PlanInvariantError as allocation_error:
@@ -210,6 +219,7 @@ async def produce_book_plan(
                     ),
                 )
             if not validation.invariant_failures:
+                ctx.record_item_done()
                 break
             if attempt < _MAX_PLAN_ATTEMPTS:
                 attempt_prompt = _repair_prompt(prompt, validation)
@@ -240,6 +250,18 @@ async def produce_book_plan(
             artifacts.write_page(page)
         artifacts.write_plan(plan)
     return plan
+
+
+def _schema_repair_prompt(base_prompt: str, raw: object, error: Exception) -> str:
+    """Re-prompt with the exact schema errors from the previous payload."""
+
+    return (
+        f"{base_prompt}\n\nYour previous response did not match the required JSON "
+        "schema. Return one corrected, complete JSON object: use JSON arrays for "
+        "every list field and exactly one of the permitted values for every "
+        "enumerated field.\n\nYOUR PREVIOUS JSON:\n"
+        f"{json.dumps(raw, indent=2, default=str)}\n\nVALIDATION ERRORS:\n{error}"
+    )
 
 
 def _repair_prompt(prompt: str, validation: PlanValidation) -> str:
