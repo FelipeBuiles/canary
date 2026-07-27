@@ -374,6 +374,12 @@ def _complete_source_start_quotes(story_bible: StoryBible, novel_text: str) -> N
     as the scene-boundary anchor. This post-processing repairs both older
     fixed-length model output and occasional future model truncation.
     """
+    from novel_to_comic.source_extraction import _source_units
+
+    units = _source_units(novel_text)
+    if not units:
+        return
+
     search_from = 0
     for scene in story_bible.scenes:
         quote = scene.source_start_quote.strip()
@@ -386,12 +392,21 @@ def _complete_source_start_quotes(story_bible: StoryBible, novel_text: str) -> N
         if position == -1:
             continue
 
-        if not re.search(r"[.!?][\"'\u2019\u201d)\]]*$", quote):
-            quote_end = position + len(quote)
-            sentence_end = _sentence_end_after(novel_text, quote_end)
-            if sentence_end is not None:
-                scene.source_start_quote = novel_text[position:sentence_end].strip()
-        search_from = position + 1
+        matching_unit = None
+        for unit in units:
+            semantic_start = unit.start_offset + len(unit.text) - len(unit.text.lstrip())
+            if position == semantic_start:
+                matching_unit = unit
+                break
+            if unit.start_offset <= position < unit.end_offset:
+                matching_unit = unit
+                break
+
+        if matching_unit is not None:
+            scene.source_start_quote = matching_unit.text.strip()
+            search_from = matching_unit.end_offset
+        else:
+            search_from = position + 1
 
 
 async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBible:

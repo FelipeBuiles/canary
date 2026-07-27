@@ -35,8 +35,12 @@ def get_story(project=Depends(get_project)):
         brief = target.read_brief()
     except ArtifactMissing:
         brief = None
+    try:
+        story_bible = artifacts.read_story_bible(project_dir)
+    except ArtifactMissing as exc:
+        raise _not_found(exc) from exc
     return {
-        "story_bible": artifacts.read_story_bible(project_dir),
+        "story_bible": story_bible,
         "brief": brief,
     }
 
@@ -44,7 +48,10 @@ def get_story(project=Depends(get_project)):
 @router.get("/story-bible")
 def get_story_bible(project=Depends(get_project)):
     project_dir, _config, _state = project
-    return artifacts.read_story_bible(project_dir)
+    try:
+        return artifacts.read_story_bible(project_dir)
+    except ArtifactMissing as exc:
+        raise _not_found(exc) from exc
 
 
 @router.put("/story-bible")

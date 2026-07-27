@@ -14,6 +14,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 from novel_to_comic.model_costs import DEFAULT_COST_MAP_PATH, refresh_litellm_cost_cache
+from novel_to_comic.target_artifacts import ArtifactMissing
 from novel_to_comic.usage import audit_pricing
 
 from .generation_jobs import generation_worker
@@ -275,6 +276,11 @@ async def _lifespan(app: FastAPI):
 
 def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app = FastAPI(title="Scenewright", lifespan=_lifespan)
+
+    @app.exception_handler(ArtifactMissing)
+    async def artifact_missing_exception_handler(request, exc: ArtifactMissing):
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
+
     app.middleware("http")(request_log_middleware)
     env = (os.environ.get("CANARY_ENV") or os.environ.get("ENV") or "dev").lower()
     if env == "production":
