@@ -47,9 +47,12 @@ def style_sample_fallback_brief(story_bible: StoryBible) -> str:
         or (first_location.name if first_location else "")
         or "a dramatic atmospheric setting"
     )[:200]
+    scene = story_bible.scenes[0].summary[:240] if story_bible.scenes else ""
+    context = f" Use this quiet story context: {scene}" if scene else ""
     return (
-        f"A three-quarter view of one figure — {character} — in {location}. "
-        "One frozen instant with the figure as the clear focal point and the "
-        "setting giving depth behind them. Directional light models the face "
-        "and figure, with bright accents and deep shadow both in frame."
+        f"A coherent three-panel micro-beat follows one figure — {character} — in "
+        f"{location}.{context} Begin with the environment, show the figure at "
+        "three-quarter or full length during one quiet characteristic action, then "
+        "finish on an expressive detail. Directional light models the face and figure "
+        "while the setting retains clear depth and material variety."
     )

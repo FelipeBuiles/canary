@@ -30,6 +30,12 @@ from novel_to_comic.style_briefing import (
     normalize_prose_brief,
     style_sample_fallback_brief,
 )
+from novel_to_comic.style_contract import (
+    DEFAULT_LETTERING_STANDARD,
+    DEFAULT_PAGE_FRAMING_STANDARD,
+    style_template_for_suggestion,
+    page_style_template,
+)
 from novel_to_comic.stage_runtime import StageRuntime
 
 logger = logging.getLogger(__name__)
@@ -38,14 +44,16 @@ SAMPLE_COUNT = 5
 LLM_REQUEST_COUNT = 8  # ask for more than we need so dedup still yields >= 5
 SAMPLE_CONCURRENCY = 2
 _GENERATION_MAX_ATTEMPTS = 2
-SUGGESTION_SCHEMA_VERSION = 2
-STYLE_BRIEF_VERSION = 2
+SUGGESTION_SCHEMA_VERSION = 3
+STYLE_BRIEF_VERSION = 3
 PORTFOLIO_ROLES = (
     "story_fit_primary", "story_fit_secondary", "adjacent", "contrast", "wildcard",
 )
 STYLE_VALIDATION_ACTION = "A decisive full-body action with readable silhouette and hand gesture."
 STYLE_VALIDATION_COMPOSITION = (
-    "Dynamic portrait action frame with foreground, subject, and environment depth."
+    "One complete portrait comic-page proof with three panels: environment setup, "
+    "full-body action, and expressive reaction detail, all using the same declared "
+    "framing, border, gutter, and lettering system."
 )
 
 _SYSTEM_PROMPT = (
@@ -103,17 +111,34 @@ _SYSTEM_PROMPT = (
     "then one aesthetically adjacent alternative, one viable contrast, and one controlled "
     "wildcard. Judge every direction as sequential art: panel-size readability, repeatable "
     "characters, expressive faces and action, clear environments, and value separation.\n\n"
+    "For each direction, also define a production system that can remain invariant across "
+    "an entire book:\n"
+    "- lettering: name one typeface class/family; require preservation of canonical "
+    "capitalization exactly (never convert all copy to a different case); name text, "
+    "balloon, and caption colors; balloon/caption shapes; and one outline treatment. "
+    "Canonical wording and capitalization must always be preserved exactly. Role-specific "
+    "differences must be intentional variants inside the same system, never improvised.\n"
+    "- page_framing: choose exactly one outer-page system — either the same fixed margin "
+    "on every page or full bleed on every page — plus one panel-border and gutter treatment. "
+    "Never alternate systems by page and never use scribbled borders unless that exact "
+    "border treatment is the declared invariant.\n\n"
     "Output JSON array only, no markdown. Every object needs: label, medium, palette, "
     "portfolio_role (story_fit_primary, story_fit_secondary, adjacent, contrast, or wildcard), "
-    "line_rendering, lighting_value, sequential_art_strengths, story_fit, risk, and template. "
-    "Template remains a 40-70 word downstream generation direction."
+    "line_rendering, lighting_value, lettering, page_framing, sequential_art_strengths, "
+    "story_fit, risk, and template. Template remains a 40-70 word downstream generation "
+    "direction."
 )
 
 
 def _stable_suggestion_id(suggestion: dict) -> str:
-    material = "\n".join(
-        str(suggestion.get(key) or "").strip() for key in ("label", "medium", "template")
+    values = (
+        suggestion.get("label"),
+        suggestion.get("medium"),
+        suggestion.get("template"),
+        suggestion.get("lettering") or DEFAULT_LETTERING_STANDARD,
+        suggestion.get("page_framing") or DEFAULT_PAGE_FRAMING_STANDARD,
     )
+    material = "\n".join(str(value or "").strip() for value in values)
     return f"style_{hashlib.sha256(material.encode('utf-8')).hexdigest()[:16]}"
 
 
@@ -130,6 +155,10 @@ def normalize_suggestion(
         "palette": suggestion.get("palette") or "",
         "line_rendering": suggestion.get("line_rendering") or "",
         "lighting_value": suggestion.get("lighting_value") or "",
+        "lettering": suggestion.get("lettering") or DEFAULT_LETTERING_STANDARD,
+        "page_framing": (
+            suggestion.get("page_framing") or DEFAULT_PAGE_FRAMING_STANDARD
+        ),
         "sequential_art_strengths": suggestion.get("sequential_art_strengths") or "",
         "story_fit": suggestion.get("story_fit") or "",
         "risk": suggestion.get("risk") or "",
@@ -384,25 +413,25 @@ async def generate_suggestions(
 # or fails, build_style_sample_prompt falls back to a deterministic body.
 
 STYLE_SAMPLE_BRIEF_SYSTEM_PROMPT = (
-    "You write the subject brief for a style proof image: one image used to judge "
-    "candidate art styles for a comic adaptation of a novel. You receive the story's "
-    "main characters and locations.\n"
+    "You write the subject brief for a complete-page style proof used to judge candidate "
+    "art and production styles for a comic adaptation of a novel. You receive the story's "
+    "curated characters, locations, and early scene evidence.\n"
     "\n"
     "Use the first listed character and first listed location (already curated as the "
-    "proof subjects): a face and figure that show how people render, an "
-    "environment with depth and material variety. Let each candidate art direction own "
-    "the palette, contrast, and value structure.\n"
+    "proof subjects): a face and figure that show how people render, and an environment "
+    "with depth and material variety. Use the first scene that contains both as quiet "
+    "story context when one is supplied. Do not quote source prose as lettering. Let each "
+    "candidate art direction own the palette, contrast, and value structure.\n"
     "\n"
     "Then write that moment as a single flowing brief of 60-120 words, the way a "
-    "film director describes one frozen frame:\n"
+    "film director describes the shared visual content of one three-panel proof page:\n"
     "- Introduce the character with their full physical description (age, build, "
     "hair, face, wardrobe) before their action.\n"
-    "- Keep the figure the clear focal point at three-quarter or full length, with "
-    "the location giving depth behind them; compose for a portrait frame.\n"
+    "- Use an environment setup, a three-quarter or full-length character view, and one "
+    "expressive detail. Keep them in one coherent place and moment sequence.\n"
     "- Name the physical light source and direction, but do not prescribe its color, "
     "contrast, value range, or shadow density.\n"
-    "- Exactly one frozen instant and a quiet, characteristic action — no climactic "
-    "story beat.\n"
+    "- Use one quiet, characteristic micro-beat — no climactic story event.\n"
     "- Never mention art style, medium, or rendering technique: the same brief is "
     "rendered in several candidate styles and must not favor any of them.\n"
     "- Plain declarative prose only: no headings, labels, bullet points, markdown, "
@@ -428,6 +457,20 @@ def _style_sample_brief_source(story_bible: StoryBible) -> str:
         for loc in story_bible.locations[:6]:
             mood = f" (mood: {loc.mood})" if loc.mood else ""
             lines.append(f"- {loc.name}{mood}: {loc.visual_anchor or loc.name}")
+    if story_bible.scenes:
+        lines.append("Early scene evidence:")
+        for scene in story_bible.scenes[:6]:
+            anchor = (
+                f' Source anchor: "{scene.source_start_quote}"'
+                if scene.source_start_quote
+                else ""
+            )
+            lines.append(
+                f"- {scene.id} ({scene.scene_type}/{scene.narrative_beat}): "
+                f"location={scene.location_id or 'unknown'}; "
+                f"characters={','.join(scene.character_ids) or 'none'}; "
+                f"{scene.summary}.{anchor}"
+            )
     return "\n".join(lines)
 
 
@@ -523,8 +566,7 @@ async def generate_sample_image(
     *brief* is the shared prose body from ``ensure_style_sample_brief``;
     when None the prompt falls back to its deterministic body.
 
-    Slice 06: style proof images use a portrait 4:5 frame — the style-sample
-    prompt promises "Portrait 4:5 frame, filled edge to edge." The generation
+    Style proof images use a portrait 4:5 complete-page specimen. The generation
     dimensions must agree with that promised composition instead of the
     (default square) panel config dimensions.
     """
@@ -562,6 +604,7 @@ def build_style_sample_request(
     from novel_to_comic.image_geometry import style_proof_dimensions
 
     width, height = style_proof_dimensions()
+    selected_style = page_style_template(config.style_template)
     character = bible.characters[0] if bible.characters else None
     location = bible.locations[0] if bible.locations else None
     anchors = tuple(filter(None, (
@@ -589,18 +632,29 @@ def build_style_sample_request(
             anchors=anchors,
             subjects=subjects,
             visual_brief=scene_brief,
-            composition=composition or "Portrait style proof frame filled edge to edge.",
+            composition=composition or (
+                "One complete portrait comic-page style proof with three clearly separated "
+                "panels, rendered using the declared invariant outer-page framing, border, "
+                "margin, and gutter system."
+            ),
             setting=location.visual_anchor if location else None,
-            constraints="Wordless artwork with no lettering or borders.",
+            constraints=(
+                "This is a production-design proof, not wordless concept art. Include exactly "
+                'these three lettering specimens once each: narration “The night held its '
+                'breath.”, dialogue “We keep moving.”, and SFX “KRAK”. Apply the declared '
+                "lettering standard consistently to all three. No other readable words, title, "
+                "logo, signature, or watermark. Show the declared page framing and panel-border "
+                "system clearly."
+            ),
             width=width,
             height=height,
             generation_width=width,
             generation_height=height,
             generation_shape="portrait",
         ),
-        selected_style_text=config.style_template,
+        selected_style_text=selected_style,
         selected_style_source_hash=hashlib.sha256(
-            config.style_template.encode("utf-8")
+            selected_style.encode("utf-8")
         ).hexdigest(),
     )
     request = compile_non_panel_request(
@@ -763,7 +817,7 @@ def missing_sample_indices(
         if config is None or bible is None:
             fresh = output.exists()
         else:
-            template = suggestion.get("template") or config.style_template
+            template = style_template_for_suggestion(suggestion)
             request = build_style_sample_request(
                 config.model_copy(update={"style_template": template}), bible,
                 brief or style_sample_fallback_brief(bible),
@@ -798,7 +852,7 @@ async def generate_samples_for_indices(
 
     async def _one(idx: int) -> None:
         s = suggestions[idx - 1]
-        template = s.get("template", config.style_template)
+        template = style_template_for_suggestion(s)
         sample_config = config.model_copy(update={"style_template": template})
         sample_path = artifacts.style_sample_path(project_dir, idx)
         candidate_id = s.get("id")
@@ -882,8 +936,15 @@ def _style_sample_estimate(config: Config, project_dir: Path, bible: StoryBible,
         asset_identity=identity,
         prompt=GenerationPromptInput(
             visual_brief=brief or style_sample_fallback_brief(bible),
-            composition="Portrait style proof frame filled edge to edge.",
-            constraints="Wordless artwork with no lettering or borders.",
+            composition=(
+                "One complete portrait comic-page style proof with three clearly separated "
+                "panels using the invariant outer-page framing system."
+            ),
+            constraints=(
+                "Include the narration “The night held its breath.”, dialogue “We keep "
+                "moving.”, and SFX “KRAK” exactly once each, using the declared lettering "
+                "standard. Show the declared borders, margins, and gutters. No other text."
+            ),
             width=width,
             height=height,
             generation_width=width,
@@ -1000,7 +1061,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     bible = artifacts.read_story_bible_safe(project_dir)
     if bible is not None:
         templates = (
-            [s.get("template", config.style_template) for s in suggestions]
+            [style_template_for_suggestion(s) for s in suggestions]
             if suggestions else [config.style_template] * sample_count
         )
         missing = set(missing_sample_indices(

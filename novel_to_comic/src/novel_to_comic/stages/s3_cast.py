@@ -23,6 +23,10 @@ from novel_to_comic.models.generation import PromptAnchor, PromptSubject
 from novel_to_comic.models.story_bible import Character, Prop, StoryBible
 from novel_to_comic.asset_versions import record_asset_version
 from novel_to_comic.stage_runtime import StageRuntime
+from novel_to_comic.style_contract import (
+    page_style_template,
+    style_template_for_suggestion,
+)
 from novel_to_comic.state_assets import (
     StateAssetGenerationSpec,
     build_character_state_spec,
@@ -241,8 +245,12 @@ def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
         try:
             data = json.loads(suggestions_path.read_text())
             suggestions = data.get("suggestions", [])
+            active = page_style_template(style_template)
             for i, s in enumerate(suggestions, 1):
-                if isinstance(s, dict) and s.get("template", "").strip() == style_template.strip():
+                if (
+                    isinstance(s, dict)
+                    and style_template_for_suggestion(s) == active
+                ):
                     candidate = artifacts.style_sample_path(project_dir, i)
                     if candidate.exists():
                         return candidate

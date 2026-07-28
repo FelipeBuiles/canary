@@ -708,6 +708,7 @@ def _build_sections(
     has_subject_references = any(
         instruction.role == "subject" for instruction in reference_instructions
     )
+    clean_dynamic = _clean if asset_kind == "style_sample" else sanitize_dynamic_text
 
     # ── 1. Protected anchors (verbatim — NEVER sanitized) ────────────────
     anchor_lines: list[str] = []
@@ -736,30 +737,38 @@ def _build_sections(
     ):
         # Dynamic fields are sanitized; protected anchors are emitted above
         # verbatim and never reach this path.
-        value = sanitize_dynamic_text(getattr(prompt, field_name, None))
+        value = clean_dynamic(getattr(prompt, field_name, None))
         # Strip any hardcoded medium directive that contradicts the style.
         value = strip_hardcoded_mediums(value)
         if value:
             direction_lines.append(f"{label}: {value}")
     props = getattr(prompt, "props", []) or []
     if props:
-        cleaned = [sanitize_dynamic_text(p) for p in props if sanitize_dynamic_text(p)]
+        cleaned = [clean_dynamic(p) for p in props if clean_dynamic(p)]
         if cleaned:
             direction_lines.append(f"Key props: {'; '.join(cleaned)}")
-    key_objects = sanitize_dynamic_list(getattr(prompt, "key_objects", []) or [])
+    key_objects = (
+        [
+            cleaned
+            for value in (getattr(prompt, "key_objects", []) or [])
+            if (cleaned := clean_dynamic(value))
+        ]
+        if asset_kind == "style_sample"
+        else sanitize_dynamic_list(getattr(prompt, "key_objects", []) or [])
+    )
     if key_objects:
         direction_lines.append(f"Key objects: {'; '.join(key_objects)}")
     # Visual requirements are deduplicated against owned facts and capped.
     deduped_reqs, _ = dedupe_visual_requirements(prompt)
     if deduped_reqs:
         direction_lines.append(f"Must show: {'; '.join(deduped_reqs)}")
-    continuity = sanitize_dynamic_text(getattr(prompt, "continuity_note", None))
+    continuity = clean_dynamic(getattr(prompt, "continuity_note", None))
     if continuity:
         direction_lines.append(f"Continuity: {continuity}")
     brief = (
-        sanitize_dynamic_text(getattr(prompt, "visual_brief", None))
-        or sanitize_dynamic_text(getattr(prompt, "distilled_prompt", None))
-        or sanitize_dynamic_text(getattr(prompt, "full_prompt", None))
+        clean_dynamic(getattr(prompt, "visual_brief", None))
+        or clean_dynamic(getattr(prompt, "distilled_prompt", None))
+        or clean_dynamic(getattr(prompt, "full_prompt", None))
     )
     brief = dedupe_brief_against_continuity(brief, continuity)
     brief = strip_hardcoded_mediums(brief)
@@ -815,7 +824,7 @@ def _build_sections(
         ))
 
     # ── 6. User constraint addenda (sanitized) ───────────────────────────
-    user_constraints = sanitize_dynamic_text(getattr(prompt, "constraints", None))
+    user_constraints = clean_dynamic(getattr(prompt, "constraints", None))
     if user_constraints:
         sections.append(CompiledPromptSection(
             kind="user_addenda",
@@ -922,7 +931,11 @@ def compile_generation_request(
     # conflicts. The anchor is preserved verbatim; the no-lettering constraint
     # is retained. These are warnings (non-blocking) surfaced for upstream
     # correction — diagnostics do not affect the compiled hash.
-    anchor_conflicts = detect_anchor_text_conflicts(prompt)
+    anchor_conflicts = (
+        ()
+        if asset_kind == "style_sample"
+        else detect_anchor_text_conflicts(prompt)
+    )
     warnings = list(reference_plan.warnings)
     for conflict in anchor_conflicts:
         warnings.append(

@@ -12,6 +12,7 @@ from novel_to_comic.server.routers.styles import (
 )
 from novel_to_comic.stages.s2_style import save_suggestions
 from novel_to_comic.state import StageStatus, create_initial_state, load_state
+from novel_to_comic.style_contract import page_style_template
 
 
 def test_set_active_style_clears_completed_style_failures(tmp_path):
@@ -30,15 +31,16 @@ def test_set_active_style_clears_completed_style_failures(tmp_path):
         project=(tmp_path, Config(style_template="old"), state),
     )
 
+    expected_template = page_style_template("bold ink wash")
     assert result == {
         "status": "updated",
         "index": 1,
-        "style_template": "bold ink wash",
+        "style_template": expected_template,
     }
     assert state.stages["style"].items_failed == []
     assert load_state(tmp_path).stages["style"].items_failed == []
     loaded_config, _env_file = load_config(tmp_path)
-    assert loaded_config.style_template.strip() == "bold ink wash"
+    assert loaded_config.style_template.strip() == expected_template
 
 
 def test_selected_style_reconciliation_removes_failure_from_status_payload(tmp_path):
