@@ -24,7 +24,6 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
     model = config.effective_adapt_model()
 
     async def generate(**kwargs):
-        kwargs.pop("json_schema", None)
         return await generate_json(config=config, model=model, **kwargs)
 
     return await produce_book_adaptation(

@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from novel_to_comic.book_adaptation import (
     build_book_adaptation_prompt,
+    normalize_treatment,
     build_narrative_treatment_prompt,
     produce_book_adaptation,
     validate_book_adaptation,
@@ -1049,3 +1050,125 @@ def test_a_repaired_attempt_is_billed_without_inflating_progress(
     assert len(state.stages["adapt"].usage_log) == 3
     assert state.stages["adapt"].items_done == 2
     assert state.stages["adapt"].cost_usd == pytest.approx(0.003)
+
+
+def test_the_treatment_prompt_states_the_exact_keys_it_wants() -> None:
+    # Adapt described the treatment in prose without ever naming a key, and a
+    # model returned a well-written document under eleven invented field names.
+    prompt = build_narrative_treatment_prompt(
+        _source_document(),
+        _story_bible(),
+        _approved_brief(),
+    )
+
+    for field in NarrativeTreatment.model_fields:
+        assert f'"{field}"' in prompt, field
+    assert "Do not add, rename, or omit keys" in prompt
+
+
+def test_the_book_prompt_states_the_shape_of_a_beat_and_a_ledger_entry() -> None:
+    prompt = build_book_adaptation_prompt(
+        _source_document(),
+        _story_bible(),
+        _approved_brief(),
+        _book_adaptation().treatment,
+    )
+
+    assert '"beats"' in prompt and '"ledger"' in prompt
+    # The nested element types must be spelled out, not just referenced.
+    assert "<AdaptedBeat> = {" in prompt
+    assert "<AdaptationLedgerEntry> = {" in prompt
+    assert '"narrative_function"' in prompt
+
+
+def test_a_treatment_returned_in_the_wrong_containers_is_reshaped() -> None:
+    # Exactly the shapes one model produced: a bare string where a list belongs,
+    # a list of objects, and an object keyed by motif name.
+    normalized = normalize_treatment(
+        {
+            "causal_spine": "Thurston inherits the papers and seals his fate.",
+            "character_turns": [
+                {"character": "Thurston", "turn": "There is nowhere left to go."},
+            ],
+            "motifs": {"carven_idols": "The idol recurs in the closing captions."},
+        }
+    )
+    treatment = NarrativeTreatment.model_validate(normalized)
+
+    assert treatment.causal_spine == (
+        "Thurston inherits the papers and seals his fate.",
+    )
+    assert treatment.character_turns == (
+        "character: Thurston; turn: There is nowhere left to go.",
+    )
+    assert treatment.motifs == (
+        "carven_idols: The idol recurs in the closing captions.",
+    )
+
+
+def test_keys_the_contract_does_not_have_are_dropped_not_fatal() -> None:
+    normalized = normalize_treatment(
+        {
+            "causal_spine": ["A causal spine."],
+            "title": "The Call of Cthulhu",
+            "acts": [{"act_number": 1}],
+            "narrator_voice": {"treatment": "Retrospective."},
+        }
+    )
+
+    assert set(normalized) == {"causal_spine"}
+    assert NarrativeTreatment.model_validate(normalized).causal_spine == (
+        "A causal spine.",
+    )
+
+
+def test_a_treatment_in_the_wrong_containers_costs_no_extra_model_call(
+    tmp_path: Path,
+) -> None:
+    # Reshaping is deterministic, so the stage must not pay for a retry to fix
+    # something it can fix itself.
+    expected = _book_adaptation()
+    treatment = expected.treatment.model_dump(mode="json")
+    slipped = {
+        **treatment,
+        "causal_spine": treatment["causal_spine"][0],
+        "motifs": {"door": "The door recurs."},
+    }
+    responses = [
+        slipped,
+        {
+            "beats": [beat.model_dump(mode="json") for beat in expected.beats],
+            "ledger": [entry.model_dump(mode="json") for entry in expected.ledger],
+        },
+    ]
+    calls: list[dict] = []
+
+    async def generate(**request):
+        calls.append(request)
+        return ApiResult(value=responses[len(calls) - 1], usage=None)
+
+    produced = asyncio.run(
+        produce_book_adaptation(
+            _source_document(),
+            _story_bible(),
+            _approved_brief(),
+            artifacts=TargetArtifacts(tmp_path),
+            ctx=StageRuntime(
+                "adapt",
+                PipelineState(
+                    project_name="adapt-test",
+                    novel_path="novel.txt",
+                    created_at=datetime.now(timezone.utc),
+                ),
+                tmp_path,
+            ),
+            model="gpt-4o-mini",
+            generate=generate,
+        )
+    )
+
+    assert len(calls) == 2
+    assert produced.treatment.causal_spine == (
+        expected.treatment.causal_spine[0],
+    )
+    assert produced.treatment.motifs == ("door: The door recurs.",)
