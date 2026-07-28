@@ -1,6 +1,7 @@
 import asyncio
 import base64
 from pathlib import Path
+from urllib.parse import parse_qs
 
 import httpx
 import pytest
@@ -43,7 +44,9 @@ class _FakeAsyncClient:
 
     async def post(self, url, **kwargs):
         self.__class__.last_request = {"url": url, **kwargs}
-        return _FakeResponse(self.__class__.response_payload, status_code=self.__class__.status_code)
+        return _FakeResponse(
+            self.__class__.response_payload, status_code=self.__class__.status_code
+        )
 
     async def get(self, url, **kwargs):
         self.__class__.last_request = {"url": url, **kwargs}
@@ -53,8 +56,12 @@ class _FakeAsyncClient:
 @pytest.fixture(autouse=True)
 def _patch_events(monkeypatch):
     events = []
-    monkeypatch.setattr(client, "_insert_event", lambda **kwargs: events.append(("insert", kwargs)))
-    monkeypatch.setattr(client, "_finalize_event", lambda **kwargs: events.append(("finalize", kwargs)))
+    monkeypatch.setattr(
+        client, "_insert_event", lambda **kwargs: events.append(("insert", kwargs))
+    )
+    monkeypatch.setattr(
+        client, "_finalize_event", lambda **kwargs: events.append(("finalize", kwargs))
+    )
     return events
 
 
@@ -66,12 +73,15 @@ def _patch_http(monkeypatch, payload: dict):
 
 
 def test_generate_structured_object_returns_dict_and_usage(monkeypatch, _patch_events):
-    _patch_http(monkeypatch, {
-        "id": "resp_1",
-        "model": "openai/gpt-5.4-mini",
-        "choices": [{"message": {"content": '{"ok": true}'}}],
-        "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
-    })
+    _patch_http(
+        monkeypatch,
+        {
+            "id": "resp_1",
+            "model": "openai/gpt-5.4-mini",
+            "choices": [{"message": {"content": '{"ok": true}'}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
+        },
+    )
 
     result = asyncio.run(
         client.generate_structured_object(
@@ -80,6 +90,11 @@ def test_generate_structured_object_returns_dict_and_usage(monkeypatch, _patch_e
             system_prompt="Return JSON.",
             user_content="{}",
             feature="test.json",
+            json_schema={
+                "type": "object",
+                "properties": {"ok": {"type": "boolean"}},
+                "required": ["ok"],
+            },
         )
     )
 
@@ -91,16 +106,25 @@ def test_generate_structured_object_returns_dict_and_usage(monkeypatch, _patch_e
     assert result.usage.provider_model == "openai/gpt-5.4-mini"
     assert result.usage.input_tokens == 10
     assert result.usage.output_tokens == 3
+    response_format = _FakeAsyncClient.last_request["json"]["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["name"] == "test_json"
+    assert response_format["json_schema"]["strict"] is True
+    assert response_format["json_schema"]["schema"]["required"] == ["ok"]
     assert _patch_events[0][0] == "insert"
     assert _patch_events[-1][1]["status"] == "succeeded"
 
 
-def test_generate_structured_object_retries_then_succeeds_on_malformed_json(monkeypatch, _patch_events):
+def test_generate_structured_object_retries_then_succeeds_on_malformed_json(
+    monkeypatch, _patch_events
+):
     payloads = [
         {
             "id": "resp_1",
             "model": "openai/gpt-5.4-mini",
-            "choices": [{"message": {"content": '{"ok": tru'}, "finish_reason": "length"}],
+            "choices": [
+                {"message": {"content": '{"ok": tru'}, "finish_reason": "length"}
+            ],
             "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
         },
         {
@@ -136,20 +160,27 @@ def test_generate_structured_object_retries_then_succeeds_on_malformed_json(monk
 
     assert result.value == {"ok": True}
     assert calls["n"] == 2
+    assert len(result.additional_usage) == 1
+    assert result.additional_usage[0].input_tokens == 10
     retry_message = calls["payloads"][1]["messages"][1]["content"]
     assert "previous response was not valid JSON" in retry_message
     assert "reached the output token limit" in retry_message
     assert "Expecting value" in retry_message
 
 
-def test_generate_structured_object_raises_with_context_after_exhausting_retries(monkeypatch, _patch_events):
+def test_generate_structured_object_raises_with_context_after_exhausting_retries(
+    monkeypatch, _patch_events
+):
     bad_content = '{"ok": tru'
-    _patch_http(monkeypatch, {
-        "id": "resp_1",
-        "model": "openai/gpt-5.4-mini",
-        "choices": [{"message": {"content": bad_content}}],
-        "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
-    })
+    _patch_http(
+        monkeypatch,
+        {
+            "id": "resp_1",
+            "model": "openai/gpt-5.4-mini",
+            "choices": [{"message": {"content": bad_content}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
+        },
+    )
 
     with pytest.raises(ValueError) as exc_info:
         asyncio.run(
@@ -170,12 +201,15 @@ def test_generate_structured_object_raises_with_context_after_exhausting_retries
 
 
 def test_generate_text_does_not_store_prompt_in_params(monkeypatch, _patch_events):
-    _patch_http(monkeypatch, {
-        "id": "resp_1",
-        "model": "anthropic/claude-sonnet-4-6",
-        "choices": [{"message": {"content": "hello"}}],
-        "usage": {"prompt_tokens": 4, "completion_tokens": 1},
-    })
+    _patch_http(
+        monkeypatch,
+        {
+            "id": "resp_1",
+            "model": "anthropic/claude-sonnet-4-6",
+            "choices": [{"message": {"content": "hello"}}],
+            "usage": {"prompt_tokens": 4, "completion_tokens": 1},
+        },
+    )
 
     asyncio.run(
         client.generate_text(
@@ -196,11 +230,14 @@ def test_generate_text_does_not_store_prompt_in_params(monkeypatch, _patch_event
 @pytest.mark.skip(reason="removed raw image transport; covered by provider-wire tests")
 def test_generate_image_writes_b64_response(monkeypatch, tmp_path: Path):
     image_bytes = b"fake png"
-    _patch_http(monkeypatch, {
-        "id": "img_1",
-        "model": "openai/gpt-image-1",
-        "data": [{"b64_json": base64.b64encode(image_bytes).decode()}],
-    })
+    _patch_http(
+        monkeypatch,
+        {
+            "id": "img_1",
+            "model": "openai/gpt-image-1",
+            "data": [{"b64_json": base64.b64encode(image_bytes).decode()}],
+        },
+    )
 
     output_path = tmp_path / "panel.png"
     result = asyncio.run(
@@ -282,21 +319,27 @@ def test_pricing_estimate_drift_pct_only_for_provider_reported_image_cost():
         estimated_cost_usd=0.05,
         usage=usage,
     ) == pytest.approx(50.0)
-    assert client._pricing_estimate_drift_pct(
-        operation="text",
-        estimated_cost_usd=0.05,
-        usage=usage,
-    ) is None
+    assert (
+        client._pricing_estimate_drift_pct(
+            operation="text",
+            estimated_cost_usd=0.05,
+            usage=usage,
+        )
+        is None
+    )
 
 
 @pytest.mark.skip(reason="removed raw image transport; covered by provider-wire tests")
 def test_generate_image_with_references_uses_image_edits(monkeypatch, tmp_path: Path):
     image_bytes = b"fake png"
-    _patch_http(monkeypatch, {
-        "id": "img_1",
-        "model": "openai/gpt-image-1",
-        "data": [{"b64_json": base64.b64encode(image_bytes).decode()}],
-    })
+    _patch_http(
+        monkeypatch,
+        {
+            "id": "img_1",
+            "model": "openai/gpt-image-1",
+            "data": [{"b64_json": base64.b64encode(image_bytes).decode()}],
+        },
+    )
 
     output_path = tmp_path / "panel.png"
     reference_path = tmp_path / "character.png"
@@ -329,11 +372,14 @@ def test_generate_image_with_references_uses_image_edits(monkeypatch, tmp_path: 
 @pytest.mark.skip(reason="reference filenames no longer carry semantics")
 def test_generate_image_reference_filename_includes_label(monkeypatch, tmp_path: Path):
     image_bytes = b"fake png"
-    _patch_http(monkeypatch, {
-        "id": "img_1",
-        "model": "openai/gpt-image-1",
-        "data": [{"b64_json": base64.b64encode(image_bytes).decode()}],
-    })
+    _patch_http(
+        monkeypatch,
+        {
+            "id": "img_1",
+            "model": "openai/gpt-image-1",
+            "data": [{"b64_json": base64.b64encode(image_bytes).decode()}],
+        },
+    )
 
     output_path = tmp_path / "panel.png"
     reference_path = tmp_path / "front.png"
@@ -359,11 +405,14 @@ def test_generate_image_reference_filename_includes_label(monkeypatch, tmp_path:
 @pytest.mark.skip(reason="removed raw image transport; geometry is compiler-owned")
 def test_gpt_image_2_alias_uses_exact_valid_panel_size(monkeypatch, tmp_path: Path):
     image_bytes = b"fake png"
-    _patch_http(monkeypatch, {
-        "id": "img_1",
-        "model": "openai/gpt-image-2",
-        "data": [{"b64_json": base64.b64encode(image_bytes).decode()}],
-    })
+    _patch_http(
+        monkeypatch,
+        {
+            "id": "img_1",
+            "model": "openai/gpt-image-2",
+            "data": [{"b64_json": base64.b64encode(image_bytes).decode()}],
+        },
+    )
 
     output_path = tmp_path / "panel.png"
     asyncio.run(
@@ -382,7 +431,9 @@ def test_gpt_image_2_alias_uses_exact_valid_panel_size(monkeypatch, tmp_path: Pa
     assert request["json"]["size"] == "768x1344"
 
 
-def test_failed_request_estimate_all_finalizes_billable_usage(monkeypatch, _patch_events):
+def test_failed_request_estimate_all_finalizes_billable_usage(
+    monkeypatch, _patch_events
+):
     _patch_http(monkeypatch, {"error": {"message": "provider failed"}})
     _FakeAsyncClient.status_code = 500
 
@@ -404,7 +455,8 @@ def test_failed_request_estimate_all_finalizes_billable_usage(monkeypatch, _patc
 
 
 def test_text_gateway_error_identifies_feature_model_and_provider_detail(
-    monkeypatch, _patch_events,
+    monkeypatch,
+    _patch_events,
 ):
     def handler(request):
         return httpx.Response(
@@ -443,7 +495,8 @@ def test_text_gateway_error_identifies_feature_model_and_provider_detail(
 
 
 def test_text_gateway_read_error_identifies_operation_after_retries(
-    monkeypatch, _patch_events,
+    monkeypatch,
+    _patch_events,
 ):
     delays = _patch_sleep(monkeypatch)
     calls = {"count": 0}
@@ -497,6 +550,26 @@ def _mock_transport(monkeypatch, handler) -> None:
 
 
 class TestPostWithRetry:
+    def test_preserves_form_data_when_no_files_are_present(self, monkeypatch):
+        captured: dict[str, str] = {}
+
+        def handler(request):
+            captured.update(parse_qs(request.content.decode()))
+            return httpx.Response(200, json={"ok": True})
+
+        _mock_transport(monkeypatch, handler)
+        response = asyncio.run(
+            client._post_with_retry(
+                "http://gw/v1/images/edits",
+                headers={},
+                data={"model": "image-balanced", "prompt": "page 11"},
+                files=[],
+            )
+        )
+
+        assert response.status_code == 200
+        assert captured == {"model": ["image-balanced"], "prompt": ["page 11"]}
+
     def test_recovers_after_rate_limit_and_honors_retry_after(self, monkeypatch):
         delays = _patch_sleep(monkeypatch)
         calls = {"n": 0}
@@ -508,7 +581,9 @@ class TestPostWithRetry:
             return httpx.Response(200, json={"ok": True})
 
         _mock_transport(monkeypatch, handler)
-        response = asyncio.run(client._post_with_retry("http://gw/v1/x", headers={}, json={}))
+        response = asyncio.run(
+            client._post_with_retry("http://gw/v1/x", headers={}, json={})
+        )
         assert response.status_code == 200
         assert calls["n"] == 3
         # Both waits honor the advertised Retry-After (plus up to 1s jitter).
@@ -559,13 +634,18 @@ class TestRetryAfterSeconds:
         import email.utils
         from datetime import UTC, datetime, timedelta
 
-        future = email.utils.format_datetime(datetime.now(UTC) + timedelta(seconds=30), usegmt=True)
+        future = email.utils.format_datetime(
+            datetime.now(UTC) + timedelta(seconds=30), usegmt=True
+        )
         value = client._retry_after_seconds(self._response({"retry-after": future}))
         assert value is not None
         assert 25.0 < value < 31.0
 
     def test_garbage_returns_none(self):
-        assert client._retry_after_seconds(self._response({"retry-after": "soonish"})) is None
+        assert (
+            client._retry_after_seconds(self._response({"retry-after": "soonish"}))
+            is None
+        )
 
     def test_missing_returns_none(self):
         assert client._retry_after_seconds(self._response({})) is None

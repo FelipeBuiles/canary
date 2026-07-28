@@ -18,6 +18,7 @@ vi.mock("../api/queries", () => ({
   }),
   useAdaptation: () => ({ data: undefined }),
   useBookPlan: () => ({ data: undefined }),
+  useCompletePages: () => ({ data: undefined }),
 }));
 
 import { SideNav } from "../layout/SideNav";

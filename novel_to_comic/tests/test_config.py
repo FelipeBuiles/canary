@@ -115,6 +115,7 @@ class TestEffectiveImageModel:
 class TestImageModelAliases:
     def test_exposes_production_gateway_aliases(self):
         from novel_to_comic.config import GATEWAY_IMAGE_REVE
+
         assert image_model_aliases() == (
             GATEWAY_IMAGE_FAST,
             GATEWAY_IMAGE_BALANCED,
@@ -233,8 +234,7 @@ def test_gemini_text_aliases_use_latest_flash_tiers():
         if str(item.get("model_name", "")).startswith(("plan-", "prompt-"))
     }
     assert {
-        alias: params.get("reasoning_effort")
-        for alias, params in text_params.items()
+        alias: params.get("reasoning_effort") for alias, params in text_params.items()
     } == {
         "plan-fast": "disable",
         "plan-balanced": "disable",
@@ -243,6 +243,19 @@ def test_gemini_text_aliases_use_latest_flash_tiers():
         "prompt-balanced": "disable",
         "prompt-quality": "disable",
     }
+
+
+def test_balanced_adapt_uses_low_thinking_gemini_pro():
+    gateway_config = Path(__file__).resolve().parents[2] / "litellm" / "config.yaml"
+    data = yaml.safe_load(gateway_config.read_text())
+    params = next(
+        item["litellm_params"]
+        for item in data["model_list"]
+        if item["model_name"] == "adapt-balanced"
+    )
+
+    assert params["model"] == "vertex_ai/gemini-3.1-pro-preview"
+    assert params["reasoning_effort"] == "low"
 
 
 class TestReveModelAlias:
@@ -403,6 +416,6 @@ class TestSaveConfig:
             content = path.read_text()
             assert "fr" in content
             assert "dev_mode: true" in content
-            assert "image_model: \"image-quality\"" in content
+            assert 'image_model: "image-quality"' in content
             loaded, _ = load_config(Path(tmpdir))
             assert loaded.target_language == "fr"

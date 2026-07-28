@@ -40,8 +40,11 @@ model_list:
       api_key: os.environ/ANTHROPIC_API_KEY
   - model_name: adapt-balanced
     litellm_params:
-      model: anthropic/claude-sonnet-4-6
-      api_key: os.environ/ANTHROPIC_API_KEY
+      model: vertex_ai/gemini-3.1-pro-preview
+      vertex_project: os.environ/VERTEXAI_PROJECT
+      vertex_location: os.environ/VERTEXAI_LOCATION
+      safety_settings: *vertex_safety_off
+      reasoning_effort: "low"
   - model_name: adapt-quality
     litellm_params:
       model: anthropic/claude-opus-4-7
@@ -118,10 +121,9 @@ model_list:
       vertex_location: os.environ/VERTEXAI_LOCATION
   - model_name: image-balanced
     litellm_params:
-      # Nano Banana 2 Lite (Gemini 3.1 Flash Lite Image) — ultra-low latency,
-      # ~half the per-image cost of the Pro image model. Routed through the
-      # vertex-multimodal custom handler.
-      model: vertex-multimodal/gemini-3.1-flash-lite-image
+      # Nano Banana 2 (Gemini 3.1 Flash Image): Google's recommended balance
+      # of generation quality, reference fidelity, text rendering and latency.
+      model: vertex-multimodal/gemini-3.1-flash-image
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
   - model_name: image-balanced-seedream-test

@@ -54,6 +54,10 @@ class TargetArtifacts:
         return self.project_dir / "adapt" / "book.json"
 
     @property
+    def failed_adaptation_candidate_path(self) -> Path:
+        return self.project_dir / "adapt" / "failed_candidate.json"
+
+    @property
     def plan_path(self) -> Path:
         return self.project_dir / "plan" / "book.json"
 
@@ -148,6 +152,22 @@ class TargetArtifacts:
                 revisions.append(int(suffix))
         return tuple(sorted(revisions))
 
+    def request_revisions(self, page_number: int) -> tuple[int, ...]:
+        page_dir = self.project_dir / "draw" / "pages" / f"page_{page_number:03d}"
+        revisions: list[int] = []
+        for path in page_dir.glob("request_*.json"):
+            suffix = path.stem.removeprefix("request_")
+            if suffix.isdigit():
+                revisions.append(int(suffix))
+        return tuple(sorted(revisions))
+
+    def has_page_provenance(self) -> bool:
+        return any(
+            (self.project_dir / "draw" / "pages").glob(
+                "page_*/provenance_*.json"
+            )
+        )
+
     def render_revisions(self, page_number: int) -> tuple[int, ...]:
         page_dir = self.project_dir / "draw" / "pages" / f"page_{page_number:03d}"
         revisions: list[int] = []
@@ -199,6 +219,19 @@ class TargetArtifacts:
     def read_adaptation(self) -> BookAdaptation:
         return self._read_model("book_adaptation", self.adaptation_path, BookAdaptation)
 
+    def write_failed_adaptation_candidate(self, adaptation: BookAdaptation) -> None:
+        self._write_model(self.failed_adaptation_candidate_path, adaptation)
+
+    def read_failed_adaptation_candidate(self) -> BookAdaptation:
+        return self._read_model(
+            "failed_book_adaptation",
+            self.failed_adaptation_candidate_path,
+            BookAdaptation,
+        )
+
+    def clear_failed_adaptation_candidate(self) -> None:
+        self.failed_adaptation_candidate_path.unlink(missing_ok=True)
+
     def write_page(self, page: ComicPage) -> None:
         # The canonical path always holds the latest revision; each revision is
         # also archived so a render citing a superseded ComicPage revision stays
@@ -240,6 +273,14 @@ class TargetArtifacts:
     def write_book_edition(self, edition: BookEdition) -> None:
         self._write_immutable_model(self.book_edition_path, edition, BookEdition)
 
+    def replace_book_edition(self, edition: BookEdition) -> None:
+        """Advance an existing edition before any page has rendered."""
+
+        current = self.read_book_edition()
+        if edition.id != current.id or edition.revision != current.revision + 1:
+            raise ValueError("replacement book edition must advance the current edition")
+        self._write_model(self.book_edition_path, edition)
+
     def read_book_edition(self) -> BookEdition:
         return self._read_model("book_edition", self.book_edition_path, BookEdition)
 
@@ -261,7 +302,9 @@ class TargetArtifacts:
         request_revision: int,
     ) -> FrozenPageGenerationRequest:
         path = self.request_path(page_number, request_revision)
-        return self._read_model("page_generation_request", path, FrozenPageGenerationRequest)
+        return self._read_model(
+            "page_generation_request", path, FrozenPageGenerationRequest
+        )
 
     def write_render(
         self,
@@ -334,7 +377,9 @@ class TargetArtifacts:
         self._write_model(self.preflight_path, preflight)
 
     def read_preflight(self) -> FinishPreflight:
-        return self._read_model("finish_preflight", self.preflight_path, FinishPreflight)
+        return self._read_model(
+            "finish_preflight", self.preflight_path, FinishPreflight
+        )
 
     @staticmethod
     def _write_model(path: Path, artifact: BaseModel) -> None:

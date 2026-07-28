@@ -109,7 +109,10 @@ canonical ComicPages. It is not a competing source for publishable page
 structure or copy.
 
 **Planned panel** — A panel-level record in a layout plan. It describes the
-intended scene, framing, shape, and other visual constraints.
+intended scene, semantic role, framing, shape, and other visual constraints.
+Adjacent planned panels may cite the same adapted beat when they decompose it
+into distinct source-supported visual moments; beat citations remain monotonic
+and never return to an earlier beat after the story advances.
 
 **Generation request** — A frozen, derived request compiled by Draw from a
 specific ComicPage revision and its approved references. It is retained for

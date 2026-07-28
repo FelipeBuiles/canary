@@ -68,17 +68,20 @@ SEEDREAM_ALIASES: frozenset[str] = frozenset(
 GEMINI_IMAGE_CONCURRENCY_DEFAULT = 3
 
 # Ticket 04 complete-page production profile. Draw capability selection is
-# intentionally edition-wide and does not consult the legacy quality aliases.
+# intentionally edition-wide. The gateway alias is transport-only; the frozen
+# edition records the actual provider/model identity.
 COMPLETE_PAGE_PROVIDER = "vertex-multimodal"
-COMPLETE_PAGE_MODEL = "gemini-3-pro-image-preview"
-COMPLETE_PAGE_PROFILE_ID = "nano-banana-pro-complete-page-v1"
+COMPLETE_PAGE_MODEL = "gemini-3.1-flash-image"
+COMPLETE_PAGE_GATEWAY_MODEL = GATEWAY_IMAGE_BALANCED
+COMPLETE_PAGE_PROFILE_ID = "nano-banana-2-complete-page-v1"
 COMPLETE_PAGE_MAX_REFERENCES = 8
-COMPLETE_PAGE_OUTPUT_WIDTH = 2048
-COMPLETE_PAGE_OUTPUT_HEIGHT = 3072
+# Gemini's documented 2K dimensions for a 2:3 image.
+COMPLETE_PAGE_OUTPUT_WIDTH = 1696
+COMPLETE_PAGE_OUTPUT_HEIGHT = 2528
 COMPLETE_PAGE_MAX_PROMPT_CHARACTERS = 32_000
 COMPLETE_PAGE_MAX_ATTEMPTS = 3
-COMPLETE_PAGE_BASE_COST_USD = "0.134"
-COMPLETE_PAGE_REFERENCE_COST_USD = "0.00112"
+COMPLETE_PAGE_BASE_COST_USD = "0.101"
+COMPLETE_PAGE_REFERENCE_COST_USD = "0.00056"
 
 # Ticket 05 render analysis. Reading a rendered page's visible lettering is a
 # vision-model task, kept in configuration so Draw never names a model inline.

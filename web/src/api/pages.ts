@@ -43,9 +43,11 @@ export function pageRenderUrl(project: string, pageNumber: number, revision: num
 export function generateCompletePage(
   project: string,
   pageNumber: number,
+  depiction: "canonical" | "less_graphic" = "canonical",
 ): Promise<{ status: "queued"; job: GenerationJob }> {
   return apiFetch(`${projectPath(project)}/pages/${pageNumber}/generate`, {
     method: "POST",
+    body: JSON.stringify({ depiction }),
   });
 }
 

@@ -125,6 +125,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
         ApprovedPageRange(
             minimum=brief.target_page_min,
             maximum=brief.target_page_max,
+            allow_expansion=brief.transformation_level == "faithful",
         ),
         artifacts=target,
         ctx=ctx,
@@ -144,6 +145,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
         ApprovedPageRange(
             minimum=brief.target_page_min,
             maximum=brief.target_page_max,
+            allow_expansion=brief.transformation_level == "faithful",
         ),
     )
     return estimate_text_cost(

@@ -23,8 +23,8 @@ def _wire(source: Path) -> ProviderWireRequest:
         discriminator="canary.provider-wire/1",
         schema_version=1,
         requested_alias="image-balanced",
-        expected_route="gemini_flash_lite",
-        configured_provider_model="vertex-multimodal/gemini-3.1-flash-lite-image",
+        expected_route="gemini_pro_image",
+        configured_provider_model="vertex-multimodal/gemini-3-pro-image-preview",
         prompt_parts=("protected anchor sentinel",),
         references=(ProviderWireReference(
             index=0,

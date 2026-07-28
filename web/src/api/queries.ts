@@ -566,8 +566,15 @@ function invalidatePageReview(qc: ReturnType<typeof useQueryClient>, project: st
 export function useGenerateCompletePage() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ project, pageNumber }: { project: string; pageNumber: number }) =>
-      generateCompletePage(project, pageNumber),
+    mutationFn: ({
+      project,
+      pageNumber,
+      depiction = "canonical",
+    }: {
+      project: string;
+      pageNumber: number;
+      depiction?: "canonical" | "less_graphic";
+    }) => generateCompletePage(project, pageNumber, depiction),
     onSettled: (_data, _error, { project, pageNumber }) =>
       invalidatePageReview(qc, project, pageNumber),
   });

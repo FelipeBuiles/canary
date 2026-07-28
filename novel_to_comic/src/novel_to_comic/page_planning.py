@@ -66,6 +66,16 @@ class _PageContentDraft(BaseModel):
     id: str = Field(min_length=1)
     order: int = Field(ge=1)
     beat_ids: tuple[str, ...] = Field(min_length=1)
+    panel_role: Literal[
+        "establishing",
+        "standard",
+        "detail",
+        "reaction",
+        "action",
+        "transition",
+        "splash",
+        "inset",
+    ] = "standard"
     visual_intent: str = Field(min_length=1)
     lettering_ids: tuple[str, ...] = ()
     entity_ids: tuple[str, ...] = ()
@@ -109,6 +119,74 @@ class _BookPlanDraft(BaseModel):
         return self
 
 
+def _normalize_book_plan_draft(
+    value: Mapping[str, Any],
+    references: ApprovedVisualReferenceInventory,
+) -> Mapping[str, Any]:
+    """Canonicalize deterministic Plan-owned metadata before validation."""
+
+    normalized = dict(value)
+    issues = normalized.get("editorial_issues")
+    if isinstance(issues, (list, tuple)):
+        normalized["editorial_issues"] = [
+            {**issue, "owner_stage": "plan"}
+            if isinstance(issue, Mapping)
+            else issue
+            for issue in issues
+        ]
+    pages = normalized.get("pages")
+    if not isinstance(pages, (list, tuple)):
+        return normalized
+    normalized["pages"] = _normalize_draft_references(pages, references)
+    return normalized
+
+
+def _normalize_draft_references(
+    pages: list[Any] | tuple[Any, ...],
+    references: ApprovedVisualReferenceInventory,
+) -> list[Any]:
+    reference_states = {
+        reference.id: reference.appearance_state_id
+        for reference in references.references
+    }
+    known_states = {
+        state_id for state_id in reference_states.values() if state_id is not None
+    }
+    normalized_pages: list[Any] = []
+    for page in pages:
+        if not isinstance(page, Mapping):
+            normalized_pages.append(page)
+            continue
+        normalized_page = dict(page)
+        content_items = normalized_page.get("content")
+        if not isinstance(content_items, (list, tuple)):
+            normalized_pages.append(normalized_page)
+            continue
+        normalized_content: list[Any] = []
+        for content in content_items:
+            if not isinstance(content, Mapping):
+                normalized_content.append(content)
+                continue
+            normalized_item = dict(content)
+            state_ids = normalized_item.get("appearance_state_ids")
+            if isinstance(state_ids, (list, tuple)):
+                canonical_states: list[Any] = []
+                for state_id in state_ids:
+                    if state_id in known_states:
+                        canonical = state_id
+                    elif state_id in reference_states:
+                        canonical = reference_states[state_id]
+                    else:
+                        canonical = state_id
+                    if canonical is not None and canonical not in canonical_states:
+                        canonical_states.append(canonical)
+                normalized_item["appearance_state_ids"] = canonical_states
+            normalized_content.append(normalized_item)
+        normalized_page["content"] = normalized_content
+        normalized_pages.append(normalized_page)
+    return normalized_pages
+
+
 StructuredGenerator = Callable[
     ...,
     Awaitable[ApiResult[Mapping[str, Any]]],
@@ -127,21 +205,51 @@ def build_book_plan_prompt(
         "approved_visual_reference_inventory": references.model_dump(mode="json"),
         "approved_target_page_range": target_range.model_dump(mode="json"),
     }
+    page_range_instruction = (
+        "The approved minimum is a narrative floor. Because this adaptation is "
+        "allowed to expand for fidelity, keep every page needed for safe, legible "
+        "storytelling even when the allocation exceeds the approved maximum. "
+        if target_range.allow_expansion
+        else "Stay within the approved target page range unless the complete safe "
+        "allocation proves that the range is insufficient. "
+    )
+    overflow_instruction = (
+        "Do not compress required content to fit the approved maximum; return the "
+        "complete safe allocation and let the resulting page count expand. "
+        if target_range.allow_expansion
+        else "If required content cannot fit safely inside the approved range, "
+        "return the complete safe allocation even when it exceeds the maximum; "
+        "Plan will report the evidenced conflict and recommended minimum. "
+    )
     return (
         "Allocate the single ordered BookAdaptation globally into canonical comic "
-        "pages. Allocate every adapted beat exactly once and in order. Allocate "
+        "pages. Each content item is one planned semantic panel in reading order, "
+        "not an independently generated image. Allocate every adapted beat at least "
+        "once and in order. A panel may cite an adapted beat again only on an "
+        "immediately adjacent panel or page when decompression reveals a distinct "
+        "visual submoment supported by that beat and its source; never return to a "
+        "beat after advancing beyond it. Allocate "
         "lettering by citing LetteringItem IDs in lettering_ids, on the same page "
         "content item as the beat that owns them, in reading order; never copy, "
         "rewrite, shorten, clip, or omit the wording itself. Every lettering ID of "
         "an allocated beat must be cited exactly once. Pages may bridge "
-        "source-scene boundaries. Own actual page count, "
+        "source-scene boundaries. Group adjacent story beats into varied multi-panel "
+        "pages when that preserves action, reaction, detail, causality, and rhythm. "
+        "Reserve one-panel pages and splash panels for exceptional peaks, reveals, "
+        "or deliberate pauses; do not make them the default page grammar. Author a "
+        "panel_role for every content item and ensure layout_intent describes those "
+        "same ordered panels. appearance_state_ids contains only the inventory's "
+        "appearance_state_id values (for example, feverish), never reference IDs "
+        "(for example, char_003:feverish); omit base references because base is not "
+        "an appearance state. Own actual page count, "
+        + page_range_instruction
+        + " "
         "page and spread rhythm, page-turn intent, explicit reading order, narrative "
         "emphasis, semantic density and layout intent, and page-scoped approved "
         "entity and appearance-state IDs. Sparse, standard, and dense are semantic "
-        "intent, not panel-count or word-count caps. If required content cannot fit "
-        "safely inside the approved range, return the complete safe allocation even "
-        "when it exceeds the maximum; Plan will report the evidenced conflict and "
-        "recommended minimum. Do not use templates, split beats mechanically, "
+        "intent, not panel-count or word-count caps. "
+        + overflow_instruction
+        + "Do not use templates, split beats mechanically, "
         "assign fixed character positions, create scene-local pagination, add exact "
         "coordinates, reconcile scene plans, or write image provider prompts. "
         "Return only the global page-plan JSON object.\n"
@@ -181,6 +289,9 @@ async def produce_book_plan(
         attempt_prompt = prompt
         pages: tuple[ComicPage, ...] = ()
         validation = PlanValidation()
+        valid_fallback: (
+            tuple[_BookPlanDraft, tuple[ComicPage, ...], PlanValidation] | None
+        ) = None
         for attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
             result = await generate(
                 system_prompt=(
@@ -194,9 +305,18 @@ async def produce_book_plan(
             if result.usage is not None:
                 ctx.record_api_usage(result.usage)
             try:
-                draft = _BookPlanDraft.model_validate(result.value)
+                draft = _BookPlanDraft.model_validate(
+                    _normalize_book_plan_draft(
+                        result.value,
+                        references,
+                    )
+                )
             except ValidationError as error:
                 if attempt == _MAX_PLAN_ATTEMPTS:
+                    if valid_fallback is not None:
+                        draft, pages, validation = valid_fallback
+                        ctx.record_item_done()
+                        break
                     raise
                 attempt_prompt = _schema_repair_prompt(prompt, result.value, error)
                 continue
@@ -204,6 +324,8 @@ async def produce_book_plan(
                 pages = _canonical_pages(adaptation, draft, pin_by_beat)
             except PlanInvariantError as allocation_error:
                 validation = allocation_error.validation
+            except ValidationError as error:
+                validation = _canonical_page_validation(error)
             else:
                 validation = validate_book_plan(
                     adaptation,
@@ -221,10 +343,30 @@ async def produce_book_plan(
                     ),
                 )
             if not validation.invariant_failures:
+                retryable_issues = tuple(
+                    issue
+                    for issue in validation.editorial_issues
+                    if issue.code
+                    in {
+                        "repetitive_page_composition",
+                        "density_mismatch",
+                    }
+                )
+                if retryable_issues and attempt < _MAX_PLAN_ATTEMPTS:
+                    valid_fallback = (draft, pages, validation)
+                    attempt_prompt = _editorial_repair_prompt(
+                        prompt,
+                        result.value,
+                        retryable_issues,
+                    )
+                    continue
                 ctx.record_item_done()
                 break
             if attempt < _MAX_PLAN_ATTEMPTS:
-                attempt_prompt = _repair_prompt(prompt, validation)
+                attempt_prompt = _repair_prompt(prompt, result.value, validation)
+        if validation.invariant_failures and valid_fallback is not None:
+            draft, pages, validation = valid_fallback
+            ctx.record_item_done()
         ctx.progress(1, 1)
 
         _persist_validation(artifacts, validation, attempts=attempt)
@@ -236,7 +378,11 @@ async def produce_book_plan(
             adaptation_revision=adaptation.revision,
             adaptation_sha256=adaptation.content_sha256,
             target_page_min=target_range.minimum,
-            target_page_max=target_range.maximum,
+            target_page_max=(
+                max(target_range.maximum, len(pages))
+                if target_range.allow_expansion
+                else target_range.maximum
+            ),
             rhythm_summary=draft.rhythm_summary,
             pages=[
                 PlannedPageRevision(
@@ -266,7 +412,11 @@ def _schema_repair_prompt(base_prompt: str, raw: object, error: Exception) -> st
     )
 
 
-def _repair_prompt(prompt: str, validation: PlanValidation) -> str:
+def _repair_prompt(
+    prompt: str,
+    raw: object,
+    validation: PlanValidation,
+) -> str:
     failures = "\n".join(
         f"- [{failure.code}] {failure.message} " + " ".join(failure.evidence)
         for failure in validation.invariant_failures
@@ -274,8 +424,51 @@ def _repair_prompt(prompt: str, validation: PlanValidation) -> str:
     return (
         f"{prompt}\n\nYour previous global page plan violated these blocking "
         "contract requirements. Return one complete corrected JSON object that "
-        "resolves every one of them:\n"
+        "preserves its valid decisions and resolves every failure.\n\n"
+        "YOUR PREVIOUS JSON:\n"
+        f"{json.dumps(raw, indent=2, default=str)}\n\n"
+        "BLOCKING CONTRACT FAILURES:\n"
         f"{failures}"
+    )
+
+
+def _editorial_repair_prompt(
+    prompt: str,
+    raw: object,
+    issues: tuple[EditorialIssue, ...],
+) -> str:
+    concerns = "\n".join(
+        f"- [{issue.code}] {issue.message} " + " ".join(issue.evidence)
+        for issue in issues
+    )
+    return (
+        f"{prompt}\n\nYour previous global page plan is contract-valid but its "
+        "page grammar has these evidence-backed editorial concerns. Return one "
+        "complete corrected JSON object that preserves all story content, exact "
+        "lettering allocation, page order, and valid rhythm decisions while "
+        "introducing purposeful semantic panel variety. Do not add panels merely "
+        "to satisfy a count; each added panel must depict a distinct visual "
+        "submoment supported by its cited beat and source.\n\n"
+        "YOUR PREVIOUS JSON:\n"
+        f"{json.dumps(raw, indent=2, default=str)}\n\n"
+        "EDITORIAL CONCERNS:\n"
+        f"{concerns}"
+    )
+
+
+def _canonical_page_validation(error: ValidationError) -> PlanValidation:
+    """Translate canonical model errors into repairable Plan-owned failures."""
+
+    return PlanValidation(
+        invariant_failures=(
+            InvariantFailure(
+                id="plan_failure_canonical_page_contract",
+                owner_stage="plan",
+                code="canonical_page_contract",
+                message="The proposed allocation does not form valid canonical pages.",
+                evidence=[str(error)],
+            ),
+        )
     )
 
 
@@ -339,8 +532,9 @@ def _merged_editorial_issues(
         for source_unit_id in beat.source_unit_ids
     }
     merged = {issue.id: issue for issue in derived}
+    upstream_issue_ids = {issue.id for issue in adaptation.editorial_issues}
     for issue in authored:
-        if issue.id in merged:
+        if issue.id in merged or issue.id in upstream_issue_ids:
             continue
         if any(artifact_id not in known_ids for artifact_id in issue.artifact_ids):
             continue
@@ -462,10 +656,59 @@ def _canonical_pages(
                 rhythm_intent=page.rhythm_intent,
                 layout_intent=page.layout_intent,
                 content=content_items,
-                reading_order=page.reading_order,
+                reading_order=_canonical_reading_order(
+                    page.reading_order,
+                    content_items,
+                ),
             )
         )
     return tuple(pages)
+
+
+def _canonical_reading_order(
+    authored: tuple[str, ...],
+    content: list[PageContent],
+) -> tuple[str, ...]:
+    """Complete mechanically required IDs without replacing authored order."""
+
+    expected = [
+        ordered_id
+        for item in content
+        for ordered_id in (item.id, *(lettering.id for lettering in item.lettering))
+    ]
+    known = set(expected)
+    reading_order: list[str] = []
+    for ordered_id in authored:
+        if ordered_id in known and ordered_id not in reading_order:
+            reading_order.append(ordered_id)
+
+    for expected_index, ordered_id in enumerate(expected):
+        if ordered_id in reading_order:
+            continue
+        preceding = next(
+            (
+                candidate
+                for candidate in reversed(expected[:expected_index])
+                if candidate in reading_order
+            ),
+            None,
+        )
+        if preceding is not None:
+            reading_order.insert(reading_order.index(preceding) + 1, ordered_id)
+            continue
+        following = next(
+            (
+                candidate
+                for candidate in expected[expected_index + 1 :]
+                if candidate in reading_order
+            ),
+            None,
+        )
+        if following is None:
+            reading_order.append(ordered_id)
+        else:
+            reading_order.insert(reading_order.index(following), ordered_id)
+    return tuple(reading_order)
 
 
 def _validate_author_pins(
@@ -540,16 +783,33 @@ def validate_book_plan(
         for content in page.content
         for beat_id in content.beat_ids
     ]
-    if actual_beats != expected_beats:
+    expected_position = {
+        beat_id: position for position, beat_id in enumerate(expected_beats)
+    }
+    actual_positions = [
+        expected_position[beat_id]
+        for beat_id in actual_beats
+        if beat_id in expected_position
+    ]
+    allocation_is_complete_and_monotonic = (
+        len(actual_positions) == len(actual_beats)
+        and set(actual_beats) == set(expected_beats)
+        and actual_positions == sorted(actual_positions)
+    )
+    if not allocation_is_complete_and_monotonic:
         failures.append(
             InvariantFailure(
                 id="plan_failure_beat_allocation",
                 owner_stage="plan",
                 code="beat_allocation",
-                message="Every adapted beat must be allocated exactly once and in order.",
+                message=(
+                    "Every adapted beat must be allocated at least once and remain "
+                    "in story order."
+                ),
                 artifact_ids=actual_beats,
                 evidence=[
-                    f"Expected beat order {expected_beats!r}; found {actual_beats!r}."
+                    f"Expected complete monotonic beat order {expected_beats!r}; "
+                    f"found {actual_beats!r}."
                 ],
             )
         )
@@ -703,7 +963,10 @@ def validate_book_plan(
                 )
             )
 
-    if not target_range.minimum <= len(pages) <= target_range.maximum:
+    if (
+        not target_range.allow_expansion
+        and not target_range.minimum <= len(pages) <= target_range.maximum
+    ):
         failures.append(
             InvariantFailure(
                 id="plan_failure_target_page_range",
@@ -718,6 +981,60 @@ def validate_book_plan(
                 ],
             )
         )
+
+    single_panel_run: list[ComicPage] = []
+    for page in (*pages, None):
+        if page is not None and len(page.content) == 1:
+            single_panel_run.append(page)
+            continue
+        if len(single_panel_run) >= 4:
+            page_ids = [
+                f"page_{candidate.page_number:03d}"
+                for candidate in single_panel_run
+            ]
+            issues.append(
+                EditorialIssue(
+                    id=(
+                        "plan_issue_repetitive_page_composition_"
+                        f"{single_panel_run[0].page_number:03d}_"
+                        f"{single_panel_run[-1].page_number:03d}"
+                    ),
+                    owner_stage="plan",
+                    code="repetitive_page_composition",
+                    message=(
+                        "A long run of one-panel pages may rush story detail while "
+                        "giving every beat the same visual weight."
+                    ),
+                    artifact_ids=page_ids,
+                    evidence=[
+                        f"Pages {single_panel_run[0].page_number}-"
+                        f"{single_panel_run[-1].page_number} each contain one "
+                        "planned panel.",
+                        "Single-panel and splash pages should be deliberate "
+                        "exceptions within the book's broader page rhythm.",
+                    ],
+                )
+            )
+        single_panel_run = []
+
+    for page in pages:
+        if page.density_intent == "dense" and len(page.content) == 1:
+            issues.append(
+                EditorialIssue(
+                    id=f"plan_issue_density_mismatch_page_{page.page_number:03d}",
+                    owner_stage="plan",
+                    code="density_mismatch",
+                    message=(
+                        "A dense page declares only one planned panel, so its "
+                        "structured composition may not express its density intent."
+                    ),
+                    artifact_ids=[f"page_{page.page_number:03d}", page.content[0].id],
+                    evidence=[
+                        f"Page {page.page_number} is dense but contains one "
+                        f"{page.content[0].panel_role!r} panel."
+                    ],
+                )
+            )
 
     known_entities = {reference.entity_id for reference in references.references}
     known_states = {
@@ -921,7 +1238,10 @@ def validate_book_plan(
                 )
             )
         reveal_beats = [
-            beat for beat in page_beats if "reveal" in beat.story_functions
+            beat
+            for beat in page_beats
+            if "reveal" in beat.story_functions
+            and beat.narrative_function == "peak"
         ]
         if not reveal_beats or page_index == 0:
             continue

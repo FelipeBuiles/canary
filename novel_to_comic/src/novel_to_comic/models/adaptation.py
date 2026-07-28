@@ -19,19 +19,33 @@ class RevisionedArtifact(BaseModel):
     revision: int = Field(ge=1)
     content_sha256: str = ""
 
-    @model_validator(mode="after")
-    def _verify_content_hash(self) -> "RevisionedArtifact":
-        payload = self.model_dump(mode="json", exclude={"content_sha256"})
+    @staticmethod
+    def _content_digest(payload: dict) -> str:
         encoded = json.dumps(
             payload,
             ensure_ascii=False,
             separators=(",", ":"),
             sort_keys=True,
         ).encode("utf-8")
-        digest = hashlib.sha256(encoded).hexdigest()
-        if self.content_sha256 and self.content_sha256 != digest:
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _compatible_content_hashes(self) -> tuple[str, ...]:
+        """Previously valid hashes for defaults added after persistence."""
+
+        return ()
+
+    @model_validator(mode="after")
+    def _verify_content_hash(self) -> "RevisionedArtifact":
+        payload = self.model_dump(mode="json", exclude={"content_sha256"})
+        digest = self._content_digest(payload)
+        if (
+            self.content_sha256
+            and self.content_sha256 != digest
+            and self.content_sha256 not in self._compatible_content_hashes()
+        ):
             raise ValueError("content_sha256 does not match artifact content")
-        object.__setattr__(self, "content_sha256", digest)
+        if not self.content_sha256:
+            object.__setattr__(self, "content_sha256", digest)
         return self
 
 
@@ -49,9 +63,9 @@ class AdaptationBrief(RevisionedArtifact):
     protected_language: tuple[str, ...] = ()
     essential_events: tuple[str, ...] = ()
     character_turns: tuple[str, ...] = ()
-    transformation_level: Literal[
-        "faithful", "medium_specific", "transformative"
-    ] = "medium_specific"
+    transformation_level: Literal["faithful", "medium_specific", "transformative"] = (
+        "medium_specific"
+    )
     desired_emphasis: tuple[str, ...] = ()
     target_page_min: int = Field(ge=1)
     target_page_max: int = Field(ge=1)
@@ -87,7 +101,9 @@ class NarrativeTreatment(BaseModel):
     causal_spine: tuple[str, ...] = Field(min_length=1)
     character_arcs: tuple[str, ...] = ()
     essential_events: tuple[str, ...] = ()
+    essential_event_ids: tuple[str, ...] = ()
     character_turns: tuple[str, ...] = ()
+    character_turn_ids: tuple[str, ...] = ()
     reveals: tuple[str, ...] = ()
     reactions: tuple[str, ...] = ()
     consequences: tuple[str, ...] = ()
@@ -126,6 +142,13 @@ class ContinuityTransition(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     dimension: Literal["time", "place", "knowledge", "emotional_state"]
+    scope_id: str = Field(
+        min_length=1,
+        description=(
+            "Stable character/entity ID for knowledge or emotion, or stable "
+            "narrative-thread ID for time or place."
+        ),
+    )
     from_state: str = Field(min_length=1)
     to_state: str = Field(min_length=1)
     description: str = Field(min_length=1)
@@ -166,6 +189,7 @@ class AdaptedBeat(BaseModel):
         ...,
     ] = ()
     brief_requirements: tuple[str, ...] = ()
+    brief_requirement_ids: tuple[str, ...] = ()
     source_unit_ids: tuple[str, ...] = Field(min_length=1)
     lettering: tuple[LetteringItem, ...] = ()
     transitions: tuple[ContinuityTransition, ...] = ()
@@ -203,8 +227,7 @@ class AdaptationLedgerEntry(BaseModel):
                 "intentionally_omitted cannot have an adapted-beat destination"
             )
         if (
-            self.disposition
-            not in {"compressed_into", "intentionally_omitted"}
+            self.disposition not in {"compressed_into", "intentionally_omitted"}
             and not self.adapted_beat_ids
         ):
             raise ValueError(f"{self.disposition} requires an adapted beat")
@@ -227,14 +250,10 @@ class BookAdaptation(RevisionedArtifact):
         beat_ids = [beat.id for beat in self.beats]
         if len(beat_ids) != len(set(beat_ids)):
             raise ValueError("adapted beat IDs must be unique")
-        if [beat.order for beat in self.beats] != list(
-            range(1, len(self.beats) + 1)
-        ):
+        if [beat.order for beat in self.beats] != list(range(1, len(self.beats) + 1)):
             raise ValueError("adapted beat order must be consecutive")
 
-        lettering_ids = [
-            item.id for beat in self.beats for item in beat.lettering
-        ]
+        lettering_ids = [item.id for beat in self.beats for item in beat.lettering]
         if len(lettering_ids) != len(set(lettering_ids)):
             raise ValueError("lettering IDs must be unique")
 

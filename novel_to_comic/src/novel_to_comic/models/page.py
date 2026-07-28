@@ -17,6 +17,7 @@ class ApprovedPageRange(BaseModel):
 
     minimum: int = Field(ge=1)
     maximum: int = Field(ge=1)
+    allow_expansion: bool = False
     approved: Literal[True] = True
 
     @model_validator(mode="after")
@@ -88,13 +89,23 @@ class AuthorGeometryPin(BaseModel):
 
 
 class PageContent(BaseModel):
-    """One ordered semantic unit of page content, not a panel render."""
+    """One planned semantic panel, never an independently generated asset."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     id: str = Field(min_length=1)
     order: int = Field(ge=1)
     beat_ids: tuple[str, ...] = Field(min_length=1)
+    panel_role: Literal[
+        "establishing",
+        "standard",
+        "detail",
+        "reaction",
+        "action",
+        "transition",
+        "splash",
+        "inset",
+    ] = "standard"
     visual_intent: str = Field(min_length=1)
     lettering: tuple[LetteringItem, ...] = ()
     entity_ids: tuple[str, ...] = ()
@@ -134,6 +145,17 @@ class ComicPage(RevisionedArtifact):
     content: tuple[PageContent, ...] = Field(min_length=1)
     reading_order: tuple[str, ...] = Field(min_length=1)
 
+    def _compatible_content_hashes(self) -> tuple[str, ...]:
+        """Accept the authored hash from before semantic panel roles existed."""
+
+        if all("panel_role" in item.model_fields_set for item in self.content):
+            return ()
+        payload = self.model_dump(mode="json", exclude={"content_sha256"})
+        for index, item in enumerate(self.content):
+            if "panel_role" not in item.model_fields_set:
+                payload["content"][index].pop("panel_role", None)
+        return (self._content_digest(payload),)
+
     @model_validator(mode="after")
     def _validate_page(self) -> "ComicPage":
         content_ids = [item.id for item in self.content]
@@ -143,10 +165,6 @@ class ComicPage(RevisionedArtifact):
             range(1, len(self.content) + 1)
         ):
             raise ValueError("page content order must be consecutive")
-
-        beat_ids = [beat_id for item in self.content for beat_id in item.beat_ids]
-        if len(beat_ids) != len(set(beat_ids)):
-            raise ValueError("adapted beats may appear only once on a page")
 
         lettering_ids = [
             lettering.id for item in self.content for lettering in item.lettering

@@ -206,6 +206,9 @@ export interface GenerationJob {
   started_at: string | null;
   finished_at: string | null;
   error: string | null;
+  classification?: string | null;
+  user_message?: string | null;
+  recoverable?: boolean | null;
 }
 
 export const STAGE_ORDER: StageName[] = [
@@ -400,6 +403,15 @@ export interface PageContent {
   id: string;
   order: number;
   beat_ids: string[];
+  panel_role:
+    | "establishing"
+    | "standard"
+    | "detail"
+    | "reaction"
+    | "action"
+    | "transition"
+    | "splash"
+    | "inset";
   visual_intent: string;
   lettering: LetteringItem[];
   entity_ids: string[];
@@ -505,8 +517,32 @@ export interface StageValidation {
 export interface BookAdaptation {
   revision: number;
   editorial_issues: EditorialIssue[];
-  treatment?: { causal_spine?: string[] };
-  beats?: Array<{ id: string; order: number; summary: string }>;
+  treatment?: {
+    causal_spine?: string[];
+    character_arcs?: string[];
+    reveals?: string[];
+    consequences?: string[];
+    aftermath?: string[];
+    relative_emphasis?: string[];
+  };
+  beats?: Array<{
+    id: string;
+    order: number;
+    summary: string;
+    narrative_function?: string;
+    story_functions?: string[];
+    source_unit_ids?: string[];
+    lettering?: Array<{ id: string; kind?: string; text?: string }>;
+    transitions?: Array<{ description?: string }>;
+    appearance_changes?: Array<{ description?: string }>;
+  }>;
+  ledger?: Array<{
+    source_unit_id: string;
+    disposition: string;
+    adapted_beat_ids?: string[];
+    reason?: string | null;
+    preserved_function?: string;
+  }>;
 }
 
 export interface BookPlan {

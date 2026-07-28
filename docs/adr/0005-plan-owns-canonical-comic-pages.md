@@ -23,6 +23,11 @@ with `ComicPage` for authority over publishable structure or copy.
 renders tied to identified `ComicPage` revisions. `finish` consumes those
 renders for verification, correction coordination, normalization, and export.
 
+Canonical panel records carry semantic roles such as establishing, action,
+reaction, detail, transition, splash, and inset. Adjacent panels may cite the
+same adapted beat when they depict distinct source-supported submoments. This
+decompression does not duplicate lettering or permit story order to rewind.
+
 Author edits write back to the canonical `ComicPage` and invalidate affected
 downstream artifacts. An explicit replan may replace those edits; it must be
 presented as a destructive regeneration of page intent rather than a routine

@@ -255,9 +255,10 @@ export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0 }: StageRunn
 interface StageFailedProps {
   project: string;
   stage: StageName;
+  rerun: boolean;
 }
 
-function StageFailed({ project, stage }: StageFailedProps) {
+function StageFailed({ project, stage, rerun }: StageFailedProps) {
   const { t } = useI18n();
   const { handleRun, isPending } = useRunAction();
   return (
@@ -269,7 +270,7 @@ function StageFailed({ project, stage }: StageFailedProps) {
           <Button
             size="md"
             disabled={isPending}
-            onClick={() => handleRun(project, stage)}
+            onClick={() => handleRun(project, stage, { rerun })}
           >
             {isPending ? t("Starting…") : t("Retry stage")}
           </Button>
@@ -284,11 +285,21 @@ interface StagePlaceholderProps {
   project: string;
   stage: StageName;
   status: StageStatus;
+  stale?: boolean;
   itemsDone?: number;
   itemsTotal?: number;
+  retryAsRerun?: boolean;
 }
 
-export function StagePlaceholder({ project, stage, status, itemsDone, itemsTotal }: StagePlaceholderProps) {
+export function StagePlaceholder({
+  project,
+  stage,
+  status,
+  stale = false,
+  itemsDone,
+  itemsTotal,
+  retryAsRerun = false,
+}: StagePlaceholderProps) {
   const { t } = useI18n();
   // Credit gate takes priority over every other placeholder state — a user
   // blocked on credits should never see "WAITING FOR PIPELINE" or a fake
@@ -309,14 +320,14 @@ export function StagePlaceholder({ project, stage, status, itemsDone, itemsTotal
     );
   }
 
-  if (status === "running") {
+  if (status === "running" && !stale) {
     return <StageRunning stage={stage} itemsDone={itemsDone} itemsTotal={itemsTotal} />;
   }
   if (status === "pending") {
     return <StagePending stage={stage} />;
   }
-  if (status === "failed") {
-    return <StageFailed project={project} stage={stage} />;
+  if (status === "failed" || stale) {
+    return <StageFailed project={project} stage={stage} rerun={retryAsRerun} />;
   }
   // Stage completed but no data — shouldn't normally happen; show a minimal
   // state while the data loads.

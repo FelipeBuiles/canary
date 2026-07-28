@@ -10,6 +10,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 from litellm_handlers.vertex_multimodal import (
     _extract_image,
     _image_config_kwargs,
+    _image_size_for_dimensions,
     _map_to_supported_aspect,
     _exact_complete_page_contents,
     _parse_complete_page_request,
@@ -88,6 +89,19 @@ def test_flash_lite_image_clamps_unsupported_resolution_to_1k():
     }
 
 
+def test_complete_page_dimensions_select_native_2k_output():
+    assert _image_size_for_dimensions(1696, 2528) == "2K"
+    assert _image_config_kwargs(
+        2 / 3,
+        None,
+        model="gemini-3.1-flash-image",
+        image_size="2K",
+    ) == {
+        "aspect_ratio": "2:3",
+        "image_size": "2K",
+    }
+
+
 def test_legacy_vertex_sdk_can_safely_omit_square_aspect_control():
     assert not _requires_native_aspect_control(None)
     assert not _requires_native_aspect_control("1:1")
@@ -146,13 +160,30 @@ def test_extract_image_safety_block_diagnostics():
     mock_feedback = SimpleNamespace(block_reason="SAFETY", safety_ratings=[mock_rating])
     response = SimpleNamespace(candidates=[], prompt_feedback=mock_feedback)
 
-    with pytest.raises(ValueError) as excinfo:
+    with pytest.raises(litellm.APIError) as excinfo:
         _extract_image(response)
 
     err_msg = str(excinfo.value)
+    assert excinfo.value.status_code == 400
     assert "no candidates returned" in err_msg
     assert "prompt_feedback: block_reason=SAFETY" in err_msg
     assert "HARM_CATEGORY_DANGEROUS_CONTENT(prob=HIGH, blocked=True)" in err_msg
+
+
+def test_extract_image_other_prompt_block_is_a_typed_refusal():
+    response = SimpleNamespace(
+        candidates=None,
+        prompt_feedback=SimpleNamespace(
+            block_reason="OTHER",
+            safety_ratings=None,
+        ),
+    )
+
+    with pytest.raises(litellm.APIError) as excinfo:
+        _extract_image(response)
+
+    assert excinfo.value.status_code == 400
+    assert "prompt_feedback: block_reason=OTHER" in str(excinfo.value)
 
 
 def test_extract_image_candidate_finish_reason_diagnostics():

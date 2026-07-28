@@ -7,7 +7,9 @@ falsify a render, and Draw's exact-lettering invariant would validate itself.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from novel_to_comic.config import Config
 from novel_to_comic.models.draw import (
@@ -70,11 +72,55 @@ class _ObservedLettering(BaseModel):
     text: str = Field(min_length=1)
     box: _ObservedBox
 
+    @model_validator(mode="before")
+    @classmethod
+    def accept_gemini_box_2d(cls, value: Any) -> Any:
+        """Accept Gemini's native ``[ymin, xmin, ymax, xmax]`` box shape."""
+
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        if "text" not in normalized and "text_content" in normalized:
+            normalized["text"] = normalized.pop("text_content")
+        if "box" in normalized or "box_2d" not in normalized:
+            return normalized
+        coordinates = normalized["box_2d"]
+        if (
+            isinstance(coordinates, (list, tuple))
+            and len(coordinates) == 1
+            and isinstance(coordinates[0], (list, tuple))
+        ):
+            coordinates = coordinates[0]
+        if not isinstance(coordinates, (list, tuple)) or len(coordinates) != 4:
+            return value
+        try:
+            y_min, x_min, y_max, x_max = (float(item) for item in coordinates)
+        except (TypeError, ValueError):
+            return value
+        scale = 1000.0 if max(abs(item) for item in coordinates) > 1 else 1.0
+        return {key: item for key, item in normalized.items() if key != "box_2d"} | {
+            "box": {
+                "x": x_min / scale,
+                "y": y_min / scale,
+                "width": (x_max - x_min) / scale,
+                "height": (y_max - y_min) / scale,
+            }
+        }
+
 
 class _PageOCRDraft(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     lettering: tuple[_ObservedLettering, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_bare_lettering_list(cls, value: Any) -> Any:
+        """Accept the bare list Gemini sometimes emits despite the JSON prompt."""
+
+        if isinstance(value, list):
+            return {"lettering": value}
+        return value
 
 
 def _reading_order(items: list[tuple[int, _ObservedLettering]]) -> list[int]:
@@ -117,9 +163,7 @@ def build_extraction(draft: _PageOCRDraft) -> OCRExtraction:
         ObservedRegion(id=f"region_{index:03d}", polygon=item.box.polygon())
         for index, item in indexed
     )
-    order = tuple(
-        f"region_{index:03d}" for index in _reading_order(indexed)
-    )
+    order = tuple(f"region_{index:03d}" for index in _reading_order(indexed))
     return OCRExtraction(
         lettering=observations,
         observed_regions=regions,

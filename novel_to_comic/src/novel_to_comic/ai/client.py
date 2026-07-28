@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 import uuid
 from email.utils import parsedate_to_datetime
@@ -87,7 +88,14 @@ def _jittered(window: float) -> float:
     return window / 2 + random.uniform(0.0, window / 2)
 
 
-async def _post_with_retry(url: str, *, headers: dict[str, str], json: dict[str, Any] | None = None, data: dict[str, Any] | None = None, files: list | None = None) -> httpx.Response:
+async def _post_with_retry(
+    url: str,
+    *,
+    headers: dict[str, str],
+    json: dict[str, Any] | None = None,
+    data: dict[str, Any] | None = None,
+    files: list | None = None,
+) -> httpx.Response:
     """POST with automatic retry on transient HTTP errors and connection failures.
 
     429 responses are retried on a separate, longer budget and honor the
@@ -101,7 +109,11 @@ async def _post_with_retry(url: str, *, headers: dict[str, str], json: dict[str,
         retry_after: float | None = None
         try:
             if files:
-                response = await _http.post(url, headers=headers, data=data, files=files)
+                response = await _http.post(
+                    url, headers=headers, data=data, files=files
+                )
+            elif data is not None:
+                response = await _http.post(url, headers=headers, data=data)
             else:
                 response = await _http.post(url, headers=headers, json=json)
             if response.status_code not in _RETRYABLE_STATUS_CODES:
@@ -123,7 +135,10 @@ async def _post_with_retry(url: str, *, headers: dict[str, str], json: dict[str,
                 delay = retry_after + random.uniform(0.0, 1.0)
             else:
                 delay = _jittered(
-                    min(_RATE_LIMIT_BASE_DELAY * 2 ** (rate_limit_attempts - 1), _RATE_LIMIT_MAX_DELAY)
+                    min(
+                        _RATE_LIMIT_BASE_DELAY * 2 ** (rate_limit_attempts - 1),
+                        _RATE_LIMIT_MAX_DELAY,
+                    )
                 )
             logger.warning(
                 "Rate limited (429), waiting %.1fs before retry %d/%d",
@@ -153,7 +168,9 @@ def _base_url(config: Config) -> str:
             "mock_mode is enabled for this project but the server operator has not set "
             "CANARY_MOCK_GENERATIONS_ENABLED=true; refusing to fall back to paid models"
         )
-    base_url = config.mock_model_base_url if config.mock_mode else config.litellm_base_url
+    base_url = (
+        config.mock_model_base_url if config.mock_mode else config.litellm_base_url
+    )
     return base_url.rstrip("/")
 
 
@@ -174,7 +191,9 @@ def _hash_payload(value: str | bytes) -> str:
 
 
 def _payload_size(value: str | bytes) -> int:
-    return len(value if isinstance(value, bytes) else value.encode("utf-8", errors="replace"))
+    return len(
+        value if isinstance(value, bytes) else value.encode("utf-8", errors="replace")
+    )
 
 
 def _redacted_params(params: dict[str, Any]) -> dict[str, Any]:
@@ -184,7 +203,9 @@ def _redacted_params(params: dict[str, Any]) -> dict[str, Any]:
     return redacted
 
 
-def _content_summary(system_prompt: str | None = None, user_content: str | bytes | None = None) -> dict[str, Any]:
+def _content_summary(
+    system_prompt: str | None = None, user_content: str | bytes | None = None
+) -> dict[str, Any]:
     summary: dict[str, Any] = {}
     if system_prompt is not None:
         summary["system_prompt_sha256"] = _hash_payload(system_prompt)
@@ -192,7 +213,9 @@ def _content_summary(system_prompt: str | None = None, user_content: str | bytes
     if user_content is not None:
         summary["user_content_sha256"] = _hash_payload(user_content)
         summary["user_content_bytes"] = _payload_size(user_content)
-        summary["user_content_type"] = "bytes" if isinstance(user_content, bytes) else "text"
+        summary["user_content_type"] = (
+            "bytes" if isinstance(user_content, bytes) else "text"
+        )
     return summary
 
 
@@ -202,15 +225,19 @@ def _image_summary(refs: list[tuple[Path, bytes | None]]) -> list[dict[str, Any]
         if data is None:
             items.append({"name": path.name, "missing": True})
         else:
-            items.append({
-                "name": path.name,
-                "bytes": len(data),
-                "sha256": hashlib.sha256(data).hexdigest(),
-            })
+            items.append(
+                {
+                    "name": path.name,
+                    "bytes": len(data),
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                }
+            )
     return items
 
 
-def _metadata(feature: str, operation: str, model_alias: str, event_id: str) -> dict[str, Any]:
+def _metadata(
+    feature: str, operation: str, model_alias: str, event_id: str
+) -> dict[str, Any]:
     ctx = current_ai_request_context()
     tags = [ctx.stage, operation]
     return {
@@ -288,7 +315,9 @@ def _extract_usage(
 ) -> UsageRecord:
     usage = data.get("usage") or {}
     input_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
-    output_tokens = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+    output_tokens = int(
+        usage.get("completion_tokens") or usage.get("output_tokens") or 0
+    )
     total_tokens = int(usage.get("total_tokens") or input_tokens + output_tokens)
     if not input_tokens and total_tokens and output_tokens:
         input_tokens = max(0, total_tokens - output_tokens)
@@ -386,7 +415,9 @@ def _gateway_transport_error(
     )
 
 
-def _error_json(exc: BaseException | None = None, response: httpx.Response | None = None) -> dict[str, Any]:
+def _error_json(
+    exc: BaseException | None = None, response: httpx.Response | None = None
+) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     if response is not None:
         payload["status_code"] = response.status_code
@@ -417,23 +448,25 @@ def _insert_event(
     try:
         from novel_to_comic.server.db import get_db
 
-        get_db().table("ai_usage_events").insert({
-            "id": event_id,
-            "user_id": ctx.user_id,
-            "project_id": ctx.project_id,
-            "workspace_id": ctx.workspace_id,
-            "project_name": ctx.project_name,
-            "stage": ctx.stage,
-            "feature": feature,
-            "operation": operation,
-            "status": "started",
-            "model_alias": model_alias,
-            "request_id": ctx.request_id,
-            "params_json": params_json,
-            "request_summary_json": request_summary_json,
-            "metadata_json": metadata_json,
-            "estimated_cost_usd": estimated_cost_usd,
-        }).execute()
+        get_db().table("ai_usage_events").insert(
+            {
+                "id": event_id,
+                "user_id": ctx.user_id,
+                "project_id": ctx.project_id,
+                "workspace_id": ctx.workspace_id,
+                "project_name": ctx.project_name,
+                "stage": ctx.stage,
+                "feature": feature,
+                "operation": operation,
+                "status": "started",
+                "model_alias": model_alias,
+                "request_id": ctx.request_id,
+                "params_json": params_json,
+                "request_summary_json": request_summary_json,
+                "metadata_json": metadata_json,
+                "estimated_cost_usd": estimated_cost_usd,
+            }
+        ).execute()
     except Exception as exc:
         logger.warning("ai_usage_events insert failed for %s: %s", event_id, exc)
 
@@ -457,13 +490,20 @@ def _finalize_event(
     langfuse_output: Any = None,
     started_at: datetime.datetime | None = None,
 ) -> None:
-    provider_model = str((response_data or {}).get("model") or (usage.provider_model if usage else None) or model_alias)
+    provider_model = str(
+        (response_data or {}).get("model")
+        or (usage.provider_model if usage else None)
+        or model_alias
+    )
     cost = calculate_cost_breakdown(usage) if usage is not None else None
     cost_usd = cost.cost_usd if cost is not None else None
     billable = bool(
         usage
         and usage_has_billable_activity(usage)
-        and (status == "succeeded" or (config is not None and _should_bill_failed(config, usage)))
+        and (
+            status == "succeeded"
+            or (config is not None and _should_bill_failed(config, usage))
+        )
     )
     try:
         from novel_to_comic.server.metrics import record_ai_call
@@ -596,10 +636,14 @@ def _pricing_estimate_drift_pct(
         return None
     if usage is None or usage.cost_usd is None:
         return None
-    return ((float(usage.cost_usd) - float(estimated_cost_usd)) / float(estimated_cost_usd)) * 100.0
+    return (
+        (float(usage.cost_usd) - float(estimated_cost_usd)) / float(estimated_cost_usd)
+    ) * 100.0
 
 
-async def _post_langfuse_batch(host: str, auth: str, batch: list[dict[str, Any]]) -> None:
+async def _post_langfuse_batch(
+    host: str, auth: str, batch: list[dict[str, Any]]
+) -> None:
     try:
         await _http.post(
             f"{host}/api/public/ingestion",
@@ -705,7 +749,9 @@ def _log_langfuse_generation(
                 "startTime": start_time.isoformat(),
                 "endTime": end_time.isoformat(),
                 "level": "DEFAULT" if status == "succeeded" else "ERROR",
-                "statusMessage": (str(error)[:500] if error else None) if status != "succeeded" else None,
+                "statusMessage": (str(error)[:500] if error else None)
+                if status != "succeeded"
+                else None,
             },
         },
     ]
@@ -860,6 +906,7 @@ async def generate_structured_object(
     attempt_user_content = user_content
     last_exc: json.JSONDecodeError | None = None
     last_text: str = ""
+    prior_usage: list[UsageRecord] = []
     for attempt in range(_JSON_PARSE_MAX_RETRIES + 1):
         data = await _chat_completion(
             config=config,
@@ -875,8 +922,14 @@ async def generate_structured_object(
         )
         text = _strip_code_fence(data["text"])
         try:
-            return ApiResult(value=json.loads(text), usage=data["usage"])
+            return ApiResult(
+                value=json.loads(text),
+                usage=data["usage"],
+                additional_usage=tuple(prior_usage),
+            )
         except json.JSONDecodeError as exc:
+            if data["usage"] is not None:
+                prior_usage.append(data["usage"])
             last_exc = exc
             last_text = text
             logger.warning(
@@ -891,7 +944,10 @@ async def generate_structured_object(
             if attempt < _JSON_PARSE_MAX_RETRIES:
                 limit_note = ""
                 if str(data.get("finish_reason") or "").lower() in {
-                    "length", "max_tokens", "max_token", "max_output_tokens"
+                    "length",
+                    "max_tokens",
+                    "max_token",
+                    "max_output_tokens",
                 }:
                     limit_note = (
                         " Your previous response reached the output token limit; "
@@ -927,7 +983,15 @@ async def _chat_completion(
     metadata = _metadata(feature, operation, model, event_id)
     response_format: dict[str, Any] | None
     if json_schema:
-        response_format = {"type": "json_schema", "json_schema": json_schema}
+        schema_name = re.sub(r"[^a-zA-Z0-9_-]", "_", feature)[:64]
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": schema_name,
+                "strict": True,
+                "schema": json_schema,
+            },
+        }
     elif json_mode:
         response_format = {"type": "json_object"}
     else:
@@ -964,7 +1028,9 @@ async def _chat_completion(
     if max_output_tokens is not None:
         payload["max_completion_tokens"] = max_output_tokens
 
-    estimated_cost_usd = estimate_text_cost(model, effective_system + "\n" + user_content) or None
+    estimated_cost_usd = (
+        estimate_text_cost(model, effective_system + "\n" + user_content) or None
+    )
     _insert_event(
         event_id=event_id,
         model_alias=model,
@@ -992,22 +1058,33 @@ async def _chat_completion(
             )
         except httpx.HTTPStatusError as exc:
             raise _gateway_http_error(
-                exc.response, feature=feature, model=model, endpoint=endpoint,
+                exc.response,
+                feature=feature,
+                model=model,
+                endpoint=endpoint,
             ) from exc
         except _TRANSPORT_ERRORS as exc:
             raise _gateway_transport_error(
-                exc, feature=feature, model=model, endpoint=endpoint,
+                exc,
+                feature=feature,
+                model=model,
+                endpoint=endpoint,
             ) from exc
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             raise _gateway_http_error(
-                response, feature=feature, model=model, endpoint=endpoint,
+                response,
+                feature=feature,
+                model=model,
+                endpoint=endpoint,
             ) from exc
         data = response.json()
         refusal = _refusal_reason(data)
         if refusal:
-            raise AIRefusalError(f"AI request was refused by gateway/provider ({refusal})")
+            raise AIRefusalError(
+                f"AI request was refused by gateway/provider ({refusal})"
+            )
         choice = (data.get("choices") or [{}])[0]
         text = (choice.get("message") or {}).get("content")
         if not text:
@@ -1016,7 +1093,9 @@ async def _chat_completion(
             # exhaustion (finish_reason length/MAX_TOKENS with high
             # completion_tokens). Otherwise every cause looks identical in logs.
             detail = f"finish_reason={choice.get('finish_reason')!r}"
-            feedback = data.get("prompt_feedback") or choice.get("content_filter_results")
+            feedback = data.get("prompt_feedback") or choice.get(
+                "content_filter_results"
+            )
             if feedback:
                 detail += f", feedback={feedback!r}"
             completion_tokens = (data.get("usage") or {}).get("completion_tokens")
@@ -1127,7 +1206,10 @@ async def _chat_completion(
 
 
 async def generate_wire_image(
-    *, config: Config, wire: "ProviderWireRequest", output_path: Path,
+    *,
+    config: Config,
+    wire: "ProviderWireRequest",
+    output_path: Path,
     feature: str = "image.generate_wire",
 ) -> ApiResult[Path]:
     """Submit an immutable exact-wire request through the isolated adapter."""
@@ -1148,10 +1230,13 @@ async def generate_wire_image(
     if isinstance(provider, LitellmHttpProvider):
         params, _files = provider.prepare_wire_request(transport_wire)
     else:
-        raise ValueError(f"wire transport is not implemented for adapter {provider.name}")
+        raise ValueError(
+            f"wire transport is not implemented for adapter {provider.name}"
+        )
     ctx = begin_image_call(
         config=config,
-        model=transport_wire.requested_alias or transport_wire.configured_provider_model,
+        model=transport_wire.requested_alias
+        or transport_wire.configured_provider_model,
         feature=feature,
         prompt=transport_wire.prompt_parts[0],
         params=params,
@@ -1165,15 +1250,23 @@ async def generate_wire_image(
             metadata=ctx.metadata,
         )
         return await finalise_image_success(
-            ctx=ctx, config=config,
-            model=transport_wire.requested_alias or transport_wire.configured_provider_model,
-            feature=feature, output_path=output_path, raw=raw,
+            ctx=ctx,
+            config=config,
+            model=transport_wire.requested_alias
+            or transport_wire.configured_provider_model,
+            feature=feature,
+            output_path=output_path,
+            raw=raw,
         )
     except Exception as exc:
         finalise_image_failure(
-            ctx=ctx, config=config,
-            model=transport_wire.requested_alias or transport_wire.configured_provider_model,
-            feature=feature, error=exc, error_response=getattr(exc, "response", None),
+            ctx=ctx,
+            config=config,
+            model=transport_wire.requested_alias
+            or transport_wire.configured_provider_model,
+            feature=feature,
+            error=exc,
+            error_response=getattr(exc, "response", None),
         )
         raise
 
@@ -1218,11 +1311,14 @@ def _diagnose_empty_image_response(data: dict[str, Any]) -> str:
         ratings = first_cand.get("safety_ratings") or first_cand.get("safetyRatings")
         if isinstance(ratings, list):
             blocked = [
-                r.get("category") for r in ratings
+                r.get("category")
+                for r in ratings
                 if isinstance(r, dict) and r.get("blocked")
             ]
             if blocked:
-                crumbs.append(f"safety_ratings blocked: {', '.join(str(c) for c in blocked)}")
+                crumbs.append(
+                    f"safety_ratings blocked: {', '.join(str(c) for c in blocked)}"
+                )
 
     pf = data.get("prompt_feedback") or data.get("promptFeedback")
     if isinstance(pf, dict):

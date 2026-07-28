@@ -28,33 +28,146 @@ import { FieldLabel, TextAreaField } from "../../components/ui/Field";
 import { StatusPill } from "../../components/ui/StatusPill";
 import { Surface } from "../../components/ui/Surface";
 import { useI18n } from "../../i18n";
+import { useShowDevContent } from "../../lib/devContent";
+import { getImageFailureCopy } from "../../lib/imageFailure";
 import type {
   CompletePageSummary,
   EditorialIssue,
+  GenerationJob,
   PageIssue,
   StageValidation,
 } from "../../types/api";
 
-function ExceptionList({ issues }: { issues: EditorialIssue[] }) {
+type EditorialIssueGroup = {
+  label: string;
+  issues: EditorialIssue[];
+};
+
+type EditorialIssueSummary = {
+  key: string;
+  message: string;
+  issues: EditorialIssue[];
+};
+
+function uniqueEditorialIssues(issues: EditorialIssue[]) {
+  return [...new Map(issues.map((issue) => [issue.id, issue])).values()];
+}
+
+function editorialIssueGroup(code: string) {
+  if (
+    code === "rushed_reaction_or_aftermath"
+    || code === "weak_page_turn"
+    || code === "poor_peak_release_proportion"
+    || code === "emphasis_mismatch"
+  ) {
+    return "PACING & PAGE TURNS";
+  }
+  if (code.includes("continuity")) return "CONTINUITY";
+  if (code.includes("omission")) return "SOURCE COVERAGE";
+  return "OTHER NOTES";
+}
+
+function summarizeEditorialIssues(issues: EditorialIssue[]) {
+  return issues.reduce<EditorialIssueSummary[]>((result, issue) => {
+    const key = `${issue.code}:${issue.message}`;
+    const existing = result.find((summary) => summary.key === key);
+    if (existing) {
+      existing.issues.push(issue);
+    } else {
+      result.push({ key, message: issue.message, issues: [issue] });
+    }
+    return result;
+  }, []);
+}
+
+function EditorialDiagnostics({ issues }: { issues: EditorialIssue[] }) {
   const { t } = useI18n();
-  if (issues.length === 0) return null;
+  const [expanded, setExpanded] = useState(false);
+  const [showDevContent] = useShowDevContent();
+  const uniqueIssues = useMemo(() => uniqueEditorialIssues(issues), [issues]);
+  const groups = useMemo(
+    () => uniqueIssues.reduce<EditorialIssueGroup[]>((result, issue) => {
+      const label = editorialIssueGroup(issue.code);
+      const existing = result.find((group) => group.label === label);
+      if (existing) {
+        existing.issues.push(issue);
+      } else {
+        result.push({ label, issues: [issue] });
+      }
+      return result;
+    }, []),
+    [uniqueIssues],
+  );
+  if (!showDevContent || uniqueIssues.length === 0) return null;
+  const diagnosticLabel = uniqueIssues.length === 1
+    ? t("diagnostic")
+    : t("diagnostics");
   return (
-    <section aria-label={t("ADAPT & PLAN EXCEPTIONS")}>
-      <SectionHeader
-        variant="underline"
-        title={t("ADAPT & PLAN EXCEPTIONS")}
-        description={t("Review these editorial judgments before spending credits on page art.")}
-      />
-      <div className="grid gap-3 lg:grid-cols-2">
-        {issues.map((issue) => (
-          <Surface key={issue.id} tone="gold" border="hard" shadow="paper-sm" padding="md">
-            <p className="font-body text-sm font-bold leading-6">{issue.message}</p>
-            <p className="mt-2 font-body text-xs leading-5 text-ink-black/70">
-              {issue.evidence.join(" · ")}
+    <section aria-label={t("INTERNAL EDITORIAL DIAGNOSTICS")}>
+      <Surface tone="container" border="soft" shadow="none" padding="md">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-3">
+              <StatusPill tone="neutral">
+                {uniqueIssues.length} {diagnosticLabel}
+              </StatusPill>
+              <span className="font-meta text-xs font-bold text-ink-muted">
+                {t("DEV CONTENT")}
+              </span>
+            </div>
+            <p className="mt-2 max-w-[68ch] font-body text-sm leading-6 text-ink-black/75">
+              {t("Internal validation signals for development inspection. They do not block the book or require author action.")}
             </p>
-          </Surface>
-        ))}
-      </div>
+          </div>
+          <Button
+            variant="outline"
+            size="xs"
+            aria-expanded={expanded}
+            aria-controls="editorial-diagnostic-details"
+            onClick={() => setExpanded((current) => !current)}
+          >
+            {expanded
+              ? t("HIDE DIAGNOSTICS")
+              : t("SHOW DIAGNOSTICS")}
+          </Button>
+        </div>
+
+        {expanded && (
+          <div id="editorial-diagnostic-details" className="mt-5 border-t border-ink-black/20 pt-1">
+            {groups.map((group) => (
+              <section key={group.label} className="py-4" aria-label={t(group.label)}>
+                <div className="flex items-baseline justify-between gap-4">
+                  <h3 className="font-body text-sm font-bold">{t(group.label)}</h3>
+                  <span className="font-meta text-xs font-bold text-ink-muted">
+                    {group.issues.length}
+                  </span>
+                </div>
+                <ul className="mt-1 space-y-4">
+                  {summarizeEditorialIssues(group.issues).map((summary) => (
+                    <li key={summary.key}>
+                      <div className="flex items-start justify-between gap-4">
+                        <p className="font-body text-sm leading-6 text-ink-black/85">
+                          {summary.message}
+                        </p>
+                        {summary.issues.length > 1 && (
+                          <span className="shrink-0 font-meta text-xs font-bold text-ink-muted">
+                            ×{summary.issues.length}
+                          </span>
+                        )}
+                      </div>
+                      <ul className="mt-1 space-y-1 font-mono text-xs leading-5 text-ink-muted">
+                        {summary.issues.flatMap((issue) => issue.evidence).map((evidence, index) => (
+                          <li key={`${summary.key}:${index}`}>{evidence}</li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+        )}
+      </Surface>
     </section>
   );
 }
@@ -211,9 +324,13 @@ function PageReview({
       role="dialog"
       aria-modal="true"
       aria-label={`${t("Page")} ${item.page.page_number} ${t("review")}`}
-      className="fixed inset-0 z-modal overflow-y-auto bg-ink-black/75 p-3 md:p-8"
+      className="fixed inset-0 z-[120] overflow-y-auto bg-ink-black/75 p-3 md:p-8"
+      onClick={onClose}
     >
-      <div className="mx-auto max-w-6xl border-[3px] border-ink-black bg-pulp-paper shadow-ink">
+      <div
+        className="mx-auto max-w-6xl border-[3px] border-ink-black bg-pulp-paper shadow-ink"
+        onClick={(event) => event.stopPropagation()}
+      >
         <header className="flex items-center justify-between gap-4 border-b-[3px] border-ink-black bg-bristol px-4 py-3">
           <div>
             <h2 className="font-display text-xl font-black uppercase">
@@ -303,16 +420,31 @@ export function PagesRoom() {
   const adaptFailed = status?.stages.adapt?.status === "failed";
   const { data: planValidation } = useStageValidation(id, "plan", planFailed);
   const { data: adaptValidation } = useStageValidation(id, "adapt", adaptFailed);
+  const planNeedsAdapt = planValidation?.invariant_failures.some(
+    (failure) => failure.owner_stage === "adapt",
+  ) ?? false;
   const { data, isLoading, error, refetch } = useCompletePages(id);
   const run = useRunPipeline();
   const generate = useGenerateCompletePage();
   const approve = useApproveStage();
   const [selected, setSelected] = useState<number | null>(null);
   const [pageJobs, setPageJobs] = useState<Record<string, number>>({});
+  const [pageFailures, setPageFailures] = useState<Record<number, GenerationJob>>({});
   const jobIds = Object.keys(pageJobs);
   const { data: generationJobs } = useGenerationJobs(id, jobIds);
 
   const drawStatus = status?.stages.draw?.status ?? "pending";
+  const interruptedStage = status?.stages.adapt?.status !== "complete"
+    ? "adapt"
+    : planNeedsAdapt
+      ? "adapt"
+    : status?.stages.plan?.status !== "complete"
+      ? "plan"
+      : "draw";
+  const interruptedStageInfo = status?.stages[interruptedStage];
+  const interruptedStatus = planNeedsAdapt
+    ? "failed"
+    : interruptedStageInfo?.status ?? "pending";
   const exceptions = useMemo(
     () => [...(adaptation?.editorial_issues ?? []), ...(plan?.editorial_issues ?? [])],
     [adaptation, plan],
@@ -320,18 +452,30 @@ export function PagesRoom() {
   const selectedItem = data?.pages.find((item) => item.page.page_number === selected);
 
   useEffect(() => {
+    const failedJobs = (generationJobs?.jobs ?? [])
+      .filter((job) => job.status === "failed");
     const terminalIds = (generationJobs?.jobs ?? [])
       .filter((job) => job.status === "complete" || job.status === "failed")
       .map((job) => job.id);
     if (terminalIds.length === 0) return;
     void refetch().finally(() => {
+      if (failedJobs.length > 0) {
+        setPageFailures((current) => {
+          const next = { ...current };
+          failedJobs.forEach((job) => {
+            const pageNumber = pageJobs[job.id];
+            if (pageNumber !== undefined) next[pageNumber] = job;
+          });
+          return next;
+        });
+      }
       setPageJobs((current) => {
         const next = { ...current };
         terminalIds.forEach((jobId) => delete next[jobId]);
         return next;
       });
     });
-  }, [generationJobs?.jobs, refetch]);
+  }, [generationJobs?.jobs, pageJobs, refetch]);
 
   if (isLoading && drawStatus !== "pending") {
     return (
@@ -350,8 +494,12 @@ export function PagesRoom() {
       <RoomShell project={id ?? ""}>
         <StagePlaceholder
           project={id ?? ""}
-          stage={status?.stages.plan?.status === "complete" ? "draw" : "plan"}
-          status={status?.stages.plan?.status ?? "pending"}
+          stage={interruptedStage}
+          status={interruptedStatus}
+          stale={interruptedStageInfo?.stale}
+          itemsDone={interruptedStageInfo?.items_done}
+          itemsTotal={interruptedStageInfo?.items_total}
+          retryAsRerun={planNeedsAdapt}
         />
         <BlockingFailureList validation={adaptValidation ?? planValidation} />
       </RoomShell>
@@ -366,6 +514,28 @@ export function PagesRoom() {
     );
   }
 
+  function drawPage(
+    pageNumber: number,
+    depiction: "canonical" | "less_graphic" = "canonical",
+  ) {
+    setPageFailures((current) => {
+      const next = { ...current };
+      delete next[pageNumber];
+      return next;
+    });
+    generate.mutate(
+      depiction === "canonical"
+        ? { project: id, pageNumber }
+        : { project: id, pageNumber, depiction },
+      {
+        onSuccess: ({ job }) => setPageJobs((current) => ({
+          ...current,
+          [job.id]: pageNumber,
+        })),
+      },
+    );
+  }
+
   return (
     <RoomShell project={id}>
       <RoomHeader
@@ -374,7 +544,7 @@ export function PagesRoom() {
         lead={t("Each thumbnail is one fully lettered page. Corrections always create a complete new revision.")}
       />
 
-      <ExceptionList issues={exceptions} />
+      <EditorialDiagnostics issues={exceptions} />
 
       <section>
         <SectionHeader
@@ -399,6 +569,15 @@ export function PagesRoom() {
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4">
           {data.pages.map((item) => {
             const revision = item.active_render?.render.revision;
+            const pageFailure = pageFailures[item.page.page_number];
+            const failureCopy = pageFailure
+              ? getImageFailureCopy(
+                  t,
+                  pageFailure.classification,
+                  pageFailure.user_message,
+                  pageFailure.error,
+                )
+              : null;
             return (
               <EntityCard key={item.page.page_number} padding="cozy">
                 <button
@@ -430,20 +609,61 @@ export function PagesRoom() {
                     {revision ? `${t("Revision")} ${revision}` : t("Not generated")}
                   </p>
                 </button>
-                {!revision && drawStatus !== "pending" && (
+                {failureCopy && (
+                  <Surface
+                    tone="pulp"
+                    border="soft"
+                    shadow="none"
+                    padding="sm"
+                    className="mt-3 border-l-[4px] border-l-hero-red"
+                    role="alert"
+                  >
+                    <strong className="font-meta text-[0.62rem] tracking-[0.12em] text-hero-red">
+                      {failureCopy.title}
+                    </strong>
+                    <p className="mt-1 text-xs leading-5 text-ink-black/75">
+                      {failureCopy.message}
+                    </p>
+                    {failureCopy.guidance && (
+                      <p className="mt-2 text-xs leading-5 text-ink-black/75">
+                        {failureCopy.guidance}
+                      </p>
+                    )}
+                    {pageFailure?.classification === "provider_blocked" && !revision && (
+                      <div className="mt-3 grid gap-2">
+                        <Button
+                          size="xs"
+                          fullWidth
+                          onClick={() => drawPage(item.page.page_number, "less_graphic")}
+                          disabled={
+                            generate.isPending
+                            || Object.values(pageJobs).includes(item.page.page_number)
+                          }
+                        >
+                          {t("DRAW WITHOUT REFERENCES")}
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          fullWidth
+                          onClick={() => drawPage(item.page.page_number)}
+                          disabled={
+                            generate.isPending
+                            || Object.values(pageJobs).includes(item.page.page_number)
+                          }
+                        >
+                          {t("TRY AGAIN UNCHANGED")}
+                        </Button>
+                      </div>
+                    )}
+                  </Surface>
+                )}
+                {!revision && drawStatus !== "pending" && !failureCopy && (
                   <Button
                     className="mt-3"
                     size="xs"
                     fullWidth
-                    onClick={() => generate.mutate(
-                      { project: id, pageNumber: item.page.page_number },
-                      {
-                        onSuccess: ({ job }) => setPageJobs((current) => ({
-                          ...current,
-                          [job.id]: item.page.page_number,
-                        })),
-                      },
-                    )}
+                    onClick={() => drawPage(item.page.page_number)}
                     disabled={
                       generate.isPending
                       || Object.values(pageJobs).includes(item.page.page_number)
@@ -465,10 +685,17 @@ export function PagesRoom() {
           project={id}
           item={selectedItem}
           onClose={() => setSelected(null)}
-          onJobQueued={(jobId, pageNumber) => setPageJobs((current) => ({
-            ...current,
-            [jobId]: pageNumber,
-          }))}
+          onJobQueued={(jobId, pageNumber) => {
+            setPageFailures((current) => {
+              const next = { ...current };
+              delete next[pageNumber];
+              return next;
+            });
+            setPageJobs((current) => ({
+              ...current,
+              [jobId]: pageNumber,
+            }));
+          }}
           pageIsDrawing={Object.values(pageJobs).includes(selectedItem.page.page_number)}
         />
       )}

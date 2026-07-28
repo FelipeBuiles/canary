@@ -6,7 +6,12 @@ from types import SimpleNamespace
 
 from novel_to_comic.server import metrics
 from novel_to_comic.stage_runtime import StageRuntime
-from novel_to_comic.state import PipelineState, StageStatus, create_initial_state
+from novel_to_comic.state import (
+    PipelineState,
+    StageStatus,
+    create_initial_state,
+    load_state,
+)
 
 
 def _state(tmp_path: Path) -> PipelineState:
@@ -151,6 +156,19 @@ class TestUsageRecording:
         ctx.record_item_done()
         ctx.record_item_done()
         assert state.stages["adapt"].items_done == 2
+
+    def test_record_item_done_persists_progress_for_status_polling(self, tmp_path):
+        state = _state(tmp_path)
+        ctx = StageRuntime("adapt", state, tmp_path)
+        ctx.begin(total=2)
+
+        ctx.record_item_done()
+
+        persisted = load_state(tmp_path)
+        assert persisted.stages["adapt"].status == StageStatus.RUNNING
+        assert persisted.stages["adapt"].items_done == 1
+        assert persisted.stages["adapt"].items_total == 2
+        assert persisted.stages["adapt"].last_progress_at is not None
 
     def test_record_item_done_with_cost(self, tmp_path):
         state = _state(tmp_path)

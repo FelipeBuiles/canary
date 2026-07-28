@@ -62,9 +62,9 @@ def test_token_priced_image_alias_estimates_via_quality_token_table():
     assert estimate_image_cost("gpt-image-2", 2, quality="high") == approx(0.2496)
 
 
-def test_balanced_image_alias_estimates_flash_lite_image_cost():
-    # image-balanced -> nano banana 2 lite (gemini-3.1-flash-lite-image): $0.0336/image.
-    assert estimate_image_cost("image-balanced", 2) == approx(0.0672)
+def test_balanced_image_alias_estimates_nano_banana_2_cost():
+    # image-balanced -> Nano Banana 2 at the complete-page 2K tier: $0.101/image.
+    assert estimate_image_cost("image-balanced", 2) == approx(0.202)
 
 
 def test_fast_image_alias_estimates_reference_input_images():
@@ -126,6 +126,22 @@ def test_pricing_snapshot_changes_when_overrides_change(tmp_path):
     ).pricing_snapshot
 
     assert first != second
+
+
+def test_model_output_token_limit_resolves_alias_and_uses_fallback(tmp_path):
+    cost_map = tmp_path / "prices.json"
+    overrides = tmp_path / "overrides.yaml"
+    cost_map.write_text('{"provider/model": {"max_output_tokens": 65536}}')
+    overrides.write_text(
+        "aliases:\n  adapt-balanced: provider/model\nmodel_overrides: {}\n"
+    )
+    resolver = PricingResolver(
+        cost_map_path=cost_map,
+        overrides_path=overrides,
+    )
+
+    assert resolver.model_output_token_limit("adapt-balanced") == 65_536
+    assert resolver.model_output_token_limit("unknown", fallback=32_768) == 32_768
 
 
 def test_audit_pricing_checks_all_quality_preset_aliases(monkeypatch):
