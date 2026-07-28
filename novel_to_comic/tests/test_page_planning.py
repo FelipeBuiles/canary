@@ -1252,3 +1252,23 @@ def test_a_schema_slip_in_the_plan_draft_is_repaired_not_fatal(tmp_path: Path) -
     assert len(plan.pages) == 1
     assert len(calls) == 2
     assert "VALIDATION ERRORS" in calls[1]["user_content"]
+
+
+def test_the_plan_prompt_states_the_page_shape_it_wants() -> None:
+    # Plan describes its allocation rules at length but, like Adapt did, never
+    # named the JSON keys — leaving the writer to guess the container.
+    from novel_to_comic.page_planning import build_book_plan_prompt
+
+    prompt = build_book_plan_prompt(
+        _adaptation(),
+        _inventory(),
+        ApprovedPageRange(minimum=1, maximum=2),
+    )
+
+    assert '"rhythm_summary"' in prompt
+    assert '"pages"' in prompt
+    assert "<_PageDraft> = {" in prompt
+    assert "<_PageContentDraft> = {" in prompt
+    # Lettering is allocated by ID; the contract has to say so in the shape too.
+    assert '"lettering_ids": [string, ...]' in prompt
+    assert '"density_intent": "sparse" | "standard" | "dense"' in prompt

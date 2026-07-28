@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from novel_to_comic.json_contract import describe_json_contract
 from novel_to_comic.models.adaptation import BookAdaptation, LetteringItem
 from novel_to_comic.models.page import (
     ApprovedPageRange,
@@ -144,6 +145,8 @@ def build_book_plan_prompt(
         "assign fixed character positions, create scene-local pagination, add exact "
         "coordinates, reconcile scene plans, or write image provider prompts. "
         "Return only the global page-plan JSON object.\n"
+        + describe_json_contract(_BookPlanDraft)
+        + "\n"
         + json.dumps(
             context,
             ensure_ascii=False,
@@ -184,7 +187,6 @@ async def produce_book_plan(
                     "You are the sole global page architect for a complete comic book."
                 ),
                 user_content=attempt_prompt,
-                json_schema=_BookPlanDraft.model_json_schema(),
                 feature="plan.book",
             )
             # A retried attempt was still paid for, so its usage is recorded

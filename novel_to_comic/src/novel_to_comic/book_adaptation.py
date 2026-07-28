@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from novel_to_comic.briefing import require_approved_brief
+from novel_to_comic.json_contract import describe_json_contract
 from novel_to_comic.models.adaptation import (
     AdaptationBrief,
     AdaptationLedgerEntry,
@@ -30,6 +31,50 @@ from novel_to_comic.usage import ApiResult, estimate_text_cost
 
 
 _MAX_ADAPT_ATTEMPTS = 2
+
+
+def _as_contract_strings(value: Any) -> tuple[str, ...]:
+    """Coerce one treatment field into the tuple of strings the contract wants.
+
+    A writer asked for a list of strings routinely returns one string, a list of
+    small objects, or an object keyed by name. Those carry the same content in a
+    different container, so they are reshaped rather than rejected — flattening
+    an object into "key: value" keeps the writer's own words.
+    """
+
+    def _one(item: Any) -> str:
+        if isinstance(item, Mapping):
+            return "; ".join(
+                f"{key}: {inner}" for key, inner in item.items() if str(inner).strip()
+            )
+        return str(item).strip()
+
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value.strip(),) if value.strip() else ()
+    if isinstance(value, Mapping):
+        return tuple(
+            filter(None, (f"{key}: {_one(inner)}".strip() for key, inner in value.items()))
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(filter(None, (_one(item) for item in value)))
+    return (str(value),)
+
+
+def normalize_treatment(content: Mapping[str, Any], /) -> dict[str, Any]:
+    """Repair container slips in an inferred treatment without inventing content.
+
+    Unknown keys are dropped because the contract forbids extras; the retry that
+    follows a validation failure is what recovers content the writer put under a
+    name of its own invention.
+    """
+
+    return {
+        field: _as_contract_strings(content[field])
+        for field in NarrativeTreatment.model_fields
+        if field in content
+    }
 
 
 class AdaptationValidation(BaseModel):
@@ -89,6 +134,8 @@ def build_narrative_treatment_prompt(
         "to guide proportional selection. Do not allocate pages, panels, layouts, "
         "or geometry. Do not create parallel per-scene adaptations or reconciliation "
         "work. Return only the narrative-treatment JSON object.\n"
+        + describe_json_contract(NarrativeTreatment)
+        + "\n"
         + json.dumps(
             context,
             ensure_ascii=False,
@@ -131,6 +178,8 @@ def build_book_adaptation_prompt(
         "selection. Do not allocate pages, panels, layouts, or geometry. Do not "
         "create scene-parallel screenplays or reconciliation work. Return one JSON "
         "object containing only beats and ledger.\n"
+        + describe_json_contract(_BookDraft)
+        + "\n"
         + json.dumps(
             context,
             ensure_ascii=False,
@@ -178,7 +227,6 @@ async def produce_book_adaptation(
                     "You are the book-level narrative architect for a comic adaptation."
                 ),
                 user_content=treatment_prompt_attempt,
-                json_schema=NarrativeTreatment.model_json_schema(),
                 feature="adapt.narrative_treatment",
             )
             # A retried attempt was still paid for, so its usage is recorded
@@ -186,7 +234,9 @@ async def produce_book_adaptation(
             if treatment_result.usage is not None:
                 ctx.record_api_usage(treatment_result.usage)
             try:
-                treatment = NarrativeTreatment.model_validate(treatment_result.value)
+                treatment = NarrativeTreatment.model_validate(
+                    normalize_treatment(treatment_result.value)
+                )
             except ValidationError as error:
                 if attempt == _MAX_ADAPT_ATTEMPTS:
                     raise
@@ -228,7 +278,6 @@ async def produce_book_adaptation(
                     "You are the sole book-level Adapt writer. Return complete JSON."
                 ),
                 user_content=attempt_prompt,
-                json_schema=_BookDraft.model_json_schema(),
                 feature="adapt.book",
             )
             if book_result.usage is not None:
