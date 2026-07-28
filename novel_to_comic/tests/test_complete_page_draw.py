@@ -204,6 +204,34 @@ def test_compiler_freezes_exact_page_authority_and_selected_reference_order(
     assert "Ward’s torn left sleeve; blood below the right eye" in request.prompt
 
 
+def test_compiler_freezes_selected_lettering_and_framing_style_across_pages(
+    tmp_path: Path,
+) -> None:
+    style = (
+        "Woodcut chiaroscuro.\n\n"
+        "LETTERING STANDARD — Preserve exact capitalization; one condensed sans "
+        "typeface, black on ivory balloons and captions.\n"
+        "PAGE FRAMING STANDARD — Fixed cream outer margin on every page; straight "
+        "black borders and uniform gutters; never full bleed."
+    )
+
+    styled = compile_page_generation_request(
+        _page(),
+        _edition(),
+        _inventory(),
+        _reference_files(tmp_path),
+        retry=RetryProvenance(attempt=1),
+        style_template=style,
+    )
+    unstyled = _compile(tmp_path)
+
+    assert '"project_style_direction":' in styled.request.prompt
+    assert "Preserve exact capitalization" in styled.request.prompt
+    assert "Fixed cream outer margin on every page" in styled.request.prompt
+    assert "do not improvise or vary those choices on this page" in styled.request.prompt
+    assert styled.request.request_sha256 != unstyled.request.request_sha256
+
+
 def test_production_profile_estimates_page_and_selected_reference_cost(
     tmp_path: Path,
 ) -> None:

@@ -20,6 +20,7 @@ from novel_to_comic.stages.s2_style import (
     _select_portfolio,
     _select_role_portfolio,
     _style_sample_brief_source_key,
+    _style_sample_brief_source,
     ensure_style_sample_brief,
     estimate_style_proof_cost_usd,
     generate_sample_image,
@@ -28,6 +29,11 @@ from novel_to_comic.stages.s2_style import (
     missing_sample_indices,
     normalize_suggestion,
     style_direction_image,
+)
+from novel_to_comic.style_contract import (
+    DEFAULT_LETTERING_STANDARD,
+    DEFAULT_PAGE_FRAMING_STANDARD,
+    style_template_for_suggestion,
 )
 from novel_to_comic.usage import ApiResult
 
@@ -208,6 +214,29 @@ def test_generate_suggestions_receives_story_substance_and_custom_direction():
     assert "Seattle Street" in content
     assert "1man, adult male, leather jacket" in content
     assert "Luminous jewel tones" in content
+    system = mock.await_args.kwargs["system_prompt"]
+    assert "lettering" in system
+    assert "page_framing" in system
+
+
+def test_suggestion_carries_one_explicit_book_wide_production_standard():
+    suggestion = normalize_suggestion({
+        **_sugg("Etched dread", "etching"),
+        "lettering": "Sentence case in one condensed grotesk; ivory balloons.",
+        "page_framing": "Full bleed on every page with straight black gutters.",
+    })
+
+    selected = style_template_for_suggestion(suggestion)
+
+    assert "LETTERING STANDARD — Sentence case in one condensed grotesk" in selected
+    assert "PAGE FRAMING STANDARD — Full bleed on every page" in selected
+
+
+def test_legacy_suggestion_receives_safe_consistent_production_defaults():
+    suggestion = normalize_suggestion(_sugg("Legacy", "ink"))
+
+    assert suggestion["lettering"] == DEFAULT_LETTERING_STANDARD
+    assert suggestion["page_framing"] == DEFAULT_PAGE_FRAMING_STANDARD
 
 
 def test_generate_suggestions_retries_with_expanded_avoid_pool():
@@ -256,6 +285,17 @@ def test_ensure_style_sample_brief_generates_then_serves_from_cache(tmp_path):
     assert mock.await_count == 1
     cached = json.loads(artifacts.style_sample_brief_path(tmp_path).read_text())
     assert cached["brief"] == BRIEF
+    assert "Carl outside." in mock.await_args.kwargs["user_content"]
+    assert "The transformation occurred" in mock.await_args.kwargs["user_content"]
+
+
+def test_style_sample_source_uses_curated_extraction_evidence():
+    source = _style_sample_brief_source(_bible())
+
+    assert "1man, adult male, leather jacket" in source
+    assert "outdoors, snow, winter" in source
+    assert "Carl outside." in source
+    assert 'Source anchor: "The transformation occurred"' in source
 
 
 def test_ensure_style_sample_brief_regenerates_when_bible_changes(tmp_path):
@@ -443,10 +483,13 @@ def test_generate_sample_image_uses_brief_and_writes_meta(tmp_path):
     # Slice 06: style proof images use a portrait 4:5 frame.
     assert meta["parameters"]["width"] == 819
     assert meta["parameters"]["height"] == 1024
-    # Regression: the prose brief contains Carl, and the canonical compiler
-    # must agree instead of appending the contradictory "exactly 0 characters".
-    assert "exactly 1 character" in meta["prompt"]
-    assert "exactly 0 characters" not in meta["prompt"]
+    assert "exactly 1 distinct listed character" in meta["prompt"]
+    assert "one coherent complete comic page" in meta["prompt"]
+    assert "The night held its breath." in meta["prompt"]
+    assert "We keep moving." in meta["prompt"]
+    assert "LETTERING STANDARD —" in meta["prompt"]
+    assert "PAGE FRAMING STANDARD —" in meta["prompt"]
+    assert "no text, captions, speech balloons" not in meta["prompt"]
     assert "1man, adult male, leather jacket" in meta["prompt"]
     assert "outdoors, snow, winter" in meta["prompt"]
 
@@ -511,4 +554,5 @@ def test_validation_request_uses_dynamic_structured_action_without_contradiction
     assert request.input.prompt.subjects[0].action == STYLE_VALIDATION_ACTION
     assert STYLE_VALIDATION_COMPOSITION in request.compiled.final_prompt
     assert "quiet characteristic action" not in request.compiled.final_prompt
-    assert "exactly 1 character" in request.compiled.final_prompt
+    assert "exactly 1 distinct listed character" in request.compiled.final_prompt
+    assert "The night held its breath." in request.compiled.final_prompt

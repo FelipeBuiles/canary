@@ -35,6 +35,10 @@ from novel_to_comic.input_limits import (
     decode_remote_story,
     read_source,
 )
+from novel_to_comic.style_contract import (
+    page_style_template,
+    style_template_for_suggestion,
+)
 from novel_to_comic.models.generation import PromptAnchor
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.asset_generation import (
@@ -191,10 +195,11 @@ def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
     if suggestions_path.exists():
         try:
             data = json.loads(suggestions_path.read_text())
+            active = page_style_template(style_template)
             for i, suggestion in enumerate(data.get("suggestions", []), 1):
                 if (
                     isinstance(suggestion, dict)
-                    and suggestion.get("template", "").strip() == style_template.strip()
+                    and style_template_for_suggestion(suggestion) == active
                 ):
                     sample = project_dir / "samples" / f"style_{i}.png"
                     if sample.exists():

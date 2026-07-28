@@ -46,6 +46,7 @@ from novel_to_comic.models.page import (
     ApprovedVisualReferenceInventory,
     ComicPage,
 )
+from novel_to_comic.style_contract import page_style_template
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import ApiResult, UsageRecord, calculate_cost
 
@@ -246,9 +247,12 @@ def _compile_prompt(
     correction: PageRenderCorrection | None = None,
     depiction: Literal["canonical", "less_graphic"] = "canonical",
     unuploaded_authorities: tuple[ApprovedVisualReference, ...] = (),
+    style_template: str = "",
 ) -> str:
+    project_style = page_style_template(style_template) if style_template.strip() else None
     payload = {
         "canonical_comic_page": page.model_dump(mode="json"),
+        "project_style_direction": project_style,
         "approved_page_references": [
             {
                 "order": reference.order,
@@ -284,8 +288,11 @@ def _compile_prompt(
     return (
         "Render exactly one complete, fully lettered comic page from the canonical "
         "ComicPage below. Preserve every lettering string and every visual_anchor "
-        "verbatim. Use references in the supplied order. Return one complete page "
-        "image only; never return a panel artifact.\n"
+        "verbatim, including the canonical capitalization. The project_style_direction "
+        "is the invariant authority for lettering typeface, weights, colors, balloons, "
+        "caption boxes, borders, margins, gutters, and bleed treatment across every page; "
+        "do not improvise or vary those choices on this page. Use references in the "
+        "supplied order. Return one complete page image only; never return a panel artifact.\n"
         + depiction_direction
         + json.dumps(
             payload,
@@ -306,6 +313,7 @@ def compile_page_generation_request(
     correction: PageRenderCorrection | None = None,
     edit_source_bytes: bytes | None = None,
     depiction: Literal["canonical", "less_graphic"] = "canonical",
+    style_template: str = "",
 ) -> CompiledPageGeneration:
     """Compile one immutable request from canonical Plan and Cast authority."""
 
@@ -370,6 +378,7 @@ def compile_page_generation_request(
         correction,
         depiction,
         authorities if depiction == "less_graphic" else (),
+        style_template,
     )
     request = FrozenPageGenerationRequest.compile(
         page=page,

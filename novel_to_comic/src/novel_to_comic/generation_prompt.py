@@ -232,6 +232,14 @@ def generate_system_constraints(
             )
         else:
             lines.extend(_CHARACTER_REFERENCE_PERFORMANCE)
+    elif asset_kind == "style_sample":
+        lines = [
+            f"exactly {character_count} distinct listed {character_label}",
+            "the listed character may recur across panels but must keep one identity",
+            "one coherent complete comic page, not unrelated images or a contact sheet",
+        ]
+        if subjects:
+            lines.extend(_FACIAL_QUALITY)
     else:
         lines = [
             f"exactly {character_count} {character_label}",

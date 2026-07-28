@@ -206,6 +206,7 @@ def generate_page(
             approved_reference_files(project_dir),
             retry=RetryProvenance(attempt=1),
             depiction=generation.depiction if generation is not None else "canonical",
+            style_template=config.style_template,
         )
     except (ArtifactMissing, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -368,6 +369,7 @@ def correct_page_issue(
                 page_number,
                 issue.render_revision,
             ),
+            style_template=config.style_template,
         )
     except (ArtifactMissing, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
