@@ -457,7 +457,7 @@ Two new config fields control LLM pre-processing passes before image generation:
 
 Current image aliases:
 - `image-fast`: Gemini 3.1 Flash Lite Image route, also used by dev mode.
-- `image-balanced`: Gemini 3.1 Flash Lite Image route, retained for explicit balanced projects and legacy configs.
+- `image-balanced`: Gemini 3 Pro Image (Nano Banana Pro) route.
 - `image-quality`: Seedream 5.0 Pro route, starting at ~$0.0675/image plus additional-reference and larger-output charges, routed through the fal queue custom handler with up to 10 references. `REVE_ALIASES` includes only `image-reve`.
 - `image-reve`: Reve image generation (Reve remains available at this alias and via labs entries).
 

@@ -13,8 +13,14 @@
     "essential_events": [
       "Johansen sees the titan rise."
     ],
+    "essential_event_ids": [
+      "essential_event_001"
+    ],
     "character_turns": [
       "Johansen abandons any hope of an ordinary life."
+    ],
+    "character_turn_ids": [
+      "character_turn_001"
     ],
     "reveals": [
       "The titan rises above the yacht."
@@ -51,6 +57,9 @@
       "brief_requirements": [
         "Johansen sees the titan rise."
       ],
+      "brief_requirement_ids": [
+        "essential_event_001"
+      ],
       "source_unit_ids": [
         "source_000001"
       ],
@@ -78,6 +87,7 @@
         "consequence"
       ],
       "brief_requirements": [],
+      "brief_requirement_ids": [],
       "source_unit_ids": [
         "source_000002",
         "source_000003"
@@ -108,6 +118,9 @@
       "brief_requirements": [
         "Johansen abandons any hope of an ordinary life."
       ],
+      "brief_requirement_ids": [
+        "character_turn_001"
+      ],
       "source_unit_ids": [
         "source_000004"
       ],
@@ -115,6 +128,7 @@
       "transitions": [
         {
           "dimension": "place",
+          "scope_id": "johansen_testimony",
           "from_state": "sea",
           "to_state": "home",
           "description": "The account jumps from the escape to Johansen at home."

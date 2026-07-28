@@ -11,7 +11,7 @@ aliases:
   extract-balanced: vertex_ai/gemini-3.6-flash
   extract-quality: vertex_ai/gemini-3.1-pro-preview
   adapt-fast: anthropic/claude-haiku-4-5
-  adapt-balanced: anthropic/claude-sonnet-4-6
+  adapt-balanced: vertex_ai/gemini-3.1-pro-preview
   adapt-quality: anthropic/claude-opus-4-7
   plan-fast: vertex_ai/gemini-3.5-flash-lite
   plan-balanced: vertex_ai/gemini-3.6-flash
@@ -21,7 +21,7 @@ aliases:
   prompt-quality: vertex_ai/gemini-3.5-flash-lite
   ocr-balanced: vertex_ai/gemini-3.6-flash
   image-fast: vertex_ai/gemini-3.1-flash-lite-image
-  image-balanced: vertex_ai/gemini-3.1-flash-lite-image
+  image-balanced: vertex_ai/gemini-3.1-flash-image
   image-balanced-seedream-test: bytedance/seedream/v5/lite/edit
   image-reve: reve/create
   image-quality: bytedance/seedream/v5/pro/edit
@@ -173,9 +173,9 @@ model_overrides:
     input_cost_per_image: 0.00112
     output_cost_per_image: 0.134
     mode: image_generation
-  gemini-3.1-flash-image-preview:
+  gemini-3.1-flash-image:
     input_cost_per_image: 0.00056
-    output_cost_per_image: 0.067
+    output_cost_per_image: 0.101
     mode: image_generation
   # Nano Banana 2 Lite (Gemini 3.1 Flash Lite Image) — efficiency specialist,
   # ~half the flash-image price. 1K image output = $30/1M tokens * 1120 tokens

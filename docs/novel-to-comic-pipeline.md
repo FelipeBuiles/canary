@@ -110,7 +110,8 @@ layout_prompts_enabled: false
 
 Available image aliases: `image-fast`, `image-balanced`, `image-quality`, `image-reve`.
 The LiteLLM proxy resolves them to provider/model routes. `image-fast` and
-`image-balanced` both route to Gemini 3.1 Flash Lite Image. `image-quality` routes to
+`image-fast` routes to Gemini 3.1 Flash Lite Image, while `image-balanced` routes to
+Gemini 3 Pro Image (Nano Banana Pro). `image-quality` routes to
 Gemini 3 Pro Image (Nano Banana 2 Pro, ~$0.134/image at 1K) through the vertex-multimodal
 handler; `image-reve` routes to Reve (`REVE_ALIASES`). The default `image-quality` route
 now selects Gemini 3 Pro Image. For Reve (`image-reve`), draw selects refs via `_reve_refs()`:

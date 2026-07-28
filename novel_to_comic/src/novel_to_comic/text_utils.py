@@ -100,6 +100,12 @@ def shorten(value: str, limit: int) -> str:
 
 def clean_exception_message(exc: Exception) -> str:
     """Format an exception to a clean, user-friendly string without verbose info like Mozilla URLs."""
+    if isinstance(exc, httpx.TimeoutException):
+        return (
+            f"{type(exc).__name__}: "
+            "The AI provider did not respond before the request timeout."
+        )
+
     # Try to extract LiteLLM/API response message if it's an HTTPStatusError
     if isinstance(exc, httpx.HTTPStatusError):
         try:
@@ -126,4 +132,3 @@ def clean_exception_message(exc: Exception) -> str:
         ]
         return "\n".join(lines).strip()
     return msg
-

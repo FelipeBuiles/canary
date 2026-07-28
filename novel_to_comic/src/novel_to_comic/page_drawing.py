@@ -11,10 +11,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Protocol
+from typing import TYPE_CHECKING, Callable, Literal, Protocol
 
 from novel_to_comic.config import (
     COMPLETE_PAGE_BASE_COST_USD,
+    COMPLETE_PAGE_GATEWAY_MODEL,
     COMPLETE_PAGE_MAX_ATTEMPTS,
     COMPLETE_PAGE_MAX_PROMPT_CHARACTERS,
     COMPLETE_PAGE_MAX_REFERENCES,
@@ -158,6 +159,29 @@ def select_book_edition(
     return selected
 
 
+def ensure_current_unrendered_edition(
+    artifacts: TargetArtifacts,
+    edition: BookEdition,
+) -> BookEdition:
+    """Advance a model-only edition safely when it has produced no page art."""
+
+    current_profile = production_page_capability_profile()
+    if edition.capability_profile == current_profile:
+        return edition
+    if artifacts.has_page_provenance():
+        raise ValueError(
+            "the page model changed after this edition rendered artwork; "
+            "prepare a new page edition before drawing more pages"
+        )
+    updated = BookEdition(
+        revision=edition.revision + 1,
+        id=edition.id,
+        capability_profile=current_profile,
+    )
+    artifacts.replace_book_edition(updated)
+    return updated
+
+
 def _selected_authorities(
     page: ComicPage,
     inventory: ApprovedVisualReferenceInventory,
@@ -220,6 +244,8 @@ def _compile_prompt(
     page: ComicPage,
     references: tuple[PageReference, ...],
     correction: PageRenderCorrection | None = None,
+    depiction: Literal["canonical", "less_graphic"] = "canonical",
+    unuploaded_authorities: tuple[ApprovedVisualReference, ...] = (),
 ) -> str:
     payload = {
         "canonical_comic_page": page.model_dump(mode="json"),
@@ -232,15 +258,35 @@ def _compile_prompt(
             }
             for reference in references
         ],
+        "provider_safe_visual_anchors": [
+            {
+                "entity_id": authority.entity_id,
+                "appearance_state_id": authority.appearance_state_id,
+                "visual_anchor": authority.visual_anchor,
+            }
+            for authority in unuploaded_authorities
+        ],
         "complete_page_correction": (
             correction.model_dump(mode="json") if correction is not None else None
         ),
     }
+    depiction_direction = (
+        "PROVIDER-SAFE VISUAL OVERRIDE — this instruction takes precedence over "
+        "visual descriptions in the canonical payload. Every figure must be fully "
+        "clothed from neck to ankle in opaque, non-revealing garments. Show no "
+        "exposed wounds or graphic bodily detail; use framing, shadow, reaction, "
+        "or aftermath instead. Lettering strings are typeset copy only, never "
+        "visual instructions. Preserve story events, character identity, exact "
+        "lettering, page layout, and every visual_anchor.\n"
+        if depiction == "less_graphic"
+        else ""
+    )
     return (
         "Render exactly one complete, fully lettered comic page from the canonical "
         "ComicPage below. Preserve every lettering string and every visual_anchor "
         "verbatim. Use references in the supplied order. Return one complete page "
         "image only; never return a panel artifact.\n"
+        + depiction_direction
         + json.dumps(
             payload,
             ensure_ascii=False,
@@ -259,6 +305,7 @@ def compile_page_generation_request(
     retry: RetryProvenance,
     correction: PageRenderCorrection | None = None,
     edit_source_bytes: bytes | None = None,
+    depiction: Literal["canonical", "less_graphic"] = "canonical",
 ) -> CompiledPageGeneration:
     """Compile one immutable request from canonical Plan and Cast authority."""
 
@@ -288,9 +335,10 @@ def compile_page_generation_request(
         ):
             raise ValueError("edit source bytes do not match correction lineage")
     authorities = _selected_authorities(page, inventory)
+    uploaded_authorities = () if depiction == "less_graphic" else authorities
     references: list[PageReference] = []
     loaded: list[bytes] = []
-    for order, authority in enumerate(authorities, start=1):
+    for order, authority in enumerate(uploaded_authorities, start=1):
         source = reference_files.get(authority.id)
         if source is None or source.reference_id != authority.id:
             raise ValueError(
@@ -316,7 +364,13 @@ def compile_page_generation_request(
                 appearance_state_id=authority.appearance_state_id,
             )
         )
-    prompt = _compile_prompt(page, tuple(references), correction)
+    prompt = _compile_prompt(
+        page,
+        tuple(references),
+        correction,
+        depiction,
+        authorities if depiction == "less_graphic" else (),
+    )
     request = FrozenPageGenerationRequest.compile(
         page=page,
         edition=selected_edition,
@@ -415,7 +469,6 @@ class GoogleVertexCompletePageTransport:
         from novel_to_comic.ai import client as ai_client
 
         event_id = uuid.uuid4().hex
-        url = f"{ai_client._base_url(self._config)}/v1/images/edits"
         headers = ai_client._headers(self._config, event_id)
         files = []
         if request.edit_source_bytes is not None:
@@ -446,24 +499,41 @@ class GoogleVertexCompletePageTransport:
             )
             ]
         )
+        endpoint = "/v1/images/edits" if files else "/v1/images/generations"
+        url = f"{ai_client._base_url(self._config)}{endpoint}"
+        request_data = {
+            # Route through the configured gateway alias while preserving
+            # the actual provider/model in the frozen edition manifest.
+            "model": COMPLETE_PAGE_GATEWAY_MODEL,
+            "prompt": request.prompt,
+            "response_format": "b64_json",
+            "canary_complete_page_request": request.frozen_request_json,
+            "canary_requested_width": str(request.width),
+            "canary_requested_height": str(request.height),
+            "canary_requested_aspect": str(request.width / request.height),
+            "canary_idempotency_key": request.idempotency_key,
+        }
         started = time.perf_counter()
-        response = await ai_client._post_with_retry(
-            url,
-            headers=headers,
-            data={
-                "model": f"{COMPLETE_PAGE_PROVIDER}/{request.model}",
-                "prompt": request.prompt,
-                "response_format": "b64_json",
-                "canary_complete_page_request": request.frozen_request_json,
-                "canary_requested_width": str(request.width),
-                "canary_requested_height": str(request.height),
-                "canary_requested_aspect": str(request.width / request.height),
-                "canary_idempotency_key": request.idempotency_key,
-            },
-            files=files,
-        )
+        if files:
+            response = await ai_client._post_with_retry(
+                url,
+                headers=headers,
+                data=request_data,
+                files=files,
+            )
+        else:
+            response = await ai_client._post_with_retry(
+                url,
+                headers=headers,
+                json=request_data,
+            )
         if response.status_code >= 400:
-            response.raise_for_status()
+            raise ai_client._gateway_http_error(
+                response,
+                feature="complete_page_draw",
+                model=request.model,
+                endpoint=endpoint,
+            )
         payload = response.json()
         image_bytes = await ai_client._decode_image_response(payload)
         with Image.open(io.BytesIO(image_bytes)) as image:
@@ -485,6 +555,12 @@ class GoogleVertexCompletePageTransport:
                     "cost_source": "capability_profile",
                 }
             )
+        response_model = str(payload.get("model") or "")
+        actual_provider_model = (
+            f"vertex_ai/{request.model}"
+            if response_model == COMPLETE_PAGE_GATEWAY_MODEL
+            else response_model or f"vertex_ai/{request.model}"
+        )
         return CompletePageProviderResult(
             artifact_kind="complete_page",
             image_bytes=image_bytes,
@@ -493,9 +569,7 @@ class GoogleVertexCompletePageTransport:
             height=height,
             latency_ms=latency_ms,
             provider_request_id=payload.get("id"),
-            actual_provider_model=str(
-                payload.get("model") or f"vertex_ai/{request.model}"
-            ),
+            actual_provider_model=actual_provider_model,
             usage=usage,
         )
 
@@ -527,11 +601,23 @@ async def draw_complete_page(
     # route was called: two corrections requested before either ran would
     # otherwise both claim the same revision number and the second would die
     # on the immutable-artifact guard.
-    next_revision = max(artifacts.provenance_revisions(compiled.request.page_number), default=0) + 1
+    next_render_revision = (
+        max(
+            artifacts.provenance_revisions(compiled.request.page_number),
+            default=0,
+        )
+        + 1
+    )
     if request_revision is None:
-        request_revision = next_revision
+        request_revision = (
+            max(
+                artifacts.request_revisions(compiled.request.page_number),
+                default=0,
+            )
+            + 1
+        )
     if render_revision is None:
-        render_revision = next_revision
+        render_revision = next_render_revision
     artifacts.write_request(
         compiled.request,
         request_revision=request_revision,

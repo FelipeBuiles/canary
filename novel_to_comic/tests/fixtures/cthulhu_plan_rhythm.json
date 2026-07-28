@@ -227,6 +227,7 @@
             "beat_ids": [
               "beat_approach"
             ],
+            "panel_role": "establishing",
             "visual_intent": "The Alert is dwarfed by the black reef.",
             "entity_ids": [
               "location_alert"
@@ -234,11 +235,25 @@
             "lettering_ids": [
               "lettering_approach"
             ]
+          },
+          {
+            "id": "page_001_content_002",
+            "order": 2,
+            "beat_ids": [
+              "beat_approach"
+            ],
+            "panel_role": "detail",
+            "visual_intent": "Spray crawls over the Alert's black rail.",
+            "entity_ids": [
+              "location_alert"
+            ],
+            "lettering_ids": []
           }
         ],
         "reading_order": [
           "page_001_content_001",
-          "lettering_approach"
+          "lettering_approach",
+          "page_001_content_002"
         ]
       },
       {
@@ -256,6 +271,7 @@
             "beat_ids": [
               "beat_peak"
             ],
+            "panel_role": "splash",
             "visual_intent": "Cthulhu towers above the yacht.",
             "entity_ids": [
               "character_cthulhu",
@@ -286,6 +302,7 @@
             "beat_ids": [
               "beat_escape"
             ],
+            "panel_role": "action",
             "visual_intent": "Johansen wheels the Alert away.",
             "entity_ids": [
               "character_johansen",
@@ -294,11 +311,40 @@
             "lettering_ids": [
               "lettering_escape"
             ]
+          },
+          {
+            "id": "page_003_content_002",
+            "order": 2,
+            "beat_ids": [
+              "beat_escape"
+            ],
+            "panel_role": "detail",
+            "visual_intent": "The wheel bites hard under Johansen's hands.",
+            "entity_ids": [
+              "character_johansen",
+              "location_alert"
+            ],
+            "lettering_ids": []
+          },
+          {
+            "id": "page_003_content_003",
+            "order": 3,
+            "beat_ids": [
+              "beat_escape"
+            ],
+            "panel_role": "action",
+            "visual_intent": "The Alert's wake hooks sharply away from the reef.",
+            "entity_ids": [
+              "location_alert"
+            ],
+            "lettering_ids": []
           }
         ],
         "reading_order": [
           "page_003_content_001",
-          "lettering_escape"
+          "lettering_escape",
+          "page_003_content_002",
+          "page_003_content_003"
         ]
       },
       {
@@ -316,6 +362,7 @@
             "beat_ids": [
               "beat_release"
             ],
+            "panel_role": "standard",
             "visual_intent": "The wake disappears into the churned sea.",
             "entity_ids": [
               "location_alert"
@@ -345,6 +392,7 @@
             "beat_ids": [
               "beat_aftermath"
             ],
+            "panel_role": "reaction",
             "visual_intent": "Johansen sits alone after returning home.",
             "entity_ids": [
               "character_johansen"

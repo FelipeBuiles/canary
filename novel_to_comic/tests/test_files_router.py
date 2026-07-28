@@ -10,6 +10,8 @@ cannot take it with it.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -18,10 +20,17 @@ from starlette.testclient import TestClient
 
 from novel_to_comic import artifacts
 from novel_to_comic.config import Config
+from novel_to_comic.models.page import (
+    BookPlan,
+    ComicPage,
+    PageContent,
+    PlannedPageRevision,
+)
 from novel_to_comic.server.app import create_app
 from novel_to_comic.server.deps import get_project
 from novel_to_comic.server.routers.files import serve_project_file
 from novel_to_comic.state import PipelineState, save_state
+from novel_to_comic.target_artifacts import TargetArtifacts
 
 
 def _client(tmp_path: Path) -> tuple[TestClient, Path]:
@@ -137,3 +146,64 @@ def test_named_project_routes_are_not_shadowed_by_the_asset_reader(tmp_path: Pat
     client, _project_dir = _client(tmp_path)
     response = client.get("/api/projects/demo/pages")
     assert response.json()["detail"] != "File not found"
+
+
+def test_pages_route_reads_page_saved_before_panel_roles_were_authored(
+    tmp_path: Path,
+):
+    client, project_dir = _client(tmp_path)
+    page = ComicPage(
+        revision=1,
+        page_number=1,
+        adaptation_revision=1,
+        adaptation_sha256="a" * 64,
+        emphasis="initial",
+        density_intent="standard",
+        content=[
+            PageContent(
+                id="item_0001",
+                order=1,
+                beat_ids=["beat_0001"],
+                visual_intent="A scholar opens the forbidden manuscript.",
+            )
+        ],
+        reading_order=["item_0001"],
+    )
+    stored_page = page.model_dump(mode="json")
+    stored_page["content"][0].pop("panel_role")
+    stored_page.pop("content_sha256")
+    stored_hash = hashlib.sha256(
+        json.dumps(
+            stored_page,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+    stored_page["content_sha256"] = stored_hash
+    page_path = TargetArtifacts(project_dir).page_path(1)
+    page_path.parent.mkdir(parents=True)
+    page_path.write_text(json.dumps(stored_page))
+    TargetArtifacts(project_dir).write_plan(
+        BookPlan(
+            revision=1,
+            adaptation_revision=1,
+            adaptation_sha256="a" * 64,
+            target_page_min=1,
+            target_page_max=1,
+            pages=[
+                PlannedPageRevision(
+                    page_number=1,
+                    revision=1,
+                    content_sha256=stored_hash,
+                )
+            ],
+        )
+    )
+
+    response = client.get("/api/projects/demo/pages")
+
+    assert response.status_code == 200
+    returned = response.json()["pages"][0]["page"]
+    assert returned["content_sha256"] == stored_hash
+    assert returned["content"][0]["panel_role"] == "standard"

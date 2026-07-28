@@ -153,7 +153,7 @@ models:
     max_refs: 8
     approx_cost: 0.034
     notes: >-
-      Production image-balanced tier. Gemini 3.1 Flash Lite Image routed through the
+      Production image-balanced tier. Gemini 3 Pro Image (Nano Banana Pro) routed through the
       vertex-multimodal custom provider — native Vertex multimodal shape,
       role-labeled reference images.
 

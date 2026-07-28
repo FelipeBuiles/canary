@@ -99,7 +99,7 @@ def _render(
         width=2048,
         height=3072,
         provider="vertex-multimodal",
-        model="gemini-3-pro-image-preview",
+        model="gemini-3.1-flash-image",
         latency_ms=100,
         cost_usd="0.30",
     )
@@ -449,15 +449,15 @@ def _profile() -> PageCapabilityProfile:
     return PageCapabilityProfile(
         id="profile",
         provider="vertex-multimodal",
-        model="gemini-3-pro-image-preview",
+        model="gemini-3.1-flash-image",
         max_image_references=4,
         reference_ordering="ordered",
         editing_modes=["instructed", "region_targeted"],
-        output_width=2048,
-        output_height=3072,
+        output_width=1696,
+        output_height=2528,
         max_prompt_characters=32_000,
         retry_semantics="idempotent_request",
-        price_per_page_usd="0.30",
+        price_per_page_usd="0.101",
     )
 
 
@@ -496,14 +496,14 @@ class _Transport:
             artifact_kind="complete_page",
             image_bytes=b"corrected-complete-page",
             media_type="image/png",
-            width=2048,
-            height=3072,
+            width=1696,
+            height=2528,
             latency_ms=120,
             provider_request_id="provider-correction",
-            actual_provider_model="vertex_ai/gemini-3-pro-image-preview",
+            actual_provider_model="vertex_ai/gemini-3.1-flash-image",
             usage=UsageRecord(
                 provider="gemini",
-                model="gemini-3-pro-image-preview",
+                model="gemini-3.1-flash-image",
                 operation="image",
                 image_count=1,
                 cost_usd=0.30,

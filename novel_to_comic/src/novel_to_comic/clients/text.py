@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from novel_to_comic.config import Config
 from novel_to_comic.usage import ApiResult
-from novel_to_comic.ai import generate_structured_object, generate_text as ai_generate_text
+from novel_to_comic.ai import (
+    generate_structured_object,
+    generate_text as ai_generate_text,
+)
 
 # ── Model → provider registry ────────────────────────────────────────────────
 # Add new models here.  Do NOT add heuristic prefix-matching.
@@ -68,6 +71,7 @@ async def generate_json(
     user_content: str | bytes,
     temperature: float = 0.7,
     max_output_tokens: int | None = None,
+    json_schema: dict | None = None,
     feature: str = "text.generate_json",
     image_attachments: tuple[tuple[bytes, str], ...] = (),
 ) -> ApiResult[dict]:
@@ -79,6 +83,7 @@ async def generate_json(
         user_content=user_content,
         temperature=temperature,
         max_output_tokens=max_output_tokens,
+        json_schema=json_schema,
         feature=feature,
         image_attachments=image_attachments,
     )

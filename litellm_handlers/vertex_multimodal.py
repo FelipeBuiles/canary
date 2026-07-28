@@ -224,6 +224,7 @@ class VertexMultimodalLLM(CustomLLM):
                 parts.append(part)
         ref_count = len(parts)
         page_payload = optional_params.get("canary_complete_page_request")
+        requested_image_size: str | None = None
         if page_payload:
             manifest = _parse_complete_page_request(page_payload)
             _verify_complete_page_images(manifest, image)
@@ -244,6 +245,10 @@ class VertexMultimodalLLM(CustomLLM):
                 raise ValueError(
                     "complete-page idempotency key differs from frozen request"
                 )
+            requested_image_size = _image_size_for_dimensions(
+                manifest["output_width"],
+                manifest["output_height"],
+            )
             contents = _exact_complete_page_contents(manifest, parts)
         elif wire_payload:
             from litellm_handlers.provider_wire import (
@@ -271,6 +276,7 @@ class VertexMultimodalLLM(CustomLLM):
                 requested_aspect,
                 quality,
                 model=vertex_model,
+                image_size=requested_image_size,
             )
             native_aspect = image_config_kwargs.get("aspect_ratio")
 
@@ -321,7 +327,11 @@ class VertexMultimodalLLM(CustomLLM):
             )
         b64 = base64.b64encode(image_bytes).decode("ascii")
         provider_model = f"vertex_ai/{vertex_model}"
-        response_cost = _estimated_image_cost(vertex_model, ref_count)
+        response_cost = _estimated_image_cost(
+            vertex_model,
+            ref_count,
+            image_size=requested_image_size,
+        )
         model_response.created = int(time.time())
         model_response.data = [ImageObject(b64_json=b64)]
         model_response.usage = _image_usage(response, response_cost=response_cost)
@@ -640,21 +650,26 @@ def _image_config_kwargs(
     quality: Any,
     *,
     model: str | None = None,
+    image_size: str | None = None,
 ) -> dict[str, str]:
     """Build native Gemini image controls from the exact wire geometry."""
     result: dict[str, str] = {}
-    if quality is not None:
-        image_size = {"low": "1K", "medium": "2K", "high": "4K", "auto": "2K"}.get(
+    if image_size is not None:
+        if image_size not in {"1K", "2K", "4K"}:
+            raise ValueError(f"unsupported native image size: {image_size}")
+        result["image_size"] = image_size
+    elif quality is not None:
+        selected_image_size = {"low": "1K", "medium": "2K", "high": "4K", "auto": "2K"}.get(
             str(quality).lower()
         )
-        if image_size is None:
+        if selected_image_size is None:
             raise ValueError(f"unsupported wire quality: {quality}")
         # Flash Lite Image has a fixed 1K output resolution. Sending the
         # generic medium/high mapping (2K/4K) makes Vertex reject an otherwise
         # valid request with an opaque INVALID_ARGUMENT response.
         if model and "gemini-3.1-flash-lite-image" in model:
-            image_size = "1K"
-        result["image_size"] = image_size
+            selected_image_size = "1K"
+        result["image_size"] = selected_image_size
 
     # Gemini otherwise defaults to a square image even when the
     # provider-neutral request contains landscape/portrait geometry. Pass the
@@ -664,6 +679,18 @@ def _image_config_kwargs(
     if native_aspect is not None:
         result["aspect_ratio"] = native_aspect
     return result
+
+
+def _image_size_for_dimensions(width: int, height: int) -> str:
+    """Translate frozen provider dimensions back to Gemini's native size tier."""
+
+    pixels = width * height
+    tiers = {
+        "1K": 1024 * 1024,
+        "2K": 2048 * 2048,
+        "4K": 4096 * 4096,
+    }
+    return min(tiers, key=lambda tier: abs(tiers[tier] - pixels))
 
 
 def _requires_native_aspect_control(native_aspect: str | None) -> bool:
@@ -834,10 +861,12 @@ def _extract_image(response: types.GenerateContentResponse) -> tuple[bytes, str]
 
     # Inspect prompt feedback
     feedback = getattr(response, "prompt_feedback", None)
+    prompt_block_reason = None
     if feedback:
         feedback_details = []
         block_reason = getattr(feedback, "block_reason", None)
         if block_reason:
+            prompt_block_reason = block_reason
             feedback_details.append(f"block_reason={block_reason}")
         safety_ratings = getattr(feedback, "safety_ratings", None)
         if safety_ratings:
@@ -852,6 +881,13 @@ def _extract_image(response: types.GenerateContentResponse) -> tuple[bytes, str]
         details.append(f"prompt_feedback: {'; '.join(feedback_details)}")
 
     detail_str = " | ".join(details)
+    if prompt_block_reason is not None:
+        raise litellm.APIError(
+            status_code=400,
+            message=f"Vertex image request blocked: {detail_str}",
+            llm_provider="vertex-multimodal",
+            model=str(getattr(response, "model_version", None) or "vertex-image"),
+        )
     raise ValueError(f"Vertex response did not contain image bytes: {detail_str} (Full response: {response})")
 
 
@@ -889,10 +925,20 @@ def _image_usage(response: types.GenerateContentResponse, *, response_cost: floa
     )
 
 
-def _estimated_image_cost(model: str, ref_count: int) -> float | None:
+def _estimated_image_cost(
+    model: str,
+    ref_count: int,
+    *,
+    image_size: str | None = None,
+) -> float | None:
     normalized = _vertex_model(model)
-    if normalized == "gemini-3.1-flash-image-preview":
-        return 0.067 + 0.00056 * ref_count
+    if normalized == "gemini-3.1-flash-image":
+        output_cost = {
+            "1K": 0.067,
+            "2K": 0.101,
+            "4K": 0.151,
+        }.get(image_size or "1K", 0.067)
+        return output_cost + 0.00056 * ref_count
     if normalized == "gemini-3.1-flash-lite-image":
         # Nano Banana 2 Lite — image output at $30/1M tokens (1120 tokens for a
         # 1K image = $0.0336); input refs at $0.25/1M tokens (1120 tokens = $0.00028).

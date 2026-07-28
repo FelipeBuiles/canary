@@ -23,9 +23,9 @@ from novel_to_comic.image_models import (
         ),
         (
             "image-balanced",
-            ImageRoute.GEMINI_FLASH_LITE,
-            "vertex-multimodal/gemini-3.1-flash-lite-image",
-            "Balanced — Gemini 3.1 Flash Lite Image",
+            ImageRoute.GEMINI_FLASH_IMAGE,
+            "vertex-multimodal/gemini-3.1-flash-image",
+            "Balanced — Gemini 3.1 Flash Image (Nano Banana 2)",
         ),
         (
             "image-quality",

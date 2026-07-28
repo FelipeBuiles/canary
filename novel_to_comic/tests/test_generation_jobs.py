@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from novel_to_comic.server.generation_jobs import (
     GenerationJob,
     _looks_like_timeout_cancellation,
+    generation_job_payload,
     generation_worker,
     user_generation_semaphore,
 )
@@ -71,6 +72,38 @@ def test_generation_job_failure_does_not_log_traceback_by_default(caplog, monkey
     ]
     assert len(failed_records) == 1
     assert not failed_records[0].exc_info
+
+
+def test_generation_job_payload_classifies_provider_block():
+    async def blocked_runner():
+        raise RuntimeError(
+            "AI gateway request failed for complete_page_draw "
+            "(model=gemini-3.1-flash-image, endpoint=/v1/images/edits): "
+            "400 Bad Request — Vertex response did not contain image bytes: "
+            "no candidates returned | prompt_feedback: "
+            "block_reason=BlockedReason.OTHER"
+        )
+
+    job = GenerationJob(
+        id="blocked-page-16",
+        project_name="demo",
+        kind="complete_page_draw",
+        label="Page 16",
+        payload={"page_number": 16},
+        sequence=1,
+        runner=blocked_runner,
+    )
+
+    _run_single_job_worker(job)
+
+    payload = generation_job_payload(None, job)
+    assert payload["status"] == "failed"
+    assert payload["classification"] == "provider_blocked"
+    assert payload["user_message"] == (
+        "The image provider declined this scene but did not say which detail "
+        "caused it. Your work is unchanged."
+    )
+    assert payload["recoverable"] is True
 
 
 def test_generation_job_failure_traceback_can_be_enabled(caplog, monkeypatch):

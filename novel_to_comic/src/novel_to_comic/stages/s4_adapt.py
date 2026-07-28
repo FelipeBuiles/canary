@@ -6,7 +6,7 @@ from pathlib import Path
 
 from novel_to_comic import artifacts
 from novel_to_comic.book_adaptation import (
-    build_narrative_treatment_prompt,
+    estimate_book_adaptation_cost,
     produce_book_adaptation,
 )
 from novel_to_comic.clients.text import generate_json
@@ -14,8 +14,6 @@ from novel_to_comic.config import Config
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.state import PipelineState
 from novel_to_comic.target_artifacts import TargetArtifacts
-from novel_to_comic.usage import estimate_text_cost
-
 from novel_to_comic.stages import Stage, clean_cascade
 
 
@@ -24,7 +22,12 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
     model = config.effective_adapt_model()
 
     async def generate(**kwargs):
-        return await generate_json(config=config, model=model, **kwargs)
+        return await generate_json(
+            config=config,
+            model=model,
+            temperature=1.0,
+            **kwargs,
+        )
 
     return await produce_book_adaptation(
         target.read_source(),
@@ -51,11 +54,11 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     source = target.read_source()
     brief = target.read_brief()
     bible = artifacts.read_story_bible(project_dir)
-    prompt = build_narrative_treatment_prompt(source, bible, brief)
-    return estimate_text_cost(
-        config.effective_adapt_model(),
-        prompt,
-        output_chars=max(12_000, len(source.text) * 3),
+    return estimate_book_adaptation_cost(
+        source,
+        bible,
+        brief,
+        model=config.effective_adapt_model(),
     )
 
 

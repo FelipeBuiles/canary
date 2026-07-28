@@ -190,12 +190,15 @@ class StageRuntime:
         self, cost: float = 0.0, usage: UsageRecord | None = None
     ) -> None:
         record_item_done(self._state, self.name, cost, usage)
+        save_state(self._state, self._project_dir)
 
     def record_api_usage(self, usage: UsageRecord) -> None:
         record_api_usage(self._state, self.name, usage)
+        save_state(self._state, self._project_dir)
 
     def record_item_failed(self, item_id: str) -> None:
         record_item_failed(self._state, self.name, item_id)
+        save_state(self._state, self._project_dir)
 
     # ------------------------------------------------------------------
     # Persistence
@@ -214,3 +217,4 @@ class StageRuntime:
 
     def set_estimated_cost(self, cost_usd: float) -> None:
         self._state.stages[self.name].estimated_cost_usd = cost_usd
+        save_state(self._state, self._project_dir)

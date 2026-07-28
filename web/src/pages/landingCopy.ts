@@ -200,7 +200,7 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
         },
         {
           question: "Can I change what it makes?",
-          answer: "Yes. You approve the story, look and cast, then review complete page revisions, request corrections, and decide which editorial issues to accept.",
+          answer: "Yes. You approve the story, look and cast, then review complete page revisions and decide which page issues to correct or accept as-is.",
         },
         {
           question: "Will every character look perfectly identical?",

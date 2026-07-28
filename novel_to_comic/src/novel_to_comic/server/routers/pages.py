@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -14,6 +15,7 @@ from novel_to_comic.page_drawing import (
     VertexCompletePageAdapter,
     analyze_complete_page,
     compile_page_generation_request,
+    ensure_current_unrendered_edition,
     enqueue_complete_page_draw,
 )
 from novel_to_comic.page_ocr import GatewayPageOCRAdapter
@@ -51,6 +53,10 @@ class PageIssueCreate(BaseModel):
     detected_region_ids: tuple[str, ...] = ()
     entity_ids: tuple[str, ...] = ()
     appearance_state_ids: tuple[str, ...] = ()
+
+
+class PageGenerationCreate(BaseModel):
+    depiction: Literal["canonical", "less_graphic"] = "canonical"
 
 
 def _latest_provenance(target: TargetArtifacts, page_number: int):
@@ -183,6 +189,7 @@ def generate_page(
     page_number: int,
     request: Request,
     project_id: str,
+    generation: PageGenerationCreate | None = None,
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
@@ -191,12 +198,14 @@ def generate_page(
     try:
         page = target.read_page(page_number)
         edition = target.read_book_edition()
+        edition = ensure_current_unrendered_edition(target, edition)
         compiled = compile_page_generation_request(
             page,
             edition,
             approved_visual_inventory(project_dir),
             approved_reference_files(project_dir),
             retry=RetryProvenance(attempt=1),
+            depiction=generation.depiction if generation is not None else "canonical",
         )
     except (ArtifactMissing, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -336,6 +345,7 @@ def correct_page_issue(
     try:
         page = target.read_page(page_number)
         edition = target.read_book_edition()
+        edition = ensure_current_unrendered_edition(target, edition)
         parent = target.read_provenance(
             page_number,
             issue.render_revision,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -9,9 +10,12 @@ import pytest
 from pydantic import ValidationError
 
 from novel_to_comic.book_adaptation import (
+    _adaptation_shards,
+    _canonicalize_candidate_requirements,
+    AdaptationInvariantError,
     build_book_adaptation_prompt,
-    normalize_treatment,
     build_narrative_treatment_prompt,
+    normalize_treatment,
     produce_book_adaptation,
     validate_book_adaptation,
 )
@@ -90,7 +94,7 @@ def _approved_brief() -> AdaptationBrief:
         essential_events=["The witness sees the door open."],
         character_turns=["The witness abandons the investigation."],
         desired_emphasis=["Show the reaction and aftermath."],
-        target_page_min=32,
+        target_page_min=1,
         target_page_max=40,
     )
 
@@ -110,7 +114,9 @@ def _book_adaptation() -> BookAdaptation:
             ],
             character_arcs=["Certainty gives way to permanent fear."],
             essential_events=["The witness sees the door open."],
+            essential_event_ids=["essential_event_001"],
             character_turns=["The witness abandons the investigation."],
+            character_turn_ids=["character_turn_001"],
             reveals=["The door opens without a visible cause."],
             reactions=["The witness flees."],
             consequences=["The witness abandons the investigation."],
@@ -135,6 +141,10 @@ def _book_adaptation() -> BookAdaptation:
                 brief_requirements=[
                     "The witness sees the door open.",
                     "The witness abandons the investigation.",
+                ],
+                brief_requirement_ids=[
+                    "essential_event_001",
+                    "character_turn_001",
                 ],
                 source_unit_ids=["source_000001", "source_000002"],
                 lettering=[
@@ -177,11 +187,29 @@ def test_treatment_prompt_is_book_level_and_forbids_page_or_scene_authority() ->
         _approved_brief(),
     )
 
-    assert '"target_page_min":32' in prompt
+    assert '"target_page_min":1' in prompt
     assert '"id":"source_000001"' in prompt
     assert "one book-wide narrative treatment" in prompt
     assert "Do not allocate pages, panels, layouts, or geometry." in prompt
     assert "Do not create parallel per-scene adaptations" in prompt
+
+
+def test_adaptation_prompt_uses_story_granularity_not_the_page_floor() -> None:
+    brief = _approved_brief().model_copy(
+        update={"target_page_min": 32, "target_page_max": 40}
+    )
+    prompt = build_book_adaptation_prompt(
+        _source_document(),
+        _story_bible(),
+        brief,
+        _book_adaptation().treatment,
+    )
+
+    assert "The target page range is not a beat-count target" in prompt
+    assert "one drawable story moment" in prompt
+    assert "at least 32 distinct" not in prompt
+    assert "Do not allocate pages" in prompt
+    assert "source-linked canonical LetteringItem" in prompt
 
 
 @pytest.mark.parametrize(
@@ -239,6 +267,56 @@ def test_every_source_unit_requires_exactly_one_valid_disposition(
     )
 
     assert [failure.code for failure in result.invariant_failures] == [code]
+
+
+def test_page_minimum_does_not_force_adapt_to_pad_the_story_with_beats() -> None:
+    brief = _approved_brief().model_copy(
+        update={"target_page_min": 2, "target_page_max": 4}
+    )
+
+    result = validate_book_adaptation(
+        _source_document(),
+        brief,
+        _book_adaptation(),
+    )
+
+    assert "insufficient_page_granularity" not in {
+        failure.code for failure in result.invariant_failures
+    }
+
+
+def test_saved_candidate_recovers_requirement_metadata_and_protected_caption() -> None:
+    source = _source_document()
+    brief = _approved_brief().model_copy(
+        update={"protected_language": ("I fled into the rain.",)}
+    )
+    payload = _book_adaptation().model_dump(mode="json")
+    payload["content_sha256"] = ""
+    payload["brief_sha256"] = brief.content_sha256
+    payload["beats"][0]["summary"] = (
+        "The witness sees the door open, then abandons the investigation "
+        "and flees into the rain."
+    )
+    payload["beats"][0]["brief_requirements"] = []
+    payload["beats"][0]["brief_requirement_ids"] = []
+    payload["beats"][0]["lettering"] = payload["beats"][0]["lettering"][:1]
+    candidate = BookAdaptation.model_validate(payload)
+
+    recovered = _canonicalize_candidate_requirements(
+        candidate,
+        source,
+        brief,
+    )
+
+    assert recovered.beats[0].brief_requirement_ids == (
+        "essential_event_001",
+        "character_turn_001",
+    )
+    assert recovered.beats[0].lettering[-1].text == "I fled into the rain."
+    assert recovered.beats[0].lettering[-1].source_unit_ids == (
+        "source_000002",
+    )
+    assert validate_book_adaptation(source, brief, recovered).invariant_failures == ()
 
 
 def test_source_unit_cannot_have_two_ledger_dispositions() -> None:
@@ -314,6 +392,47 @@ def test_incomplete_or_trailing_clipped_display_text_blocks(
     assert code in {failure.code for failure in result.invariant_failures}
 
 
+def test_continuity_is_scoped_to_the_character_or_narrative_thread() -> None:
+    payload = _book_adaptation().model_dump()
+    payload["content_sha256"] = ""
+    first = payload["beats"][0]
+    first["transitions"] = [
+        {
+            "dimension": "emotional_state",
+            "scope_id": "henry_wilcox",
+            "from_state": "calm",
+            "to_state": "terrified",
+            "description": "Wilcox receives the signal.",
+        }
+    ]
+    second = {
+        **first,
+        "id": "beat_0002",
+        "order": 2,
+        "lettering": [],
+        "transitions": [
+            {
+                "dimension": "emotional_state",
+                "scope_id": "gustaf_johansen",
+                "from_state": "curious",
+                "to_state": "horrified",
+                "description": "Johansen reads the manuscript.",
+            }
+        ],
+    }
+    payload["beats"] = [first, second]
+
+    result = validate_book_adaptation(
+        _source_document(),
+        _approved_brief(),
+        BookAdaptation.model_validate(payload),
+    )
+
+    assert "continuity_state_mismatch" not in {
+        issue.code for issue in result.editorial_issues
+    }
+
+
 def test_adapted_beats_record_story_functions_without_page_or_geometry_fields() -> None:
     beat = AdaptedBeat(
         id="beat_0001",
@@ -333,6 +452,7 @@ def test_adapted_beats_record_story_functions_without_page_or_geometry_fields() 
         transitions=[
             ContinuityTransition(
                 dimension="place",
+                scope_id="witness_testimony",
                 from_state="street",
                 to_state="threshold",
                 description="The witness enters the house.",
@@ -382,6 +502,7 @@ def test_appearance_state_and_transition_chronology_validate(
     first["transitions"] = [
         {
             "dimension": "place",
+            "scope_id": "witness_testimony",
             "from_state": "street",
             "to_state": "threshold",
             "description": "The witness reaches the house.",
@@ -406,6 +527,7 @@ def test_appearance_state_and_transition_chronology_validate(
         "transitions": [
             {
                 "dimension": "place",
+                "scope_id": "witness_testimony",
                 "from_state": (
                     "cellar" if code == "transition_continuity" else "threshold"
                 ),
@@ -423,7 +545,13 @@ def test_appearance_state_and_transition_chronology_validate(
         candidate,
     )
 
-    assert code in {failure.code for failure in result.invariant_failures}
+    if code == "transition_continuity":
+        assert "continuity_state_mismatch" in {
+            issue.code for issue in result.editorial_issues
+        }
+        assert code not in {failure.code for failure in result.invariant_failures}
+    else:
+        assert code in {failure.code for failure in result.invariant_failures}
 
 
 def test_transition_story_function_requires_explicit_continuity_change() -> None:
@@ -448,12 +576,80 @@ def test_transition_story_function_requires_explicit_continuity_change() -> None
     }
 
 
-def test_cthulhu_missing_reaction_or_aftermath_is_an_editorial_issue() -> None:
+def test_faithful_cthulhu_missing_reaction_or_aftermath_blocks_adaptation() -> None:
     fixture = json.loads(
         (
-            Path(__file__).parent
-            / "fixtures"
-            / "cthulhu_adapt_missing_aftermath.json"
+            Path(__file__).parent / "fixtures" / "cthulhu_adapt_missing_aftermath.json"
+        ).read_text()
+    )
+    source = build_source_document(
+        fixture["source_text"],
+        [
+            SourceSceneAnchor(
+                id="scene_001",
+                title=fixture["title"],
+                opening_quote=fixture["opening_quote"],
+            )
+        ],
+    )
+    brief = AdaptationBrief.model_validate(
+        {
+            **_approved_brief().model_dump(),
+            "protected_language": (),
+            "transformation_level": "faithful",
+            "essential_events": ("Johansen sees the titan rise.",),
+            "character_turns": ("Johansen abandons any hope of an ordinary life.",),
+            "content_sha256": "",
+        }
+    )
+    candidate = BookAdaptation(
+        revision=1,
+        source_sha256=source.source_sha256,
+        brief_revision=brief.revision,
+        brief_sha256=brief.content_sha256,
+        treatment=fixture["treatment"],
+        beats=fixture["beats"],
+        ledger=fixture["ledger"],
+    )
+
+    result = validate_book_adaptation(source, brief, candidate)
+
+    assert "faithful_rushed_reaction_or_aftermath" in {
+        failure.code for failure in result.invariant_failures
+    }
+    assert [issue.code for issue in result.editorial_issues] == [
+        "rushed_reaction_or_aftermath"
+    ]
+    assert result.editorial_issues[0].source_unit_ids == ("source_000001",)
+    assert result.editorial_issues[0].artifact_ids == ("beat_0001",)
+    assert "score" not in result.editorial_issues[0].model_dump()
+
+
+def test_ledger_dialogue_must_be_realized_by_source_linked_lettering() -> None:
+    payload = _book_adaptation().model_dump()
+    payload["content_sha256"] = ""
+    payload["ledger"][0]["disposition"] = "dialogue"
+    candidate = BookAdaptation.model_validate(payload)
+
+    result = validate_book_adaptation(
+        _source_document(),
+        _approved_brief(),
+        candidate,
+    )
+
+    failure = next(
+        failure
+        for failure in result.invariant_failures
+        if failure.code == "source_disposition_not_realized"
+    )
+    assert failure.source_unit_ids == ("source_000001",)
+    assert "dialogue" in failure.evidence[0]
+
+
+def test_reaction_before_the_next_transition_is_sufficient_follow_through() -> None:
+    fixture = json.loads(
+        (
+            Path(__file__).parent / "fixtures" / "cthulhu_adapt_missing_aftermath.json"
         ).read_text()
     )
     source = build_source_document(
@@ -471,31 +667,77 @@ def test_cthulhu_missing_reaction_or_aftermath_is_an_editorial_issue() -> None:
             **_approved_brief().model_dump(),
             "protected_language": (),
             "essential_events": ("Johansen sees the titan rise.",),
-            "character_turns": (
-                "Johansen abandons any hope of an ordinary life.",
-            ),
+            "character_turns": ("Johansen abandons any hope of an ordinary life.",),
             "content_sha256": "",
         }
     )
+    beats = fixture["beats"]
+    beats[1]["story_functions"] = [
+        *beats[1]["story_functions"],
+        "reaction",
+    ]
     candidate = BookAdaptation(
         revision=1,
         source_sha256=source.source_sha256,
         brief_revision=brief.revision,
         brief_sha256=brief.content_sha256,
         treatment=fixture["treatment"],
-        beats=fixture["beats"],
+        beats=beats,
         ledger=fixture["ledger"],
     )
 
     result = validate_book_adaptation(source, brief, candidate)
 
-    assert result.invariant_failures == ()
-    assert [issue.code for issue in result.editorial_issues] == [
-        "rushed_reaction_or_aftermath"
+    assert "rushed_reaction_or_aftermath" not in {
+        issue.code for issue in result.editorial_issues
+    }
+
+
+def test_reaction_on_the_transition_beat_is_still_follow_through() -> None:
+    fixture = json.loads(
+        (
+            Path(__file__).parent / "fixtures" / "cthulhu_adapt_missing_aftermath.json"
+        ).read_text()
+    )
+    source = build_source_document(
+        fixture["source_text"],
+        [
+            SourceSceneAnchor(
+                id="scene_001",
+                title=fixture["title"],
+                opening_quote=fixture["opening_quote"],
+            )
+        ],
+    )
+    brief = AdaptationBrief.model_validate(
+        {
+            **_approved_brief().model_dump(),
+            "protected_language": (),
+            "essential_events": ("Johansen sees the titan rise.",),
+            "character_turns": ("Johansen abandons any hope of an ordinary life.",),
+            "content_sha256": "",
+        }
+    )
+    beats = fixture["beats"]
+    beats[2]["story_functions"] = [
+        *beats[2]["story_functions"],
+        "reaction",
     ]
-    assert result.editorial_issues[0].source_unit_ids == ("source_000001",)
-    assert result.editorial_issues[0].artifact_ids == ("beat_0001",)
-    assert "score" not in result.editorial_issues[0].model_dump()
+    candidate = BookAdaptation(
+        revision=1,
+        source_sha256=source.source_sha256,
+        brief_revision=brief.revision,
+        brief_sha256=brief.content_sha256,
+        treatment=fixture["treatment"],
+        beats=beats,
+        ledger=fixture["ledger"],
+    )
+
+    result = validate_book_adaptation(source, brief, candidate)
+
+    assert "rushed_reaction_or_aftermath" not in {
+        issue.code for issue in result.editorial_issues
+    }
 
 
 def _omission_source() -> SourceDocument:
@@ -549,9 +791,7 @@ def _omission_candidate(omitted: tuple[str, ...]) -> BookAdaptation:
     payload["ledger"] = [
         {
             "source_unit_id": unit.id,
-            "disposition": "intentionally_omitted"
-            if unit.id in omitted
-            else "caption",
+            "disposition": "intentionally_omitted" if unit.id in omitted else "caption",
             "adapted_beat_ids": [] if unit.id in omitted else ["beat_0001"],
             "reason": "Already carried by the surrounding art."
             if unit.id in omitted
@@ -604,6 +844,7 @@ def test_a_genuinely_uncovered_requirement_still_blocks() -> None:
     payload["beats"][0]["brief_requirements"] = [
         "The witness abandons the investigation."
     ]
+    payload["beats"][0]["brief_requirement_ids"] = ["character_turn_001"]
 
     result = validate_book_adaptation(
         _source_document(),
@@ -671,9 +912,7 @@ def test_omitting_protected_language_is_reviewable_with_cited_evidence() -> None
 
 
 def test_a_continuous_omitted_stretch_is_reviewable_as_one_exception() -> None:
-    issues = _omission_issues(
-        ("source_000002", "source_000003", "source_000004")
-    )
+    issues = _omission_issues(("source_000002", "source_000003", "source_000004"))
 
     assert len(issues) == 1
     assert issues[0].source_unit_ids == (
@@ -682,8 +921,7 @@ def test_a_continuous_omitted_stretch_is_reviewable_as_one_exception() -> None:
         "source_000004",
     )
     assert issues[0].evidence == (
-        "3 consecutive source units were omitted, "
-        "source_000002 through source_000004.",
+        "3 consecutive source units were omitted, source_000002 through source_000004.",
     )
 
 
@@ -708,6 +946,16 @@ def test_essential_events_and_character_turns_require_explicit_beat_coverage(
         for requirement in payload["beats"][0]["brief_requirements"]
         if requirement != missing_requirement
     ]
+    missing_id = (
+        "essential_event_001"
+        if code == "missing_essential_event"
+        else "character_turn_001"
+    )
+    payload["beats"][0]["brief_requirement_ids"] = [
+        requirement_id
+        for requirement_id in payload["beats"][0]["brief_requirement_ids"]
+        if requirement_id != missing_id
+    ]
     candidate = BookAdaptation.model_validate(payload)
 
     result = validate_book_adaptation(
@@ -723,6 +971,7 @@ def test_global_treatment_must_carry_approved_essential_events() -> None:
     payload = _book_adaptation().model_dump()
     payload["content_sha256"] = ""
     payload["treatment"]["essential_events"] = []
+    payload["treatment"]["essential_event_ids"] = []
     candidate = BookAdaptation.model_validate(payload)
 
     result = validate_book_adaptation(
@@ -760,14 +1009,8 @@ def test_producer_writes_one_book_artifact_and_records_model_usage(
     responses = [
         expected.treatment.model_dump(mode="json"),
         {
-            "beats": [
-                beat.model_dump(mode="json")
-                for beat in expected.beats
-            ],
-            "ledger": [
-                entry.model_dump(mode="json")
-                for entry in expected.ledger
-            ],
+            "beats": [beat.model_dump(mode="json") for beat in expected.beats],
+            "ledger": [entry.model_dump(mode="json") for entry in expected.ledger],
         },
     ]
     calls: list[dict] = []
@@ -820,11 +1063,325 @@ def test_producer_writes_one_book_artifact_and_records_model_usage(
         "adapt.narrative_treatment",
         "adapt.book",
     ]
+    assert all(call["json_schema"]["type"] == "object" for call in calls)
     assert state.stages["adapt"].items_done == 2
     assert len(state.stages["adapt"].usage_log) == 2
     assert state.stages["adapt"].cost_usd > 0
     assert state.stages["adapt"].cost_usd > 0
     assert state.stages["adapt"].estimated_cost_usd > 0
+
+
+def test_producer_canonicalizes_approved_requirement_metadata(
+    tmp_path: Path,
+) -> None:
+    expected = _book_adaptation()
+    treatment = expected.treatment.model_copy(
+        update={
+            "essential_event_ids": (),
+            "character_turns": (),
+            "character_turn_ids": (),
+        }
+    )
+    beat = expected.beats[0].model_copy(
+        update={
+            "brief_requirement_ids": ("character_turn_001",),
+        }
+    )
+    calls: list[dict] = []
+
+    async def generate(**request):
+        calls.append(request)
+        value = (
+            treatment.model_dump(mode="json")
+            if request["feature"] == "adapt.narrative_treatment"
+            else {
+                "beats": [beat.model_dump(mode="json")],
+                "ledger": [entry.model_dump(mode="json") for entry in expected.ledger],
+            }
+        )
+        return ApiResult(value=value, usage=None)
+
+    produced = asyncio.run(
+        produce_book_adaptation(
+            _source_document(),
+            _story_bible(),
+            _approved_brief(),
+            artifacts=TargetArtifacts(tmp_path),
+            ctx=StageRuntime(
+                "adapt",
+                PipelineState(
+                    project_name="canonical-requirements-test",
+                    novel_path="novel.txt",
+                    created_at=datetime.now(timezone.utc),
+                ),
+                tmp_path,
+            ),
+            model="adapt-balanced",
+            generate=generate,
+        )
+    )
+
+    assert len(calls) == 2
+    assert produced.treatment.essential_event_ids == ("essential_event_001",)
+    assert produced.treatment.character_turn_ids == ("character_turn_001",)
+    assert produced.beats[0].brief_requirement_ids == (
+        "character_turn_001",
+        "essential_event_001",
+    )
+
+
+def test_retry_recovers_a_paid_candidate_without_another_model_call(
+    tmp_path: Path,
+) -> None:
+    expected = _book_adaptation()
+    treatment = expected.treatment.model_copy(
+        update={
+            "essential_event_ids": (),
+            "character_turns": (),
+            "character_turn_ids": (),
+        }
+    )
+    beat = expected.beats[0].model_copy(
+        update={"brief_requirement_ids": ("character_turn_001",)}
+    )
+    candidate = BookAdaptation.model_validate(
+        {
+            **expected.model_dump(mode="json"),
+            "content_sha256": "",
+            "treatment": treatment.model_dump(mode="json"),
+            "beats": [beat.model_dump(mode="json")],
+        }
+    )
+    artifacts = TargetArtifacts(tmp_path)
+    artifacts.write_failed_adaptation_candidate(candidate)
+
+    async def generate(**request):
+        raise AssertionError("a recoverable paid candidate must not call the model")
+
+    produced = asyncio.run(
+        produce_book_adaptation(
+            _source_document(),
+            _story_bible(),
+            _approved_brief(),
+            artifacts=artifacts,
+            ctx=StageRuntime(
+                "adapt",
+                PipelineState(
+                    project_name="recover-paid-candidate-test",
+                    novel_path="novel.txt",
+                    created_at=datetime.now(timezone.utc),
+                ),
+                tmp_path,
+            ),
+            model="adapt-balanced",
+            generate=generate,
+        )
+    )
+
+    assert produced == artifacts.read_adaptation()
+    assert produced.treatment.character_turn_ids == ("character_turn_001",)
+    assert not artifacts.failed_adaptation_candidate_path.exists()
+
+
+def test_large_book_adaptation_is_written_in_bounded_internal_shards(
+    tmp_path: Path,
+) -> None:
+    sentences = [f"Sentence {index} records event {index}. " for index in range(1, 182)]
+    text = "".join(sentences).rstrip()
+    units: list[SourceUnit] = []
+    offset = 0
+    for index, sentence in enumerate(sentences, 1):
+        unit_text = sentence if index < len(sentences) else sentence.rstrip()
+        units.append(
+            SourceUnit(
+                id=f"source_{index:06d}",
+                ordinal=index,
+                start_offset=offset,
+                end_offset=offset + len(unit_text),
+                text=unit_text,
+            )
+        )
+        offset += len(unit_text)
+    source = SourceDocument(
+        text=text,
+        units=units,
+        scenes=[
+            SourceScene(
+                id="scene_001",
+                title="First movement",
+                first_unit_id="source_000001",
+                last_unit_id="source_000060",
+            ),
+            SourceScene(
+                id="scene_002",
+                title="Second movement",
+                first_unit_id="source_000061",
+                last_unit_id="source_000181",
+            ),
+        ],
+    )
+    brief_payload = _approved_brief().model_dump()
+    brief_payload.update({"content_sha256": "", "protected_language": []})
+    brief = AdaptationBrief.model_validate(brief_payload)
+    treatment = _book_adaptation().treatment
+    calls: list[dict] = []
+    active_book_calls = 0
+    max_active_book_calls = 0
+    shard_attempts: dict[str, int] = {}
+
+    async def generate(**request):
+        nonlocal active_book_calls, max_active_book_calls
+        calls.append(request)
+        if request["feature"] == "adapt.narrative_treatment":
+            return ApiResult(value=treatment.model_dump(mode="json"), usage=None)
+        active_book_calls += 1
+        max_active_book_calls = max(max_active_book_calls, active_book_calls)
+        await asyncio.sleep(0.01)
+        source_ids = list(
+            dict.fromkeys(re.findall(r'"id":"(source_\d{6})"', request["user_content"]))
+        )
+        shard_attempts[source_ids[0]] = shard_attempts.get(source_ids[0], 0) + 1
+        carries_requirements = (
+            source_ids[0] == "source_000001" and shard_attempts[source_ids[0]] > 1
+        )
+        result = ApiResult(
+            value={
+                "beats": [
+                    {
+                        "id": "beat_0001",
+                        "order": 1,
+                        "summary": f"Adapt {source_ids[0]} through {source_ids[-1]}.",
+                        "narrative_function": "prolongation",
+                        "story_functions": ["causal_event"],
+                        "brief_requirements": (
+                            [
+                                "The witness sees the door open.",
+                                "The witness abandons the investigation.",
+                            ]
+                            if carries_requirements
+                            else []
+                        ),
+                        "brief_requirement_ids": (
+                            ["essential_event_001", "character_turn_001"]
+                            if carries_requirements
+                            else []
+                        ),
+                        "source_unit_ids": source_ids,
+                        "lettering": [],
+                        "transitions": [],
+                        "appearance_changes": [],
+                    }
+                ],
+                "ledger": [
+                    {
+                        "source_unit_id": source_id,
+                        "disposition": "depicted",
+                        "adapted_beat_ids": ["beat_0001"],
+                        "reason": None,
+                        "preserved_function": "The source event remains explicit.",
+                    }
+                    for source_id in source_ids
+                ],
+            },
+            usage=None,
+        )
+        active_book_calls -= 1
+        return result
+
+    produced = asyncio.run(
+        produce_book_adaptation(
+            source,
+            _story_bible(),
+            brief,
+            artifacts=TargetArtifacts(tmp_path),
+            ctx=StageRuntime(
+                "adapt",
+                PipelineState(
+                    project_name="large-adapt-test",
+                    novel_path="novel.txt",
+                    created_at=datetime.now(timezone.utc),
+                ),
+                tmp_path,
+            ),
+            model="gpt-4o-mini",
+            generate=generate,
+        )
+    )
+
+    book_calls = [call for call in calls if call["feature"] == "adapt.book"]
+    assert len(book_calls) == 3
+    assert all(
+        len(set(re.findall(r'"id":"source_\d{6}"', call["user_content"]))) <= 180
+        for call in book_calls
+    )
+    assert [entry.source_unit_id for entry in produced.ledger] == [
+        unit.id for unit in source.units
+    ]
+    assert [beat.order for beat in produced.beats] == [1, 2]
+    assert len({beat.id for beat in produced.beats}) == 2
+    assert max_active_book_calls == 2
+    assert all("json_schema" in call for call in book_calls)
+    assert shard_attempts == {
+        "source_000001": 2,
+        "source_000181": 1,
+    }
+    assert "YOUR PREVIOUS SHARD JSON" in book_calls[-1]["user_content"]
+
+
+def test_adaptation_shards_use_model_output_budget_and_fit_cthulhu_in_three() -> None:
+    sentences = [
+        f"Event {index} "
+        + ("records source-faithful dramatic detail " * 3)
+        + "with exact context. "
+        for index in range(1, 459)
+    ]
+    sentences[-1] = sentences[-1].rstrip()
+    text = "".join(sentences)
+    units: list[SourceUnit] = []
+    offset = 0
+    for index, sentence in enumerate(sentences, 1):
+        units.append(
+            SourceUnit(
+                id=f"source_{index:06d}",
+                ordinal=index,
+                start_offset=offset,
+                end_offset=offset + len(sentence),
+                text=sentence,
+            )
+        )
+        offset += len(sentence)
+    source = SourceDocument(
+        text=text,
+        units=units,
+        scenes=[
+            SourceScene(
+                id="scene_001",
+                title="Opening",
+                first_unit_id="source_000001",
+                last_unit_id="source_000153",
+            ),
+            SourceScene(
+                id="scene_002",
+                title="Investigation",
+                first_unit_id="source_000154",
+                last_unit_id="source_000306",
+            ),
+            SourceScene(
+                id="scene_003",
+                title="Revelation",
+                first_unit_id="source_000307",
+                last_unit_id="source_000458",
+            ),
+        ],
+    )
+
+    shards = _adaptation_shards(source, model="adapt-balanced")
+
+    assert [len(shard) for shard in shards] == [180, 180, 98]
+    assert max(map(len, shards)) <= 180
+    assert tuple(source_id for shard in shards for source_id in shard) == tuple(
+        unit.id for unit in source.units
+    )
 
 
 def test_a_blocked_adaptation_gets_one_repair_pass_with_its_failures(
@@ -838,6 +1395,7 @@ def test_a_blocked_adaptation_gets_one_repair_pass_with_its_failures(
             {
                 **expected.beats[0].model_dump(mode="json"),
                 "brief_requirements": [],
+                "brief_requirement_ids": [],
             }
         ],
         "ledger": [entry.model_dump(mode="json") for entry in expected.ledger],
@@ -888,8 +1446,59 @@ def test_a_blocked_adaptation_gets_one_repair_pass_with_its_failures(
     assert produced.beats == expected.beats
     assert len(calls) == 3
     # The repair pass must state the specific failure, not just "try again".
-    assert "missing_essential_event" in calls[2]["user_content"]
+    assert "missing_character_turn" in calls[2]["user_content"]
+    assert "missing_essential_event" not in calls[2]["user_content"]
     assert artifacts.read_validation("adapt").attempts == 2
+
+
+def test_a_failed_adaptation_preserves_the_last_candidate(
+    tmp_path: Path,
+) -> None:
+    expected = _book_adaptation()
+    broken = {
+        "beats": [
+            {
+                **expected.beats[0].model_dump(mode="json"),
+                "brief_requirements": [],
+                "brief_requirement_ids": [],
+            }
+        ],
+        "ledger": [entry.model_dump(mode="json") for entry in expected.ledger],
+    }
+    responses = [
+        expected.treatment.model_dump(mode="json"),
+        broken,
+        broken,
+    ]
+
+    async def generate(**request):
+        return ApiResult(value=responses.pop(0), usage=None)
+
+    artifacts = TargetArtifacts(tmp_path)
+    with pytest.raises(AdaptationInvariantError):
+        asyncio.run(
+            produce_book_adaptation(
+                _source_document(),
+                _story_bible(),
+                _approved_brief(),
+                artifacts=artifacts,
+                ctx=StageRuntime(
+                    "adapt",
+                    PipelineState(
+                        project_name="adapt-test",
+                        novel_path="novel.txt",
+                        created_at=datetime.now(timezone.utc),
+                    ),
+                    tmp_path,
+                ),
+                model="gpt-4o-mini",
+                generate=generate,
+            )
+        )
+
+    candidate = artifacts.read_failed_adaptation_candidate()
+    assert candidate.beats[0].brief_requirement_ids == ("essential_event_001",)
+    assert not artifacts.adaptation_path.exists()
 
 
 @pytest.mark.parametrize(
@@ -1004,7 +1613,11 @@ def test_a_repaired_attempt_is_billed_without_inflating_progress(
     expected = _book_adaptation()
     broken = {
         "beats": [
-            {**expected.beats[0].model_dump(mode="json"), "brief_requirements": []}
+            {
+                **expected.beats[0].model_dump(mode="json"),
+                "brief_requirements": [],
+                "brief_requirement_ids": [],
+            }
         ],
         "ledger": [entry.model_dump(mode="json") for entry in expected.ledger],
     }
@@ -1168,7 +1781,5 @@ def test_a_treatment_in_the_wrong_containers_costs_no_extra_model_call(
     )
 
     assert len(calls) == 2
-    assert produced.treatment.causal_spine == (
-        expected.treatment.causal_spine[0],
-    )
+    assert produced.treatment.causal_spine == (expected.treatment.causal_spine[0],)
     assert produced.treatment.motifs == ("door: The door recurs.",)

@@ -53,9 +53,7 @@ def test_reading_order_comes_from_geometry_not_the_models_list_order() -> None:
 
 
 def test_balloons_in_one_row_are_ordered_left_to_right() -> None:
-    extraction = build_extraction(
-        _draft(("right", 0.60, 0.11), ("left", 0.05, 0.14))
-    )
+    extraction = build_extraction(_draft(("right", 0.60, 0.11), ("left", 0.05, 0.14)))
 
     # Slightly different heights within a tier must not zig-zag the order.
     assert extraction.observed_reading_order == ("region_002", "region_001")
@@ -69,6 +67,71 @@ def test_every_observation_carries_its_own_detected_region() -> None:
         "region_002",
     ]
     assert len(extraction.observed_regions) == 2
+
+
+def test_adapter_accepts_gemini_bare_list_and_box_2d(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_generate_json(**kwargs):
+        class _Result:
+            usage = None
+            value = [
+                {
+                    "box_2d": [56, 38, 106, 438],
+                    "text": "We should voyage far.",
+                }
+            ]
+
+        return _Result()
+
+    monkeypatch.setattr("novel_to_comic.clients.text.generate_json", fake_generate_json)
+
+    read = asyncio.run(GatewayPageOCRAdapter(Config(), page_number=1).extract(b"png"))
+
+    assert [item.text for item in read.value.lettering] == ["We should voyage far."]
+    expected_polygon = (
+        (0.038, 0.056),
+        (0.438, 0.056),
+        (0.438, 0.106),
+        (0.038, 0.106),
+    )
+    for actual, expected in zip(
+        read.value.observed_regions[0].polygon, expected_polygon, strict=True
+    ):
+        assert actual == pytest.approx(expected)
+
+
+def test_adapter_accepts_gemini_nested_normalized_box_2d(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_generate_json(**kwargs):
+        class _Result:
+            usage = None
+            value = {
+                "lettering": [
+                    {
+                        "box_2d": [[0.057, 0.076, 0.134, 0.439]],
+                        "text_content": "Void of clothing...",
+                    }
+                ]
+            }
+
+        return _Result()
+
+    monkeypatch.setattr("novel_to_comic.clients.text.generate_json", fake_generate_json)
+
+    read = asyncio.run(GatewayPageOCRAdapter(Config(), page_number=16).extract(b"png"))
+
+    expected_polygon = (
+        (0.076, 0.057),
+        (0.439, 0.057),
+        (0.439, 0.134),
+        (0.076, 0.134),
+    )
+    for actual, expected in zip(
+        read.value.observed_regions[0].polygon, expected_polygon, strict=True
+    ):
+        assert actual == pytest.approx(expected)
 
 
 def test_adapter_sends_the_page_image_and_no_canonical_wording(
@@ -99,9 +162,7 @@ def test_adapter_sends_the_page_image_and_no_canonical_wording(
 
         return _Result()
 
-    monkeypatch.setattr(
-        "novel_to_comic.clients.text.generate_json", fake_generate_json
-    )
+    monkeypatch.setattr("novel_to_comic.clients.text.generate_json", fake_generate_json)
     adapter = GatewayPageOCRAdapter(Config(), page_number=34)
 
     read = asyncio.run(adapter.extract(b"page-bytes"))

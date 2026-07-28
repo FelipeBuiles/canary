@@ -16,6 +16,11 @@ from typing import Any, Awaitable, Callable, Literal
 from fastapi import FastAPI
 
 from novel_to_comic.config import Config
+from novel_to_comic.image_failure import (
+    ImageFailureClassification,
+    classify_image_failure,
+    user_message_for_image_failure,
+)
 from novel_to_comic.server.env import bool_env
 
 GenerationJobStatus = Literal["queued", "running", "complete", "failed"]
@@ -74,6 +79,9 @@ class GenerationJob:
     started_at: datetime | None = None
     finished_at: datetime | None = None
     error: str | None = None
+    classification: ImageFailureClassification | None = None
+    user_message: str | None = None
+    recoverable: bool | None = None
 
 
 def enqueue_generation_job(
@@ -149,6 +157,9 @@ def generation_job_payload(app: FastAPI | None, job: GenerationJob) -> dict[str,
         "started_at": _iso(job.started_at),
         "finished_at": _iso(job.finished_at),
         "error": job.error,
+        "classification": job.classification,
+        "user_message": job.user_message,
+        "recoverable": job.recoverable,
     }
 
 
@@ -225,6 +236,9 @@ async def generation_worker(app: FastAPI) -> None:
         except asyncio.TimeoutError:
             job.status = "failed"
             job.error = f"Generation timed out after {timeout_seconds}s"
+            job.classification = "timed_out"
+            job.user_message = user_message_for_image_failure(job.classification)
+            job.recoverable = True
             logger.error(
                 "[bold red]Job timeout[/] project=[white]%s[/] kind=[cyan]%s[/] "
                 "label=%s id=[dim]%s[/] elapsed=[bold]%.1fs[/] timeout=%ss",
@@ -240,8 +254,12 @@ async def generation_worker(app: FastAPI) -> None:
             job.status = "failed"
             if _looks_like_timeout_cancellation(exc, elapsed, timeout_seconds):
                 job.error = f"Generation timed out after {timeout_seconds}s"
+                job.classification = "timed_out"
             else:
                 job.error = str(exc) or type(exc).__name__
+                job.classification = classify_image_failure(exc)
+            job.user_message = user_message_for_image_failure(job.classification)
+            job.recoverable = job.classification != "configuration_error"
             logger.error(
                 "[bold red]Job failed[/] project=[white]%s[/] kind=[cyan]%s[/] "
                 "label=%s id=[dim]%s[/] elapsed=[bold]%.1fs[/] error=%s",
