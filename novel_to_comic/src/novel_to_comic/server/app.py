@@ -24,10 +24,12 @@ from .ratelimit import configure_rate_limiting
 from .sentry import configure_sentry
 from .routers import (
     billing,
+    cast_assets,
     config,
     credits,
     export,
     events,
+    files,
     labs,
     operator_billing,
     pages,
@@ -430,6 +432,18 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         styles.router,
         prefix="/api/projects/{project_id}",
         tags=["styles"],
+    )
+    app.include_router(
+        cast_assets.router,
+        prefix="/api/projects/{project_id}",
+        tags=["cast"],
+    )
+    # Registered last: the asset reader owns a greedy `{file_path:path}` route,
+    # so every named project route must be matched before it is considered.
+    app.include_router(
+        files.router,
+        prefix="/api/projects/{project_id}",
+        tags=["files"],
     )
     # Labs is an image-model experimentation surface that bills provider quota
     # directly and is not credit-gated. It defaults OFF; set

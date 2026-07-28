@@ -1,0 +1,139 @@
+"""Contracts for serving project assets to the web app.
+
+The full-page rewrite replaced the page router and dropped its generic asset
+reader with the panel-era code that surrounded it. Nothing failed loudly: the
+API kept reporting ``has_sample: true`` while every image request 404'd, and
+asset 404s are deliberately suppressed from the request log as
+not-yet-generated noise. These tests pin the route down so the next rewrite
+cannot take it with it.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from fastapi import HTTPException
+from starlette.testclient import TestClient
+
+from novel_to_comic import artifacts
+from novel_to_comic.config import Config
+from novel_to_comic.server.app import create_app
+from novel_to_comic.server.deps import get_project
+from novel_to_comic.server.routers.files import serve_project_file
+from novel_to_comic.state import PipelineState, save_state
+
+
+def _client(tmp_path: Path) -> tuple[TestClient, Path]:
+    project_dir = tmp_path / "demo"
+    project_dir.mkdir()
+    state = PipelineState(
+        project_name="Demo",
+        novel_path="input/demo.txt",
+        created_at="2026-01-01T00:00:00Z",
+    )
+    save_state(state, project_dir)
+    app = create_app(tmp_path)
+    app.dependency_overrides[get_project] = lambda: (project_dir, Config(), state)
+    return TestClient(app), project_dir
+
+
+def test_every_asset_url_the_ui_builds_is_routable(tmp_path: Path):
+    # One per URL shape the web app constructs: style proofs, cast references,
+    # plates, props, the cover, generation sidecars, and finish preflight.
+    client, project_dir = _client(tmp_path)
+    relative_paths = (
+        "samples/style_1.png",
+        "samples/style_1.png.meta.json",
+        "samples/style_1.png.failure.json",
+        "samples/validations/style_abc.png",
+        "refs/character_ann/sheet.png",
+        "refs/character_ann/neutral.png",
+        "refs/character_ann/states/state_hurt/portrait.png",
+        "refs/props/prop_key/ref.png",
+        "plates/location_hall.png",
+        "cover/cover.png",
+        "finish/preflight.json",
+    )
+    for relative in relative_paths:
+        path = project_dir / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(relative.encode())
+
+    for relative in relative_paths:
+        response = client.get(f"/api/projects/demo/files/{relative}")
+        assert response.status_code == 200, relative
+        assert response.content == relative.encode()
+
+
+def test_a_style_proof_is_served_where_the_styles_route_promises_it(tmp_path: Path):
+    # get_styles reports has_sample from this exact path, so the two must agree.
+    client, project_dir = _client(tmp_path)
+    sample = artifacts.style_sample_path(project_dir, 3)
+    sample.parent.mkdir(parents=True, exist_ok=True)
+    sample.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    response = client.get("/api/projects/demo/files/samples/style_3.png")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.content == b"\x89PNG\r\n\x1a\n"
+
+
+def test_a_missing_asset_is_not_found_rather_than_an_error(tmp_path: Path):
+    client, _project_dir = _client(tmp_path)
+    response = client.get("/api/projects/demo/files/samples/style_9.png")
+    assert response.status_code == 404
+
+
+def test_assets_cannot_escape_the_project_directory(tmp_path: Path):
+    # The URL layer normalizes away `..` before routing, so the guard is tested
+    # against the handler directly: it is what protects a caller that reaches
+    # the function with a traversing relative path (encoded input, or a future
+    # in-process caller).
+    project_dir = tmp_path / "demo"
+    project_dir.mkdir()
+    (tmp_path / "secret.txt").write_text("other tenant")
+    sibling = tmp_path / "demo-private"
+    sibling.mkdir()
+    (sibling / "leak.txt").write_text("sibling project")
+    project = (project_dir, Config(), None)
+
+    for escape in (
+        "../secret.txt",
+        "../demo-private/leak.txt",
+        "samples/../../secret.txt",
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            serve_project_file(escape, project=project)
+        assert exc_info.value.status_code == 403, escape
+
+
+def test_url_encoded_traversal_never_leaks_a_neighbouring_project(tmp_path: Path):
+    client, _project_dir = _client(tmp_path)
+    sibling = tmp_path / "demo-private"
+    sibling.mkdir()
+    (sibling / "leak.txt").write_text("sibling project")
+
+    for escape in ("%2e%2e/demo-private/leak.txt", "..%2fdemo-private%2fleak.txt"):
+        response = client.get(f"/api/projects/demo/files/{escape}")
+        assert response.status_code in (403, 404), escape
+        assert b"sibling project" not in response.content, escape
+
+
+def test_project_credentials_are_not_reachable_as_assets(tmp_path: Path):
+    client, project_dir = _client(tmp_path)
+    (project_dir / "config.yaml").write_text("litellm_api_key: sk-real-key\n")
+    (project_dir / ".env").write_text("LITELLM_API_KEY=sk-real-key\n")
+
+    for secret in ("config.yaml", ".env"):
+        response = client.get(f"/api/projects/demo/files/{secret}")
+        assert response.status_code == 403, secret
+
+
+def test_named_project_routes_are_not_shadowed_by_the_asset_reader(tmp_path: Path):
+    # The asset route is greedy; registering it before a named route would make
+    # that route unreachable. `pages` has no artifacts here, so a 404 from the
+    # pages handler (not the file reader) is the signal we want.
+    client, _project_dir = _client(tmp_path)
+    response = client.get("/api/projects/demo/pages")
+    assert response.json()["detail"] != "File not found"
