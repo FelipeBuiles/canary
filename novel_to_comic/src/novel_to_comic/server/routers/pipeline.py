@@ -299,15 +299,13 @@ async def estimate_stage_cost(
     }
 
 
-@router.post("/run")
-@limiter.limit(cost_limit)
-async def run_pipeline(
+async def _start_stage(
     request: Request,
     project_id: str,
-    stage: Optional[str] = Query(None),
-    rerun: bool = Query(False),
-    project=Depends(get_project),
-    user_id: str = Depends(get_current_user),
+    stage: Optional[str],
+    rerun: bool,
+    project,
+    user_id: str,
 ):
     project_dir, config, state = project
     if stage is None:
@@ -358,6 +356,36 @@ async def run_pipeline(
     task = asyncio.create_task(_run_job(pkey, user_id, request, job))
     request.app.state.running_tasks[pkey] = task
     return {"status": "started", "stage": stage}
+
+
+@router.post("/run")
+@limiter.limit(cost_limit)
+async def run_pipeline(
+    request: Request,
+    project_id: str,
+    stage: Optional[str] = Query(None),
+    rerun: bool = Query(False),
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
+    return await _start_stage(request, project_id, stage, rerun, project, user_id)
+
+
+@router.post("/regen-extract")
+@limiter.limit(cost_limit)
+async def regen_extract(
+    request: Request,
+    project_id: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
+    """Re-read the novel and rebuild the Story Bible from scratch.
+
+    Identical to ``POST /run?stage=extract&rerun=1``. The Story station calls it
+    under its own name so re-extraction stays one action in the UI rather than a
+    flag the caller has to remember.
+    """
+    return await _start_stage(request, project_id, "extract", True, project, user_id)
 
 
 @router.get("/events")
