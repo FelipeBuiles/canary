@@ -622,6 +622,40 @@ class TestPostWithRetry:
         assert calls["n"] == client._MAX_RETRIES + 1
         assert len(delays) == client._MAX_RETRIES
 
+    def test_read_timeout_is_retried(self, monkeypatch):
+        _patch_sleep(monkeypatch)
+        calls = {"n": 0}
+
+        def handler(request):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise httpx.ReadTimeout("timed out", request=request)
+            return httpx.Response(200, json={"ok": True})
+
+        _mock_transport(monkeypatch, handler)
+        response = asyncio.run(
+            client._post_with_retry("http://gw/v1/x", headers={}, json={})
+        )
+        assert response.status_code == 200
+        assert calls["n"] == 2
+
+    def test_read_timeout_budget_is_smaller_than_transient(self, monkeypatch):
+        delays = _patch_sleep(monkeypatch)
+        calls = {"n": 0}
+
+        def handler(request):
+            calls["n"] += 1
+            raise httpx.ReadTimeout("timed out", request=request)
+
+        _mock_transport(monkeypatch, handler)
+        with pytest.raises(httpx.ReadTimeout):
+            asyncio.run(client._post_with_retry("http://gw/v1/x", headers={}, json={}))
+        # Each attempt costs the full read budget, so timeouts get one retry
+        # rather than the transient-error budget.
+        assert client._MAX_TIMEOUT_RETRIES < client._MAX_RETRIES
+        assert calls["n"] == client._MAX_TIMEOUT_RETRIES + 1
+        assert len(delays) == client._MAX_TIMEOUT_RETRIES
+
 
 class TestRetryAfterSeconds:
     def _response(self, headers: dict[str, str]) -> httpx.Response:

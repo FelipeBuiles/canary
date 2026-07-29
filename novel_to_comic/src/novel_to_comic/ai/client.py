@@ -44,8 +44,16 @@ _TRANSPORT_ERRORS = (
     httpx.ConnectError,
     httpx.ReadError,
     httpx.WriteError,
-    httpx.PoolTimeout,
+    # TimeoutException covers Connect/Read/Write/PoolTimeout. Without it a
+    # ReadTimeout escapes _post_with_retry unretried *and* unwrapped, killing
+    # the whole stage and discarding every sibling shard's completed work.
+    httpx.TimeoutException,
 )
+# Read/write timeouts already burned the full read budget before raising, so
+# each retry costs another ~10 minutes of wall clock and re-bills the
+# completion. One retry rides out a wedged connection; more just stalls.
+_SLOW_TIMEOUT_ERRORS = (httpx.ReadTimeout, httpx.WriteTimeout)
+_MAX_TIMEOUT_RETRIES = 1
 _MAX_RETRIES = 3
 # 429s get their own, longer retry budget: the provider is asking us to slow
 # down, not reporting a failure. Backoff windows double from the base up to
@@ -106,6 +114,7 @@ async def _post_with_retry(
     rate_limit_attempts = 0
     while True:
         rate_limited = False
+        slow_timeout = False
         retry_after: float | None = None
         try:
             if files:
@@ -127,6 +136,7 @@ async def _post_with_retry(
             )
         except _TRANSPORT_ERRORS as exc:
             last_exc = exc
+            slow_timeout = isinstance(exc, _SLOW_TIMEOUT_ERRORS)
         if rate_limited:
             rate_limit_attempts += 1
             if rate_limit_attempts > _MAX_RATE_LIMIT_RETRIES:
@@ -148,8 +158,16 @@ async def _post_with_retry(
             )
         else:
             transient_attempts += 1
-            if transient_attempts > _MAX_RETRIES:
+            budget = _MAX_TIMEOUT_RETRIES if slow_timeout else _MAX_RETRIES
+            if transient_attempts > budget:
                 raise last_exc  # type: ignore[misc]
+            if slow_timeout:
+                logger.warning(
+                    "Request timed out after %.0fs, retry %d/%d",
+                    _http.timeout.read or 0.0,
+                    transient_attempts,
+                    budget,
+                )
             delay = _jittered(min(2.0 ** (transient_attempts - 1), 10.0))
         await asyncio.sleep(delay)
 
