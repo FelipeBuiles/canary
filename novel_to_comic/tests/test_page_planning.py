@@ -20,9 +20,11 @@ from novel_to_comic.models.page import (
     ApprovedVisualReference,
     ApprovedVisualReferenceInventory,
     AuthorGeometryPin,
+    BookPlan,
     ComicPage,
     PageContent,
     PinnedGeometry,
+    PlannedPageRevision,
 )
 from novel_to_comic.models.validation import EditorialIssue
 from novel_to_comic.page_planning import (
@@ -1040,6 +1042,87 @@ def test_fidelity_page_floor_allows_safe_allocation_beyond_maximum() -> None:
     assert "target_page_range_conflict" not in {
         failure.code for failure in validation.invariant_failures
     }
+
+
+def test_allocation_below_the_floor_is_reviewable_not_repaired() -> None:
+    """The floor was approved before any beats existed.
+
+    Plan allocated the adaptation that actually got written, so a shortfall is
+    recorded for review rather than padded to reach a stale estimate — and it is
+    recorded by the validator, not left to whether the model volunteers it.
+    """
+    adaptation = _adaptation()
+    pages = [
+        ComicPage(
+            page_number=1,
+            revision=1,
+            adaptation_revision=adaptation.revision,
+            adaptation_sha256=adaptation.content_sha256,
+            page_turn_role="setup",
+            spread_role="single",
+            emphasis=adaptation.beats[0].narrative_function,
+            density_intent="dense",
+            layout_intent="Every beat on one page.",
+            content=[
+                PageContent(
+                    id=f"page_001_content_{index:03d}",
+                    order=index,
+                    beat_ids=[beat.id],
+                    visual_intent=beat.summary,
+                    lettering=beat.lettering,
+                    entity_ids=["location_alert"],
+                )
+                for index, beat in enumerate(adaptation.beats, start=1)
+            ],
+            reading_order=[
+                item
+                for index, beat in enumerate(adaptation.beats, start=1)
+                for item in (f"page_001_content_{index:03d}", beat.lettering[0].id)
+            ],
+        )
+    ]
+
+    validation = validate_book_plan(
+        adaptation,
+        _inventory(),
+        ApprovedPageRange(minimum=4, maximum=8, allow_expansion=True),
+        pages,
+    )
+
+    assert validation.invariant_failures == ()
+    shortfall = next(
+        issue
+        for issue in validation.editorial_issues
+        if issue.code == "page_count_below_floor"
+    )
+    assert shortfall.blocking is False
+    assert "allocation is 1 pages" in shortfall.evidence[0]
+    assert "Recommend lowering the approved minimum to 1 pages" in shortfall.evidence[0]
+
+
+def test_expansion_lets_the_recorded_range_follow_a_short_allocation() -> None:
+    # BookPlan's own validator enforces target_page_min <= len(pages), so the
+    # recorded floor has to follow the allocation or construction would fail the
+    # stage on a plan the validator already accepted.
+    adaptation = _adaptation()
+    plan = BookPlan(
+        revision=1,
+        adaptation_revision=adaptation.revision,
+        adaptation_sha256=adaptation.content_sha256,
+        target_page_min=min(32, 23),
+        target_page_max=max(40, 23),
+        rhythm_summary="Short but complete.",
+        pages=[
+            PlannedPageRevision(
+                page_number=index,
+                revision=1,
+                content_sha256="0" * 64,
+            )
+            for index in range(1, 24)
+        ],
+    )
+    assert len(plan.pages) == 23
+    assert plan.target_page_min == 23
 
 
 def test_reveal_without_page_turn_setup_is_an_evidence_backed_editorial_issue() -> None:

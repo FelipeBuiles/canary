@@ -28,6 +28,7 @@ from novel_to_comic.models.validation import (
     EditorialIssue,
     InvariantFailure,
     StageValidation,
+    ValidationAttempt,
 )
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.target_artifacts import TargetArtifacts
@@ -253,11 +254,63 @@ def _canonicalize_candidate_requirements(
                 candidate.treatment,
                 brief,
             ).model_dump(mode="json"),
-            "beats": [beat.model_dump(mode="json") for beat in beats],
+            "beats": [
+                beat.model_dump(mode="json")
+                for beat in _canonicalize_prior_states(beats)
+            ],
             "ledger": [entry.model_dump(mode="json") for entry in draft.ledger],
         }
     )
     return _materialize_protected_lettering(canonical, source, brief)
+
+
+def _canonicalize_prior_states(beats: list[AdaptedBeat]) -> list[AdaptedBeat]:
+    """Fill each transition's origin from the last state authored in its scope.
+
+    A transition's ``from_state`` is not the writer's to choose: it is whatever
+    the previous transition in the same scope ended on, which this code already
+    tracks. Asking for it back invited paraphrase — "1925" for "March 23rd -
+    April 2nd, 1925" — which reads as a continuity error while meaning the same
+    thing. Deriving it makes continuity a property of the artifact instead of a
+    string-equality check the writer has to win. Same for appearance changes,
+    where the equivalent mismatch is a *blocking* failure and so costs a repair
+    round. The first state in a scope has no predecessor and is left as authored.
+    """
+
+    continuity_states: dict[tuple[str, str], str] = {}
+    appearance_states: dict[str, str] = {}
+    canonical: list[AdaptedBeat] = []
+    # Sequence order, matching how validate_book_adaptation walks beats — a
+    # different traversal here could derive a state it then rejects.
+    for beat in beats:
+        transitions = []
+        for transition in beat.transitions:
+            key = (transition.dimension, transition.scope_id)
+            previous = continuity_states.get(key)
+            transitions.append(
+                transition
+                if previous is None
+                else transition.model_copy(update={"from_state": previous})
+            )
+            continuity_states[key] = transition.to_state
+        changes = []
+        for change in beat.appearance_changes:
+            previous_state = appearance_states.get(change.entity_id)
+            changes.append(
+                change
+                if previous_state is None
+                else change.model_copy(update={"from_state_id": previous_state})
+            )
+            appearance_states[change.entity_id] = change.to_state_id
+        canonical.append(
+            beat.model_copy(
+                update={
+                    "transitions": tuple(transitions),
+                    "appearance_changes": tuple(changes),
+                }
+            )
+        )
+    return canonical
 
 
 _REQUIREMENT_STOP_WORDS = {
@@ -521,6 +574,7 @@ def build_book_adaptation_prompt(
     primary_source_unit_ids: tuple[str, ...] | None = None,
     shard_index: int = 1,
     shard_count: int = 1,
+    owned_requirement_ids: tuple[str, ...] | None = None,
 ) -> str:
     """Compile the single ordered book-adaptation prompt contract."""
 
@@ -550,6 +604,8 @@ def build_book_adaptation_prompt(
         "approved_requirement_registry": _requirement_registry(brief),
         "narrative_treatment": treatment.model_dump(mode="json"),
     }
+    if owned_requirement_ids is not None:
+        context["adaptation_scope"]["owned_requirement_ids"] = owned_requirement_ids
     scope_instruction = ""
     if shard_count > 1:
         scope_instruction = (
@@ -560,6 +616,17 @@ def build_book_adaptation_prompt(
             "and order identifiers may be shard-local; the deterministic merge "
             "rebases them into one global sequence. The shard is a transport "
             "boundary, never an independently authoritative adaptation. "
+        )
+    ownership_instruction = ""
+    if owned_requirement_ids is not None and shard_count > 1:
+        # Without this the shard sees all nine approved requirements and has to
+        # infer which fall in its own source range.
+        ownership_instruction = (
+            "adaptation_scope.owned_requirement_ids lists the approved "
+            "requirements whose content falls in this shard's source range; "
+            "carry each one onto the beat that realizes it. Requirements outside "
+            "that list belong to other shards — carry one only if this shard's "
+            "own source plainly realizes it. "
         )
     faithful_instruction = ""
     if brief.transformation_level == "faithful":
@@ -572,6 +639,7 @@ def build_book_adaptation_prompt(
         )
     return (
         scope_instruction
+        + ownership_instruction
         + faithful_instruction
         + "Write the globally ordered AdaptedBeats for the supplied source scope. "
         "Own complete, publishable dialogue, thought, caption, and SFX wording; "
@@ -674,6 +742,7 @@ def estimate_book_adaptation_cost(
         )
     shards = _adaptation_shards(source, model=model)
     unit_by_id = {unit.id: unit for unit in source.units}
+    shard_requirements = partition_requirements_by_shard(source, brief, shards)
     prompts = [
         build_book_adaptation_prompt(
             source,
@@ -681,6 +750,7 @@ def estimate_book_adaptation_cost(
             brief,
             treatment,
             primary_source_unit_ids=source_ids,
+            owned_requirement_ids=shard_requirements[index - 1],
             shard_index=index,
             shard_count=len(shards),
         )
@@ -699,6 +769,61 @@ def estimate_book_adaptation_cost(
         for prompt, source_ids in zip(prompts, shards, strict=True)
     )
     return clean_pass * 1.25
+
+
+def partition_requirements_by_shard(
+    source: SourceDocument,
+    brief: AdaptationBrief,
+    shards: tuple[tuple[str, ...], ...],
+) -> tuple[tuple[str, ...], ...]:
+    """Assign each approved requirement to the shard whose source realizes it.
+
+    A shard sees the whole brief but only its own source units, so it has to
+    guess which requirements are its responsibility — and a miss is a
+    book-global invariant failure that costs a repair round. The assignment is
+    derivable: requirements and shards are both in narrative order, so scoring
+    word overlap against each shard's source text and forbidding the result from
+    moving backwards recovers the intended split.
+
+    Advisory, not authoritative: a shard is still told it may carry a
+    requirement its source clearly realizes, and the existing canonicalization
+    and validation remain the safety net for a misassignment.
+    """
+
+    unit_by_id = {unit.id: unit for unit in source.units}
+    shard_words = [
+        _requirement_words(
+            " ".join(
+                unit_by_id[source_id].text
+                for source_id in shard
+                if source_id in unit_by_id
+            )
+        )
+        for shard in shards
+    ]
+    owners: list[list[str]] = [[] for _ in shards]
+    if not shards:
+        return ()
+    # Essential events and character turns are two independent ordered
+    # sequences, so each carries its own floor — sharing one would push every
+    # character turn into whichever shard the last essential event reached.
+    floors: dict[str, int] = {}
+    for requirement_id, requirement in _requirement_registry(brief).items():
+        prefix = requirement_id.rsplit("_", 1)[0]
+        floor = floors.get(prefix, 0)
+        wanted = _requirement_words(requirement)
+        # Ties and blanks fall to `floor`, which keeps a requirement adjacent to
+        # its predecessor rather than dropping it into an unrelated shard.
+        best_index = floor
+        best_overlap = -1
+        for index in range(floor, len(shards)):
+            overlap = len(wanted.intersection(shard_words[index]))
+            if overlap > best_overlap:
+                best_index = index
+                best_overlap = overlap
+        owners[best_index].append(requirement_id)
+        floors[prefix] = best_index
+    return tuple(tuple(ids) for ids in owners)
 
 
 def _shard_output_chars(
@@ -978,6 +1103,7 @@ async def produce_book_adaptation(
             _shard_output_chars(unit_by_id, source_unit_ids)
             for source_unit_ids in shards
         ]
+        shard_requirements = partition_requirements_by_shard(source, brief, shards)
         book_prompts = [
             build_book_adaptation_prompt(
                 source,
@@ -985,6 +1111,7 @@ async def produce_book_adaptation(
                 brief,
                 treatment,
                 primary_source_unit_ids=source_unit_ids,
+                owned_requirement_ids=shard_requirements[shard_index - 1],
                 shard_index=shard_index,
                 shard_count=len(shards),
             )
@@ -1014,6 +1141,7 @@ async def produce_book_adaptation(
                 detail=f"drafting {len(book_prompts)} shards",
             )
         ]
+        history: list[ValidationAttempt] = []
         for validation_attempt in range(1, _MAX_ADAPT_ATTEMPTS + 1):
             draft, beat_to_shard = _merged_draft(drafts)
             candidate = BookAdaptation(
@@ -1031,6 +1159,7 @@ async def produce_book_adaptation(
                 brief,
             )
             validation = validate_book_adaptation(source, brief, candidate)
+            history.append(_attempt_record(validation_attempt, validation))
             if not validation.invariant_failures:
                 break
             artifacts.write_failed_adaptation_candidate(candidate)
@@ -1077,6 +1206,7 @@ async def produce_book_adaptation(
             artifacts,
             validation,
             attempts=validation_attempt,
+            history=tuple(history),
         )
         if validation.invariant_failures:
             raise AdaptationInvariantError(validation)
@@ -1137,11 +1267,24 @@ def _repair_prompt(
     )
 
 
+def _attempt_record(
+    attempt: int, validation: AdaptationValidation
+) -> ValidationAttempt:
+    return ValidationAttempt(
+        attempt=attempt,
+        invariant_codes=tuple(
+            failure.code for failure in validation.invariant_failures
+        ),
+        editorial_codes=tuple(issue.code for issue in validation.editorial_issues),
+    )
+
+
 def _persist_validation(
     artifacts: TargetArtifacts,
     validation: AdaptationValidation,
     *,
     attempts: int,
+    history: tuple[ValidationAttempt, ...] = (),
 ) -> None:
     artifacts.write_validation(
         StageValidation(
@@ -1149,6 +1292,7 @@ def _persist_validation(
             attempts=attempts,
             invariant_failures=validation.invariant_failures,
             editorial_issues=validation.editorial_issues,
+            attempt_history=history,
         )
     )
 
