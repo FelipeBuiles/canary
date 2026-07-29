@@ -2247,3 +2247,196 @@ def test_fidelity_plan_prompt_treats_page_maximum_as_expandable_floor() -> None:
 
     assert "approved minimum is a narrative floor" in prompt
     assert "exceeds the approved maximum" in prompt
+
+
+def _soaked_adaptation() -> BookAdaptation:
+    """The production shape: beat_0001 changes Johansen into a soaked state."""
+
+    payload = _adaptation().model_dump()
+    payload["content_sha256"] = ""
+    payload["beats"][0]["appearance_changes"] = [
+        AppearanceChange(
+            entity_id="character_johansen",
+            to_state_id="johansen_soaked",
+            description="Spray soaks Johansen's coat.",
+        ).model_dump(mode="json")
+    ]
+    return BookAdaptation.model_validate(payload)
+
+
+def _soaked_inventory() -> ApprovedVisualReferenceInventory:
+    return ApprovedVisualReferenceInventory(
+        references=[
+            *_inventory().references,
+            ApprovedVisualReference(
+                id="ref_johansen_soaked",
+                entity_id="character_johansen",
+                appearance_state_id="johansen_soaked",
+                visual_anchor="gaunt Norwegian sailor; soaked rain-dark pea coat",
+            ),
+        ]
+    )
+
+
+def _two_page_response(content_overrides: dict[str, object]) -> dict:
+    return {
+        "rhythm_summary": "approach → escape",
+        "pages": [
+            {
+                "page_number": 1,
+                "page_turn_role": "setup",
+                "spread_role": "single",
+                "emphasis": "initial",
+                "density_intent": "standard",
+                "rhythm_intent": "The soaked approach begins.",
+                "layout_intent": "Spray fills the approach.",
+                "content": [
+                    {
+                        "id": "page_001_content_001",
+                        "order": 1,
+                        "beat_ids": ["beat_0001"],
+                        "visual_intent": "Johansen approaches through heavy spray.",
+                        "lettering_ids": ["lettering_0001"],
+                        **content_overrides,
+                    }
+                ],
+                "reading_order": ["page_001_content_001", "lettering_0001"],
+            },
+            {
+                "page_number": 2,
+                "page_turn_role": "release",
+                "spread_role": "single",
+                "emphasis": "release",
+                "density_intent": "standard",
+                "rhythm_intent": "The approach gives way to escape.",
+                "layout_intent": "The yacht wheels away.",
+                "content": [
+                    {
+                        "id": "page_002_content_001",
+                        "order": 1,
+                        "beat_ids": ["beat_0002"],
+                        "visual_intent": "The yacht wheels away.",
+                        "lettering_ids": ["lettering_0002"],
+                        "entity_ids": ["character_johansen", "location_alert"],
+                    }
+                ],
+                "reading_order": ["page_002_content_001", "lettering_0002"],
+            },
+        ],
+    }
+
+
+def _run_plan(
+    adaptation: BookAdaptation,
+    inventory: ApprovedVisualReferenceInventory,
+    response: dict,
+    tmp_path: Path,
+) -> tuple[TargetArtifacts, list[dict], BookPlan | PlanInvariantError]:
+    calls: list[dict] = []
+
+    async def generate(**request):
+        calls.append(request)
+        return ApiResult(value=response)
+
+    artifacts = TargetArtifacts(tmp_path)
+    ctx = StageRuntime(
+        "plan",
+        PipelineState(
+            project_name="cthulhu",
+            novel_path="novel.txt",
+            created_at=datetime.now(timezone.utc),
+        ),
+        tmp_path,
+    )
+    try:
+        outcome: BookPlan | PlanInvariantError = asyncio.run(
+            produce_book_plan(
+                adaptation,
+                inventory,
+                ApprovedPageRange(minimum=2, maximum=2),
+                artifacts=artifacts,
+                ctx=ctx,
+                model="test-planner",
+                generate=generate,
+            )
+        )
+    except PlanInvariantError as error:
+        outcome = error
+    return artifacts, calls, outcome
+
+
+def test_an_adapted_appearance_change_is_derived_into_the_page_citations(
+    tmp_path: Path,
+) -> None:
+    # The exact production failure: the writer allocated the beat that carries
+    # the appearance change but cited neither the entity nor the target state,
+    # which used to raise a blocking appearance_state_allocation failure and
+    # buy a full repair round. Both IDs are Adapt's decision, so code derives
+    # them and no second call is made.
+    artifacts, calls, plan = _run_plan(
+        _soaked_adaptation(),
+        _soaked_inventory(),
+        _two_page_response({"entity_ids": ["location_alert"]}),
+        tmp_path,
+    )
+
+    assert isinstance(plan, BookPlan)
+    assert len(calls) == 1
+    content = artifacts.read_page(1).content[0]
+    assert content.entity_ids == ("location_alert", "character_johansen")
+    assert content.appearance_state_ids == ("johansen_soaked",)
+    validation = artifacts.read_validation("plan")
+    assert validation.invariant_failures == ()
+
+
+def test_deriving_an_appearance_change_never_duplicates_a_cited_id(
+    tmp_path: Path,
+) -> None:
+    artifacts, _calls, plan = _run_plan(
+        _soaked_adaptation(),
+        _soaked_inventory(),
+        _two_page_response(
+            {
+                "entity_ids": ["character_johansen", "location_alert"],
+                "appearance_state_ids": ["johansen_soaked"],
+            }
+        ),
+        tmp_path,
+    )
+
+    assert isinstance(plan, BookPlan)
+    content = artifacts.read_page(1).content[0]
+    assert content.entity_ids == ("character_johansen", "location_alert")
+    assert content.appearance_state_ids == ("johansen_soaked",)
+
+
+def test_an_unapproved_appearance_state_is_attributed_to_adapt_not_repaired(
+    tmp_path: Path,
+) -> None:
+    # Adapt named a state Cast never approved. No page allocation can make that
+    # valid, so Plan must not derive it, must not blame itself, and must not pay
+    # for a repair attempt it cannot win.
+    artifacts, calls, outcome = _run_plan(
+        _soaked_adaptation(),
+        _inventory(),
+        _two_page_response({"entity_ids": ["character_johansen", "location_alert"]}),
+        tmp_path,
+    )
+
+    assert isinstance(outcome, PlanInvariantError)
+    assert len(calls) == 1
+    validation = artifacts.read_validation("plan")
+    failure = next(
+        failure
+        for failure in validation.invariant_failures
+        if failure.code == "unapproved_appearance_state"
+    )
+    assert failure.owner_stage == "adapt"
+    assert failure.artifact_ids == (
+        "beat_0001",
+        "character_johansen",
+        "johansen_soaked",
+    )
+    assert validation.attempt_history[0].invariant_codes == (
+        "unapproved_appearance_state",
+    )

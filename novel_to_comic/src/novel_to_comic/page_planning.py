@@ -242,7 +242,10 @@ def build_book_plan_prompt(
         "same ordered panels. appearance_state_ids contains only the inventory's "
         "appearance_state_id values (for example, feverish), never reference IDs "
         "(for example, char_003:feverish); omit base references because base is not "
-        "an appearance state. Own actual page count, "
+        "an appearance state. You do not need to restate the appearance change an "
+        "allocated beat already declares: its entity and target state are added to "
+        "that content item for you. Cite entity_ids and appearance_state_ids for "
+        "what is visible on the panel beyond those changes. Own actual page count, "
         + page_range_instruction
         + " "
         "page and spread rhythm, page-turn intent, explicit reading order, narrative "
@@ -323,7 +326,9 @@ async def produce_book_plan(
                 attempt_prompt = _schema_repair_prompt(prompt, result.value, error)
                 continue
             try:
-                pages = _canonical_pages(adaptation, draft, pin_by_beat)
+                pages = _canonical_pages(
+                    adaptation, draft, pin_by_beat, references
+                )
             except PlanInvariantError as allocation_error:
                 validation = allocation_error.validation
             except ValidationError as error:
@@ -364,6 +369,13 @@ async def produce_book_plan(
                     )
                     continue
                 ctx.record_item_done()
+                break
+            if all(
+                failure.owner_stage != "plan"
+                for failure in validation.invariant_failures
+            ):
+                # Nothing Plan can re-allocate would clear these, so stop paying
+                # for attempts and let the owning stage be re-run instead.
                 break
             if attempt < _MAX_PLAN_ATTEMPTS:
                 attempt_prompt = _repair_prompt(prompt, result.value, validation)
@@ -577,10 +589,56 @@ def _merged_editorial_issues(
     return tuple(merged.values())
 
 
+def _approved_state_pairs(
+    references: ApprovedVisualReferenceInventory,
+) -> set[tuple[str, str]]:
+    """The (entity, appearance state) authorities Cast actually approved."""
+
+    return {
+        (reference.entity_id, reference.appearance_state_id)
+        for reference in references.references
+        if reference.appearance_state_id is not None
+    }
+
+
+def _derived_state_citations(
+    content: "_PageContentDraft",
+    beat_by_id: Mapping[str, Any],
+    approved_pairs: set[tuple[str, str]],
+) -> tuple[tuple[str, ...], tuple[str, ...], list[tuple[str, str, str]]]:
+    """Fold each carried beat's appearance changes into the content citations.
+
+    Which entity changes into which state on which beat is Adapt's decision,
+    already recorded in the adaptation. Asking Plan to restate it made a
+    derivable fact a blocking invariant (``appearance_state_allocation``) that
+    a repair round had to pay for. Only pairs Cast approved are derived: an
+    unapproved pair is a genuine Adapt/Cast disagreement, returned separately
+    so it is attributed to the stage that can actually fix it.
+    """
+
+    entity_ids = list(content.entity_ids)
+    state_ids = list(content.appearance_state_ids)
+    unapproved: list[tuple[str, str]] = []
+    for beat_id in content.beat_ids:
+        beat = beat_by_id.get(beat_id)
+        if beat is None:
+            continue
+        for change in beat.appearance_changes:
+            if (change.entity_id, change.to_state_id) not in approved_pairs:
+                unapproved.append((beat_id, change.entity_id, change.to_state_id))
+                continue
+            if change.entity_id not in entity_ids:
+                entity_ids.append(change.entity_id)
+            if change.to_state_id not in state_ids:
+                state_ids.append(change.to_state_id)
+    return tuple(entity_ids), tuple(state_ids), unapproved
+
+
 def _canonical_pages(
     adaptation: BookAdaptation,
     draft: "_BookPlanDraft",
     pin_by_beat: dict[str, AuthorGeometryPin],
+    references: ApprovedVisualReferenceInventory,
 ) -> tuple[ComicPage, ...]:
     """Materialize canonical pages, copying Adapt's lettering by ID."""
 
@@ -590,6 +648,9 @@ def _canonical_pages(
     owning_beat: dict[str, str] = {
         item.id: beat.id for beat in adaptation.beats for item in beat.lettering
     }
+    beat_by_id = {beat.id: beat for beat in adaptation.beats}
+    approved_pairs = _approved_state_pairs(references)
+    unapproved_changes: list[tuple[str, str, str]] = []
     claimed: set[str] = set()
     pages: list[ComicPage] = []
     for page in draft.pages:
@@ -665,10 +726,20 @@ def _canonical_pages(
                     )
                 claimed.add(lettering_id)
                 lettering.append(item)
-            payload = content.model_dump(exclude={"lettering_ids"})
+            entity_ids, state_ids, unapproved = _derived_state_citations(
+                content,
+                beat_by_id,
+                approved_pairs,
+            )
+            unapproved_changes.extend(unapproved)
+            payload = content.model_dump(
+                exclude={"lettering_ids", "entity_ids", "appearance_state_ids"}
+            )
             content_items.append(
                 PageContent(
                     **payload,
+                    entity_ids=entity_ids,
+                    appearance_state_ids=state_ids,
                     lettering=tuple(lettering),
                     pinned_geometry=_geometry_for_content(
                         content.beat_ids,
@@ -693,6 +764,35 @@ def _canonical_pages(
                     page.reading_order,
                     content_items,
                 ),
+            )
+        )
+    if unapproved_changes:
+        raise PlanInvariantError(
+            PlanValidation(
+                invariant_failures=tuple(
+                    InvariantFailure(
+                        id=(
+                            "adapt_failure_unapproved_appearance_state_"
+                            f"{beat_id}_{state_id}"
+                        ),
+                        # Owned by Adapt on purpose: no page allocation can make an
+                        # unapproved (entity, state) pair valid, so repairing Plan
+                        # would just burn another expensive attempt.
+                        owner_stage="adapt",
+                        code="unapproved_appearance_state",
+                        message=(
+                            "An adapted appearance change must cite a Cast-approved "
+                            "entity appearance state."
+                        ),
+                        artifact_ids=[beat_id, entity_id, state_id],
+                        evidence=[
+                            f"Beat {beat_id!r} changes {entity_id!r} into "
+                            f"{state_id!r}, which the approved reference "
+                            "inventory does not contain."
+                        ],
+                    )
+                    for beat_id, entity_id, state_id in unapproved_changes
+                )
             )
         )
     return tuple(pages)
