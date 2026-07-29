@@ -16,6 +16,7 @@ from novel_to_comic.book_adaptation import (
     build_book_adaptation_prompt,
     build_narrative_treatment_prompt,
     normalize_treatment,
+    partition_requirements_by_shard,
     produce_book_adaptation,
     validate_book_adaptation,
 )
@@ -552,6 +553,227 @@ def test_appearance_state_and_transition_chronology_validate(
         assert code not in {failure.code for failure in result.invariant_failures}
     else:
         assert code in {failure.code for failure in result.invariant_failures}
+
+
+def _two_beat_payload(*, from_state: str, from_state_id: str | None) -> dict:
+    payload = _book_adaptation().model_dump()
+    payload["content_sha256"] = ""
+    first = payload["beats"][0]
+    first["appearance_changes"] = [
+        {
+            "entity_id": "witness",
+            "from_state_id": None,
+            "to_state_id": "witness_dry",
+            "description": "The witness is dry.",
+        }
+    ]
+    first["transitions"] = [
+        {
+            "dimension": "place",
+            "scope_id": "witness_testimony",
+            "from_state": "street",
+            "to_state": "the threshold of the old house",
+            "description": "The witness reaches the house.",
+        }
+    ]
+    second = {
+        **first,
+        "id": "beat_0002",
+        "order": 2,
+        "summary": "The witness enters.",
+        "source_unit_ids": ["source_000002"],
+        "lettering": [],
+        "brief_requirements": [],
+        "appearance_changes": [
+            {
+                "entity_id": "witness",
+                "from_state_id": from_state_id,
+                "to_state_id": "witness_shaken",
+                "description": "The witness begins to shake.",
+            }
+        ],
+        "transitions": [
+            {
+                "dimension": "place",
+                "scope_id": "witness_testimony",
+                "from_state": from_state,
+                "to_state": "hall",
+                "description": "The witness enters the hall.",
+            }
+        ],
+    }
+    payload["beats"] = [*payload["beats"], second]
+    return payload
+
+
+def test_canonicalization_derives_a_paraphrased_transition_origin() -> None:
+    """A paraphrase of the prior state is the same continuity, not a break.
+
+    The writer returned "the threshold" for "the threshold of the old house";
+    the prior state is already known, so it is filled in rather than compared.
+    """
+    candidate = BookAdaptation.model_validate(
+        _two_beat_payload(from_state="the threshold", from_state_id="witness_dry")
+    )
+
+    canonical = _canonicalize_candidate_requirements(
+        candidate, _source_document(), _approved_brief()
+    )
+
+    assert canonical.beats[1].transitions[0].from_state == (
+        "the threshold of the old house"
+    )
+    result = validate_book_adaptation(
+        _source_document(), _approved_brief(), canonical
+    )
+    assert "continuity_state_mismatch" not in {
+        issue.code for issue in result.editorial_issues
+    }
+
+
+def test_canonicalization_derives_a_wrong_appearance_origin() -> None:
+    # The appearance equivalent blocks the stage, so deriving it removes a
+    # repair round rather than just log noise.
+    candidate = BookAdaptation.model_validate(
+        _two_beat_payload(
+            from_state="the threshold of the old house", from_state_id="witness_soaked"
+        )
+    )
+
+    canonical = _canonicalize_candidate_requirements(
+        candidate, _source_document(), _approved_brief()
+    )
+
+    assert canonical.beats[1].appearance_changes[0].from_state_id == "witness_dry"
+    result = validate_book_adaptation(
+        _source_document(), _approved_brief(), canonical
+    )
+    assert "appearance_state_chronology" not in {
+        failure.code for failure in result.invariant_failures
+    }
+
+
+def test_canonicalization_leaves_the_first_state_in_a_scope_as_authored() -> None:
+    candidate = BookAdaptation.model_validate(
+        _two_beat_payload(from_state="the threshold", from_state_id="witness_dry")
+    )
+
+    canonical = _canonicalize_candidate_requirements(
+        candidate, _source_document(), _approved_brief()
+    )
+
+    # Nothing precedes it, so there is no prior state to derive from.
+    assert canonical.beats[0].transitions[0].from_state == "street"
+    assert canonical.beats[0].appearance_changes[0].from_state_id is None
+
+
+def test_requirements_are_partitioned_to_the_shard_that_realizes_them() -> None:
+    """The shard that contains a requirement's source should own it.
+
+    Without this a shard sees every approved requirement and has to infer which
+    fall in its own range — the guess that cost a repair round on shard 3.
+    """
+    source = _source_document()
+    brief = _approved_brief()
+    shards = (("source_000001",), ("source_000002",))
+
+    owners = partition_requirements_by_shard(source, brief, shards)
+
+    # "The witness sees the door open." overlaps unit 1 ("door", "open");
+    # "The witness abandons the investigation." has no overlap and stays put.
+    assert "essential_event_001" in owners[0]
+    assert sum(len(ids) for ids in owners) == 2
+    assert all(
+        requirement_id.startswith(("essential_event_", "character_turn_"))
+        for ids in owners
+        for requirement_id in ids
+    )
+
+
+def test_partition_never_assigns_a_requirement_before_its_predecessor() -> None:
+    source = _source_document()
+    brief = _approved_brief().model_copy(
+        update={
+            "essential_events": (
+                "The witness sees the door open.",
+                "The witness flees into the rain.",
+                # No lexical anchor at all — must not fall back to an earlier shard.
+                "Something ineffable transpires offstage.",
+            )
+        }
+    )
+    shards = (("source_000001",), ("source_000002",))
+
+    owners = partition_requirements_by_shard(source, brief, shards)
+
+    placement = {
+        requirement_id: index
+        for index, ids in enumerate(owners)
+        for requirement_id in ids
+    }
+    ordered = [
+        placement[f"essential_event_{index:03d}"] for index in (1, 2, 3)
+    ]
+    assert ordered == sorted(ordered), ordered
+
+
+def test_character_turns_are_not_dragged_along_by_essential_events() -> None:
+    """The two requirement kinds are independent ordered sequences.
+
+    Sharing one monotonic floor pushed every character turn into whichever shard
+    the last essential event reached.
+    """
+    source = _source_document()
+    brief = _approved_brief().model_copy(
+        update={
+            "essential_events": (
+                "The witness sees the door open.",
+                "The witness flees into the rain.",
+            ),
+            "character_turns": ("The witness sees the door and doubts himself.",),
+        }
+    )
+    shards = (("source_000001",), ("source_000002",))
+
+    owners = partition_requirements_by_shard(source, brief, shards)
+
+    placement = {
+        requirement_id: index
+        for index, ids in enumerate(owners)
+        for requirement_id in ids
+    }
+    assert placement["essential_event_002"] == 1
+    # The turn's own words point at shard 0 and must not inherit event 2's floor.
+    assert placement["character_turn_001"] == 0
+
+
+def test_partition_of_a_single_shard_owns_everything() -> None:
+    source = _source_document()
+    brief = _approved_brief()
+
+    owners = partition_requirements_by_shard(
+        source, brief, (("source_000001", "source_000002"),)
+    )
+
+    assert owners == (("essential_event_001", "character_turn_001"),)
+
+
+def test_shard_prompt_states_which_requirements_it_owns() -> None:
+    prompt = build_book_adaptation_prompt(
+        _source_document(),
+        _story_bible(),
+        _approved_brief(),
+        _book_adaptation().treatment,
+        primary_source_unit_ids=("source_000002",),
+        owned_requirement_ids=("character_turn_001",),
+        shard_index=2,
+        shard_count=2,
+    )
+
+    assert "owned_requirement_ids" in prompt
+    assert "carry each one onto the beat that realizes it" in prompt
+    # Judgment is preserved: a shard may still carry what its source realizes.
+    assert "only if this shard's own source plainly realizes it" in prompt
 
 
 def test_transition_story_function_requires_explicit_continuity_change() -> None:

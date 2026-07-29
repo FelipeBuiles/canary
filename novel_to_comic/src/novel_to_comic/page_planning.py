@@ -24,6 +24,7 @@ from novel_to_comic.models.validation import (
     EditorialIssue,
     InvariantFailure,
     StageValidation,
+    ValidationAttempt,
 )
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.target_artifacts import TargetArtifacts
@@ -292,6 +293,7 @@ async def produce_book_plan(
         valid_fallback: (
             tuple[_BookPlanDraft, tuple[ComicPage, ...], PlanValidation] | None
         ) = None
+        history: list[ValidationAttempt] = []
         for attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
             result = await generate(
                 system_prompt=(
@@ -342,6 +344,7 @@ async def produce_book_plan(
                         pages=pages,
                     ),
                 )
+            history.append(_attempt_record(attempt, validation))
             if not validation.invariant_failures:
                 retryable_issues = tuple(
                     issue
@@ -369,7 +372,9 @@ async def produce_book_plan(
             ctx.record_item_done()
         ctx.progress(1, 1)
 
-        _persist_validation(artifacts, validation, attempts=attempt)
+        _persist_validation(
+            artifacts, validation, attempts=attempt, history=tuple(history)
+        )
         if validation.invariant_failures:
             raise PlanInvariantError(validation)
 
@@ -377,7 +382,15 @@ async def produce_book_plan(
             revision=1,
             adaptation_revision=adaptation.revision,
             adaptation_sha256=adaptation.content_sha256,
-            target_page_min=target_range.minimum,
+            # With expansion approved, the recorded range follows the allocation
+            # in both directions: the beats decide the page count, not an
+            # estimate made before they existed. The shortfall is reported as an
+            # editorial issue instead of failing the stage.
+            target_page_min=(
+                min(target_range.minimum, len(pages))
+                if target_range.allow_expansion
+                else target_range.minimum
+            ),
             target_page_max=(
                 max(target_range.maximum, len(pages))
                 if target_range.allow_expansion
@@ -472,11 +485,22 @@ def _canonical_page_validation(error: ValidationError) -> PlanValidation:
     )
 
 
+def _attempt_record(attempt: int, validation: PlanValidation) -> ValidationAttempt:
+    return ValidationAttempt(
+        attempt=attempt,
+        invariant_codes=tuple(
+            failure.code for failure in validation.invariant_failures
+        ),
+        editorial_codes=tuple(issue.code for issue in validation.editorial_issues),
+    )
+
+
 def _persist_validation(
     artifacts: TargetArtifacts,
     validation: PlanValidation,
     *,
     attempts: int,
+    history: tuple[ValidationAttempt, ...] = (),
 ) -> None:
     """Persist Plan's verdict, including any page-range recommendation.
 
@@ -485,11 +509,19 @@ def _persist_validation(
     written down before the stage raises.
     """
 
+    # A range conflict is the one blocking failure the user can act on. A floor
+    # shortfall under approved expansion is not blocking, but it is still a
+    # brief decision, so its recommendation is surfaced the same way.
     recommendations = tuple(
         evidence
         for failure in validation.invariant_failures
         if failure.code == "target_page_range_conflict"
         for evidence in failure.evidence
+    ) + tuple(
+        evidence
+        for issue in validation.editorial_issues
+        if issue.code == "page_count_below_floor"
+        for evidence in issue.evidence
     )
     artifacts.write_validation(
         StageValidation(
@@ -498,6 +530,7 @@ def _persist_validation(
             invariant_failures=validation.invariant_failures,
             editorial_issues=validation.editorial_issues,
             recommendations=recommendations,
+            attempt_history=history,
         )
     )
 
@@ -978,6 +1011,26 @@ def validate_book_plan(
                     f"The complete allocation requires {len(pages)} pages; "
                     f"the approved range is {target_range.minimum}-"
                     f"{target_range.maximum}. Recommend a minimum of {len(pages)} pages."
+                ],
+            )
+        )
+    elif target_range.allow_expansion and len(pages) < target_range.minimum:
+        # The floor was approved before any beats existed; Plan allocated the
+        # adaptation that actually got written. Padding to reach a stale
+        # estimate would manufacture pages the story does not have, so this is
+        # recorded for review rather than repaired — but recorded by us, not
+        # left to whether the model volunteers it.
+        issues.append(
+            EditorialIssue(
+                id="plan_issue_page_count_below_floor",
+                owner_stage="plan",
+                code="page_count_below_floor",
+                message="The complete allocation is below the approved page floor.",
+                artifact_ids=["plan_book"],
+                evidence=[
+                    f"The complete allocation is {len(pages)} pages; the "
+                    f"approved floor is {target_range.minimum}. Recommend "
+                    f"lowering the approved minimum to {len(pages)} pages."
                 ],
             )
         )

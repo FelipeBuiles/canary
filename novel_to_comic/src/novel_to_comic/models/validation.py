@@ -36,6 +36,22 @@ class EditorialIssue(_ValidationResult):
     blocking: Literal[False] = False
 
 
+class ValidationAttempt(BaseModel):
+    """What one repair round actually failed on.
+
+    Only the final verdict used to be persisted, so a stage that repaired and
+    then passed left no record of what triggered the repair — which is exactly
+    the information needed to decide whether a check should be computed rather
+    than generated.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    attempt: int = Field(ge=1)
+    invariant_codes: tuple[str, ...] = ()
+    editorial_codes: tuple[str, ...] = ()
+
+
 class StageValidation(BaseModel):
     """One stage's own verdict on its artifact, persisted for review.
 
@@ -51,6 +67,7 @@ class StageValidation(BaseModel):
     invariant_failures: tuple[InvariantFailure, ...] = ()
     editorial_issues: tuple[EditorialIssue, ...] = ()
     recommendations: tuple[str, ...] = ()
+    attempt_history: tuple[ValidationAttempt, ...] = ()
 
     @property
     def blocked(self) -> bool:

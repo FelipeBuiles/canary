@@ -65,6 +65,25 @@ _MAX_RETRIES = 3
 # wall-clock ceiling on the whole stream.
 _READ_TIMEOUT = 600.0
 _STREAM_TOTAL_TIMEOUT = 1800.0
+# Keepalive comments and empty chunks reset the per-chunk read timeout, so a
+# gateway that accepts the request but never produces content would otherwise
+# ride the total budget. Bound the wait for the *first content* separately —
+# above _READ_TIMEOUT, so this only fires when non-content bytes are actively
+# masking a stall. Time-to-first-content is legitimately long here: an observed
+# adapt treatment call spent ~520s before emitting just 2k output tokens, so a
+# bound under the read timeout would kill healthy requests.
+_STREAM_FIRST_CONTENT_TIMEOUT = 900.0
+
+
+def _stream_text_enabled() -> bool:
+    """Whether text completions stream. Set CANARY_AI_STREAM_TEXT=0 to opt out.
+
+    Streaming is what lets a generation outlive the read timeout, so it is the
+    default — but it is one env var away from off if it ever misbehaves against
+    a provider mid-run.
+    """
+    raw = os.environ.get("CANARY_AI_STREAM_TEXT", "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
 # 429s get their own, longer retry budget: the provider is asking us to slow
 # down, not reporting a failure. Backoff windows double from the base up to
 # the cap (4/8/16/32/60s), so the full budget rides out a quota refill cycle.
@@ -306,6 +325,8 @@ async def _read_chat_stream(
         observer = current_stream_observer()
         streamed_chars = 0
         dropped = 0
+        opened = time.perf_counter()
+        first_content_at: float | None = None
         # `data:` lines accumulate until they parse, or until a blank line ends
         # the event. Dispatching as soon as the payload is valid JSON handles the
         # usual one-object-per-line shape even from a server that omits the
@@ -315,9 +336,18 @@ async def _read_chat_stream(
         # that resurfaces as a JSON error far from its cause.
         event_data: list[str] = []
 
+        def notify(chars: int) -> None:
+            if observer is None:
+                return
+            # Never let progress reporting break a paid request.
+            try:
+                observer(chars)
+            except Exception:
+                logger.debug("stream observer raised", exc_info=True)
+
         def dispatch(blob: str) -> bool:
             """Consume one complete data payload; False if it isn't valid yet."""
-            nonlocal streamed_chars
+            nonlocal streamed_chars, first_content_at
             if not blob or blob == "[DONE]":
                 return True
             try:
@@ -327,13 +357,14 @@ async def _read_chat_stream(
             if not isinstance(chunk, dict):
                 return False
             chunks.append(chunk)
-            if observer is not None:
-                streamed_chars += _chunk_content_length(chunk)
-                # Never let progress reporting break a paid request.
-                try:
-                    observer(streamed_chars)
-                except Exception:
-                    logger.debug("stream observer raised", exc_info=True)
+            content_chars = _chunk_content_length(chunk)
+            if content_chars and first_content_at is None:
+                first_content_at = time.perf_counter()
+                logger.info(
+                    "Stream first content after %.1fs", first_content_at - opened
+                )
+            streamed_chars += content_chars
+            notify(streamed_chars)
             return True
 
         def end_event() -> None:
@@ -344,6 +375,9 @@ async def _read_chat_stream(
                 dropped += 1
             event_data.clear()
 
+        # Report before the first chunk so a stage waiting on a slow model shows
+        # as in-flight rather than as a dead progress bar.
+        notify(0)
         try:
             async with asyncio.timeout(_STREAM_TOTAL_TIMEOUT):
                 async for line in response.aiter_lines():
@@ -358,10 +392,22 @@ async def _read_chat_stream(
                         continue  # SSE comment / keepalive
                     else:
                         raw.append(line)
+                    if (
+                        first_content_at is None
+                        and time.perf_counter() - opened
+                        > _STREAM_FIRST_CONTENT_TIMEOUT
+                    ):
+                        raise httpx.ReadTimeout(
+                            "no content in the first "
+                            f"{_STREAM_FIRST_CONTENT_TIMEOUT:.0f}s of the stream "
+                            f"({len(chunks)} non-content events received)",
+                            request=response.request,
+                        )
                 end_event()
         except TimeoutError as exc:
             raise httpx.ReadTimeout(
-                f"stream exceeded its {_STREAM_TOTAL_TIMEOUT:.0f}s total budget",
+                f"stream exceeded its {_STREAM_TOTAL_TIMEOUT:.0f}s total budget "
+                f"({streamed_chars} chars received)",
                 request=response.request,
             ) from exc
         if dropped:
@@ -1317,8 +1363,10 @@ async def _chat_completion(
     # Stream so the read timeout is per-chunk: long adapt repairs exceed the
     # read budget as a single blocking response. include_usage puts the usage
     # block on a final chunk, which streaming otherwise omits.
-    payload["stream"] = True
-    payload["stream_options"] = {"include_usage": True}
+    streaming = _stream_text_enabled()
+    if streaming:
+        payload["stream"] = True
+        payload["stream_options"] = {"include_usage": True}
 
     estimated_cost_usd = (
         estimate_text_cost(model, effective_system + "\n" + user_content) or None
@@ -1343,12 +1391,29 @@ async def _chat_completion(
     data: dict[str, Any] = {}
     try:
         endpoint = "/v1/chat/completions"
+        # Breadcrumb before the request: Langfuse only records a call once it
+        # finishes, so an in-flight request leaves no trace there at all.
+        logger.info(
+            "AI request issued feature=%s model=%s streaming=%s event_id=%s",
+            feature,
+            model,
+            streaming,
+            event_id,
+        )
         try:
-            data, response = await _stream_with_retry(
-                f"{_base_url(config)}{endpoint}",
-                headers=_headers(config, event_id),
-                payload=payload,
-            )
+            if streaming:
+                data, response = await _stream_with_retry(
+                    f"{_base_url(config)}{endpoint}",
+                    headers=_headers(config, event_id),
+                    payload=payload,
+                )
+            else:
+                response = await _post_with_retry(
+                    f"{_base_url(config)}{endpoint}",
+                    headers=_headers(config, event_id),
+                    json=payload,
+                )
+                data = {}
         except httpx.HTTPStatusError as exc:
             raise _gateway_http_error(
                 exc.response,
@@ -1372,6 +1437,8 @@ async def _chat_completion(
                 model=model,
                 endpoint=endpoint,
             ) from exc
+        if not streaming:
+            data = response.json()
         refusal = _refusal_reason(data)
         if refusal:
             raise AIRefusalError(

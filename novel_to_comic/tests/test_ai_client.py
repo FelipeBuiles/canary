@@ -788,6 +788,46 @@ class TestStreamingChatCompletion:
         assert sent["stream"] is True
         assert sent["stream_options"] == {"include_usage": True}
 
+    def test_no_content_within_the_first_content_budget_times_out(self, monkeypatch):
+        monkeypatch.setattr(client, "_STREAM_FIRST_CONTENT_TIMEOUT", 0.0)
+
+        def handler(request):
+            # Keepalives reset the per-chunk read timeout, so only the
+            # first-content bound can stop this.
+            return httpx.Response(200, content=b": keepalive\n\n" * 4)
+
+        _mock_transport(monkeypatch, handler)
+        with pytest.raises(httpx.ReadTimeout, match="no content in the first"):
+            asyncio.run(
+                client._read_chat_stream("http://gw/v1/x", headers={}, payload={})
+            )
+
+    def test_first_content_bound_sits_above_the_read_timeout(self):
+        # Below it, a slow-but-healthy request (observed: ~520s before first
+        # content) would be killed by the guard meant for masked stalls.
+        assert client._STREAM_FIRST_CONTENT_TIMEOUT > client._READ_TIMEOUT
+        assert client._STREAM_FIRST_CONTENT_TIMEOUT < client._STREAM_TOTAL_TIMEOUT
+
+    def test_content_free_chunks_do_not_trip_the_first_content_bound(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(client, "_STREAM_FIRST_CONTENT_TIMEOUT", 30.0)
+
+        def handler(request):
+            return httpx.Response(
+                200,
+                content=_sse_body(
+                    {"choices": [{"delta": {"role": "assistant"}}]},
+                    {"choices": [{"delta": {"content": "ok"}}]},
+                ),
+            )
+
+        _mock_transport(monkeypatch, handler)
+        data, _ = asyncio.run(
+            client._read_chat_stream("http://gw/v1/x", headers={}, payload={})
+        )
+        assert data["choices"][0]["message"]["content"] == "ok"
+
     def test_parse_failure_log_names_the_cause(self, monkeypatch, caplog):
         # A truncated string looks the same whether the model hit its cap or the
         # stream lost an event, so the log has to carry both signals.
@@ -949,7 +989,8 @@ class TestStreamingChatCompletion:
             asyncio.run(
                 client._read_chat_stream("http://gw/v1/x", headers={}, payload={})
             )
-        assert seen == [3, 5, 5]
+        # Leading 0 is the "request in flight" signal, before any content.
+        assert seen == [0, 3, 5, 5]
 
     def test_observer_failure_does_not_break_the_request(self, monkeypatch):
         def handler(request):
@@ -995,6 +1036,47 @@ class TestStreamingChatCompletion:
         assert data == {}
         assert response.status_code == 400
         assert response.json()["error"]["message"] == "bad schema"
+
+
+class TestStreamingOptOut:
+    def test_stream_text_enabled_reads_the_env_var(self, monkeypatch):
+        monkeypatch.delenv("CANARY_AI_STREAM_TEXT", raising=False)
+        assert client._stream_text_enabled() is True
+        for value in ("0", "false", "no", "off", "OFF"):
+            monkeypatch.setenv("CANARY_AI_STREAM_TEXT", value)
+            assert client._stream_text_enabled() is False
+        monkeypatch.setenv("CANARY_AI_STREAM_TEXT", "1")
+        assert client._stream_text_enabled() is True
+
+    def test_opting_out_falls_back_to_a_buffered_request(
+        self, monkeypatch, _patch_events
+    ):
+        monkeypatch.setenv("CANARY_AI_STREAM_TEXT", "0")
+        _patch_http(
+            monkeypatch,
+            {
+                "model": "vertex_ai/gemini-3.1-pro-preview",
+                "choices": [{"message": {"content": '{"ok": true}'}}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+            },
+        )
+
+        result = asyncio.run(
+            client.generate_structured_object(
+                config=Config(),
+                model="adapt-balanced",
+                system_prompt="Return JSON.",
+                user_content="{}",
+                feature="adapt.book",
+            )
+        )
+
+        assert result.value == {"ok": True}
+        assert result.usage.output_tokens == 2
+        # The buffered path must not advertise streaming to the gateway.
+        sent = _FakeAsyncClient.last_request["json"]
+        assert "stream" not in sent
+        assert "stream_options" not in sent
 
 
 class TestRetryAfterSeconds:
