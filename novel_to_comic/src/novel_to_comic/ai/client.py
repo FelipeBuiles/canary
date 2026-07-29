@@ -19,7 +19,10 @@ from typing import Any
 
 import httpx
 
-from novel_to_comic.ai.context import current_ai_request_context
+from novel_to_comic.ai.context import (
+    current_ai_request_context,
+    current_stream_observer,
+)
 from novel_to_comic.ai.errors import AIRefusalError, AITransportError
 from novel_to_comic.ai.finalisation import (
     begin_image_call,
@@ -55,6 +58,13 @@ _TRANSPORT_ERRORS = (
 _SLOW_TIMEOUT_ERRORS = (httpx.ReadTimeout, httpx.WriteTimeout)
 _MAX_TIMEOUT_RETRIES = 1
 _MAX_RETRIES = 3
+# Text completions stream, so _READ_TIMEOUT becomes a per-chunk idle budget
+# rather than a cap on the whole generation. That removes the cliff where a long
+# adapt repair blocks on one read until the read timeout fires, but it also
+# means a slowly-trickling response could run forever — hence a separate
+# wall-clock ceiling on the whole stream.
+_READ_TIMEOUT = 600.0
+_STREAM_TOTAL_TIMEOUT = 1800.0
 # 429s get their own, longer retry budget: the provider is asking us to slow
 # down, not reporting a failure. Backoff windows double from the base up to
 # the cap (4/8/16/32/60s), so the full budget rides out a quota refill cycle.
@@ -96,6 +106,71 @@ def _jittered(window: float) -> float:
     return window / 2 + random.uniform(0.0, window / 2)
 
 
+class _RetryPacer:
+    """Backoff bookkeeping shared by the buffered and streaming POST paths.
+
+    429s get their own, longer budget; read/write timeouts get a shorter one
+    because each of those attempts already burned the full read budget.
+    """
+
+    def __init__(self) -> None:
+        self.last_exc: Exception | None = None
+        self._transient_attempts = 0
+        self._rate_limit_attempts = 0
+
+    def record_retryable_status(self, response: httpx.Response) -> None:
+        self.last_exc = httpx.HTTPStatusError(
+            f"Server returned {response.status_code}",
+            request=response.request,
+            response=response,
+        )
+
+    def record_exception(self, exc: Exception) -> None:
+        self.last_exc = exc
+
+    async def pause_or_raise(
+        self,
+        *,
+        rate_limited: bool,
+        retry_after: float | None = None,
+        slow_timeout: bool = False,
+    ) -> None:
+        """Sleep before the next attempt, or re-raise once the budget is spent."""
+        if rate_limited:
+            self._rate_limit_attempts += 1
+            if self._rate_limit_attempts > _MAX_RATE_LIMIT_RETRIES:
+                raise self.last_exc  # type: ignore[misc]
+            if retry_after is not None:
+                delay = retry_after + random.uniform(0.0, 1.0)
+            else:
+                delay = _jittered(
+                    min(
+                        _RATE_LIMIT_BASE_DELAY * 2 ** (self._rate_limit_attempts - 1),
+                        _RATE_LIMIT_MAX_DELAY,
+                    )
+                )
+            logger.warning(
+                "Rate limited (429), waiting %.1fs before retry %d/%d",
+                delay,
+                self._rate_limit_attempts,
+                _MAX_RATE_LIMIT_RETRIES,
+            )
+        else:
+            self._transient_attempts += 1
+            budget = _MAX_TIMEOUT_RETRIES if slow_timeout else _MAX_RETRIES
+            if self._transient_attempts > budget:
+                raise self.last_exc  # type: ignore[misc]
+            if slow_timeout:
+                logger.warning(
+                    "Request timed out (%s), retry %d/%d",
+                    self.last_exc or type(self.last_exc).__name__,
+                    self._transient_attempts,
+                    budget,
+                )
+            delay = _jittered(min(2.0 ** (self._transient_attempts - 1), 10.0))
+        await asyncio.sleep(delay)
+
+
 async def _post_with_retry(
     url: str,
     *,
@@ -109,9 +184,7 @@ async def _post_with_retry(
     429 responses are retried on a separate, longer budget and honor the
     server's Retry-After header when present.
     """
-    last_exc: Exception | None = None
-    transient_attempts = 0
-    rate_limit_attempts = 0
+    pacer = _RetryPacer()
     while True:
         rate_limited = False
         slow_timeout = False
@@ -129,53 +202,181 @@ async def _post_with_retry(
                 return response
             rate_limited = response.status_code == 429
             retry_after = _retry_after_seconds(response)
-            last_exc = httpx.HTTPStatusError(
-                f"Server returned {response.status_code}",
-                request=response.request,
-                response=response,
-            )
+            pacer.record_retryable_status(response)
         except _TRANSPORT_ERRORS as exc:
-            last_exc = exc
+            pacer.record_exception(exc)
             slow_timeout = isinstance(exc, _SLOW_TIMEOUT_ERRORS)
-        if rate_limited:
-            rate_limit_attempts += 1
-            if rate_limit_attempts > _MAX_RATE_LIMIT_RETRIES:
-                raise last_exc  # type: ignore[misc]
-            if retry_after is not None:
-                delay = retry_after + random.uniform(0.0, 1.0)
-            else:
-                delay = _jittered(
-                    min(
-                        _RATE_LIMIT_BASE_DELAY * 2 ** (rate_limit_attempts - 1),
-                        _RATE_LIMIT_MAX_DELAY,
-                    )
+        await pacer.pause_or_raise(
+            rate_limited=rate_limited,
+            retry_after=retry_after,
+            slow_timeout=slow_timeout,
+        )
+
+
+# Top-level chunk fields worth keeping when collapsing a stream: cost extraction
+# and refusal detection read these off the buffered body.
+_STREAM_CARRIED_FIELDS = (
+    "id",
+    "object",
+    "model",
+    "system_fingerprint",
+    "prompt_feedback",
+    "error",
+    "response_cost",
+    "cost",
+    "_hidden_params",
+)
+
+
+def _chunk_content_length(chunk: dict[str, Any]) -> int:
+    choices = chunk.get("choices") or []
+    if not choices:
+        return 0
+    content = (choices[0].get("delta") or {}).get("content")
+    return len(content) if isinstance(content, str) else 0
+
+
+def _collapse_chat_chunks(chunks: list[dict[str, Any]]) -> dict[str, Any]:
+    """Reassemble streamed deltas into a non-streaming chat-completion body."""
+    collapsed: dict[str, Any] = {}
+    parts: list[str] = []
+    finish_reason: str | None = None
+    refusal: Any = None
+    filter_results: Any = None
+    usage: dict[str, Any] = {}
+    for chunk in chunks:
+        for field in _STREAM_CARRIED_FIELDS:
+            if chunk.get(field) is not None and field not in collapsed:
+                collapsed[field] = chunk[field]
+        if chunk.get("usage"):
+            usage = chunk["usage"]
+        choices = chunk.get("choices") or []
+        if not choices:
+            continue
+        choice = choices[0]
+        delta = choice.get("delta") or {}
+        if delta.get("content"):
+            parts.append(str(delta["content"]))
+        if delta.get("refusal") and refusal is None:
+            refusal = delta["refusal"]
+        if choice.get("finish_reason"):
+            finish_reason = choice["finish_reason"]
+        if choice.get("content_filter_results") and filter_results is None:
+            filter_results = choice["content_filter_results"]
+    message: dict[str, Any] = {"role": "assistant", "content": "".join(parts)}
+    if refusal is not None:
+        message["refusal"] = refusal
+    rebuilt: dict[str, Any] = {
+        "index": 0,
+        "message": message,
+        "finish_reason": finish_reason,
+    }
+    if filter_results is not None:
+        rebuilt["content_filter_results"] = filter_results
+    collapsed["choices"] = [rebuilt]
+    if usage:
+        collapsed["usage"] = usage
+    return collapsed
+
+
+async def _read_chat_stream(
+    url: str,
+    *,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], httpx.Response]:
+    """Run one streaming attempt, returning a buffered-shaped body plus response.
+
+    Raises HTTPStatusError for retryable statuses; other error statuses come
+    back fully read so the caller's raise_for_status/_gateway_http_error path
+    can still inspect the body.
+    """
+    async with _http.stream("POST", url, headers=headers, json=payload) as response:
+        if response.status_code >= 400:
+            await response.aread()
+            if response.status_code in _RETRYABLE_STATUS_CODES:
+                raise httpx.HTTPStatusError(
+                    f"Server returned {response.status_code}",
+                    request=response.request,
+                    response=response,
                 )
-            logger.warning(
-                "Rate limited (429), waiting %.1fs before retry %d/%d",
-                delay,
-                rate_limit_attempts,
-                _MAX_RATE_LIMIT_RETRIES,
-            )
-        else:
-            transient_attempts += 1
-            budget = _MAX_TIMEOUT_RETRIES if slow_timeout else _MAX_RETRIES
-            if transient_attempts > budget:
-                raise last_exc  # type: ignore[misc]
-            if slow_timeout:
-                logger.warning(
-                    "Request timed out after %.0fs, retry %d/%d",
-                    _http.timeout.read or 0.0,
-                    transient_attempts,
-                    budget,
-                )
-            delay = _jittered(min(2.0 ** (transient_attempts - 1), 10.0))
-        await asyncio.sleep(delay)
+            return {}, response
+        chunks: list[dict[str, Any]] = []
+        raw: list[str] = []
+        observer = current_stream_observer()
+        streamed_chars = 0
+        try:
+            async with asyncio.timeout(_STREAM_TOTAL_TIMEOUT):
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        raw.append(line)
+                        continue
+                    blob = line[len("data:") :].strip()
+                    if not blob or blob == "[DONE]":
+                        continue
+                    try:
+                        chunk = json.loads(blob)
+                    except ValueError:
+                        continue
+                    if not isinstance(chunk, dict):
+                        continue
+                    chunks.append(chunk)
+                    if observer is not None:
+                        streamed_chars += _chunk_content_length(chunk)
+                        # Never let progress reporting break a paid request.
+                        try:
+                            observer(streamed_chars)
+                        except Exception:
+                            logger.debug("stream observer raised", exc_info=True)
+        except TimeoutError as exc:
+            raise httpx.ReadTimeout(
+                f"stream exceeded its {_STREAM_TOTAL_TIMEOUT:.0f}s total budget",
+                request=response.request,
+            ) from exc
+        if not chunks:
+            # A gateway that ignores `stream` answers with a buffered body; use
+            # it rather than reporting an empty completion.
+            try:
+                buffered = json.loads("".join(raw))
+            except ValueError:
+                buffered = None
+            if isinstance(buffered, dict) and buffered.get("choices"):
+                return buffered, response
+        return _collapse_chat_chunks(chunks), response
+
+
+async def _stream_with_retry(
+    url: str,
+    *,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], httpx.Response]:
+    """Streaming counterpart to _post_with_retry, with the same retry budgets."""
+    pacer = _RetryPacer()
+    while True:
+        rate_limited = False
+        slow_timeout = False
+        retry_after: float | None = None
+        try:
+            return await _read_chat_stream(url, headers=headers, payload=payload)
+        except httpx.HTTPStatusError as exc:
+            rate_limited = exc.response.status_code == 429
+            retry_after = _retry_after_seconds(exc.response)
+            pacer.record_exception(exc)
+        except _TRANSPORT_ERRORS as exc:
+            pacer.record_exception(exc)
+            slow_timeout = isinstance(exc, _SLOW_TIMEOUT_ERRORS)
+        await pacer.pause_or_raise(
+            rate_limited=rate_limited,
+            retry_after=retry_after,
+            slow_timeout=slow_timeout,
+        )
 
 
 # Shared connection pool — LiteLLM runs as a local/nearby sidecar so keepalive
 # connections give a meaningful speedup at high panel concurrency (50-200 images).
 _http = httpx.AsyncClient(
-    timeout=httpx.Timeout(connect=30, read=600, write=300, pool=5),
+    timeout=httpx.Timeout(connect=30, read=_READ_TIMEOUT, write=300, pool=5),
     limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
 )
 
@@ -425,10 +626,21 @@ def _gateway_transport_error(
     model: str,
     endpoint: str,
 ) -> AITransportError:
+    # Read/write timeouts run on the shorter _MAX_TIMEOUT_RETRIES budget, so
+    # reporting _MAX_RETRIES + 1 for them overstates what was actually tried.
+    if isinstance(exc, _SLOW_TIMEOUT_ERRORS):
+        attempts = _MAX_TIMEOUT_RETRIES + 1
+        detail = (
+            f" (per-chunk read timeout {_READ_TIMEOUT:.0f}s, "
+            f"stream budget {_STREAM_TOTAL_TIMEOUT:.0f}s)"
+        )
+    else:
+        attempts = _MAX_RETRIES + 1
+        detail = ""
     return AITransportError(
         f"AI gateway request failed for {feature} "
         f"(model={model}, endpoint={endpoint}): transport {type(exc).__name__} "
-        f"after {_MAX_RETRIES + 1} attempts",
+        f"after {attempts} attempts{detail}",
         phase="gateway_request",
     )
 
@@ -439,7 +651,12 @@ def _error_json(
     payload: dict[str, Any] = {}
     if response is not None:
         payload["status_code"] = response.status_code
-        payload["body"] = response.text[:2000]
+        try:
+            payload["body"] = response.text[:2000]
+        except httpx.ResponseNotRead:
+            # A streamed response is consumed chunk-by-chunk, so there is no
+            # buffered body to log; the collapsed body goes to response_data.
+            payload["body"] = None
     if exc is not None:
         payload["exception"] = type(exc).__name__
     return payload
@@ -1045,6 +1262,11 @@ async def _chat_completion(
         payload["response_format"] = response_format
     if max_output_tokens is not None:
         payload["max_completion_tokens"] = max_output_tokens
+    # Stream so the read timeout is per-chunk: long adapt repairs exceed the
+    # read budget as a single blocking response. include_usage puts the usage
+    # block on a final chunk, which streaming otherwise omits.
+    payload["stream"] = True
+    payload["stream_options"] = {"include_usage": True}
 
     estimated_cost_usd = (
         estimate_text_cost(model, effective_system + "\n" + user_content) or None
@@ -1066,13 +1288,14 @@ async def _chat_completion(
         {"role": "user", "content": _truncate_for_log(user_content)},
     ]
     response: httpx.Response | None = None
+    data: dict[str, Any] = {}
     try:
         endpoint = "/v1/chat/completions"
         try:
-            response = await _post_with_retry(
+            data, response = await _stream_with_retry(
                 f"{_base_url(config)}{endpoint}",
                 headers=_headers(config, event_id),
-                json=payload,
+                payload=payload,
             )
         except httpx.HTTPStatusError as exc:
             raise _gateway_http_error(
@@ -1097,7 +1320,6 @@ async def _chat_completion(
                 model=model,
                 endpoint=endpoint,
             ) from exc
-        data = response.json()
         refusal = _refusal_reason(data)
         if refusal:
             raise AIRefusalError(
@@ -1173,7 +1395,8 @@ async def _chat_completion(
         )
         raise
     except AIRefusalError as exc:
-        data = response.json() if response is not None and response.content else {}
+        # `data` is the collapsed stream body — a streamed response has no
+        # buffered content to re-parse here.
         usage = _extract_usage(data, event_id, model, operation) if data else None
         _finalize_event(
             event_id=event_id,
