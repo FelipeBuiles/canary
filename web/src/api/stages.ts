@@ -1,4 +1,4 @@
-import { apiFetch } from "./client";
+import { apiFetch, isNotFoundError } from "./client";
 import type {
   StoryBible,
   StoryDecision,
@@ -64,12 +64,12 @@ export async function getImageGenerationMeta(
   try {
     return await apiFetch(`/projects/${encodeURIComponent(project)}/files/${encodedPath}`);
   } catch (err) {
-    if (err instanceof Error && err.message.startsWith("API 404:")) {
+    if (isNotFoundError(err)) {
       const failurePath = encodeProjectFile(`${relativeImagePath}.failure.json`);
       try {
         return await apiFetch(`/projects/${encodeURIComponent(project)}/files/${failurePath}`);
       } catch (failureErr) {
-        if (failureErr instanceof Error && failureErr.message.startsWith("API 404:")) {
+        if (isNotFoundError(failureErr)) {
           return null;
         }
         throw failureErr;

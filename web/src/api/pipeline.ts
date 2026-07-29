@@ -1,4 +1,4 @@
-import { apiFetch } from "./client";
+import { apiFetch, isNotFoundError } from "./client";
 import type {
   CharacterRefVersionsResponse,
   GenerationJob,
@@ -77,7 +77,7 @@ export function getCharacterRefVersions(
   return apiFetch<CharacterRefVersionsResponse>(
     `/projects/${encodeURIComponent(project)}/character-ref-versions?${params.toString()}`,
   ).catch((err) => {
-    if (err instanceof Error && err.message.startsWith("API 404:")) {
+    if (isNotFoundError(err)) {
       return { char_id: charId, state_id: stateId ?? null, has_history: false, versions: [] };
     }
     throw err;
