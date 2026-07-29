@@ -305,34 +305,71 @@ async def _read_chat_stream(
         raw: list[str] = []
         observer = current_stream_observer()
         streamed_chars = 0
+        dropped = 0
+        # `data:` lines accumulate until they parse, or until a blank line ends
+        # the event. Dispatching as soon as the payload is valid JSON handles the
+        # usual one-object-per-line shape even from a server that omits the
+        # spec's blank-line separator; accumulating handles a genuinely
+        # multi-line payload. A per-line parse would instead silently swallow
+        # anything that didn't parse, leaving a hole in the reassembled text
+        # that resurfaces as a JSON error far from its cause.
+        event_data: list[str] = []
+
+        def dispatch(blob: str) -> bool:
+            """Consume one complete data payload; False if it isn't valid yet."""
+            nonlocal streamed_chars
+            if not blob or blob == "[DONE]":
+                return True
+            try:
+                chunk = json.loads(blob)
+            except ValueError:
+                return False
+            if not isinstance(chunk, dict):
+                return False
+            chunks.append(chunk)
+            if observer is not None:
+                streamed_chars += _chunk_content_length(chunk)
+                # Never let progress reporting break a paid request.
+                try:
+                    observer(streamed_chars)
+                except Exception:
+                    logger.debug("stream observer raised", exc_info=True)
+            return True
+
+        def end_event() -> None:
+            nonlocal dropped
+            if not event_data:
+                return
+            if not dispatch("\n".join(event_data)):
+                dropped += 1
+            event_data.clear()
+
         try:
             async with asyncio.timeout(_STREAM_TOTAL_TIMEOUT):
                 async for line in response.aiter_lines():
-                    if not line.startswith("data:"):
+                    line = line.rstrip("\r")
+                    if not line:
+                        end_event()
+                    elif line.startswith("data:"):
+                        event_data.append(line[len("data:") :].lstrip())
+                        if dispatch("\n".join(event_data)):
+                            event_data.clear()
+                    elif line.startswith(":"):
+                        continue  # SSE comment / keepalive
+                    else:
                         raw.append(line)
-                        continue
-                    blob = line[len("data:") :].strip()
-                    if not blob or blob == "[DONE]":
-                        continue
-                    try:
-                        chunk = json.loads(blob)
-                    except ValueError:
-                        continue
-                    if not isinstance(chunk, dict):
-                        continue
-                    chunks.append(chunk)
-                    if observer is not None:
-                        streamed_chars += _chunk_content_length(chunk)
-                        # Never let progress reporting break a paid request.
-                        try:
-                            observer(streamed_chars)
-                        except Exception:
-                            logger.debug("stream observer raised", exc_info=True)
+                end_event()
         except TimeoutError as exc:
             raise httpx.ReadTimeout(
                 f"stream exceeded its {_STREAM_TOTAL_TIMEOUT:.0f}s total budget",
                 request=response.request,
             ) from exc
+        if dropped:
+            logger.warning(
+                "Dropped %d unparsable stream event(s); reassembled text may "
+                "have holes",
+                dropped,
+            )
         if not chunks:
             # A gateway that ignores `stream` answers with a buffered body; use
             # it rather than reporting an empty completion.
@@ -342,7 +379,11 @@ async def _read_chat_stream(
                 buffered = None
             if isinstance(buffered, dict) and buffered.get("choices"):
                 return buffered, response
-        return _collapse_chat_chunks(chunks), response
+        collapsed = _collapse_chat_chunks(chunks)
+        # Carried so a downstream JSON parse failure can say whether the text
+        # arrived intact. Private prefix: not a provider field.
+        collapsed["_canary_stream"] = {"events": len(chunks), "dropped": dropped}
+        return collapsed, response
 
 
 async def _stream_with_retry(
@@ -1167,14 +1208,25 @@ async def generate_structured_object(
                 prior_usage.append(data["usage"])
             last_exc = exc
             last_text = text
+            # finish_reason and the stream counters separate the two causes that
+            # look identical here: the model hit its output cap (finish_reason
+            # length/max_tokens — a real truncation), or the stream lost an
+            # event (dropped > 0 — reassembly left a hole).
+            stream_info = data.get("stream") or {}
             logger.warning(
-                "JSON parse failed for %s (model=%s) on attempt %d/%d: %s at char %d",
+                "JSON parse failed for %s (model=%s) on attempt %d/%d: %s at "
+                "char %d (finish_reason=%s, chars=%d, stream_events=%s, "
+                "dropped_events=%s)",
                 feature,
                 model,
                 attempt + 1,
                 _JSON_PARSE_MAX_RETRIES + 1,
                 exc.msg,
                 exc.pos,
+                data.get("finish_reason"),
+                len(text),
+                stream_info.get("events", "n/a"),
+                stream_info.get("dropped", "n/a"),
             )
             if attempt < _JSON_PARSE_MAX_RETRIES:
                 limit_note = ""
@@ -1376,6 +1428,7 @@ async def _chat_completion(
             "text": text,
             "usage": usage,
             "finish_reason": choice.get("finish_reason"),
+            "stream": data.get("_canary_stream") or {},
         }
     except asyncio.CancelledError as exc:
         _finalize_event(
