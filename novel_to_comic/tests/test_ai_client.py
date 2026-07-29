@@ -55,12 +55,15 @@ def _sse_lines(payload: dict) -> list[str]:
         }
         if choice.get("content_filter_results"):
             rebuilt["content_filter_results"] = choice["content_filter_results"]
-        lines.append(f"data: {json.dumps({**carried, 'choices': [rebuilt]})}")
+        lines += [f"data: {json.dumps({**carried, 'choices': [rebuilt]})}", ""]
     else:
-        lines.append(f"data: {json.dumps({**carried, 'choices': []})}")
+        lines += [f"data: {json.dumps({**carried, 'choices': []})}", ""]
     if payload.get("usage"):
-        lines.append(f"data: {json.dumps({'choices': [], 'usage': payload['usage']})}")
-    lines.append("data: [DONE]")
+        lines += [
+            f"data: {json.dumps({'choices': [], 'usage': payload['usage']})}",
+            "",
+        ]
+    lines += ["data: [DONE]", ""]
     return lines
 
 
@@ -785,6 +788,36 @@ class TestStreamingChatCompletion:
         assert sent["stream"] is True
         assert sent["stream_options"] == {"include_usage": True}
 
+    def test_parse_failure_log_names_the_cause(self, monkeypatch, caplog):
+        # A truncated string looks the same whether the model hit its cap or the
+        # stream lost an event, so the log has to carry both signals.
+        def handler(request):
+            return httpx.Response(
+                200,
+                content=_sse_body(
+                    {"choices": [{"delta": {"content": '{"ok": "unterminated'}}]},
+                    {"choices": [{"delta": {}, "finish_reason": "length"}]},
+                ),
+            )
+
+        _mock_transport(monkeypatch, handler)
+        with caplog.at_level("WARNING"):
+            with pytest.raises(Exception):
+                asyncio.run(
+                    client.generate_structured_object(
+                        config=Config(),
+                        model="plan-balanced",
+                        system_prompt="Return JSON.",
+                        user_content="{}",
+                        feature="test.truncated",
+                    )
+                )
+
+        assert "finish_reason=length" in caplog.text
+        assert "dropped_events=0" in caplog.text
+        assert "stream_events=2" in caplog.text
+        assert f"chars={len('{\"ok\": \"unterminated')}" in caplog.text
+
     def test_stream_exceeding_total_budget_raises_read_timeout(self, monkeypatch):
         monkeypatch.setattr(client, "_STREAM_TOTAL_TIMEOUT", 0.05)
 
@@ -824,6 +857,79 @@ class TestStreamingChatCompletion:
         assert calls["n"] == 2
         assert response.status_code == 200
         assert data["choices"][0]["message"]["content"] == "hi"
+
+    def test_parses_events_without_blank_line_separators(self, monkeypatch):
+        # A server that skips the spec's blank line still has to work: each
+        # data line is dispatched as soon as it parses.
+        body = (
+            b'data: {"choices": [{"delta": {"content": "ab"}}]}\n'
+            b'data: {"choices": [{"delta": {"content": "cd"}}]}\n'
+            b"data: [DONE]\n"
+        )
+
+        def handler(request):
+            return httpx.Response(200, content=body)
+
+        _mock_transport(monkeypatch, handler)
+        data, _ = asyncio.run(
+            client._read_chat_stream("http://gw/v1/x", headers={}, payload={})
+        )
+        assert data["choices"][0]["message"]["content"] == "abcd"
+        assert data["_canary_stream"] == {"events": 2, "dropped": 0}
+
+    def test_parses_a_payload_split_across_data_lines(self, monkeypatch):
+        body = (
+            b'data: {"choices": [{"delta":\n'
+            b'data:  {"content": "split"}}]}\n'
+            b"\n"
+            b"data: [DONE]\n\n"
+        )
+
+        def handler(request):
+            return httpx.Response(200, content=body)
+
+        _mock_transport(monkeypatch, handler)
+        data, _ = asyncio.run(
+            client._read_chat_stream("http://gw/v1/x", headers={}, payload={})
+        )
+        assert data["choices"][0]["message"]["content"] == "split"
+        assert data["_canary_stream"]["dropped"] == 0
+
+    def test_unparsable_event_is_counted_not_swallowed(self, monkeypatch, caplog):
+        body = (
+            b'data: {"choices": [{"delta": {"content": "kept"}}]}\n\n'
+            b"data: {not json at all\n\n"
+            b"data: [DONE]\n\n"
+        )
+
+        def handler(request):
+            return httpx.Response(200, content=body)
+
+        _mock_transport(monkeypatch, handler)
+        with caplog.at_level("WARNING"):
+            data, _ = asyncio.run(
+                client._read_chat_stream("http://gw/v1/x", headers={}, payload={})
+            )
+        # The hole is reported rather than surfacing later as a mystery JSON error.
+        assert data["_canary_stream"]["dropped"] == 1
+        assert "unparsable stream event" in caplog.text
+
+    def test_sse_comments_are_ignored(self, monkeypatch):
+        body = (
+            b": keepalive\n\n"
+            b'data: {"choices": [{"delta": {"content": "hi"}}]}\n\n'
+            b"data: [DONE]\n\n"
+        )
+
+        def handler(request):
+            return httpx.Response(200, content=body)
+
+        _mock_transport(monkeypatch, handler)
+        data, _ = asyncio.run(
+            client._read_chat_stream("http://gw/v1/x", headers={}, payload={})
+        )
+        assert data["choices"][0]["message"]["content"] == "hi"
+        assert data["_canary_stream"]["dropped"] == 0
 
     def test_observer_sees_cumulative_characters(self, monkeypatch):
         seen: list[int] = []
