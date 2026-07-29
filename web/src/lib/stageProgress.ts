@@ -15,6 +15,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { completedStageArtifactQueryKeys } from "./pipelineArtifacts";
 import { applyStageEventToProjectStatus } from "./pipelineStatusEvents";
+import { applyStageActivityEvent } from "./stageActivity";
 import type { PipelineEvent, ProjectStatus } from "../types/api";
 
 export function statusQueryKey(projectId: string) {
@@ -79,6 +80,7 @@ export function applyPipelineEvent(
   event: PipelineEvent,
 ): void {
   applyStatusPatch(queryClient, projectId, event);
+  applyStageActivityEvent(queryClient, projectId, event);
   if (event.stage === "draw" && event.type === "page_done") {
     void queryClient.invalidateQueries({ queryKey: ["project", projectId, "complete-pages"] });
   }

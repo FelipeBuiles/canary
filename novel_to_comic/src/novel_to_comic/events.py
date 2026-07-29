@@ -9,6 +9,13 @@ Event schema (all fields are strings / ints — JSON-serialisable by default)
 ----------------------------------------------------------------------------
 stage_begin      stage: str, total: int
 stage_progress   stage: str, done: int, total: int
+stage_activity   stage: str, fraction: float | None (0..1), detail: str | None,
+                 at: str (ISO-8601 UTC)
+                   Sub-item progress inside the item being worked on, driven by
+                   streamed completions. Advisory and not persisted: it may move
+                   backwards when a request retries, so consumers must keep it
+                   out of the items_done counters that /status reconciles.
+                   `at` doubles as a liveness heartbeat for long single calls.
 stage_complete   stage: str, done: int, total: int
 stage_fail       stage: str, message: str
 log              stage: str, level: str, message: str

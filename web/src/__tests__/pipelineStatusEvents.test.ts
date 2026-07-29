@@ -79,6 +79,22 @@ describe("applyStageEventToProjectStatus", () => {
     expect(next?.stages.finish.status).toBe("running");
   });
 
+  it("ignores stage_activity so a streaming fraction never becomes item progress", () => {
+    const current = status();
+    current.stages.adapt = stage("running", 5);
+    current.stages.adapt.items_done = 2;
+
+    const next = applyStageEventToProjectStatus(current, {
+      type: "stage_activity",
+      stage: "adapt",
+      fraction: 0.9,
+      detail: "drafting 4 shards",
+      at: "2026-07-29T12:00:00.000Z",
+    });
+
+    expect(next).toBe(current);
+  });
+
   it("marks completed checkpoint stages as awaiting review", () => {
     const current = status();
     current.stages.draw = stage("running", 3);

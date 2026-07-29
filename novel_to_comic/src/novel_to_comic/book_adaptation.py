@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from novel_to_comic.ai.context import stream_observer
 from novel_to_comic.briefing import require_approved_brief
 from novel_to_comic.json_contract import describe_json_contract
 from novel_to_comic.model_costs import get_pricing_resolver
@@ -693,18 +694,29 @@ def estimate_book_adaptation_cost(
         estimate_text_cost(
             model,
             prompt,
-            output_chars=max(
-                8_000,
-                int(
-                    sum(len(unit_by_id[source_id].text) for source_id in source_ids)
-                    * _ADAPT_OUTPUT_TOKENS_PER_SOURCE_CHAR
-                    * 4
-                ),
-            ),
+            output_chars=_shard_output_chars(unit_by_id, source_ids),
         )
         for prompt, source_ids in zip(prompts, shards, strict=True)
     )
     return clean_pass * 1.25
+
+
+def _shard_output_chars(
+    unit_by_id: dict[str, Any], shard_source_ids: Iterable[str]
+) -> int:
+    """Expected adapted-output size for one shard, in characters.
+
+    Same basis as the cost estimate, reused to turn streamed characters into a
+    progress fraction.
+    """
+    return max(
+        8_000,
+        int(
+            sum(len(unit_by_id[source_id].text) for source_id in shard_source_ids)
+            * _ADAPT_OUTPUT_TOKENS_PER_SOURCE_CHAR
+            * 4
+        ),
+    )
 
 
 async def _generate_book_draft(
@@ -741,25 +753,46 @@ async def _generate_book_drafts(
     progress_offset: int,
     progress_total: int,
     record_progress: bool,
+    expected_chars: list[int] | None = None,
+    detail: str = "drafting",
 ) -> list[_BookDraft]:
     semaphore = asyncio.Semaphore(_ADAPT_MAX_CONCURRENCY)
     completed = 0
+    # Shards stream concurrently, so the reported fraction is how much of the
+    # whole pass has arrived rather than any single shard's share of it.
+    streamed = [0] * len(prompts)
+    budget = sum(expected_chars) if expected_chars else 0
 
-    async def generate_one(prompt: str) -> _BookDraft:
+    def report(index: int, chars: int) -> None:
+        streamed[index] = chars
+        if budget <= 0:
+            ctx.activity(detail=detail)
+            return
+        ctx.activity(fraction=sum(streamed) / budget, detail=detail)
+
+    async def generate_one(index: int, prompt: str) -> _BookDraft:
         nonlocal completed
         async with semaphore:
-            draft = await _generate_book_draft(
-                prompt=prompt,
-                generate=generate,
-                ctx=ctx,
-            )
+            with stream_observer(lambda chars: report(index, chars)):
+                draft = await _generate_book_draft(
+                    prompt=prompt,
+                    generate=generate,
+                    ctx=ctx,
+                )
         if record_progress:
             ctx.record_item_done()
             completed += 1
             ctx.progress(progress_offset + completed, progress_total)
         return draft
 
-    return list(await asyncio.gather(*(generate_one(prompt) for prompt in prompts)))
+    ctx.activity(fraction=0.0, detail=detail, force=True)
+    drafts = list(
+        await asyncio.gather(
+            *(generate_one(index, prompt) for index, prompt in enumerate(prompts))
+        )
+    )
+    ctx.activity(fraction=1.0, detail=detail, force=True)
+    return drafts
 
 
 def _merge_book_drafts(
@@ -906,14 +939,18 @@ async def produce_book_adaptation(
         treatment_prompt_attempt = treatment_prompt
         treatment: NarrativeTreatment | None = None
         for attempt in range(1, _MAX_ADAPT_ATTEMPTS + 1):
-            treatment_result = await generate(
-                system_prompt=(
-                    "You are the book-level narrative architect for a comic adaptation."
-                ),
-                user_content=treatment_prompt_attempt,
-                feature="adapt.narrative_treatment",
-                json_schema=NarrativeTreatment.model_json_schema(),
-            )
+            # Heartbeat only — the treatment's output size isn't predictable
+            # enough from the source to make a fraction honest.
+            with stream_observer(lambda chars: ctx.activity(detail="writing treatment")):
+                treatment_result = await generate(
+                    system_prompt=(
+                        "You are the book-level narrative architect for a comic "
+                        "adaptation."
+                    ),
+                    user_content=treatment_prompt_attempt,
+                    feature="adapt.narrative_treatment",
+                    json_schema=NarrativeTreatment.model_json_schema(),
+                )
             # A retried attempt was still paid for, so its usage is recorded
             # without counting a completed item.
             _record_result_usage(ctx, treatment_result)
@@ -936,6 +973,11 @@ async def produce_book_adaptation(
         assert treatment is not None  # the loop either binds it or raises
         ctx.progress(1, total_steps)
 
+        unit_by_id = {unit.id: unit for unit in source.units}
+        shard_chars = [
+            _shard_output_chars(unit_by_id, source_unit_ids)
+            for source_unit_ids in shards
+        ]
         book_prompts = [
             build_book_adaptation_prompt(
                 source,
@@ -968,6 +1010,8 @@ async def produce_book_adaptation(
                 progress_offset=1,
                 progress_total=total_steps,
                 record_progress=True,
+                expected_chars=shard_chars,
+                detail=f"drafting {len(book_prompts)} shards",
             )
         ]
         for validation_attempt in range(1, _MAX_ADAPT_ATTEMPTS + 1):
@@ -1018,6 +1062,11 @@ async def produce_book_adaptation(
                     progress_offset=1,
                     progress_total=total_steps,
                     record_progress=False,
+                    expected_chars=[shard_chars[index] for index in affected],
+                    detail=(
+                        f"repairing {len(affected)} of {len(shards)} shards "
+                        f"(round {validation_attempt})"
+                    ),
                 )
             ]
             for shard_index, repaired_draft in zip(affected, repaired, strict=True):

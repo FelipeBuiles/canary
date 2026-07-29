@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from PIL import Image, ImageOps
 
 
@@ -154,6 +155,25 @@ class TargetFixtureReplay:
             return output.getvalue()
 
 
+def _sse(chunk: dict[str, Any]) -> str:
+    return f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+
+async def _chat_chunks(content: str, usage: dict[str, Any]):
+    """Replay a fixture as an OpenAI-compatible SSE stream.
+
+    Emitted as one content chunk plus the terminal usage chunk — replay has no
+    reason to fake incremental delivery, only the wire shape.
+    """
+    base = {"id": "target-fixture-chat", "object": "chat.completion.chunk"}
+    yield _sse(
+        {**base, "choices": [{"index": 0, "delta": {"role": "assistant", "content": content}}]}
+    )
+    yield _sse({**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
+    yield _sse({**base, "choices": [], "usage": usage})
+    yield "data: [DONE]\n\n"
+
+
 def create_app(project_dir: Path) -> FastAPI:
     replay = TargetFixtureReplay(project_dir)
     app = FastAPI()
@@ -163,18 +183,23 @@ def create_app(project_dir: Path) -> FastAPI:
         return {"status": "ok"}
 
     @app.post("/v1/chat/completions")
-    async def chat(payload: dict[str, Any]) -> dict[str, Any]:
+    async def chat(payload: dict[str, Any]) -> Any:
         feature = _feature(payload)
         if feature == "draw.page_ocr":
             value: Any = replay.page_ocr(_page_number(payload))
         else:
             value = replay.structured(feature)
         content = json.dumps(value, ensure_ascii=False)
+        usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        if payload.get("stream"):
+            return StreamingResponse(
+                _chat_chunks(content, usage), media_type="text/event-stream"
+            )
         return {
             "id": "target-fixture-chat",
             "object": "chat.completion",
             "choices": [{"index": 0, "message": {"role": "assistant", "content": content}}],
-            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            "usage": usage,
         }
 
     @app.post("/v1/images/generations")

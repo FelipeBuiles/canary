@@ -183,6 +183,10 @@ export interface PipelineEvent {
   balance_credits?: number;
   required_credits?: number;
   shortfall_credits?: number;
+  // Sub-item streaming activity (stage_activity)
+  fraction?: number | null;
+  detail?: string | null;
+  at?: string;
   // Per-page events (draw stage)
   page_number?: number;
   revision?: number;

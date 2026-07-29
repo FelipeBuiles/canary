@@ -231,3 +231,54 @@ class TestPageEvents:
         ctx = StageRuntime("draw", state, tmp_path)
         ctx.emit_page_start(1)
         ctx.emit_page_done(1, revision=1, status="ok", duration_ms=100)
+
+
+class TestActivity:
+    def _ctx(self, tmp_path, events: list):
+        return StageRuntime("adapt", _state(tmp_path), tmp_path, events.append)
+
+    def test_first_activity_emits_and_clamps_fraction(self, tmp_path):
+        events: list = []
+        ctx = self._ctx(tmp_path, events)
+        ctx.activity(fraction=1.4, detail="drafting")
+        assert len(events) == 1
+        assert events[0]["type"] == "stage_activity"
+        assert events[0]["fraction"] == 1.0
+        assert events[0]["detail"] == "drafting"
+        assert events[0]["at"]
+
+    def test_negative_fraction_clamps_to_zero(self, tmp_path):
+        events: list = []
+        self._ctx(tmp_path, events).activity(fraction=-2.0)
+        assert events[0]["fraction"] == 0.0
+
+    def test_rapid_small_moves_are_throttled(self, tmp_path):
+        events: list = []
+        ctx = self._ctx(tmp_path, events)
+        ctx.activity(fraction=0.10)
+        for _ in range(50):
+            ctx.activity(fraction=0.101)
+        assert len(events) == 1
+
+    def test_large_move_bypasses_the_time_throttle(self, tmp_path):
+        events: list = []
+        ctx = self._ctx(tmp_path, events)
+        ctx.activity(fraction=0.10)
+        ctx.activity(fraction=0.40)
+        assert [e["fraction"] for e in events] == [0.10, 0.40]
+
+    def test_force_emits_even_when_throttled(self, tmp_path):
+        events: list = []
+        ctx = self._ctx(tmp_path, events)
+        ctx.activity(fraction=0.10)
+        ctx.activity(fraction=0.101, force=True)
+        assert len(events) == 2
+
+    def test_activity_does_not_touch_item_counters(self, tmp_path):
+        events: list = []
+        state = _state(tmp_path)
+        ctx = StageRuntime("adapt", state, tmp_path, events.append)
+        ctx.begin(total=5)
+        ctx.activity(fraction=0.9, detail="drafting")
+        # Advisory only: a stale fraction must never be mistaken for progress.
+        assert state.stages["adapt"].items_done == 0

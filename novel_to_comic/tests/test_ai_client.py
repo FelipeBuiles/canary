@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -7,6 +8,7 @@ import httpx
 import pytest
 
 from novel_to_comic.ai import client
+from novel_to_comic.ai.context import stream_observer
 from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.ai.providers.base import RefImage
 from novel_to_comic.config import Config
@@ -19,6 +21,7 @@ class _FakeResponse:
         self.text = str(payload)
         self.content = self.text.encode()
         self.headers: dict = {}
+        self.request = None
 
     def json(self):
         return self._payload
@@ -26,6 +29,59 @@ class _FakeResponse:
     def raise_for_status(self):
         if self.status_code >= 400:
             raise RuntimeError(f"HTTP {self.status_code}")
+
+
+def _sse_lines(payload: dict) -> list[str]:
+    """Render a buffered chat-completion body as the SSE lines the client parses.
+
+    Lets tests keep declaring the familiar buffered shape while exercising the
+    streaming code path the text client actually uses.
+    """
+    carried = {k: v for k, v in payload.items() if k not in {"choices", "usage"}}
+    choices = payload.get("choices") or []
+    lines: list[str] = []
+    if choices:
+        choice = choices[0]
+        message = choice.get("message") or {}
+        delta: dict = {"role": "assistant"}
+        if message.get("content") is not None:
+            delta["content"] = message["content"]
+        if message.get("refusal"):
+            delta["refusal"] = message["refusal"]
+        rebuilt: dict = {
+            "index": 0,
+            "delta": delta,
+            "finish_reason": choice.get("finish_reason"),
+        }
+        if choice.get("content_filter_results"):
+            rebuilt["content_filter_results"] = choice["content_filter_results"]
+        lines.append(f"data: {json.dumps({**carried, 'choices': [rebuilt]})}")
+    else:
+        lines.append(f"data: {json.dumps({**carried, 'choices': []})}")
+    if payload.get("usage"):
+        lines.append(f"data: {json.dumps({'choices': [], 'usage': payload['usage']})}")
+    lines.append("data: [DONE]")
+    return lines
+
+
+class _FakeStreamResponse(_FakeResponse):
+    async def aread(self):
+        return self.content
+
+    async def aiter_lines(self):
+        for line in _sse_lines(self._payload):
+            yield line
+
+
+class _FakeStreamContext:
+    def __init__(self, response: _FakeStreamResponse):
+        self._response = response
+
+    async def __aenter__(self):
+        return self._response
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
 
 
 class _FakeAsyncClient:
@@ -51,6 +107,15 @@ class _FakeAsyncClient:
     async def get(self, url, **kwargs):
         self.__class__.last_request = {"url": url, **kwargs}
         return _FakeResponse({})
+
+    def stream(self, method, url, **kwargs):
+        self.__class__.last_request = {"url": url, "method": method, **kwargs}
+        return _FakeStreamContext(
+            _FakeStreamResponse(
+                self.__class__.response_payload,
+                status_code=self.__class__.status_code,
+            )
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -137,14 +202,14 @@ def test_generate_structured_object_retries_then_succeeds_on_malformed_json(
     calls = {"n": 0, "payloads": []}
 
     class _SeqClient:
-        async def post(self, url, **kwargs):
+        async def get(self, url, **kwargs):
+            return _FakeResponse({})
+
+        def stream(self, method, url, **kwargs):
             calls["payloads"].append(kwargs["json"])
             i = calls["n"]
             calls["n"] += 1
-            return _FakeResponse(payloads[i])
-
-        async def get(self, url, **kwargs):
-            return _FakeResponse({})
+            return _FakeStreamContext(_FakeStreamResponse(payloads[i]))
 
     monkeypatch.setattr(client, "_http", _SeqClient())
 
@@ -655,6 +720,175 @@ class TestPostWithRetry:
         assert client._MAX_TIMEOUT_RETRIES < client._MAX_RETRIES
         assert calls["n"] == client._MAX_TIMEOUT_RETRIES + 1
         assert len(delays) == client._MAX_TIMEOUT_RETRIES
+
+
+def _sse_body(*events: dict) -> bytes:
+    lines = [f"data: {json.dumps(e)}\n\n" for e in events]
+    return ("".join(lines) + "data: [DONE]\n\n").encode()
+
+
+class TestStreamingChatCompletion:
+    def test_collapse_joins_deltas_and_keeps_terminal_usage(self):
+        collapsed = client._collapse_chat_chunks(
+            [
+                {"id": "c1", "model": "m", "choices": [{"delta": {"content": '{"ok"'}}]},
+                {"choices": [{"delta": {"content": ": true}"}}]},
+                {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+                {"choices": [], "usage": {"prompt_tokens": 7, "completion_tokens": 2}},
+            ]
+        )
+        choice = collapsed["choices"][0]
+        assert choice["message"]["content"] == '{"ok": true}'
+        assert choice["finish_reason"] == "stop"
+        assert collapsed["usage"]["completion_tokens"] == 2
+        assert collapsed["id"] == "c1"
+        assert collapsed["model"] == "m"
+
+    def test_text_request_streams_and_reassembles_chunks(
+        self, monkeypatch, _patch_events
+    ):
+        sent: dict = {}
+
+        def handler(request):
+            sent.update(json.loads(request.content))
+            return httpx.Response(
+                200,
+                content=_sse_body(
+                    {"model": "openai/gpt-5.4-mini", "choices": [{"delta": {"content": '{"ok":'}}]},
+                    {"choices": [{"delta": {"content": " true}"}}]},
+                    {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+                    {
+                        "choices": [],
+                        "usage": {
+                            "prompt_tokens": 11,
+                            "completion_tokens": 4,
+                            "total_tokens": 15,
+                        },
+                    },
+                ),
+            )
+
+        _mock_transport(monkeypatch, handler)
+        result = asyncio.run(
+            client.generate_structured_object(
+                config=Config(),
+                model="plan-balanced",
+                system_prompt="Return JSON.",
+                user_content="{}",
+                feature="test.stream",
+                json_schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+            )
+        )
+
+        assert result.value == {"ok": True}
+        assert result.usage.output_tokens == 4
+        assert sent["stream"] is True
+        assert sent["stream_options"] == {"include_usage": True}
+
+    def test_stream_exceeding_total_budget_raises_read_timeout(self, monkeypatch):
+        monkeypatch.setattr(client, "_STREAM_TOTAL_TIMEOUT", 0.05)
+
+        async def trickle():
+            yield b'data: {"choices": [{"delta": {"content": "x"}}]}\n\n'
+            # Chunks keep arriving, so the per-chunk read timeout never fires —
+            # only the wall-clock ceiling stops this.
+            while True:
+                await asyncio.sleep(0.01)
+                yield b'data: {"choices": [{"delta": {"content": "x"}}]}\n\n'
+
+        def handler(request):
+            return httpx.Response(200, content=trickle())
+
+        _mock_transport(monkeypatch, handler)
+        with pytest.raises(httpx.ReadTimeout, match="total budget"):
+            asyncio.run(
+                client._read_chat_stream("http://gw/v1/x", headers={}, payload={})
+            )
+
+    def test_streaming_retries_retryable_status(self, monkeypatch):
+        _patch_sleep(monkeypatch)
+        calls = {"n": 0}
+
+        def handler(request):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return httpx.Response(503)
+            return httpx.Response(
+                200, content=_sse_body({"choices": [{"delta": {"content": "hi"}}]})
+            )
+
+        _mock_transport(monkeypatch, handler)
+        data, response = asyncio.run(
+            client._stream_with_retry("http://gw/v1/x", headers={}, payload={})
+        )
+        assert calls["n"] == 2
+        assert response.status_code == 200
+        assert data["choices"][0]["message"]["content"] == "hi"
+
+    def test_observer_sees_cumulative_characters(self, monkeypatch):
+        seen: list[int] = []
+
+        def handler(request):
+            return httpx.Response(
+                200,
+                content=_sse_body(
+                    {"choices": [{"delta": {"content": "abc"}}]},
+                    {"choices": [{"delta": {"content": "de"}}]},
+                    {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+                ),
+            )
+
+        _mock_transport(monkeypatch, handler)
+        with stream_observer(seen.append):
+            asyncio.run(
+                client._read_chat_stream("http://gw/v1/x", headers={}, payload={})
+            )
+        assert seen == [3, 5, 5]
+
+    def test_observer_failure_does_not_break_the_request(self, monkeypatch):
+        def handler(request):
+            return httpx.Response(
+                200, content=_sse_body({"choices": [{"delta": {"content": "hi"}}]})
+            )
+
+        def boom(_chars):
+            raise RuntimeError("observer exploded")
+
+        _mock_transport(monkeypatch, handler)
+        with stream_observer(boom):
+            data, _ = asyncio.run(
+                client._read_chat_stream("http://gw/v1/x", headers={}, payload={})
+            )
+        assert data["choices"][0]["message"]["content"] == "hi"
+
+    def test_buffered_reply_to_a_stream_request_is_still_parsed(self, monkeypatch):
+        def handler(request):
+            return httpx.Response(
+                200,
+                json={
+                    "model": "m",
+                    "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
+                },
+            )
+
+        _mock_transport(monkeypatch, handler)
+        data, _ = asyncio.run(
+            client._read_chat_stream("http://gw/v1/x", headers={}, payload={})
+        )
+        assert data["choices"][0]["message"]["content"] == "hi"
+
+    def test_streaming_leaves_non_retryable_status_to_caller(self, monkeypatch):
+        def handler(request):
+            return httpx.Response(400, json={"error": {"message": "bad schema"}})
+
+        _mock_transport(monkeypatch, handler)
+        data, response = asyncio.run(
+            client._stream_with_retry("http://gw/v1/x", headers={}, payload={})
+        )
+        # Body is read so _gateway_http_error can still quote the provider detail.
+        assert data == {}
+        assert response.status_code == 400
+        assert response.json()["error"]["message"] == "bad schema"
 
 
 class TestRetryAfterSeconds:
