@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +17,11 @@ const generateCoverMutation = {
   isPending: false,
   variables: undefined as { project: string } | undefined,
 };
+const deleteProjectMutation = {
+  mutate: vi.fn(),
+  isPending: false,
+  variables: undefined as { id: string } | undefined,
+};
 
 vi.mock("../api/queries", () => ({
   useProjects: () => projectsResult,
@@ -24,6 +29,7 @@ vi.mock("../api/queries", () => ({
   useImportStory: () => ({ mutate: vi.fn(), isPending: false, error: null }),
   useRunPipeline: () => ({ mutate: vi.fn() }),
   useGenerateProjectCover: () => generateCoverMutation,
+  useDeleteProject: () => deleteProjectMutation,
 }));
 
 import { Library } from "../pages/Library";
@@ -45,6 +51,9 @@ describe("Library first-run (Issue #0)", () => {
     generateCoverMutation.mutate.mockReset();
     generateCoverMutation.isPending = false;
     generateCoverMutation.variables = undefined;
+    deleteProjectMutation.mutate.mockReset();
+    deleteProjectMutation.isPending = false;
+    deleteProjectMutation.variables = undefined;
   });
 
   it("shows the first-issue invitation with the 4-station teaching strip", () => {
@@ -126,6 +135,36 @@ describe("Library first-run (Issue #0)", () => {
     expect(generateCoverMutation.mutate).toHaveBeenCalledWith(
       { project: "demo" },
       expect.objectContaining({ onError: expect.any(Function) }),
+    );
+  });
+
+  it("offers a recovery delete for an incompatible project", async () => {
+    const user = userEvent.setup();
+    projectsResult.data = [{
+      id: "legacy-id",
+      project_name: "Old Book",
+      author: null,
+      created_at: "2026-06-01T00:00:00Z",
+      furthest_stage: null,
+      is_running: false,
+      has_cover: false,
+      cover_job: null,
+      total_cost_credits: 0,
+      incompatible: true,
+    } as unknown as ProjectSummary];
+
+    renderLibrary();
+
+    expect(screen.getByText("Needs reset")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "REMOVE OLD PROJECT" }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog).toBeTruthy();
+    await user.type(screen.getByPlaceholderText("Old Book"), "Old Book");
+    await user.click(within(dialog).getByRole("button", { name: "REMOVE OLD PROJECT" }));
+
+    expect(deleteProjectMutation.mutate).toHaveBeenCalledWith(
+      { id: "legacy-id" },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
   });
 });
