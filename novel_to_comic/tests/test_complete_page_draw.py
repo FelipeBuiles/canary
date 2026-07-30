@@ -97,6 +97,7 @@ def _page(*, revision: int = 2, visual_intent: str = "Ward sees the idol.") -> C
                         id="letter-1",
                         kind="caption",
                         text="It was the same face.",
+                        delivery="narration",
                         source_unit_ids=["source-1"],
                     )
                 ],
@@ -204,6 +205,8 @@ def test_compiler_freezes_exact_page_authority_and_selected_reference_order(
     assert request.retry == RetryProvenance(attempt=1)
     assert "It was the same face." in request.prompt
     assert "Ward’s torn left sleeve; blood below the right eye" in request.prompt
+    assert "attach the balloon tail only to speaker_entity_id" in request.prompt
+    assert "off-panel balloon treatment" in request.prompt
 
 
 def test_compiler_explicitly_forbids_visible_text_on_unlettered_pages(

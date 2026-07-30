@@ -6,13 +6,12 @@ import asyncio
 import json
 import re
 from collections.abc import Awaitable, Callable, Iterable, Mapping
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from novel_to_comic.ai.context import stream_observer
 from novel_to_comic.briefing import require_approved_brief
-from novel_to_comic.json_contract import describe_json_contract
 from novel_to_comic.model_costs import get_pricing_resolver
 from novel_to_comic.models.adaptation import (
     AdaptationBrief,
@@ -40,7 +39,10 @@ _MAX_ADAPT_ATTEMPTS = 2
 _ADAPT_SHARD_MAX_UNITS = 180
 _ADAPT_MAX_CONCURRENCY = 4
 _ADAPT_OUTPUT_BUDGET_RATIO = 0.65
-_ADAPT_OUTPUT_TOKENS_PER_SOURCE_CHAR = 1.5
+# Beats plus compact ledger exceptions are materially smaller than the source;
+# the canonical per-unit ledger is expanded locally after generation.
+_ADAPT_OUTPUT_TOKENS_PER_SOURCE_CHAR = 0.5
+_MISSING_LEDGER_EXCEPTION = "missing_model_authored_omission_exception"
 
 
 def _requirement_registry(brief: AdaptationBrief) -> dict[str, str]:
@@ -111,11 +113,44 @@ class AdaptationValidation(BaseModel):
     editorial_issues: tuple[EditorialIssue, ...] = ()
 
 
+class _LedgerException(BaseModel):
+    """Only source-accounting decisions that cannot be derived from beats."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source_unit_ids: tuple[str, ...] = Field(min_length=1)
+    disposition: Literal[
+        "visual_motif",
+        "compressed_into",
+        "intentionally_omitted",
+    ]
+    adapted_beat_ids: tuple[str, ...] = ()
+    reason: str | None = None
+    preserved_function: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_exception(self) -> "_LedgerException":
+        if self.disposition in {"compressed_into", "intentionally_omitted"}:
+            if not self.reason:
+                raise ValueError(f"{self.disposition} requires a reason")
+        if self.disposition == "intentionally_omitted" and self.adapted_beat_ids:
+            raise ValueError(
+                "intentionally_omitted cannot have an adapted-beat destination"
+            )
+        if self.disposition != "intentionally_omitted" and not self.adapted_beat_ids:
+            raise ValueError(f"{self.disposition} requires an adapted beat")
+        return self
+
+
 class _BookDraft(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     beats: tuple[AdaptedBeat, ...]
-    ledger: tuple[AdaptationLedgerEntry, ...]
+    # ``ledger`` remains accepted internally while tests and failed paid
+    # candidates migrate. Production prompts request only compact exceptions;
+    # code expands them into the canonical one-entry-per-source-unit ledger.
+    ledger: tuple[AdaptationLedgerEntry, ...] = ()
+    ledger_exceptions: tuple[_LedgerException, ...] = ()
 
 
 def _canonicalize_treatment_requirements(
@@ -189,10 +224,7 @@ def _canonicalize_candidate_requirements(
     beats = list(draft.beats)
     registry = _requirement_registry(brief)
     for requirement_id, requirement in registry.items():
-        if any(
-            requirement_id in beat.brief_requirement_ids
-            for beat in beats
-        ):
+        if any(requirement_id in beat.brief_requirement_ids for beat in beats):
             continue
         prefix, raw_index = requirement_id.rsplit("_", 1)
         candidates = beats
@@ -218,16 +250,12 @@ def _canonicalize_candidate_requirements(
                 ),
                 default=len(beats),
             )
-            candidates = [
-                beat for beat in beats if lower <= beat.order <= upper
-            ]
+            candidates = [beat for beat in beats if lower <= beat.order <= upper]
         best, overlap = _closest_requirement_beat(
             candidates,
             requirement=requirement,
             story_function=(
-                "causal_event"
-                if prefix == "essential_event"
-                else "character_turn"
+                "causal_event" if prefix == "essential_event" else "character_turn"
             ),
         )
         if best is None or overlap < 2:
@@ -443,9 +471,7 @@ def _materialize_protected_lettering(
     beats = list(candidate.beats)
     ledger = list(candidate.ledger)
     existing_keys = {
-        _protected_language_key(item.text)
-        for beat in beats
-        for item in beat.lettering
+        _protected_language_key(item.text) for beat in beats for item in beat.lettering
     }
     source_by_id = {unit.id: unit for unit in source.units}
     ledger_index_by_source = {
@@ -490,12 +516,12 @@ def _materialize_protected_lettering(
             and entry.disposition not in kind_by_disposition
             and entry.adapted_beat_ids
         ):
-            entry = entry.model_copy(
-                update={"disposition": "caption", "reason": None}
-            )
+            entry = entry.model_copy(update={"disposition": "caption", "reason": None})
             ledger[ledger_index] = entry
         kind = kind_by_disposition.get(entry.disposition) if entry else None
-        destination = entry.adapted_beat_ids[0] if entry and entry.adapted_beat_ids else None
+        destination = (
+            entry.adapted_beat_ids[0] if entry and entry.adapted_beat_ids else None
+        )
         if kind is None or destination is None:
             continue
         beat_index = next(
@@ -592,6 +618,130 @@ def _record_result_usage(ctx: StageRuntime, result: ApiResult[Any]) -> None:
             ctx.record_api_usage(usage)
 
 
+def _brief_view(brief: AdaptationBrief) -> dict[str, Any]:
+    """Project only authorial constraints; revision metadata has no model value."""
+
+    return brief.model_dump(
+        mode="json",
+        exclude={"revision", "content_sha256", "status"},
+    )
+
+
+def _source_units_view(
+    source: SourceDocument,
+    source_unit_ids: Iterable[str],
+) -> list[dict[str, str]]:
+    """Compact source provenance without offsets and duplicated ordinals."""
+
+    wanted = set(source_unit_ids)
+    return [
+        {"id": unit.id, "text": unit.text} for unit in source.units if unit.id in wanted
+    ]
+
+
+def _story_bible_view(
+    story_bible: StoryBible,
+    *,
+    scene_ids: set[str] | None = None,
+) -> dict[str, Any]:
+    """Return Adapt's semantic Story Bible projection, excluding visual prose."""
+
+    scenes = [
+        scene
+        for scene in story_bible.scenes
+        if scene_ids is None or scene.id in scene_ids
+    ]
+    character_ids = {
+        character_id for scene in scenes for character_id in scene.character_ids
+    }
+    location_ids = {scene.location_id for scene in scenes}
+    return {
+        "title": story_bible.title,
+        "author": story_bible.author,
+        "characters": [
+            {
+                "id": character.id,
+                "name": character.name,
+                "relationships": [
+                    relationship.model_dump(mode="json")
+                    for relationship in character.relationships
+                ],
+                "appearance_state_ids": [
+                    state.id for state in character.appearance_states
+                ],
+            }
+            for character in story_bible.characters
+            if scene_ids is None or character.id in character_ids
+        ],
+        "locations": [
+            {
+                "id": location.id,
+                "name": location.name,
+                "appearance_state_ids": [
+                    state.id for state in location.appearance_states
+                ],
+            }
+            for location in story_bible.locations
+            if scene_ids is None or location.id in location_ids
+        ],
+        "props": [{"id": prop.id, "name": prop.name} for prop in story_bible.props],
+        "scenes": [
+            {
+                "id": scene.id,
+                "chapter": scene.chapter,
+                "title": scene.title,
+                "location_id": scene.location_id,
+                "character_ids": scene.character_ids,
+                "summary": scene.summary,
+                "scene_type": scene.scene_type,
+                "narrative_beat": scene.narrative_beat,
+            }
+            for scene in scenes
+        ],
+        "narrative_arcs": [
+            arc.model_dump(mode="json") for arc in story_bible.narrative_arcs
+        ],
+    }
+
+
+def _scene_obligations(
+    story_bible: StoryBible,
+    *,
+    scene_ids: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Derive explicit local completeness obligations before costly drafting."""
+
+    return [
+        {
+            "scene_id": scene.id,
+            "narrative_function": scene.narrative_beat,
+            "required_reader_facts": [scene.summary],
+            "required_speaker_entity_ids": scene.character_ids,
+            "relative_weight": (
+                "high"
+                if scene.narrative_beat
+                in {"inciting_incident", "climax", "resolution", "turning_point"}
+                else "standard"
+            ),
+            "silence_policy": (
+                "Silence is allowed only for self-explanatory action or reaction; "
+                "testimony, deduction, chronology, and causal links require lettering."
+            ),
+        }
+        for scene in story_bible.scenes
+        if scene_ids is None or scene.id in scene_ids
+    ]
+
+
+def _treatment_view(treatment: NarrativeTreatment) -> dict[str, Any]:
+    """Remove requirement wording already present in the approved registry."""
+
+    return treatment.model_dump(
+        mode="json",
+        exclude={"essential_events", "character_turns"},
+    )
+
+
 def build_narrative_treatment_prompt(
     source: SourceDocument,
     story_bible: StoryBible,
@@ -600,11 +750,22 @@ def build_narrative_treatment_prompt(
     """Compile the book-wide dramatic-reasoning prompt from canonical inputs."""
 
     context = {
-        "source_sha256": source.source_sha256,
-        "source_units": [unit.model_dump(mode="json") for unit in source.units],
-        "source_scenes": [scene.model_dump(mode="json") for scene in source.scenes],
-        "story_bible": story_bible.model_dump(mode="json"),
-        "approved_adaptation_brief": brief.model_dump(mode="json"),
+        "source_units": _source_units_view(
+            source,
+            (unit.id for unit in source.units),
+        ),
+        "source_scenes": [
+            {
+                "id": scene.id,
+                "title": scene.title,
+                "first_unit_id": scene.first_unit_id,
+                "last_unit_id": scene.last_unit_id,
+            }
+            for scene in source.scenes
+        ],
+        "story_bible": _story_bible_view(story_bible),
+        "scene_obligations": _scene_obligations(story_bible),
+        "approved_adaptation_brief": _brief_view(brief),
         "approved_requirement_registry": _requirement_registry(brief),
     }
     return (
@@ -618,9 +779,10 @@ def build_narrative_treatment_prompt(
         "character_turn_ids. Use the approved target page range only "
         "to guide proportional selection. Do not allocate pages, panels, layouts, "
         "or geometry. Do not create parallel per-scene adaptations or reconciliation "
-        "work. Return only the narrative-treatment JSON object.\n"
-        + describe_json_contract(NarrativeTreatment)
-        + "\n"
+        "work. scene_obligations are mandatory local completeness constraints: "
+        "preserve every required reader fact, speaker function, relative weight, "
+        "and silence policy in the global treatment. Return only the "
+        "narrative-treatment JSON object.\n"
         + json.dumps(
             context,
             ensure_ascii=False,
@@ -645,18 +807,27 @@ def build_book_adaptation_prompt(
 
     primary_ids = primary_source_unit_ids or tuple(unit.id for unit in source.units)
     primary_id_set = set(primary_ids)
-    source_units = [
-        unit.model_dump(mode="json")
-        for unit in source.units
-        if unit.id in primary_id_set
-    ]
+    source_units = _source_units_view(source, primary_ids)
     source_scenes = [
-        scene.model_dump(mode="json")
+        {
+            "id": scene.id,
+            "title": scene.title,
+            "first_unit_id": next(
+                source_id
+                for source_id in scene.unit_ids(source)
+                if source_id in primary_id_set
+            ),
+            "last_unit_id": next(
+                source_id
+                for source_id in reversed(scene.unit_ids(source))
+                if source_id in primary_id_set
+            ),
+        }
         for scene in source.scenes
         if primary_id_set.intersection(scene.unit_ids(source))
     ]
+    scene_ids = {scene["id"] for scene in source_scenes}
     context = {
-        "source_sha256": source.source_sha256,
         "adaptation_scope": {
             "shard_index": shard_index,
             "shard_count": shard_count,
@@ -664,10 +835,14 @@ def build_book_adaptation_prompt(
         },
         "source_units": source_units,
         "source_scenes": source_scenes,
-        "story_bible": story_bible.model_dump(mode="json"),
-        "approved_adaptation_brief": brief.model_dump(mode="json"),
+        "story_bible": _story_bible_view(story_bible, scene_ids=scene_ids),
+        "scene_obligations": _scene_obligations(
+            story_bible,
+            scene_ids=scene_ids,
+        ),
+        "approved_adaptation_brief": _brief_view(brief),
         "approved_requirement_registry": _requirement_registry(brief),
-        "narrative_treatment": treatment.model_dump(mode="json"),
+        "narrative_treatment": _treatment_view(treatment),
     }
     if owned_requirement_ids is not None:
         context["adaptation_scope"]["owned_requirement_ids"] = owned_requirement_ids
@@ -700,13 +875,24 @@ def build_book_adaptation_prompt(
             "blocking requirement: every reveal must receive an explicit reaction "
             "or aftermath before the next transition, and do not compress a "
             "multi-step explanation into a single visual beat when separate beats "
-            "would preserve the causal chain. "
+            "would preserve the causal chain. Do not erase an extracted source "
+            "scene or concentrate nearly all intentional omissions in one part of "
+            "the book. Preserve the relative weight of investigation, setup, "
+            "corroboration, climax, and aftermath rather than stripping early "
+            "evidence to make room for later spectacle. "
         )
     return (
         scope_instruction
         + ownership_instruction
         + faithful_instruction
         + "Write the globally ordered AdaptedBeats for the supplied source scope. "
+        "Assume the reader has not read the source and cannot see this JSON: "
+        "beat summaries are never visible to the reader. Every causal link, motive, "
+        "date or place change, deduction, testimony, and relationship between "
+        "independent pieces of evidence that cannot be inferred unambiguously from "
+        "a still image must appear in complete canonical lettering. Use silence "
+        "deliberately for visually self-explanatory action, awe, dread, or reaction; "
+        "never use silent beats as a substitute for exposition or connective logic. "
         "Own complete, publishable dialogue, thought, caption, and SFX wording; "
         "never return fragments or trailing-clipped display text. Preserve every "
         "protected-language string verbatim. Record causal events, reveals, "
@@ -725,16 +911,32 @@ def build_book_adaptation_prompt(
         "For every ledger entry marked dialogue, thought, or caption, cite its "
         "source unit on a matching source-linked canonical LetteringItem; a beat "
         "summary alone does not realize a lettering disposition. Cite source-unit "
-        "provenance and "
-        "assign exactly one ledger disposition for every source unit. Compression "
+        "provenance. For every LetteringItem, set delivery explicitly. On-screen "
+        "dialogue or thought uses delivery='onscreen', one precise speaker name, "
+        "and that Story Bible character's speaker_entity_id. Off-panel voices or "
+        "choruses use delivery='offscreen' and a precise speaker label without "
+        "inventing a visible character. Narration uses delivery='narration'. "
+        "Quoted prose, translated inscriptions, manuscript excerpts, and phrases "
+        "reported by a narrator use caption plus delivery='quoted_text'; do not "
+        "misclassify quoted prose as dialogue by a present character. SFX uses "
+        "delivery='display'. Never use a slash-separated or combined speaker to "
+        "stand for multiple possible owners. "
+        "Cite source-unit provenance. Do not restate the full source ledger: code "
+        "derives depicted, dialogue, thought, and caption dispositions from beats "
+        "and lettering. Return ledger=[] and author ledger_exceptions only for "
+        "visual_motif, compressed_into, or intentionally_omitted source units. Group "
+        "every contiguous run that shares a disposition and destination into one "
+        "exception with one concise reason; never emit repetitive per-unit "
+        "exceptions for the same decision. Compression "
         "requires a reason and an existing adapted-beat destination. Intentional "
         "omission requires a reason, the function intentionally removed, and no "
-        "adapted-beat destination. Use the target page range only for proportional "
+        "adapted-beat destination. Every source unit not cited by a beat requires "
+        "an intentional-omission exception. Treat scene_obligations as mandatory "
+        "local completeness and proportional-weight constraints. Use the target "
+        "page range only for proportional "
         "selection. Do not allocate pages, panels, layouts, or geometry. Do not "
         "create scene-parallel screenplays or reconciliation work. Return one JSON "
-        "object containing only beats and ledger.\n"
-        + describe_json_contract(_BookDraft)
-        + "\n"
+        "object containing only beats, ledger=[], and ledger_exceptions.\n"
         + json.dumps(
             context,
             ensure_ascii=False,
@@ -1032,6 +1234,95 @@ def _merge_book_drafts(
     return _BookDraft(beats=tuple(beats), ledger=tuple(ledger)), beat_to_shard
 
 
+def _materialize_draft_ledger(
+    draft: _BookDraft,
+    source_unit_ids: tuple[str, ...],
+) -> _BookDraft:
+    """Expand compact model decisions into the canonical source ledger."""
+
+    if draft.ledger:
+        return draft
+
+    beat_by_id = {beat.id: beat for beat in draft.beats}
+    beats_by_source: dict[str, list[str]] = {}
+    lettering_by_source: dict[str, tuple[str, str]] = {}
+    for beat in draft.beats:
+        for source_id in beat.source_unit_ids:
+            beats_by_source.setdefault(source_id, []).append(beat.id)
+        for item in beat.lettering:
+            for source_id in item.source_unit_ids:
+                lettering_by_source.setdefault(source_id, (item.kind, beat.id))
+
+    exception_by_source: dict[str, _LedgerException] = {}
+    for exception in draft.ledger_exceptions:
+        for source_id in exception.source_unit_ids:
+            if source_id in exception_by_source:
+                raise ValueError(
+                    f"source unit {source_id!r} has duplicate ledger exceptions"
+                )
+            exception_by_source[source_id] = exception
+
+    ledger: list[AdaptationLedgerEntry] = []
+    for source_id in source_unit_ids:
+        exception = exception_by_source.get(source_id)
+        if exception is not None:
+            ledger.append(
+                AdaptationLedgerEntry(
+                    source_unit_id=source_id,
+                    disposition=exception.disposition,
+                    adapted_beat_ids=exception.adapted_beat_ids,
+                    reason=exception.reason,
+                    preserved_function=exception.preserved_function,
+                )
+            )
+            continue
+
+        lettering = lettering_by_source.get(source_id)
+        if lettering is not None:
+            kind, beat_id = lettering
+            ledger.append(
+                AdaptationLedgerEntry(
+                    source_unit_id=source_id,
+                    disposition=kind,
+                    adapted_beat_ids=(beat_id,),
+                    preserved_function=(f"Realized as canonical {kind} in {beat_id}."),
+                )
+            )
+            continue
+
+        beat_ids = tuple(dict.fromkeys(beats_by_source.get(source_id, ())))
+        if beat_ids:
+            summaries = "; ".join(beat_by_id[beat_id].summary for beat_id in beat_ids)
+            ledger.append(
+                AdaptationLedgerEntry(
+                    source_unit_id=source_id,
+                    disposition="depicted",
+                    adapted_beat_ids=beat_ids,
+                    preserved_function=f"Depicted through: {summaries}",
+                )
+            )
+            continue
+
+        ledger.append(
+            AdaptationLedgerEntry(
+                source_unit_id=source_id,
+                disposition="intentionally_omitted",
+                reason=_MISSING_LEDGER_EXCEPTION,
+                preserved_function=(
+                    "The model omitted this source unit without the required "
+                    "explicit exception."
+                ),
+            )
+        )
+
+    return draft.model_copy(
+        update={
+            "ledger": tuple(ledger),
+            "ledger_exceptions": (),
+        }
+    )
+
+
 def _merged_draft(
     drafts: list[_BookDraft],
 ) -> tuple[_BookDraft, dict[str, int]]:
@@ -1066,6 +1357,141 @@ def _affected_shards(
     return tuple(sorted(affected))
 
 
+def _repair_source_scope(
+    source: SourceDocument,
+    shard_source_ids: tuple[str, ...],
+    validation: AdaptationValidation,
+) -> tuple[str, ...]:
+    """Expand cited failures to complete source scenes, not complete shards."""
+
+    shard_set = set(shard_source_ids)
+    failed = {
+        source_id
+        for failure in validation.invariant_failures
+        for source_id in failure.source_unit_ids
+        if source_id in shard_set
+    }
+    if not failed:
+        return shard_source_ids
+    scoped = {
+        source_id
+        for scene in source.scenes
+        if failed.intersection(scene.unit_ids(source))
+        for source_id in scene.unit_ids(source)
+        if source_id in shard_set
+    }
+    return tuple(source_id for source_id in shard_source_ids if source_id in scoped)
+
+
+def _subset_draft(
+    draft: _BookDraft,
+    source_unit_ids: tuple[str, ...],
+) -> _BookDraft:
+    wanted = set(source_unit_ids)
+    beat_ids = {
+        beat.id for beat in draft.beats if wanted.intersection(beat.source_unit_ids)
+    }
+    return _BookDraft(
+        beats=tuple(beat for beat in draft.beats if beat.id in beat_ids),
+        ledger=tuple(entry for entry in draft.ledger if entry.source_unit_id in wanted),
+    )
+
+
+def _rebase_local_draft(draft: _BookDraft) -> _BookDraft:
+    beat_id_map = {
+        beat.id: f"beat_{index:04d}" for index, beat in enumerate(draft.beats, 1)
+    }
+    lettering_number = 0
+    beats: list[AdaptedBeat] = []
+    for order, beat in enumerate(draft.beats, 1):
+        lettering: list[LetteringItem] = []
+        for item in beat.lettering:
+            lettering_number += 1
+            lettering.append(
+                item.model_copy(update={"id": f"lettering_{lettering_number:04d}"})
+            )
+        beats.append(
+            beat.model_copy(
+                update={
+                    "id": beat_id_map[beat.id],
+                    "order": order,
+                    "lettering": tuple(lettering),
+                }
+            )
+        )
+    return _BookDraft(
+        beats=tuple(beats),
+        ledger=tuple(
+            entry.model_copy(
+                update={
+                    "adapted_beat_ids": tuple(
+                        beat_id_map[beat_id]
+                        for beat_id in entry.adapted_beat_ids
+                        if beat_id in beat_id_map
+                    )
+                }
+            )
+            for entry in draft.ledger
+        ),
+    )
+
+
+def _splice_draft_repair(
+    draft: _BookDraft,
+    repair: _BookDraft,
+    source_unit_ids: tuple[str, ...],
+    source_order: Mapping[str, int],
+) -> _BookDraft:
+    wanted = set(source_unit_ids)
+    repair_id_map = {beat.id: f"repair_{beat.id}" for beat in repair.beats}
+    namespaced_repair = _BookDraft(
+        beats=tuple(
+            beat.model_copy(update={"id": repair_id_map[beat.id]})
+            for beat in repair.beats
+        ),
+        ledger=tuple(
+            entry.model_copy(
+                update={
+                    "adapted_beat_ids": tuple(
+                        repair_id_map[beat_id] for beat_id in entry.adapted_beat_ids
+                    )
+                }
+            )
+            for entry in repair.ledger
+        ),
+    )
+    retained_beats = [
+        beat for beat in draft.beats if not wanted.intersection(beat.source_unit_ids)
+    ]
+    combined_beats = [*retained_beats, *namespaced_repair.beats]
+    combined_beats.sort(
+        key=lambda beat: min(
+            (
+                source_order[source_id]
+                for source_id in beat.source_unit_ids
+                if source_id in source_order
+            ),
+            default=len(source_order) + beat.order,
+        )
+    )
+    retained_ledger = [
+        entry for entry in draft.ledger if entry.source_unit_id not in wanted
+    ]
+    combined_ledger = [*retained_ledger, *namespaced_repair.ledger]
+    combined_ledger.sort(
+        key=lambda entry: source_order.get(
+            entry.source_unit_id,
+            len(source_order) + 1,
+        )
+    )
+    return _rebase_local_draft(
+        _BookDraft(
+            beats=tuple(combined_beats),
+            ledger=tuple(combined_ledger),
+        )
+    )
+
+
 async def produce_book_adaptation(
     source: SourceDocument,
     story_bible: StoryBible,
@@ -1090,6 +1516,7 @@ async def produce_book_adaptation(
             source,
             brief,
             recovered_candidate,
+            story_bible=story_bible,
         )
         if not recovered_validation.invariant_failures:
             adaptation = BookAdaptation.model_validate(
@@ -1131,7 +1558,9 @@ async def produce_book_adaptation(
         for attempt in range(1, _MAX_ADAPT_ATTEMPTS + 1):
             # Heartbeat only — the treatment's output size isn't predictable
             # enough from the source to make a fraction honest.
-            with stream_observer(lambda chars: ctx.activity(detail="writing treatment")):
+            with stream_observer(
+                lambda chars: ctx.activity(detail="writing treatment")
+            ):
                 treatment_result = await generate(
                     system_prompt=(
                         "You are the book-level narrative architect for a comic "
@@ -1193,17 +1622,25 @@ async def produce_book_adaptation(
         )
         candidate: BookAdaptation | None = None
         validation = AdaptationValidation()
+        generated_drafts = await _generate_book_drafts(
+            prompts=book_prompts,
+            generate=generate,
+            ctx=ctx,
+            progress_offset=1,
+            progress_total=total_steps,
+            record_progress=True,
+            expected_chars=shard_chars,
+            detail=f"drafting {len(book_prompts)} shards",
+        )
         drafts = [
-            _canonicalize_draft_requirements(draft, brief)
-            for draft in await _generate_book_drafts(
-                prompts=book_prompts,
-                generate=generate,
-                ctx=ctx,
-                progress_offset=1,
-                progress_total=total_steps,
-                record_progress=True,
-                expected_chars=shard_chars,
-                detail=f"drafting {len(book_prompts)} shards",
+            _canonicalize_draft_requirements(
+                _materialize_draft_ledger(draft, source_ids),
+                brief,
+            )
+            for draft, source_ids in zip(
+                generated_drafts,
+                shards,
+                strict=True,
             )
         ]
         history: list[ValidationAttempt] = []
@@ -1223,7 +1660,12 @@ async def produce_book_adaptation(
                 source,
                 brief,
             )
-            validation = validate_book_adaptation(source, brief, candidate)
+            validation = validate_book_adaptation(
+                source,
+                brief,
+                candidate,
+                story_bible=story_bible,
+            )
             history.append(_attempt_record(validation_attempt, validation))
             if not validation.invariant_failures:
                 break
@@ -1237,34 +1679,76 @@ async def produce_book_adaptation(
             )
             if not affected:
                 break
+            repair_scopes = [
+                _repair_source_scope(
+                    source,
+                    shards[shard_index],
+                    validation,
+                )
+                for shard_index in affected
+            ]
             repair_prompts = [
                 _repair_prompt(
-                    book_prompts[shard_index],
-                    drafts[shard_index],
+                    build_book_adaptation_prompt(
+                        source,
+                        story_bible,
+                        brief,
+                        treatment,
+                        primary_source_unit_ids=scope,
+                        owned_requirement_ids=shard_requirements[shard_index],
+                        shard_index=shard_index + 1,
+                        shard_count=len(shards),
+                    ),
+                    _subset_draft(drafts[shard_index], scope),
                     validation,
                     shard_index=shard_index,
                     beat_to_shard=beat_to_shard,
                 )
-                for shard_index in affected
-            ]
-            repaired = [
-                _canonicalize_draft_requirements(draft, brief)
-                for draft in await _generate_book_drafts(
-                    prompts=repair_prompts,
-                    generate=generate,
-                    ctx=ctx,
-                    progress_offset=1,
-                    progress_total=total_steps,
-                    record_progress=False,
-                    expected_chars=[shard_chars[index] for index in affected],
-                    detail=(
-                        f"repairing {len(affected)} of {len(shards)} shards "
-                        f"(round {validation_attempt})"
-                    ),
+                for shard_index, scope in zip(
+                    affected,
+                    repair_scopes,
+                    strict=True,
                 )
             ]
-            for shard_index, repaired_draft in zip(affected, repaired, strict=True):
-                drafts[shard_index] = repaired_draft
+            generated_repairs = await _generate_book_drafts(
+                prompts=repair_prompts,
+                generate=generate,
+                ctx=ctx,
+                progress_offset=1,
+                progress_total=total_steps,
+                record_progress=False,
+                expected_chars=[
+                    _shard_output_chars(unit_by_id, scope) for scope in repair_scopes
+                ],
+                detail=(
+                    f"repairing {len(affected)} of {len(shards)} shards "
+                    f"(round {validation_attempt})"
+                ),
+            )
+            repaired = [
+                _canonicalize_draft_requirements(
+                    _materialize_draft_ledger(draft, scope),
+                    brief,
+                )
+                for draft, scope in zip(
+                    generated_repairs,
+                    repair_scopes,
+                    strict=True,
+                )
+            ]
+            source_order = {unit.id: unit.ordinal for unit in source.units}
+            for shard_index, scope, repaired_draft in zip(
+                affected,
+                repair_scopes,
+                repaired,
+                strict=True,
+            ):
+                drafts[shard_index] = _splice_draft_repair(
+                    drafts[shard_index],
+                    repaired_draft,
+                    scope,
+                    source_order,
+                )
 
         assert candidate is not None  # validation loop runs at least once
         _persist_validation(
@@ -1317,18 +1801,38 @@ def _repair_prompt(
                 beat_to_shard.get(artifact_id) == shard_index
                 for artifact_id in failure.artifact_ids
             )
+            or not any(
+                artifact_id in beat_to_shard for artifact_id in failure.artifact_ids
+            )
         )
     ]
     failures = "\n".join(
         f"- [{failure.code}] {failure.message} " + " ".join(failure.evidence)
         for failure in relevant
     )
+    previous = {
+        "beats": [beat.model_dump(mode="json") for beat in previous_draft.beats],
+        "ledger": [],
+        "ledger_exceptions": [
+            {
+                "source_unit_ids": [entry.source_unit_id],
+                "disposition": entry.disposition,
+                "adapted_beat_ids": entry.adapted_beat_ids,
+                "reason": entry.reason,
+                "preserved_function": entry.preserved_function,
+            }
+            for entry in previous_draft.ledger
+            if entry.disposition
+            in {"visual_motif", "compressed_into", "intentionally_omitted"}
+            and entry.reason != _MISSING_LEDGER_EXCEPTION
+        ],
+    }
     return (
         f"{book_prompt}\n\nYour previous book adaptation violated these blocking "
         "contract requirements. Return one complete corrected JSON object that "
         "resolves every one of them without dropping content you already had:\n"
         f"{failures}\n\nYOUR PREVIOUS SHARD JSON:\n"
-        f"{previous_draft.model_dump_json(indent=2)}"
+        f"{json.dumps(previous, separators=(',', ':'), ensure_ascii=False)}"
     )
 
 
@@ -1393,6 +1897,8 @@ def validate_book_adaptation(
     source: SourceDocument,
     brief: AdaptationBrief,
     adaptation: BookAdaptation,
+    *,
+    story_bible: StoryBible | None = None,
 ) -> AdaptationValidation:
     """Validate a candidate only against Adapt-owned canonical inputs."""
 
@@ -1463,6 +1969,29 @@ def validate_book_adaptation(
             )
         )
 
+    implicit_omissions = tuple(
+        entry.source_unit_id
+        for entry in adaptation.ledger
+        if entry.reason == _MISSING_LEDGER_EXCEPTION
+    )
+    if implicit_omissions:
+        failures.append(
+            InvariantFailure(
+                id="adapt_failure_missing_ledger_exceptions",
+                owner_stage="adapt",
+                code="missing_ledger_exception",
+                message=(
+                    "Every source unit absent from adapted beats requires an "
+                    "explicit omission exception and reason."
+                ),
+                source_unit_ids=implicit_omissions,
+                evidence=[
+                    "No authored omission exception exists for: "
+                    + ", ".join(implicit_omissions)
+                ],
+            )
+        )
+
     for beat in adaptation.beats:
         cited = set(beat.source_unit_ids)
         cited.update(
@@ -1491,6 +2020,63 @@ def validate_book_adaptation(
     for item in lettering:
         for source_unit_id in item.source_unit_ids:
             lettering_by_source.setdefault(source_unit_id, []).append(item)
+
+    if story_bible is not None:
+        known_speakers = {character.id for character in story_bible.characters}
+        allowed_delivery = {
+            "dialogue": {"onscreen", "offscreen"},
+            "thought": {"onscreen", "offscreen"},
+            "caption": {"narration", "quoted_text"},
+            "sfx": {"display"},
+        }
+        for item in lettering:
+            evidence: list[str] = []
+            if item.delivery not in allowed_delivery[item.kind]:
+                evidence.append(
+                    f"{item.kind!r} lettering requires delivery in "
+                    f"{sorted(allowed_delivery[item.kind])!r}; found "
+                    f"{item.delivery!r}."
+                )
+            if item.kind in {"dialogue", "thought"} and not item.speaker:
+                evidence.append(
+                    "Dialogue and thought require one precise speaker label."
+                )
+            if item.speaker is not None and "/" in item.speaker:
+                evidence.append(
+                    "Speaker labels cannot combine multiple possible owners with "
+                    "'/'; author separate lettering items or one explicit chorus."
+                )
+            if item.delivery == "onscreen":
+                if not item.speaker_entity_id:
+                    evidence.append("On-screen lettering requires speaker_entity_id.")
+                elif item.speaker_entity_id not in known_speakers:
+                    evidence.append(
+                        f"Speaker entity {item.speaker_entity_id!r} is not a "
+                        "Story Bible character."
+                    )
+            elif (
+                item.speaker_entity_id is not None
+                and item.speaker_entity_id not in known_speakers
+            ):
+                evidence.append(
+                    f"Speaker entity {item.speaker_entity_id!r} is not a "
+                    "Story Bible character."
+                )
+            if evidence:
+                failures.append(
+                    InvariantFailure(
+                        id=f"adapt_failure_invalid_lettering_speaker_{item.id}",
+                        owner_stage="adapt",
+                        code="invalid_lettering_speaker",
+                        message=(
+                            "Canonical lettering must identify how and by whom "
+                            "it is delivered."
+                        ),
+                        source_unit_ids=item.source_unit_ids,
+                        artifact_ids=[item.id],
+                        evidence=evidence,
+                    )
+                )
 
     expected_lettering_kind = {
         "dialogue": "dialogue",
@@ -1534,15 +2120,12 @@ def validate_book_adaptation(
     # balloon. They routinely disagree on quote style, dash form, and line
     # wrapping while carrying identical words, so compare under the shared
     # display-text policy instead of raw substring identity.
-    complete_wording = tuple(
-        _protected_language_key(item.text) for item in lettering
-    )
+    complete_wording = tuple(_protected_language_key(item.text) for item in lettering)
     missing_protected = [
         phrase
         for phrase in brief.protected_language
         if not any(
-            _protected_language_key(phrase) in wording
-            for wording in complete_wording
+            _protected_language_key(phrase) in wording for wording in complete_wording
         )
     ]
     if missing_protected:
@@ -1704,6 +2287,83 @@ def validate_book_adaptation(
             continuity_states[state_key] = transition.to_state
 
     issues.extend(_omission_issues(source, brief, adaptation))
+
+    if brief.transformation_level == "faithful":
+        entry_by_source = {entry.source_unit_id: entry for entry in adaptation.ledger}
+        for scene in source.scenes:
+            scene_units = tuple(scene.unit_ids(source))
+            omitted = tuple(
+                source_id
+                for source_id in scene_units
+                if entry_by_source.get(source_id) is not None
+                and entry_by_source[source_id].disposition == "intentionally_omitted"
+            )
+            if (
+                len(scene_units) >= 12
+                and len(omitted) >= 12
+                and len(omitted) * 5 >= len(scene_units) * 4
+            ):
+                failures.append(
+                    InvariantFailure(
+                        id=f"adapt_failure_faithful_source_scene_erased_{scene.id}",
+                        owner_stage="adapt",
+                        code="faithful_source_scene_erased",
+                        message=(
+                            "A faithful adaptation cannot erase nearly an entire "
+                            "extracted source scene."
+                        ),
+                        source_unit_ids=omitted,
+                        artifact_ids=[scene.id],
+                        evidence=[
+                            f"{len(omitted)} of {len(scene_units)} source units in "
+                            f"{scene.id!r} ({scene.title}) were intentionally "
+                            "omitted. Preserve its causal and reader-facing "
+                            "function with adapted beats and complete lettering."
+                        ],
+                    )
+                )
+
+        silent_run: list[AdaptedBeat] = []
+        for beat in (*adaptation.beats, None):
+            if beat is not None and not beat.lettering:
+                silent_run.append(beat)
+                continue
+            critical_functions = {
+                function
+                for candidate in silent_run
+                for function in candidate.story_functions
+            }.intersection({"causal_event", "reveal", "transition", "character_turn"})
+            if len(silent_run) >= 3 and critical_functions:
+                failures.append(
+                    InvariantFailure(
+                        id=(
+                            "adapt_failure_reader_context_gap_"
+                            f"{silent_run[0].id}_{silent_run[-1].id}"
+                        ),
+                        owner_stage="adapt",
+                        code="reader_context_gap",
+                        message=(
+                            "A faithful adaptation cannot leave a sustained "
+                            "reader-critical sequence entirely unlettered."
+                        ),
+                        source_unit_ids=tuple(
+                            dict.fromkeys(
+                                source_id
+                                for candidate in silent_run
+                                for source_id in candidate.source_unit_ids
+                            )
+                        ),
+                        artifact_ids=[candidate.id for candidate in silent_run],
+                        evidence=[
+                            f"{len(silent_run)} consecutive beats carry "
+                            f"{sorted(critical_functions)!r} but no publishable "
+                            "lettering. Beat summaries are not reader-visible; "
+                            "add the captions, testimony, dialogue, or transition "
+                            "copy needed to follow the causal chain."
+                        ],
+                    )
+                )
+            silent_run = []
 
     for index, beat in enumerate(adaptation.beats):
         if "reveal" not in beat.story_functions:

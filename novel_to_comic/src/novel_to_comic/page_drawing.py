@@ -290,7 +290,12 @@ def _compile_prompt(
         "verbatim, including the canonical capitalization. The project_style_direction "
         "is the invariant authority for lettering typeface, weights, colors, balloons, "
         "caption boxes, borders, margins, gutters, and bleed treatment across every page; "
-        "do not improvise or vary those choices on this page. "
+        "do not improvise or vary those choices on this page. For lettering with "
+        "delivery='onscreen', attach the balloon tail only to speaker_entity_id; "
+        "never share one tail or balloon between characters. For delivery='offscreen', "
+        "use an off-panel balloon treatment with no tail pointing to a visible "
+        "character. Narration and quoted_text use caption boxes without character "
+        "tails. "
         if has_lettering
         else
         "Render exactly one complete, unlettered comic page from the canonical "

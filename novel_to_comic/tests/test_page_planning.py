@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 
 import pytest
 
@@ -29,6 +30,7 @@ from novel_to_comic.models.page import (
 from novel_to_comic.models.validation import EditorialIssue
 from novel_to_comic.page_planning import (
     _merged_editorial_issues,
+    _planning_view,
     PlanInvariantError,
     build_book_plan_prompt,
     produce_book_plan,
@@ -131,9 +133,13 @@ def test_plan_prompt_uses_structured_panels_and_reserves_splashes() -> None:
     )
 
     assert "Each content item is one planned semantic panel" in prompt
-    assert "may cite an adapted beat again only on an immediately adjacent panel" in prompt
+    assert (
+        "may cite an adapted beat again only on an immediately adjacent panel" in prompt
+    )
     assert "Reserve one-panel pages and splash panels" in prompt
-    assert "group adjacent story beats into varied multi-panel pages" in prompt.casefold()
+    assert (
+        "group adjacent story beats into varied multi-panel pages" in prompt.casefold()
+    )
 
 
 def test_producer_allocates_global_book_once_and_persists_canonical_artifacts(
@@ -173,7 +179,7 @@ def test_producer_allocates_global_book_once_and_persists_canonical_artifacts(
                     "lettering_0002",
                 ],
             }
-        ]
+        ],
     }
 
     async def generate(**_kwargs):
@@ -216,6 +222,137 @@ def test_producer_allocates_global_book_once_and_persists_canonical_artifacts(
     assert plan.pages[0].content_sha256 == page.content_sha256
     assert artifacts.plan_path == tmp_path / "plan" / "book.json"
     assert artifacts.page_path(1) == tmp_path / "plan" / "pages" / "page_001.json"
+
+
+def _long_adaptation(beat_count: int = 24) -> BookAdaptation:
+    beats = [
+        AdaptedBeat(
+            id=f"beat_{index:04d}",
+            order=index,
+            summary=f"Story event {index}.",
+            narrative_function="initial",
+            story_functions=["causal_event"],
+            source_unit_ids=[f"source_{index:06d}"],
+            lettering=[
+                LetteringItem(
+                    id=f"lettering_{index:04d}",
+                    kind="caption",
+                    text=f"Event {index}.",
+                    delivery="narration",
+                    source_unit_ids=[f"source_{index:06d}"],
+                )
+            ],
+        )
+        for index in range(1, beat_count + 1)
+    ]
+    return BookAdaptation(
+        revision=1,
+        source_sha256="a" * 64,
+        brief_revision=1,
+        brief_sha256="b" * 64,
+        treatment=NarrativeTreatment(causal_spine=["The events advance in order."]),
+        beats=beats,
+        ledger=[
+            AdaptationLedgerEntry(
+                source_unit_id=f"source_{index:06d}",
+                disposition="caption",
+                adapted_beat_ids=[f"beat_{index:04d}"],
+                preserved_function=f"Event {index} remains explicit.",
+            )
+            for index in range(1, beat_count + 1)
+        ],
+    )
+
+
+def test_long_plan_uses_global_map_bounded_detail_and_local_repair(
+    tmp_path: Path,
+) -> None:
+    adaptation = _long_adaptation()
+    calls: list[dict] = []
+    detail_targets: list[tuple[int, ...]] = []
+
+    async def generate(**request):
+        calls.append(request)
+        if request["feature"] == "plan.map":
+            return ApiResult(
+                value={
+                    "rhythm_summary": "Twenty-four measured story pages.",
+                    "pages": [
+                        {
+                            "beat_ids": [f"beat_{index:04d}"],
+                            "emphasis": "initial",
+                            "density_intent": "standard",
+                            "rhythm_intent": f"Advance event {index}.",
+                        }
+                        for index in range(1, 25)
+                    ],
+                },
+                usage=None,
+            )
+
+        match = re.search(
+            r'"target_page_numbers":\[(.*?)\]',
+            request["user_content"],
+        )
+        assert match is not None
+        page_numbers = tuple(int(value) for value in match.group(1).split(",") if value)
+        detail_targets.append(page_numbers)
+        repairing = "repetitive_page_composition" in request["user_content"]
+        pages = []
+        for page_number in page_numbers:
+            panel_count = 1 if page_number <= 4 and not repairing else 2
+            pages.append(
+                {
+                    "emphasis": "initial",
+                    "density_intent": "standard",
+                    "rhythm_intent": f"Advance event {page_number}.",
+                    "layout_intent": f"{panel_count} supported visual moments.",
+                    "content": [
+                        {
+                            "beat_ids": [f"beat_{page_number:04d}"],
+                            "panel_role": ("standard" if panel == 1 else "reaction"),
+                            "visual_intent": (f"Visual moment {page_number}.{panel}."),
+                            "entity_ids": [],
+                        }
+                        for panel in range(1, panel_count + 1)
+                    ],
+                }
+            )
+        return ApiResult(
+            value={"rhythm_summary": "Local detail.", "pages": pages},
+            usage=None,
+        )
+
+    artifacts = TargetArtifacts(tmp_path)
+    plan = asyncio.run(
+        produce_book_plan(
+            adaptation,
+            ApprovedVisualReferenceInventory(),
+            ApprovedPageRange(minimum=24, maximum=24),
+            artifacts=artifacts,
+            ctx=StageRuntime(
+                "plan",
+                PipelineState(
+                    project_name="long-plan",
+                    novel_path="novel.txt",
+                    created_at=datetime.now(timezone.utc),
+                ),
+                tmp_path,
+            ),
+            model="test-planner",
+            generate=generate,
+        )
+    )
+
+    assert [call["feature"] for call in calls].count("plan.map") == 1
+    assert [call["feature"] for call in calls].count("plan.detail") == 4
+    assert detail_targets.count(tuple(range(1, 9))) == 2
+    assert detail_targets.count(tuple(range(9, 17))) == 1
+    assert detail_targets.count(tuple(range(17, 25))) == 1
+    assert all("json_schema" in call for call in calls)
+    assert len(plan.pages) == 24
+    assert len(artifacts.read_page(1).content) == 2
+    assert artifacts.read_page(1).content[0].lettering[0].id == "lettering_0001"
 
 
 def test_producer_retries_repetitive_single_panel_grammar_once(
@@ -369,8 +506,7 @@ def test_validation_separates_changed_lettering_from_broken_global_allocation() 
     assert validation.editorial_issues == ()
     assert all(failure.blocking for failure in validation.invariant_failures)
     assert all(
-        "score" not in failure.model_dump()
-        for failure in validation.invariant_failures
+        "score" not in failure.model_dump() for failure in validation.invariant_failures
     )
 
 
@@ -685,9 +821,7 @@ def test_plan_copies_adapt_lettering_from_the_cited_ids(tmp_path: Path) -> None:
     page = artifacts.read_page(1)
     assert [
         item.model_dump() for content in page.content for item in content.lettering
-    ] == [
-        item.model_dump() for beat in adaptation.beats for item in beat.lettering
-    ]
+    ] == [item.model_dump() for beat in adaptation.beats for item in beat.lettering]
     assert artifacts.read_page_revision(1, 1) == page
 
 
@@ -773,9 +907,9 @@ def test_lettering_cited_by_the_wrong_content_item_cannot_be_planned(
             )
         )
 
-    assert [
-        failure.code for failure in raised.value.validation.invariant_failures
-    ] == ["unknown_lettering"]
+    assert [failure.code for failure in raised.value.validation.invariant_failures] == [
+        "unknown_lettering"
+    ]
 
 
 def test_plan_persists_its_verdict_and_page_range_recommendation(
@@ -898,7 +1032,7 @@ def test_coordinates_are_absent_unless_the_author_explicitly_pins_a_beat(
                     "lettering_0002",
                 ],
             }
-        ]
+        ],
     }
 
     async def generate(**_kwargs):
@@ -1044,13 +1178,7 @@ def test_fidelity_page_floor_allows_safe_allocation_beyond_maximum() -> None:
     }
 
 
-def test_allocation_below_the_floor_is_reviewable_not_repaired() -> None:
-    """The floor was approved before any beats existed.
-
-    Plan allocated the adaptation that actually got written, so a shortfall is
-    recorded for review rather than padded to reach a stale estimate — and it is
-    recorded by the validator, not left to whether the model volunteers it.
-    """
+def test_allocation_below_the_approved_floor_is_blocking() -> None:
     adaptation = _adaptation()
     pages = [
         ComicPage(
@@ -1089,40 +1217,91 @@ def test_allocation_below_the_floor_is_reviewable_not_repaired() -> None:
         pages,
     )
 
-    assert validation.invariant_failures == ()
     shortfall = next(
-        issue
-        for issue in validation.editorial_issues
-        if issue.code == "page_count_below_floor"
+        failure
+        for failure in validation.invariant_failures
+        if failure.code == "target_page_range_conflict"
     )
-    assert shortfall.blocking is False
+    assert shortfall.blocking is True
     assert "allocation is 1 pages" in shortfall.evidence[0]
-    assert "Recommend lowering the approved minimum to 1 pages" in shortfall.evidence[0]
+    assert "approved minimum is 4" in shortfall.evidence[0]
+    assert "Do not lower the approved minimum" in shortfall.evidence[0]
 
 
-def test_expansion_lets_the_recorded_range_follow_a_short_allocation() -> None:
-    # BookPlan's own validator enforces target_page_min <= len(pages), so the
-    # recorded floor has to follow the allocation or construction would fail the
-    # stage on a plan the validator already accepted.
+def test_onscreen_lettering_speaker_must_be_visible_in_its_panel() -> None:
+    payload = _adaptation().model_dump(mode="json")
+    payload["content_sha256"] = ""
+    payload["beats"][1]["lettering"][0]["speaker_entity_id"] = "character_johansen"
+    payload["beats"][1]["lettering"][0]["delivery"] = "onscreen"
+    adaptation = BookAdaptation.model_validate(payload)
+    page = ComicPage(
+        page_number=1,
+        revision=1,
+        adaptation_revision=adaptation.revision,
+        adaptation_sha256=adaptation.content_sha256,
+        page_turn_role="release",
+        spread_role="single",
+        emphasis="release",
+        density_intent="standard",
+        layout_intent="The order is given from off frame.",
+        content=[
+            PageContent(
+                id="page_001_content_001",
+                order=1,
+                beat_ids=["beat_0001", "beat_0002"],
+                visual_intent="The Alert turns while Johansen remains unseen.",
+                lettering=[
+                    item for beat in adaptation.beats for item in beat.lettering
+                ],
+                entity_ids=["location_alert"],
+            )
+        ],
+        reading_order=[
+            "page_001_content_001",
+            "lettering_0001",
+            "lettering_0002",
+        ],
+    )
+
+    validation = validate_book_plan(
+        adaptation,
+        _inventory(),
+        ApprovedPageRange(minimum=1, maximum=2, allow_expansion=True),
+        [page],
+    )
+
+    failure = next(
+        item
+        for item in validation.invariant_failures
+        if item.code == "lettering_speaker_visibility"
+    )
+    assert failure.artifact_ids == (
+        "page_001_content_001",
+        "lettering_0002",
+        "character_johansen",
+    )
+
+
+def test_book_plan_preserves_an_approved_floor_after_valid_allocation() -> None:
     adaptation = _adaptation()
     plan = BookPlan(
         revision=1,
         adaptation_revision=adaptation.revision,
         adaptation_sha256=adaptation.content_sha256,
-        target_page_min=min(32, 23),
-        target_page_max=max(40, 23),
-        rhythm_summary="Short but complete.",
+        target_page_min=32,
+        target_page_max=40,
+        rhythm_summary="Complete at the approved narrative floor.",
         pages=[
             PlannedPageRevision(
                 page_number=index,
                 revision=1,
                 content_sha256="0" * 64,
             )
-            for index in range(1, 24)
+            for index in range(1, 33)
         ],
     )
-    assert len(plan.pages) == 23
-    assert plan.target_page_min == 23
+    assert len(plan.pages) == 32
+    assert plan.target_page_min == 32
 
 
 def test_reveal_without_page_turn_setup_is_an_evidence_backed_editorial_issue() -> None:
@@ -1168,9 +1347,7 @@ def test_reveal_without_page_turn_setup_is_an_evidence_backed_editorial_issue() 
     )
 
     issue = next(
-        issue
-        for issue in validation.editorial_issues
-        if issue.code == "weak_page_turn"
+        issue for issue in validation.editorial_issues if issue.code == "weak_page_turn"
     )
     assert issue.blocking is False
     assert issue.artifact_ids == ("beat_0002", "page_002")
@@ -1223,25 +1400,17 @@ def test_non_peak_reveal_does_not_require_its_own_page_turn() -> None:
         pages,
     )
 
-    assert "weak_page_turn" not in {
-        issue.code for issue in validation.editorial_issues
-    }
+    assert "weak_page_turn" not in {issue.code for issue in validation.editorial_issues}
 
 
 def test_cthulhu_plan_preserves_approach_peak_escape_release_and_aftermath_rhythm(
     tmp_path: Path,
 ) -> None:
     fixture = json.loads(
-        (
-            Path(__file__).parent
-            / "fixtures"
-            / "cthulhu_plan_rhythm.json"
-        ).read_text()
+        (Path(__file__).parent / "fixtures" / "cthulhu_plan_rhythm.json").read_text()
     )
     adaptation = BookAdaptation.model_validate(fixture["adaptation"])
-    inventory = ApprovedVisualReferenceInventory.model_validate(
-        fixture["references"]
-    )
+    inventory = ApprovedVisualReferenceInventory.model_validate(fixture["references"])
     target_range = ApprovedPageRange.model_validate(fixture["target_range"])
 
     async def generate(**_kwargs):
@@ -1276,9 +1445,7 @@ def test_cthulhu_plan_preserves_approach_peak_escape_release_and_aftermath_rhyth
     )
 
     pages = [artifacts.read_page(number) for number in range(1, 6)]
-    assert plan.rhythm_summary == (
-        "approach → Peak → escape → Release → aftermath"
-    )
+    assert plan.rhythm_summary == ("approach → Peak → escape → Release → aftermath")
     assert [page.rhythm_intent for page in pages] == [
         "approach",
         "Peak",
@@ -1315,9 +1482,7 @@ def test_reading_order_cannot_reorder_adapt_lettering() -> None:
                 beat_ids=["beat_0001", "beat_0002"],
                 visual_intent="The Alert approaches and turns away.",
                 lettering=[
-                    item
-                    for beat in adaptation.beats
-                    for item in beat.lettering
+                    item for beat in adaptation.beats for item in beat.lettering
                 ],
                 entity_ids=["character_johansen", "location_alert"],
             )
@@ -1389,9 +1554,7 @@ def test_page_scoped_appearance_state_must_follow_the_adapted_change() -> None:
                 beat_ids=["beat_0001", "beat_0002"],
                 visual_intent="Johansen turns the Alert through heavy spray.",
                 lettering=[
-                    item
-                    for beat in adaptation.beats
-                    for item in beat.lettering
+                    item for beat in adaptation.beats for item in beat.lettering
                 ],
                 entity_ids=["character_johansen", "location_alert"],
             )
@@ -1428,16 +1591,10 @@ def test_density_is_semantic_intent_without_a_universal_content_cap(
     density: str,
 ) -> None:
     fixture = json.loads(
-        (
-            Path(__file__).parent
-            / "fixtures"
-            / "cthulhu_plan_rhythm.json"
-        ).read_text()
+        (Path(__file__).parent / "fixtures" / "cthulhu_plan_rhythm.json").read_text()
     )
     adaptation = BookAdaptation.model_validate(fixture["adaptation"])
-    inventory = ApprovedVisualReferenceInventory.model_validate(
-        fixture["references"]
-    )
+    inventory = ApprovedVisualReferenceInventory.model_validate(fixture["references"])
     content = [
         PageContent(
             id=f"page_001_content_{index:03d}",
@@ -1549,15 +1706,20 @@ def test_repetitive_single_panel_run_is_an_evidence_backed_editorial_issue() -> 
         "page_003",
         "page_004",
     )
+    silent_issue = next(
+        issue
+        for issue in validation.editorial_issues
+        if issue.code == "sustained_silent_pages"
+    )
+    assert silent_issue.artifact_ids == (
+        "page_002",
+        "page_003",
+    )
 
 
 def test_peak_and_release_on_one_page_report_proportion_evidence() -> None:
     fixture = json.loads(
-        (
-            Path(__file__).parent
-            / "fixtures"
-            / "cthulhu_plan_rhythm.json"
-        ).read_text()
+        (Path(__file__).parent / "fixtures" / "cthulhu_plan_rhythm.json").read_text()
     )
     adaptation = BookAdaptation.model_validate(fixture["adaptation"])
     content = [
@@ -1656,9 +1818,7 @@ def test_spread_sides_cannot_repeat_without_an_intervening_single_or_spread() ->
         if failure.code == "page_spread_order"
     )
     assert failure.artifact_ids == ("page_001", "page_002")
-    assert failure.evidence == (
-        "Pages 1 and 2 both declare spread side 'left'.",
-    )
+    assert failure.evidence == ("Pages 1 and 2 both declare spread side 'left'.",)
 
 
 def test_pages_must_cite_the_canonical_book_adaptation_revision() -> None:
@@ -1680,9 +1840,7 @@ def test_pages_must_cite_the_canonical_book_adaptation_revision() -> None:
                 beat_ids=["beat_0001", "beat_0002"],
                 visual_intent="The Alert approaches and turns away.",
                 lettering=[
-                    item
-                    for beat in adaptation.beats
-                    for item in beat.lettering
+                    item for beat in adaptation.beats for item in beat.lettering
                 ],
             )
         ],
@@ -1871,7 +2029,9 @@ def test_plan_authored_issue_ownership_is_canonicalized_without_a_retry(
     )
 
     assert len(calls) == 1
-    issue = next(issue for issue in plan.editorial_issues if issue.id == "plan_issue_test")
+    issue = next(
+        issue for issue in plan.editorial_issues if issue.id == "plan_issue_test"
+    )
     assert issue.owner_stage == "plan"
 
 
@@ -2216,9 +2376,7 @@ def test_missing_lettering_ids_are_derived_into_reading_order(
     )
 
 
-def test_the_plan_prompt_states_the_page_shape_it_wants() -> None:
-    # Plan describes its allocation rules at length but, like Adapt did, never
-    # named the JSON keys — leaving the writer to guess the container.
+def test_plan_prompt_does_not_duplicate_the_strict_response_schema() -> None:
     from novel_to_comic.page_planning import build_book_plan_prompt
 
     prompt = build_book_plan_prompt(
@@ -2227,13 +2385,22 @@ def test_the_plan_prompt_states_the_page_shape_it_wants() -> None:
         ApprovedPageRange(minimum=1, maximum=2),
     )
 
-    assert '"rhythm_summary"' in prompt
-    assert '"pages"' in prompt
-    assert "<_PageDraft> = {" in prompt
-    assert "<_PageContentDraft> = {" in prompt
-    # Lettering is allocated by ID; the contract has to say so in the shape too.
-    assert '"lettering_ids": [string, ...]' in prompt
-    assert '"density_intent": "sparse" | "standard" | "dense"' in prompt
+    assert "planning_view" in prompt
+    assert "<_PageDraft>" not in prompt
+    assert "<_PageContentDraft>" not in prompt
+    assert "canonicalizes" in prompt
+
+
+def test_planning_view_excludes_the_source_ledger_and_provenance() -> None:
+    adaptation = _adaptation()
+    view = _planning_view(adaptation)
+    serialized = json.dumps(view)
+
+    assert "ledger" not in view
+    assert "source_unit_ids" not in serialized
+    assert "content_sha256" not in serialized
+    assert "The reef rose before us." in serialized
+    assert "speaker_entity_id" in serialized
 
 
 def test_fidelity_plan_prompt_treats_page_maximum_as_expandable_floor() -> None:
