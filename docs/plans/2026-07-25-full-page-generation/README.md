@@ -1,7 +1,9 @@
 # Full-page generation — implementation plan
 
-**Date:** 2026-07-25  
-**Status:** Ready for implementation  
+**Date:** 2026-07-25
+**Status:** Implementation substantially complete on `render-full-pages`;
+Ticket 09 acceptance evidence, documentation cleanup, and release integration
+remain before launch.
 **Design:** ADRs 0003-0015 in [`docs/adr/`](../../../adr/) — the dated design
 document was removed once its decisions were recorded there.
 
@@ -16,7 +18,9 @@ clean base. The prototype branch is evidence, not merge material. Reuse
 production concepts deliberately; do not merge prototype runners, provider
 experiments, paid outputs, or aliases wholesale.
 
-Stop after this plan. Do not begin implementation from the planning session.
+The plan is retained as the implementation record. The remaining work is
+hardening and launch evidence, not a second architecture or a compatibility
+migration.
 
 ## Sequencing
 

@@ -670,11 +670,18 @@ class TestPostWithRetry:
             asyncio.run(client._post_with_retry("http://gw/v1/x", headers={}, json={}))
         assert calls["n"] == client._MAX_RATE_LIMIT_RETRIES + 1
         assert len(delays) == client._MAX_RATE_LIMIT_RETRIES
-        # Without Retry-After the jittered windows grow monotonically and stay
-        # within the configured cap.
-        assert delays == sorted(delays)
-        assert delays[0] >= client._RATE_LIMIT_BASE_DELAY / 2
-        assert delays[-1] <= client._RATE_LIMIT_MAX_DELAY
+        # Without Retry-After, each equal-jitter delay stays inside its
+        # exponential window. Independent jitter can make a sampled delay
+        # smaller than the previous sample once the final window is capped.
+        windows = [
+            min(
+                client._RATE_LIMIT_BASE_DELAY * 2**attempt,
+                client._RATE_LIMIT_MAX_DELAY,
+            )
+            for attempt in range(client._MAX_RATE_LIMIT_RETRIES)
+        ]
+        for delay, window in zip(delays, windows, strict=True):
+            assert window / 2 <= delay <= window
 
     def test_transient_errors_keep_smaller_budget(self, monkeypatch):
         delays = _patch_sleep(monkeypatch)
