@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import re
 import time
+from datetime import UTC, datetime
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
@@ -33,6 +35,7 @@ from novel_to_comic.models.draw import (
     FrozenPageGenerationRequest,
     PageCapabilityProfile,
     PageGenerationProvenance,
+    PageGenerationFailure,
     PageReference,
     PageIssue,
     PageRenderRevision,
@@ -247,30 +250,69 @@ def _compile_prompt(
     unuploaded_authorities: tuple[ApprovedVisualReference, ...] = (),
     style_template: str = "",
 ) -> str:
+    def provider_safe_direction(text: str) -> str:
+        replacements = {
+            "char": "the referenced character",
+            "loc": "the referenced location",
+            "prop": "the referenced prop",
+        }
+        return re.sub(
+            r"\b(char|loc|prop)_\d+\b",
+            lambda match: replacements[match.group(1)],
+            text,
+        )
+
+    provider_page = {
+        "page_number": page.page_number,
+        "page_turn_role": page.page_turn_role,
+        "spread_role": page.spread_role,
+        "emphasis": page.emphasis,
+        "density_intent": page.density_intent,
+        "layout_intent": provider_safe_direction(page.layout_intent),
+        "rhythm_intent": provider_safe_direction(page.rhythm_intent),
+        "content": [
+            {
+                "order": content.order,
+                "panel_role": content.panel_role,
+                "visual_intent": provider_safe_direction(content.visual_intent),
+                "lettering": [
+                    {
+                        "kind": lettering.kind,
+                        "text": lettering.text,
+                        "speaker": lettering.speaker,
+                        "delivery": lettering.delivery,
+                    }
+                    for lettering in content.lettering
+                ],
+            }
+            for content in page.content
+        ],
+    }
     project_style = page_style_template(style_template) if style_template.strip() else None
     has_lettering = any(content.lettering for content in page.content)
     payload = {
-        "canonical_comic_page": page.model_dump(mode="json"),
+        "canonical_comic_page": provider_page,
         "project_style_direction": project_style,
         "approved_page_references": [
             {
                 "order": reference.order,
-                "entity_id": reference.entity_id,
-                "appearance_state_id": reference.appearance_state_id,
                 "visual_anchor": reference.visual_anchor,
             }
             for reference in references
         ],
         "provider_safe_visual_anchors": [
             {
-                "entity_id": authority.entity_id,
-                "appearance_state_id": authority.appearance_state_id,
                 "visual_anchor": authority.visual_anchor,
             }
             for authority in unuploaded_authorities
         ],
         "complete_page_correction": (
-            correction.model_dump(mode="json") if correction is not None else None
+            {
+                "mode": correction.mode,
+                "instruction": provider_safe_direction(correction.instruction),
+            }
+            if correction is not None
+            else None
         ),
     }
     depiction_direction = (
@@ -290,8 +332,12 @@ def _compile_prompt(
         "verbatim, including the canonical capitalization. The project_style_direction "
         "is the invariant authority for lettering typeface, weights, colors, balloons, "
         "caption boxes, borders, margins, gutters, and bleed treatment across every page; "
-        "do not improvise or vary those choices on this page. For lettering with "
-        "delivery='onscreen', attach the balloon tail only to speaker_entity_id; "
+        "do not improvise or vary those choices on this page. Render every exact "
+        "lettering string exactly once, only in its assigned content area; never "
+        "repeat, carry over, label, annotate, or typeset any metadata. Internal "
+        "identifiers are production metadata and must never appear in the art. "
+        "For lettering with delivery='onscreen', attach the balloon tail only to "
+        "the named speaker; "
         "never share one tail or balloon between characters. For delivery='offscreen', "
         "use an off-panel balloon treatment with no tail pointing to a visible "
         "character. Narration and quoted_text use caption boxes without character "
@@ -895,28 +941,77 @@ def enqueue_complete_page_draw(
     )
 
     async def _work() -> ApiResult[PageGenerationProvenance]:
-        if issue is None:
-            provenance = await draw_complete_page(
-                compiled,
-                adapter=adapter,
-                artifacts=artifacts,
-                page=page,
-                ocr=ocr,
-                request_revision=request_revision,
-                render_revision=render_revision,
-                parent_render_revision=parent_render_revision,
+        try:
+            if issue is None:
+                provenance = await draw_complete_page(
+                    compiled,
+                    adapter=adapter,
+                    artifacts=artifacts,
+                    page=page,
+                    ocr=ocr,
+                    request_revision=request_revision,
+                    render_revision=render_revision,
+                    parent_render_revision=parent_render_revision,
+                )
+            else:
+                provenance = await correct_complete_page(
+                    compiled,
+                    issue=issue,
+                    adapter=adapter,
+                    artifacts=artifacts,
+                    page=page,
+                    ocr=ocr,
+                    request_revision=request_revision,
+                    render_revision=render_revision,
+                )
+        except BaseException as exc:
+            from novel_to_comic.image_failure import (
+                classify_image_failure,
+                user_message_for_image_failure,
             )
-        else:
-            provenance = await correct_complete_page(
-                compiled,
-                issue=issue,
-                adapter=adapter,
-                artifacts=artifacts,
-                page=page,
-                ocr=ocr,
-                request_revision=request_revision,
-                render_revision=render_revision,
+
+            provenance_revisions = artifacts.provenance_revisions(
+                compiled.request.page_number
             )
+            analysis_failed = False
+            if provenance_revisions:
+                latest = artifacts.read_provenance(
+                    compiled.request.page_number,
+                    provenance_revisions[-1],
+                )
+                analysis_failed = (
+                    latest.render.request_sha256
+                    == compiled.request.request_sha256
+                    and not artifacts.analysis_path(
+                        compiled.request.page_number,
+                        latest.render.revision,
+                    ).exists()
+                )
+            classification = (
+                "analysis_error"
+                if analysis_failed
+                else classify_image_failure(exc)
+            )
+            user_message = (
+                "The page is already drawn, but its text check could not be "
+                "completed. Retry the text check without redrawing the page."
+                if analysis_failed
+                else user_message_for_image_failure(classification)
+            )
+            artifacts.write_page_failure(
+                PageGenerationFailure(
+                    page_number=compiled.request.page_number,
+                    request_sha256=compiled.request.request_sha256,
+                    failed_at=datetime.now(UTC),
+                    phase="analysis" if analysis_failed else "generation",
+                    classification=classification,
+                    recoverable=classification != "configuration_error",
+                    user_message=user_message,
+                    error=(str(exc) or type(exc).__name__)[:1000],
+                )
+            )
+            raise
+        artifacts.clear_page_failure(compiled.request.page_number)
         if on_success is not None:
             on_success(provenance)
         return ApiResult(

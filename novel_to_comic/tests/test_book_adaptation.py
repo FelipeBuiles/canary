@@ -10,12 +10,18 @@ import pytest
 from pydantic import ValidationError
 
 from novel_to_comic.book_adaptation import (
+    _BlueprintDraft,
     _BookDraft,
+    _LetteringDraft,
     _LedgerException,
     _adaptation_shards,
     _canonicalize_candidate_requirements,
     _materialize_draft_ledger,
     _repair_source_scope,
+    _splice_draft_repair,
+    _story_bible_view,
+    _validate_blueprint_scope,
+    _validate_locked_lettering,
     AdaptationValidation,
     AdaptationInvariantError,
     build_book_adaptation_prompt,
@@ -24,6 +30,12 @@ from novel_to_comic.book_adaptation import (
     partition_requirements_by_shard,
     produce_book_adaptation,
     validate_book_adaptation,
+)
+from novel_to_comic.models.appearance import (
+    AppearanceState,
+    StateActivation,
+    StoryPosition,
+    Transition,
 )
 from novel_to_comic.models.adaptation import (
     AdaptationBrief,
@@ -36,7 +48,7 @@ from novel_to_comic.models.adaptation import (
     NarrativeTreatment,
 )
 from novel_to_comic.models.source import SourceDocument, SourceScene, SourceUnit
-from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.models.story_bible import Character, Scene, StoryBible
 from novel_to_comic.models.validation import InvariantFailure
 from novel_to_comic.source_extraction import SourceSceneAnchor, build_source_document
 from novel_to_comic.stage_runtime import StageRuntime
@@ -86,6 +98,86 @@ def _story_bible() -> StoryBible:
         scenes=[],
         narrative_arcs=[],
     )
+
+
+def test_story_bible_view_preserves_extracted_appearance_transitions():
+    character = Character(
+        id="char_001",
+        name="Henry",
+        visual_anchor="1man, adult male, dark hair, pale skin",
+        age_range="early 20s",
+        gender="male",
+        distinguishing_features=["dark hair"],
+        default_outfit="artist clothes",
+        first_appearance_scene="scene_001",
+        appearance_states=[
+            AppearanceState(
+                id="henry_delirious",
+                label="Feverish delirium",
+                visual_anchor="1man, adult male, dark hair, pale skin",
+                baseline_affect="alternating unconsciousness and delirium",
+                visually_significant=True,
+            ),
+            AppearanceState(
+                id="henry_recovered",
+                label="Recovered",
+                visual_anchor="1man, adult male, dark hair, pale skin",
+                canonical_equivalent=True,
+            ),
+        ],
+        appearance_timeline=[
+            StateActivation(
+                state_id="henry_delirious",
+                at=StoryPosition(scene_id="scene_001", beat=2),
+                transition=Transition(label="fever begins"),
+            ),
+            StateActivation(
+                state_id="henry_recovered",
+                at=StoryPosition(scene_id="scene_001", beat=4),
+                transition=Transition(label="recovers"),
+            ),
+        ],
+    )
+    bible = StoryBible(
+        title="Fever",
+        author="A. Witness",
+        total_scenes=1,
+        characters=[character],
+        locations=[],
+        scenes=[
+            Scene(
+                id="scene_001",
+                chapter=1,
+                title="The fever",
+                location_id="loc_001",
+                character_ids=["char_001"],
+                summary="Henry becomes delirious, then recovers.",
+                scene_type="emotional",
+                narrative_beat="rising_action",
+                source_start_quote="Henry became ill.",
+            )
+        ],
+        narrative_arcs=[],
+    )
+
+    character_view = _story_bible_view(bible)["characters"][0]
+
+    assert character_view["appearance_states"] == [
+        {
+            "id": "henry_delirious",
+            "label": "Feverish delirium",
+            "canonical_equivalent": False,
+        },
+        {
+            "id": "henry_recovered",
+            "label": "Recovered",
+            "canonical_equivalent": True,
+        },
+    ]
+    assert [item["state_id"] for item in character_view["appearance_timeline"]] == [
+        "henry_delirious",
+        "henry_recovered",
+    ]
 
 
 def _approved_brief() -> AdaptationBrief:
@@ -187,6 +279,45 @@ def _book_adaptation() -> BookAdaptation:
             ),
         ],
     )
+
+
+def _blueprint_response(
+    beats: tuple[AdaptedBeat, ...] | list[AdaptedBeat],
+    *,
+    include_legacy_ledger: bool = False,
+) -> dict:
+    response = {
+        "beats": [
+            beat.model_dump(mode="json", exclude={"lettering"}) for beat in beats
+        ],
+        "ledger_exceptions": [],
+    }
+    if include_legacy_ledger:
+        response["ledger"] = [
+            {
+                "source_unit_id": beats[0].source_unit_ids[0],
+                "disposition": "depicted",
+                "adapted_beat_ids": [beats[0].id],
+                "preserved_function": "An obsolete partial model ledger.",
+            }
+        ]
+    return response
+
+
+def _lettering_response(
+    beats: tuple[AdaptedBeat, ...] | list[AdaptedBeat],
+) -> dict:
+    return {
+        "beats": [
+            {
+                "beat_id": beat.id,
+                "lettering": [
+                    item.model_dump(mode="json") for item in beat.lettering
+                ],
+            }
+            for beat in beats
+        ]
+    }
 
 
 def test_treatment_prompt_is_book_level_and_forbids_page_or_scene_authority() -> None:
@@ -904,6 +1035,90 @@ def test_canonicalization_derives_a_paraphrased_transition_origin() -> None:
     }
 
 
+def test_canonicalization_discards_a_transition_to_the_current_state() -> None:
+    payload = _two_beat_payload(
+        from_state="London",
+        from_state_id="witness_dry",
+    )
+    payload["beats"][1]["transitions"][0]["to_state"] = (
+        "the threshold of the old house"
+    )
+    candidate = BookAdaptation.model_validate(payload)
+
+    canonical = _canonicalize_candidate_requirements(
+        candidate,
+        _source_document(),
+        _approved_brief(),
+    )
+
+    assert canonical.beats[1].transitions == ()
+
+
+def test_spliced_repair_redirects_external_compression_to_replacement_beat() -> None:
+    template = _book_adaptation().beats[0]
+    original = _BookDraft(
+        beats=(
+            template.model_copy(
+                update={
+                    "id": "beat_0001",
+                    "order": 1,
+                    "source_unit_ids": ("source_000001",),
+                }
+            ),
+            template.model_copy(
+                update={
+                    "id": "beat_0002",
+                    "order": 2,
+                    "source_unit_ids": ("source_000002",),
+                }
+            ),
+        ),
+        ledger=(
+            AdaptationLedgerEntry(
+                source_unit_id="source_000001",
+                disposition="compressed_into",
+                adapted_beat_ids=["beat_0002"],
+                reason="The second beat carries the connection.",
+                preserved_function="The connection remains explicit.",
+            ),
+            AdaptationLedgerEntry(
+                source_unit_id="source_000002",
+                disposition="depicted",
+                adapted_beat_ids=["beat_0002"],
+                preserved_function="The destination is depicted.",
+            ),
+        ),
+    )
+    repair = _BookDraft(
+        beats=(
+            template.model_copy(
+                update={
+                    "id": "beat_0001",
+                    "order": 1,
+                    "source_unit_ids": ("source_000002",),
+                }
+            ),
+        ),
+        ledger=(
+            AdaptationLedgerEntry(
+                source_unit_id="source_000002",
+                disposition="depicted",
+                adapted_beat_ids=["beat_0001"],
+                preserved_function="The repaired destination is depicted.",
+            ),
+        ),
+    )
+
+    spliced = _splice_draft_repair(
+        original,
+        repair,
+        ("source_000002",),
+        {"source_000001": 1, "source_000002": 2},
+    )
+
+    assert spliced.ledger[0].adapted_beat_ids == ("beat_0002",)
+
+
 def test_canonicalization_derives_a_wrong_appearance_origin() -> None:
     # The appearance equivalent blocks the stage, so deriving it removes a
     # repair round rather than just log noise.
@@ -1604,11 +1819,8 @@ def test_producer_writes_one_book_artifact_and_records_model_usage(
     expected = _book_adaptation()
     responses = [
         expected.treatment.model_dump(mode="json"),
-        {
-            "beats": [beat.model_dump(mode="json") for beat in expected.beats],
-            "ledger": [],
-            "ledger_exceptions": [],
-        },
+        _blueprint_response(expected.beats, include_legacy_ledger=True),
+        _lettering_response(expected.beats),
     ]
     calls: list[dict] = []
 
@@ -1649,23 +1861,104 @@ def test_producer_writes_one_book_artifact_and_records_model_usage(
 
     assert produced == artifacts.read_adaptation()
     assert produced.beats == expected.beats
+    assert [entry.source_unit_id for entry in produced.ledger] == [
+        "source_000001",
+        "source_000002",
+    ]
     # One adaptation authority, plus Adapt's own derived verdict on it. No
     # per-scene screenplay outputs of any kind.
     assert sorted(path.name for path in (tmp_path / "adapt").iterdir()) == [
         "book.json",
         "validation.json",
     ]
+    assert (tmp_path / ".checkpoints" / "adapt" / "treatment.json").exists()
     assert artifacts.read_validation("adapt").invariant_failures == ()
     assert [call["feature"] for call in calls] == [
         "adapt.narrative_treatment",
-        "adapt.book",
+        "adapt.blueprint",
+        "adapt.lettering",
     ]
     assert all(call["json_schema"]["type"] == "object" for call in calls)
-    assert state.stages["adapt"].items_done == 2
-    assert len(state.stages["adapt"].usage_log) == 2
+    assert "ledger" not in calls[1]["json_schema"]["properties"]
+    assert state.stages["adapt"].items_done == 3
+    assert len(state.stages["adapt"].usage_log) == 3
     assert state.stages["adapt"].cost_usd > 0
     assert state.stages["adapt"].cost_usd > 0
     assert state.stages["adapt"].estimated_cost_usd > 0
+
+
+def test_restart_reuses_paid_treatment_and_blueprint_checkpoints(
+    tmp_path: Path,
+) -> None:
+    expected = _book_adaptation()
+    first_calls: list[str] = []
+
+    async def interrupted_generate(**request):
+        first_calls.append(request["feature"])
+        if request["feature"] == "adapt.narrative_treatment":
+            value = expected.treatment.model_dump(mode="json")
+        elif request["feature"] == "adapt.blueprint":
+            value = _blueprint_response(expected.beats)
+        else:
+            raise RuntimeError("connection lost during lettering")
+        return ApiResult(value=value, usage=None)
+
+    artifacts = TargetArtifacts(tmp_path)
+    with pytest.raises(RuntimeError):
+        asyncio.run(
+            produce_book_adaptation(
+                _source_document(),
+                _story_bible(),
+                _approved_brief(),
+                artifacts=artifacts,
+                ctx=StageRuntime(
+                    "adapt",
+                    PipelineState(
+                        project_name="checkpoint-test",
+                        novel_path="novel.txt",
+                        created_at=datetime.now(timezone.utc),
+                    ),
+                    tmp_path,
+                ),
+                model="gpt-4o-mini",
+                generate=interrupted_generate,
+            )
+        )
+
+    resumed_calls: list[str] = []
+
+    async def resumed_generate(**request):
+        resumed_calls.append(request["feature"])
+        assert request["feature"] == "adapt.lettering"
+        return ApiResult(value=_lettering_response(expected.beats), usage=None)
+
+    produced = asyncio.run(
+        produce_book_adaptation(
+            _source_document(),
+            _story_bible(),
+            _approved_brief(),
+            artifacts=artifacts,
+            ctx=StageRuntime(
+                "adapt",
+                PipelineState(
+                    project_name="checkpoint-test",
+                    novel_path="novel.txt",
+                    created_at=datetime.now(timezone.utc),
+                ),
+                tmp_path,
+            ),
+            model="gpt-4o-mini",
+            generate=resumed_generate,
+        )
+    )
+
+    assert first_calls == [
+        "adapt.narrative_treatment",
+        "adapt.blueprint",
+        "adapt.lettering",
+    ]
+    assert resumed_calls == ["adapt.lettering"]
+    assert produced.beats == expected.beats
 
 
 def test_producer_canonicalizes_approved_requirement_metadata(
@@ -1688,14 +1981,12 @@ def test_producer_canonicalizes_approved_requirement_metadata(
 
     async def generate(**request):
         calls.append(request)
-        value = (
-            treatment.model_dump(mode="json")
-            if request["feature"] == "adapt.narrative_treatment"
-            else {
-                "beats": [beat.model_dump(mode="json")],
-                "ledger": [entry.model_dump(mode="json") for entry in expected.ledger],
-            }
-        )
+        if request["feature"] == "adapt.narrative_treatment":
+            value = treatment.model_dump(mode="json")
+        elif request["feature"] == "adapt.blueprint":
+            value = _blueprint_response([beat])
+        else:
+            value = _lettering_response([beat])
         return ApiResult(value=value, usage=None)
 
     produced = asyncio.run(
@@ -1718,7 +2009,7 @@ def test_producer_canonicalizes_approved_requirement_metadata(
         )
     )
 
-    assert len(calls) == 2
+    assert len(calls) == 3
     assert produced.treatment.essential_event_ids == ("essential_event_001",)
     assert produced.treatment.character_turn_ids == ("character_turn_001",)
     assert produced.beats[0].brief_requirement_ids == (
@@ -1831,6 +2122,21 @@ def test_large_book_adaptation_is_written_in_bounded_internal_shards(
         calls.append(request)
         if request["feature"] == "adapt.narrative_treatment":
             return ApiResult(value=treatment.model_dump(mode="json"), usage=None)
+        if request["feature"] == "adapt.lettering":
+            beat_ids = list(
+                dict.fromkeys(
+                    re.findall(r'"id":"(beat_\d{4})"', request["user_content"])
+                )
+            )
+            return ApiResult(
+                value={
+                    "beats": [
+                        {"beat_id": beat_id, "lettering": []}
+                        for beat_id in beat_ids
+                    ]
+                },
+                usage=None,
+            )
         active_book_calls += 1
         max_active_book_calls = max(max_active_book_calls, active_book_calls)
         await asyncio.sleep(0.01)
@@ -1869,17 +2175,8 @@ def test_large_book_adaptation_is_written_in_bounded_internal_shards(
                         "appearance_changes": [],
                     }
                 ],
-                "ledger": [
-                    {
-                        "source_unit_id": source_id,
-                        "disposition": "depicted",
-                        "adapted_beat_ids": ["beat_0001"],
-                        "reason": None,
-                        "preserved_function": "The source event remains explicit.",
-                    }
-                    for source_id in source_ids
-                ],
-            },
+                    "ledger_exceptions": [],
+                },
             usage=None,
         )
         active_book_calls -= 1
@@ -1905,7 +2202,7 @@ def test_large_book_adaptation_is_written_in_bounded_internal_shards(
         )
     )
 
-    book_calls = [call for call in calls if call["feature"] == "adapt.book"]
+    book_calls = [call for call in calls if call["feature"] == "adapt.blueprint"]
     assert len(book_calls) == 3
     assert all(
         len(set(re.findall(r'"id":"source_\d{6}"', call["user_content"]))) <= 180
@@ -1917,12 +2214,12 @@ def test_large_book_adaptation_is_written_in_bounded_internal_shards(
     assert [beat.order for beat in produced.beats] == [1, 2]
     assert len({beat.id for beat in produced.beats}) == 2
     assert max_active_book_calls == 2
-    assert all("json_schema" in call for call in book_calls)
+    assert all("ledger" not in call["json_schema"]["properties"] for call in book_calls)
     assert shard_attempts == {
         "source_000001": 2,
         "source_000181": 1,
     }
-    assert "YOUR PREVIOUS SHARD JSON" in book_calls[-1]["user_content"]
+    assert "VALIDATION ERRORS" in book_calls[-1]["user_content"]
 
 
 def test_adaptation_shards_use_model_output_budget_and_fit_cthulhu_in_three() -> None:
@@ -2001,7 +2298,12 @@ def test_a_blocked_adaptation_gets_one_repair_pass_with_its_failures(
         "beats": [beat.model_dump(mode="json") for beat in expected.beats],
         "ledger": [entry.model_dump(mode="json") for entry in expected.ledger],
     }
-    responses = [expected.treatment.model_dump(mode="json"), broken, repaired]
+    responses = [
+        expected.treatment.model_dump(mode="json"),
+        broken,
+        repaired,
+        _lettering_response(expected.beats),
+    ]
     calls: list[dict] = []
 
     async def generate(**request):
@@ -2041,30 +2343,71 @@ def test_a_blocked_adaptation_gets_one_repair_pass_with_its_failures(
     )
 
     assert produced.beats == expected.beats
-    assert len(calls) == 3
-    # The repair pass must state the specific failure, not just "try again".
-    assert "missing_character_turn" in calls[2]["user_content"]
-    assert "missing_essential_event" not in calls[2]["user_content"]
-    assert artifacts.read_validation("adapt").attempts == 2
+    assert len(calls) == 4
+    # Structural omissions are repaired before the expensive prose pass.
+    assert "missing owned requirement IDs" in calls[2]["user_content"]
+    assert calls[2]["quality_tier"] == "quality"
+    assert calls[3]["feature"] == "adapt.lettering"
+    assert artifacts.read_validation("adapt").attempts == 1
 
 
 def test_a_failed_adaptation_preserves_the_last_candidate(
     tmp_path: Path,
 ) -> None:
     expected = _book_adaptation()
+    brief = AdaptationBrief.model_validate(
+        {
+            **_approved_brief().model_dump(mode="json"),
+            "transformation_level": "faithful",
+            "content_sha256": "",
+        }
+    )
+    reveal = expected.beats[0].model_copy(
+        update={
+            "source_unit_ids": ("source_000001",),
+            "story_functions": ("reveal",),
+            "brief_requirements": ("The witness sees the door open.",),
+            "brief_requirement_ids": ("essential_event_001",),
+            "lettering": (expected.beats[0].lettering[0],),
+        }
+    )
+    transition = expected.beats[0].model_copy(
+        update={
+            "id": "beat_0002",
+            "order": 2,
+            "summary": "The witness abandons the investigation.",
+            "narrative_function": "transition",
+            "source_unit_ids": ("source_000002",),
+            "story_functions": ("transition", "character_turn"),
+            "brief_requirements": ("The witness abandons the investigation.",),
+            "brief_requirement_ids": ("character_turn_001",),
+            "transitions": (
+                ContinuityTransition(
+                    dimension="place",
+                    scope_id="thread_witness",
+                    from_state="inside the house",
+                    to_state="outside in the rain",
+                    description="The witness flees the house.",
+                ),
+            ),
+            "lettering": (
+                expected.beats[0].lettering[1].model_copy(
+                    update={"id": "lettering_0002"}
+                ),
+            ),
+        }
+    )
     broken = {
         "beats": [
-            {
-                **expected.beats[0].model_dump(mode="json"),
-                "brief_requirements": [],
-                "brief_requirement_ids": [],
-            }
+            reveal.model_dump(mode="json"),
+            transition.model_dump(mode="json"),
         ],
-        "ledger": [entry.model_dump(mode="json") for entry in expected.ledger],
+        "ledger_exceptions": [],
     }
     responses = [
         expected.treatment.model_dump(mode="json"),
-        broken,
+        _blueprint_response([reveal, transition]),
+        _lettering_response([reveal, transition]),
         broken,
     ]
 
@@ -2077,7 +2420,7 @@ def test_a_failed_adaptation_preserves_the_last_candidate(
             produce_book_adaptation(
                 _source_document(),
                 _story_bible(),
-                _approved_brief(),
+                brief,
                 artifacts=artifacts,
                 ctx=StageRuntime(
                     "adapt",
@@ -2094,7 +2437,7 @@ def test_a_failed_adaptation_preserves_the_last_candidate(
         )
 
     candidate = artifacts.read_failed_adaptation_candidate()
-    assert candidate.beats[0].brief_requirement_ids == ("essential_event_001",)
+    assert candidate.beats[0].story_functions == ("reveal",)
     assert not artifacts.adaptation_path.exists()
 
 
@@ -2158,6 +2501,7 @@ def test_a_schema_slip_is_repaired_instead_of_failing_the_stage(
             "beats": [beat],
             "ledger": [entry.model_dump(mode="json") for entry in expected.ledger],
         },
+        _lettering_response(expected.beats),
     ]
     calls: list[dict] = []
 
@@ -2197,7 +2541,7 @@ def test_a_schema_slip_is_repaired_instead_of_failing_the_stage(
     )
 
     assert produced.beats == expected.beats
-    assert len(calls) == 3
+    assert len(calls) == 4
     assert "VALIDATION ERRORS" in calls[2]["user_content"]
     assert "story_functions" in calls[2]["user_content"]
 
@@ -2222,7 +2566,12 @@ def test_a_repaired_attempt_is_billed_without_inflating_progress(
         "beats": [beat.model_dump(mode="json") for beat in expected.beats],
         "ledger": [entry.model_dump(mode="json") for entry in expected.ledger],
     }
-    responses = [expected.treatment.model_dump(mode="json"), broken, repaired]
+    responses = [
+        expected.treatment.model_dump(mode="json"),
+        broken,
+        repaired,
+        _lettering_response(expected.beats),
+    ]
     calls: list[dict] = []
 
     async def generate(**request):
@@ -2257,9 +2606,9 @@ def test_a_repaired_attempt_is_billed_without_inflating_progress(
         )
     )
 
-    assert len(state.stages["adapt"].usage_log) == 3
-    assert state.stages["adapt"].items_done == 2
-    assert state.stages["adapt"].cost_usd == pytest.approx(0.003)
+    assert len(state.stages["adapt"].usage_log) == 4
+    assert state.stages["adapt"].items_done == 3
+    assert state.stages["adapt"].cost_usd == pytest.approx(0.004)
 
 
 def test_treatment_prompt_does_not_duplicate_the_strict_response_schema() -> None:
@@ -2315,6 +2664,90 @@ def test_compact_ledger_exceptions_expand_into_canonical_source_accounting() -> 
     assert materialized.ledger[0].disposition == "caption"
     assert materialized.ledger[1].disposition == "compressed_into"
     assert materialized.ledger_exceptions == ()
+
+
+def test_sfx_lettering_is_depicted_in_the_source_ledger() -> None:
+    """SFX is publishable lettering, but not a canonical ledger disposition."""
+
+    beat = _book_adaptation().beats[0].model_copy(
+        update={
+            "source_unit_ids": ("source_000001",),
+            "lettering": (
+                LetteringItem(
+                    id="lettering_0001",
+                    kind="sfx",
+                    text="BANG",
+                    delivery="display",
+                    source_unit_ids=("source_000001",),
+                ),
+            ),
+        }
+    )
+
+    materialized = _materialize_draft_ledger(
+        _BookDraft(beats=(beat,)),
+        ("source_000001",),
+    )
+
+    assert materialized.ledger[0].disposition == "depicted"
+    assert materialized.ledger[0].adapted_beat_ids == ("beat_0001",)
+
+
+def test_blueprint_rejects_an_unexplained_transition_before_lettering() -> None:
+    beat = _book_adaptation().beats[0].model_copy(
+        update={
+            "narrative_function": "transition",
+            "story_functions": ("transition",),
+            "transitions": (),
+        }
+    )
+    blueprint = _BlueprintDraft.model_validate(
+        _blueprint_response([beat])
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="transition beats missing continuity transitions",
+    ):
+        _validate_blueprint_scope(
+            blueprint,
+            source_unit_ids=("source_000001", "source_000002"),
+            owned_requirement_ids=(
+                "essential_event_001",
+                "character_turn_001",
+            ),
+        )
+
+
+def test_locked_lettering_rejects_onscreen_speech_without_entity_id() -> None:
+    lettering = _LetteringDraft.model_validate(
+        {
+            "beats": [
+                {
+                    "beat_id": "beat_0001",
+                    "lettering": [
+                        {
+                            "id": "lettering_0001",
+                            "kind": "dialogue",
+                            "text": "The stars are right.",
+                            "speaker": "Prisoner",
+                            "delivery": "onscreen",
+                            "source_unit_ids": ["source_000001"],
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="On-screen lettering requires speaker_entity_id",
+    ):
+        _validate_locked_lettering(
+            lettering,
+            known_speaker_ids={"char_006"},
+        )
 
 
 def test_missing_compact_ledger_exception_becomes_a_repairable_failure() -> None:
@@ -2470,6 +2903,7 @@ def test_a_treatment_in_the_wrong_containers_costs_no_extra_model_call(
             "beats": [beat.model_dump(mode="json") for beat in expected.beats],
             "ledger": [entry.model_dump(mode="json") for entry in expected.ledger],
         },
+        _lettering_response(expected.beats),
     ]
     calls: list[dict] = []
 
@@ -2497,6 +2931,6 @@ def test_a_treatment_in_the_wrong_containers_costs_no_extra_model_call(
         )
     )
 
-    assert len(calls) == 2
+    assert len(calls) == 3
     assert produced.treatment.causal_spine == (expected.treatment.causal_spine[0],)
     assert produced.treatment.motifs == ("door: The door recurs.",)

@@ -7,6 +7,8 @@ import type { EditorialIssue, StageStatus } from "../types/api";
 
 const createIssue = vi.fn();
 const correctIssue = vi.fn();
+const dismissIssue = vi.fn();
+const analyzePage = vi.fn();
 const continueToBook = vi.fn();
 const generatePage = vi.fn();
 const runPipeline = vi.fn();
@@ -29,6 +31,8 @@ let stageStatuses: Record<"adapt" | "plan" | "draw", TestStageInfo> = {
 };
 let completePagesUnavailable = false;
 let pageIssues: Array<Record<string, unknown>> | undefined;
+let persistedPageFailure: Record<string, unknown> | null = null;
+let persistedRenderedFailure: Record<string, unknown> | null = null;
 let adaptationIssues: EditorialIssue[] = [];
 let planIssues: EditorialIssue[] = [];
 let planValidation: {
@@ -102,6 +106,7 @@ vi.mock("../api/queries", () => ({
           status: "open",
           resolution_revision: null,
         }],
+        failure: persistedRenderedFailure,
       }, ...(includeUndrawnPage ? [{
         page: {
           page_number: 2,
@@ -118,6 +123,7 @@ vi.mock("../api/queries", () => ({
         },
         active_render: null,
         issues: [],
+        failure: persistedPageFailure,
       }] : [])],
       issue_summary: {
         unresolved_issue_ids: ["page-issue-1"],
@@ -130,9 +136,11 @@ vi.mock("../api/queries", () => ({
     refetch: vi.fn().mockResolvedValue(undefined),
   }),
   useGenerateCompletePage: () => ({ mutate: generatePage, isPending: false }),
+  useAnalyzeCompletePage: () => ({ mutate: analyzePage, isPending: false }),
   useCreatePageIssue: () => ({ mutate: createIssue, isPending: false }),
   useCorrectPageIssue: () => ({ mutate: correctIssue, isPending: false }),
   useAcceptPageIssue: () => ({ mutate: vi.fn(), isPending: false }),
+  useDismissPageIssue: () => ({ mutate: dismissIssue, isPending: false }),
   useApproveStage: () => ({ mutate: continueToBook, isPending: false }),
   useRunPipeline: () => ({ mutate: runPipeline, isPending: false }),
   useGenerationJobs: (project: string | undefined, ids: string[]) => {
@@ -166,6 +174,8 @@ describe("PagesRoom", () => {
     window.localStorage.removeItem(SHOW_DEV_CONTENT_KEY);
     createIssue.mockReset();
     correctIssue.mockReset();
+    dismissIssue.mockReset();
+    analyzePage.mockReset();
     continueToBook.mockReset();
     generatePage.mockReset();
     runPipeline.mockReset();
@@ -173,6 +183,8 @@ describe("PagesRoom", () => {
     includeUndrawnPage = false;
     completePagesUnavailable = false;
     pageIssues = undefined;
+    persistedPageFailure = null;
+    persistedRenderedFailure = null;
     adaptationIssues = [{
       id: "adapt-issue-1",
       owner_stage: "adapt",
@@ -499,7 +511,7 @@ describe("PagesRoom", () => {
 
   it("explains the exact OCR mismatch before offering a redraw", () => {
     pageIssues = [{
-      id: "page-issue-ocr",
+      id: "page-issue-draw-page-001-render-002-misspelled_lettering",
       issue_type: "misspelled_lettering",
       classification: "invariant_failure",
       correction_kind: "render_fidelity",
@@ -521,7 +533,14 @@ describe("PagesRoom", () => {
     expect(screen.getByText("Some lettering does not match")).toBeTruthy();
     expect(screen.getByText("Open the door. · Run!")).toBeTruthy();
     expect(screen.getByText("Open the dor. · Run!")).toBeTruthy();
+    expect(screen.getByText("EXACT DIFFERENCE")).toBeTruthy();
     expect(screen.getByRole("button", { name: "CREATE CORRECTED REVISION" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "DISMISS FALSE POSITIVE" }));
+    expect(dismissIssue).toHaveBeenCalledWith({
+      project: "demo",
+      pageNumber: 1,
+      issueId: "page-issue-draw-page-001-render-002-misspelled_lettering",
+    });
   });
 
   it("generates one complete page from an undrawn page card", () => {
@@ -571,6 +590,47 @@ describe("PagesRoom", () => {
       { project: "demo", pageNumber: 2, depiction: "less_graphic" },
       expect.any(Object),
     );
+  });
+
+  it("keeps a provider failure visible after the temporary job is gone", () => {
+    includeUndrawnPage = true;
+    persistedPageFailure = {
+      page_number: 2,
+      request_sha256: "f".repeat(64),
+      failed_at: "2026-07-30T16:00:00Z",
+      phase: "generation",
+      classification: "provider_blocked",
+      recoverable: true,
+      user_message: "The image provider declined this scene.",
+      error: "finish_reason=SAFETY",
+    };
+
+    renderRoom();
+
+    expect(screen.getByText("WE COULDN'T DRAW THIS PAGE")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "DRAW WITHOUT REFERENCES" })).toBeTruthy();
+  });
+
+  it("retries a failed text check without redrawing the page", () => {
+    persistedRenderedFailure = {
+      page_number: 1,
+      request_sha256: "f".repeat(64),
+      failed_at: "2026-07-30T16:00:00Z",
+      phase: "analysis",
+      classification: "analysis_error",
+      recoverable: true,
+      user_message: "The page is already drawn, but its text check failed.",
+      error: "invalid OCR response shape",
+    };
+
+    renderRoom();
+
+    expect(screen.getByText("TEXT CHECK INCOMPLETE")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "RETRY TEXT CHECK" }));
+    expect(analyzePage).toHaveBeenCalledWith({
+      project: "demo",
+      pageNumber: 1,
+    });
   });
 
   it("continues to Book through the Draw checkpoint", () => {

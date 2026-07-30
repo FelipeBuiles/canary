@@ -71,15 +71,28 @@ def _ocr_is_exact(
     page: ComicPage,
     render: PageRenderRevision,
     analysis: RenderAnalysis,
+    *,
+    dismissed_failure_ids: frozenset[str] = frozenset(),
 ) -> bool:
     canonical = _canonical_lettering(page)
+    active_failures = tuple(
+        failure
+        for failure in analysis.invariant_failures
+        if failure.id not in dismissed_failure_ids
+    )
     if (
         analysis.page_number != page.page_number
         or analysis.render_revision != render.revision
         or analysis.render_image_sha256 != render.image_sha256
-        or analysis.invariant_failures
-        or len(analysis.lettering_matches) != len(canonical)
+        or active_failures
     ):
+        return False
+    # A dismissed Draw finding is an explicit visual-review override of the
+    # detector's OCR verdict. The analysis remains immutable evidence, but it
+    # must not continue to block Finish after that decision.
+    if analysis.invariant_failures:
+        return True
+    if len(analysis.lettering_matches) != len(canonical):
         return False
     for expected, match in zip(canonical, analysis.lettering_matches, strict=True):
         if (
@@ -104,13 +117,18 @@ def _appearance_failures(
         for change in beat.appearance_changes
     }
     active: dict[str, str] = {}
+    activated: dict[str, set[str]] = defaultdict(set)
+    seen_beats: set[str] = set()
     failures: dict[int, list[InvariantFailure]] = defaultdict(list)
     for page in pages:
         for content in page.content:
             for beat_id in content.beat_ids:
                 beat = beats.get(beat_id)
-                if beat is None:
+                if beat is None or beat.id in seen_beats:
                     continue
+                # Adjacent content items may decompose one adapted beat into
+                # several visual moments. Apply its state changes once, not
+                # once per content item.
                 for change in beat.appearance_changes:
                     current = active.get(change.entity_id)
                     if (
@@ -135,6 +153,8 @@ def _appearance_failures(
                             )
                         )
                     active[change.entity_id] = change.to_state_id
+                    activated[change.entity_id].add(change.to_state_id)
+                seen_beats.add(beat.id)
             cited_by_entity: dict[str, list[str]] = defaultdict(list)
             for state_id in content.appearance_state_ids:
                 owner = state_owner.get(state_id)
@@ -143,7 +163,25 @@ def _appearance_failures(
             for entity_id in content.entity_ids:
                 expected = active.get(entity_id)
                 cited = cited_by_entity.get(entity_id, [])
-                if expected is not None and cited != [expected]:
+                not_yet_activated = [
+                    state_id
+                    for state_id in cited
+                    if state_id not in activated.get(entity_id, set())
+                ]
+                # A page may explicitly cite an earlier state for a timeline
+                # or composite image. The invariant is that the state has
+                # been activated and that a changed entity is not left
+                # without any page-scoped state citation.
+                if expected is not None and (not cited or not_yet_activated):
+                    evidence = (
+                        f"Active state for {entity_id!r} is {expected!r}; "
+                        f"page content cites {cited!r}."
+                    )
+                    if not_yet_activated:
+                        evidence = (
+                            f"Page content cites states not yet activated for "
+                            f"{entity_id!r}: {not_yet_activated!r}."
+                        )
                     failures[page.page_number].append(
                         _failure(
                             page_number=page.page_number,
@@ -151,10 +189,7 @@ def _appearance_failures(
                             code="cross_page_appearance_state",
                             message="Page-scoped appearance state is stale across pages.",
                             artifact_ids=(content.id, entity_id, expected, *cited),
-                            evidence=(
-                                f"Active state for {entity_id!r} is {expected!r}; "
-                                f"page content cites {cited!r}.",
-                            ),
+                            evidence=(evidence,),
                         )
                     )
     return failures
@@ -306,6 +341,85 @@ def _clear_derived_outputs(artifacts: TargetArtifacts) -> None:
             path.unlink()
 
 
+def _read_existing_preflight(
+    artifacts: TargetArtifacts,
+) -> FinishPreflight | None:
+    try:
+        return artifacts.read_preflight()
+    except (ArtifactMissing, ValueError):
+        return None
+
+
+def _page_identity(preflight: FinishPreflight) -> tuple:
+    return (
+        preflight.edition_sha256,
+        tuple(
+            (
+                page.page_number,
+                page.comic_page_revision,
+                page.comic_page_sha256,
+                page.render_revision,
+                page.render_image_sha256,
+            )
+            for page in preflight.pages
+        ),
+    )
+
+
+def _safe_package_path(artifacts: TargetArtifacts, relative_path: str) -> Path | None:
+    project_root = artifacts.project_dir.resolve()
+    candidate = (artifacts.project_dir / relative_path).resolve()
+    try:
+        candidate.relative_to(project_root)
+    except ValueError:
+        return None
+    return candidate
+
+
+def _remove_packages(
+    artifacts: TargetArtifacts,
+    packages: tuple[ExportPackage, ...],
+) -> None:
+    for package in packages:
+        path = _safe_package_path(artifacts, package.relative_path)
+        if path is None:
+            continue
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+
+def _reusable_packages(
+    artifacts: TargetArtifacts,
+    previous: FinishPreflight | None,
+    current: FinishPreflight,
+) -> tuple[ExportPackage, ...]:
+    if previous is None or not previous.packages:
+        return ()
+    if _page_identity(previous) != _page_identity(current):
+        _remove_packages(artifacts, previous.packages)
+        return ()
+
+    reusable: list[ExportPackage] = []
+    for package in previous.packages:
+        path = _safe_package_path(artifacts, package.relative_path)
+        if path is None or not path.is_file():
+            continue
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        if (
+            len(data) == package.byte_size
+            and hashlib.sha256(data).hexdigest() == package.content_sha256
+        ):
+            reusable.append(package)
+    stale = tuple(package for package in previous.packages if package not in reusable)
+    _remove_packages(artifacts, stale)
+    return tuple(reusable)
+
+
 def _package_exports(
     artifacts: TargetArtifacts,
     page_paths: tuple[Path, ...],
@@ -373,10 +487,17 @@ def finish_book(
     *,
     production: FinishProductionSpec,
     formats: tuple[str, ...] = ("pdf", "cbz"),
+    clear_derived_outputs: bool = True,
 ) -> FinishResult:
     """Preflight and export active complete pages without any provider seam."""
 
-    _clear_derived_outputs(artifacts)
+    previous_preflight = (
+        _read_existing_preflight(artifacts)
+        if not clear_derived_outputs and not formats
+        else None
+    )
+    if clear_derived_outputs:
+        _clear_derived_outputs(artifacts)
     plan = artifacts.read_plan()
     adaptation = artifacts.read_adaptation()
     edition = artifacts.read_book_edition()
@@ -388,6 +509,7 @@ def finish_book(
 
     for selected, page in zip(plan.pages, pages, strict=True):
         failures = list(appearance.get(page.page_number, ()))
+        issues = _read_issues(artifacts, selected.page_number)
         if (
             plan.adaptation_revision != adaptation.revision
             or plan.adaptation_sha256 != adaptation.content_sha256
@@ -470,7 +592,21 @@ def finish_book(
                 )
             except ArtifactMissing:
                 analysis = None
-            if analysis is None or not _ocr_is_exact(page, render, analysis):
+            dismissed_failure_ids = frozenset(
+                issue.id.removeprefix("page-issue-")
+                for issue in issues
+                if (
+                    issue.status == "dismissed"
+                    and issue.classification == "invariant_failure"
+                    and issue.render_revision == render.revision
+                )
+            )
+            if analysis is None or not _ocr_is_exact(
+                page,
+                render,
+                analysis,
+                dismissed_failure_ids=dismissed_failure_ids,
+            ):
                 failures.append(
                     _failure(
                         page_number=selected.page_number,
@@ -524,7 +660,6 @@ def finish_book(
                     )
                 )
 
-        issues = _read_issues(artifacts, selected.page_number)
         known_render_revisions = set(
             artifacts.provenance_revisions(selected.page_number)
         )
@@ -726,8 +861,18 @@ def finish_book(
         correction_requests=tuple(correction_requests),
     )
     if not preflight.ready_to_export:
+        if previous_preflight is not None:
+            _remove_packages(artifacts, previous_preflight.packages)
         artifacts.write_preflight(preflight)
         return FinishResult(preflight=preflight)
+
+    if not formats:
+        packages = _reusable_packages(artifacts, previous_preflight, preflight)
+        preflight = FinishPreflight.model_validate(
+            preflight.model_copy(update={"packages": packages}).model_dump()
+        )
+        artifacts.write_preflight(preflight)
+        return FinishResult(preflight=preflight, packages=packages)
 
     try:
         packages = _package_exports(

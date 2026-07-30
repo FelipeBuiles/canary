@@ -205,8 +205,25 @@ def test_compiler_freezes_exact_page_authority_and_selected_reference_order(
     assert request.retry == RetryProvenance(attempt=1)
     assert "It was the same face." in request.prompt
     assert "Ward’s torn left sleeve; blood below the right eye" in request.prompt
-    assert "attach the balloon tail only to speaker_entity_id" in request.prompt
+    assert "attach the balloon tail only to the named speaker" in request.prompt
     assert "off-panel balloon treatment" in request.prompt
+    assert "exactly once" in request.prompt
+    assert "ward-bloodied" not in request.prompt
+    assert "idol-ref" not in request.prompt
+
+
+def test_provider_prompt_never_exposes_internal_entity_ids_as_visible_copy(
+    tmp_path: Path,
+) -> None:
+    page = _page(visual_intent="Ward studies loc_001 while holding prop_002.")
+
+    request = _compile(tmp_path, page=page).request
+
+    assert "loc_001" not in request.prompt
+    assert "prop_002" not in request.prompt
+    assert "the referenced location" in request.prompt
+    assert "the referenced prop" in request.prompt
+    assert request.references[0].entity_id == "ward"
 
 
 def test_compiler_explicitly_forbids_visible_text_on_unlettered_pages(
@@ -845,6 +862,91 @@ def test_complete_page_enqueue_uses_credited_lifecycle_and_persists_result(
     debit.assert_called_once()
     release.assert_called_once()
     assert artifacts.read_render(7, 1) == b"complete-page-png"
+
+
+def test_failed_complete_page_persists_a_user_facing_failure(
+    tmp_path: Path,
+) -> None:
+    app = _make_app()
+    artifacts = TargetArtifacts(tmp_path / "project")
+
+    class _BlockedTransport:
+        async def generate(self, request):
+            raise RuntimeError("finish_reason=SAFETY")
+
+    with (
+        patch("novel_to_comic.server.credited_job.get_db", return_value=object()),
+        patch(
+            "novel_to_comic.server.credited_job.reserve_credits",
+            return_value=("reservation-1", "ledger-job-1"),
+        ),
+        patch("novel_to_comic.server.credited_job.release_reservation"),
+        patch("novel_to_comic.server.credited_job.debit_model_usage"),
+        patch("novel_to_comic.server.credited_job.ai_request_context"),
+    ):
+        job, _ = enqueue_complete_page_draw(
+            app,
+            project_name="project",
+            user_id="user-1",
+            project_id="project-1",
+            project_dir=tmp_path / "project",
+            compiled=_compile(tmp_path),
+            adapter=VertexCompletePageAdapter(_BlockedTransport()),
+            artifacts=artifacts,
+            page=_page(),
+        )
+        with pytest.raises(RuntimeError, match="SAFETY"):
+            asyncio.run(job.runner())
+
+    failure = artifacts.read_page_failure(7)
+    assert failure.classification == "provider_blocked"
+    assert "declined" in failure.user_message
+    assert failure.request_sha256 == _compile(tmp_path).request.request_sha256
+    assert failure.phase == "generation"
+
+
+def test_failed_ocr_is_recorded_as_analysis_failure_without_losing_render(
+    tmp_path: Path,
+) -> None:
+    app = _make_app()
+    artifacts = TargetArtifacts(tmp_path / "project")
+
+    class _BrokenOCR:
+        async def extract(self, image: bytes):
+            raise ValueError("invalid OCR response shape")
+
+    with (
+        patch("novel_to_comic.server.credited_job.get_db", return_value=object()),
+        patch(
+            "novel_to_comic.server.credited_job.reserve_credits",
+            return_value=("reservation-1", "ledger-job-1"),
+        ),
+        patch("novel_to_comic.server.credited_job.release_reservation"),
+        patch("novel_to_comic.server.credited_job.debit_model_usage"),
+        patch("novel_to_comic.server.credited_job.ai_request_context"),
+    ):
+        job, _ = enqueue_complete_page_draw(
+            app,
+            project_name="project",
+            user_id="user-1",
+            project_id="project-1",
+            project_dir=tmp_path / "project",
+            compiled=_compile(tmp_path),
+            adapter=VertexCompletePageAdapter(
+                _RecordingTransport(_provider_result())
+            ),
+            artifacts=artifacts,
+            page=_page(),
+            ocr=_BrokenOCR(),
+        )
+        with pytest.raises(ValueError, match="OCR"):
+            asyncio.run(job.runner())
+
+    assert artifacts.provenance_revisions(7) == (1,)
+    failure = artifacts.read_page_failure(7)
+    assert failure.phase == "analysis"
+    assert failure.classification == "analysis_error"
+    assert "already drawn" in failure.user_message
 
 
 def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(

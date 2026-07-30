@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 from collections.abc import Awaitable, Callable, Iterable, Mapping
@@ -17,7 +18,9 @@ from novel_to_comic.models.adaptation import (
     AdaptationBrief,
     AdaptationLedgerEntry,
     AdaptedBeat,
+    AppearanceChange,
     BookAdaptation,
+    ContinuityTransition,
     LetteringItem,
     NarrativeTreatment,
 )
@@ -43,6 +46,7 @@ _ADAPT_OUTPUT_BUDGET_RATIO = 0.65
 # the canonical per-unit ledger is expanded locally after generation.
 _ADAPT_OUTPUT_TOKENS_PER_SOURCE_CHAR = 0.5
 _MISSING_LEDGER_EXCEPTION = "missing_model_authored_omission_exception"
+_ADAPT_CHECKPOINT_VERSION = 2
 
 
 def _requirement_registry(brief: AdaptationBrief) -> dict[str, str]:
@@ -153,6 +157,133 @@ class _BookDraft(BaseModel):
     ledger_exceptions: tuple[_LedgerException, ...] = ()
 
 
+class _BlueprintBeat(BaseModel):
+    """A locked story decision, deliberately excluding final lettering."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(min_length=1)
+    order: int = Field(ge=1)
+    summary: str = Field(min_length=1)
+    narrative_function: Literal[
+        "establisher",
+        "initial",
+        "prolongation",
+        "peak",
+        "release",
+        "transition",
+    ]
+    story_functions: tuple[
+        Literal[
+            "causal_event",
+            "reveal",
+            "reaction",
+            "consequence",
+            "transition",
+            "aftermath",
+            "character_turn",
+        ],
+        ...,
+    ] = ()
+    brief_requirements: tuple[str, ...] = ()
+    brief_requirement_ids: tuple[str, ...] = ()
+    source_unit_ids: tuple[str, ...] = Field(min_length=1)
+    transitions: tuple[ContinuityTransition, ...] = ()
+    appearance_changes: tuple[AppearanceChange, ...] = ()
+
+    def to_adapted_beat(self) -> AdaptedBeat:
+        return AdaptedBeat(
+            **self.model_dump(mode="python"),
+            lettering=(),
+        )
+
+
+class _BlueprintDraft(BaseModel):
+    """The model-facing structural contract; canonical ledger is not exposed."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    beats: tuple[_BlueprintBeat, ...] = Field(min_length=1)
+    ledger_exceptions: tuple[_LedgerException, ...] = ()
+
+
+class _BeatLettering(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    beat_id: str = Field(min_length=1)
+    lettering: tuple[LetteringItem, ...] = ()
+
+
+class _LetteringDraft(BaseModel):
+    """Final words keyed to immutable blueprint beats."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    beats: tuple[_BeatLettering, ...]
+
+
+class _AdaptCheckpoint(BaseModel):
+    """Hash-keyed cache entry for one paid Adapt response."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    version: int
+    input_sha256: str
+    payload: dict[str, Any]
+
+
+def _checkpoint_key(*, model: str, feature: str, prompt: str) -> str:
+    encoded = json.dumps(
+        {
+            "version": _ADAPT_CHECKPOINT_VERSION,
+            "model": model,
+            "feature": feature,
+            "prompt": prompt,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _read_checkpoint(
+    artifacts: TargetArtifacts,
+    *,
+    name: str,
+    input_sha256: str,
+    model_type: type[BaseModel],
+) -> BaseModel | None:
+    checkpoint = artifacts.read_adapt_checkpoint(name, _AdaptCheckpoint)
+    if (
+        checkpoint is None
+        or checkpoint.version != _ADAPT_CHECKPOINT_VERSION
+        or checkpoint.input_sha256 != input_sha256
+    ):
+        return None
+    try:
+        return model_type.model_validate(checkpoint.payload)
+    except ValidationError:
+        return None
+
+
+def _write_checkpoint(
+    artifacts: TargetArtifacts,
+    *,
+    name: str,
+    input_sha256: str,
+    payload: BaseModel,
+) -> None:
+    artifacts.write_adapt_checkpoint(
+        name,
+        _AdaptCheckpoint(
+            version=_ADAPT_CHECKPOINT_VERSION,
+            input_sha256=input_sha256,
+            payload=payload.model_dump(mode="json"),
+        ),
+    )
+
+
 def _canonicalize_treatment_requirements(
     treatment: NarrativeTreatment,
     brief: AdaptationBrief,
@@ -217,8 +348,38 @@ def _canonicalize_candidate_requirements(
     source: SourceDocument,
     brief: AdaptationBrief,
 ) -> BookAdaptation:
+    retained_exceptions = tuple(
+        _LedgerException(
+            source_unit_ids=(entry.source_unit_id,),
+            disposition=entry.disposition,
+            adapted_beat_ids=entry.adapted_beat_ids,
+            reason=entry.reason,
+            preserved_function=entry.preserved_function,
+        )
+        for entry in candidate.ledger
+        if entry.disposition
+        in {"visual_motif", "compressed_into", "intentionally_omitted"}
+    )
+    materialized = _materialize_draft_ledger(
+        _BookDraft(
+            beats=candidate.beats,
+            ledger_exceptions=retained_exceptions,
+        ),
+        tuple(unit.id for unit in source.units),
+    )
+    persisted_by_source = {
+        entry.source_unit_id: entry for entry in candidate.ledger
+    }
+    materialized = materialized.model_copy(
+        update={
+            "ledger": tuple(
+                persisted_by_source.get(entry.source_unit_id, entry)
+                for entry in materialized.ledger
+            )
+        }
+    )
     draft = _canonicalize_draft_requirements(
-        _BookDraft(beats=candidate.beats, ledger=candidate.ledger),
+        materialized,
         brief,
     )
     beats = list(draft.beats)
@@ -315,6 +476,14 @@ def _canonicalize_prior_states(beats: list[AdaptedBeat]) -> list[AdaptedBeat]:
         for transition in beat.transitions:
             key = (transition.dimension, transition.scope_id)
             previous = continuity_states.get(key)
+            if previous == transition.to_state:
+                # Parallel shards can independently restate the destination
+                # already established by the preceding shard. Once the true
+                # origin is derived this is not a transition at all; retaining
+                # it would manufacture an invalid "Oslo -> Oslo" record and
+                # crash before normal adaptation validation can repair the
+                # surrounding beat when necessary.
+                continue
             transitions.append(
                 transition
                 if previous is None
@@ -669,6 +838,18 @@ def _story_bible_view(
                 "appearance_state_ids": [
                     state.id for state in character.appearance_states
                 ],
+                "appearance_states": [
+                    {
+                        "id": state.id,
+                        "label": state.label,
+                        "canonical_equivalent": state.canonical_equivalent,
+                    }
+                    for state in character.appearance_states
+                ],
+                "appearance_timeline": [
+                    activation.model_dump(mode="json")
+                    for activation in character.appearance_timeline
+                ],
             }
             for character in story_bible.characters
             if scene_ids is None or character.id in character_ids
@@ -679,6 +860,18 @@ def _story_bible_view(
                 "name": location.name,
                 "appearance_state_ids": [
                     state.id for state in location.appearance_states
+                ],
+                "appearance_states": [
+                    {
+                        "id": state.id,
+                        "label": state.label,
+                        "canonical_equivalent": state.canonical_equivalent,
+                    }
+                    for state in location.appearance_states
+                ],
+                "appearance_timeline": [
+                    activation.model_dump(mode="json")
+                    for activation in location.appearance_timeline
                 ],
             }
             for location in story_bible.locations
@@ -946,6 +1139,136 @@ def build_book_adaptation_prompt(
     )
 
 
+def build_adaptation_blueprint_prompt(
+    source: SourceDocument,
+    story_bible: StoryBible,
+    brief: AdaptationBrief,
+    treatment: NarrativeTreatment,
+    *,
+    primary_source_unit_ids: tuple[str, ...],
+    owned_requirement_ids: tuple[str, ...],
+    shard_index: int,
+    shard_count: int,
+) -> str:
+    """Ask only for story structure, before any final prose can obscure gaps."""
+
+    primary_id_set = set(primary_source_unit_ids)
+    source_scenes = [
+        {
+            "id": scene.id,
+            "title": scene.title,
+            "first_unit_id": next(
+                source_id
+                for source_id in scene.unit_ids(source)
+                if source_id in primary_id_set
+            ),
+            "last_unit_id": next(
+                source_id
+                for source_id in reversed(scene.unit_ids(source))
+                if source_id in primary_id_set
+            ),
+        }
+        for scene in source.scenes
+        if primary_id_set.intersection(scene.unit_ids(source))
+    ]
+    scene_ids = {scene["id"] for scene in source_scenes}
+    context = {
+        "adaptation_scope": {
+            "shard_index": shard_index,
+            "shard_count": shard_count,
+            "primary_source_unit_ids": primary_source_unit_ids,
+            "owned_requirement_ids": owned_requirement_ids,
+        },
+        "source_units": _source_units_view(source, primary_source_unit_ids),
+        "source_scenes": source_scenes,
+        "story_bible": _story_bible_view(story_bible, scene_ids=scene_ids),
+        "scene_obligations": _scene_obligations(story_bible, scene_ids=scene_ids),
+        "approved_adaptation_brief": _brief_view(brief),
+        "approved_requirement_registry": _requirement_registry(brief),
+        "narrative_treatment": _treatment_view(treatment),
+    }
+    faithful = (
+        "For this faithful adaptation, preserve every causal step and each "
+        "reveal's reaction or aftermath before a transition. "
+        if brief.transformation_level == "faithful"
+        else ""
+    )
+    return (
+        f"Design locked story structure for internal shard {shard_index} of "
+        f"{shard_count}. {faithful}"
+        "Assume a reader has never read the novel. Create one drawable beat per "
+        "story moment and make chronology, evidence, motives, deductions, reactions, "
+        "consequences, and aftermath explicit in the beat sequence. Preserve the "
+        "relative weight in scene_obligations. Carry every owned requirement onto "
+        "the beat that realizes it. Record continuity and appearance changes using "
+        "stable Story Bible IDs. Do not write dialogue, captions, thoughts, SFX, "
+        "pages, panels, or layouts: another locked expansion pass writes the final "
+        "words without changing this structure. Do not return a canonical ledger. "
+        "Code derives ordinary source accounting from beat provenance. Use "
+        "ledger_exceptions only for visual_motif, compressed_into, or "
+        "intentionally_omitted units; every uncited source unit requires an explicit "
+        "exception. Return only beats and ledger_exceptions.\n"
+        + json.dumps(
+            context,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    )
+
+
+def build_locked_lettering_prompt(
+    source: SourceDocument,
+    story_bible: StoryBible,
+    brief: AdaptationBrief,
+    treatment: NarrativeTreatment,
+    blueprint: _BlueprintDraft,
+    *,
+    primary_source_unit_ids: tuple[str, ...],
+    shard_index: int,
+    shard_count: int,
+) -> str:
+    """Expand a validated blueprint without allowing story redesign."""
+
+    scene_ids = {
+        scene.id
+        for scene in source.scenes
+        if set(primary_source_unit_ids).intersection(scene.unit_ids(source))
+    }
+    context = {
+        "adaptation_scope": {
+            "shard_index": shard_index,
+            "shard_count": shard_count,
+        },
+        "source_units": _source_units_view(source, primary_source_unit_ids),
+        "story_bible": _story_bible_view(story_bible, scene_ids=scene_ids),
+        "approved_adaptation_brief": _brief_view(brief),
+        "narrative_treatment": _treatment_view(treatment),
+        "locked_blueprint": blueprint.model_dump(mode="json"),
+    }
+    return (
+        "Write complete publishable lettering for the locked blueprint. Return "
+        "exactly one entry for every blueprint beat_id, in order; an entry may have "
+        "empty lettering only when the beat is visually self-explanatory. Do not "
+        "add, remove, reorder, summarize, merge, or redesign beats. Every causal "
+        "link, motive, chronology change, deduction, testimony, and relationship "
+        "between evidence that a still image cannot establish must appear in "
+        "dialogue, thought, or caption. Preserve protected language verbatim. "
+        "For every LetteringItem cite source_unit_ids and set delivery. On-screen "
+        "dialogue/thought requires one precise speaker and its speaker_entity_id; "
+        "off-panel voices use offscreen; narration uses narration; quoted prose, "
+        "inscriptions, and manuscript excerpts use caption/quoted_text; SFX uses "
+        "display. Never combine two speakers in one item. Return only beat_id and "
+        "lettering; the application owns all structural fields and the ledger.\n"
+        + json.dumps(
+            context,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    )
+
+
 def _adaptation_shards(
     source: SourceDocument,
     *,
@@ -1010,8 +1333,8 @@ def estimate_book_adaptation_cost(
     shards = _adaptation_shards(source, model=model)
     unit_by_id = {unit.id: unit for unit in source.units}
     shard_requirements = partition_requirements_by_shard(source, brief, shards)
-    prompts = [
-        build_book_adaptation_prompt(
+    blueprint_prompts = [
+        build_adaptation_blueprint_prompt(
             source,
             story_bible,
             brief,
@@ -1028,12 +1351,25 @@ def estimate_book_adaptation_cost(
         treatment_prompt,
         output_chars=max(12_000, len(source.text)),
     ) + sum(
-        estimate_text_cost(
-            model,
-            prompt,
-            output_chars=_shard_output_chars(unit_by_id, source_ids),
+        (
+            estimate_text_cost(
+                model,
+                prompt,
+                output_chars=max(
+                    4_000,
+                    int(_shard_output_chars(unit_by_id, source_ids) * 0.55),
+                ),
+            )
+            + estimate_text_cost(
+                model,
+                prompt,
+                output_chars=max(
+                    3_000,
+                    int(_shard_output_chars(unit_by_id, source_ids) * 0.45),
+                ),
+            )
         )
-        for prompt, source_ids in zip(prompts, shards, strict=True)
+        for prompt, source_ids in zip(blueprint_prompts, shards, strict=True)
     )
     return clean_pass * 1.25
 
@@ -1111,12 +1447,366 @@ def _shard_output_chars(
     )
 
 
+def _normalize_blueprint(value: object) -> dict[str, Any]:
+    """Discard obsolete model-authored ledger/lettering without a paid retry."""
+
+    if not isinstance(value, Mapping):
+        return {}
+    beat_fields = set(_BlueprintBeat.model_fields)
+    beats = []
+    raw_beats = value.get("beats", ())
+    if isinstance(raw_beats, (list, tuple)):
+        for beat in raw_beats:
+            if isinstance(beat, Mapping):
+                beats.append({key: beat[key] for key in beat_fields if key in beat})
+    return {
+        "beats": beats,
+        "ledger_exceptions": value.get("ledger_exceptions", ()),
+    }
+
+
+def _validate_blueprint_scope(
+    blueprint: _BlueprintDraft,
+    *,
+    source_unit_ids: tuple[str, ...],
+    owned_requirement_ids: tuple[str, ...],
+) -> None:
+    """Fail compact structure before paying to write its final prose."""
+
+    allowed = set(source_unit_ids)
+    beat_ids = {beat.id for beat in blueprint.beats}
+    cited = {
+        source_id for beat in blueprint.beats for source_id in beat.source_unit_ids
+    }
+    excepted = {
+        source_id
+        for exception in blueprint.ledger_exceptions
+        for source_id in exception.source_unit_ids
+    }
+    unknown = sorted((cited | excepted) - allowed)
+    missing = sorted(allowed - cited - excepted)
+    missing_requirements = sorted(
+        set(owned_requirement_ids)
+        - {
+            requirement_id
+            for beat in blueprint.beats
+            for requirement_id in beat.brief_requirement_ids
+        }
+    )
+    bad_destinations = sorted(
+        {
+            beat_id
+            for exception in blueprint.ledger_exceptions
+            for beat_id in exception.adapted_beat_ids
+            if beat_id not in beat_ids
+        }
+    )
+    incomplete_transitions = [
+        beat.id
+        for beat in blueprint.beats
+        if (
+            beat.narrative_function == "transition"
+            or "transition" in beat.story_functions
+        )
+        and not beat.transitions
+    ]
+    errors = []
+    if unknown:
+        errors.append(f"unknown source_unit_ids: {unknown}")
+    if missing:
+        errors.append(f"source units missing beats or ledger_exceptions: {missing}")
+    if missing_requirements:
+        errors.append(f"missing owned requirement IDs: {missing_requirements}")
+    if bad_destinations:
+        errors.append(f"ledger exceptions target unknown beats: {bad_destinations}")
+    if incomplete_transitions:
+        errors.append(
+            "transition beats missing continuity transitions: "
+            f"{incomplete_transitions}"
+        )
+    if errors:
+        raise ValueError("; ".join(errors))
+
+
+def _canonicalize_blueprint_requirements(
+    blueprint: _BlueprintDraft,
+    brief: AdaptationBrief,
+) -> _BlueprintDraft:
+    draft = _canonicalize_draft_requirements(
+        _BookDraft(
+            beats=tuple(beat.to_adapted_beat() for beat in blueprint.beats),
+        ),
+        brief,
+    )
+    return blueprint.model_copy(
+        update={
+            "beats": tuple(
+                _BlueprintBeat.model_validate(
+                    beat.model_dump(mode="python", exclude={"lettering"})
+                )
+                for beat in draft.beats
+            )
+        }
+    )
+
+
+async def _generate_blueprint(
+    *,
+    prompt: str,
+    brief: AdaptationBrief,
+    source_unit_ids: tuple[str, ...],
+    owned_requirement_ids: tuple[str, ...],
+    checkpoint_name: str,
+    model: str,
+    artifacts: TargetArtifacts,
+    generate: StructuredGenerator,
+    ctx: StageRuntime,
+) -> _BlueprintDraft:
+    key = _checkpoint_key(model=model, feature="adapt.blueprint", prompt=prompt)
+    cached = _read_checkpoint(
+        artifacts,
+        name=checkpoint_name,
+        input_sha256=key,
+        model_type=_BlueprintDraft,
+    )
+    attempt_prompt = prompt
+    repairing_cached_blueprint = False
+    if isinstance(cached, _BlueprintDraft):
+        try:
+            _validate_blueprint_scope(
+                cached,
+                source_unit_ids=source_unit_ids,
+                owned_requirement_ids=owned_requirement_ids,
+            )
+            return cached
+        except ValueError as error:
+            repairing_cached_blueprint = True
+            # A validator added after the checkpoint was written can cheaply
+            # repair the compact cached structure instead of discarding every
+            # paid stage result or crashing before a model call.
+            attempt_prompt = _schema_repair_prompt(
+                prompt,
+                cached.model_dump(mode="json"),
+                error,
+            )
+    for attempt in range(1, _MAX_ADAPT_ATTEMPTS + 1):
+        result = await generate(
+            system_prompt=(
+                "You are the structural architect for a graphic novel. Return "
+                "compact locked story structure, not prose."
+            ),
+            user_content=attempt_prompt,
+            feature="adapt.blueprint",
+            json_schema=_BlueprintDraft.model_json_schema(),
+            quality_tier=(
+                "quality"
+                if repairing_cached_blueprint or attempt > 1
+                else None
+            ),
+        )
+        _record_result_usage(ctx, result)
+        try:
+            blueprint = _BlueprintDraft.model_validate(
+                _normalize_blueprint(result.value)
+            )
+            blueprint = _canonicalize_blueprint_requirements(blueprint, brief)
+            _validate_blueprint_scope(
+                blueprint,
+                source_unit_ids=source_unit_ids,
+                owned_requirement_ids=owned_requirement_ids,
+            )
+        except (ValidationError, ValueError) as error:
+            if attempt == _MAX_ADAPT_ATTEMPTS:
+                raise
+            attempt_prompt = _schema_repair_prompt(prompt, result.value, error)
+            continue
+        _write_checkpoint(
+            artifacts,
+            name=checkpoint_name,
+            input_sha256=key,
+            payload=blueprint,
+        )
+        return blueprint
+    raise AssertionError("blueprint loop must return or raise")
+
+
+def _apply_locked_lettering(
+    blueprint: _BlueprintDraft,
+    lettering: _LetteringDraft,
+) -> _BookDraft:
+    by_id = {entry.beat_id: entry.lettering for entry in lettering.beats}
+    expected = {beat.id for beat in blueprint.beats}
+    if set(by_id) != expected or len(lettering.beats) != len(expected):
+        raise ValueError(
+            "lettering must contain each locked blueprint beat exactly once"
+        )
+    return _BookDraft(
+        beats=tuple(
+            beat.to_adapted_beat().model_copy(
+                update={"lettering": by_id[beat.id]}
+            )
+            for beat in blueprint.beats
+        ),
+        ledger_exceptions=blueprint.ledger_exceptions,
+    )
+
+
+def _lettering_contract_errors(
+    item: LetteringItem,
+    *,
+    known_speaker_ids: set[str],
+) -> tuple[str, ...]:
+    allowed_delivery = {
+        "dialogue": {"onscreen", "offscreen"},
+        "thought": {"onscreen", "offscreen"},
+        "caption": {"narration", "quoted_text"},
+        "sfx": {"display"},
+    }
+    evidence: list[str] = []
+    if item.delivery not in allowed_delivery[item.kind]:
+        evidence.append(
+            f"{item.kind!r} lettering requires delivery in "
+            f"{sorted(allowed_delivery[item.kind])!r}; found {item.delivery!r}."
+        )
+    if item.kind in {"dialogue", "thought"} and not item.speaker:
+        evidence.append("Dialogue and thought require one precise speaker label.")
+    if item.speaker is not None and "/" in item.speaker:
+        evidence.append(
+            "Speaker labels cannot combine multiple possible owners with '/'; "
+            "author separate lettering items or one explicit chorus."
+        )
+    if item.delivery == "onscreen":
+        if not item.speaker_entity_id:
+            evidence.append("On-screen lettering requires speaker_entity_id.")
+        elif item.speaker_entity_id not in known_speaker_ids:
+            evidence.append(
+                f"Speaker entity {item.speaker_entity_id!r} is not a "
+                "Story Bible character."
+            )
+    elif (
+        item.speaker_entity_id is not None
+        and item.speaker_entity_id not in known_speaker_ids
+    ):
+        evidence.append(
+            f"Speaker entity {item.speaker_entity_id!r} is not a "
+            "Story Bible character."
+        )
+    return tuple(evidence)
+
+
+def _validate_locked_lettering(
+    lettering: _LetteringDraft,
+    *,
+    known_speaker_ids: set[str],
+) -> None:
+    errors = [
+        f"{item.id}: {'; '.join(evidence)}"
+        for beat in lettering.beats
+        for item in beat.lettering
+        if (
+            evidence := _lettering_contract_errors(
+                item,
+                known_speaker_ids=known_speaker_ids,
+            )
+        )
+    ]
+    if errors:
+        raise ValueError("invalid locked lettering: " + " | ".join(errors))
+
+
+async def _generate_locked_lettering(
+    *,
+    prompt: str,
+    blueprint: _BlueprintDraft,
+    known_speaker_ids: set[str],
+    checkpoint_name: str,
+    model: str,
+    artifacts: TargetArtifacts,
+    generate: StructuredGenerator,
+    ctx: StageRuntime,
+) -> _BookDraft:
+    key = _checkpoint_key(model=model, feature="adapt.lettering", prompt=prompt)
+    cached = _read_checkpoint(
+        artifacts,
+        name=checkpoint_name,
+        input_sha256=key,
+        model_type=_LetteringDraft,
+    )
+    attempt_prompt = prompt
+    if isinstance(cached, _LetteringDraft):
+        try:
+            _validate_locked_lettering(
+                cached,
+                known_speaker_ids=known_speaker_ids,
+            )
+            return _apply_locked_lettering(blueprint, cached)
+        except ValueError as error:
+            attempt_prompt = _schema_repair_prompt(
+                prompt,
+                cached.model_dump(mode="json"),
+                error,
+            )
+    for attempt in range(1, _MAX_ADAPT_ATTEMPTS + 1):
+        result = await generate(
+            system_prompt=(
+                "You are the dialogue and caption writer for a locked graphic-"
+                "novel blueprint. You may write words but not redesign the story."
+            ),
+            user_content=attempt_prompt,
+            feature="adapt.lettering",
+            json_schema=_LetteringDraft.model_json_schema(),
+        )
+        _record_result_usage(ctx, result)
+        try:
+            lettering = _LetteringDraft.model_validate(result.value)
+            _validate_locked_lettering(
+                lettering,
+                known_speaker_ids=known_speaker_ids,
+            )
+            draft = _apply_locked_lettering(blueprint, lettering)
+        except (ValidationError, ValueError) as error:
+            if attempt == _MAX_ADAPT_ATTEMPTS:
+                raise
+            attempt_prompt = _schema_repair_prompt(prompt, result.value, error)
+            continue
+        _write_checkpoint(
+            artifacts,
+            name=checkpoint_name,
+            input_sha256=key,
+            payload=lettering,
+        )
+        return draft
+    raise AssertionError("lettering loop must return or raise")
+
+
 async def _generate_book_draft(
     *,
     prompt: str,
     generate: StructuredGenerator,
     ctx: StageRuntime,
+    checkpoint_name: str | None = None,
+    artifacts: TargetArtifacts | None = None,
+    model: str | None = None,
 ) -> _BookDraft:
+    checkpoint_key = (
+        _checkpoint_key(model=model, feature="adapt.book", prompt=prompt)
+        if checkpoint_name is not None and artifacts is not None and model is not None
+        else None
+    )
+    if (
+        checkpoint_key is not None
+        and checkpoint_name is not None
+        and artifacts is not None
+    ):
+        cached = _read_checkpoint(
+            artifacts,
+            name=checkpoint_name,
+            input_sha256=checkpoint_key,
+            model_type=_BookDraft,
+        )
+        if isinstance(cached, _BookDraft):
+            return cached
+
     attempt_prompt = prompt
     for attempt in range(1, _MAX_ADAPT_ATTEMPTS + 1):
         result = await generate(
@@ -1125,15 +1815,40 @@ async def _generate_book_draft(
             ),
             user_content=attempt_prompt,
             feature="adapt.book",
-            json_schema=_BookDraft.model_json_schema(),
+            json_schema={
+                **_BookDraft.model_json_schema(),
+                "properties": {
+                    key: value
+                    for key, value in _BookDraft.model_json_schema()[
+                        "properties"
+                    ].items()
+                    if key != "ledger"
+                },
+            },
         )
         _record_result_usage(ctx, result)
         try:
-            return _BookDraft.model_validate(result.value)
+            value = result.value
+            if isinstance(value, Mapping):
+                value = {key: inner for key, inner in value.items() if key != "ledger"}
+            draft = _BookDraft.model_validate(value)
         except ValidationError as error:
             if attempt == _MAX_ADAPT_ATTEMPTS:
                 raise
             attempt_prompt = _schema_repair_prompt(prompt, result.value, error)
+            continue
+        if (
+            checkpoint_key is not None
+            and checkpoint_name is not None
+            and artifacts is not None
+        ):
+            _write_checkpoint(
+                artifacts,
+                name=checkpoint_name,
+                input_sha256=checkpoint_key,
+                payload=draft,
+            )
+        return draft
     raise AssertionError("book-draft loop must return or raise")
 
 
@@ -1147,6 +1862,9 @@ async def _generate_book_drafts(
     record_progress: bool,
     expected_chars: list[int] | None = None,
     detail: str = "drafting",
+    checkpoint_names: list[str] | None = None,
+    artifacts: TargetArtifacts | None = None,
+    model: str | None = None,
 ) -> list[_BookDraft]:
     semaphore = asyncio.Semaphore(_ADAPT_MAX_CONCURRENCY)
     completed = 0
@@ -1170,6 +1888,11 @@ async def _generate_book_drafts(
                     prompt=prompt,
                     generate=generate,
                     ctx=ctx,
+                    checkpoint_name=(
+                        checkpoint_names[index] if checkpoint_names is not None else None
+                    ),
+                    artifacts=artifacts,
+                    model=model,
                 )
         if record_progress:
             ctx.record_item_done()
@@ -1240,9 +1963,6 @@ def _materialize_draft_ledger(
 ) -> _BookDraft:
     """Expand compact model decisions into the canonical source ledger."""
 
-    if draft.ledger:
-        return draft
-
     beat_by_id = {beat.id: beat for beat in draft.beats}
     beats_by_source: dict[str, list[str]] = {}
     lettering_by_source: dict[str, tuple[str, str]] = {}
@@ -1250,6 +1970,12 @@ def _materialize_draft_ledger(
         for source_id in beat.source_unit_ids:
             beats_by_source.setdefault(source_id, []).append(beat.id)
         for item in beat.lettering:
+            # SFX is canonical publishable lettering, but the source ledger
+            # accounts for its underlying action as depicted. Keeping it out of
+            # this map also lets dialogue/caption on the same source unit retain
+            # the more specific reader-facing disposition.
+            if item.kind == "sfx":
+                continue
             for source_id in item.source_unit_ids:
                 lettering_by_source.setdefault(source_id, (item.kind, beat.id))
 
@@ -1443,6 +2169,9 @@ def _splice_draft_repair(
     source_order: Mapping[str, int],
 ) -> _BookDraft:
     wanted = set(source_unit_ids)
+    removed_beats = [
+        beat for beat in draft.beats if wanted.intersection(beat.source_unit_ids)
+    ]
     repair_id_map = {beat.id: f"repair_{beat.id}" for beat in repair.beats}
     namespaced_repair = _BookDraft(
         beats=tuple(
@@ -1460,6 +2189,51 @@ def _splice_draft_repair(
             for entry in repair.ledger
         ),
     )
+    repair_destinations = {
+        entry.source_unit_id: entry.adapted_beat_ids
+        for entry in namespaced_repair.ledger
+    }
+    replacement_ids: dict[str, tuple[str, ...]] = {}
+    for removed in removed_beats:
+        destinations = [
+            destination
+            for source_id in removed.source_unit_ids
+            for destination in repair_destinations.get(source_id, ())
+        ]
+        if not destinations:
+            destinations = [
+                replacement.id
+                for replacement in namespaced_repair.beats
+                if set(removed.source_unit_ids).intersection(
+                    replacement.source_unit_ids
+                )
+            ]
+        if not destinations and namespaced_repair.beats:
+            removed_position = min(
+                (
+                    source_order[source_id]
+                    for source_id in removed.source_unit_ids
+                    if source_id in source_order
+                ),
+                default=len(source_order) + removed.order,
+            )
+            nearest = min(
+                namespaced_repair.beats,
+                key=lambda replacement: abs(
+                    min(
+                        (
+                            source_order[source_id]
+                            for source_id in replacement.source_unit_ids
+                            if source_id in source_order
+                        ),
+                        default=len(source_order) + replacement.order,
+                    )
+                    - removed_position
+                ),
+            )
+            destinations = [nearest.id]
+        replacement_ids[removed.id] = tuple(dict.fromkeys(destinations))
+
     retained_beats = [
         beat for beat in draft.beats if not wanted.intersection(beat.source_unit_ids)
     ]
@@ -1474,9 +2248,20 @@ def _splice_draft_repair(
             default=len(source_order) + beat.order,
         )
     )
-    retained_ledger = [
-        entry for entry in draft.ledger if entry.source_unit_id not in wanted
-    ]
+    retained_ledger = []
+    for entry in draft.ledger:
+        if entry.source_unit_id in wanted:
+            continue
+        redirected = [
+            replacement
+            for beat_id in entry.adapted_beat_ids
+            for replacement in replacement_ids.get(beat_id, (beat_id,))
+        ]
+        retained_ledger.append(
+            entry.model_copy(
+                update={"adapted_beat_ids": tuple(dict.fromkeys(redirected))}
+            )
+        )
     combined_ledger = [*retained_ledger, *namespaced_repair.ledger]
     combined_ledger.sort(
         key=lambda entry: source_order.get(
@@ -1550,56 +2335,72 @@ async def produce_book_adaptation(
         model=model,
     )
     shards = _adaptation_shards(source, model=model)
-    total_steps = 1 + len(shards)
+    total_steps = 1 + (2 * len(shards))
 
     with ctx.execute(total=total_steps, estimated_cost_usd=initial_estimate):
-        treatment_prompt_attempt = treatment_prompt
-        treatment: NarrativeTreatment | None = None
-        for attempt in range(1, _MAX_ADAPT_ATTEMPTS + 1):
-            # Heartbeat only — the treatment's output size isn't predictable
-            # enough from the source to make a fraction honest.
-            with stream_observer(
-                lambda chars: ctx.activity(detail="writing treatment")
-            ):
-                treatment_result = await generate(
-                    system_prompt=(
-                        "You are the book-level narrative architect for a comic "
-                        "adaptation."
-                    ),
-                    user_content=treatment_prompt_attempt,
-                    feature="adapt.narrative_treatment",
-                    json_schema=NarrativeTreatment.model_json_schema(),
+        treatment_key = _checkpoint_key(
+            model=model,
+            feature="adapt.narrative_treatment",
+            prompt=treatment_prompt,
+        )
+        cached_treatment = _read_checkpoint(
+            artifacts,
+            name="treatment",
+            input_sha256=treatment_key,
+            model_type=NarrativeTreatment,
+        )
+        treatment = (
+            cached_treatment
+            if isinstance(cached_treatment, NarrativeTreatment)
+            else None
+        )
+        if treatment is None:
+            treatment_prompt_attempt = treatment_prompt
+            for attempt in range(1, _MAX_ADAPT_ATTEMPTS + 1):
+                # Heartbeat only — the treatment's output size isn't predictable
+                # enough from the source to make a fraction honest.
+                with stream_observer(
+                    lambda chars: ctx.activity(detail="writing treatment")
+                ):
+                    treatment_result = await generate(
+                        system_prompt=(
+                            "You are the book-level narrative architect for a comic "
+                            "adaptation."
+                        ),
+                        user_content=treatment_prompt_attempt,
+                        feature="adapt.narrative_treatment",
+                        json_schema=NarrativeTreatment.model_json_schema(),
+                    )
+                _record_result_usage(ctx, treatment_result)
+                try:
+                    treatment = NarrativeTreatment.model_validate(
+                        normalize_treatment(treatment_result.value)
+                    )
+                    treatment = _canonicalize_treatment_requirements(treatment, brief)
+                except ValidationError as error:
+                    if attempt == _MAX_ADAPT_ATTEMPTS:
+                        raise
+                    treatment_prompt_attempt = _schema_repair_prompt(
+                        treatment_prompt,
+                        treatment_result.value,
+                        error,
+                    )
+                    continue
+                _write_checkpoint(
+                    artifacts,
+                    name="treatment",
+                    input_sha256=treatment_key,
+                    payload=treatment,
                 )
-            # A retried attempt was still paid for, so its usage is recorded
-            # without counting a completed item.
-            _record_result_usage(ctx, treatment_result)
-            try:
-                treatment = NarrativeTreatment.model_validate(
-                    normalize_treatment(treatment_result.value)
-                )
-                treatment = _canonicalize_treatment_requirements(treatment, brief)
-            except ValidationError as error:
-                if attempt == _MAX_ADAPT_ATTEMPTS:
-                    raise
-                treatment_prompt_attempt = _schema_repair_prompt(
-                    treatment_prompt,
-                    treatment_result.value,
-                    error,
-                )
-                continue
-            ctx.record_item_done()
-            break
-        assert treatment is not None  # the loop either binds it or raises
+                break
+        assert treatment is not None
+        ctx.record_item_done()
         ctx.progress(1, total_steps)
 
         unit_by_id = {unit.id: unit for unit in source.units}
-        shard_chars = [
-            _shard_output_chars(unit_by_id, source_unit_ids)
-            for source_unit_ids in shards
-        ]
         shard_requirements = partition_requirements_by_shard(source, brief, shards)
-        book_prompts = [
-            build_book_adaptation_prompt(
+        blueprint_prompts = [
+            build_adaptation_blueprint_prompt(
                 source,
                 story_bible,
                 brief,
@@ -1622,16 +2423,83 @@ async def produce_book_adaptation(
         )
         candidate: BookAdaptation | None = None
         validation = AdaptationValidation()
-        generated_drafts = await _generate_book_drafts(
-            prompts=book_prompts,
-            generate=generate,
-            ctx=ctx,
-            progress_offset=1,
-            progress_total=total_steps,
-            record_progress=True,
-            expected_chars=shard_chars,
-            detail=f"drafting {len(book_prompts)} shards",
+        semaphore = asyncio.Semaphore(_ADAPT_MAX_CONCURRENCY)
+        completed_blueprints = 0
+
+        async def generate_blueprint(index: int) -> _BlueprintDraft:
+            nonlocal completed_blueprints
+            async with semaphore:
+                blueprint = await _generate_blueprint(
+                    prompt=blueprint_prompts[index],
+                    brief=brief,
+                    source_unit_ids=shards[index],
+                    owned_requirement_ids=shard_requirements[index],
+                    checkpoint_name=f"blueprint/shard_{index + 1:03d}",
+                    model=model,
+                    artifacts=artifacts,
+                    generate=generate,
+                    ctx=ctx,
+                )
+            completed_blueprints += 1
+            ctx.record_item_done()
+            ctx.progress(1 + completed_blueprints, total_steps)
+            return blueprint
+
+        ctx.activity(fraction=0.0, detail="locking story structure", force=True)
+        blueprints = list(
+            await asyncio.gather(
+                *(generate_blueprint(index) for index in range(len(shards)))
+            )
         )
+        ctx.activity(fraction=1.0, detail="locking story structure", force=True)
+        lettering_prompts = [
+            build_locked_lettering_prompt(
+                source,
+                story_bible,
+                brief,
+                treatment,
+                blueprint,
+                primary_source_unit_ids=source_ids,
+                shard_index=index,
+                shard_count=len(shards),
+            )
+            for index, (blueprint, source_ids) in enumerate(
+                zip(blueprints, shards, strict=True),
+                1,
+            )
+        ]
+        completed_lettering = 0
+
+        async def generate_lettering(index: int) -> _BookDraft:
+            nonlocal completed_lettering
+            async with semaphore:
+                draft = await _generate_locked_lettering(
+                    prompt=lettering_prompts[index],
+                    blueprint=blueprints[index],
+                    known_speaker_ids={
+                        character.id for character in story_bible.characters
+                    },
+                    checkpoint_name=f"lettering/shard_{index + 1:03d}",
+                    model=model,
+                    artifacts=artifacts,
+                    generate=generate,
+                    ctx=ctx,
+                )
+            completed_lettering += 1
+            ctx.record_item_done()
+            ctx.progress(
+                1 + len(shards) + completed_lettering,
+                total_steps,
+            )
+            return draft
+
+        ctx.activity(fraction=0.0, detail="writing locked lettering", force=True)
+        generated_drafts = list(
+            await asyncio.gather(
+                *(generate_lettering(index) for index in range(len(shards)))
+            )
+        )
+        ctx.activity(fraction=1.0, detail="writing locked lettering", force=True)
         drafts = [
             _canonicalize_draft_requirements(
                 _materialize_draft_ledger(draft, source_ids),
@@ -1724,6 +2592,15 @@ async def produce_book_adaptation(
                     f"repairing {len(affected)} of {len(shards)} shards "
                     f"(round {validation_attempt})"
                 ),
+                checkpoint_names=[
+                    (
+                        f"repairs/round_{validation_attempt:02d}_"
+                        f"shard_{shard_index + 1:03d}"
+                    )
+                    for shard_index in affected
+                ],
+                artifacts=artifacts,
+                model=model,
             )
             repaired = [
                 _canonicalize_draft_requirements(
@@ -2023,45 +2900,11 @@ def validate_book_adaptation(
 
     if story_bible is not None:
         known_speakers = {character.id for character in story_bible.characters}
-        allowed_delivery = {
-            "dialogue": {"onscreen", "offscreen"},
-            "thought": {"onscreen", "offscreen"},
-            "caption": {"narration", "quoted_text"},
-            "sfx": {"display"},
-        }
         for item in lettering:
-            evidence: list[str] = []
-            if item.delivery not in allowed_delivery[item.kind]:
-                evidence.append(
-                    f"{item.kind!r} lettering requires delivery in "
-                    f"{sorted(allowed_delivery[item.kind])!r}; found "
-                    f"{item.delivery!r}."
-                )
-            if item.kind in {"dialogue", "thought"} and not item.speaker:
-                evidence.append(
-                    "Dialogue and thought require one precise speaker label."
-                )
-            if item.speaker is not None and "/" in item.speaker:
-                evidence.append(
-                    "Speaker labels cannot combine multiple possible owners with "
-                    "'/'; author separate lettering items or one explicit chorus."
-                )
-            if item.delivery == "onscreen":
-                if not item.speaker_entity_id:
-                    evidence.append("On-screen lettering requires speaker_entity_id.")
-                elif item.speaker_entity_id not in known_speakers:
-                    evidence.append(
-                        f"Speaker entity {item.speaker_entity_id!r} is not a "
-                        "Story Bible character."
-                    )
-            elif (
-                item.speaker_entity_id is not None
-                and item.speaker_entity_id not in known_speakers
-            ):
-                evidence.append(
-                    f"Speaker entity {item.speaker_entity_id!r} is not a "
-                    "Story Bible character."
-                )
+            evidence = _lettering_contract_errors(
+                item,
+                known_speaker_ids=known_speakers,
+            )
             if evidence:
                 failures.append(
                     InvariantFailure(

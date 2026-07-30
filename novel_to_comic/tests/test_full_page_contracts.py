@@ -56,6 +56,7 @@ from novel_to_comic.briefing import (
     approve_story,
     infer_brief,
     propose_brief,
+    recommended_page_envelope,
     require_approved_brief,
     revise_brief,
     revise_persisted_brief,
@@ -883,6 +884,32 @@ def test_brief_inference_uses_source_units_and_story_bible_without_approval() ->
     assert '"id":"source_000001"' in prompts[0]
     assert '"text":"The door opened. "' in prompts[0]
     assert '"title":"The Door"' in prompts[0]
+    assert '"recommended_page_envelope":{"maximum":4,"minimum":2}' in prompts[0]
+    assert "Do not equate source units, sentences, paragraphs, or prose pages" in prompts[0]
+
+
+def test_recommended_page_envelope_calibrates_cthulhu_length() -> None:
+    assert recommended_page_envelope(word_count=11_865, scene_count=12) == (30, 48)
+
+
+def test_brief_inference_replaces_an_outlier_page_guess_without_retry() -> None:
+    inferred = _approved_brief().model_dump(
+        exclude={"revision", "content_sha256", "status"}
+    )
+    inferred.update(target_page_min=110, target_page_max=130)
+    calls = 0
+
+    async def infer(_prompt: str):
+        nonlocal calls
+        calls += 1
+        return inferred
+
+    proposed = asyncio.run(
+        infer_brief(_source_document(), _story_bible(), infer=infer)
+    )
+
+    assert calls == 1
+    assert (proposed.target_page_min, proposed.target_page_max) == (2, 4)
 
 
 def test_brief_approval_rejects_a_stale_editor_revision() -> None:

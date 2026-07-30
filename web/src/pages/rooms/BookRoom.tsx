@@ -15,15 +15,55 @@ import { Button } from "../../components/ui/Button";
 import { StatusPill } from "../../components/ui/StatusPill";
 import { Surface } from "../../components/ui/Surface";
 import { useI18n } from "../../i18n";
+import type { FinishPreflight, InvariantFailure } from "../../types/api";
+
+type FinishFindingGroup = {
+  key: string;
+  pageNumber: number | null;
+  message: string;
+  evidence: string[];
+  count: number;
+};
+
+function groupFinishFindings(preflight?: FinishPreflight): FinishFindingGroup[] {
+  if (!preflight) return [];
+  const groups = new Map<string, FinishFindingGroup>();
+
+  const add = (finding: InvariantFailure, pageNumber: number | null) => {
+    const key = `${pageNumber ?? "book"}:${finding.code}:${finding.message}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.count += 1;
+      existing.evidence = Array.from(new Set([...existing.evidence, ...finding.evidence]));
+      return;
+    }
+    groups.set(key, {
+      key,
+      pageNumber,
+      message: finding.message,
+      evidence: finding.evidence,
+      count: 1,
+    });
+  };
+
+  preflight.packaging_failures.forEach((finding) => add(finding, null));
+  preflight.pages.forEach((page) => {
+    page.invariant_failures.forEach((finding) => add(finding, page.page_number));
+  });
+  return Array.from(groups.values());
+}
 
 export function BookRoom() {
   const { id } = useParams<{ id: string }>();
   const { t } = useI18n();
   const { data: status } = useProjectStatus(id);
   const finishStatus = status?.stages.finish?.status ?? "pending";
+  const drawComplete = status?.stages.draw?.status === "complete";
+  const shouldRunPreflight =
+    drawComplete || finishStatus === "complete" || status?.finish_ready === true;
   const { data: preflight, isLoading } = useFinishPreflight(
     id,
-    finishStatus === "complete" || status?.finish_ready === true,
+    shouldRunPreflight,
   );
   const exportBook = useExport();
 
@@ -51,9 +91,21 @@ export function BookRoom() {
     (total, page) => total + page.unresolved_editorial_issue_ids.length,
     0,
   ) ?? 0;
-  const blockingFailures = (preflight?.packaging_failures.length ?? 0)
+  const technicalFindingCount = (preflight?.packaging_failures.length ?? 0)
     + (preflight?.pages.reduce((total, page) => total + page.invariant_failures.length, 0) ?? 0);
-  const canExport = !preflight || (blockingFailures === 0 && unresolvedIssues === 0);
+  const exportBlockers = technicalFindingCount + unresolvedIssues;
+  const canExport = !!preflight && !isLoading && exportBlockers === 0;
+  const finishFindings = groupFinishFindings(preflight);
+  const editorialTone = unresolvedIssues > 0
+    ? "red"
+    : acceptedIssues > 0
+      ? "gold"
+      : "sage";
+  const editorialSummary = unresolvedIssues > 0
+    ? `${unresolvedIssues} ${unresolvedIssues === 1 ? t("unresolved editorial issue") : t("unresolved editorial issues")}`
+    : acceptedIssues > 0
+      ? `${acceptedIssues} ${acceptedIssues === 1 ? t("accepted editorial issue") : t("accepted editorial issues")}`
+      : t("No editorial issues");
 
   return (
     <RoomShell project={id}>
@@ -67,12 +119,15 @@ export function BookRoom() {
         <SectionHeader
           variant="underline"
           title={t("FINISH PREFLIGHT")}
-          description={t("Creative corrections return to Draw; Finish never changes page artwork.")}
+          description={t("Finish checks the book before export. Creative corrections return to Draw; Finish never changes page artwork.")}
         />
 
         {isLoading ? (
-          <Surface padding="lg" border="soft" shadow="none">
+          <Surface padding="lg" border="soft" shadow="none" role="status" aria-live="polite">
             <p className="font-meta text-sm font-bold">{t("CHECKING THE BOOK…")}</p>
+            <p className="mt-2 max-w-[60ch] font-body text-sm font-semibold leading-6 text-ink-muted">
+              {t("Finish is checking every page before export.")}
+            </p>
           </Surface>
         ) : preflight ? (
           <div className="grid gap-4 md:grid-cols-3">
@@ -85,33 +140,74 @@ export function BookRoom() {
               </p>
             </Surface>
             <Surface padding="md" border="hard" shadow="paper">
-              <StatusPill tone={blockingFailures === 0 ? "sage" : "red"}>
+              <StatusPill tone={technicalFindingCount === 0 ? "sage" : "red"}>
                 {t("PREFLIGHT")}
               </StatusPill>
               <p className="mt-4 font-display text-2xl font-black uppercase">
-                {blockingFailures === 0 ? t("No blocking failures") : `${blockingFailures} ${t("blocking failures")}`}
+                {technicalFindingCount === 0
+                  ? t("No technical blockers")
+                  : `${technicalFindingCount} ${t("technical findings")}`}
               </p>
             </Surface>
             <Surface padding="md" border="hard" shadow="paper">
-              <StatusPill tone="gold">{t("ISSUES")}</StatusPill>
+              <StatusPill tone={editorialTone}>
+                {acceptedIssues > 0 || unresolvedIssues > 0 ? t("ISSUES") : t("NO EDITORIAL ISSUES")}
+              </StatusPill>
               <p className="mt-4 font-display text-2xl font-black uppercase">
-                {acceptedIssues} {acceptedIssues === 1 ? t("accepted editorial issue") : t("accepted editorial issues")}
+                {editorialSummary}
               </p>
               {unresolvedIssues > 0 && (
                 <p className="mt-2 font-body text-sm font-bold text-hero-red">
-                  {unresolvedIssues} {unresolvedIssues === 1 ? t("unresolved issue") : t("unresolved issues")}
+                  {t("These decisions must be resolved before export.")}
                 </p>
               )}
             </Surface>
           </div>
         ) : (
-          <Surface padding="md" tone="gold" border="hard" shadow="paper">
+          <Surface padding="md" tone="red" border="hard" shadow="paper" role="alert">
             <p className="font-body text-sm font-bold leading-6">
-              {t("Finish preflight runs before the first export. It does not call an image model.")}
+              {t("The book could not be checked.")}
+            </p>
+            <p className="mt-2 font-body text-sm font-semibold leading-6">
+              {t("Refresh the page and try again.")}
             </p>
           </Surface>
         )}
       </section>
+
+      {finishFindings.length ? (
+        <section aria-label={t("VALIDATION FINDINGS")}>
+          <SectionHeader
+            variant="underline"
+            title={t("VALIDATION FINDINGS")}
+            description={t("These technical checks are separate from your editorial review decisions.")}
+          />
+          <div className="space-y-3">
+            {finishFindings.map((finding) => (
+              <Surface key={finding.key} tone="red" padding="md" border="hard" shadow="paper-sm">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="font-meta text-xs font-bold tracking-[0.08em] text-hero-red">
+                      {finding.pageNumber === null ? t("BOOK") : `${t("Page")} ${finding.pageNumber}`}
+                    </p>
+                    <p className="mt-1 font-body text-sm font-bold leading-6">{finding.message}</p>
+                  </div>
+                  {finding.count > 1 && (
+                    <span className="shrink-0 font-meta text-xs font-bold text-ink-muted">
+                      ×{finding.count}
+                    </span>
+                  )}
+                </div>
+                {finding.evidence.length > 0 && (
+                  <p className="mt-2 font-body text-xs leading-5 text-ink-black/70">
+                    {finding.evidence.join(" · ")}
+                  </p>
+                )}
+              </Surface>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {preflight?.correction_requests.length ? (
         <section>
@@ -142,14 +238,14 @@ export function BookRoom() {
         <div className="flex flex-wrap gap-3">
           <Button
             onClick={() => exportBook.mutate({ project: id, format: "pdf" })}
-            disabled={exportBook.isPending || !canExport}
+            disabled={exportBook.isPending || isLoading || !canExport}
           >
             {t("EXPORT PDF")}
           </Button>
           <Button
             variant="outline"
             onClick={() => exportBook.mutate({ project: id, format: "cbz" })}
-            disabled={exportBook.isPending || !canExport}
+            disabled={exportBook.isPending || isLoading || !canExport}
           >
             {t("EXPORT CBZ")}
           </Button>

@@ -30,6 +30,36 @@ def _get_export_lock(app, project_name: str) -> asyncio.Lock:
     return locks.setdefault(project_name, asyncio.Lock())
 
 
+@router.post("/preflight")
+@limiter.limit(export_limit)
+async def run_preflight(
+    request: Request,
+    project_id: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),  # noqa: ARG001 — auth gate
+):
+    """Run Finish checks without creating an export package."""
+
+    project_dir, config, state = project
+    lock = _get_export_lock(request.app, project_dir.name)
+    if lock.locked():
+        raise HTTPException(
+            409, "An export or preflight for this project is already running"
+        )
+    async with lock:
+        try:
+            result = await REGISTRY["finish"].run(
+                config,
+                project_dir,
+                StageRuntime("finish", state, project_dir),
+                formats=(),
+                clear_derived_outputs=False,
+            )
+        except Exception as exc:
+            raise HTTPException(422, str(exc)) from exc
+    return {"status": "done", "preflight": result.preflight}
+
+
 @router.post("/")
 @limiter.limit(export_limit)
 async def trigger_export(

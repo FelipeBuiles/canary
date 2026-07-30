@@ -6,7 +6,11 @@ import json
 from pathlib import Path
 
 from novel_to_comic import artifacts
-from novel_to_comic.briefing import build_brief_inference_prompt, propose_brief
+from novel_to_comic.briefing import (
+    build_brief_inference_prompt,
+    propose_brief,
+    story_page_envelope,
+)
 from novel_to_comic.clients.structured_call import (
     StructuredCallError,
     generate_validated_json,
@@ -25,8 +29,13 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
     source = target.read_source()
     story_bible = artifacts.read_story_bible(project_dir)
     prompt = build_brief_inference_prompt(source, story_bible)
+    page_envelope = story_page_envelope(source, story_bible)
     model = config.effective_extraction_model()
     estimate = estimate_text_cost(model, prompt, output_chars=8_000)
+
+    def parse(raw: object):
+        return propose_brief(raw, page_envelope=page_envelope)
+
     def correction(raw: object, error: Exception) -> str:
         # Shape slips are repaired deterministically in propose_brief; anything
         # still invalid needs the model, so it gets the exact errors rather than
@@ -49,7 +58,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
                     "Infer the adaptation brief. Return only the requested JSON object."
                 ),
                 user_content=prompt,
-                parse=propose_brief,
+                parse=parse,
                 correction=correction,
                 label="Adaptation brief inference",
                 feature="brief.infer",
@@ -58,6 +67,8 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
             raise exc.last_error from exc
         brief = outcome.value
         target.write_brief(brief)
+        for retry_usage in outcome.usage_records[:-1]:
+            ctx.record_api_usage(retry_usage)
         ctx.record_item_done(
             usage=outcome.usage_records[-1] if outcome.usage_records else None
         )

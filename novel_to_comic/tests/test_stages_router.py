@@ -117,11 +117,38 @@ def _story_project(tmp_path: Path) -> tuple[Path, PipelineState, StoryBible]:
     return project_dir, state, bible
 
 
-def _client(tmp_path: Path, project_dir: Path, state: PipelineState) -> TestClient:
+def _client(
+    tmp_path: Path,
+    project_dir: Path,
+    state: PipelineState,
+    *,
+    raise_server_exceptions: bool = True,
+) -> TestClient:
     app = create_app(tmp_path)
     app.dependency_overrides[get_project] = lambda: (project_dir, Config(), state)
     app.dependency_overrides[get_current_user] = lambda: "test-user"
-    return TestClient(app)
+    return TestClient(app, raise_server_exceptions=raise_server_exceptions)
+
+
+def test_invalid_persisted_adaptation_is_a_concise_conflict(tmp_path: Path):
+    project_dir, state, _bible = _story_project(tmp_path)
+    adaptation_path = TargetArtifacts(project_dir).adaptation_path
+    adaptation_path.parent.mkdir(parents=True)
+    adaptation_path.write_text('{"revision": 1, "content_sha256": "' + "a" * 64 + '"}')
+    client = _client(
+        tmp_path,
+        project_dir,
+        state,
+        raise_server_exceptions=False,
+    )
+
+    response = client.get("/api/projects/test_project/adaptation")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "Stored book adaptation is incompatible with the current pipeline. "
+        "Rerun Adapt to rebuild it."
+    )
 
 
 def _write_draft_brief(project_dir: Path) -> None:
@@ -365,7 +392,10 @@ def test_brief_reapproval_resumes_adapt_when_cast_is_already_complete(
     assert started == ["adapt"]
 
 
-def test_brief_stage_repairs_an_invalid_inference_with_one_retry(tmp_path: Path):
+def test_brief_stage_repairs_an_invalid_inference_with_one_retry(
+    tmp_path: Path,
+    caplog,
+):
     """Anything normalization cannot fix gets the errors fed back, once."""
 
     import asyncio
@@ -373,7 +403,7 @@ def test_brief_stage_repairs_an_invalid_inference_with_one_retry(tmp_path: Path)
     from novel_to_comic.clients import structured_call
     from novel_to_comic.stages import s2_brief
     from novel_to_comic.stage_runtime import StageRuntime
-    from novel_to_comic.usage import ApiResult
+    from novel_to_comic.usage import ApiResult, UsageRecord
 
     project_dir, state, bible = _story_project(tmp_path)
     complete = {
@@ -389,17 +419,33 @@ def test_brief_stage_repairs_an_invalid_inference_with_one_retry(tmp_path: Path)
         "target_page_min": 24,
         "target_page_max": 32,
     }
-    # The page range is required and cannot be invented deterministically, so
-    # the first response omits it and the repair pass supplies it.
+    # Structured model output sometimes expands each character turn into an
+    # object even though the persisted contract requires plain strings.
     responses = [
-        {key: value for key, value in complete.items() if key != "target_page_min"},
+        {
+            **complete,
+            "character_turns": [
+                {"character": "Witness", "turn": "He stops looking."},
+                {"character": "Friend", "turn": "She believes him."},
+                {"character": "Inspector", "turn": "He closes the case."},
+            ],
+        },
         complete,
     ]
     prompts: list[str] = []
 
     async def fake_generate_json(**kwargs):
         prompts.append(kwargs["user_content"])
-        return ApiResult(value=responses[len(prompts) - 1])
+        return ApiResult(
+            value=responses[len(prompts) - 1],
+            usage=UsageRecord(
+                provider="test",
+                model="extract-balanced",
+                operation="text",
+                input_tokens=100,
+                output_tokens=50,
+            ),
+        )
 
     original = structured_call.generate_json
     structured_call.generate_json = fake_generate_json
@@ -416,8 +462,20 @@ def test_brief_stage_repairs_an_invalid_inference_with_one_retry(tmp_path: Path)
 
     assert len(prompts) == 2
     assert "VALIDATION ERRORS" in prompts[1]
-    assert "target_page_min" in prompts[1]
+    assert "character_turns" in prompts[1]
     assert brief.status == "draft"
     assert brief.transformation_level == "faithful"
     assert brief.desired_emphasis == ("Hold the aftermath.",)
     assert TargetArtifacts(project_dir).read_brief() == brief
+    assert len(state.stages["brief"].usage_log) == 2
+    warning = next(
+        record.message
+        for record in caplog.records
+        if record.levelname == "WARNING"
+        and record.message.startswith("Adaptation brief inference")
+    )
+    assert warning == (
+        "Adaptation brief inference attempt 1/3 rejected; retrying: "
+        "character_turns[0, 1, 2]: Input should be a valid string"
+    )
+    assert "pydantic.dev" not in warning
