@@ -1,6 +1,13 @@
 # Scenewright — Launch Readiness
 
-> Current-state review, updated 2026-07-13. This document is the launch gate;
+> **Current source (2026-07-30):** read
+> [the market and launch-readiness reassessment](../research/2026-07-30-market-and-launch-readiness.md)
+> first. This file remains the operational checklist, but its dated
+> deployment snapshot, test counts, and panel-era assumptions are historical.
+> Public launch is currently a no-go; a paid pilot waits for the reassessment's
+> P0 evidence package.
+>
+> Historical snapshot, originally updated 2026-07-13. This document is the launch gate;
 > [the deploy runbook](../deploy.md) is the operational procedure and
 > [the pricing proposal](pricing-and-margin.md) is the current-pipeline
 > unit-economics decision. Full-page economics must be revalidated before that
@@ -211,8 +218,9 @@ Do not switch to live purchases until this checklist passes.
 - [ ] Signup, confirmation, login, logout, forgot-password, and reset-password
       work on the deployed domain.
 - [ ] Two-user direct-Supabase authorization test passes.
-- [ ] Upload a representative EPUB/PDF and complete all nine backend stages,
-      including panel regeneration, compose editing, and PDF/CBZ export.
+- [ ] Upload a representative EPUB/PDF and complete all eight backend stages,
+      including complete-page lettering/issue review, correction, and Finish
+      PDF/CBZ export.
 - [ ] Verify estimates, reservations, final debits, refunds/releases, and displayed
       `~N credits` agree for a complete project.
 - [ ] Stripe test purchase credits the ledger exactly once; duplicate webhook
@@ -230,10 +238,10 @@ Do not switch to live purchases until this checklist passes.
 ## Product-quality gate
 
 The July image-request hardening materially improves prompt/reference ordering,
-provider transport, provenance, and failure states. The current eight-panel
-benchmark is encouraging, but alternate/significant/restored/location state
-coverage and paired acceptance remain incomplete, and wardrobe drift was still
-observed.
+provider transport, provenance, and failure states. The current full-page
+contract tests are encouraging, but deployed complete-page visual acceptance,
+lettering/OCR coverage, correction behavior, and recurring-character/location
+coverage remain incomplete.
 
 For a soft launch, either finish those targeted visual evaluations or record an
 explicit waiver and recruit testers with the expectation that consistency is

@@ -6,17 +6,21 @@ extension, and rollback contract is
 field descriptions below are historical/editing descriptions, not
 provider-bound authority.
 
-Detailed reference for agentic coding sessions. **Status: Current reference
-(2026-07-18).** The root `AGENTS.md` stays compact. Open this file when work
-touches pipeline architecture, stage contracts, generation, assembly, or
-project artifacts.
+Detailed reference for agentic coding sessions. **Status: partially
+superseded (2026-07-30).** The root `AGENTS.md`, `CONTEXT.md`, current
+implementation, and ADRs 0003-0015 are authoritative for the full-page
+pipeline. This file still contains useful operational background, but its
+nine-stage/panel-era maps must not guide launch copy or new implementation.
+Open [the current market and launch-readiness reassessment](../research/2026-07-30-market-and-launch-readiness.md)
+for the release and proof gates.
 
 ---
 
 ## Project Overview
 
-**What it is:** A Python/React application that converts novels (EPUB/TXT/PDF) into
-comic books (PDF/CBZ) via a 9-stage LLM + image-generation pipeline.
+**What it is:** A Python/React application that converts novels (EPUB/TXT/PDF)
+into complete, lettered comic pages and comic books (PDF/CBZ) through the
+current eight-stage full-page pipeline.
 
 **Status:** Early MVP. The web server is the primary interface — the CLI only
 has `init` and `serve`. All pipeline operations are HTTP API endpoints.

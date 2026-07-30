@@ -1,16 +1,17 @@
 # Novel-to-Comic Pipeline
 
-> **Status: Current (2026-07-18).** This is the product-level pipeline
-> overview. For exact I/O, use `docs/reference/stage-contracts.md`; for agent
-> implementation guidance, use `docs/reference/agent-context.md`.
+> **Status: Historical panel-era overview (2026-07-30).** The current product
+> uses the eight-stage full-page pipeline in ADRs 0003-0015. For current launch
+> claims and evidence gates, use
+> [the market and launch-readiness reassessment](research/2026-07-30-market-and-launch-readiness.md).
 >
 > **Accepted replacement:** the panel pipeline described here is replaced by
 > the full-page architecture in ADRs 0003-0015 (`docs/adr/`). Treat this
 > document as panel-era behavior, not current or future design guidance.
 
-A 9-stage Python/FastAPI/React application that converts a novel
-(EPUB, TXT, or PDF) into a graphic novel (PDF/CBZ), using LLMs for story
-analysis and image generation models for panel artwork.
+A Python/FastAPI/React application that converts a novel (EPUB, TXT, or PDF)
+into complete, lettered comic pages and a graphic novel (PDF/CBZ), using LLMs
+for story analysis and image generation models for page artwork.
 
 **Cost estimate:** varies by LiteLLM gateway routing, image alias pricing, and
 reference-image usage. Use `/estimate` and the credits UI for project-specific
