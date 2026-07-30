@@ -9,6 +9,7 @@
     "brand:preview": "npm run brand:build && vite --open /brand-system/preview/",
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "audit:production": "node scripts/audit-production.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
@@ -21,7 +22,7 @@
     "lucide-react": "^1.8.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "react-router-dom": "^7.14.1",
+    "react-router-dom": "7.18.2",
     "zustand": "^5.0.12"
   },
   "devDependencies": {

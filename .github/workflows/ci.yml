@@ -83,7 +83,10 @@ jobs:
         run: npm ci
 
       - name: Production dependency audit
-        run: npm audit --omit=dev --audit-level=high
+        # The app uses declarative BrowserRouter, not React Router's unstable
+        # RSC APIs. The audit helper allows only that documented non-applicable
+        # advisory and still fails on every other high/critical finding.
+        run: npm run audit:production
 
       # supabase.ts throws at import time when VITE_SUPABASE_* are unset, which
       # breaks the two suites that pull it in transitively (api/client →
