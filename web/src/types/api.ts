@@ -462,8 +462,9 @@ export interface PageIssue {
   requested_correction: string;
   detected_region_ids?: string[];
   lettering_item_ids?: string[];
-  status: "open" | "accepted" | "resolved";
+  status: "open" | "accepted" | "resolved" | "dismissed";
   resolution_revision: number | null;
+  dismissal_reason?: string | null;
 }
 
 export interface PageIssueSummary {
@@ -476,6 +477,18 @@ export interface CompletePageSummary {
   page: ComicPage;
   active_render: PageGenerationProvenance | null;
   issues: PageIssue[];
+  failure: PageGenerationFailure | null;
+}
+
+export interface PageGenerationFailure {
+  page_number: number;
+  request_sha256: string;
+  failed_at: string;
+  phase: "generation" | "analysis";
+  classification: string;
+  recoverable: boolean;
+  user_message: string;
+  error: string;
 }
 
 export interface CompletePagesResponse {
@@ -488,6 +501,7 @@ export interface CompletePageDetail {
   renders: PageGenerationProvenance[];
   analyses: RenderAnalysis[];
   issues: PageIssue[];
+  failure: PageGenerationFailure | null;
 }
 
 export interface RenderAnalysis {
@@ -564,7 +578,7 @@ export interface FinishPreflight {
     page_number: number;
     comic_page_revision: number;
     render_revision: number;
-    invariant_failures: Array<{ id: string; code: string; message: string }>;
+    invariant_failures: InvariantFailure[];
     unresolved_editorial_issue_ids: string[];
     accepted_editorial_issue_ids: string[];
   }>;
@@ -575,7 +589,7 @@ export interface FinishPreflight {
     requested_correction: string;
   }>;
   packages: Array<{ format: "pdf" | "cbz"; relative_path: string; byte_size: number }>;
-  packaging_failures: Array<{ id: string; code: string; message: string }>;
+  packaging_failures: InvariantFailure[];
 }
 
 export interface ImageGenerationMeta {

@@ -69,6 +69,31 @@ def test_every_observation_carries_its_own_detected_region() -> None:
     assert len(extraction.observed_regions) == 2
 
 
+def test_incidental_in_world_writing_is_not_reported_as_comic_lettering() -> None:
+    extraction = build_extraction(
+        _PageOCRDraft.model_validate(
+            {
+                "lettering": [
+                    {
+                        "text": "The canonical caption.",
+                        "role": "comic_lettering",
+                        "box": {"x": 0.1, "y": 0.1, "width": 0.5, "height": 0.1},
+                    },
+                    {
+                        "text": "Cthulhu fhtagn",
+                        "role": "incidental_text",
+                        "box": {"x": 0.2, "y": 0.6, "width": 0.3, "height": 0.1},
+                    },
+                ]
+            }
+        )
+    )
+
+    assert [item.text for item in extraction.lettering] == ["The canonical caption."]
+    assert [item.text for item in extraction.incidental_text] == ["Cthulhu fhtagn"]
+    assert extraction.observed_reading_order == ("region_001",)
+
+
 def test_adapter_accepts_gemini_bare_list_and_box_2d(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -132,6 +157,69 @@ def test_adapter_accepts_gemini_nested_normalized_box_2d(
         read.value.observed_regions[0].polygon, expected_polygon, strict=True
     ):
         assert actual == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    "coordinates",
+    [
+        [34, 57, 137, 369],
+        [[34, 57, 137, 369]],
+    ],
+)
+def test_adapter_accepts_gemini_coordinate_lists_under_box(
+    coordinates,
+) -> None:
+    draft = _PageOCRDraft.model_validate(
+        {
+            "lettering": [
+                {
+                    "text": "The stars were right.",
+                    "role": "comic_lettering",
+                    "box": coordinates,
+                }
+            ]
+        }
+    )
+
+    extraction = build_extraction(draft)
+
+    assert extraction.lettering[0].text == "The stars were right."
+    expected_polygon = (
+        (0.057, 0.034),
+        (0.369, 0.034),
+        (0.369, 0.137),
+        (0.057, 0.137),
+    )
+    for actual, expected in zip(
+        extraction.observed_regions[0].polygon,
+        expected_polygon,
+        strict=True,
+    ):
+        assert actual == pytest.approx(expected)
+
+
+def test_adapter_accepts_role_named_text_fields_from_gemini() -> None:
+    extraction = build_extraction(
+        _PageOCRDraft.model_validate(
+            {
+                "lettering": [
+                    {
+                        "comic_lettering": "The door opened.",
+                        "box": [41, 391, 137, 942],
+                    },
+                    {
+                        "incidental_text": "Cthulhu fhtagn",
+                        "box": [660, 344, 802, 661],
+                    },
+                ]
+            }
+        )
+    )
+
+    assert [item.text for item in extraction.lettering] == ["The door opened."]
+    assert [item.text for item in extraction.incidental_text] == [
+        "Cthulhu fhtagn"
+    ]
 
 
 def test_adapter_sends_the_page_image_and_no_canonical_wording(

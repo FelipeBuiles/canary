@@ -36,7 +36,8 @@ from novel_to_comic.models.page import (
     PageContent,
     PlannedPageRevision,
 )
-from novel_to_comic.page_finishing import finish_book
+from novel_to_comic.models.validation import InvariantFailure
+from novel_to_comic.page_finishing import _appearance_failures, finish_book
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import UsageRecord
 
@@ -299,6 +300,31 @@ def test_finish_exports_complete_page_renders_without_changing_pixels(
     assert artifacts.read_preflight() == result.preflight
 
 
+def test_finish_preflight_can_run_without_packaging_or_clearing_exports(
+    tmp_path: Path,
+) -> None:
+    artifacts, _ = _write_valid_book(tmp_path)
+    initial = finish_book(
+        artifacts,
+        production=FinishProductionSpec(canvas_width=120, canvas_height=180),
+        formats=("pdf",),
+    )
+    existing_export = artifacts.export_path("pdf")
+    existing_bytes = existing_export.read_bytes()
+
+    result = finish_book(
+        artifacts,
+        production=FinishProductionSpec(canvas_width=120, canvas_height=180),
+        formats=(),
+        clear_derived_outputs=False,
+    )
+
+    assert result.preflight.ready_to_export is True
+    assert result.packages == initial.packages
+    assert existing_export.read_bytes() == existing_bytes
+    assert artifacts.read_preflight() == result.preflight
+
+
 def test_stale_render_blocks_export_and_emits_complete_page_draw_request(
     tmp_path: Path,
 ) -> None:
@@ -378,6 +404,100 @@ def test_inexact_ocr_and_wrong_dimensions_block_without_normalizing_pixels(
     assert set(result.preflight.correction_requests[0].failure_codes) >= codes
     assert not artifacts.normalized_page_path(1).exists()
     assert not artifacts.export_path("cbz").exists()
+
+
+def test_dismissed_draw_finding_does_not_block_finish_preflight(
+    tmp_path: Path,
+) -> None:
+    artifacts, _ = _write_valid_book(tmp_path)
+    failure = InvariantFailure(
+        id="draw-page-001-render-001-misspelled_lettering",
+        owner_stage="draw",
+        code="misspelled_lettering",
+        message="OCR lettering does not exactly match canonical wording.",
+        evidence=("Visual review confirmed the detector was a false positive.",),
+    )
+    analysis = artifacts.read_analysis(1, 1)
+    artifacts.analysis_path(1, 1).write_text(
+        analysis.model_copy(
+            update={"invariant_failures": (failure,), "lettering_matches": ()}
+        ).model_dump_json()
+    )
+    artifacts.write_issues(
+        1,
+        (
+            PageIssue(
+                id=f"page-issue-{failure.id}",
+                issue_type=failure.code,
+                classification="invariant_failure",
+                page_number=1,
+                render_revision=1,
+                evidence=failure.evidence,
+                requested_correction="Render the canonical lettering exactly.",
+                status="dismissed",
+                dismissal_reason="Verified as a detector false positive.",
+            ),
+        ),
+    )
+
+    result = finish_book(
+        artifacts,
+        production=FinishProductionSpec(canvas_width=120, canvas_height=180),
+    )
+
+    assert result.preflight.ready_to_export is True
+    assert result.preflight.pages[0].invariant_failures == ()
+
+
+def test_repeated_beat_states_are_not_replayed_or_rejected() -> None:
+    base = _adaptation()
+    beat = base.beats[0].model_copy(
+        update={
+            "appearance_changes": (
+                AppearanceChange(
+                    entity_id="ward",
+                    to_state_id="ward-wet",
+                    description="Ward's coat is soaked.",
+                ),
+                AppearanceChange(
+                    entity_id="ward",
+                    from_state_id="ward-wet",
+                    to_state_id="ward-dry",
+                    description="Ward's coat dries.",
+                ),
+            )
+        }
+    )
+    adaptation = base.model_copy(update={"beats": (beat,)})
+    page = ComicPage(
+        revision=1,
+        page_number=1,
+        adaptation_revision=adaptation.revision,
+        adaptation_sha256=adaptation.content_sha256,
+        emphasis="initial",
+        density_intent="standard",
+        content=[
+            PageContent(
+                id="content-1",
+                order=1,
+                beat_ids=["beat-1"],
+                visual_intent="Ward is soaked.",
+                entity_ids=["ward"],
+                appearance_state_ids=["ward-wet", "ward-dry"],
+            ),
+            PageContent(
+                id="content-2",
+                order=2,
+                beat_ids=["beat-1"],
+                visual_intent="Ward is dry.",
+                entity_ids=["ward"],
+                appearance_state_ids=["ward-wet", "ward-dry"],
+            ),
+        ],
+        reading_order=["content-1", "content-2"],
+    )
+
+    assert _appearance_failures(adaptation, (page,)) == {}
 
 
 def test_deliberately_accepted_editorial_issue_is_recorded_but_open_one_blocks(

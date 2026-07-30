@@ -16,15 +16,17 @@ import {
 } from "./stages";
 import {
   acceptPageIssue,
+  analyzeCompletePage,
   correctPageIssue,
   createPageIssue,
+  dismissPageIssue,
   generateCompletePage,
   getAdaptation,
   getBookPlan,
   getStageValidation,
   getCompletePage,
-  getFinishPreflight,
   listCompletePages,
+  runFinishPreflight,
   triggerExport,
 } from "./pages";
 import { createStyleDirection, generateStyleValidation, getStyles, suggestStyles, fetchStyleDirectionEstimate, fetchSuggestStylesEstimate, fetchStyleSampleEstimate, generateStyleSamples, setActiveStyle } from "./styles";
@@ -584,6 +586,16 @@ export function useGenerateCompletePage() {
   });
 }
 
+export function useAnalyzeCompletePage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, pageNumber }: { project: string; pageNumber: number }) =>
+      analyzeCompletePage(project, pageNumber),
+    onSettled: (_data, _error, { project, pageNumber }) =>
+      invalidatePageReview(qc, project, pageNumber),
+  });
+}
+
 export function useCreatePageIssue() {
   const qc = useQueryClient();
   return useMutation({
@@ -611,6 +623,16 @@ export function useAcceptPageIssue() {
   });
 }
 
+export function useDismissPageIssue() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, pageNumber, issueId }: { project: string; pageNumber: number; issueId: string }) =>
+      dismissPageIssue(project, pageNumber, issueId),
+    onSuccess: (_data, { project, pageNumber }) =>
+      invalidatePageReview(qc, project, pageNumber),
+  });
+}
+
 export function useCorrectPageIssue() {
   const qc = useQueryClient();
   return useMutation({
@@ -622,9 +644,14 @@ export function useCorrectPageIssue() {
 }
 
 export function useFinishPreflight(project: string | undefined, enabled = true) {
+  const qc = useQueryClient();
   return useQuery({
     queryKey: ["project", project, "finish-preflight"],
-    queryFn: () => getFinishPreflight(project!),
+    queryFn: async () => {
+      const result = await runFinishPreflight(project!);
+      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+      return result.preflight;
+    },
     enabled: !!project && enabled,
     retry: false,
   });

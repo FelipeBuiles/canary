@@ -22,6 +22,7 @@ from novel_to_comic.page_ocr import GatewayPageOCRAdapter
 from novel_to_comic.page_review import (
     accept_editorial_page_issue,
     build_correction_request,
+    dismiss_page_issue,
     record_page_issue,
     summarize_page_issues,
 )
@@ -71,6 +72,27 @@ def _issues(target: TargetArtifacts, page_number: int):
         return target.read_issues(page_number)
     except ArtifactMissing:
         return ()
+
+
+def _page_failure(target: TargetArtifacts, page_number: int):
+    try:
+        failure = target.read_page_failure(page_number)
+    except ArtifactMissing:
+        return None
+    revisions = target.provenance_revisions(page_number)
+    if revisions and not target.analysis_path(page_number, revisions[-1]).exists():
+        return failure.model_copy(
+            update={
+                "phase": "analysis",
+                "classification": "analysis_error",
+                "recoverable": True,
+                "user_message": (
+                    "The page is already drawn, but its text check could not be "
+                    "completed. Retry the text check without redrawing the page."
+                ),
+            }
+        )
+    return failure
 
 
 def _correction_retry(
@@ -249,6 +271,7 @@ def list_pages(project=Depends(get_project)):
                 "page": target.read_page(selected.page_number),
                 "active_render": _latest_provenance(target, selected.page_number),
                 "issues": _issues(target, selected.page_number),
+                "failure": _page_failure(target, selected.page_number),
             }
             for selected in plan.pages
         ],
@@ -276,6 +299,7 @@ def get_page(page_number: int, project=Depends(get_project)):
             if target.analysis_path(page_number, revision).exists()
         ],
         "issues": _issues(target, page_number),
+        "failure": _page_failure(target, page_number),
     }
 
 
@@ -383,6 +407,7 @@ async def analyze_page(
         )
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
+    target.clear_page_failure(page_number)
     return analysis
 
 
@@ -434,6 +459,24 @@ def accept_page_issue(
             TargetArtifacts(project_dir),
             issue_id=issue_id,
             page_number=page_number,
+        )
+    except (ArtifactMissing, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/pages/{page_number}/issues/{issue_id}/dismiss")
+def dismiss_automated_page_issue(
+    page_number: int,
+    issue_id: str,
+    project=Depends(get_project),
+):
+    project_dir, _config, _state = project
+    try:
+        return dismiss_page_issue(
+            TargetArtifacts(project_dir),
+            issue_id=issue_id,
+            page_number=page_number,
+            reason="Dismissed after visual review as a validator false positive.",
         )
     except (ArtifactMissing, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc

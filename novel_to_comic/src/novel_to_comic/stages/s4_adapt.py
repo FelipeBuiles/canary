@@ -10,7 +10,7 @@ from novel_to_comic.book_adaptation import (
     produce_book_adaptation,
 )
 from novel_to_comic.clients.text import generate_json
-from novel_to_comic.config import Config
+from novel_to_comic.config import Config, GATEWAY_ADAPT_QUALITY
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.state import PipelineState
 from novel_to_comic.target_artifacts import TargetArtifacts
@@ -22,9 +22,10 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
     model = config.effective_adapt_model()
 
     async def generate(**kwargs):
+        quality_tier = kwargs.pop("quality_tier", None)
         return await generate_json(
             config=config,
-            model=model,
+            model=GATEWAY_ADAPT_QUALITY if quality_tier == "quality" else model,
             # Preserve expressive adaptation while reducing structural variance
             # that otherwise turns into paid schema and invariant repairs.
             temperature=0.6,

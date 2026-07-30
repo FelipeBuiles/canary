@@ -17,6 +17,35 @@ from novel_to_comic.target_artifacts import TargetArtifacts
 logger = logging.getLogger("canary.briefing")
 
 
+def recommended_page_envelope(
+    *,
+    word_count: int,
+    scene_count: int,
+) -> tuple[int, int]:
+    """Return a stable initial editorial range for Brief inference.
+
+    The range is deliberately a recommendation rather than a downstream
+    capacity limit. It keeps an unconstrained model from confusing source
+    units or prose pages with comic pages while leaving the draft editable.
+    """
+
+    words = max(1, word_count)
+    scenes = max(1, scene_count)
+    minimum = max(scenes * 2, (words + 399) // 400)
+    maximum = max(minimum, scenes * 4, (words + 249) // 250)
+    return minimum, maximum
+
+
+def story_page_envelope(
+    source: SourceDocument,
+    story_bible: StoryBible,
+) -> tuple[int, int]:
+    return recommended_page_envelope(
+        word_count=len(source.text.split()),
+        scene_count=len(story_bible.scenes),
+    )
+
+
 class StoryDecision(BaseModel):
     """The Story station's single review and approval contract."""
 
@@ -32,8 +61,13 @@ def build_brief_inference_prompt(
 ) -> str:
     """Compile the target Brief inference contract from canonical Story inputs."""
 
+    page_minimum, page_maximum = story_page_envelope(source, story_bible)
     context = {
         "source_sha256": source.source_sha256,
+        "recommended_page_envelope": {
+            "minimum": page_minimum,
+            "maximum": page_maximum,
+        },
         "source_units": [
             unit.model_dump(mode="json")
             for unit in source.units
@@ -50,6 +84,12 @@ def build_brief_inference_prompt(
         "narrator_treatment, tone, ambiguities, motifs, protected_language, "
         "essential_events, character_turns, transformation_level, "
         "desired_emphasis, target_page_min, and target_page_max. "
+        "The context contains a calibrated recommended_page_envelope. Both "
+        "target_page_min and target_page_max MUST remain inside that envelope. "
+        "Choose a useful editorial range within it; it is an editable narrative "
+        "recommendation, not a page-allocation or layout decision. Do not equate "
+        "source units, sentences, paragraphs, or prose pages with comic pages, "
+        "and do not assign one page per source unit. "
         "Do not return approval status or revision metadata.\n"
         + json.dumps(
             context,
@@ -70,7 +110,10 @@ async def infer_brief(
     """Produce a validated draft through an injected model adapter."""
 
     inferred_content = await infer(build_brief_inference_prompt(source, story_bible))
-    return propose_brief(inferred_content)
+    return propose_brief(
+        inferred_content,
+        page_envelope=story_page_envelope(source, story_bible),
+    )
 
 
 _LIST_FIELDS = (
@@ -104,7 +147,12 @@ def _transformation_level(described: str) -> str:
     return "medium_specific"
 
 
-def normalize_inferred_brief(inferred_content: Mapping[str, Any], /) -> dict[str, Any]:
+def normalize_inferred_brief(
+    inferred_content: Mapping[str, Any],
+    /,
+    *,
+    page_envelope: tuple[int, int] | None = None,
+) -> dict[str, Any]:
     """Repair shape slips in inferred brief content without inventing intent.
 
     A model asked for a list routinely returns one string, and asked for an enum
@@ -135,15 +183,48 @@ def normalize_inferred_brief(inferred_content: Mapping[str, Any], /) -> dict[str
             level,
             normalized["transformation_level"],
         )
+    if page_envelope is not None:
+        inferred_minimum = normalized.get("target_page_min")
+        inferred_maximum = normalized.get("target_page_max")
+        envelope_minimum, envelope_maximum = page_envelope
+        if (
+            isinstance(inferred_minimum, int)
+            and not isinstance(inferred_minimum, bool)
+            and isinstance(inferred_maximum, int)
+            and not isinstance(inferred_maximum, bool)
+            and (
+                inferred_minimum < envelope_minimum
+                or inferred_maximum > envelope_maximum
+                or inferred_minimum > inferred_maximum
+            )
+        ):
+            logger.warning(
+                "Inferred page range %d-%d fell outside recommended envelope "
+                "%d-%d; using the envelope without another model call",
+                inferred_minimum,
+                inferred_maximum,
+                envelope_minimum,
+                envelope_maximum,
+            )
+            normalized["target_page_min"] = envelope_minimum
+            normalized["target_page_max"] = envelope_maximum
     return normalized
 
 
-def propose_brief(inferred_content: Mapping[str, Any], /) -> AdaptationBrief:
+def propose_brief(
+    inferred_content: Mapping[str, Any],
+    /,
+    *,
+    page_envelope: tuple[int, int] | None = None,
+) -> AdaptationBrief:
     """Parse inferred adaptation intent without allowing inference to approve it."""
 
     return AdaptationBrief.model_validate(
         {
-            **normalize_inferred_brief(inferred_content),
+            **normalize_inferred_brief(
+                inferred_content,
+                page_envelope=page_envelope,
+            ),
             "revision": 1,
             "status": "draft",
             "content_sha256": "",

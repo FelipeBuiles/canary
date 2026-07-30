@@ -7,7 +7,7 @@ falsify a render, and Draw's exact-lettering invariant would validate itself.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -22,18 +22,25 @@ from novel_to_comic.usage import ApiResult
 PAGE_OCR_FEATURE = "draw.page_ocr"
 
 _SYSTEM_PROMPT = (
-    "You transcribe the visible lettering of a finished comic page exactly as "
-    "drawn. You never translate, correct, complete, or reorder the words."
+    "You identify and transcribe visible text on a finished comic page exactly "
+    "as drawn. You distinguish publishable comic lettering from incidental "
+    "in-world writing. You never translate, correct, complete, or reorder words."
 )
 
 _INSTRUCTION = (
-    "Transcribe every visible lettering element on this comic page: speech "
-    "balloons, thought balloons, captions, and sound effects. Copy each one "
+    "Find visible text on this comic page. Assign role='comic_lettering' only "
+    "to speech balloons, thought balloons, caption boxes, and sound effects. "
+    "Assign role='incidental_text' to writing that exists inside the depicted "
+    "world, including handwriting or print on notebooks, documents, books, "
+    "newspapers, signs, labels, screens, clothing, and scenery. Copy each item "
     "character for character, including punctuation and capitalisation as "
     "drawn. Join a balloon's line breaks with single spaces. Do not merge two "
     "balloons, do not split one balloon, and do not invent, complete, or "
     "correct wording. Report each element's normalized bounding box, where x "
     "and y are the top-left corner and all four values are between 0 and 1. "
+    "Use exactly this shape for every item: "
+    '{"text":"exact words","role":"comic_lettering|incidental_text",'
+    '"box":{"x":0.0,"y":0.0,"width":0.1,"height":0.1}}. '
     "Return only the JSON object."
 )
 
@@ -71,20 +78,32 @@ class _ObservedLettering(BaseModel):
 
     text: str = Field(min_length=1)
     box: _ObservedBox
+    role: Literal["comic_lettering", "incidental_text"] = "comic_lettering"
 
     @model_validator(mode="before")
     @classmethod
     def accept_gemini_box_2d(cls, value: Any) -> Any:
-        """Accept Gemini's native ``[ymin, xmin, ymax, xmax]`` box shape."""
+        """Canonicalize common Gemini field and coordinate variants."""
 
         if not isinstance(value, dict):
             return value
         normalized = dict(value)
         if "text" not in normalized and "text_content" in normalized:
             normalized["text"] = normalized.pop("text_content")
-        if "box" in normalized or "box_2d" not in normalized:
+        for role_field in ("comic_lettering", "incidental_text"):
+            role_value = normalized.get(role_field)
+            if "text" not in normalized and isinstance(role_value, str):
+                normalized["text"] = role_value
+                normalized["role"] = role_field
+            normalized.pop(role_field, None)
+
+        coordinates = normalized.get("box")
+        coordinate_field = "box"
+        if not isinstance(coordinates, (list, tuple)):
+            coordinates = normalized.get("box_2d")
+            coordinate_field = "box_2d"
+        if not isinstance(coordinates, (list, tuple)):
             return normalized
-        coordinates = normalized["box_2d"]
         if (
             isinstance(coordinates, (list, tuple))
             and len(coordinates) == 1
@@ -98,7 +117,11 @@ class _ObservedLettering(BaseModel):
         except (TypeError, ValueError):
             return value
         scale = 1000.0 if max(abs(item) for item in coordinates) > 1 else 1.0
-        return {key: item for key, item in normalized.items() if key != "box_2d"} | {
+        return {
+            key: item
+            for key, item in normalized.items()
+            if key not in {coordinate_field, "box_2d"}
+        } | {
             "box": {
                 "x": x_min / scale,
                 "y": y_min / scale,
@@ -156,6 +179,7 @@ def build_extraction(draft: _PageOCRDraft) -> OCRExtraction:
             id=f"ocr_{index:03d}",
             text=item.text,
             detected_region_id=f"region_{index:03d}",
+            role=item.role,
         )
         for index, item in indexed
     )
@@ -163,9 +187,17 @@ def build_extraction(draft: _PageOCRDraft) -> OCRExtraction:
         ObservedRegion(id=f"region_{index:03d}", polygon=item.box.polygon())
         for index, item in indexed
     )
-    order = tuple(f"region_{index:03d}" for index in _reading_order(indexed))
+    comic_items = [
+        entry for entry in indexed if entry[1].role == "comic_lettering"
+    ]
+    order = tuple(f"region_{index:03d}" for index in _reading_order(comic_items))
     return OCRExtraction(
-        lettering=observations,
+        lettering=tuple(
+            item for item in observations if item.role == "comic_lettering"
+        ),
+        incidental_text=tuple(
+            item for item in observations if item.role == "incidental_text"
+        ),
         observed_regions=regions,
         observed_reading_order=order,
     )

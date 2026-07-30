@@ -295,6 +295,7 @@ async def analyze_page_render(
             match.lettering_item_id: match.observed_text for match in matches
         },
         ocr_observations=extraction.lettering,
+        incidental_text=extraction.incidental_text,
         lettering_matches=matches,
         observed_regions=extraction.observed_regions,
         observed_reading_order=extraction.observed_reading_order,
@@ -528,3 +529,46 @@ def accept_editorial_page_issue(
         raise ValueError(f"page issue {issue_id!r} was not found")
     artifacts.write_issues(page_number, tuple(updated))
     return accepted
+
+
+def dismiss_page_issue(
+    artifacts: TargetArtifacts,
+    *,
+    issue_id: str,
+    page_number: int,
+    reason: str,
+) -> PageIssue:
+    """Dismiss an automated Draw finding that visual review disproved.
+
+    This is not acceptance of a known invariant failure. It records that the
+    detector's evidence was a false positive, preserving the audit trail while
+    removing a finding that is no longer considered proven.
+    """
+
+    clean_reason = reason.strip()
+    if not clean_reason:
+        raise ValueError("a dismissal reason is required")
+    issues = artifacts.read_issues(page_number)
+    dismissed: PageIssue | None = None
+    updated: list[PageIssue] = []
+    for issue in issues:
+        if issue.id == issue_id:
+            if issue.status != "open":
+                raise ValueError("only an open page issue can be dismissed")
+            if not issue.id.startswith("page-issue-draw-page-"):
+                raise ValueError("only an automated Draw finding can be dismissed")
+            dismissed = PageIssue.model_validate(
+                issue.model_copy(
+                    update={
+                        "status": "dismissed",
+                        "dismissal_reason": clean_reason,
+                    }
+                ).model_dump()
+            )
+            updated.append(dismissed)
+        else:
+            updated.append(issue)
+    if dismissed is None:
+        raise ValueError(f"page issue {issue_id!r} was not found")
+    artifacts.write_issues(page_number, tuple(updated))
+    return dismissed

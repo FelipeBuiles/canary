@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -256,6 +257,21 @@ class PageGenerationProvenance(BaseModel):
     provider_request_id: str | None = None
 
 
+class PageGenerationFailure(BaseModel):
+    """Persisted explanation for the latest failed complete-page request."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    page_number: int = Field(ge=1)
+    request_sha256: str = Field(min_length=64, max_length=64)
+    failed_at: datetime
+    phase: Literal["generation", "analysis"] = "generation"
+    classification: str = Field(min_length=1)
+    recoverable: bool
+    user_message: str = Field(min_length=1)
+    error: str = Field(min_length=1)
+
+
 class ObservedRegion(BaseModel):
     """Derived geometry detected in a render, never canonical layout."""
 
@@ -273,6 +289,7 @@ class OCRTextObservation(BaseModel):
     id: str = Field(min_length=1)
     text: str = Field(min_length=1)
     detected_region_id: str | None = None
+    role: Literal["comic_lettering", "incidental_text"] = "comic_lettering"
 
 
 class OCRExtraction(BaseModel):
@@ -281,12 +298,15 @@ class OCRExtraction(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     lettering: tuple[OCRTextObservation, ...] = ()
+    incidental_text: tuple[OCRTextObservation, ...] = ()
     observed_regions: tuple[ObservedRegion, ...] = ()
     observed_reading_order: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def _validate_evidence_references(self) -> "OCRExtraction":
-        observation_ids = [item.id for item in self.lettering]
+        observation_ids = [
+            item.id for item in (*self.lettering, *self.incidental_text)
+        ]
         if len(observation_ids) != len(set(observation_ids)):
             raise ValueError("OCR observation IDs must be unique")
         region_ids = [region.id for region in self.observed_regions]
@@ -295,7 +315,7 @@ class OCRExtraction(BaseModel):
         known_regions = set(region_ids)
         if any(
             item.detected_region_id not in known_regions
-            for item in self.lettering
+            for item in (*self.lettering, *self.incidental_text)
             if item.detected_region_id is not None
         ):
             raise ValueError("OCR observation cites an unknown detected region")
@@ -330,6 +350,7 @@ class RenderAnalysis(BaseModel):
     punctuation_policy: Literal["typographic_lettering_v2"] = "typographic_lettering_v2"
     recognized_lettering: dict[str, str] = Field(default_factory=dict)
     ocr_observations: tuple[OCRTextObservation, ...] = ()
+    incidental_text: tuple[OCRTextObservation, ...] = ()
     lettering_matches: tuple[LetteringMatch, ...] = ()
     observed_regions: tuple[ObservedRegion, ...] = ()
     observed_reading_order: tuple[str, ...] = ()
@@ -436,8 +457,9 @@ class PageIssue(BaseModel):
     detected_region_ids: tuple[str, ...] = ()
     entity_ids: tuple[str, ...] = ()
     appearance_state_ids: tuple[str, ...] = ()
-    status: Literal["open", "accepted", "resolved"]
+    status: Literal["open", "accepted", "resolved", "dismissed"]
     resolution_revision: int | None = Field(default=None, ge=1)
+    dismissal_reason: str | None = None
 
     @model_validator(mode="after")
     def _validate_resolution(self) -> "PageIssue":
@@ -451,6 +473,10 @@ class PageIssue(BaseModel):
             raise ValueError("resolved page issue requires a resolution revision")
         if self.status != "resolved" and self.resolution_revision is not None:
             raise ValueError("only a resolved page issue has a resolution revision")
+        if self.status == "dismissed" and not self.dismissal_reason:
+            raise ValueError("dismissed page issue requires a reason")
+        if self.status != "dismissed" and self.dismissal_reason is not None:
+            raise ValueError("only a dismissed page issue has a dismissal reason")
         if (
             self.resolution_revision is not None
             and self.resolution_revision <= self.render_revision

@@ -19,6 +19,7 @@ async def run(
     ctx: StageRuntime,
     *,
     formats: tuple[str, ...] = ("pdf", "cbz"),
+    clear_derived_outputs: bool = True,
 ):
     profile = TargetArtifacts(project_dir).read_book_edition().capability_profile
     with ctx.execute(total=1, estimated_cost_usd=0):
@@ -29,6 +30,7 @@ async def run(
                 canvas_height=profile.output_height,
             ),
             formats=formats,
+            clear_derived_outputs=clear_derived_outputs,
         )
         ctx.record_item_done()
         ctx.progress(1, 1)

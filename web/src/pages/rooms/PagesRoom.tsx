@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   useAcceptPageIssue,
+  useAnalyzeCompletePage,
   useAdaptation,
   useApproveStage,
   useBookPlan,
   useCompletePages,
   useCorrectPageIssue,
   useCreatePageIssue,
+  useDismissPageIssue,
   useGenerateCompletePage,
   useGenerationJobs,
   useProjectStatus,
@@ -88,6 +90,37 @@ function pageIssueCopy(issue: PageIssue, t: (value: string) => string) {
     description: t("The text check compared this page with the approved script and found a difference."),
     expected: readEvidence("expected_text="),
     recognized: readEvidence("recognized_text="),
+  };
+}
+
+function exactDifference(expected: string[], recognized: string[]) {
+  const index = expected.findIndex((value, position) => value !== recognized[position]);
+  if (index < 0 || recognized[index] == null) return null;
+  const before = expected[index];
+  const after = recognized[index];
+  let prefix = 0;
+  while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) {
+    prefix += 1;
+  }
+  let suffix = 0;
+  while (
+    suffix < before.length - prefix
+    && suffix < after.length - prefix
+    && before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  return {
+    expected: {
+      prefix: before.slice(0, prefix),
+      changed: before.slice(prefix, before.length - suffix),
+      suffix: suffix ? before.slice(-suffix) : "",
+    },
+    recognized: {
+      prefix: after.slice(0, prefix),
+      changed: after.slice(prefix, after.length - suffix),
+      suffix: suffix ? after.slice(-suffix) : "",
+    },
   };
 }
 
@@ -259,6 +292,7 @@ function IssueHistory({
   const { t } = useI18n();
   const correct = useCorrectPageIssue();
   const accept = useAcceptPageIssue();
+  const dismiss = useDismissPageIssue();
   const [correctionError, setCorrectionError] = useState<{
     issueId: string;
     message: string;
@@ -272,6 +306,9 @@ function IssueHistory({
     <ol className="space-y-3">
       {issues.map((issue) => {
         const copy = pageIssueCopy(issue, t);
+        const difference = copy.expected && copy.recognized
+          ? exactDifference(copy.expected, copy.recognized)
+          : null;
         return (
           <li key={issue.id}>
             <Surface
@@ -282,7 +319,7 @@ function IssueHistory({
             >
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
-                <StatusPill tone={issue.status === "resolved" ? "sage" : issue.classification === "invariant_failure" ? "red" : "gold"}>
+                <StatusPill tone={issue.status === "resolved" || issue.status === "dismissed" ? "sage" : issue.classification === "invariant_failure" ? "red" : "gold"}>
                   {t(issue.status.toUpperCase())}
                 </StatusPill>
                 <p className="mt-3 font-body text-sm font-bold">{copy.title}</p>
@@ -307,10 +344,32 @@ function IssueHistory({
                     )}
                   </dl>
                 )}
+                {difference && (
+                  <div className="mt-3 border-l-[3px] border-narrator-gold bg-chip-gold/40 px-3 py-2 font-body text-xs leading-5">
+                    <p className="font-meta font-bold text-ink-muted">{t("EXACT DIFFERENCE")}</p>
+                    <p>
+                      <span className="font-bold">{t("Expected:")} </span>
+                      {difference.expected.prefix}
+                      <mark className="bg-hero-red/15 text-hero-red">{difference.expected.changed || "∅"}</mark>
+                      {difference.expected.suffix}
+                    </p>
+                    <p>
+                      <span className="font-bold">{t("Found:")} </span>
+                      {difference.recognized.prefix}
+                      <mark className="bg-hero-red/15 text-hero-red">{difference.recognized.changed || "∅"}</mark>
+                      {difference.recognized.suffix}
+                    </p>
+                  </div>
+                )}
                 <p className="mt-1 font-body text-xs leading-5 text-ink-muted">
                   {t("Revision")} {issue.render_revision}
                   {issue.resolution_revision ? ` → ${t("Revision")} ${issue.resolution_revision}` : ""}
                 </p>
+                {issue.dismissal_reason && (
+                  <p className="mt-2 font-body text-xs leading-5 text-ink-black/70">
+                    {issue.dismissal_reason}
+                  </p>
+                )}
               </div>
               {issue.status === "open" && (
                 <div className="flex flex-wrap gap-2">
@@ -354,6 +413,21 @@ function IssueHistory({
                       disabled={accept.isPending}
                     >
                       {t("ACCEPT AS-IS")}
+                    </Button>
+                  )}
+                  {issue.classification === "invariant_failure"
+                    && issue.id.startsWith("page-issue-draw-page-") && (
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() => dismiss.mutate({
+                        project,
+                        pageNumber,
+                        issueId: issue.id,
+                      })}
+                      disabled={dismiss.isPending}
+                    >
+                      {t("DISMISS FALSE POSITIVE")}
                     </Button>
                   )}
                 </div>
@@ -524,13 +598,14 @@ export function PagesRoom() {
   const { data, isLoading, error, refetch } = useCompletePages(id);
   const run = useRunPipeline();
   const generate = useGenerateCompletePage();
+  const analyze = useAnalyzeCompletePage();
   const approve = useApproveStage();
   const [selected, setSelected] = useState<number | null>(null);
   const [pageJobs, setPageJobs] = useState<Record<string, number>>({});
   const [startingPages, setStartingPages] = useState<number[]>([]);
   const [batchPages, setBatchPages] = useState<number[]>([]);
   const [batchStartedAt, setBatchStartedAt] = useState<number | null>(null);
-  const [pageFailures, setPageFailures] = useState<Record<number, GenerationJob>>({});
+  const [pageFailures, setPageFailures] = useState<Partial<Record<number, GenerationJob>>>({});
   const jobIds = Object.keys(pageJobs);
   const watchingBatch = batchPages.length > 0
     && status?.stages.draw?.status !== "failed";
@@ -755,7 +830,10 @@ export function PagesRoom() {
             const pageIsDrawing = startingPages.includes(item.page.page_number)
               || (drawStatus !== "failed" && batchPages.includes(item.page.page_number))
               || Object.values(pageJobs).includes(item.page.page_number);
-            const pageFailure = pageFailures[item.page.page_number];
+            const pageFailure = pageFailures[item.page.page_number] ?? item.failure;
+            const failurePhase = pageFailure && "phase" in pageFailure
+              ? pageFailure.phase
+              : undefined;
             const failureCopy = pageFailure
               ? getImageFailureCopy(
                   t,
@@ -849,6 +927,20 @@ export function PagesRoom() {
                           {t("TRY AGAIN UNCHANGED")}
                         </Button>
                       </div>
+                    )}
+                    {failurePhase === "analysis" && revision && (
+                      <Button
+                        className="mt-3"
+                        size="xs"
+                        fullWidth
+                        onClick={() => analyze.mutate({
+                          project: projectId,
+                          pageNumber: item.page.page_number,
+                        })}
+                        disabled={analyze.isPending}
+                      >
+                        {analyze.isPending ? t("CHECKING TEXT…") : t("RETRY TEXT CHECK")}
+                      </Button>
                     )}
                   </Surface>
                 )}

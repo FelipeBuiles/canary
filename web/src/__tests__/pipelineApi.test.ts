@@ -4,7 +4,7 @@ import {
   regenLocationState,
 } from "../api/pipeline";
 import { createStyleDirection, fetchStyleSampleEstimate, generateStyleSamples, generateStyleValidation, setActiveStyle, suggestStyles } from "../api/styles";
-import { triggerExport } from "../api/pages";
+import { runFinishPreflight, triggerExport } from "../api/pages";
 import { apiFetch } from "../api/client";
 
 vi.mock("../api/client", () => ({
@@ -94,6 +94,15 @@ describe("generation API", () => {
 
     expect(mockedApiFetch).toHaveBeenCalledWith(
       "/projects/proj%20one/export/?format=pdf&force=1",
+      { method: "POST" },
+    );
+  });
+
+  it("runs Finish preflight without exporting", async () => {
+    await runFinishPreflight("proj one");
+
+    expect(mockedApiFetch).toHaveBeenCalledWith(
+      "/projects/proj%20one/export/preflight",
       { method: "POST" },
     );
   });

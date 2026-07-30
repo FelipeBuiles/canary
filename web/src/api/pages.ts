@@ -40,6 +40,15 @@ export function pageRenderUrl(project: string, pageNumber: number, revision: num
   return `/api${projectPath(project)}/pages/${pageNumber}/renders/${revision}`;
 }
 
+export function analyzeCompletePage(
+  project: string,
+  pageNumber: number,
+): Promise<CompletePageDetail["analyses"][number]> {
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/analyze`, {
+    method: "POST",
+  });
+}
+
 export function generateCompletePage(
   project: string,
   pageNumber: number,
@@ -79,6 +88,16 @@ export function acceptPageIssue(
   });
 }
 
+export function dismissPageIssue(
+  project: string,
+  pageNumber: number,
+  issueId: string,
+): Promise<PageIssue> {
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/issues/${encodeURIComponent(issueId)}/dismiss`, {
+    method: "POST",
+  });
+}
+
 export function correctPageIssue(
   project: string,
   pageNumber: number,
@@ -91,6 +110,14 @@ export function correctPageIssue(
 
 export function getFinishPreflight(project: string): Promise<FinishPreflight> {
   return apiFetch(`${projectPath(project)}/files/finish/preflight.json`);
+}
+
+export function runFinishPreflight(
+  project: string,
+): Promise<{ status: "done"; preflight: FinishPreflight }> {
+  return apiFetch(`${projectPath(project)}/export/preflight`, {
+    method: "POST",
+  });
 }
 
 export function triggerExport(

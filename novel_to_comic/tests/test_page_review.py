@@ -34,6 +34,7 @@ from novel_to_comic.page_review import (
     accept_editorial_page_issue,
     analyze_page_render,
     build_correction_request,
+    dismiss_page_issue,
     record_analysis_issues,
     record_page_issue,
     request_issue_correction,
@@ -399,6 +400,37 @@ def test_invariant_page_issue_cannot_be_deliberately_accepted() -> None:
             lettering_item_ids=["letter-1"],
             status="accepted",
         )
+
+
+def test_automated_invariant_finding_can_be_dismissed_as_a_false_positive(
+    tmp_path: Path,
+) -> None:
+    artifacts = TargetArtifacts(tmp_path)
+    issue = PageIssue(
+        id="page-issue-draw-page-034-render-001-invented_lettering",
+        issue_type="invented_lettering",
+        classification="invariant_failure",
+        correction_owner="draw",
+        page_number=34,
+        render_revision=1,
+        evidence=["OCR read handwriting on a notebook prop."],
+        requested_correction="Remove invented comic lettering.",
+        status="open",
+    )
+    record_page_issue(artifacts, issue)
+
+    dismissed = dismiss_page_issue(
+        artifacts,
+        issue_id=issue.id,
+        page_number=34,
+        reason="Verified as incidental in-world notebook writing.",
+    )
+
+    assert dismissed.status == "dismissed"
+    assert dismissed.dismissal_reason == (
+        "Verified as incidental in-world notebook writing."
+    )
+    assert summarize_page_issues(artifacts).can_continue is True
 
 
 def test_page_issues_are_reviewed_by_exception_and_copy_changes_route_to_adapt(

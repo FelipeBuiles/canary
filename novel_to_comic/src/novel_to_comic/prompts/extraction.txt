@@ -31,6 +31,7 @@ Given the complete text of a novel, output a single JSON object matching the sch
           "visual_anchor": "SELF-CONTAINED PHYSICAL tags for the WHOLE look in this state (identity + the change) — e.g. the full base anchor PLUS 'polished silver prosthetic hands'. Never a bare delta, never mixed with another state, and never include emotion or expression.",
           "baseline_affect": "string or null — only when this state has a stable altered demeanor; never a beat-level reaction",
           "visually_significant": true,
+          "canonical_equivalent": false,
           "continuity_guard": "When visually_significant is true, ONE imperative sentence stating what the image model must preserve and must NOT revert to its default, plus how to stage actions to stay consistent. State the rule in this entity's own terms; do not assume a generic case. Examples: a lost limb → 'She has no hands — both arms end in bandaged stumps; never depict her holding, gripping, or gesturing; she acts with her mouth or against her stumps.' A prosthetic → 'Her hands are rigid polished silver prosthetics, not flesh; always show the metallic sheen.' Omit (null) for minor/text-only states."
         }
       ],
@@ -57,6 +58,7 @@ Given the complete text of a novel, output a single JSON object matching the sch
           "label": "Post-collapse",
           "visual_anchor": "STRICT self-contained TAGS for this state only. NEVER mix pre/post or before/after details in one anchor.",
           "visually_significant": true,
+          "canonical_equivalent": false,
           "continuity_guard": "When visually_significant is true, ONE imperative sentence on what to preserve and NOT revert to the default — e.g. a drained lake → 'The basin is empty cracked mud, never water'; a burned house → 'Charred timber and ash, never an intact building.' Null for minor states."
         }
       ],
@@ -131,8 +133,8 @@ Given the complete text of a novel, output a single JSON object matching the sch
 - characters[].distinguishing_features: ARRAY of strings — e.g. ["long red hair", "scar on chin"]. NOT a single string.
 - characters[].baseline_affect: STRING or null. A stable, low-intensity demeanor separate from physical identity and from scene reactions.
 - scenes[].source_start_quote: VERBATIM string — copy the complete opening sentence of that scene exactly as it appears in the text. Do NOT paraphrase, summarise, or stop mid-sentence.
-- characters[].appearance_states, locations[].appearance_states: ARRAY (may be empty) of alternate-look objects. See APPEARANCE TIMELINE rules below.
-- characters[].appearance_timeline, locations[].appearance_timeline: ARRAY (may be empty) of activations, each {state_id, at:{scene_id, beat}, transition?}, ordered by story position. See APPEARANCE TIMELINE rules below.
+- characters[].appearance_states, locations[].appearance_states: ARRAY of alternate-look objects. It may be empty only after completing the mandatory VISIBLE-CHANGE INVENTORY below.
+- characters[].appearance_timeline, locations[].appearance_timeline: ARRAY of activations, each {state_id, at:{scene_id, beat}, transition?}, ordered by story position. It may be empty only when the corresponding state catalog is empty.
 - scenes[].transient_objects: ARRAY (may be empty). See TRANSIENT OBJECTS rules below.
 
 === EXTRACTION RULES ===
@@ -146,7 +148,8 @@ CHARACTERS
 - Include only characters who can be visually shown in panels.
 - Do NOT create Character entries for off-screen voices, unseen speakers, people only heard from another room, or people mentioned but never physically shown. Preserve their dialogue/events in scene summaries instead.
 - Do NOT add voice-only or off-screen speakers to scenes[].character_ids.
-- visual_anchor = Danbooru-style comma-separated PHYSICAL IDENTITY tags ONLY. No prose, sentences, emotion, expression, mood, pose, or action. Include the character's typical recognizable anatomy, physical traits, usual clothing, and usual accessories. Exclude both transient affect ("anxious expression", "terrified", "smiling", "wild-eyed") and situational/changed state ("wet", "injured", "shivering", "covered in blood", "exhausted", "silver hands"). A permanent mid-story body change belongs in appearance_states + appearance_timeline, never the base anchor.
+- A concrete embodied event that is reported, remembered, or presented through a diary, letter, testimony, dream, or flashback IS visually depictable. If the comic can show the named character physically undergoing that event, include the character in that scene's character_ids. "Off-screen" means the source provides only a disembodied voice or mention with no depictable physical event; it does not mean "described retrospectively." For example, a doctor reporting a named patient's sustained fever and delirium can become a sickbed scene containing the patient.
+- visual_anchor = Danbooru-style comma-separated PHYSICAL IDENTITY tags ONLY. No prose, sentences, emotion, expression, mood, pose, or action. Include the character's typical recognizable anatomy, physical traits, usual clothing, and usual accessories. Exclude both transient affect ("anxious expression", "terrified", "smiling", "wild-eyed") and situational/changed state ("wet", "injured", "shivering", "covered in blood", "exhausted", "silver hands"). Any sustained, story-significant changed condition belongs in appearance_states + appearance_timeline, even when temporary or reversible; it is not limited to permanent body changes.
 - baseline_affect owns any stable demeanor supported by the source, expressed at low intensity: e.g. "guarded and watchful", "habitually stern", "quietly uneasy". It is NOT part of visual_anchor. Do not record beat-level reactions here; screenplay/panel expression direction owns those. Prefer null when the source establishes no stable demeanor.
 - Ground every visual_anchor tag in textual evidence from the source. Do NOT invent specific clothing items, facial features, or accessories that are not supported by the text.
 - Prefer omission over fabrication. If details are sparse, use broader but evidence-supported tags instead of made-up specifics.
@@ -162,7 +165,7 @@ CHARACTERS
   - Adult female characters MUST start with "1woman, adult female" — NEVER "1girl".
   - Child male characters use "1boy, child".
   - Child female characters use "1girl, child".
-- distinguishing_features: PERMANENT, state-invariant identity details true for the WHOLE story (scars present throughout, hair, marks). NEVER a feature the character acquires or loses partway through (severed hands, prosthetics, a wound, aging) — those are appearance_states, not identity. A tag like "maimed arms" here would brand her maimed in every panel, including before the injury. The base visual_anchor and distinguishing_features must describe her ORIGINAL, default look.
+- distinguishing_features: PERMANENT, state-invariant identity details true for the WHOLE story (scars present throughout, hair, marks). NEVER a feature the character acquires or loses partway through (severed hands, prosthetics, a wound, aging) — those are appearance_states, not identity. A tag like "maimed arms" here would brand her maimed in every panel, including before the injury. The base visual_anchor and distinguishing_features must describe the earliest depictable pre-change look in the character's lived chronology. If the source first mentions a later appearance and then reveals the earlier look in a diary or flashback, the earlier look is still the base. Do not put the later look in the base visual_anchor.
 
 LOCATIONS
 - One Location entry per distinct PHYSICAL PLACE. The bunker, the apartment, the alley — each gets its own entry.
@@ -189,18 +192,38 @@ INTERIOR vs EXTERIOR
 - A flashback or cold-open that depicts a different physical location (or a clearly different time) is ALSO a separate scene. Do NOT bundle a remembered interior into the "now" exterior scene.
 
 APPEARANCE TIMELINE (characters[] and locations[] — how a look changes over the story)
-- Most entities look the SAME throughout: leave appearance_states and appearance_timeline empty ([]).
-- Use them when an entity's visible appearance changes at a definite point: a character loses a hand, gains silver prostheses, is restored; a place collapses, burns, shifts day→night.
+- Before writing any JSON, silently complete a VISIBLE-CHANGE INVENTORY for every character and location. Search the entire source for explicit contrasts between earlier and later looks or sustained conditions. Do this even when the source is framed, non-linear, retrospective, or embeds testimony, dreams, letters, or diaries.
+- Inventory all story-significant, visually depictable intervals, including:
+  - bodily transformation, injury, disability, healing, restoration, aging, changed hair or skin, and supernatural form
+  - fever, delirium, unconsciousness, recovery, possession, intoxication, or another sustained condition with a distinct state-specific demeanor
+  - disguise, uniform, major wardrobe era, imprisonment, contamination, blood, burns, or weather exposure when it persists for a meaningful visual sequence rather than one instantaneous reaction
+  - a location becoming flooded, drained, raised, sunken, intact, ruined, burning, blood-soaked, overgrown, or changing between story-significant lighting/time states
+- Treat explicit transition language as decisive evidence: "yellow hair turned white," "years later," "recovered," "restored," "disguised as," "the house burned," and equivalent wording require a before/after decision. A source statement such as hair turns white from shock means the original hair color is the base and the white hair is a later state, even if the later look is mentioned first in the framing narrative.
+- Most entities genuinely look the SAME throughout and should keep empty arrays, but never choose [] by default. Empty arrays are valid only after the inventory finds no explicit before/after change and no sustained visually distinct condition.
+- Use states whenever an entity changes at a definite point or remains in a story-significant altered condition for one or more depictable beats. A state does not need to be permanent or span multiple scenes.
 - Model it as a CATALOG of alternate looks (appearance_states) + an ordered TIMELINE of transitions (appearance_timeline).
-- appearance_states[]: each {id, label, visual_anchor, baseline_affect, visually_significant}.
+- appearance_states[]: each {id, label, visual_anchor, baseline_affect, visually_significant, canonical_equivalent, continuity_guard}.
   - visual_anchor is SELF-CONTAINED physical identity: it fully describes the entity in that state (identity + the physical change) so it can REPLACE the base look with no contradiction. Never a bare delta; never mix two states' tags; never include emotion, expression, pose, or action.
-  - baseline_affect is optional and only describes a stable state-specific demeanor. A momentary expression remains panel direction, not appearance identity.
+  - A sustained mental or medical condition may justify a state even when the source gives few new physical traits. Keep its visual_anchor evidence-grounded and self-contained; record the sustained altered demeanor in baseline_affect instead of inventing sweat, wounds, clothing, or anatomy.
+  - baseline_affect is optional and describes a sustained state-specific demeanor such as delirious, possessed, or shell-shocked. A momentary expression remains panel direction, not appearance identity.
   - visually_significant: true when the state deserves its own generated reference image (a body transformation, a collapsed building); false for a minor text-only difference (dusty travel clothes).
+  - canonical_equivalent: true only for a return to the unchanged base physical look, such as recovery after a temporary fever. This lets the timeline explicitly leave the altered state while reusing canonical identity. A return-to-base state must set `"canonical_equivalent": true`; every physically changed look must set it to false.
 - appearance_timeline[]: each {state_id, at, transition?}, ORDERED by story position.
   - at = {scene_id, beat}: the FIRST point where the new look holds. beat = null means "from that scene's start" (the usual case). Before the first activation, the base visual_anchor applies.
   - Place `at` at the scene where the NEW look first clearly holds. If a destructive act must be SHOWN with the old look (the hand being cut), set `at` to the following scene.
   - transition (encouraged): {label, depicted_at, cause}. label = short name ("hands severed"); depicted_at = where it is shown; cause = why (kept for narration, does not change rendering).
-- THINK IN TRANSITIONS: list each moment an entity's look changes, in order; each becomes one appearance_state + one timeline activation.
+- THINK IN TRANSITIONS: list every moment an entity enters or leaves an altered look, in order; each becomes one appearance_state + one timeline activation. For a temporary condition, create both the altered state and a later recovered/restored state. Never activate a temporary state without a subsequent exit when the source explicitly says it ends.
+- CROSS-FIELD INVARIANT: whenever the source contains an explicit before/after change, the earlier condition must be the base (or the active earlier state), the later condition must have an appearance_state, and the timeline must activate it at the first depicted point where it holds. No changed feature may leak backward into the base anchor.
+- WORKED EXAMPLE — temporary illness and recovery:
+  A dark-haired young sculptor becomes feverish, alternates between unconsciousness and delirium, then recovers.
+  appearance_states:
+    {"id":"sculptor_delirious", "label":"Feverish delirium", "visual_anchor":"the complete evidence-grounded base physical tags", "baseline_affect":"alternating between unconsciousness and delirium", "visually_significant":true, "canonical_equivalent":false, "continuity_guard":"Keep him visibly incapacitated and disconnected from ordinary surroundings; never stage him as alert and conversational."}
+    {"id":"sculptor_recovered", "label":"Recovered", "visual_anchor":"the complete base physical tags", "baseline_affect":"alert and returned to ordinary awareness", "visually_significant":false, "canonical_equivalent":true, "continuity_guard":null}
+  appearance_timeline:
+    {"state_id":"sculptor_delirious", "at":{"scene_id":"scene_003","beat":null}, "transition":{"label":"stricken by fever","cause":"the source's supernatural crisis"}}
+    {"state_id":"sculptor_recovered", "at":{"scene_id":"scene_004","beat":null}, "transition":{"label":"malady suddenly ceases","cause":"the crisis ends"}}
+- WORKED EXAMPLE — retrospective trauma:
+  The framing narrative says a sailor returned with yellow hair turned white, then an embedded diary depicts the earlier voyage. Base visual_anchor uses yellow hair. Add a self-contained white-haired survivor state and activate it only after the traumatic event at the precise beat where the changed look first holds. The framing mention is evidence, not permission to render the earlier voyage with white hair.
 - WORKED EXAMPLE — The Girl Without Hands, char_001 base anchor = a real-handed peasant girl:
   appearance_states: stumps, silver, restored (all visually_significant: true)
   appearance_timeline:
@@ -242,6 +265,7 @@ COMPLETENESS — CRITICAL
   story-critical testimony or explanation, even if they appear in only one
   scene.
 - You MUST cover the full novel. Do not stop at chapter 10 if the novel has 20 chapters. Every chapter must be represented by at least one scene.
+- You MUST finish the VISIBLE-CHANGE INVENTORY before emitting JSON. For every explicit before/after change, verify that the base anchor contains only the earlier look, each altered interval has a state, every state has a timeline activation, and every explicitly ended temporary state has a recovered/restored activation.
 
 NARRATIVE ARCS
 - Always output exactly 3 acts.

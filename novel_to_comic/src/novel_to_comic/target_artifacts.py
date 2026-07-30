@@ -7,12 +7,13 @@ import shutil
 from pathlib import Path
 from typing import TypeVar
 
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from novel_to_comic.models.adaptation import AdaptationBrief, BookAdaptation
 from novel_to_comic.models.draw import (
     BookEdition,
     FrozenPageGenerationRequest,
+    PageGenerationFailure,
     PageGenerationProvenance,
     PageIssue,
     RenderAnalysis,
@@ -33,6 +34,42 @@ class ArtifactMissing(Exception):
         super().__init__(f"Artifact {name!r} not found: {path}")
         self.name = name
         self.path = path
+
+
+_ARTIFACT_OWNER_STAGES = {
+    "source": "Extract",
+    "adaptation_brief": "Brief",
+    "book_adaptation": "Adapt",
+    "failed_book_adaptation": "Adapt",
+    "book_plan": "Plan",
+    "comic_page": "Plan",
+    "comic_page_revision": "Plan",
+    "book_edition": "Draw",
+    "page_generation_request": "Draw",
+    "page_generation_provenance": "Draw",
+    "render_analysis": "Draw",
+    "finish_preflight": "Finish",
+}
+
+
+class ArtifactInvalid(Exception):
+    """Raised when a persisted artifact no longer satisfies its contract."""
+
+    def __init__(self, name: str, path: Path, validation_error: ValidationError) -> None:
+        label = name.replace("_", " ")
+        owner_stage = _ARTIFACT_OWNER_STAGES.get(name)
+        action = (
+            f" Rerun {owner_stage} to rebuild it."
+            if owner_stage is not None
+            else ""
+        )
+        super().__init__(
+            f"Stored {label} is incompatible with the current pipeline.{action}"
+        )
+        self.name = name
+        self.path = path
+        self.validation_error = validation_error
+        self.owner_stage = owner_stage
 
 
 class TargetArtifacts:
@@ -56,6 +93,24 @@ class TargetArtifacts:
     @property
     def failed_adaptation_candidate_path(self) -> Path:
         return self.project_dir / "adapt" / "failed_candidate.json"
+
+    def adapt_checkpoint_path(self, name: str) -> Path:
+        """Return a safe path for one resumable, non-canonical Adapt result."""
+
+        if not name or any(part in {"", ".", ".."} for part in Path(name).parts):
+            raise ValueError("adapt checkpoint name must be a safe relative path")
+        path = Path(name)
+        if path.is_absolute():
+            raise ValueError("adapt checkpoint name must be relative")
+        # Deliberately outside ``adapt/``: a normal stage retry clears canonical
+        # Adapt outputs before running, while exact-input checkpoints must survive
+        # that cleanup to avoid rebilling completed work.
+        return (
+            self.project_dir
+            / ".checkpoints"
+            / "adapt"
+            / path.with_suffix(".json")
+        )
 
     @property
     def plan_path(self) -> Path:
@@ -125,6 +180,15 @@ class TargetArtifacts:
             / "pages"
             / f"page_{page_number:03d}"
             / "issues.json"
+        )
+
+    def page_failure_path(self, page_number: int) -> Path:
+        return (
+            self.project_dir
+            / "draw"
+            / "pages"
+            / f"page_{page_number:03d}"
+            / "failure.json"
         )
 
     @property
@@ -231,6 +295,25 @@ class TargetArtifacts:
 
     def clear_failed_adaptation_candidate(self) -> None:
         self.failed_adaptation_candidate_path.unlink(missing_ok=True)
+
+    def write_adapt_checkpoint(self, name: str, checkpoint: BaseModel) -> None:
+        self._write_model(self.adapt_checkpoint_path(name), checkpoint)
+
+    def read_adapt_checkpoint(
+        self,
+        name: str,
+        model_type: type[ArtifactModel],
+    ) -> ArtifactModel | None:
+        path = self.adapt_checkpoint_path(name)
+        if not path.exists():
+            return None
+        try:
+            return model_type.model_validate_json(path.read_text())
+        except ValidationError:
+            # Checkpoints are disposable implementation details, not canonical
+            # artifacts. An old shape is a cache miss, never a user-facing stage
+            # failure.
+            return None
 
     def write_page(self, page: ComicPage) -> None:
         # The canonical path always holds the latest revision; each revision is
@@ -373,6 +456,16 @@ class TargetArtifacts:
             raise ArtifactMissing("page_issues", path)
         return TypeAdapter(tuple[PageIssue, ...]).validate_json(path.read_text())
 
+    def write_page_failure(self, failure: PageGenerationFailure) -> None:
+        self._write_model(self.page_failure_path(failure.page_number), failure)
+
+    def read_page_failure(self, page_number: int) -> PageGenerationFailure:
+        path = self.page_failure_path(page_number)
+        return self._read_model("page_generation_failure", path, PageGenerationFailure)
+
+    def clear_page_failure(self, page_number: int) -> None:
+        self.page_failure_path(page_number).unlink(missing_ok=True)
+
     def write_preflight(self, preflight: FinishPreflight) -> None:
         self._write_model(self.preflight_path, preflight)
 
@@ -412,4 +505,7 @@ class TargetArtifacts:
     ) -> ArtifactModel:
         if not path.exists():
             raise ArtifactMissing(name, path)
-        return model_type.model_validate_json(path.read_text())
+        try:
+            return model_type.model_validate_json(path.read_text())
+        except ValidationError as exc:
+            raise ArtifactInvalid(name, path, exc) from exc

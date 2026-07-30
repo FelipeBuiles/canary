@@ -271,7 +271,11 @@ async def _extract_with_retry(
         raise exc.last_error from exc
 
     usage = outcome.usage_records[-1] if outcome.usage_records else None
-    return ApiResult(value=outcome.value, usage=usage)
+    return ApiResult(
+        value=outcome.value,
+        usage=usage,
+        additional_usage=tuple(outcome.usage_records[:-1]),
+    )
 
 
 async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBible:
@@ -345,6 +349,8 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
             story_bible,
         )
 
+        for retry_usage in extract_result.additional_usage:
+            ctx.record_api_usage(retry_usage)
         ctx.record_item_done(usage=extract_result.usage)
         ctx.progress(4, 4)
 

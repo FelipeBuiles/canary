@@ -78,13 +78,19 @@ def approved_reference_files(
         )
         for appearance in character.appearance_states:
             state_reference = reference_id(character.id, appearance.id)
-            files[state_reference] = ApprovedReferenceFile(
-                reference_id=state_reference,
-                path=artifacts.character_state_ref_sheet_path(
+            appearance_path = (
+                path
+                if appearance.canonical_equivalent
+                or not appearance.visually_significant
+                else artifacts.character_state_ref_sheet_path(
                     project_dir,
                     character.id,
                     appearance.id,
-                ),
+                )
+            )
+            files[state_reference] = ApprovedReferenceFile(
+                reference_id=state_reference,
+                path=appearance_path,
                 media_type="image/png",
             )
     for location in bible.locations:
@@ -95,13 +101,19 @@ def approved_reference_files(
         )
         for appearance in location.appearance_states:
             state_reference = reference_id(location.id, appearance.id)
-            files[state_reference] = ApprovedReferenceFile(
-                reference_id=state_reference,
-                path=artifacts.location_state_plate_path(
+            appearance_path = (
+                artifacts.location_plate_path(project_dir, location.id)
+                if appearance.canonical_equivalent
+                or not appearance.visually_significant
+                else artifacts.location_state_plate_path(
                     project_dir,
                     location.id,
                     appearance.id,
-                ),
+                )
+            )
+            files[state_reference] = ApprovedReferenceFile(
+                reference_id=state_reference,
+                path=appearance_path,
                 media_type="image/png",
             )
     for prop in bible.props:
