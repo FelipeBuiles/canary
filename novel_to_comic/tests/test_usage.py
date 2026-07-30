@@ -62,9 +62,9 @@ def test_token_priced_image_alias_estimates_via_quality_token_table():
     assert estimate_image_cost("gpt-image-2", 2, quality="high") == approx(0.2496)
 
 
-def test_balanced_image_alias_estimates_nano_banana_2_cost():
-    # image-balanced -> Nano Banana 2 at the complete-page 2K tier: $0.101/image.
-    assert estimate_image_cost("image-balanced", 2) == approx(0.202)
+def test_balanced_image_alias_estimates_nano_banana_pro_cost():
+    # Image-balanced -> Nano Banana Pro at the 1K/2K tier: $0.134/image.
+    assert estimate_image_cost("image-balanced", 2) == approx(0.268)
 
 
 def test_fast_image_alias_estimates_reference_input_images():

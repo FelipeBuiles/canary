@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
-from novel_to_comic.briefing import approve_brief
+from novel_to_comic.briefing import approve_brief, require_approved_brief
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.stages import REGISTRY
 from novel_to_comic.state import (
@@ -134,6 +134,8 @@ async def _run_stage_with_credits(
     project_id: str | None,
     *_unused,
     rerun: bool = False,
+    request: Request | None = None,
+    queue_draw_pages: bool = False,
     **_unused_kwargs,
 ) -> None:
     started = time.perf_counter()
@@ -146,6 +148,18 @@ async def _run_stage_with_credits(
     try:
         if stage == "draw":
             await _run_stage(stage, config, project_dir, state, queue)
+            if queue_draw_pages:
+                if request is None or project_id is None:
+                    raise ValueError("queueing Draw pages requires an active request")
+                from .pages import enqueue_all_undrawn_pages
+
+                enqueue_all_undrawn_pages(
+                    request,
+                    project_id=project_id,
+                    user_id=user_id,
+                    project_dir=project_dir,
+                    config=config,
+                )
             job_id = "draw-initialization"
         else:
             job_id = await run_credited_stage(
@@ -266,6 +280,13 @@ def _require_previous_stage(state, stage: str) -> None:
         )
 
 
+def _require_adaptation_brief(project_dir) -> None:
+    try:
+        require_approved_brief(TargetArtifacts(project_dir).read_brief())
+    except (ArtifactMissing, ValueError, FileNotFoundError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @router.get("/estimate")
 async def estimate_stage_cost(
     project_id: str,
@@ -306,6 +327,7 @@ async def _start_stage(
     rerun: bool,
     project,
     user_id: str,
+    queue_pages: bool = False,
 ):
     project_dir, config, state = project
     if stage is None:
@@ -319,6 +341,9 @@ async def _start_stage(
     style_task = getattr(request.app.state, "style_tasks", {}).get(pkey)
     if style_task is not None and not style_task.done():
         raise HTTPException(409, "A style operation is already running")
+
+    if stage == "adapt":
+        _require_adaptation_brief(project_dir)
 
     if rerun:
         _reset_stage_and_downstream(state, stage)
@@ -352,6 +377,8 @@ async def _start_stage(
         user_id,
         project_id,
         rerun=rerun,
+        request=request,
+        queue_draw_pages=stage == "draw" and queue_pages,
     )
     task = asyncio.create_task(_run_job(pkey, user_id, request, job))
     request.app.state.running_tasks[pkey] = task
@@ -365,10 +392,19 @@ async def run_pipeline(
     project_id: str,
     stage: Optional[str] = Query(None),
     rerun: bool = Query(False),
+    queue_pages: bool = Query(False),
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
-    return await _start_stage(request, project_id, stage, rerun, project, user_id)
+    return await _start_stage(
+        request,
+        project_id,
+        stage,
+        rerun,
+        project,
+        user_id,
+        queue_pages,
+    )
 
 
 @router.post("/regen-extract")
@@ -477,6 +513,8 @@ async def approve(
             target.write_brief(
                 approve_brief(brief, expected_revision=brief.revision)
             )
+        elif stage == "cast":
+            require_approved_brief(TargetArtifacts(project_dir).read_brief())
         approve_stage(state, stage)
     except (ArtifactMissing, ValueError, FileNotFoundError) as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -488,7 +526,17 @@ async def approve(
         properties={"stage": stage},
     )
     response = {"status": "approved", "stage": stage}
-    if stage == "cast":
+    should_start_adapt = (
+        state.stages["adapt"].status == StageStatus.PENDING
+        and (
+            stage == "cast"
+            or (
+                stage == "brief"
+                and state.stages["cast"].status == StageStatus.COMPLETE
+            )
+        )
+    )
+    if should_start_adapt:
         pkey = project_key(user_id, project_id)
         running = request.app.state.running_tasks.get(pkey)
         if running is not None and not running.done():

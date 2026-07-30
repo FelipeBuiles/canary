@@ -184,8 +184,8 @@ class TestUsesGeminiImageProvider:
 
 
 class TestGptImage2Alias:
-    def test_quality_alias_is_not_gpt_image_2(self):
-        assert is_gpt_image_2(GATEWAY_IMAGE_QUALITY) is False
+    def test_quality_alias_is_gpt_image_2(self):
+        assert is_gpt_image_2(GATEWAY_IMAGE_QUALITY) is True
 
     def test_balanced_alias_is_not_gpt_image_2(self):
         assert is_gpt_image_2(GATEWAY_IMAGE_BALANCED) is False
@@ -260,7 +260,7 @@ def test_balanced_adapt_uses_low_thinking_gemini_pro():
 
 class TestReveModelAlias:
     def test_quality_alias_is_not_reve_model(self):
-        # image-quality routes to Seedream 5 Pro, not Reve.
+        # image-quality routes to GPT Image 2, not Reve.
         assert is_reve_model(GATEWAY_IMAGE_QUALITY) is False
 
     def test_reve_alias_is_reve_model(self):
@@ -273,8 +273,8 @@ class TestReveModelAlias:
 
 
 class TestSeedreamModelAlias:
-    def test_quality_alias_is_seedream(self):
-        assert is_seedream_model(GATEWAY_IMAGE_QUALITY) is True
+    def test_quality_alias_is_not_seedream(self):
+        assert is_seedream_model(GATEWAY_IMAGE_QUALITY) is False
 
     def test_balanced_alias_is_not_seedream(self):
         assert is_seedream_model(GATEWAY_IMAGE_BALANCED) is False

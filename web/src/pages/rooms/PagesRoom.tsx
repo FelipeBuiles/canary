@@ -25,6 +25,7 @@ import {
 } from "../../components/composites";
 import { Button } from "../../components/ui/Button";
 import { FieldLabel, TextAreaField } from "../../components/ui/Field";
+import { FlowingDotsPlaceholder } from "../../components/ui/FlowingDotsPlaceholder";
 import { StatusPill } from "../../components/ui/StatusPill";
 import { Surface } from "../../components/ui/Surface";
 import { useI18n } from "../../i18n";
@@ -48,6 +49,47 @@ type EditorialIssueSummary = {
   message: string;
   issues: EditorialIssue[];
 };
+
+const OCR_ISSUE_TYPES = new Set([
+  "misspelled_lettering",
+  "missing_lettering",
+  "duplicated_lettering",
+  "invented_lettering",
+  "reordered_lettering",
+]);
+
+function pageIssueCopy(issue: PageIssue, t: (value: string) => string) {
+  if (!OCR_ISSUE_TYPES.has(issue.issue_type)) {
+    return {
+      title: issue.requested_correction,
+      description: null,
+      expected: null,
+      recognized: null,
+    };
+  }
+  const readEvidence = (prefix: string) => {
+    const value = issue.evidence.find((item) => item.startsWith(prefix));
+    if (!value) return null;
+    try {
+      return JSON.parse(value.slice(prefix.length)) as string[];
+    } catch {
+      return null;
+    }
+  };
+  const titles: Record<string, string> = {
+    misspelled_lettering: "Some lettering does not match",
+    missing_lettering: "Some lettering is missing or unreadable",
+    duplicated_lettering: "Some lettering appears more than once",
+    invented_lettering: "The page contains unexpected lettering",
+    reordered_lettering: "The lettering may be in the wrong reading order",
+  };
+  return {
+    title: t(titles[issue.issue_type]),
+    description: t("The text check compared this page with the approved script and found a difference."),
+    expected: readEvidence("expected_text="),
+    recognized: readEvidence("recognized_text="),
+  };
+}
 
 function uniqueEditorialIssues(issues: EditorialIssue[]) {
   return [...new Map(issues.map((issue) => [issue.id, issue])).values()];
@@ -217,6 +259,10 @@ function IssueHistory({
   const { t } = useI18n();
   const correct = useCorrectPageIssue();
   const accept = useAcceptPageIssue();
+  const [correctionError, setCorrectionError] = useState<{
+    issueId: string;
+    message: string;
+  } | null>(null);
 
   if (issues.length === 0) {
     return <p className="font-body text-sm text-ink-muted">{t("No page issues recorded.")}</p>;
@@ -224,15 +270,43 @@ function IssueHistory({
 
   return (
     <ol className="space-y-3">
-      {issues.map((issue) => (
-        <li key={issue.id}>
-          <Surface border="soft" shadow="none" padding="md">
+      {issues.map((issue) => {
+        const copy = pageIssueCopy(issue, t);
+        return (
+          <li key={issue.id}>
+            <Surface
+              tone={issue.classification === "invariant_failure" && issue.status === "open" ? "pulp" : "bristol"}
+              border="soft"
+              shadow="none"
+              padding="md"
+            >
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
+              <div className="min-w-0 flex-1">
                 <StatusPill tone={issue.status === "resolved" ? "sage" : issue.classification === "invariant_failure" ? "red" : "gold"}>
                   {t(issue.status.toUpperCase())}
                 </StatusPill>
-                <p className="mt-3 font-body text-sm font-bold">{issue.requested_correction}</p>
+                <p className="mt-3 font-body text-sm font-bold">{copy.title}</p>
+                {copy.description && (
+                  <p className="mt-1 max-w-[62ch] font-body text-xs leading-5 text-ink-black/75">
+                    {copy.description}
+                  </p>
+                )}
+                {(copy.expected || copy.recognized) && (
+                  <dl className="mt-3 grid gap-2 font-body text-xs leading-5">
+                    {copy.expected && (
+                      <div>
+                        <dt className="font-meta font-bold text-ink-muted">{t("EXPECTED SCRIPT")}</dt>
+                        <dd>{copy.expected.join(" · ") || t("No lettering")}</dd>
+                      </div>
+                    )}
+                    {copy.recognized && (
+                      <div>
+                        <dt className="font-meta font-bold text-ink-muted">{t("FOUND ON PAGE")}</dt>
+                        <dd>{copy.recognized.join(" · ") || t("No readable lettering found")}</dd>
+                      </div>
+                    )}
+                  </dl>
+                )}
                 <p className="mt-1 font-body text-xs leading-5 text-ink-muted">
                   {t("Revision")} {issue.render_revision}
                   {issue.resolution_revision ? ` → ${t("Revision")} ${issue.resolution_revision}` : ""}
@@ -243,19 +317,29 @@ function IssueHistory({
                   {issue.correction_owner === "draw" && (
                     <Button
                       size="xs"
-                      onClick={() => correct.mutate(
-                        {
-                          project,
-                          pageNumber,
-                          issueId: issue.id,
-                        },
-                        {
-                          onSuccess: ({ job }) => onJobQueued(job.id, pageNumber),
-                        },
-                      )}
+                      onClick={() => {
+                        setCorrectionError(null);
+                        correct.mutate(
+                          {
+                            project,
+                            pageNumber,
+                            issueId: issue.id,
+                          },
+                          {
+                            onSuccess: ({ job }) => {
+                              setCorrectionError(null);
+                              onJobQueued(job.id, pageNumber);
+                            },
+                            onError: (error) => setCorrectionError({
+                              issueId: issue.id,
+                              message: error instanceof Error ? error.message : String(error),
+                            }),
+                          },
+                        );
+                      }}
                       disabled={correct.isPending || pageIsDrawing}
                     >
-                      {t("CORRECT COMPLETE PAGE")}
+                      {t("CREATE CORRECTED REVISION")}
                     </Button>
                   )}
                   {issue.classification === "editorial_issue" && (
@@ -275,9 +359,23 @@ function IssueHistory({
                 </div>
               )}
             </div>
-          </Surface>
-        </li>
-      ))}
+            {correctionError?.issueId === issue.id && (
+              <p
+                role="alert"
+                className="mt-3 border-l-[3px] border-hero-red pl-3 font-body text-xs font-bold leading-5 text-hero-red"
+              >
+                {t("Could not create corrected revision.")} {correctionError.message}
+              </p>
+            )}
+            {issue.status === "open" && issue.correction_owner === "draw" && (
+              <p className="mt-3 font-body text-xs leading-5 text-ink-black/70">
+                {t("This redraws the whole page as a new revision using this finding. Your current page and approved script stay saved.")}
+              </p>
+            )}
+            </Surface>
+          </li>
+        );
+      })}
     </ol>
   );
 }
@@ -429,9 +527,20 @@ export function PagesRoom() {
   const approve = useApproveStage();
   const [selected, setSelected] = useState<number | null>(null);
   const [pageJobs, setPageJobs] = useState<Record<string, number>>({});
+  const [startingPages, setStartingPages] = useState<number[]>([]);
+  const [batchPages, setBatchPages] = useState<number[]>([]);
+  const [batchStartedAt, setBatchStartedAt] = useState<number | null>(null);
   const [pageFailures, setPageFailures] = useState<Record<number, GenerationJob>>({});
   const jobIds = Object.keys(pageJobs);
-  const { data: generationJobs } = useGenerationJobs(id, jobIds);
+  const watchingBatch = batchPages.length > 0
+    && status?.stages.draw?.status !== "failed";
+  const { data: trackedGenerationJobs } = useGenerationJobs(
+    id,
+    watchingBatch ? [] : jobIds,
+    watchingBatch,
+  );
+  const generationJobs = watchingBatch ? undefined : trackedGenerationJobs;
+  const batchGenerationJobs = watchingBatch ? trackedGenerationJobs : undefined;
 
   const drawStatus = status?.stages.draw?.status ?? "pending";
   const interruptedStage = status?.stages.adapt?.status !== "complete"
@@ -477,6 +586,34 @@ export function PagesRoom() {
     });
   }, [generationJobs?.jobs, pageJobs, refetch]);
 
+  useEffect(() => {
+    if (batchPages.length === 0) return;
+    const relevant = (batchGenerationJobs?.jobs ?? []).filter(
+      (job) =>
+        job.kind === "complete_page_draw"
+        && job.payload.issue_id == null
+        && (batchStartedAt == null || Date.parse(job.queued_at) >= batchStartedAt)
+        && batchPages.includes(Number(job.payload.page_number)),
+    );
+    const terminalPages = relevant
+      .filter((job) => job.status === "complete" || job.status === "failed")
+      .map((job) => Number(job.payload.page_number));
+    if (terminalPages.length === 0) return;
+    const failed = relevant.filter((job) => job.status === "failed");
+    void refetch().finally(() => {
+      if (failed.length > 0) {
+        setPageFailures((current) => {
+          const next = { ...current };
+          failed.forEach((job) => {
+            next[Number(job.payload.page_number)] = job;
+          });
+          return next;
+        });
+      }
+      setBatchPages((current) => current.filter((page) => !terminalPages.includes(page)));
+    });
+  }, [batchGenerationJobs?.jobs, batchPages, batchStartedAt, refetch]);
+
   if (isLoading && drawStatus !== "pending") {
     return (
       <RoomShell
@@ -500,11 +637,14 @@ export function PagesRoom() {
           itemsDone={interruptedStageInfo?.items_done}
           itemsTotal={interruptedStageInfo?.items_total}
           retryAsRerun={planNeedsAdapt}
+          allowPendingStart={interruptedStage === "adapt"}
         />
         <BlockingFailureList validation={adaptValidation ?? planValidation} />
       </RoomShell>
     );
   }
+  const projectId = id;
+  const pages = data.pages;
 
   function continueToBook() {
     if (!id) return;
@@ -518,6 +658,9 @@ export function PagesRoom() {
     pageNumber: number,
     depiction: "canonical" | "less_graphic" = "canonical",
   ) {
+    setStartingPages((current) => (
+      current.includes(pageNumber) ? current : [...current, pageNumber]
+    ));
     setPageFailures((current) => {
       const next = { ...current };
       delete next[pageNumber];
@@ -525,13 +668,37 @@ export function PagesRoom() {
     });
     generate.mutate(
       depiction === "canonical"
-        ? { project: id, pageNumber }
-        : { project: id, pageNumber, depiction },
+        ? { project: projectId, pageNumber }
+        : { project: projectId, pageNumber, depiction },
       {
-        onSuccess: ({ job }) => setPageJobs((current) => ({
-          ...current,
-          [job.id]: pageNumber,
-        })),
+        onSuccess: ({ job }) => {
+          setStartingPages((current) => current.filter((page) => page !== pageNumber));
+          setPageJobs((current) => ({
+            ...current,
+            [job.id]: pageNumber,
+          }));
+        },
+        onError: () => {
+          setStartingPages((current) => current.filter((page) => page !== pageNumber));
+        },
+      },
+    );
+  }
+
+  function startDraw(queuePages: boolean) {
+    const undrawnPages = pages
+      .filter((item) => !item.active_render)
+      .map((item) => item.page.page_number);
+    if (queuePages) {
+      setBatchStartedAt(Date.now());
+      setBatchPages(undrawnPages);
+    }
+    run.mutate(
+      { project: projectId, stage: "draw", queuePages },
+      {
+        onError: () => {
+          if (queuePages) setBatchPages([]);
+        },
       },
     );
   }
@@ -553,22 +720,41 @@ export function PagesRoom() {
           description={`${data.pages.length} ${t("planned pages")}`}
         />
         {drawStatus === "pending" && (
-          <Surface tone="ink" padding="md" className="mb-5 flex flex-wrap items-center justify-between gap-4">
-            <p className="max-w-[60ch] text-sm leading-6 text-bristol/80">
-              {t("Start Draw to lock one page model for this edition. Page art is generated only when you request it.")}
-            </p>
-            <Button
-              variant="onInk"
-              onClick={() => run.mutate({ project: id, stage: "draw" })}
-              disabled={run.isPending}
-            >
-              {t("PREPARE PAGE EDITION")}
-            </Button>
+          <Surface tone="ink" padding="md" className="mb-5">
+            <div className="flex flex-wrap items-end justify-between gap-5">
+              <div className="max-w-[62ch]">
+                <h3 className="font-body text-base font-bold text-bristol">
+                  {t("How do you want to draw this edition?")}
+                </h3>
+                <p className="mt-1 text-sm leading-6 text-bristol/80">
+                  {t("Queue every page now, or prepare the edition and generate pages one at a time while you review.")}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => startDraw(false)}
+                  disabled={run.isPending}
+                >
+                  {t("GO ONE BY ONE")}
+                </Button>
+                <Button
+                  variant="onInk"
+                  onClick={() => startDraw(true)}
+                  disabled={run.isPending}
+                >
+                  {t("QUEUE ALL PAGES")}
+                </Button>
+              </div>
+            </div>
           </Surface>
         )}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4">
           {data.pages.map((item) => {
             const revision = item.active_render?.render.revision;
+            const pageIsDrawing = startingPages.includes(item.page.page_number)
+              || (drawStatus !== "failed" && batchPages.includes(item.page.page_number))
+              || Object.values(pageJobs).includes(item.page.page_number);
             const pageFailure = pageFailures[item.page.page_number];
             const failureCopy = pageFailure
               ? getImageFailureCopy(
@@ -587,7 +773,15 @@ export function PagesRoom() {
                   className="block w-full text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red"
                 >
                   <div className="aspect-[2/3] overflow-hidden bg-surface-container">
-                    {revision ? (
+                    {pageIsDrawing ? (
+                      <FlowingDotsPlaceholder
+                        aspect="2 / 3"
+                        label={t("DRAWING PAGE…")}
+                        caption={t("Queued in the page press")}
+                        aria-label={`${t("Page")} ${item.page.page_number}: ${t("generation in progress")}`}
+                        className="h-full border-0"
+                      />
+                    ) : revision ? (
                       <img
                         src={pageRenderUrl(id, item.page.page_number, revision)}
                         alt={`${t("Complete page thumbnail")} ${item.page.page_number}, ${t("revision")} ${revision}`}
@@ -637,7 +831,7 @@ export function PagesRoom() {
                           onClick={() => drawPage(item.page.page_number, "less_graphic")}
                           disabled={
                             generate.isPending
-                            || Object.values(pageJobs).includes(item.page.page_number)
+                            || pageIsDrawing
                           }
                         >
                           {t("DRAW WITHOUT REFERENCES")}
@@ -649,7 +843,7 @@ export function PagesRoom() {
                           onClick={() => drawPage(item.page.page_number)}
                           disabled={
                             generate.isPending
-                            || Object.values(pageJobs).includes(item.page.page_number)
+                            || pageIsDrawing
                           }
                         >
                           {t("TRY AGAIN UNCHANGED")}
@@ -665,11 +859,10 @@ export function PagesRoom() {
                     fullWidth
                     onClick={() => drawPage(item.page.page_number)}
                     disabled={
-                      generate.isPending
-                      || Object.values(pageJobs).includes(item.page.page_number)
+                      pageIsDrawing
                     }
                   >
-                    {Object.values(pageJobs).includes(item.page.page_number)
+                    {pageIsDrawing
                       ? t("DRAWING PAGE…")
                       : t("GENERATE COMPLETE PAGE")}
                   </Button>
@@ -696,7 +889,11 @@ export function PagesRoom() {
               [jobId]: pageNumber,
             }));
           }}
-          pageIsDrawing={Object.values(pageJobs).includes(selectedItem.page.page_number)}
+          pageIsDrawing={
+            startingPages.includes(selectedItem.page.page_number)
+            || (drawStatus !== "failed" && batchPages.includes(selectedItem.page.page_number))
+            || Object.values(pageJobs).includes(selectedItem.page.page_number)
+          }
         />
       )}
 

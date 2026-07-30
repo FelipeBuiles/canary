@@ -24,7 +24,7 @@ def _row(
         "job_id": job_id,
         "provider": "gemini",
         "model": "image-balanced",
-        "provider_model": "gemini-3-pro-image-preview",
+        "provider_model": "gemini-3-pro-image",
         "operation": "image",
         "input_tokens": 0,
         "output_tokens": 0,

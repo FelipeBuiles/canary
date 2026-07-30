@@ -218,8 +218,8 @@ function markStageRunningInCache(
 export function useRunPipeline() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ project, stage, rerun, retryFailed }: { project: string; stage?: string; rerun?: boolean; retryFailed?: boolean }) =>
-      runPipeline(project, stage, rerun, retryFailed),
+    mutationFn: ({ project, stage, rerun, retryFailed, queuePages }: { project: string; stage?: string; rerun?: boolean; retryFailed?: boolean; queuePages?: boolean }) =>
+      runPipeline(project, stage, rerun, retryFailed, queuePages),
     onMutate: async ({ project, stage }) => {
       if (!stage) return { previous: undefined };
       // Cancel in-flight refetches so they can't clobber our optimistic write.
@@ -380,14 +380,18 @@ export function useRegenPropWithInstruction() {
   });
 }
 
-export function useGenerationJobs(project: string | undefined, ids: string[]) {
+export function useGenerationJobs(
+  project: string | undefined,
+  ids: string[],
+  watchAll = false,
+) {
   return useQuery({
     queryKey: ["project", project, "generation-jobs", ids],
     queryFn: () => getGenerationJobs(project!, ids),
-    enabled: !!project && ids.length > 0,
+    enabled: !!project && (ids.length > 0 || watchAll),
     refetchInterval: (query) => {
       const jobs = query.state.data?.jobs ?? [];
-      return jobs.some((job) => job.status === "queued" || job.status === "running")
+      return watchAll || jobs.some((job) => job.status === "queued" || job.status === "running")
         ? 1000
         : false;
     },

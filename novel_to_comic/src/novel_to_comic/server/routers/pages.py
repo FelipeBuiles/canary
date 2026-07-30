@@ -15,7 +15,7 @@ from novel_to_comic.page_drawing import (
     VertexCompletePageAdapter,
     analyze_complete_page,
     compile_page_generation_request,
-    ensure_current_unrendered_edition,
+    ensure_current_page_edition,
     enqueue_complete_page_draw,
 )
 from novel_to_comic.page_ocr import GatewayPageOCRAdapter
@@ -73,6 +73,45 @@ def _issues(target: TargetArtifacts, page_number: int):
         return ()
 
 
+def _correction_retry(
+    target: TargetArtifacts,
+    *,
+    page_number: int,
+    issue_id: str,
+) -> RetryProvenance:
+    prior_requests = [
+        target.read_request(page_number, revision)
+        for revision in target.request_revisions(page_number)
+    ]
+    prior_attempts = [
+        request
+        for request in prior_requests
+        if request.correction is not None
+        and request.correction.issue_id == issue_id
+    ]
+    if not prior_attempts:
+        return RetryProvenance(attempt=1)
+    prior = max(prior_attempts, key=lambda request: request.retry.attempt)
+    return RetryProvenance(
+        attempt=prior.retry.attempt + 1,
+        retries_request_sha256=prior.request_sha256,
+    )
+
+
+def _active_correction_job(request: Request, *, pkey: str, issue_id: str):
+    return next(
+        (
+            job
+            for job in request.app.state.generation_jobs.values()
+            if job.project_name == pkey
+            and job.kind == "complete_page_draw"
+            and job.payload.get("issue_id") == issue_id
+            and job.status in {"queued", "running"}
+        ),
+        None,
+    )
+
+
 def _sync_draw_progress(project_dir) -> None:
     """Reconcile Draw's stage state with the renders actually on disk.
 
@@ -124,6 +163,75 @@ def _draw_success_callback(
             )
 
     return callback
+
+
+def enqueue_all_undrawn_pages(
+    request: Request,
+    *,
+    project_id: str,
+    user_id: str,
+    project_dir,
+    config,
+):
+    """Queue every planned page that does not already have a render."""
+
+    target = TargetArtifacts(project_dir)
+    plan = target.read_plan()
+    edition = ensure_current_page_edition(
+        target,
+        target.read_book_edition(),
+    )
+    inventory = approved_visual_inventory(project_dir)
+    reference_files = approved_reference_files(project_dir)
+    adapter = VertexCompletePageAdapter(GoogleVertexCompletePageTransport(config))
+    pkey = project_key(user_id, project_id)
+    queue = request.app.state.event_queues.get(pkey)
+    prepared = []
+    jobs = []
+
+    for selected in plan.pages:
+        page_number = selected.page_number
+        if target.provenance_revisions(page_number):
+            continue
+        page = target.read_page(page_number)
+        compiled = compile_page_generation_request(
+            page,
+            edition,
+            inventory,
+            reference_files,
+            retry=RetryProvenance(attempt=1),
+            style_template=config.style_template,
+        )
+        # Validate the whole batch before reserving credits or queueing its
+        # first page, so a later unsupported page cannot leave a partial batch.
+        adapter.prepare(compiled)
+        prepared.append((page_number, page, compiled))
+
+    for page_number, page, compiled in prepared:
+        if queue is not None:
+            queue.put_nowait(
+                {"type": "page_start", "stage": "draw", "page_number": page_number}
+            )
+        job, _created = enqueue_complete_page_draw(
+            request.app,
+            project_name=pkey,
+            user_id=user_id,
+            project_id=project_id,
+            project_dir=project_dir,
+            compiled=compiled,
+            adapter=adapter,
+            artifacts=target,
+            page=page,
+            ocr=GatewayPageOCRAdapter(config, page_number=page_number),
+            on_success=_draw_success_callback(
+                request,
+                pkey=pkey,
+                project_dir=project_dir,
+            ),
+        )
+        jobs.append(job)
+
+    return tuple(jobs)
 
 
 @router.get("/pages")
@@ -198,7 +306,7 @@ def generate_page(
     try:
         page = target.read_page(page_number)
         edition = target.read_book_edition()
-        edition = ensure_current_unrendered_edition(target, edition)
+        edition = ensure_current_page_edition(target, edition)
         compiled = compile_page_generation_request(
             page,
             edition,
@@ -343,10 +451,17 @@ def correct_page_issue(
     project_dir, config, _state = project
     target = TargetArtifacts(project_dir)
     issue = _find_issue(target, page_number, issue_id)
+    pkey = project_key(user_id, project_id)
+    active_job = _active_correction_job(request, pkey=pkey, issue_id=issue_id)
+    if active_job is not None:
+        return {
+            "status": "queued",
+            "job": generation_job_payload(request.app, active_job),
+        }
     try:
         page = target.read_page(page_number)
         edition = target.read_book_edition()
-        edition = ensure_current_unrendered_edition(target, edition)
+        edition = ensure_current_page_edition(target, edition)
         parent = target.read_provenance(
             page_number,
             issue.render_revision,
@@ -363,7 +478,11 @@ def correct_page_issue(
             edition,
             approved_visual_inventory(project_dir),
             approved_reference_files(project_dir),
-            retry=RetryProvenance(attempt=1),
+            retry=_correction_retry(
+                target,
+                page_number=page_number,
+                issue_id=issue_id,
+            ),
             correction=correction,
             edit_source_bytes=target.read_render(
                 page_number,
@@ -374,7 +493,6 @@ def correct_page_issue(
     except (ArtifactMissing, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
     adapter = VertexCompletePageAdapter(GoogleVertexCompletePageTransport(config))
-    pkey = project_key(user_id, project_id)
     queue = request.app.state.event_queues.get(pkey)
     if queue is not None:
         queue.put_nowait(

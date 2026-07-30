@@ -274,7 +274,7 @@ class TargetArtifacts:
         self._write_immutable_model(self.book_edition_path, edition, BookEdition)
 
     def replace_book_edition(self, edition: BookEdition) -> None:
-        """Advance an existing edition before any page has rendered."""
+        """Advance the active edition while preserving prior request provenance."""
 
         current = self.read_book_edition()
         if edition.id != current.id or edition.revision != current.revision + 1:

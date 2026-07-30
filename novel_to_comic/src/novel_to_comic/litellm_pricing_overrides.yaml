@@ -21,10 +21,10 @@ aliases:
   prompt-quality: vertex_ai/gemini-3.5-flash-lite
   ocr-balanced: vertex_ai/gemini-3.6-flash
   image-fast: vertex_ai/gemini-3.1-flash-lite-image
-  image-balanced: vertex_ai/gemini-3.1-flash-image
+  image-balanced: vertex_ai/gemini-3-pro-image
   image-balanced-seedream-test: bytedance/seedream/v5/lite/edit
   image-reve: reve/create
-  image-quality: bytedance/seedream/v5/pro/edit
+  image-quality: openai/gpt-image-2
 
 model_overrides:
   # Reve v2 real cost is ~$0.20/image (measured in production 2026-07; the
@@ -169,6 +169,10 @@ model_overrides:
   # sources:
   # https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing
   # and https://ai.google.dev/gemini-api/docs/pricing, verified 2026-07-01.
+  gemini-3-pro-image:
+    input_cost_per_image: 0.00112
+    output_cost_per_image: 0.134
+    mode: image_generation
   gemini-3-pro-image-preview:
     input_cost_per_image: 0.00112
     output_cost_per_image: 0.134

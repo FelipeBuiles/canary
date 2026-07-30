@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from pathlib import Path
 from starlette.testclient import TestClient
+from unittest.mock import MagicMock
 
 from novel_to_comic.server.app import create_app
+from novel_to_comic.server.auth import get_current_user
 from novel_to_comic.server.deps import get_project
-from novel_to_comic.state import save_state, PipelineState
+from novel_to_comic.server.routers import pipeline
+from novel_to_comic.server.routers import projects
+from novel_to_comic.server.routers import styles
+from novel_to_comic.state import save_state, PipelineState, StageState, StageStatus
 from novel_to_comic.artifacts import read_story_bible, write_story_bible
+from novel_to_comic.briefing import propose_brief
 from novel_to_comic.models.story_bible import Scene, StoryBible
 from novel_to_comic.models.validation import InvariantFailure, StageValidation
 from novel_to_comic.source_extraction import produce_source_document
@@ -114,7 +120,28 @@ def _story_project(tmp_path: Path) -> tuple[Path, PipelineState, StoryBible]:
 def _client(tmp_path: Path, project_dir: Path, state: PipelineState) -> TestClient:
     app = create_app(tmp_path)
     app.dependency_overrides[get_project] = lambda: (project_dir, Config(), state)
+    app.dependency_overrides[get_current_user] = lambda: "test-user"
     return TestClient(app)
+
+
+def _write_draft_brief(project_dir: Path) -> None:
+    TargetArtifacts(project_dir).write_brief(
+        propose_brief(
+            {
+                "story_promises": ["The witness never recovers."],
+                "themes": ["Knowledge has a cost."],
+                "point_of_view": "First person.",
+                "narrator_treatment": "Captions carry the testimony.",
+                "tone": "Cosmic dread.",
+                "essential_events": ["The door opens."],
+                "character_turns": ["The witness stops looking."],
+                "desired_emphasis": ["Hold the aftermath."],
+                "transformation_level": "faithful",
+                "target_page_min": 24,
+                "target_page_max": 32,
+            }
+        )
+    )
 
 
 def test_editing_the_story_bible_rederives_the_source_scenes(tmp_path: Path):
@@ -197,6 +224,145 @@ def test_stage_validation_is_readable_after_a_blocking_stage(tmp_path: Path):
     assert response.status_code == 200
     assert response.json()["recommendations"] == ["Recommend a minimum of 44 pages."]
     assert client.get("/api/projects/test_project/validation/draw").status_code == 404
+
+
+def test_cast_approval_does_not_start_adapt_with_a_draft_brief(
+    tmp_path: Path,
+    monkeypatch,
+):
+    project_dir, state, _bible = _story_project(tmp_path)
+    _write_draft_brief(project_dir)
+    state.stages["cast"].status = StageStatus.AWAITING_REVIEW
+    started: list[str] = []
+
+    async def record_started_stage(stage, *_args, **_kwargs):
+        started.append(stage)
+
+    monkeypatch.setattr(pipeline, "_run_stage_with_credits", record_started_stage)
+    client = _client(tmp_path, project_dir, state)
+
+    response = client.post("/api/projects/test_project/approve/cast")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Adapt requires an approved adaptation brief"
+    assert state.stages["cast"].status == StageStatus.AWAITING_REVIEW
+    assert started == []
+
+
+def test_run_adapt_rejects_a_draft_brief_before_enqueuing(
+    tmp_path: Path,
+    monkeypatch,
+):
+    project_dir, state, _bible = _story_project(tmp_path)
+    _write_draft_brief(project_dir)
+    state.stages["cast"].status = StageStatus.COMPLETE
+    started: list[str] = []
+
+    async def record_started_stage(stage, *_args, **_kwargs):
+        started.append(stage)
+
+    monkeypatch.setattr(pipeline, "_run_stage_with_credits", record_started_stage)
+    monkeypatch.setattr(styles, "is_style_selected", lambda *_args: True)
+    monkeypatch.setattr(
+        pipeline,
+        "estimate_stage_credit_reservation",
+        lambda *_args: 0,
+    )
+    monkeypatch.setattr(pipeline, "get_db", lambda: object())
+    monkeypatch.setattr(
+        pipeline, "assert_sufficient_credits", lambda *_args, **_kwargs: None
+    )
+    client = _client(tmp_path, project_dir, state)
+
+    response = client.post("/api/projects/test_project/run?stage=adapt")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Adapt requires an approved adaptation brief"
+    assert state.stages["adapt"].status == StageStatus.PENDING
+    assert started == []
+
+
+def test_status_reopens_story_review_when_draft_brief_has_stale_adapt_failure(
+    tmp_path: Path,
+    monkeypatch,
+):
+    project_dir, state, _bible = _story_project(tmp_path)
+    _write_draft_brief(project_dir)
+    state.stages["brief"] = StageState(
+        status=StageStatus.AWAITING_REVIEW,
+    )
+    state.stages["style"] = StageState(status=StageStatus.COMPLETE)
+    state.stages["cast"] = StageState(status=StageStatus.COMPLETE)
+    state.stages["adapt"] = StageState(
+        status=StageStatus.FAILED,
+        error="Adapt requires an approved adaptation brief",
+    )
+    save_state(state, project_dir)
+
+    db = MagicMock()
+    db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
+    monkeypatch.setattr(projects, "get_db", lambda: db)
+    client = _client(tmp_path, project_dir, state)
+
+    response = client.get("/api/projects/test_project/status")
+
+    assert response.status_code == 200
+    assert response.json()["stages"]["brief"]["status"] == "awaiting_review"
+    assert response.json()["stages"]["brief"]["approved"] is None
+    assert response.json()["stages"]["style"]["status"] == "complete"
+    assert response.json()["stages"]["cast"]["status"] == "complete"
+    assert response.json()["stages"]["adapt"]["status"] == "pending"
+
+
+def test_start_draw_can_request_queueing_every_page(
+    tmp_path: Path,
+    monkeypatch,
+):
+    project_dir, state, _bible = _story_project(tmp_path)
+    state.stages["plan"] = StageState(status=StageStatus.COMPLETE)
+    calls: list[dict] = []
+
+    async def record_started_stage(*_args, **kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(pipeline, "_run_stage_with_credits", record_started_stage)
+    monkeypatch.setattr(styles, "is_style_selected", lambda *_args: True)
+    client = _client(tmp_path, project_dir, state)
+
+    response = client.post(
+        "/api/projects/test_project/run?stage=draw&queue_pages=1"
+    )
+
+    assert response.status_code == 200
+    assert len(calls) == 1
+    assert calls[0]["queue_draw_pages"] is True
+    assert calls[0]["request"] is not None
+
+
+def test_brief_reapproval_resumes_adapt_when_cast_is_already_complete(
+    tmp_path: Path,
+    monkeypatch,
+):
+    project_dir, state, _bible = _story_project(tmp_path)
+    _write_draft_brief(project_dir)
+    state.stages["brief"] = StageState(status=StageStatus.AWAITING_REVIEW)
+    state.stages["style"] = StageState(status=StageStatus.COMPLETE)
+    state.stages["cast"] = StageState(status=StageStatus.COMPLETE)
+    started: list[str] = []
+
+    async def record_started_stage(stage, *_args, **_kwargs):
+        started.append(stage)
+
+    monkeypatch.setattr(pipeline, "_run_stage_with_credits", record_started_stage)
+    client = _client(tmp_path, project_dir, state)
+
+    response = client.post("/api/projects/test_project/approve/brief")
+
+    assert response.status_code == 200
+    assert response.json()["auto_started"] == "adapt"
+    assert state.stages["brief"].status == StageStatus.COMPLETE
+    assert TargetArtifacts(project_dir).read_brief().status == "approved"
+    assert started == ["adapt"]
 
 
 def test_brief_stage_repairs_an_invalid_inference_with_one_retry(tmp_path: Path):

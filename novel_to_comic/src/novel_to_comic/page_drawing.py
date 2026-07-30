@@ -6,7 +6,6 @@ import hashlib
 import io
 import json
 import time
-import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
@@ -160,20 +159,19 @@ def select_book_edition(
     return selected
 
 
-def ensure_current_unrendered_edition(
+def ensure_current_page_edition(
     artifacts: TargetArtifacts,
     edition: BookEdition,
 ) -> BookEdition:
-    """Advance a model-only edition safely when it has produced no page art."""
+    """Advance the active edition manifest when the production model changes.
+
+    Existing requests and render provenance remain immutable under the prior
+    edition revision. New generations and corrections use the current profile.
+    """
 
     current_profile = production_page_capability_profile()
     if edition.capability_profile == current_profile:
         return edition
-    if artifacts.has_page_provenance():
-        raise ValueError(
-            "the page model changed after this edition rendered artwork; "
-            "prepare a new page edition before drawing more pages"
-        )
     updated = BookEdition(
         revision=edition.revision + 1,
         id=edition.id,
@@ -250,6 +248,7 @@ def _compile_prompt(
     style_template: str = "",
 ) -> str:
     project_style = page_style_template(style_template) if style_template.strip() else None
+    has_lettering = any(content.lettering for content in page.content)
     payload = {
         "canonical_comic_page": page.model_dump(mode="json"),
         "project_style_direction": project_style,
@@ -285,13 +284,26 @@ def _compile_prompt(
         if depiction == "less_graphic"
         else ""
     )
-    return (
+    page_direction = (
         "Render exactly one complete, fully lettered comic page from the canonical "
         "ComicPage below. Preserve every lettering string and every visual_anchor "
         "verbatim, including the canonical capitalization. The project_style_direction "
         "is the invariant authority for lettering typeface, weights, colors, balloons, "
         "caption boxes, borders, margins, gutters, and bleed treatment across every page; "
-        "do not improvise or vary those choices on this page. Use references in the "
+        "do not improvise or vary those choices on this page. "
+        if has_lettering
+        else
+        "Render exactly one complete, unlettered comic page from the canonical "
+        "ComicPage below. This canonical page contains no lettering. Do not add any "
+        "visible text, captions, speech or thought balloons, or SFX. Preserve every "
+        "visual_anchor verbatim. The project_style_direction is the invariant authority "
+        "for borders, margins, gutters, and bleed treatment; any lettering guidance in "
+        "it applies only to pages with canonical lettering and must not cause visible "
+        "text on this page. "
+    )
+    return (
+        page_direction
+        + "Use references in the "
         "supplied order. Return one complete page image only; never return a panel artifact.\n"
         + depiction_direction
         + json.dumps(
@@ -451,15 +463,29 @@ class VertexCompletePageAdapter:
             if actual_model.startswith(prefix):
                 actual_model = actual_model.removeprefix(prefix)
                 break
-        if (
-            result.artifact_kind != "complete_page"
-            or result.media_type != prepared.media_type
-            or result.width != prepared.width
-            or result.height != prepared.height
-            or actual_model != prepared.model
-        ):
+        mismatches: list[str] = []
+        if result.artifact_kind != "complete_page":
+            mismatches.append(
+                f"artifact_kind expected=complete_page actual={result.artifact_kind}"
+            )
+        if result.media_type != prepared.media_type:
+            mismatches.append(
+                f"media_type expected={prepared.media_type} actual={result.media_type}"
+            )
+        if (result.width, result.height) != (prepared.width, prepared.height):
+            mismatches.append(
+                "dimensions "
+                f"expected={prepared.width}x{prepared.height} "
+                f"actual={result.width}x{result.height}"
+            )
+        if actual_model != prepared.model:
+            mismatches.append(
+                f"model expected={prepared.model} actual={result.actual_provider_model}"
+            )
+        if mismatches:
             raise ValueError(
-                "provider result does not satisfy the fixed complete-page profile"
+                "provider result does not satisfy the fixed complete-page profile: "
+                + "; ".join(mismatches)
             )
         return result
 
@@ -476,10 +502,13 @@ class GoogleVertexCompletePageTransport:
     ) -> CompletePageProviderResult:
         from PIL import Image
         from novel_to_comic.ai import client as ai_client
+        from novel_to_comic.ai.finalisation import (
+            begin_image_call,
+            finalise_image_failure,
+        )
 
-        event_id = uuid.uuid4().hex
-        headers = ai_client._headers(self._config, event_id)
         files = []
+        ref_reads: list[tuple[Path, bytes | None]] = []
         if request.edit_source_bytes is not None:
             files.append(
                 (
@@ -491,25 +520,35 @@ class GoogleVertexCompletePageTransport:
                     ),
                 )
             )
+            ref_reads.append(
+                (Path("complete-page-edit-source.png"), request.edit_source_bytes)
+            )
         files.extend(
             [
-            (
-                "image",
                 (
-                    f"complete-page-ref-{reference.order}",
-                    data,
-                    reference.media_type,
-                ),
-            )
+                    "image",
+                    (
+                        f"complete-page-ref-{reference.order}",
+                        data,
+                        reference.media_type,
+                    ),
+                )
+                for reference, data in zip(
+                    request.references,
+                    request.reference_bytes,
+                    strict=True,
+                )
+            ]
+        )
+        ref_reads.extend(
+            (Path(f"complete-page-ref-{reference.order}-{reference.id}"), data)
             for reference, data in zip(
                 request.references,
                 request.reference_bytes,
                 strict=True,
             )
-            ]
         )
         endpoint = "/v1/images/edits" if files else "/v1/images/generations"
-        url = f"{ai_client._base_url(self._config)}{endpoint}"
         request_data = {
             # Route through the configured gateway alias while preserving
             # the actual provider/model in the frozen edition manifest.
@@ -522,65 +561,125 @@ class GoogleVertexCompletePageTransport:
             "canary_requested_aspect": str(request.width / request.height),
             "canary_idempotency_key": request.idempotency_key,
         }
-        started = time.perf_counter()
-        if files:
-            response = await ai_client._post_with_retry(
-                url,
-                headers=headers,
-                data=request_data,
-                files=files,
-            )
-        else:
-            response = await ai_client._post_with_retry(
-                url,
-                headers=headers,
-                json=request_data,
-            )
-        if response.status_code >= 400:
-            raise ai_client._gateway_http_error(
-                response,
-                feature="complete_page_draw",
-                model=request.model,
-                endpoint=endpoint,
-            )
-        payload = response.json()
-        image_bytes = await ai_client._decode_image_response(payload)
-        with Image.open(io.BytesIO(image_bytes)) as image:
-            if image.format != "PNG":
-                raise ValueError("Vertex complete-page output must be PNG")
-            width, height = image.size
-        latency_ms = int((time.perf_counter() - started) * 1000)
-        usage = ai_client._extract_usage(
-            payload,
-            event_id,
-            request.model,
-            "image",
-            response.headers,
+        feature = "complete_page_draw"
+        ctx = begin_image_call(
+            config=self._config,
+            model=COMPLETE_PAGE_GATEWAY_MODEL,
+            feature=feature,
+            prompt=request.prompt,
+            params={
+                "model": COMPLETE_PAGE_GATEWAY_MODEL,
+                "provider_model": request.model,
+                "size": f"{request.width}x{request.height}",
+                "quality": self._config.image_quality,
+                "artifact_kind": "complete_page",
+            },
+            ref_reads=ref_reads,
         )
-        if usage.cost_usd is None:
+        headers = ai_client._headers(self._config, ctx.event_id)
+        url = f"{ai_client._base_url(self._config)}{endpoint}"
+        response = None
+        try:
+            if files:
+                response = await ai_client._post_with_retry(
+                    url,
+                    headers=headers,
+                    data=request_data,
+                    files=files,
+                )
+            else:
+                response = await ai_client._post_with_retry(
+                    url,
+                    headers=headers,
+                    json=request_data,
+                )
+            if response.status_code >= 400:
+                raise ai_client._gateway_http_error(
+                    response,
+                    feature=feature,
+                    model=request.model,
+                    endpoint=endpoint,
+                )
+            payload = response.json()
+            image_bytes = await ai_client._decode_image_response(payload)
+            with Image.open(io.BytesIO(image_bytes)) as image:
+                if image.format != "PNG":
+                    raise ValueError("Vertex complete-page output must be PNG")
+                width, height = image.size
+            latency_ms = int((time.perf_counter() - ctx.started) * 1000)
+            usage = ai_client._extract_usage(
+                payload,
+                ctx.event_id,
+                COMPLETE_PAGE_GATEWAY_MODEL,
+                "image",
+                response.headers,
+            )
+            if usage.cost_usd is None:
+                usage = usage.model_copy(
+                    update={
+                        "cost_usd": float(request.estimated_cost_usd),
+                        "cost_source": "capability_profile",
+                    }
+                )
+            response_model = str(payload.get("model") or "")
+            actual_provider_model = (
+                f"vertex_ai/{request.model}"
+                if response_model == COMPLETE_PAGE_GATEWAY_MODEL
+                else response_model or f"vertex_ai/{request.model}"
+            )
             usage = usage.model_copy(
                 update={
-                    "cost_usd": float(request.estimated_cost_usd),
-                    "cost_source": "capability_profile",
+                    "model": COMPLETE_PAGE_GATEWAY_MODEL,
+                    "provider_model": actual_provider_model,
                 }
             )
-        response_model = str(payload.get("model") or "")
-        actual_provider_model = (
-            f"vertex_ai/{request.model}"
-            if response_model == COMPLETE_PAGE_GATEWAY_MODEL
-            else response_model or f"vertex_ai/{request.model}"
-        )
-        return CompletePageProviderResult(
-            artifact_kind="complete_page",
-            image_bytes=image_bytes,
-            media_type="image/png",
-            width=width,
-            height=height,
-            latency_ms=latency_ms,
-            provider_request_id=payload.get("id"),
-            actual_provider_model=actual_provider_model,
-            usage=usage,
-        )
+            response_data = {
+                key: value for key, value in payload.items() if key != "data"
+            }
+            response_data["model"] = actual_provider_model
+            ai_client._finalize_event(
+                event_id=ctx.event_id,
+                status="succeeded",
+                feature=feature,
+                model_alias=COMPLETE_PAGE_GATEWAY_MODEL,
+                latency_ms=latency_ms,
+                usage=usage,
+                response_data=response_data,
+                config=self._config,
+                operation=ctx.operation,
+                metadata=ctx.metadata,
+                estimated_cost_usd=ctx.estimated_cost_usd,
+                langfuse_input=ctx.langfuse_input,
+                langfuse_output={
+                    "artifact_kind": "complete_page",
+                    "image_bytes": len(image_bytes),
+                    "image_sha256": hashlib.sha256(image_bytes).hexdigest(),
+                    "size": f"{width}x{height}",
+                    "actual_provider_model": actual_provider_model,
+                },
+                started_at=ctx.started_at,
+            )
+            return CompletePageProviderResult(
+                artifact_kind="complete_page",
+                image_bytes=image_bytes,
+                media_type="image/png",
+                width=width,
+                height=height,
+                latency_ms=latency_ms,
+                provider_request_id=payload.get("id"),
+                actual_provider_model=actual_provider_model,
+                usage=usage,
+            )
+        except BaseException as exc:
+            finalise_image_failure(
+                ctx=ctx,
+                config=self._config,
+                model=COMPLETE_PAGE_GATEWAY_MODEL,
+                feature=feature,
+                error=exc,
+                error_response=response,
+            )
+            raise
 
 
 async def draw_complete_page(

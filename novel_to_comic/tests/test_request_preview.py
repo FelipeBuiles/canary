@@ -24,7 +24,7 @@ def _wire(source: Path) -> ProviderWireRequest:
         schema_version=1,
         requested_alias="image-balanced",
         expected_route="gemini_pro_image",
-        configured_provider_model="vertex-multimodal/gemini-3-pro-image-preview",
+        configured_provider_model="vertex-multimodal/gemini-3-pro-image",
         prompt_parts=("protected anchor sentinel",),
         references=(ProviderWireReference(
             index=0,

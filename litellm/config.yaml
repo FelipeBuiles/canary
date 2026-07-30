@@ -121,9 +121,9 @@ model_list:
       vertex_location: os.environ/VERTEXAI_LOCATION
   - model_name: image-balanced
     litellm_params:
-      # Nano Banana 2 (Gemini 3.1 Flash Image): Google's recommended balance
-      # of generation quality, reference fidelity, text rendering and latency.
-      model: vertex-multimodal/gemini-3.1-flash-image
+      # Nano Banana Pro (Gemini 3 Pro Image): GA Vertex model with stronger
+      # reasoning, image quality, and text rendering than the Flash route.
+      model: vertex-multimodal/gemini-3-pro-image
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
   - model_name: image-balanced-seedream-test
@@ -136,10 +136,10 @@ model_list:
       api_key: os.environ/REVE_API_KEY
   - model_name: image-quality
     litellm_params:
-      # Seedream 5.0 Pro — production quality tier with up to 10 references.
-      # Routed through the fal queue custom handler.
-      model: fal-queue/bytedance/seedream/v5/pro/edit
-      api_key: os.environ/FAL_KEY
+      # GPT Image 2 — OpenAI's highest-quality image generation and editing
+      # route, with high-fidelity image inputs.
+      model: openai/gpt-image-2
+      api_key: os.environ/OPENAI_API_KEY
 
 litellm_settings:
   # Langfuse logging happens directly from the Canary AI client (see

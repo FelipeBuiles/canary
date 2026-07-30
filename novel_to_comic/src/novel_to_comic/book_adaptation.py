@@ -423,22 +423,33 @@ def _protected_language_key(text: str) -> str:
     )
 
 
+def _quoted_source_wording(text: str) -> tuple[str, ...]:
+    """Return publishable wording enclosed in straight or curly double quotes."""
+
+    return tuple(
+        wording
+        for match in re.finditer(r'[“"]\s*(.+?)\s*[”"]', text, flags=re.DOTALL)
+        if (wording := re.sub(r"\s+", " ", match.group(1)).strip())
+    )
+
+
 def _materialize_protected_lettering(
     candidate: BookAdaptation,
     source: SourceDocument,
     brief: AdaptationBrief,
 ) -> BookAdaptation:
-    """Copy ledgered protected source wording into canonical lettering."""
+    """Realize protected wording and ledgered speech as canonical lettering."""
 
     beats = list(candidate.beats)
+    ledger = list(candidate.ledger)
     existing_keys = {
         _protected_language_key(item.text)
         for beat in beats
         for item in beat.lettering
     }
     source_by_id = {unit.id: unit for unit in source.units}
-    ledger_by_source = {
-        entry.source_unit_id: entry for entry in candidate.ledger
+    ledger_index_by_source = {
+        entry.source_unit_id: index for index, entry in enumerate(ledger)
     }
     next_lettering_number = (
         max(
@@ -472,7 +483,17 @@ def _materialize_protected_lettering(
         )
         if source_unit is None:
             continue
-        entry = ledger_by_source.get(source_unit.id)
+        ledger_index = ledger_index_by_source.get(source_unit.id)
+        entry = ledger[ledger_index] if ledger_index is not None else None
+        if (
+            entry is not None
+            and entry.disposition not in kind_by_disposition
+            and entry.adapted_beat_ids
+        ):
+            entry = entry.model_copy(
+                update={"disposition": "caption", "reason": None}
+            )
+            ledger[ledger_index] = entry
         kind = kind_by_disposition.get(entry.disposition) if entry else None
         destination = entry.adapted_beat_ids[0] if entry and entry.adapted_beat_ids else None
         if kind is None or destination is None:
@@ -483,11 +504,10 @@ def _materialize_protected_lettering(
         )
         if beat_index is None:
             continue
-        text = phrase if phrase in source_by_id[source_unit.id].text else source_unit.text.strip()
         lettering = LetteringItem(
             id=f"lettering_{next_lettering_number:04d}",
             kind=kind,
-            text=text,
+            text=phrase,
             source_unit_ids=(source_unit.id,),
         )
         next_lettering_number += 1
@@ -495,13 +515,58 @@ def _materialize_protected_lettering(
         beats[beat_index] = beat.model_copy(
             update={"lettering": (*beat.lettering, lettering)}
         )
-        existing_keys.add(_protected_language_key(text))
+        existing_keys.add(phrase_key)
+
+    realized_dispositions = {
+        (source_unit_id, item.kind)
+        for beat in beats
+        for item in beat.lettering
+        for source_unit_id in item.source_unit_ids
+    }
+    for entry in ledger:
+        kind = kind_by_disposition.get(entry.disposition)
+        if (
+            kind not in {"dialogue", "thought"}
+            or (entry.source_unit_id, kind) in realized_dispositions
+            or not entry.adapted_beat_ids
+        ):
+            continue
+        source_unit = source_by_id.get(entry.source_unit_id)
+        if source_unit is None:
+            continue
+        quoted_wording = _quoted_source_wording(source_unit.text)
+        if not quoted_wording:
+            continue
+        destination = entry.adapted_beat_ids[0]
+        beat_index = next(
+            (index for index, beat in enumerate(beats) if beat.id == destination),
+            None,
+        )
+        if beat_index is None:
+            continue
+        beat = beats[beat_index]
+        additions = []
+        for wording in quoted_wording:
+            additions.append(
+                LetteringItem(
+                    id=f"lettering_{next_lettering_number:04d}",
+                    kind=kind,
+                    text=wording,
+                    source_unit_ids=(entry.source_unit_id,),
+                )
+            )
+            next_lettering_number += 1
+        beats[beat_index] = beat.model_copy(
+            update={"lettering": (*beat.lettering, *additions)}
+        )
+        realized_dispositions.add((entry.source_unit_id, kind))
 
     return BookAdaptation.model_validate(
         {
             **candidate.model_dump(mode="json"),
             "content_sha256": "",
             "beats": [beat.model_dump(mode="json") for beat in beats],
+            "ledger": [entry.model_dump(mode="json") for entry in ledger],
         }
     )
 

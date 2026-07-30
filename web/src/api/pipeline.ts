@@ -14,11 +14,13 @@ export function runPipeline(
   stage?: string,
   rerun?: boolean,
   retryFailed?: boolean,
+  queuePages?: boolean,
 ): Promise<{ status: string; stage: string }> {
   const params = new URLSearchParams();
   if (stage) params.set("stage", stage);
   if (rerun) params.set("rerun", "1");
   if (retryFailed) params.set("retry_failed", "1");
+  if (queuePages) params.set("queue_pages", "1");
   const query = params.toString();
   return apiFetch(`/projects/${encodeURIComponent(project)}/run${query ? `?${query}` : ""}`, {
     method: "POST",

@@ -96,10 +96,10 @@ def _render(
         comic_page_sha256=_page().content_sha256,
         request_sha256=str(revision) * 64,
         image_sha256=hashlib.sha256(image).hexdigest(),
-        width=2048,
-        height=3072,
+        width=1696,
+        height=2528,
         provider="vertex-multimodal",
-        model="gemini-3.1-flash-image",
+        model="gemini-3-pro-image",
         latency_ms=100,
         cost_usd="0.30",
     )
@@ -370,6 +370,14 @@ def test_ocr_invariant_failures_become_page_issues_that_gate_book(
 
     assert [issue.issue_type for issue in recorded] == ["missing_lettering"]
     assert all(issue.classification == "invariant_failure" for issue in recorded)
+    assert any(
+        evidence.startswith("expected_text=")
+        for evidence in recorded[0].evidence
+    )
+    assert any(
+        evidence.startswith("recognized_text=")
+        for evidence in recorded[0].evidence
+    )
     summary = summarize_page_issues(artifacts, page_number=34)
     assert summary.blocking_issue_ids == (recorded[0].id,)
     assert summary.can_continue is False
@@ -449,7 +457,7 @@ def _profile() -> PageCapabilityProfile:
     return PageCapabilityProfile(
         id="profile",
         provider="vertex-multimodal",
-        model="gemini-3.1-flash-image",
+        model="gemini-3-pro-image",
         max_image_references=4,
         reference_ordering="ordered",
         editing_modes=["instructed", "region_targeted"],
@@ -457,7 +465,7 @@ def _profile() -> PageCapabilityProfile:
         output_height=2528,
         max_prompt_characters=32_000,
         retry_semantics="idempotent_request",
-        price_per_page_usd="0.101",
+        price_per_page_usd="0.134",
     )
 
 
@@ -500,10 +508,10 @@ class _Transport:
             height=2528,
             latency_ms=120,
             provider_request_id="provider-correction",
-            actual_provider_model="vertex_ai/gemini-3.1-flash-image",
+            actual_provider_model="vertex_ai/gemini-3-pro-image",
             usage=UsageRecord(
                 provider="gemini",
-                model="gemini-3.1-flash-image",
+                model="gemini-3-pro-image",
                 operation="image",
                 image_count=1,
                 cost_usd=0.30,

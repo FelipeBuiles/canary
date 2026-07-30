@@ -1053,7 +1053,7 @@ def _page_profile() -> PageCapabilityProfile:
     return PageCapabilityProfile(
         id="nano_banana_pro_page_v1",
         provider="vertex-multimodal",
-        model="gemini-3-pro-image-preview",
+        model="gemini-3-pro-image",
         exact_visible_lettering=True,
         max_image_references=8,
         reference_ordering="ordered",
@@ -1125,7 +1125,7 @@ def test_page_render_and_analysis_are_derived_from_one_frozen_request() -> None:
         width=2048,
         height=3072,
         provider="vertex",
-        model="gemini-3-pro-image-preview",
+        model="gemini-3-pro-image",
         latency_ms=4_200,
         cost_usd="0.30",
     )

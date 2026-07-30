@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 from dataclasses import replace
 from decimal import Decimal
@@ -36,11 +37,12 @@ from novel_to_comic.page_drawing import (
     VertexCompletePageAdapter,
     compile_page_generation_request,
     draw_complete_page,
-    ensure_current_unrendered_edition,
+    ensure_current_page_edition,
     enqueue_complete_page_draw,
     production_page_capability_profile,
     select_book_edition,
 )
+from novel_to_comic.server.routers.pages import _correction_retry
 from novel_to_comic.server.credited_job import enqueue_reserved_generation_job
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import ApiResult, UsageRecord
@@ -48,9 +50,9 @@ from novel_to_comic.usage import ApiResult, UsageRecord
 
 def _profile(**updates: object) -> PageCapabilityProfile:
     payload: dict[str, object] = {
-        "id": "nano-banana-2-complete-page-v1",
+        "id": "nano-banana-pro-complete-page-v1",
         "provider": "vertex-multimodal",
-        "model": "gemini-3.1-flash-image",
+        "model": "gemini-3-pro-image",
         "max_image_references": 4,
         "reference_ordering": "ordered",
         "editing_modes": ["instructed", "region_targeted"],
@@ -58,7 +60,7 @@ def _profile(**updates: object) -> PageCapabilityProfile:
         "output_height": 2528,
         "max_prompt_characters": 32_000,
         "retry_semantics": "idempotent_request",
-        "price_per_page_usd": "0.101",
+        "price_per_page_usd": "0.134",
     }
     payload.update(updates)
     return PageCapabilityProfile(**payload)
@@ -204,6 +206,29 @@ def test_compiler_freezes_exact_page_authority_and_selected_reference_order(
     assert "Ward’s torn left sleeve; blood below the right eye" in request.prompt
 
 
+def test_compiler_explicitly_forbids_visible_text_on_unlettered_pages(
+    tmp_path: Path,
+) -> None:
+    page = _page()
+    unlettered = page.model_copy(
+        update={
+            "content": (
+                page.content[0].model_copy(update={"lettering": ()}),
+            ),
+            "reading_order": ("content-1",),
+        }
+    )
+
+    request = _compile(tmp_path, page=unlettered).request
+
+    assert request.lettering == ()
+    assert "fully lettered" not in request.prompt
+    assert "This canonical page contains no lettering." in request.prompt
+    assert "Do not add any visible text, captions, speech or thought balloons, or SFX." in (
+        request.prompt
+    )
+
+
 def test_compiler_freezes_selected_lettering_and_framing_style_across_pages(
     tmp_path: Path,
 ) -> None:
@@ -245,8 +270,8 @@ def test_production_profile_estimates_page_and_selected_reference_cost(
     )
 
     assert profile.provider == "vertex-multimodal"
-    assert profile.model == "gemini-3.1-flash-image"
-    assert compiled.request.estimated_cost_usd == Decimal("0.10212")
+    assert profile.model == "gemini-3-pro-image"
+    assert compiled.request.estimated_cost_usd == Decimal("0.13624")
 
 
 def test_request_identity_tracks_page_revision_and_selected_reference_bytes(
@@ -315,7 +340,7 @@ def test_less_graphic_depiction_preserves_authority_and_softens_visual_treatment
     assert "Ward’s torn left sleeve; blood below the right eye" in compiled.request.prompt
 
 
-def test_unrendered_edition_advances_to_current_production_profile(
+def test_edition_advances_to_current_profile_after_the_model_changes(
     tmp_path: Path,
 ) -> None:
     artifacts = TargetArtifacts(tmp_path / "project")
@@ -323,16 +348,38 @@ def test_unrendered_edition_advances_to_current_production_profile(
         _profile(
             id="unavailable-preview",
             model="gemini-3-pro-image-preview",
-            output_width=2048,
-            output_height=3072,
+        output_width=1696,
+        output_height=2528,
         )
     )
     artifacts.write_book_edition(old)
+    provenance_dir = tmp_path / "project" / "draw" / "pages" / "page_001"
+    provenance_dir.mkdir(parents=True)
+    (provenance_dir / "provenance_001.json").write_text("{}")
 
-    updated = ensure_current_unrendered_edition(artifacts, old)
+    updated = ensure_current_page_edition(artifacts, old)
 
     assert updated.revision == old.revision + 1
     assert updated.capability_profile == production_page_capability_profile()
+    assert artifacts.read_book_edition() == updated
+
+
+def test_edition_advances_after_current_model_was_saved_with_wrong_dimensions(
+    tmp_path: Path,
+) -> None:
+    artifacts = TargetArtifacts(tmp_path / "project")
+    invalid_dimensions = _edition(
+        _profile(output_width=2048, output_height=3072)
+    )
+    artifacts.write_book_edition(invalid_dimensions)
+
+    updated = ensure_current_page_edition(artifacts, invalid_dimensions)
+
+    assert updated.revision == invalid_dimensions.revision + 1
+    assert (updated.capability_profile.output_width, updated.capability_profile.output_height) == (
+        1696,
+        2528,
+    )
     assert artifacts.read_book_edition() == updated
 
 
@@ -385,6 +432,56 @@ def test_book_edition_rejects_non_production_capability_before_cost() -> None:
         )
 
 
+def test_page_correction_uses_current_model_after_edition_advances(
+    tmp_path: Path,
+) -> None:
+    legacy_profile = _profile(
+        id="nano-banana-2-complete-page-v1",
+        model="gemini-3.1-flash-image",
+        output_width=1696,
+        output_height=2528,
+        price_per_page_usd="0.101",
+    )
+    artifacts = TargetArtifacts(tmp_path / "project")
+    artifacts.write_book_edition(_edition(legacy_profile))
+    provenance_dir = tmp_path / "project" / "draw" / "pages" / "page_001"
+    provenance_dir.mkdir(parents=True)
+    (provenance_dir / "provenance_001.json").write_text("{}")
+    edition = ensure_current_page_edition(
+        artifacts,
+        artifacts.read_book_edition(),
+    )
+    page = _page()
+    parent_bytes = b"legacy-page-render"
+    correction = PageRenderCorrection(
+        issue_id="issue-model-change",
+        page_number=page.page_number,
+        comic_page_revision=page.revision,
+        comic_page_sha256=page.content_sha256,
+        parent_render_revision=1,
+        parent_render_image_sha256=hashlib.sha256(parent_bytes).hexdigest(),
+        mode="instructed",
+        instruction="Use the newly approved prop reference.",
+    )
+
+    compiled = compile_page_generation_request(
+        page,
+        edition,
+        _inventory(),
+        _reference_files(tmp_path),
+        retry=RetryProvenance(attempt=1),
+        correction=correction,
+        edit_source_bytes=parent_bytes,
+    )
+
+    assert compiled.request.model == "gemini-3-pro-image"
+    assert compiled.request.profile_id == "nano-banana-pro-complete-page-v1"
+    assert compiled.request.correction == correction
+    assert VertexCompletePageAdapter(MagicMock()).prepare(compiled).model == (
+        "gemini-3-pro-image"
+    )
+
+
 def test_reference_capacity_fails_during_compilation(tmp_path: Path) -> None:
     edition = _edition(_profile(max_image_references=1))
 
@@ -417,14 +514,14 @@ def _provider_result() -> CompletePageProviderResult:
         height=2528,
         latency_ms=321,
         provider_request_id="vertex-request-1",
-        actual_provider_model="vertex_ai/gemini-3.1-flash-image",
+        actual_provider_model="vertex_ai/gemini-3-pro-image",
         usage=UsageRecord(
             provider="gemini",
-            model="gemini-3.1-flash-image",
-            provider_model="vertex_ai/gemini-3.1-flash-image",
+            model="gemini-3-pro-image",
+            provider_model="vertex_ai/gemini-3-pro-image",
             operation="image",
             image_count=1,
-            cost_usd=0.101,
+            cost_usd=0.134,
             cost_source="provider",
         ),
     )
@@ -449,7 +546,25 @@ def test_vertex_adapter_submits_exactly_the_prepared_complete_page_request(
         update={"actual_provider_model": "vertex_ai/another-model"}
     )
     rejecting_adapter = VertexCompletePageAdapter(_RecordingTransport(wrong_model))
-    with pytest.raises(ValueError, match="fixed complete-page profile"):
+    with pytest.raises(
+        ValueError,
+        match=(
+            "fixed complete-page profile: "
+            "model expected=gemini-3-pro-image actual=vertex_ai/another-model"
+        ),
+    ):
+        asyncio.run(rejecting_adapter.generate(rejecting_adapter.prepare(compiled)))
+
+    wrong_dimensions = _provider_result().model_copy(
+        update={"width": 2048, "height": 3072}
+    )
+    rejecting_adapter = VertexCompletePageAdapter(
+        _RecordingTransport(wrong_dimensions)
+    )
+    with pytest.raises(
+        ValueError,
+        match="dimensions expected=1696x2528 actual=2048x3072",
+    ):
         asyncio.run(rejecting_adapter.generate(rejecting_adapter.prepare(compiled)))
 
 
@@ -482,10 +597,11 @@ def test_native_vertex_transport_preserves_reference_order_and_returns_one_page(
         model=prepared.model,
         operation="image",
         image_count=1,
-        cost_usd=0.101,
+        cost_usd=0.134,
         cost_source="provider",
     )
     post = AsyncMock(return_value=response)
+    finalize = MagicMock()
     with (
         patch("novel_to_comic.ai.client._base_url", return_value="http://gateway"),
         patch("novel_to_comic.ai.client._headers", return_value={}),
@@ -495,6 +611,7 @@ def test_native_vertex_transport_preserves_reference_order_and_returns_one_page(
             AsyncMock(return_value=output.getvalue()),
         ),
         patch("novel_to_comic.ai.client._extract_usage", return_value=usage),
+        patch("novel_to_comic.ai.client._finalize_event", finalize),
     ):
         transport = GoogleVertexCompletePageTransport(
             Config(google_cloud_project="test-project"),
@@ -511,7 +628,15 @@ def test_native_vertex_transport_preserves_reference_order_and_returns_one_page(
     assert submitted["data"]["model"] == "image-balanced"
     assert result.artifact_kind == "complete_page"
     assert (result.width, result.height) == (8, 12)
-    assert result.actual_provider_model == "vertex_ai/gemini-3.1-flash-image"
+    assert result.actual_provider_model == "vertex_ai/gemini-3-pro-image"
+    finalized = finalize.call_args.kwargs
+    assert finalized["model_alias"] == "image-balanced"
+    assert finalized["operation"] == "image"
+    assert finalized["metadata"]["trace_name"] == "complete_page_draw"
+    assert finalized["langfuse_input"]["prompt"] == prepared.prompt
+    assert finalized["langfuse_output"]["actual_provider_model"] == (
+        "vertex_ai/gemini-3-pro-image"
+    )
 
 
 def test_native_vertex_transport_uses_generation_endpoint_without_references(
@@ -537,7 +662,7 @@ def test_native_vertex_transport_uses_generation_endpoint_without_references(
         model=prepared.model,
         operation="image",
         image_count=1,
-        cost_usd=0.101,
+        cost_usd=0.134,
         cost_source="provider",
     )
     post = AsyncMock(return_value=response)
@@ -561,7 +686,7 @@ def test_native_vertex_transport_uses_generation_endpoint_without_references(
     assert submitted["json"]["model"] == "image-balanced"
     assert submitted["json"]["prompt"] == prepared.prompt
     assert "files" not in submitted
-    assert result.actual_provider_model == "vertex_ai/gemini-3.1-flash-image"
+    assert result.actual_provider_model == "vertex_ai/gemini-3-pro-image"
 
 
 def test_native_vertex_transport_surfaces_provider_error_detail(
@@ -575,7 +700,7 @@ def test_native_vertex_transport_surfaces_provider_error_detail(
         json={
             "error": {
                 "message": (
-                    "Publisher model gemini-3-pro-image-preview was not found "
+                    "Publisher model gemini-3-pro-image was not found "
                     "or this project does not have access."
                 )
             }
@@ -621,8 +746,8 @@ def test_draw_persists_immutable_request_render_usage_cost_and_lineage(
     assert result.render.request_sha256 == compiled.request.request_sha256
     assert result.render.comic_page_revision == 2
     assert result.render.latency_ms == 321
-    assert result.render.cost_usd == Decimal("0.101")
-    assert result.usage.cost_usd == 0.101
+    assert result.render.cost_usd == Decimal("0.134")
+    assert result.usage.cost_usd == 0.134
     assert result.usage.image_count == 1
 
     with pytest.raises(ValueError, match="immutable"):
@@ -713,7 +838,7 @@ def test_complete_page_enqueue_uses_credited_lifecycle_and_persists_result(
         asyncio.run(job.runner())
 
     assert created is True
-    assert reserve.call_args.args[-1] == 14
+    assert reserve.call_args.args[-1] == 18
     debit.assert_called_once()
     release.assert_called_once()
     assert artifacts.read_render(7, 1) == b"complete-page-png"
@@ -788,10 +913,10 @@ def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
     assert unanalysed is not job
     # The OCR allowance is included before conversion. At this page price the
     # buffered values happen to round to the same whole-credit reservation.
-    assert with_analysis == without_analysis == 14
+    assert with_analysis == without_analysis == 18
     debited = [call.args[3] for call in debit.call_args_list]
     assert [usage.model for usage in debited] == [
-        "gemini-3.1-flash-image",
+        "gemini-3-pro-image",
         "ocr-balanced",
     ]
     # One ledger job, so whole credits are rounded once across both calls.
@@ -957,6 +1082,42 @@ def test_correction_revisions_are_allocated_when_the_job_runs(tmp_path: Path) ->
     assert corrected.render.parent_revision == 1
     assert artifacts.provenance_revisions(7) == (1, 2)
     assert artifacts.read_request(7, 2).correction == correction
+
+
+def test_failed_page_correction_gets_new_retry_lineage(tmp_path: Path) -> None:
+    artifacts = TargetArtifacts(tmp_path / "project")
+    page = _page()
+    correction = PageRenderCorrection(
+        issue_id="issue-lettering",
+        page_number=page.page_number,
+        comic_page_revision=page.revision,
+        comic_page_sha256=page.content_sha256,
+        parent_render_revision=1,
+        parent_render_image_sha256=hashlib.sha256(b"parent-page").hexdigest(),
+        mode="instructed",
+        instruction="Correct the visible lettering.",
+    )
+    failed_request = compile_page_generation_request(
+        page,
+        _edition(),
+        _inventory(),
+        _reference_files(tmp_path),
+        retry=RetryProvenance(attempt=1),
+        correction=correction,
+        edit_source_bytes=b"parent-page",
+    ).request
+    artifacts.write_request(failed_request, request_revision=2)
+
+    retry = _correction_retry(
+        artifacts,
+        page_number=page.page_number,
+        issue_id=correction.issue_id,
+    )
+
+    assert retry == RetryProvenance(
+        attempt=2,
+        retries_request_sha256=failed_request.request_sha256,
+    )
 
 
 def test_draw_analyses_its_render_and_records_blocking_lettering_issues(

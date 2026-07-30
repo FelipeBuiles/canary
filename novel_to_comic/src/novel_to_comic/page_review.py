@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections import Counter
 from typing import Protocol
 
@@ -144,6 +145,8 @@ def _compare_lettering(
         f"canonical={canonical_normalized!r}",
         f"observed={observed_normalized!r}",
         f"punctuation_policy={PUNCTUATION_POLICY}",
+        f"expected_text={json.dumps(canonical_normalized, ensure_ascii=False)}",
+        f"recognized_text={json.dumps(observed_normalized, ensure_ascii=False)}",
     )
     failures: list[InvariantFailure] = []
     issues: list[EditorialIssue] = []
