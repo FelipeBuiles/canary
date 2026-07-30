@@ -74,6 +74,8 @@ export interface ProjectSummary {
   is_running: boolean;
   has_cover: boolean;
   cover_job: GenerationJob | null;
+  incompatible?: boolean;
+  incompatibility_reason?: string | null;
 }
 
 export interface ProjectStatus {

@@ -49,10 +49,25 @@ def get_project(
     request: Request,
     user_id: str = Depends(get_current_user),
 ) -> tuple[Path, Config, PipelineState]:
+    d = get_project_dir(project_id, request, user_id)
+    config, _ = load_config(d)
+    state = load_state(d)
+    return d, config, state
+
+
+def get_project_dir(
+    project_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+) -> Path:
+    """Resolve a project directory without validating its pipeline state.
+
+    Destructive recovery actions need to reach projects whose state belongs to
+    a retired pipeline contract. Normal project routes should continue using
+    ``get_project`` so they only receive fully validated current projects.
+    """
     slug = _resolve_project_slug(user_id, project_id)
     d = request.app.state.projects_dir / user_id / slug
     if not d.is_dir() or not (d / "state.json").exists():
         raise HTTPException(404, f"Project '{project_id}' not found")
-    config, _ = load_config(d)
-    state = load_state(d)
-    return d, config, state
+    return d

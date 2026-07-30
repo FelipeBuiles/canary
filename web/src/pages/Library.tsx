@@ -1,17 +1,17 @@
 import { useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCreateProject, useGenerateProjectCover, useProjects, useImportStory } from "../api/queries";
+import { useCreateProject, useDeleteProject, useGenerateProjectCover, useProjects, useImportStory } from "../api/queries";
 import { usePipelineStore } from "../store/pipeline";
 import { useRunAction } from "../hooks/useRunAction";
 import { ProjectCard } from "../components/ProjectCard";
 import { Icon } from "../components/ui/Icon";
 import { Button } from "../components/ui/Button";
 import { LoadingBlock, StateBlock } from "../components/ui/StateBlock";
-import { SectionHeader } from "../components/composites";
+import { ConfirmModal, SectionHeader } from "../components/composites";
 import { STATIONS } from "../lib/stations";
 import { UploadStep } from "../components/wizard/UploadStep";
-import type { ConfigOverrides } from "../types/api";
+import type { ConfigOverrides, ProjectSummary } from "../types/api";
 import { useI18n } from "../i18n";
 import { maybeShowInsufficientCredits } from "../store/insufficientCredits";
 
@@ -148,7 +148,9 @@ export function Library() {
   const { t } = useI18n();
   const { data: projects, isLoading, error, refetch } = useProjects();
   const generateCover = useGenerateProjectCover();
+  const deleteProject = useDeleteProject();
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [incompatibleProject, setIncompatibleProject] = useState<ProjectSummary | null>(null);
   const isEmpty = (projects?.length ?? 0) === 0;
 
   if (isLoading) {
@@ -236,6 +238,10 @@ export function Library() {
                 }
                 coverFailed={project.cover_job?.status === "failed"}
                 coverRetrying={generateCover.isPending && generateCover.variables?.project === project.id}
+                onDeleteIncompatible={project.incompatible ? () => setIncompatibleProject(project) : undefined}
+                deleteIncompatiblePending={
+                  deleteProject.isPending && deleteProject.variables?.id === project.id
+                }
                 onRetryCover={() => generateCover.mutate(
                   { project: project.id },
                   {
@@ -251,6 +257,23 @@ export function Library() {
       </section>
 
       <NewProjectModal isOpen={newProjectOpen} onClose={() => setNewProjectOpen(false)} />
+      <ConfirmModal
+        open={incompatibleProject !== null}
+        title={t("REMOVE OLD PROJECT")}
+        body={t("This project belongs to an older pipeline version and cannot be opened. Deleting it removes its old project data permanently.")}
+        confirmInput={incompatibleProject?.project_name}
+        confirmLabel={t("REMOVE OLD PROJECT")}
+        busy={deleteProject.isPending}
+        destructive
+        onConfirm={() => {
+          if (!incompatibleProject) return;
+          deleteProject.mutate(
+            { id: incompatibleProject.id },
+            { onSuccess: () => setIncompatibleProject(null) },
+          );
+        }}
+        onClose={() => setIncompatibleProject(null)}
+      />
     </div>
   );
 }

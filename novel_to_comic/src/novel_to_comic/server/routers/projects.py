@@ -24,7 +24,7 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from novel_to_comic.ai import ai_request_context
 from novel_to_comic.config import Config, mock_mode_active, save_config
@@ -67,7 +67,7 @@ from ..credits import (
     provider_usd_to_credits,
 )
 from ..db import get_db
-from ..deps import get_project, get_projects_dir, project_key
+from ..deps import get_project, get_project_dir, get_projects_dir, project_key
 from ..ratelimit import cost_limit, create_limit, limiter
 from ..product_events import capture_server_event
 from .styles import clear_style_failures_after_selection, is_style_selected
@@ -85,6 +85,9 @@ logger = logging.getLogger(__name__)
 _story_catalog_cache: list[dict] | None = None
 _story_catalog_last_fetch: float = 0.0
 _CACHE_EXPIRY: int = 86400  # 24 hours
+_INCOMPATIBLE_PROJECT_REASON = (
+    "This project was created with an older pipeline version and must be deleted."
+)
 
 
 def _stage_payload(
@@ -217,6 +220,37 @@ def _story_bible_author(project_dir: Path) -> str | None:
         return StoryBible.model_validate_json(bible_path.read_text()).author
     except Exception:
         return None
+
+
+def _stored_project_name(project_dir: Path, fallback: str) -> str:
+    """Read only the display name from an invalid state file when possible."""
+    try:
+        payload = json.loads((project_dir / "state.json").read_text())
+    except (OSError, JSONDecodeError, UnicodeDecodeError):
+        return fallback
+    name = payload.get("project_name") if isinstance(payload, dict) else None
+    return name if isinstance(name, str) and name.strip() else fallback
+
+
+def _incompatible_project_summary(row: dict, project_dir: Path) -> dict:
+    """Return a safe library entry for data the current pipeline cannot load."""
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "project_name": _stored_project_name(project_dir, row["name"]),
+        "author": None,
+        "created_at": row["created_at"],
+        "total_cost_credits": 0,
+        "furthest_stage": None,
+        "is_running": False,
+        "has_cover": False,
+        "page_count": 0,
+        "page_issue_summary": None,
+        "finish_ready": False,
+        "cover_job": None,
+        "incompatible": True,
+        "incompatibility_reason": _INCOMPATIBLE_PROJECT_REASON,
+    }
 
 
 def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
@@ -575,7 +609,15 @@ def list_projects(
         state_file = d / "state.json"
         if not d.is_dir() or not state_file.exists():
             continue  # orphaned DB row — directory missing, skip silently
-        state = load_state(d)
+        try:
+            state = load_state(d)
+        except (ValidationError, JSONDecodeError, UnicodeDecodeError):
+            logger.warning(
+                "Project %s has state data from an incompatible pipeline version",
+                row["id"],
+            )
+            results.append(_incompatible_project_summary(row, d))
+            continue
         pkey = project_key(user_id, row["id"])
         cover_job = _latest_project_cover_job(request, pkey)
         furthest = None
@@ -602,6 +644,8 @@ def list_projects(
                 "cover_job": generation_job_payload(request.app, cover_job)
                 if cover_job
                 else None,
+                "incompatible": False,
+                "incompatibility_reason": None,
             }
         )
     return results
@@ -731,10 +775,9 @@ async def generate_cover(
 def delete_project(
     request: Request,
     project_id: str,
-    project=Depends(get_project),
+    project_dir: Path = Depends(get_project_dir),
     user_id: str = Depends(get_current_user),
 ):
-    project_dir, config, state = project
     if _is_project_running(user_id, project_id, request):
         raise HTTPException(409, "Cannot delete a project while a stage is running")
 
