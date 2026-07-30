@@ -27,11 +27,6 @@ RUN if [ -z "$VITE_SUPABASE_URL" ]; then \
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
-# sync-tokens.mjs (run by `npm run build`) copies the canonical theme tokens
-# from the Python package into the web tree so the live canvas and the PNG/PDF
-# renderer share one source of truth. The script resolves the source relative
-# to web/scripts/ (../../novel_to_comic/...), so place it at that sibling path.
-COPY novel_to_comic/src/novel_to_comic/assembly/theme_tokens.json /novel_to_comic/src/novel_to_comic/assembly/theme_tokens.json
 # Export the build args into the shell environment so Vite inlines them into
 # the bundle. Supabase URL/key are required and validated before compilation;
 # optional values such as VITE_SENTRY_DSN may remain empty.
