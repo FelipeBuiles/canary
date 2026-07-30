@@ -11,12 +11,14 @@ from novel_to_comic.models.page import (
     ApprovedVisualReference,
     ApprovedVisualReferenceInventory,
 )
-from novel_to_comic.page_planning import build_book_plan_prompt, produce_book_plan
+from novel_to_comic.page_planning import (
+    estimate_book_plan_cost,
+    produce_book_plan,
+)
 from novel_to_comic.page_drawing import ApprovedReferenceFile
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.state import PipelineState
 from novel_to_comic.target_artifacts import TargetArtifacts
-from novel_to_comic.usage import estimate_text_cost
 from novel_to_comic import artifacts
 
 from novel_to_comic.stages import Stage, clean_cascade
@@ -117,7 +119,12 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
     model = config.effective_plan_model()
 
     async def generate(**kwargs):
-        return await generate_json(config=config, model=model, **kwargs)
+        return await generate_json(
+            config=config,
+            model=model,
+            temperature=0.25,
+            **kwargs,
+        )
 
     return await produce_book_plan(
         target.read_adaptation(),
@@ -139,7 +146,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     if not target.adaptation_path.exists() or not target.brief_path.exists():
         return 0.0
     brief = target.read_brief()
-    prompt = build_book_plan_prompt(
+    return estimate_book_plan_cost(
         target.read_adaptation(),
         approved_visual_inventory(project_dir),
         ApprovedPageRange(
@@ -147,11 +154,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
             maximum=brief.target_page_max,
             allow_expansion=brief.transformation_level == "faithful",
         ),
-    )
-    return estimate_text_cost(
-        config.effective_plan_model(),
-        prompt,
-        output_chars=max(8_000, len(target.read_adaptation().beats) * 2_000),
+        model=config.effective_plan_model(),
     )
 
 

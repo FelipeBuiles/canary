@@ -226,6 +226,19 @@ async def _extract_with_retry(
 ) -> ApiResult[StoryBible]:
     """Call the extraction model, normalize, validate, and retry on schema errors."""
 
+    def parse(raw: object) -> StoryBible:
+        bible = _parse_extraction(raw)
+        aligned = bible.model_copy(deep=True)
+        unresolved = align_scene_anchors(aligned, novel_text)
+        if unresolved:
+            raise ValueError(
+                "Story Bible scenes must remain in source-text order and every "
+                "source_start_quote must resolve to a monotonically later complete "
+                "source sentence. Unresolved scene IDs: "
+                + ", ".join(unresolved)
+            )
+        return aligned
+
     def correction(raw: object, error: Exception) -> str:
         result = raw[0] if isinstance(raw, list) else raw
         result = _normalize_result(result)
@@ -246,7 +259,7 @@ async def _extract_with_retry(
             model=config.effective_extraction_model(),
             system_prompt=system_prompt,
             user_content=novel_text,
-            parse=_parse_extraction,
+            parse=parse,
             correction=correction,
             label="Story Bible extraction",
             feature="extract.story_bible",

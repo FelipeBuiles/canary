@@ -27,7 +27,10 @@ ordered book adaptation. `plan` creates canonical ComicPages and owns page
 allocation, spread rhythm, page turns, reading order, exact lettering, and
 semantic layout intent. `draw` compiles frozen generation requests from
 canonical page revisions and exclusively owns complete-page generation
-provider calls.
+provider calls. Plan must stage the canonical speaker for on-screen lettering
+in the same semantic panel. Draw uses that ownership to give each balloon one
+unambiguous speaker target; off-screen speech and captioned narration or quoted
+text do not receive tails pointing at visible characters.
 `finish` verifies, corrects, normalizes, and exports page renders without
 calling generation providers directly.
 
@@ -68,6 +71,15 @@ Pages station, with source evidence and proposed remedies. Invariant failures
 block automatically. Editorial issues do not create another approval stage:
 the user may correct them or deliberately continue before spending credits on
 page generation. When no issues exist, no additional review surface is shown.
+
+For long books, Plan's implementation uses two internal passes behind the same
+stage interface. A compact global page map owns page count, ordered beat
+allocation, page turns, spreads, emphasis, density, and rhythm. Bounded page
+batches then expand that fixed authority into semantic panels. Plan consumes a
+ledger-free planning projection rather than the complete Adapt artifact.
+Mechanical page numbers, content IDs/order, ordinary lettering allocation, and
+reading order are canonicalized by code. Validation repairs regenerate only
+the affected page batch whenever the global map remains valid.
 
 ## Consequences
 

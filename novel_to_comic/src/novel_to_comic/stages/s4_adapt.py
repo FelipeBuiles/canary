@@ -25,7 +25,9 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
         return await generate_json(
             config=config,
             model=model,
-            temperature=1.0,
+            # Preserve expressive adaptation while reducing structural variance
+            # that otherwise turns into paid schema and invariant repairs.
+            temperature=0.6,
             **kwargs,
         )
 

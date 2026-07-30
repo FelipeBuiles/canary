@@ -122,6 +122,14 @@ class LetteringItem(BaseModel):
     kind: Literal["dialogue", "thought", "caption", "sfx"]
     text: str = Field(min_length=1)
     speaker: str | None = None
+    speaker_entity_id: str | None = None
+    delivery: Literal[
+        "onscreen",
+        "offscreen",
+        "narration",
+        "quoted_text",
+        "display",
+    ] | None = None
     source_unit_ids: tuple[str, ...] = ()
 
 

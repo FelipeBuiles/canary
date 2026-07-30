@@ -42,3 +42,19 @@ def test_extraction_contract_excludes_affect_from_visual_anchor():
     assert '"baseline_affect"' in prompt
     assert "NO emotion, expression, mood, pose, action" in prompt
     assert "It is NOT part of visual_anchor" in prompt
+
+
+def test_extraction_contract_keeps_source_order_and_important_speakers():
+    prompt_path = (
+        Path(__file__).parents[1]
+        / "src"
+        / "novel_to_comic"
+        / "prompts"
+        / "extraction.txt"
+    )
+    prompt = prompt_path.read_text()
+
+    assert "strict source-text order" in prompt
+    assert "monotonically later" in prompt
+    assert "named on-screen speaking character" in prompt
+    assert "only one scene" in prompt

@@ -29,13 +29,18 @@ text. Adaptation assigns every unit a disposition such as depicted, dialogue,
 thought, caption, visual motif, compressed into another beat, or intentionally
 omitted with a reason. Adapted beats retain links to the source units
 they adapt, identify the narrative function being preserved, and own complete
-dialogue and caption wording.
+dialogue and caption wording. Every lettering item records how it is delivered.
+On-screen dialogue and thought also identify one canonical speaking character;
+quoted prose is captioned quoted text rather than dialogue attributed to an
+arbitrary visible character.
 
 Unaccounted source material, incomplete scene boundaries, and truncated
 display copy are validation failures rather than warnings. Lettering budgets
 may trigger editorial rewriting, redistribution, or additional panels, but
 must never silently shorten text or replace a complete thought with a trailing
-ellipsis.
+ellipsis. A faithful adaptation also fails validation when it effectively
+erases a substantial source scene or leaves a sustained run of causal beats
+without reader-facing dialogue, caption, or thought.
 
 `plan` may allocate an adapted lettering item across pages or panels without
 changing its words. It may also create more space or report that the item
@@ -51,9 +56,25 @@ collectively damaging book-level causality, proportion, pacing, or emotional
 release. User approval of the brief protects authorial intent that automated
 coverage and coherence checks cannot establish.
 
-The target page range is a soft editorial constraint, not permission to drop
-essential material or overload pages. `adapt` uses it to guide proportional
-selection and compression, while `plan` determines the actual page count. If
-the approved story requirements cannot fit the range at acceptable density,
-Canary reports the conflict and recommends a larger range rather than silently
-cutting, truncating, or crowding the adaptation.
+The canonical ledger remains one entry per source unit, but the model does not
+author repetitive entries that can be derived from beat and lettering
+provenance. Adapt's internal wire format contains beats plus compact exceptions
+for compression, intentional omission, and visual-motif treatment. Code expands
+those decisions into the complete canonical ledger. Model-facing source and
+Story Bible views omit offsets, hashes, visual prose, and other fields that do
+not affect narrative judgment.
+
+Validation failures are repaired at the smallest source-owned scope that
+preserves coherence. A failure with source evidence expands to its complete
+source scene and replaces only that scene's beats and ledger decisions inside
+the affected shard. Failures without resolvable local evidence may still
+require a full-shard repair.
+
+The approved minimum page count is a narrative floor, while the maximum is a
+soft editorial constraint rather than permission to drop essential material
+or overload pages. `adapt` uses the range to guide proportional selection and
+compression, while `plan` determines the actual page count. `plan` may not
+lower the approved minimum to legitimize an underdeveloped allocation. If the
+approved story requirements cannot fit the range at acceptable density,
+Canary expands or reports the conflict and recommends a larger range rather
+than silently cutting, truncating, or crowding the adaptation.

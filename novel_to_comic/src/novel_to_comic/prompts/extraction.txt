@@ -139,6 +139,10 @@ Given the complete text of a novel, output a single JSON object matching the sch
 
 CHARACTERS
 - Include any named character who appears in 2+ scenes.
+- Also include every named on-screen speaking character whose testimony,
+  explanation, decision, or reaction is important to understanding the story,
+  even when that character appears in only one scene. A comic cannot assign
+  dialogue balloons or stable visual identity to a missing speaker.
 - Include only characters who can be visually shown in panels.
 - Do NOT create Character entries for off-screen voices, unseen speakers, people only heard from another room, or people mentioned but never physically shown. Preserve their dialogue/events in scene summaries instead.
 - Do NOT add voice-only or off-screen speakers to scenes[].character_ids.
@@ -206,6 +210,10 @@ APPEARANCE TIMELINE (characters[] and locations[] — how a look changes over th
   Result: scenes 1-3 show real hands, 4-8 stumps, 9-15 silver, 16 restored — and silver NEVER appears before scene_009.
 
 SCENES
+- List scenes in strict source-text order, never reconstructed chronology or
+  dramatic chronology. Every source_start_quote must occur monotonically later
+  in the source than the previous scene's quote. A flashback or embedded
+  document stays where the framing narrative presents it.
 - A new scene starts when ANY of the following changes: location, location appearance state, POV character, OR a significant time jump (>30 min, "later that day", flashback to earlier).
 - source_start_quote: copy the complete opening sentence of the scene VERBATIM from the text — exact words, punctuation, capitalisation. This is used both to locate the scene in the source file and as its displayed excerpt. Do NOT invent, paraphrase, or stop mid-sentence.
 - A character's or location's CHANGED appearance is NOT recorded on the scene. It lives on the entity's appearance_states + appearance_timeline (see APPEARANCE TIMELINE), which resolve per panel automatically.
@@ -230,6 +238,9 @@ TRANSIENT OBJECTS (scene-scoped, one-time)
 
 COMPLETENESS — CRITICAL
 - You MUST extract EVERY named character who appears in 2+ scenes. Do not skip minor but recurring characters.
+- You MUST also extract every named on-screen speaking character who carries
+  story-critical testimony or explanation, even if they appear in only one
+  scene.
 - You MUST cover the full novel. Do not stop at chapter 10 if the novel has 20 chapters. Every chapter must be represented by at least one scene.
 
 NARRATIVE ARCS
