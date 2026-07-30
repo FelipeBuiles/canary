@@ -9,7 +9,7 @@ from novel_to_comic.labs.providers.base import LabsImageInput
 from novel_to_comic.labs.providers.litellm import LitellmProvider, _canonical_temp_path
 from novel_to_comic.config import Config
 from novel_to_comic.generation_input import GenerationPromptInput
-from novel_to_comic.non_panel_generation import AssetGenerationInput, compile_non_panel_request
+from novel_to_comic.asset_generation import AssetGenerationInput, compile_non_panel_request
 from novel_to_comic.labs.registry import LabsModelEntry
 from novel_to_comic.usage import ApiResult, UsageRecord
 

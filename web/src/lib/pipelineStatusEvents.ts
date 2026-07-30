@@ -1,6 +1,6 @@
 import type { PipelineEvent, ProjectStatus, StageInfo } from "../types/api";
 
-const CHECKPOINT_STAGES = new Set(["extract", "style", "cast", "draw"]);
+const CHECKPOINT_STAGES = new Set(["brief", "style", "cast", "draw"]);
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);

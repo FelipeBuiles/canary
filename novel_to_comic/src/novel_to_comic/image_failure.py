@@ -1,4 +1,4 @@
-"""Shared classification and user-facing copy for panel image failures."""
+"""Shared classification and user-facing copy for image-generation failures."""
 
 from __future__ import annotations
 
@@ -118,8 +118,8 @@ def user_message_for_image_failure(classification: ImageFailureClassification) -
     """Return concise English copy for stored failure metadata and APIs."""
     return {
         "provider_blocked": (
-            "The image service rejected this request for safety reasons. "
-            "Edit the prompt to remove the blocked content, then try again."
+            "The image provider declined this scene but did not say which detail "
+            "caused it. Your work is unchanged."
         ),
         "rate_limited": (
             "The image service has temporarily reached its quota. "

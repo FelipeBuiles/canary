@@ -24,6 +24,26 @@ export function isInsufficientCreditsError(err: unknown): err is InsufficientCre
   return err instanceof InsufficientCreditsError;
 }
 
+/**
+ * A non-2xx response, carrying the status so callers and the retry policy can
+ * branch on it. The message keeps the historic `API <status>: <detail>` shape
+ * because existing callers match on it.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(`API ${status}: ${message}`);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+/** A missing artifact is the normal pre-stage state, not a failure to retry. */
+export function isNotFoundError(err: unknown): boolean {
+  if (err instanceof ApiError) return err.status === 404;
+  return err instanceof Error && err.message.startsWith("API 404:");
+}
+
 function parseInsufficientCredits(detail: unknown): InsufficientCreditsInfo | null {
   if (!detail || typeof detail !== "object") return null;
   const d = detail as Record<string, unknown>;
@@ -72,7 +92,7 @@ export async function apiFetch<T>(
       const info = parseInsufficientCredits(detail);
       if (info) throw new InsufficientCreditsError(info);
     }
-    throw new Error(`API ${res.status}: ${message}`);
+    throw new ApiError(res.status, message);
   }
   return res.json();
 }

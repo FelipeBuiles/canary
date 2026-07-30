@@ -26,6 +26,13 @@ const STAGE_META: Record<StageName, StageMeta> = {
     inputs: ["Source text"],
     outputs: ["Characters", "Locations", "Scenes", "Arcs"],
   },
+  brief: {
+    label: "BRIEF",
+    title: "Adaptation Brief",
+    description: "Sets the story promises, tone, emphasis, and approved target page range for the whole book.",
+    inputs: ["Story Bible", "Source text"],
+    outputs: ["Approved adaptation brief"],
+  },
   style: {
     label: "LOOK & FEEL",
     title: "Visual Style",
@@ -42,45 +49,31 @@ const STAGE_META: Record<StageName, StageMeta> = {
   },
   adapt: {
     label: "ADAPT",
-    title: "Screenplay",
-    description: "Transforms prose scenes into screenplay beats — action, dialogue, sfx, and stage direction.",
-    inputs: ["Story bible", "Scenes"],
-    outputs: ["Screenplay beats"],
+    title: "Book Adaptation",
+    description: "Creates one source-accounted book adaptation with complete lettering and a narrative treatment.",
+    inputs: ["Approved brief", "Story bible"],
+    outputs: ["Book adaptation"],
   },
   plan: {
     label: "PLAN",
-    title: "Layout Plan",
-    description: "Groups beats into panels and pages, deciding panel count, importance, and page rhythm.",
-    inputs: ["Screenplay"],
-    outputs: ["Planned panels", "Planned pages"],
-  },
-  storyboard: {
-    label: "STORYBOARD",
-    title: "Panel Breakdown",
-    description: "Details each planned panel — shot type, camera angle, character poses, expressions, and mood.",
-    inputs: ["Screenplay", "Layout plan"],
-    outputs: ["Panel breakdowns"],
-  },
-  direct: {
-    label: "DIRECT",
-    title: "Image Prompts",
-    description: "Assembles fully-baked image prompts with style, composition, character refs, and continuity notes.",
-    inputs: ["Panel breakdowns", "Character refs"],
-    outputs: ["Image prompts"],
+    title: "Page Plan",
+    description: "Allocates the complete adaptation into canonical pages, spreads, page turns, and reading order.",
+    inputs: ["Book adaptation", "Approved references"],
+    outputs: ["Canonical pages"],
   },
   draw: {
     label: "DRAW",
-    title: "Panel Gallery",
-    description: "Sends each prompt to the image model and collects generated panel artwork.",
-    inputs: ["Image prompts", "Style"],
-    outputs: ["Panel images"],
+    title: "Complete Pages",
+    description: "Generates one fully lettered page revision at a time and records review evidence.",
+    inputs: ["Canonical pages", "Approved references"],
+    outputs: ["Page renders", "Page issues"],
   },
-  compose: {
-    label: "COMPOSE",
-    title: "Comic Pages",
-    description: "Assembles panels, bubbles, sfx, and lettering onto final comic page layouts.",
-    inputs: ["Panel images", "Layout plan"],
-    outputs: ["Comic pages"],
+  finish: {
+    label: "FINISH",
+    title: "Finish Preflight",
+    description: "Verifies the completed book, normalizes production files, and creates export packages.",
+    inputs: ["Complete page renders", "Page issues"],
+    outputs: ["Preflight", "PDF", "CBZ"],
   },
 };
 
@@ -139,12 +132,15 @@ function StageDocket({
 // ── Pending state ─────────────────────────────────────────────────────────────
 
 interface StagePendingProps {
+  project: string;
   stage: StageName;
+  allowStart: boolean;
 }
 
-export function StagePending({ stage }: StagePendingProps) {
+export function StagePending({ project, stage, allowStart }: StagePendingProps) {
   const { t } = useI18n();
   const meta = STAGE_META[stage];
+  const { handleRun, isPending } = useRunAction();
 
   return (
     <StageDocket stage={stage} state="WAITING IN THE PRODUCTION LINE" tone="muted">
@@ -169,6 +165,17 @@ export function StagePending({ stage }: StagePendingProps) {
             ))}
           </div>
       </div>
+      {allowStart && (
+        <div className="mt-5 flex">
+          <Button
+            size="md"
+            disabled={isPending}
+            onClick={() => handleRun(project, stage)}
+          >
+            {isPending ? t("Starting…") : t("Start adaptation")}
+          </Button>
+        </div>
+      )}
     </StageDocket>
   );
 }
@@ -262,9 +269,10 @@ export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0 }: StageRunn
 interface StageFailedProps {
   project: string;
   stage: StageName;
+  rerun: boolean;
 }
 
-function StageFailed({ project, stage }: StageFailedProps) {
+function StageFailed({ project, stage, rerun }: StageFailedProps) {
   const { t } = useI18n();
   const { handleRun, isPending } = useRunAction();
   return (
@@ -276,7 +284,7 @@ function StageFailed({ project, stage }: StageFailedProps) {
           <Button
             size="md"
             disabled={isPending}
-            onClick={() => handleRun(project, stage)}
+            onClick={() => handleRun(project, stage, { rerun })}
           >
             {isPending ? t("Starting…") : t("Retry stage")}
           </Button>
@@ -291,11 +299,23 @@ interface StagePlaceholderProps {
   project: string;
   stage: StageName;
   status: StageStatus;
+  stale?: boolean;
   itemsDone?: number;
   itemsTotal?: number;
+  retryAsRerun?: boolean;
+  allowPendingStart?: boolean;
 }
 
-export function StagePlaceholder({ project, stage, status, itemsDone, itemsTotal }: StagePlaceholderProps) {
+export function StagePlaceholder({
+  project,
+  stage,
+  status,
+  stale = false,
+  itemsDone,
+  itemsTotal,
+  retryAsRerun = false,
+  allowPendingStart = false,
+}: StagePlaceholderProps) {
   const { t } = useI18n();
   // Credit gate takes priority over every other placeholder state — a user
   // blocked on credits should never see "WAITING FOR PIPELINE" or a fake
@@ -316,14 +336,20 @@ export function StagePlaceholder({ project, stage, status, itemsDone, itemsTotal
     );
   }
 
-  if (status === "running") {
+  if (status === "running" && !stale) {
     return <StageRunning stage={stage} itemsDone={itemsDone} itemsTotal={itemsTotal} />;
   }
   if (status === "pending") {
-    return <StagePending stage={stage} />;
+    return (
+      <StagePending
+        project={project}
+        stage={stage}
+        allowStart={allowPendingStart}
+      />
+    );
   }
-  if (status === "failed") {
-    return <StageFailed project={project} stage={stage} />;
+  if (status === "failed" || stale) {
+    return <StageFailed project={project} stage={stage} rerun={retryAsRerun} />;
   }
   // Stage completed but no data — shouldn't normally happen; show a minimal
   // state while the data loads.

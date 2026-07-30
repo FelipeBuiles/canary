@@ -80,8 +80,19 @@ def init(input_path: str, name: str | None, image_model: str | None):
             f"Delete state.json first, or cd into an empty directory."
         )
 
-    for subdir in ["input", "scenes", "refs", "plates", "adapt", "plan", "storyboard",
-                   "direct", "draw", "compose", "exports"]:
+    for subdir in [
+        "input",
+        "source",
+        "brief",
+        "samples",
+        "refs",
+        "plates",
+        "adapt",
+        "plan",
+        "draw",
+        "finish",
+        "exports",
+    ]:
         (project_dir / subdir).mkdir(exist_ok=True)
 
     dst = project_dir / "input" / src.name

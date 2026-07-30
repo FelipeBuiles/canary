@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 @dataclass
 class Stage:
     name: str
-    run: Callable  # async def run(config, project_dir, state, on_event) -> Any
+    run: Callable  # async def run(config, project_dir, ctx) -> Any
     outputs: Callable[[Path], list[Path]]
     clean_paths: Callable[[Path], list[Path]]
     estimate_cost: Callable[[Config, Path, PipelineState], float] | None = None
@@ -23,8 +23,16 @@ class Stage:
 # own outputs plus everything downstream, so each stage's clean_paths is just
 # the cascade from its first directory.
 _CLEAN_CASCADE: tuple[str, ...] = (
-    "samples", "refs", "plates", "screenplays", "plan", "storyboard",
-    "direct", "draw", "compose", "exports",
+    "source",
+    "brief",
+    "samples",
+    "refs",
+    "plates",
+    "adapt",
+    "plan",
+    "draw",
+    "finish",
+    "exports",
 )
 
 
@@ -37,27 +45,25 @@ def clean_cascade(project_dir: Path, start: str) -> list[Path]:
 # and Stage must be defined before those modules are loaded.
 from novel_to_comic.stages import (  # noqa: E402
     s1_extract,
+    s2_brief,
     s2_style,
     s3_cast,
-    s4_screenplay,
-    s5_layout_plan,
-    s5_panels,
-    s6_storyboard,
-    s7_draw,
-    s8_compose,
+    s4_adapt,
+    s5_plan,
+    s7_page_draw,
+    s8_finish,
 )
 
 REGISTRY: dict[str, Stage] = {
     m.STAGE.name: m.STAGE
     for m in [
         s1_extract,
+        s2_brief,
         s2_style,
         s3_cast,
-        s4_screenplay,
-        s5_layout_plan,
-        s5_panels,
-        s6_storyboard,
-        s7_draw,
-        s8_compose,
+        s4_adapt,
+        s5_plan,
+        s7_page_draw,
+        s8_finish,
     ]
 }

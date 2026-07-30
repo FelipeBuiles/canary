@@ -6,6 +6,18 @@ import pytest
 from novel_to_comic.server import app as server_app
 
 
+def test_every_model_the_pipeline_uses_has_pricing():
+    """A gateway alias without pricing refuses to boot in production.
+
+    Adding a model to MODEL_REGISTRY without its `aliases` entry in
+    litellm_pricing_overrides.yaml is a deploy-time failure, so the audit that
+    detects it runs in the suite rather than only at startup.
+    """
+    from novel_to_comic.usage import audit_pricing
+
+    assert audit_pricing() == []
+
+
 def test_pricing_audit_raises_in_production(monkeypatch):
     monkeypatch.setattr(server_app, "audit_pricing", lambda: ["missing-model"])
     monkeypatch.setenv("CANARY_ENV", "production")

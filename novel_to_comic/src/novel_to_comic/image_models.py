@@ -19,7 +19,8 @@ IMAGE_MODEL_ALIASES = (
 )
 
 _GEMINI_FLASH_LITE_MODEL = "vertex-multimodal/gemini-3.1-flash-lite-image"
-_GEMINI_PRO_IMAGE_MODEL = "vertex-multimodal/gemini-3-pro-image-preview"
+_GEMINI_PRO_IMAGE_MODEL = "vertex-multimodal/gemini-3-pro-image"
+_GPT_IMAGE_2_MODEL = "openai/gpt-image-2"
 _SEEDREAM_V5_PRO_MODEL = "fal-queue/bytedance/seedream/v5/pro/edit"
 _REVE_CREATE_MODEL = "reve/create"
 
@@ -51,14 +52,14 @@ _ALIAS_DESCRIPTIONS: dict[str, ImageModelDescription] = {
         provider_model=_GEMINI_FLASH_LITE_MODEL,
     ),
     GATEWAY_IMAGE_BALANCED: ImageModelDescription(
-        route=ImageRoute.GEMINI_FLASH_LITE,
-        display_name="Balanced — Gemini 3.1 Flash Lite Image",
-        provider_model=_GEMINI_FLASH_LITE_MODEL,
+        route=ImageRoute.GEMINI_PRO_IMAGE,
+        display_name="Balanced — Gemini 3 Pro Image (Nano Banana Pro)",
+        provider_model=_GEMINI_PRO_IMAGE_MODEL,
     ),
     GATEWAY_IMAGE_QUALITY: ImageModelDescription(
-        route=ImageRoute.SEEDREAM,
-        display_name="Quality — Seedream 5.0 Pro",
-        provider_model=_SEEDREAM_V5_PRO_MODEL,
+        route=ImageRoute.GPT_IMAGE_2,
+        display_name="Quality — GPT Image 2",
+        provider_model=_GPT_IMAGE_2_MODEL,
     ),
     GATEWAY_IMAGE_REVE: ImageModelDescription(
         route=ImageRoute.REVE,
@@ -94,7 +95,7 @@ def describe_image_model(model: str) -> ImageModelDescription:
     if normalized == _GEMINI_PRO_IMAGE_MODEL:
         return ImageModelDescription(
             route=ImageRoute.GEMINI_PRO_IMAGE,
-            display_name="Gemini 3 Pro Image (Nano Banana 2 Pro)",
+            display_name="Gemini 3 Pro Image (Nano Banana Pro)",
             provider_model=normalized,
         )
     if normalized in {
@@ -268,8 +269,9 @@ class ImageModelProfile:
 # images, but Canary keeps its production selector at four to reduce
 # conditioning noise; the Gemini Flash Lite route accepts many more
 # (the contents-list has headroom),
-# and GPT Image 2 processes every supplied image at high fidelity so it keeps
-# references to identity only.
+# and GPT Image 2 processes every supplied image at high fidelity, so Canary
+# keeps a conservative four-reference budget. Context-specific selectors may
+# further narrow roles (for example, panel generation keeps style text-only).
 _ROUTE_REFERENCE_CAPS: dict[ImageRoute, int] = {
     ImageRoute.REVE: 4,
     ImageRoute.GEMINI_FLASH_LITE: 10,
@@ -281,18 +283,6 @@ _ROUTE_REFERENCE_CAPS: dict[ImageRoute, int] = {
 
 
 def _profile_for_route(route: ImageRoute) -> ImageModelProfile:
-    if route is ImageRoute.GPT_IMAGE_2:
-        # GPT Image 2 treats every supplied image as edit conditioning; keep it
-        # to identity only (subjects + props). Style samples and location plates
-        # leak texture/noise and repeated backgrounds.
-        return ImageModelProfile(
-            route=route,
-            max_references=_ROUTE_REFERENCE_CAPS[route],
-            supported_roles=frozenset({"subject", "prop"}),
-            prompt_char_limit=_PROMPT_CHAR_LIMITS[route],
-            native_aspect_modes=_NATIVE_ASPECTS[route],
-            supported_controls=_SUPPORTED_CONTROLS[route],
-        )
     return ImageModelProfile(
         route=route,
         max_references=_ROUTE_REFERENCE_CAPS[route],

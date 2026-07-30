@@ -26,17 +26,12 @@ from novel_to_comic.usage import (
 
 CostConfidence = Literal["low_variance", "usually_within_estimate", "variable"]
 
-# Instructions are capped at 500 characters, but text preprocessing also
-# includes system rules and serialized patchable prompt/asset context. 32k
-# input characters conservatively covers those bounded schemas. Each call caps
-# output at 4096 tokens; 16,384 characters represents that full allowance under
-# the estimator's character-to-token conversion. Cast and panel instruction
-# jobs each perform one explicit rewrite; derived panel prompt bodies are local.
+# Instructions are capped at 500 characters, but Cast text preprocessing also
+# includes system rules and serialized asset context.
 INSTRUCTION_REWRITE_INPUT_CHARS = 32_000
 INSTRUCTION_REWRITE_OUTPUT_CHARS = 16_384
-INSTRUCTION_TEXT_CALLS_BY_STAGE: dict[Literal["cast", "draw"], int] = {
+INSTRUCTION_TEXT_CALLS_BY_STAGE: dict[Literal["cast"], int] = {
     "cast": 1,
-    "draw": 1,
 }
 
 log = logging.getLogger("canary.credits")
@@ -119,14 +114,13 @@ def estimate_stage_credit_cost(
 def stage_cost_confidence(stage: str) -> CostConfidence:
     _map: dict[str, CostConfidence] = {
         "extract": "usually_within_estimate",
+        "brief": "usually_within_estimate",
         "style": "usually_within_estimate",
         "cast": "variable",
         "adapt": "usually_within_estimate",
         "plan": "usually_within_estimate",
-        "storyboard": "low_variance",
-        "direct": "low_variance",
         "draw": "variable",
-        "compose": "low_variance",
+        "finish": "low_variance",
     }
     return _map.get(stage, "variable")
 
@@ -198,7 +192,7 @@ class UnifiedCostResolver:
     def estimate_instructed_regen_cost(
         config: Config,
         image_estimate: CreditEstimate,
-        stage: Literal["cast", "draw"],
+        stage: Literal["cast"],
     ) -> CreditEstimate:
         """Add the separately billed prompt rewrite to an image estimate."""
         if mock_mode_active(config):
@@ -241,34 +235,6 @@ class UnifiedCostResolver:
     ) -> CreditEstimate:
         """Estimate the credits to reserve/debit for a full stage run."""
         return estimate_stage_credit_breakdown(config, project_dir, state, stage)
-
-    @staticmethod
-    def estimate_panel_regen_cost(
-        config: Config,
-        project_dir: Path,
-        scene_id: str,
-        panel_number: int,
-        image_model_alias: str | None = None,
-    ) -> CreditEstimate:
-        """Estimate the credits needed to regenerate a single panel."""
-        if mock_mode_active(config):
-            return credit_estimate_for_provider_cost(0.0, "draw", reserve=False)
-        from novel_to_comic import artifacts
-        from novel_to_comic.stages.s7_draw import estimate_panel_image_cost_usd
-        from novel_to_comic.config import config_for_image_model_alias
-
-        if not scene_id or scene_id != Path(scene_id).name or scene_id in {".", ".."}:
-            raise HTTPException(400, "Invalid scene_id")
-
-        regen_config = config_for_image_model_alias(config, image_model_alias)
-        prompt_path = artifacts.panel_prompt_path(project_dir, scene_id, panel_number)
-        if not prompt_path.exists():
-            raise HTTPException(404, f"Prompt not found: {scene_id}/panel_{panel_number:03d}")
-
-        cost_usd = estimate_panel_image_cost_usd(regen_config, project_dir, prompt_path)
-        return credit_estimate_for_provider_cost(
-            cost_usd, "draw", reserve=False, zero_cost_estimate=1
-        )
 
     @staticmethod
     def estimate_asset_regen_cost(

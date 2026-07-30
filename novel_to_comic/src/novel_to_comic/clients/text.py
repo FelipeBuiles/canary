@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from novel_to_comic.config import Config
 from novel_to_comic.usage import ApiResult
-from novel_to_comic.ai import generate_structured_object, generate_text as ai_generate_text
+from novel_to_comic.ai import (
+    generate_structured_object,
+    generate_text as ai_generate_text,
+)
 
 # ── Model → provider registry ────────────────────────────────────────────────
 # Add new models here.  Do NOT add heuristic prefix-matching.
@@ -37,15 +40,16 @@ MODEL_REGISTRY: dict[str, str] = {
     "extract-fast": "litellm",
     "extract-balanced": "litellm",
     "extract-quality": "litellm",
-    "screenplay-fast": "litellm",
-    "screenplay-balanced": "litellm",
-    "screenplay-quality": "litellm",
-    "panel-fast": "litellm",
-    "panel-balanced": "litellm",
-    "panel-quality": "litellm",
+    "adapt-fast": "litellm",
+    "adapt-balanced": "litellm",
+    "adapt-quality": "litellm",
+    "plan-fast": "litellm",
+    "plan-balanced": "litellm",
+    "plan-quality": "litellm",
     "prompt-fast": "litellm",
     "prompt-balanced": "litellm",
     "prompt-quality": "litellm",
+    "ocr-balanced": "litellm",
 }
 
 
@@ -67,7 +71,9 @@ async def generate_json(
     user_content: str | bytes,
     temperature: float = 0.7,
     max_output_tokens: int | None = None,
+    json_schema: dict | None = None,
     feature: str = "text.generate_json",
+    image_attachments: tuple[tuple[bytes, str], ...] = (),
 ) -> ApiResult[dict]:
     """Generate structured JSON through the AI gateway."""
     return await generate_structured_object(
@@ -77,7 +83,9 @@ async def generate_json(
         user_content=user_content,
         temperature=temperature,
         max_output_tokens=max_output_tokens,
+        json_schema=json_schema,
         feature=feature,
+        image_attachments=image_attachments,
     )
 
 

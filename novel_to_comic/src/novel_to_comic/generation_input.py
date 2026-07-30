@@ -1,22 +1,16 @@
-"""Provider-independent prompt inputs shared by panel and asset generation.
-
-Panel prompts are persisted as :class:`ImagePrompt` records.  Non-panel assets
-are requests in their own right and must not acquire panel-only identifiers just
-to use the common compiler, so this module carries only the fields the compiler
-actually projects.
-"""
+"""Provider-independent prompt inputs for Style and Cast assets."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from novel_to_comic.models.prompt import PromptAnchor, PromptSubject
-from novel_to_comic.panel_aspect import GenerationShape
+from novel_to_comic.models.generation import PromptAnchor, PromptSubject
+from novel_to_comic.image_geometry import GenerationShape
 
 
 @dataclass(frozen=True, slots=True)
 class GenerationPromptInput:
-    """Panel-free canonical prompt input for any image asset."""
+    """Canonical prompt input for one Style or Cast image asset."""
 
     anchors: tuple[PromptAnchor, ...] = ()
     subjects: tuple[PromptSubject, ...] = ()

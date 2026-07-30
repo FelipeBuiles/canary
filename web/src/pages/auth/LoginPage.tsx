@@ -120,7 +120,7 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
               Your novel, scene by scene.
             </h1>
             <p className="mt-8 max-w-[32rem] bg-bristol/8 px-5 py-4 text-[1.05rem] font-semibold leading-8 text-pulp-paper/70">
-              Upload your manuscript. Scenewright drafts characters, storyboards each chapter, and lays out every panel — you direct every page, and we claim no ownership over what you make.
+              Upload your manuscript. Scenewright shapes the adaptation, plans the book, and draws complete comic pages — you review every page, and we claim no ownership over what you make.
             </p>
           </div>
           <div className="relative mt-12 font-meta text-[0.62rem] uppercase tracking-[0.22em] text-pulp-paper/40">

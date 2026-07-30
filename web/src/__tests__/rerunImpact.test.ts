@@ -12,26 +12,21 @@ describe("RERUN_IMPACT", () => {
     }
   });
 
-  it("has a style entry", () => {
-    expect(RERUN_IMPACT["style"]).toBeDefined();
-  });
-
   it("every entry has a downstream field", () => {
     for (const [, impact] of Object.entries(RERUN_IMPACT)) {
       expect(Array.isArray(impact.downstream)).toBe(true);
     }
   });
 
-  it("extract has the most downstream stages (all 7 others)", () => {
+  it("extract has all seven downstream stages", () => {
     const extract = RERUN_IMPACT["extract"];
     expect(extract.downstream).toHaveLength(7);
     expect(extract.downstream).toContain("cast");
-    expect(extract.downstream).toContain("compose");
+    expect(extract.downstream).toContain("finish");
   });
 
-  it("compose has no downstream stages", () => {
-    const compose = RERUN_IMPACT["compose"];
-    expect(compose.downstream).toHaveLength(0);
+  it("finish has no downstream stages", () => {
+    expect(RERUN_IMPACT.finish.downstream).toHaveLength(0);
   });
 
   it("downstream stages are in pipeline order (no cycles)", () => {
@@ -46,24 +41,14 @@ describe("RERUN_IMPACT", () => {
     }
   });
 
-  it("draw downstream contains only compose", () => {
-    const draw = RERUN_IMPACT["draw"];
-    expect(draw.downstream).toEqual(["compose"]);
+  it("draw downstream contains only finish", () => {
+    expect(RERUN_IMPACT.draw.downstream).toEqual(["finish"]);
   });
 
-  it("direct downstream contains draw and compose", () => {
-    const direct = RERUN_IMPACT["direct"];
-    expect(direct.downstream).toContain("draw");
-    expect(direct.downstream).toContain("compose");
-    expect(direct.downstream.indexOf("draw")).toBeLessThan(
-      direct.downstream.indexOf("compose")
-    );
-  });
-
-  it("style has the same downstream as extract", () => {
-    const style = RERUN_IMPACT["style"];
-    const extract = RERUN_IMPACT["extract"];
-    expect(style.downstream).toEqual(extract.downstream);
+  it("Brief invalidates every stage that derives from it", () => {
+    expect(RERUN_IMPACT.brief.downstream).toEqual([
+      "style", "cast", "adapt", "plan", "draw", "finish",
+    ]);
   });
 
 });

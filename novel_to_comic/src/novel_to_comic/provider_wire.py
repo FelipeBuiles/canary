@@ -12,20 +12,13 @@ import json
 import os
 import stat
 from dataclasses import asdict, dataclass, replace
-from collections.abc import Mapping, Sequence
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any
 
 from novel_to_comic.compiled_request import CompiledGenerationRequest
 from novel_to_comic.image_models import ImageRoute
-from novel_to_comic.models.prompt import PromptLayout
-from novel_to_comic.panel_aspect import (
-    REVE_LAYOUT_MAX_DIMENSION,
-    REVE_LAYOUT_MAX_PIXELS,
-    REVE_LAYOUT_MIN_PIXELS,
+from novel_to_comic.image_geometry import (
     aspect_for_dimensions,
-    dimensions_for_reve_layout,
 )
 
 PROVIDER_WIRE_SCHEMA_VERSION = 1
@@ -37,69 +30,6 @@ PROVIDER_WIRE_DISCRIMINATOR = "canary.provider-wire/1"
 
 class ProviderWireError(ValueError):
     """The exact wire request cannot be safely serialized."""
-
-
-class _FrozenMapping(Mapping[str, Any]):
-    """Read-only mapping used inside a frozen wire request."""
-
-    __slots__ = ("_data",)
-
-    def __init__(self, values: Mapping[str, Any]) -> None:
-        self._data = MappingProxyType(dict(values))
-
-    def __getitem__(self, key: str) -> Any:
-        return self._data[key]
-
-    def __iter__(self):
-        return iter(self._data)
-
-    def __len__(self) -> int:
-        return len(self._data)
-
-    def __eq__(self, other: object) -> bool:
-        return self._data == other
-
-    def __deepcopy__(self, _memo: dict[int, Any]) -> "_FrozenMapping":
-        return self
-
-
-class _FrozenSequence(Sequence[Any]):
-    """Read-only sequence used inside a frozen wire request."""
-
-    __slots__ = ("_data",)
-
-    def __init__(self, values: Sequence[Any]) -> None:
-        self._data = tuple(values)
-
-    def __getitem__(self, index):
-        return self._data[index]
-
-    def __len__(self) -> int:
-        return len(self._data)
-
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, Sequence) and not isinstance(other, (str, bytes, bytearray)):
-            return tuple(other) == self._data
-        return False
-
-    def __deepcopy__(self, _memo: dict[int, Any]) -> "_FrozenSequence":
-        return self
-
-
-def _freeze_layout(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return _FrozenMapping({key: _freeze_layout(item) for key, item in value.items()})
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return _FrozenSequence([_freeze_layout(item) for item in value])
-    return value
-
-
-def _thaw_layout(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return {key: _thaw_layout(item) for key, item in value.items()}
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [_thaw_layout(item) for item in value]
-    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,23 +63,8 @@ class ProviderWireRequest:
     controls: tuple[tuple[str, Any], ...]
     compiled_request_sha256: str
     execution_fingerprint: str
-    # Strict Reve v2 render_layout payload, already bound to the final
-    # reference indices. None keeps the existing flat-provider path intact.
-    layout: Mapping[str, Any] | None = None
-
-    def __post_init__(self) -> None:
-        if self.layout is not None:
-            if not isinstance(self.layout, Mapping):
-                raise ProviderWireError("ProviderWireRequest layout must be an object")
-            object.__setattr__(self, "layout", _freeze_layout(self.layout))
-
-    def layout_payload(self) -> dict[str, Any] | None:
-        """Return a detached JSON-compatible copy for provider transport."""
-        return _thaw_layout(self.layout) if self.layout is not None else None
-
     def _fingerprint_projection(self) -> dict[str, Any]:
         data = asdict(self)
-        data["layout"] = self.layout_payload()
         data.pop("execution_fingerprint", None)
         # Local paths locate bytes during the temporary pre-freeze era; they do
         # not affect provider execution. Their verified digests do.
@@ -165,9 +80,9 @@ class ProviderWireRequest:
         return hashlib.sha256(encoded).hexdigest()
 
     def to_json(self) -> str:
-        data = asdict(self)
-        data["layout"] = self.layout_payload()
-        return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return json.dumps(
+            asdict(self), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
 
     @classmethod
     def from_json(cls, payload: str) -> "ProviderWireRequest":
@@ -209,77 +124,6 @@ def _wire_prompt(compiled: CompiledGenerationRequest) -> str:
                 instruction.marker, f"<frame>{instruction.index}</frame>"
             )
     return prompt
-
-
-def without_layout(request: ProviderWireRequest) -> ProviderWireRequest:
-    """Derive the exact flat v2-create request used by rollout fallback.
-
-    The original request remains unchanged. The returned request has its own
-    execution fingerprint, while retaining the compiler-owned flat prompt and
-    ordered reference bytes needed by the ordinary v2 create path.
-    """
-    if request.layout is None:
-        return request
-    updated = replace(request, layout=None, execution_fingerprint="")
-    return replace(updated, execution_fingerprint=updated.recompute_execution_fingerprint())
-
-
-def _wire_layout(
-    compiled: CompiledGenerationRequest,
-    refs: tuple[ProviderWireReference, ...],
-) -> dict[str, Any] | None:
-    """Project semantic layout IR into Reve's strict render_layout shape."""
-    if compiled.expected_route is not ImageRoute.REVE or not compiled.layout:
-        return None
-    layout = PromptLayout.model_validate(compiled.layout).sanitized()
-    if not layout.regions:
-        return None
-
-    reference_indices: dict[str, int] = {}
-    for ref in refs:
-        if ref.entity_id:
-            reference_indices.setdefault(ref.entity_id, ref.index)
-
-    frame_width, frame_height = dimensions_for_reve_layout(*compiled.effective_dimensions)
-    if (
-        layout.width
-        and layout.height
-        and layout.width <= REVE_LAYOUT_MAX_DIMENSION
-        and layout.height <= REVE_LAYOUT_MAX_DIMENSION
-        and layout.width * layout.height >= REVE_LAYOUT_MIN_PIXELS
-        and layout.width * layout.height <= REVE_LAYOUT_MAX_PIXELS
-    ):
-        frame_width, frame_height = layout.width, layout.height
-
-    regions: list[dict[str, Any]] = []
-    for region in layout.regions:
-        entry: dict[str, Any] = {
-            "label": region.label,
-            "prompt": region.prompt,
-            "bbox": region.bbox.model_dump(mode="json"),
-        }
-        if region.parent:
-            entry["parent"] = region.parent
-        if region.region_type:
-            entry["region_type"] = region.region_type
-        if region.image_region_index is not None:
-            entry["image_region_index"] = region.image_region_index
-        if region.reference_key and region.reference_key in reference_indices:
-            entry["image_index"] = reference_indices[region.reference_key]
-        regions.append(entry)
-
-    payload: dict[str, Any] = {
-        "regions": regions,
-        "width": frame_width,
-        "height": frame_height,
-        # render_layout has no separate prompt field. This is the exact
-        # provider-independent instruction that would otherwise be sent as the
-        # flat prompt, so anchors/style/constraints remain in the request.
-        "normalized_edit_instruction": compiled.final_prompt,
-    }
-    if layout.prompt:
-        payload["prompt"] = layout.prompt
-    return payload
 
 
 def compile_provider_wire_request(compiled: CompiledGenerationRequest) -> ProviderWireRequest:
@@ -329,16 +173,12 @@ def compile_provider_wire_request(compiled: CompiledGenerationRequest) -> Provid
             "1:4": 0.25,
         }
         structured_aspect = min(modes, key=lambda key: abs(modes[key] - ratio))
-    layout = _wire_layout(compiled, refs)
     request = ProviderWireRequest(
         discriminator=PROVIDER_WIRE_DISCRIMINATOR,
         schema_version=PROVIDER_WIRE_SCHEMA_VERSION,
         requested_alias=compiled.requested_alias,
         expected_route=compiled.expected_route.value,
         configured_provider_model=compiled.configured_provider_model,
-        # Keep the flat v2-create form available even when the primary request
-        # uses render_layout. The layout adapter consumes ``layout`` and the
-        # rollout fallback consumes this exact prompt/reference ordering.
         prompt_parts=(_wire_prompt(compiled),),
         references=refs,
         width=width,
@@ -347,7 +187,6 @@ def compile_provider_wire_request(compiled: CompiledGenerationRequest) -> Provid
         controls=tuple(sorted(compiled.controls.active_controls().items())),
         compiled_request_sha256=compiled.compiled_request_sha256,
         execution_fingerprint="",
-        layout=layout,
     )
     return replace(request, execution_fingerprint=request.recompute_execution_fingerprint())
 
@@ -387,5 +226,5 @@ def materialize_wire_references(request: ProviderWireRequest) -> tuple[bytes, ..
 __all__ = [
     "PROVIDER_WIRE_DISCRIMINATOR", "PROVIDER_WIRE_SCHEMA_VERSION",
     "ProviderWireError", "ProviderWireReference", "ProviderWireRequest",
-    "compile_provider_wire_request", "materialize_wire_references", "without_layout",
+    "compile_provider_wire_request", "materialize_wire_references",
 ]

@@ -40,7 +40,10 @@ read-only inspect drawers with an `auto · view` badge — a placeholder is show
 if their content isn't generated yet. Panel review is flag-by-exception:
 generated panels are accepted by default and users flag the ones needing
 re-work. This grouping is presentation-only; backend stages remain discrete
-and ordered. See `docs/proposals/four-station-redesign.md` for the full plan.
+and ordered. `src/lib/stations.ts` is the implemented mapping.
+
+The replacement complete-page architecture is recorded in ADRs 0003-0015
+(`docs/adr/`).
 
 Key pieces:
 

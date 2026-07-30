@@ -1,7 +1,15 @@
+import { useQuery } from "@tanstack/react-query";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useProjectStatus } from "../../api/queries";
 import { STAGE_ORDER } from "../../types/api";
 import { BACKEND_STAGE_TO_UI_ROUTE, getBackendStageUiLabel } from "../../lib/uiStages";
+import {
+  activityQueryKey,
+  barSegments,
+  isStalled,
+  type StageActivityMap,
+} from "../../lib/stageActivity";
+import { useNow } from "../../hooks/useNow";
 import { Icon } from "./Icon";
 import { cn } from "../../lib/cn";
 
@@ -10,6 +18,14 @@ export function FloatingIndicator() {
   const navigate = useNavigate();
   const location = useLocation();
   const { data: status } = useProjectStatus(id);
+  // SSE-fed only; `enabled: false` keeps react-query from trying to fetch it.
+  const { data: activityMap } = useQuery<StageActivityMap>({
+    queryKey: activityQueryKey(id ?? ""),
+    enabled: false,
+    initialData: {},
+  });
+  // Ticks so a stream that goes quiet ages into "still waiting" on its own.
+  const now = useNow(5_000, Boolean(status?.is_running));
 
   if (!id || !status || !status.is_running) {
     return null;
@@ -24,6 +40,14 @@ export function FloatingIndicator() {
   }
 
   const stageInfo = status.stages[runningStage];
+  const activity = activityMap?.[runningStage];
+  const stalled = activity ? isStalled(activity, now) : false;
+  const { donePct, inFlightPct } = barSegments(
+    stageInfo.items_done,
+    stageInfo.items_total,
+    activity,
+    now,
+  );
   const route = BACKEND_STAGE_TO_UI_ROUTE[runningStage];
   const stageLabel = getBackendStageUiLabel(runningStage).toUpperCase();
   const jumpPath = `/project/${encodeURIComponent(id)}/${route}`;
@@ -60,15 +84,28 @@ export function FloatingIndicator() {
           <>
             <div className="flex items-center justify-between font-meta text-[0.5rem] tracking-[0.14em] text-ink-black/55">
               <span>{stageInfo.items_done} / {stageInfo.items_total}</span>
-              <span>{Math.round((stageInfo.items_done / stageInfo.items_total) * 100)}%</span>
+              <span>{Math.round(donePct)}%</span>
             </div>
-            <div className="h-2 w-full overflow-hidden border border-ink-black bg-pulp-paper">
+            <div className="flex h-2 w-full overflow-hidden border border-ink-black bg-pulp-paper">
               <div
                 className="h-full bg-narrator-gold transition-all duration-300"
-                style={{ width: `${(stageInfo.items_done / stageInfo.items_total) * 100}%` }}
+                style={{ width: `${donePct}%` }}
               />
+              {inFlightPct > 0 && (
+                <div
+                  data-testid="in-flight-bar"
+                  className="h-full bg-narrator-gold/40 transition-all duration-300"
+                  style={{ width: `${inFlightPct}%` }}
+                />
+              )}
             </div>
           </>
+        )}
+
+        {activity?.detail && (
+          <div className="font-meta text-[0.5rem] leading-[1.4] tracking-[0.1em] text-ink-black/55">
+            {stalled ? `${activity.detail} — still waiting` : activity.detail}
+          </div>
         )}
 
         <button

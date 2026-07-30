@@ -16,6 +16,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
+from pydantic import ValidationError
+
 from novel_to_comic.clients.text import generate_json
 from novel_to_comic.config import Config
 from novel_to_comic.usage import UsageRecord
@@ -55,6 +57,41 @@ class StructuredCallError(Exception):
         self.last_parsed = last_parsed
         self.usage_records = usage_records
         self.attempts = attempts
+
+
+def validation_error_summary(error: Exception) -> str:
+    """Keep recoverable model-shape failures readable in operator logs."""
+
+    if not isinstance(error, ValidationError):
+        return " ".join(str(error).split())
+
+    grouped: dict[tuple[tuple[object, ...], str], list[object]] = {}
+    standalone: list[tuple[tuple[object, ...], str]] = []
+    for item in error.errors(
+        include_url=False,
+        include_context=False,
+        include_input=False,
+    ):
+        location = tuple(item["loc"])
+        message = str(item["msg"])
+        if location and isinstance(location[-1], int):
+            grouped.setdefault((location[:-1], message), []).append(location[-1])
+        else:
+            standalone.append((location, message))
+
+    summaries: list[str] = []
+    for (prefix, message), indexes in grouped.items():
+        path = ".".join(str(part) for part in prefix)
+        suffix = ", ".join(str(index) for index in indexes)
+        summaries.append(f"{path}[{suffix}]: {message}")
+    for location, message in standalone:
+        path = ".".join(str(part) for part in location) or "response"
+        summaries.append(f"{path}: {message}")
+
+    visible = summaries[:3]
+    if len(summaries) > len(visible):
+        visible.append(f"+{len(summaries) - len(visible)} more")
+    return "; ".join(visible)
 
 
 async def generate_validated_json(
@@ -128,9 +165,14 @@ async def generate_validated_json(
                         )
                 except Exception:
                     logger.debug("%s local repair did not validate", label, exc_info=True)
+            action = "retrying" if attempt < total_attempts - 1 else "no retries left"
             logger.warning(
-                "%s rejected on attempt %d/%d: %s",
-                label, attempt + 1, total_attempts, exc,
+                "%s attempt %d/%d rejected; %s: %s",
+                label,
+                attempt + 1,
+                total_attempts,
+                action,
+                validation_error_summary(exc),
             )
             if attempt < total_attempts - 1:
                 user_content = correction(api_result.value, exc)

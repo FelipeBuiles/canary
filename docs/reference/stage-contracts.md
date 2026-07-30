@@ -1,8 +1,10 @@
 # Stage I/O Contracts
 
-> **Status: Current (2026-07-18).** Verify implementation details against
-> `state.py`, `stages/__init__.py`, and `server/routers/pipeline.py`. This page
-> is the focused contract reference; proposals and plans are not substitutes.
+> **Status: Panel-era reference, superseded (2026-07-30).** The current
+> implementation, `state.py`, `stages/__init__.py`, ADRs 0003-0015, and
+> [the current launch-readiness reassessment](../research/2026-07-30-market-and-launch-readiness.md)
+> are authoritative. This page is retained only as historical context and must
+> not be used for launch copy or new implementation.
 
 What each pipeline stage reads and writes. Each stage owns its artifact
 contract and reads/writes project files; the server may orchestrate explicit
@@ -199,7 +201,7 @@ Ordinary requests use v2 `/image/create` with raw ordered references and
 compiled layout is rendered through v2 `/image/render_layout`; region types,
 parent hierarchy, normalized boxes, and `image_index` bindings are sent
 structurally, and the returned layout echo is persisted beside the panel.
-For GPT Image 2 (literal `gpt-image-2` — no longer a gateway alias), draw
+For GPT Image 2 (`image-quality` or a literal `gpt-image-2` route), draw
 keeps style/location/previous-panel context text-only and uploads a minimal
 subject ref set: one preferred character crop per visible character, or one
 prop ref only when no character refs exist.

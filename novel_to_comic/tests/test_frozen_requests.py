@@ -241,7 +241,7 @@ def test_frozen_output_rejects_symlinked_parent_without_external_write(tmp_path:
     (tmp_path / "output").symlink_to(external, target_is_directory=True)
 
     with pytest.raises(OSError):
-        _write_image_outputs(tmp_path / "output" / "panel.png", b"image", None)
+        _write_image_outputs(tmp_path / "output" / "page.png", b"image")
     assert not (external / "panel.png").exists()
 
 

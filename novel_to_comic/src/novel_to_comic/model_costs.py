@@ -109,12 +109,33 @@ class PricingResolver:
         cache_spec = self._cache_pricing_for(model)
         override_spec = self._override_pricing_for(model)
         if cache_spec is not None and override_spec is not None:
-            return {**cache_spec, **override_spec}, "litellm_cost_map+canary_pricing_override"
+            return {
+                **cache_spec,
+                **override_spec,
+            }, "litellm_cost_map+canary_pricing_override"
         if cache_spec is not None:
             return cache_spec, "litellm_cost_map"
         if override_spec is not None:
             return override_spec, "canary_pricing_override"
         return None, "unknown_pricing"
+
+    def model_output_token_limit(
+        self,
+        model_alias: str,
+        *,
+        provider_model: str | None = None,
+        fallback: int = 65_536,
+    ) -> int:
+        """Return the configured provider's output ceiling for planning calls."""
+
+        resolved_model = self.resolve_model(model_alias, provider_model)
+        pricing, _ = self._pricing_for(resolved_model)
+        if pricing is not None:
+            for field in ("max_output_tokens", "max_tokens"):
+                value = pricing.get(field)
+                if isinstance(value, (int, float)) and value > 0:
+                    return int(value)
+        return fallback
 
     def calculate(
         self,
@@ -172,7 +193,9 @@ class PricingResolver:
             pricing_snapshot=self.pricing_snapshot,
         )
 
-    def estimate_text_cost(self, model: str, input_tokens: int, output_tokens: int) -> CostBreakdown:
+    def estimate_text_cost(
+        self, model: str, input_tokens: int, output_tokens: int
+    ) -> CostBreakdown:
         return self.calculate(
             model_alias=model,
             operation="text",
@@ -218,7 +241,9 @@ class PricingResolver:
         quality_table = token_meta.get("image_output_tokens_by_quality") or {}
 
         if (input_per_token > 0 or output_per_token > 0) and quality_table:
-            image_input_per_token = float(pricing.get("image_input_cost_per_token") or input_per_token)
+            image_input_per_token = float(
+                pricing.get("image_input_cost_per_token") or input_per_token
+            )
             ref_tokens = int(token_meta.get("image_input_tokens_per_ref") or 0)
             quality_key = (quality or "auto").lower()
             output_tokens_per_image = int(
@@ -305,18 +330,18 @@ class PricingResolver:
         output_per_mp = pricing.get("output_cost_per_megapixel")
         input_per_mp = pricing.get("input_cost_per_megapixel")
 
-        if (
-            output_first_mp is None
-            and output_per_mp is None
-            and input_per_mp is None
-        ):
+        if output_first_mp is None and output_per_mp is None and input_per_mp is None:
             return None
 
         output_mps = self._rounded_megapixels(width, height)
         total = 0.0
         if output_first_mp is not None:
             first = float(output_first_mp)
-            extra = float(output_extra_mp if output_extra_mp is not None else output_per_mp or first)
+            extra = float(
+                output_extra_mp
+                if output_extra_mp is not None
+                else output_per_mp or first
+            )
             output_cost = first + max(0, output_mps - 1) * extra
         elif output_per_mp is not None:
             output_cost = output_mps * float(output_per_mp)
@@ -326,7 +351,9 @@ class PricingResolver:
 
         if input_per_mp is not None:
             if ref_image_sizes:
-                input_mps = sum(self._rounded_megapixels(w, h) for w, h in ref_image_sizes)
+                input_mps = sum(
+                    self._rounded_megapixels(w, h) for w, h in ref_image_sizes
+                )
             else:
                 input_mps = ref_count
             total += input_mps * float(input_per_mp)
@@ -340,7 +367,10 @@ class PricingResolver:
             spec = overrides.get(key)
             if not isinstance(spec, dict):
                 continue
-            if "image_input_tokens_per_ref" in spec or "image_output_tokens_by_quality" in spec:
+            if (
+                "image_input_tokens_per_ref" in spec
+                or "image_output_tokens_by_quality" in spec
+            ):
                 return spec
         return {}
 

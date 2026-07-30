@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from novel_to_comic.panel_versions import (
+from novel_to_comic.asset_versions import (
     asset_versions_dir,
     list_asset_versions,
     record_asset_version,
@@ -31,7 +31,7 @@ def test_regenerate_archives_prior_versions(tmp_path):
 
     assert e1 and e1["version"] == 1
     assert e2 and e2["version"] == 2
-    # Archived files exist and the meta rode along.
+    # Archived image and its metadata exist.
     assert (asset_versions_dir(sheet) / "v001.png").exists()
     assert (asset_versions_dir(sheet) / "v001.meta.json").exists()
 

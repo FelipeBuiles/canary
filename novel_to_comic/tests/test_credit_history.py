@@ -24,12 +24,12 @@ def _row(
         "job_id": job_id,
         "provider": "gemini",
         "model": "image-balanced",
-        "provider_model": "gemini-3.1-flash-lite-image",
+        "provider_model": "gemini-3-pro-image",
         "operation": "image",
         "input_tokens": 0,
         "output_tokens": 0,
         "image_count": 1,
-        "cost_usd": 0.0336,
+        "cost_usd": 0.134,
     }
 
 

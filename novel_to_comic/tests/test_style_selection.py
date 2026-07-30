@@ -1,6 +1,3 @@
-import pytest
-from fastapi import HTTPException
-
 from novel_to_comic.config import Config, load_config
 from novel_to_comic.server.routers.projects import _stage_payload
 from novel_to_comic.server.routers.styles import (
@@ -12,6 +9,7 @@ from novel_to_comic.server.routers.styles import (
 )
 from novel_to_comic.stages.s2_style import save_suggestions
 from novel_to_comic.state import StageStatus, create_initial_state, load_state
+from novel_to_comic.style_contract import page_style_template
 
 
 def test_set_active_style_clears_completed_style_failures(tmp_path):
@@ -30,15 +28,16 @@ def test_set_active_style_clears_completed_style_failures(tmp_path):
         project=(tmp_path, Config(style_template="old"), state),
     )
 
+    expected_template = page_style_template("bold ink wash")
     assert result == {
         "status": "updated",
         "index": 1,
-        "style_template": "bold ink wash",
+        "style_template": expected_template,
     }
     assert state.stages["style"].items_failed == []
     assert load_state(tmp_path).stages["style"].items_failed == []
     loaded_config, _env_file = load_config(tmp_path)
-    assert loaded_config.style_template.strip() == "bold ink wash"
+    assert loaded_config.style_template.strip() == expected_template
 
 
 def test_selected_style_reconciliation_removes_failure_from_status_payload(tmp_path):
@@ -77,12 +76,10 @@ def test_unselected_style_does_not_clear_failures(tmp_path):
 
 def test_style_reference_capability_matches_configured_route():
     assert _supports_style_reference(Config(image_model="image-balanced")) is True
-    assert _supports_style_reference(Config(image_model="gpt-image-2")) is False
+    assert _supports_style_reference(Config(image_model="gpt-image-2")) is True
 
 
-def test_image_only_direction_rejected_when_route_cannot_use_reference():
+def test_image_only_direction_is_usable_when_route_supports_reference():
     config = Config(image_model="gpt-image-2")
-    with pytest.raises(HTTPException) as exc_info:
-        _assert_usable_style_direction(config, "", True)
-    assert exc_info.value.status_code == 400
+    _assert_usable_style_direction(config, "", True)
     _assert_usable_style_direction(config, "bright ligne claire", True)

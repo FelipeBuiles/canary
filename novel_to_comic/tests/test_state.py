@@ -50,12 +50,12 @@ class TestPipelineState:
 
     def test_stage_names_are_in_order(self):
         assert STAGE_NAMES == [
-            "extract", "style", "cast", "adapt", "plan",
-            "storyboard", "direct", "draw", "compose",
+            "extract", "brief", "style", "cast",
+            "adapt", "plan", "draw", "finish",
         ]
 
     def test_checkpoint_stages(self):
-        assert CHECKPOINT_STAGES == {"extract", "style", "cast", "draw"}
+        assert CHECKPOINT_STAGES == {"brief", "style", "cast", "draw"}
         # adapt, plan, storyboard, direct auto-run (4-station model);
         # compose is NOT a checkpoint either
         assert "adapt" not in CHECKPOINT_STAGES
@@ -94,9 +94,9 @@ class TestCompleteStage:
 
     def test_checkpoint_marks_awaiting_review(self):
         state = create_initial_state("p", "n.txt")
-        begin_stage(state, "extract")
-        complete_stage(state, "extract")
-        assert state.stages["extract"].status == StageStatus.AWAITING_REVIEW
+        begin_stage(state, "brief")
+        complete_stage(state, "brief")
+        assert state.stages["brief"].status == StageStatus.AWAITING_REVIEW
 
     def test_updates_total_cost(self):
         state = create_initial_state("p", "n.txt")

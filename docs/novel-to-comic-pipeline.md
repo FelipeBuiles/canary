@@ -1,12 +1,17 @@
 # Novel-to-Comic Pipeline
 
-> **Status: Current (2026-07-18).** This is the product-level pipeline
-> overview. For exact I/O, use `docs/reference/stage-contracts.md`; for agent
-> implementation guidance, use `docs/reference/agent-context.md`.
+> **Status: Historical panel-era overview (2026-07-30).** The current product
+> uses the eight-stage full-page pipeline in ADRs 0003-0015. For current launch
+> claims and evidence gates, use
+> [the market and launch-readiness reassessment](research/2026-07-30-market-and-launch-readiness.md).
+>
+> **Accepted replacement:** the panel pipeline described here is replaced by
+> the full-page architecture in ADRs 0003-0015 (`docs/adr/`). Treat this
+> document as panel-era behavior, not current or future design guidance.
 
-A 9-stage Python/FastAPI/React application that converts a novel
-(EPUB, TXT, or PDF) into a graphic novel (PDF/CBZ), using LLMs for story
-analysis and image generation models for panel artwork.
+A Python/FastAPI/React application that converts a novel (EPUB, TXT, or PDF)
+into complete, lettered comic pages and a graphic novel (PDF/CBZ), using LLMs
+for story analysis and image generation models for page artwork.
 
 **Cost estimate:** varies by LiteLLM gateway routing, image alias pricing, and
 reference-image usage. Use `/estimate` and the credits UI for project-specific
@@ -105,18 +110,16 @@ layout_prompts_enabled: false
 ```
 
 Available image aliases: `image-fast`, `image-balanced`, `image-quality`, `image-reve`.
-The LiteLLM proxy resolves them to provider/model routes. `image-fast` and
-`image-balanced` both route to Gemini 3.1 Flash Lite Image. `image-quality` routes to
-Gemini 3 Pro Image (Nano Banana 2 Pro, ~$0.134/image at 1K) through the vertex-multimodal
-handler; `image-reve` routes to Reve (`REVE_ALIASES`). The default `image-quality` route
-now selects Gemini 3 Pro Image. For Reve (`image-reve`), draw selects refs via `_reve_refs()`:
+The LiteLLM proxy resolves them to provider/model routes. `image-fast` routes
+to Gemini 3.1 Flash Lite Image, `image-balanced` routes to Gemini 3 Pro Image
+(Nano Banana Pro), `image-quality` routes to GPT Image 2, and `image-reve`
+routes to Reve (`REVE_ALIASES`). For Reve (`image-reve`), draw selects refs via `_reve_refs()`:
 up to 3 subject crops plus continuity/prop/style/location up to 4 total. With
 `layout_prompts_enabled: true`, the panel wire uses Reve v2 `render_layout`
 with compound references and structural region bindings; otherwise the normal
 Reve path uses v2 `create`. Layout transport failures also fall back to v2
 `create`; already-frozen layout wires remain exact when the flag is later
-disabled. GPT Image 2 is no longer a default gateway alias
-(`GPT_IMAGE_2_ALIASES` is empty).
+disabled. `GPT_IMAGE_2_ALIASES` contains `image-quality`.
 
 ---
 

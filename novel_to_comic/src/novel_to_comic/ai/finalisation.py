@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import datetime
 import hashlib
-import json
 import os
 import time
 import uuid
@@ -94,20 +93,10 @@ def _atomic_write_output(parent_fd: int, filename: str, data: bytes) -> None:
 def _write_image_outputs(
     output_path: Path,
     image_bytes: bytes,
-    layout_echo: dict[str, Any] | None,
 ) -> None:
     parent_fd = _open_output_parent(output_path)
     try:
         _atomic_write_output(parent_fd, output_path.name, image_bytes)
-        if layout_echo:
-            layout_name = output_path.with_suffix(
-                f"{output_path.suffix}.layout.json"
-            ).name
-            _atomic_write_output(
-                parent_fd,
-                layout_name,
-                json.dumps(layout_echo, indent=2, sort_keys=True).encode(),
-            )
     finally:
         os.close(parent_fd)
 
@@ -183,7 +172,6 @@ async def finalise_image_success(
         _write_image_outputs,
         output_path,
         raw.image_bytes,
-        raw.layout_echo,
     )
     usage = ai_client._extract_usage(
         raw_response,

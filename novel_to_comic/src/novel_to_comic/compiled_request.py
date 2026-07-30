@@ -1,7 +1,7 @@
 """Slice 05 — the one provider-independent compiled generation request.
 
 ``compile_generation_request`` is a PURE function that combines the prepared
-canonical prompt IR (:class:`~novel_to_comic.models.prompt.ImagePrompt`) with
+canonical Style/Cast generation input with
 the already-final :class:`~novel_to_comic.image_references.ReferencePlan`,
 the selected style text/spec, the route profile, and explicit generation
 controls into one typed, immutable :class:`CompiledGenerationRequest`.
@@ -61,7 +61,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Literal
 
 from novel_to_comic.image_models import ImageModelProfile, ImageRoute
 from novel_to_comic.image_references import (
@@ -70,11 +70,9 @@ from novel_to_comic.image_references import (
     ReferencePlan,
 )
 from novel_to_comic.generation_input import GenerationPromptInput
-from novel_to_comic.models.prompt import ImagePrompt, PromptLayout
-from novel_to_comic.panel_aspect import (
+from novel_to_comic.image_geometry import (
     GenerationShape,
     aspect_for_dimensions,
-    dimensions_for_generation_shape,
     generation_shape_for_aspect,
 )
 from novel_to_comic.prompt_hygiene import (
@@ -89,12 +87,11 @@ from novel_to_comic.prompt_hygiene import (
 from novel_to_comic.text_utils import clean as _clean
 
 #: Compiler/schema version. Bumped when the compiled-request shape changes.
-#: Version 2 adds provider-neutral layout IR to the immutable request.
-COMPILED_REQUEST_SCHEMA_VERSION = 2
+COMPILED_REQUEST_SCHEMA_VERSION = 3
 
 AssetKind = Literal[
-    "panel", "character_ref", "location_plate", "prop_ref", "style_sample",
-    "project_cover",
+    "character_ref", "location_plate", "prop_ref", "style_sample",
+    "project_cover", "labs_image",
 ]
 
 
@@ -473,10 +470,6 @@ class CompiledGenerationRequest:
     effective_dimensions: tuple[int, int]
     # Controls
     controls: GenerationControls
-    # Provider-neutral layout IR. The provider wire compiler projects this to
-    # Reve's strict layout schema and resolves semantic reference_key bindings
-    # against the already-final reference plan.
-    layout: dict[str, Any] | None
     # Hashes and metadata
     prompt_source_sha256: str | None
     reference_selection_fingerprint: str
@@ -494,7 +487,7 @@ class CompiledRequestError(ValueError):
 
 
 def _protected_anchors_from_prompt(
-    prompt: ImagePrompt | GenerationPromptInput,
+    prompt: GenerationPromptInput,
 ) -> tuple[ProtectedAnchor, ...]:
     """Collect every protected anchor from the prompt (character + location/prop)."""
     out: list[ProtectedAnchor] = []
@@ -527,7 +520,7 @@ def _protected_anchors_from_prompt(
 
 
 def _validate_active_state_authority(
-    prompt: ImagePrompt | GenerationPromptInput, plan: ReferencePlan
+    prompt: GenerationPromptInput, plan: ReferencePlan
 ) -> None:
     """Fail before transport when a selected reference contradicts active state.
 
@@ -623,7 +616,6 @@ def _compiled_hash_projection(req: CompiledGenerationRequest) -> str:
             "requested_shape": req.requested_shape,
             "effective_dimensions": list(req.effective_dimensions),
             "controls": json.loads(req.controls.to_hash_projection()),
-            "layout": req.layout,
         },
         sort_keys=True,
         ensure_ascii=False,
@@ -637,60 +629,24 @@ def _compiled_hash_projection(req: CompiledGenerationRequest) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _effective_geometry(prompt: ImagePrompt) -> tuple[GenerationShape | None, tuple[int, int]]:
+def _effective_geometry(
+    prompt: GenerationPromptInput,
+) -> tuple[GenerationShape | None, tuple[int, int]]:
     """Resolve the effective target shape and dimensions from the prompt.
 
-    All aspect/dimension math flows through ``panel_aspect`` — no inline math.
+    All aspect/dimension math flows through ``image_geometry`` — no inline math.
     """
     gen_shape = getattr(prompt, "generation_shape", None)
     gen_width = getattr(prompt, "generation_width", None)
     gen_height = getattr(prompt, "generation_height", None)
-    # Non-panel inputs carry verified asset geometry explicitly.  Preserve it
-    # instead of replacing a 4:5 style proof with the panel portrait default.
-    if isinstance(prompt, GenerationPromptInput):
-        shape: GenerationShape | None = gen_shape or generation_shape_for_aspect(
-            aspect_for_dimensions(prompt.width, prompt.height)
-        )
-        dimensions = (
-            int(gen_width or prompt.width),
-            int(gen_height or prompt.height),
-        )
-    elif gen_shape:
-        shape: GenerationShape | None = gen_shape
-        dimensions = dimensions_for_generation_shape(gen_shape)
-    elif gen_width and gen_height:
-        aspect = aspect_for_dimensions(gen_width, gen_height)
-        shape = generation_shape_for_aspect(aspect)
-        dimensions = (int(gen_width), int(gen_height))
-    else:
-        width = getattr(prompt, "width", 0)
-        height = getattr(prompt, "height", 0)
-        aspect = aspect_for_dimensions(width, height)
-        shape = generation_shape_for_aspect(aspect) if aspect else None
-        dimensions = (int(width), int(height))
+    shape: GenerationShape | None = gen_shape or generation_shape_for_aspect(
+        aspect_for_dimensions(prompt.width, prompt.height)
+    )
+    dimensions = (
+        int(gen_width or prompt.width),
+        int(gen_height or prompt.height),
+    )
     return shape, dimensions
-
-
-def _layout_for_route(
-    prompt: ImagePrompt | GenerationPromptInput,
-    route: ImageRoute,
-    *,
-    enabled: bool = True,
-) -> dict[str, Any] | None:
-    """Return sanitized layout IR only for the route that can consume it."""
-    if not enabled or route is not ImageRoute.REVE:
-        return None
-    raw_layout = getattr(prompt, "layout", None)
-    if raw_layout is None:
-        return None
-    layout = (
-        raw_layout
-        if isinstance(raw_layout, PromptLayout)
-        else PromptLayout.model_validate(raw_layout)
-    ).sanitized()
-    if not layout.regions:
-        return None
-    return layout.model_dump(mode="json", exclude_none=True)
 
 
 # ---------------------------------------------------------------------------
@@ -725,7 +681,7 @@ def _demote_named_style_attributions(style_text: str) -> str:
 
 
 def _build_sections(
-    prompt: ImagePrompt | GenerationPromptInput,
+    prompt: GenerationPromptInput,
     style_text: str | None,
     reference_instructions: tuple[CompiledReferenceInstruction, ...],
     controls: GenerationControls,
@@ -752,6 +708,7 @@ def _build_sections(
     has_subject_references = any(
         instruction.role == "subject" for instruction in reference_instructions
     )
+    clean_dynamic = _clean if asset_kind == "style_sample" else sanitize_dynamic_text
 
     # ── 1. Protected anchors (verbatim — NEVER sanitized) ────────────────
     anchor_lines: list[str] = []
@@ -780,41 +737,39 @@ def _build_sections(
     ):
         # Dynamic fields are sanitized; protected anchors are emitted above
         # verbatim and never reach this path.
-        value = sanitize_dynamic_text(getattr(prompt, field_name, None))
+        value = clean_dynamic(getattr(prompt, field_name, None))
         # Strip any hardcoded medium directive that contradicts the style.
         value = strip_hardcoded_mediums(value)
         if value:
             direction_lines.append(f"{label}: {value}")
     props = getattr(prompt, "props", []) or []
     if props:
-        cleaned = [sanitize_dynamic_text(p) for p in props if sanitize_dynamic_text(p)]
+        cleaned = [clean_dynamic(p) for p in props if clean_dynamic(p)]
         if cleaned:
             direction_lines.append(f"Key props: {'; '.join(cleaned)}")
-    key_objects = sanitize_dynamic_list(getattr(prompt, "key_objects", []) or [])
+    key_objects = (
+        [
+            cleaned
+            for value in (getattr(prompt, "key_objects", []) or [])
+            if (cleaned := clean_dynamic(value))
+        ]
+        if asset_kind == "style_sample"
+        else sanitize_dynamic_list(getattr(prompt, "key_objects", []) or [])
+    )
     if key_objects:
         direction_lines.append(f"Key objects: {'; '.join(key_objects)}")
     # Visual requirements are deduplicated against owned facts and capped.
     deduped_reqs, _ = dedupe_visual_requirements(prompt)
     if deduped_reqs:
         direction_lines.append(f"Must show: {'; '.join(deduped_reqs)}")
-    continuity = sanitize_dynamic_text(getattr(prompt, "continuity_note", None))
+    continuity = clean_dynamic(getattr(prompt, "continuity_note", None))
     if continuity:
         direction_lines.append(f"Continuity: {continuity}")
-    # Panels use the deterministic distilled prompt in production. Non-panel
-    # assets still use their explicit visual brief: those briefs carry style
-    # auditions and user addenda that have no panel-style distilled equivalent.
-    # Single-owner: strip continuity content from the brief so it appears once.
-    if asset_kind == "panel":
-        brief = (
-            sanitize_dynamic_text(getattr(prompt, "distilled_prompt", None))
-            or sanitize_dynamic_text(getattr(prompt, "full_prompt", None))
-        )
-    else:
-        brief = (
-            sanitize_dynamic_text(getattr(prompt, "visual_brief", None))
-            or sanitize_dynamic_text(getattr(prompt, "distilled_prompt", None))
-            or sanitize_dynamic_text(getattr(prompt, "full_prompt", None))
-        )
+    brief = (
+        clean_dynamic(getattr(prompt, "visual_brief", None))
+        or clean_dynamic(getattr(prompt, "distilled_prompt", None))
+        or clean_dynamic(getattr(prompt, "full_prompt", None))
+    )
     brief = dedupe_brief_against_continuity(brief, continuity)
     brief = strip_hardcoded_mediums(brief)
     if brief:
@@ -869,7 +824,7 @@ def _build_sections(
         ))
 
     # ── 6. User constraint addenda (sanitized) ───────────────────────────
-    user_constraints = sanitize_dynamic_text(getattr(prompt, "constraints", None))
+    user_constraints = clean_dynamic(getattr(prompt, "constraints", None))
     if user_constraints:
         sections.append(CompiledPromptSection(
             kind="user_addenda",
@@ -905,7 +860,7 @@ def _build_sections(
 
 def compile_generation_request(
     *,
-    prompt: ImagePrompt | GenerationPromptInput,
+    prompt: GenerationPromptInput,
     reference_plan: ReferencePlan,
     route_profile: ImageModelProfile,
     requested_alias: str | None = None,
@@ -913,9 +868,8 @@ def compile_generation_request(
     selected_style_text: str | None = None,
     selected_style_source_hash: str | None = None,
     controls: GenerationControls | None = None,
-    asset_kind: AssetKind = "panel",
+    asset_kind: AssetKind,
     asset_identity: str | None = None,
-    layout_enabled: bool = True,
 ) -> CompiledGenerationRequest:
     """Compile one provider-independent generation request.
 
@@ -940,10 +894,6 @@ def compile_generation_request(
 
     shape, dimensions = _effective_geometry(prompt)
     native_aspect = _native_aspect_for(prompt, route_profile, shape, dimensions)
-    layout = _layout_for_route(
-        prompt, route_profile.route, enabled=layout_enabled,
-    )
-
     # Compile one semantic instruction per selected reference (final order).
     reference_instructions = tuple(
         compile_reference_instruction(asset, index)
@@ -981,7 +931,11 @@ def compile_generation_request(
     # conflicts. The anchor is preserved verbatim; the no-lettering constraint
     # is retained. These are warnings (non-blocking) surfaced for upstream
     # correction — diagnostics do not affect the compiled hash.
-    anchor_conflicts = detect_anchor_text_conflicts(prompt)
+    anchor_conflicts = (
+        ()
+        if asset_kind == "style_sample"
+        else detect_anchor_text_conflicts(prompt)
+    )
     warnings = list(reference_plan.warnings)
     for conflict in anchor_conflicts:
         warnings.append(
@@ -1007,7 +961,6 @@ def compile_generation_request(
         requested_shape=shape,
         effective_dimensions=dimensions,
         controls=controls,
-        layout=layout,
         prompt_source_sha256=getattr(prompt, "source_sha256", None),
         reference_selection_fingerprint=reference_plan.selection_fingerprint,
         compiled_request_sha256="",  # placeholder; computed below
@@ -1039,7 +992,7 @@ def _validate_control_support(controls: GenerationControls, profile: ImageModelP
 
 
 def _native_aspect_for(
-    prompt: ImagePrompt | GenerationPromptInput,
+    prompt: GenerationPromptInput,
     profile: ImageModelProfile,
     shape: GenerationShape | None,
     dimensions: tuple[int, int],
@@ -1059,11 +1012,9 @@ def _native_aspect_for(
 
 
 def _default_asset_identity(
-    prompt: ImagePrompt | GenerationPromptInput,
+    prompt: GenerationPromptInput,
     asset_kind: AssetKind,
 ) -> str:
-    if asset_kind == "panel":
-        return f"{prompt.scene_id}:panel_{prompt.panel_number:03d}"
     return asset_kind
 
 
