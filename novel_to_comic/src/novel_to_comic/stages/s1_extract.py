@@ -18,7 +18,12 @@ from novel_to_comic.clients.structured_call import (
 from novel_to_comic.config import Config
 from novel_to_comic.input_limits import read_source
 from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.source_extraction import (
+    align_scene_anchors,
+    produce_source_document,
+)
 from novel_to_comic.stage_runtime import StageRuntime
+from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.text_utils import has_offscreen_marker
 from novel_to_comic.usage import ApiResult, estimate_text_cost, estimate_token_count
 
@@ -221,6 +226,19 @@ async def _extract_with_retry(
 ) -> ApiResult[StoryBible]:
     """Call the extraction model, normalize, validate, and retry on schema errors."""
 
+    def parse(raw: object) -> StoryBible:
+        bible = _parse_extraction(raw)
+        aligned = bible.model_copy(deep=True)
+        unresolved = align_scene_anchors(aligned, novel_text)
+        if unresolved:
+            raise ValueError(
+                "Story Bible scenes must remain in source-text order and every "
+                "source_start_quote must resolve to a monotonically later complete "
+                "source sentence. Unresolved scene IDs: "
+                + ", ".join(unresolved)
+            )
+        return aligned
+
     def correction(raw: object, error: Exception) -> str:
         result = raw[0] if isinstance(raw, list) else raw
         result = _normalize_result(result)
@@ -241,7 +259,7 @@ async def _extract_with_retry(
             model=config.effective_extraction_model(),
             system_prompt=system_prompt,
             user_content=novel_text,
-            parse=_parse_extraction,
+            parse=parse,
             correction=correction,
             label="Story Bible extraction",
             feature="extract.story_bible",
@@ -253,206 +271,11 @@ async def _extract_with_retry(
         raise exc.last_error from exc
 
     usage = outcome.usage_records[-1] if outcome.usage_records else None
-    return ApiResult(value=outcome.value, usage=usage)
-
-
-def _norm_quote_text(s: str) -> str:
-    """Normalise smart quotes / dashes the model may have substituted."""
-    return (
-        s.replace("\u2018", "'").replace("\u2019", "'")
-         .replace("\u201c", '"').replace("\u201d", '"')
-         .replace("\u2013", "-").replace("\u2014", "--")
+    return ApiResult(
+        value=outcome.value,
+        usage=usage,
+        additional_usage=tuple(outcome.usage_records[:-1]),
     )
-
-
-def _fuzzy_find_quote(norm_text: str, norm_quote: str, start: int = 0) -> int:
-    """Fuzzy-locate a quote whose exact prefix never matches.
-
-    Anchors candidate windows on individual words of the quote, then scores
-    each window with SequenceMatcher. Only a strong match (>0.85) is accepted
-    so a wrong-but-similar passage doesn't mis-anchor the scene.
-    """
-    from difflib import SequenceMatcher
-
-    probe = norm_quote[:60].lower()
-    if len(probe) < 20:
-        return -1
-    text_lower = norm_text.lower()
-    words = [w.strip("\"'.,;:!?") for w in probe.split()]
-    words = [w for w in words if len(w) >= 4]
-    if not words:
-        return -1
-
-    seen: set[int] = set()
-    best_pos = -1
-    best_ratio = 0.85
-    for word in words[:6]:
-        offset = probe.find(word)
-        idx = text_lower.find(word, start)
-        hops = 0
-        while idx != -1 and hops < 500:
-            window_start = idx - offset
-            if window_start >= start and window_start not in seen:
-                seen.add(window_start)
-                window = text_lower[window_start:window_start + len(probe)]
-                ratio = SequenceMatcher(None, probe, window).ratio()
-                if ratio > best_ratio or (
-                    ratio == best_ratio and best_pos != -1 and window_start < best_pos
-                ):
-                    best_pos = window_start
-                    best_ratio = ratio
-            hops += 1
-            idx = text_lower.find(word, idx + 1)
-    return best_pos
-
-
-def _find_quote_position(text: str, quote: str, start: int = 0) -> int:
-    """Locate a verbatim scene quote in the novel text at or after ``start``.
-
-    Tries progressively shorter prefixes so minor model transcription errors
-    (e.g. a misquoted word at the end) don't cause a miss, then falls back to
-    a fuzzy word-anchored search. Searching from ``start`` keeps anchors
-    monotonic: a short prefix like "The next morning" can't match an earlier
-    occurrence and silently reorder scenes. Returns -1 if nothing matches.
-    """
-    if not quote:
-        return -1
-
-    norm_text = _norm_quote_text(text)
-    norm_quote = _norm_quote_text(quote)
-
-    for length in (len(norm_quote), 80, 60, 40, 25):
-        if length > len(norm_quote):
-            continue
-        pos = norm_text.find(norm_quote[:length], start)
-        if pos != -1:
-            return pos
-
-    return _fuzzy_find_quote(norm_text, norm_quote, start)
-
-
-_SENTENCE_CLOSERS = {'"', "'", "\u2019", "\u201d", ")", "]"}
-_PERIOD_ABBREVIATIONS = {
-    "dr", "jr", "mr", "mrs", "ms", "prof", "sr", "st", "vs",
-}
-
-
-def _sentence_end_after(text: str, start: int) -> int | None:
-    """Return the end of the first sentence ending at or after ``start``.
-
-    The model-provided quote is only an anchor. Walking the source text makes
-    the excerpt shown in the Story room deterministic and prevents a fixed
-    character limit from leaving a dangling half-phrase.
-    """
-    for match in re.finditer(r"[.!?]", text[start:]):
-        punctuation = start + match.start()
-        mark = text[punctuation]
-
-        if mark == ".":
-            if punctuation > 0 and punctuation + 1 < len(text):
-                if text[punctuation - 1].isdigit() and text[punctuation + 1].isdigit():
-                    continue
-            word_match = re.search(r"([A-Za-z]+)$", text[:punctuation])
-            if word_match and word_match.group(1).lower() in _PERIOD_ABBREVIATIONS:
-                continue
-
-        end = punctuation + 1
-        while end < len(text) and text[end] in _SENTENCE_CLOSERS:
-            end += 1
-
-        following = text[end:].lstrip()
-        if not following or following[0].isupper() or following[0].isdigit():
-            return end
-
-    return None
-
-
-def _complete_source_start_quotes(story_bible: StoryBible, novel_text: str) -> None:
-    """Extend each scene's source anchor through its opening sentence.
-
-    ``source_start_quote`` remains verbatim source text and continues to serve
-    as the scene-boundary anchor. This post-processing repairs both older
-    fixed-length model output and occasional future model truncation.
-    """
-    search_from = 0
-    for scene in story_bible.scenes:
-        quote = scene.source_start_quote.strip()
-        if not quote:
-            continue
-
-        position = novel_text.find(quote, search_from)
-        if position == -1:
-            position = _find_quote_position(novel_text, quote, start=search_from)
-        if position == -1:
-            continue
-
-        if not re.search(r"[.!?][\"'\u2019\u201d)\]]*$", quote):
-            quote_end = position + len(quote)
-            sentence_end = _sentence_end_after(novel_text, quote_end)
-            if sentence_end is not None:
-                scene.source_start_quote = novel_text[position:sentence_end].strip()
-        search_from = position + 1
-
-
-def _write_scene_files(story_bible: StoryBible, novel_text: str, scenes_dir: Path) -> None:
-    """Write individual scene text files using verbatim quote anchors.
-
-    For each scene, source_start_quote is searched in the novel text to find
-    the exact byte offset. Scenes are sorted by their found position, and each
-    scene runs from its anchor to the next scene's anchor (last scene runs to
-    end of text).
-
-    Anchors are resolved monotonically: each scene's quote is searched at or
-    after the previous scene's anchor, so a short or repeated opening phrase
-    cannot match an earlier passage and silently reorder scene boundaries.
-    A quote found only *before* the previous anchor indicates extraction
-    disorder and is treated as missing (with a loud warning).
-
-    Scenes whose quote cannot be found receive a fallback text block instead
-    of novel prose.
-    """
-    scenes_dir.mkdir(parents=True, exist_ok=True)
-
-    positions: list[tuple[int, object]] = []
-    missing: list = []
-    search_from = 0
-
-    for scene in story_bible.scenes:
-        pos = _find_quote_position(novel_text, scene.source_start_quote, start=search_from)
-        if pos == -1 and search_from > 0:
-            # Diagnose: does the quote exist earlier in the text? That means
-            # the bible's scene order disagrees with the novel — surface it.
-            earlier = _find_quote_position(novel_text, scene.source_start_quote)
-            if earlier != -1:
-                console.print(
-                    f"[yellow]  ⚠ Quote for {scene.id} ({scene.title!r}) only matches "
-                    f"BEFORE the previous scene's anchor — scene order may be wrong. "
-                    f"Using summary fallback.[/yellow]"
-                )
-                missing.append(scene)
-                continue
-        if pos == -1:
-            missing.append(scene)
-            console.print(
-                f"[yellow]  ⚠ Could not locate quote for {scene.id} "
-                f"({scene.title!r}) — will use summary fallback[/yellow]"
-            )
-        else:
-            positions.append((pos, scene))
-            search_from = pos + 1
-
-    positions.sort(key=lambda x: x[0])
-
-    # Write scenes with found positions
-    for i, (start, scene) in enumerate(positions):
-        end = positions[i + 1][0] if i + 1 < len(positions) else len(novel_text)
-        scene_text = novel_text[start:end].strip()
-        (scenes_dir / f"{scene.id}.txt").write_text(scene_text)
-
-    # Write fallback files for unlocated scenes
-    for scene in missing:
-        fallback = f"[Scene: {scene.title}]\n\n{scene.summary}"
-        (scenes_dir / f"{scene.id}.txt").write_text(fallback)
 
 
 async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBible:
@@ -492,7 +315,20 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
         ctx.log(f"Calling {config.effective_extraction_model()}...")
         extract_result = await _extract_with_retry(config, system_prompt, novel_text)
         story_bible = extract_result.value
-        _complete_source_start_quotes(story_bible, novel_text)
+        unresolved = align_scene_anchors(story_bible, novel_text)
+        if unresolved:
+            # The scene still exists in the Story Bible; only its source
+            # boundary is unknown, so its units stay with the preceding scene.
+            console.print(
+                "[yellow]Scene anchors not found in the source:[/yellow] "
+                + ", ".join(unresolved)
+            )
+            ctx.log(
+                f"{len(unresolved)} scene anchor(s) could not be located in the "
+                "source text and were merged into the preceding scene: "
+                + ", ".join(unresolved),
+                level="dim",
+            )
         console.print(
             f"[green]Extracted:[/green] {len(story_bible.characters)} characters, "
             f"{len(story_bible.locations)} locations, {len(story_bible.scenes)} scenes"
@@ -507,8 +343,14 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
         ctx.progress(3, 4)
 
         artifacts.write_story_bible(project_dir, story_bible)
-        _write_scene_files(story_bible, novel_text, project_dir / "scenes")
+        produce_source_document(
+            TargetArtifacts(project_dir),
+            novel_text,
+            story_bible,
+        )
 
+        for retry_usage in extract_result.additional_usage:
+            ctx.record_api_usage(retry_usage)
         ctx.record_item_done(usage=extract_result.usage)
         ctx.progress(4, 4)
 
@@ -542,13 +384,13 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
 STAGE = Stage(
     name="extract",
     run=run,
-    outputs=lambda d: [artifacts.story_bible_path(d)],
-    # Style samples survive a re-extract (cascade starts at "refs"), so the
-    # user's selected style isn't lost when the bible is regenerated.
+    outputs=lambda d: [
+        artifacts.story_bible_path(d),
+        d / "source" / "source.json",
+    ],
     clean_paths=lambda d: [
         artifacts.story_bible_path(d),
-        d / "scenes",
-        *clean_cascade(d, "refs"),
+        *clean_cascade(d, "source"),
     ],
     estimate_cost=estimate_cost,
 )

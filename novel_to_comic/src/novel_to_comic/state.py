@@ -8,7 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 if TYPE_CHECKING:
     from novel_to_comic.usage import UsageRecord
@@ -70,12 +70,17 @@ class StageState(BaseModel):
     shortfall_credits: Optional[int] = None
 
 
-STAGE_NAMES = ["extract", "style", "cast", "adapt", "plan", "storyboard", "direct", "draw", "compose"]
-# Stages that pause for user review. `direct` is intentionally NOT a
-# checkpoint: prompts auto-run after cast approval and are inspectable
-# (but non-blocking) in the UI — prompt editing happens per-panel in the
-# panel detail modal instead.
-CHECKPOINT_STAGES = {"extract", "style", "cast", "draw"}
+STAGE_NAMES = [
+    "extract",
+    "brief",
+    "style",
+    "cast",
+    "adapt",
+    "plan",
+    "draw",
+    "finish",
+]
+CHECKPOINT_STAGES = {"brief", "style", "cast", "draw"}
 
 
 class PipelineState(BaseModel):
@@ -89,8 +94,15 @@ class PipelineState(BaseModel):
     # SHA-256 hash of the style_template string at the moment the cast stage
     # generated character/location reference plates. Downstream stages check
     # this hash against the current config to detect style-drift: if the
-    # template changed after cast ran, plates will not match new panel output
+    # template changed after cast ran, plates will not match new page artwork
     # and a re-run of cast is recommended.
+
+    @model_validator(mode="after")
+    def _validate_stage_names(self) -> "PipelineState":
+        unknown = sorted(set(self.stages) - set(STAGE_NAMES))
+        if unknown:
+            raise ValueError(f"unknown pipeline stages: {', '.join(unknown)}")
+        return self
 
     def model_post_init(self, __context: object) -> None:
         for name in STAGE_NAMES:

@@ -10,11 +10,6 @@ export function NavigateToRoom() {
 
   const activeStage = useMemo(() => {
     if (!status) return null;
-    const extractDone = status.stages.extract?.status === "complete"
-      || status.stages.extract?.status === "awaiting_review";
-    if (extractDone && !status.style_selected) {
-      return "styles";
-    }
     const stage =
       STAGE_ORDER.find((s) => status.stages[s]?.status === "running") ??
       STAGE_ORDER.find((s) => status.stages[s]?.status === "awaiting_review") ??

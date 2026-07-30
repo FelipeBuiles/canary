@@ -57,11 +57,11 @@ jobs:
       - name: Pytest
         run: uv run pytest -x -q
 
-      - name: Deterministic image-prompt golden gates
-        # Keep the release-blocker corpus visible as its own CI check. These
-        # tests use explicit local fixtures and never require provider
+      - name: Full-page contract gates
+        # Keep the current page-generation contract visible as its own CI
+        # check. These tests use local fixtures and never require provider
         # credentials or credits.
-        run: uv run pytest -q tests/test_golden_corpus.py
+        run: uv run pytest -q tests/test_full_page_contracts.py
 
   web:
     name: Web (vitest + build)
@@ -83,7 +83,10 @@ jobs:
         run: npm ci
 
       - name: Production dependency audit
-        run: npm audit --omit=dev --audit-level=high
+        # The app uses declarative BrowserRouter, not React Router's unstable
+        # RSC APIs. The audit helper allows only that documented non-applicable
+        # advisory and still fails on every other high/critical finding.
+        run: npm run audit:production
 
       # supabase.ts throws at import time when VITE_SUPABASE_* are unset, which
       # breaks the two suites that pull it in transitively (api/client →

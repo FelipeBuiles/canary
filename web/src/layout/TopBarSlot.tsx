@@ -34,6 +34,7 @@ export function useTopBarSlotRegister() {
  */
 export function TopBarPortal({ children }: { children: ReactNode }) {
   const ctx = useContext(ShellSlotsContext);
+  if (!ctx) return children;
   if (!ctx?.topEl) return null;
   return createPortal(children, ctx.topEl);
 }
@@ -51,6 +52,9 @@ export function BottomBarHost() {
  */
 export function BottomBarPortal({ children }: { children: ReactNode }) {
   const ctx = useContext(ShellSlotsContext);
+  // Rooms remain independently renderable in tests, component references,
+  // and embedded surfaces that do not mount the full application shell.
+  if (!ctx) return children;
   if (!ctx?.bottomEl) return null;
   return createPortal(children, ctx.bottomEl);
 }

@@ -45,6 +45,7 @@ describe("pipeline navigation stage selection", () => {
   it("finds the first pending stage in pipeline order", () => {
     expect(findPendingStage(status({
       extract: stage("complete"),
+      brief: stage("complete"),
       style: stage("pending"),
       cast: stage("pending"),
     }))).toBe("style");
@@ -53,6 +54,7 @@ describe("pipeline navigation stage selection", () => {
   it("runs cast after approving style when style is selected", () => {
     expect(findPendingStageAfter(status({
       extract: stage("complete"),
+      brief: stage("complete"),
       style: stage("awaiting_review"),
       cast: stage("pending"),
     }), "style")).toBe("cast");
@@ -61,6 +63,7 @@ describe("pipeline navigation stage selection", () => {
   it("does not look before the approved stage", () => {
     expect(findPendingStageAfter(status({
       extract: stage("pending"),
+      brief: stage("pending"),
       style: stage("awaiting_review"),
       cast: stage("pending"),
     }), "style")).toBe("cast");

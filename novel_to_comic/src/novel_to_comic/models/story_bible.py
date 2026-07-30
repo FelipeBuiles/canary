@@ -21,7 +21,7 @@ class Character(BaseModel):
     gender: str
     distinguishing_features: list[str]  # ["jagged scar on left cheek"]
     # Stable, low-intensity demeanor only (for example "guarded and watchful").
-    # Scene reactions belong in panel expression direction, never visual_anchor.
+    # Scene reactions belong in page-level acting direction, never visual_anchor.
     baseline_affect: str | None = None
     default_outfit: str
     relationships: list[CharacterRelationship] = []
@@ -32,7 +32,7 @@ class Character(BaseModel):
     appearance_timeline: list[StateActivation] = []
     # Ordered transitions into the states above. The look before the first
     # activation at-or-before a panel is the base visual_anchor. Resolved per
-    # panel by novel_to_comic.appearance.active_state — never by text matching.
+    # page by explicit adaptation and planning state — never by text matching.
 
     @field_validator("distinguishing_features", mode="before")
     @classmethod
@@ -56,7 +56,7 @@ class Location(BaseModel):
     # parent location id (e.g. "loc_001_pre") so generated plates never collide.
     appearance_timeline: list[StateActivation] = []
     # Ordered transitions into the states above, resolved per panel by
-    # novel_to_comic.appearance.active_state — the same mechanism as characters.
+    # explicit adaptation and planning state — the same mechanism as characters.
 
 
 class TransientObject(BaseModel):
@@ -86,7 +86,7 @@ class Scene(BaseModel):
     source_start_quote: str  # verbatim opening sentence of this scene in the novel text
     # Per-character and per-location appearance change is modeled on the entity
     # itself (appearance_states + appearance_timeline), resolved per panel by
-    # novel_to_comic.appearance — not as per-scene override fields.
+    # adaptation chronology — not as per-scene override fields.
     transient_objects: list[TransientObject] = []
     # Story-critical visual elements scoped to this scene only.
 

@@ -9,7 +9,11 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Iterator
+from typing import Callable, Iterator
+
+# Cumulative characters received so far on the in-flight streamed completion.
+# Resets to 0 when a retry restarts the stream.
+StreamObserver = Callable[[int], None]
 
 
 @dataclass(frozen=True)
@@ -62,3 +66,31 @@ def ai_request_context(
         yield context
     finally:
         _current_ai_request_context.reset(token)
+
+
+_current_stream_observer: ContextVar[StreamObserver | None] = ContextVar(
+    "current_stream_observer",
+    default=None,
+)
+
+
+def current_stream_observer() -> StreamObserver | None:
+    """The callback to notify as a streamed completion arrives, if any."""
+
+    return _current_stream_observer.get()
+
+
+@contextmanager
+def stream_observer(observer: StreamObserver | None) -> Iterator[None]:
+    """Watch streamed-completion progress for AI calls in this context.
+
+    Set per unit of work (one adapt shard, say) rather than per stage: tasks
+    spawned under asyncio.gather copy the context at creation, so each gets its
+    own observer.
+    """
+
+    token = _current_stream_observer.set(observer)
+    try:
+        yield
+    finally:
+        _current_stream_observer.reset(token)

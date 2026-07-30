@@ -1,0 +1,178 @@
+{
+  "title": "The Call of Cthulhu missing reaction and aftermath regression",
+  "source_text": "Johansen saw the titan rise above the yacht. He recoiled from the impossible sight. The Alert escaped across the churned sea. Johansen never recovered from what he had seen.",
+  "opening_quote": "Johansen saw the titan rise above the yacht.",
+  "treatment": {
+    "causal_spine": [
+      "Johansen sees the titan rise.",
+      "The Alert escapes."
+    ],
+    "character_arcs": [
+      "Johansen encounters knowledge that will destroy his peace."
+    ],
+    "essential_events": [
+      "Johansen sees the titan rise."
+    ],
+    "essential_event_ids": [
+      "essential_event_001"
+    ],
+    "character_turns": [
+      "Johansen abandons any hope of an ordinary life."
+    ],
+    "character_turn_ids": [
+      "character_turn_001"
+    ],
+    "reveals": [
+      "The titan rises above the yacht."
+    ],
+    "reactions": [
+      "Johansen recoils from the sight."
+    ],
+    "consequences": [
+      "The encounter permanently destroys Johansen's peace."
+    ],
+    "transitions": [
+      "The Alert escapes and Johansen later returns home."
+    ],
+    "aftermath": [
+      "Johansen never recovers."
+    ],
+    "motifs": [
+      "The sea carries forbidden knowledge."
+    ],
+    "relative_emphasis": [
+      "Give the encounter, reaction, escape, and aftermath distinct weight."
+    ]
+  },
+  "beats": [
+    {
+      "id": "beat_0001",
+      "order": 1,
+      "summary": "The titan rises over the yacht.",
+      "narrative_function": "peak",
+      "story_functions": [
+        "causal_event",
+        "reveal"
+      ],
+      "brief_requirements": [
+        "Johansen sees the titan rise."
+      ],
+      "brief_requirement_ids": [
+        "essential_event_001"
+      ],
+      "source_unit_ids": [
+        "source_000001"
+      ],
+      "lettering": [
+        {
+          "id": "lettering_0001",
+          "kind": "caption",
+          "text": "Johansen saw the titan rise above the yacht.",
+          "speaker": null,
+          "source_unit_ids": [
+            "source_000001"
+          ]
+        }
+      ],
+      "transitions": [],
+      "appearance_changes": []
+    },
+    {
+      "id": "beat_0002",
+      "order": 2,
+      "summary": "The Alert escapes across the sea.",
+      "narrative_function": "release",
+      "story_functions": [
+        "causal_event",
+        "consequence"
+      ],
+      "brief_requirements": [],
+      "brief_requirement_ids": [],
+      "source_unit_ids": [
+        "source_000002",
+        "source_000003"
+      ],
+      "lettering": [
+        {
+          "id": "lettering_0002",
+          "kind": "caption",
+          "text": "The Alert escaped across the churned sea.",
+          "speaker": null,
+          "source_unit_ids": [
+            "source_000003"
+          ]
+        }
+      ],
+      "transitions": [],
+      "appearance_changes": []
+    },
+    {
+      "id": "beat_0003",
+      "order": 3,
+      "summary": "Johansen returns home.",
+      "narrative_function": "transition",
+      "story_functions": [
+        "transition",
+        "character_turn"
+      ],
+      "brief_requirements": [
+        "Johansen abandons any hope of an ordinary life."
+      ],
+      "brief_requirement_ids": [
+        "character_turn_001"
+      ],
+      "source_unit_ids": [
+        "source_000004"
+      ],
+      "lettering": [],
+      "transitions": [
+        {
+          "dimension": "place",
+          "scope_id": "johansen_testimony",
+          "from_state": "sea",
+          "to_state": "home",
+          "description": "The account jumps from the escape to Johansen at home."
+        }
+      ],
+      "appearance_changes": []
+    }
+  ],
+  "ledger": [
+    {
+      "source_unit_id": "source_000001",
+      "disposition": "caption",
+      "adapted_beat_ids": [
+        "beat_0001"
+      ],
+      "reason": null,
+      "preserved_function": "The reveal is explicit."
+    },
+    {
+      "source_unit_id": "source_000002",
+      "disposition": "compressed_into",
+      "adapted_beat_ids": [
+        "beat_0002"
+      ],
+      "reason": "The escape beat carries the immediate chronology.",
+      "preserved_function": "Johansen's reaction remains source-accounted but is not dramatized."
+    },
+    {
+      "source_unit_id": "source_000003",
+      "disposition": "caption",
+      "adapted_beat_ids": [
+        "beat_0002"
+      ],
+      "reason": null,
+      "preserved_function": "The escape remains explicit."
+    },
+    {
+      "source_unit_id": "source_000004",
+      "disposition": "compressed_into",
+      "adapted_beat_ids": [
+        "beat_0003"
+      ],
+      "reason": "The transition moves directly to Johansen at home.",
+      "preserved_function": "The long-term consequence is source-accounted but not dramatized."
+    }
+  ]
+}

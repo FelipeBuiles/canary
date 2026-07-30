@@ -41,12 +41,18 @@ class UsageRecord(BaseModel, frozen=True):
 
 @dataclass
 class ApiResult(Generic[T]):
-    """Pairs a call's return value with its usage record."""
+    """Pairs a call's return value with its usage record.
+
+    ``additional_usage`` carries the other provider calls one unit of work
+    needed — a complete page and the vision pass that reads it back are two
+    calls the customer must be billed for exactly once each.
+    """
 
     value: T
     usage: UsageRecord | None = None
     provider_request_id: str | None = None
     actual_provider_model: str | None = None
+    additional_usage: tuple[UsageRecord, ...] = ()
 
 
 def calculate_cost_breakdown(record: UsageRecord) -> CostBreakdown:

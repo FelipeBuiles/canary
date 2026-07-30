@@ -1,5 +1,17 @@
 # Scenewright — Credit Pricing & Margin Recommendation
 
+> **Current-pipeline economics only (2026-07-25):** the credit conversion,
+> reservation, and package decisions remain implemented, but book-cost and
+> margin calculations below assume panel-by-panel generation. Recompute them
+> from measured complete-page costs before the full-page pipeline launches.
+> Do not use the panel-count model to price the accepted target architecture.
+
+> **Launch decision (2026-07-30):** the package prices and ledger mechanics are
+> code-backed, but the coverage, typical-book, and margin claims below remain
+> provisional until a provider-backed complete-page run is measured. Use
+> [the market and launch-readiness reassessment](../research/2026-07-30-market-and-launch-readiness.md)
+> for the required measurement fields and go/no-go gates.
+
 > Resolves Launch-Readiness **P1 #9** (unit economics) and **Open Questions #1 &
 > #3**. Picks concrete values for the three production env vars that currently
 > ship at zero-margin / unconfigured defaults. Dated 2026-07-03.

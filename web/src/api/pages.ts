@@ -1,96 +1,142 @@
 import { apiFetch } from "./client";
-import type { ComicPage, PageSummary, LetteringStyle } from "../types/api";
+import type {
+  BookAdaptation,
+  BookPlan,
+  CompletePageDetail,
+  CompletePagesResponse,
+  FinishPreflight,
+  GenerationJob,
+  PageIssue,
+  StageValidation,
+} from "../types/api";
 
-export function listPages(project: string): Promise<PageSummary[]> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/`);
+const projectPath = (project: string) => `/projects/${encodeURIComponent(project)}`;
+
+export function getAdaptation(project: string): Promise<BookAdaptation> {
+  return apiFetch(`${projectPath(project)}/adaptation`);
 }
 
-export function getPage(
+export function getBookPlan(project: string): Promise<BookPlan> {
+  return apiFetch(`${projectPath(project)}/book-plan`);
+}
+
+/** Adapt and Plan persist their own verdict so a block can explain itself. */
+export function getStageValidation(
   project: string,
-  pageNum: number,
-): Promise<ComicPage> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/${pageNum}`);
+  stage: "adapt" | "plan",
+): Promise<StageValidation> {
+  return apiFetch(`${projectPath(project)}/validation/${stage}`);
 }
 
-export function updatePage(
+export function listCompletePages(project: string): Promise<CompletePagesResponse> {
+  return apiFetch(`${projectPath(project)}/pages`);
+}
+
+export function getCompletePage(project: string, pageNumber: number): Promise<CompletePageDetail> {
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}`);
+}
+
+export function pageRenderUrl(project: string, pageNumber: number, revision: number): string {
+  return `/api${projectPath(project)}/pages/${pageNumber}/renders/${revision}`;
+}
+
+export function analyzeCompletePage(
   project: string,
-  pageNum: number,
-  data: Partial<ComicPage>,
-): Promise<ComicPage> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/${pageNum}`, {
-    method: "PATCH",
-    body: JSON.stringify(data),
-  });
-}
-
-export function replacePage(
-  project: string,
-  pageNum: number,
-  data: ComicPage,
-): Promise<ComicPage> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/${pageNum}`, {
-    method: "PUT",
-    body: JSON.stringify(data),
-  });
-}
-
-export function getLetteringStyle(project: string): Promise<LetteringStyle> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/lettering-style`);
-}
-
-export function generateLetteringStyle(project: string, reroll = false): Promise<LetteringStyle> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/lettering-style/generate`, {
+  pageNumber: number,
+): Promise<CompletePageDetail["analyses"][number]> {
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/analyze`, {
     method: "POST",
-    body: JSON.stringify({ reroll }),
   });
 }
 
-export function setLetteringStyle(
+export function generateCompletePage(
   project: string,
-  body: { mode: "auto" | "preset"; preset?: string },
-): Promise<LetteringStyle> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/lettering-style`, {
-    method: "PUT",
-    body: JSON.stringify(body),
-  });
-}
-
-export function translatePageBubbles(
-  project: string,
-  targetLanguage?: "en" | "es" | "fr",
-): Promise<{ status: string; target_language: string; updated: number; pages: PageSummary[] }> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/translate-bubbles`, {
+  pageNumber: number,
+  depiction: "canonical" | "less_graphic" = "canonical",
+): Promise<{ status: "queued"; job: GenerationJob }> {
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/generate`, {
     method: "POST",
-    body: JSON.stringify(targetLanguage ? { target_language: targetLanguage } : {}),
+    body: JSON.stringify({ depiction }),
   });
 }
 
-export function translateSinglePageBubbles(
+export function createPageIssue(
   project: string,
-  pageNum: number,
-  targetLanguage?: "en" | "es" | "fr",
-): Promise<{ status: string; target_language: string; updated: number; page: ComicPage }> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/pages/${pageNum}/translate-bubbles`, {
+  pageNumber: number,
+  requestedCorrection: string,
+): Promise<PageIssue> {
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/issues`, {
     method: "POST",
-    body: JSON.stringify(targetLanguage ? { target_language: targetLanguage } : {}),
+    body: JSON.stringify({
+      issue_type: "author_review",
+      classification: "editorial_issue",
+      correction_kind: "render_fidelity",
+      correction_owner: "draw",
+      evidence: [requestedCorrection],
+      requested_correction: requestedCorrection,
+    }),
+  });
+}
+
+export function acceptPageIssue(
+  project: string,
+  pageNumber: number,
+  issueId: string,
+): Promise<PageIssue> {
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/issues/${encodeURIComponent(issueId)}/accept`, {
+    method: "POST",
+  });
+}
+
+export function dismissPageIssue(
+  project: string,
+  pageNumber: number,
+  issueId: string,
+): Promise<PageIssue> {
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/issues/${encodeURIComponent(issueId)}/dismiss`, {
+    method: "POST",
+  });
+}
+
+export function correctPageIssue(
+  project: string,
+  pageNumber: number,
+  issueId: string,
+): Promise<{ status: "queued"; job: GenerationJob }> {
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/issues/${encodeURIComponent(issueId)}/correct`, {
+    method: "POST",
+  });
+}
+
+export function getFinishPreflight(project: string): Promise<FinishPreflight> {
+  return apiFetch(`${projectPath(project)}/files/finish/preflight.json`);
+}
+
+export function runFinishPreflight(
+  project: string,
+): Promise<{ status: "done"; preflight: FinishPreflight }> {
+  return apiFetch(`${projectPath(project)}/export/preflight`, {
+    method: "POST",
   });
 }
 
 export function triggerExport(
   project: string,
   format: "pdf" | "cbz",
-  allowIssues = false,
-): Promise<{ status: string; path: string; url: string | null }> {
-  const allowQuery = allowIssues ? "&allow_issues=true" : "";
-  return apiFetch(`/projects/${encodeURIComponent(project)}/export/?format=${format}${allowQuery}`, {
+  force = false,
+): Promise<{
+  status: string;
+  path: string;
+  url: string | null;
+  preflight?: FinishPreflight;
+}> {
+  const params = new URLSearchParams({ format });
+  if (force) params.set("force", "1");
+  return apiFetch(`${projectPath(project)}/export/?${params.toString()}`, {
     method: "POST",
   });
 }
 
 export function downloadExportUrl(project: string, format: "pdf" | "cbz"): string {
-  return `/api/projects/${encodeURIComponent(project)}/export/${format}`;
-}
-
-export function pagePreviewUrl(project: string, pageNum: number): string {
-  return `/api/projects/${encodeURIComponent(project)}/pages/${pageNum}/preview`;
+  return `/api${projectPath(project)}/export/${format}`;
 }

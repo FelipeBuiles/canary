@@ -1,20 +1,9 @@
-import { useEffect, useState } from "react";
-import {
-  usePanelSummaries,
-  usePanelsForScene,
-  useProjectStatus,
-  usePromptSummaries,
-  usePromptsForScene,
-  useScreenplay,
-  useScreenplays,
-} from "../api/queries";
-import { useRunAction } from "../hooks/useRunAction";
-import { getShotPlanAction } from "../lib/shotPlan";
-import { rerunStageForDrawer, type DrawerKind } from "../lib/stations";
-import { cn } from "../lib/cn";
+import { useAdaptation, useBookPlan, useCompletePages } from "../api/queries";
+import { useI18n } from "../i18n";
+import type { DrawerKind } from "../lib/stations";
 import { Button } from "./ui/Button";
-import { RerunStageAction } from "./composites";
-import { trackProductEvent } from "../api/events";
+import { Surface } from "./ui/Surface";
+import type { BookAdaptation, CompletePageSummary } from "../types/api";
 
 interface InspectDrawerProps {
   project: string;
@@ -22,312 +11,272 @@ interface InspectDrawerProps {
   onClose: () => void;
 }
 
-const DRAWER_META: Record<DrawerKind, { kicker: string; title: string; placeholder: string }> = {
-  script: {
-    kicker: "AUTO · READ ONLY",
-    title: "Script",
-    placeholder: "Scenewright writes the script automatically after you approve the cast. Nothing to read yet.",
-  },
-  "shot-plan": {
-    kicker: "AUTO · READ ONLY",
-    title: "Shot plan",
-    placeholder: "Scenewright plans shots automatically after you approve the cast. Nothing to inspect yet.",
-  },
-  prompts: {
-    kicker: "AUTO · READ ONLY",
-    title: "Prompts",
-    placeholder: "Scenewright writes one image prompt per panel automatically. Open a panel in the Panels station to edit its prompt.",
-  },
-};
-
-function words(raw: string | null | undefined): string {
-  if (!raw) return "";
-  return raw.replace(/_/g, " ").trim();
+function countLabel(value: number, singular: string, plural: string) {
+  return `${value} ${value === 1 ? singular : plural}`;
 }
 
-function sceneTitle(sceneId: string): string {
-  return words(sceneId).replace(/^scene /i, "Scene ");
-}
+function AdaptationDetails({ adaptation }: { adaptation: BookAdaptation }) {
+  const { t } = useI18n();
+  const beats = adaptation.beats ?? [];
+  const ledger = adaptation.ledger ?? [];
+  const treatment = adaptation.treatment;
+  const letteringCount = beats.reduce((total, beat) => total + (beat.lettering?.length ?? 0), 0);
+  const transitionCount = beats.reduce((total, beat) => total + (beat.transitions?.length ?? 0), 0);
+  const appearanceChangeCount = beats.reduce((total, beat) => total + (beat.appearance_changes?.length ?? 0), 0);
+  const compressedCount = ledger.filter((entry) => entry.disposition === "compressed_into").length;
+  const omittedCount = ledger.filter((entry) => entry.disposition === "intentionally_omitted").length;
+  const treatmentSignals = [
+    ["REVEALS", treatment?.reveals],
+    ["CONSEQUENCES", treatment?.consequences],
+    ["AFTERMATH", treatment?.aftermath],
+    ["CHARACTER ARCS", treatment?.character_arcs],
+    ["RELATIVE EMPHASIS", treatment?.relative_emphasis],
+  ] as const;
 
-// ── Script ────────────────────────────────────────────────────────────────────
-
-function ScriptScene({ project, sceneId, title, beatCount }: { project: string; sceneId: string; title: string; beatCount: number }) {
-  const [open, setOpen] = useState(false);
-  const { data: screenplay } = useScreenplay(open ? project : undefined, sceneId);
   return (
-    <div className="border-[2px] border-ink-black/12 bg-bristol">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-baseline gap-3 px-4 py-3 text-left transition-colors hover:bg-pulp-paper/60"
-      >
-        <span className="font-meta text-[0.52rem] tracking-[0.18em] text-hero-red">{sceneTitle(sceneId).toUpperCase()}</span>
-        <span className="min-w-0 flex-1 truncate font-body text-[0.85rem] font-semibold text-ink-black">{title}</span>
-        <span className="font-meta text-[0.5rem] tracking-[0.12em] text-ink-black/40">
-          {beatCount} BEATS {open ? "▴" : "▾"}
-        </span>
-      </button>
-      {open && (
-        <div className="border-t border-ink-black/10 px-4 py-3">
-          {!screenplay ? (
-            <p className="font-meta text-[0.55rem] tracking-[0.14em] text-ink-black/40">LOADING…</p>
-          ) : (
-            <ol className="space-y-2">
-              {screenplay.beats.map((beat, i) => (
-                <li key={i} className="font-mono text-[0.72rem] leading-5 text-ink-black/80">
-                  <span className="mr-2 text-ink-black/35">{String(i + 1).padStart(2, "0")}</span>
-                  {beat.content}
-                </li>
-              ))}
-            </ol>
-          )}
+    <>
+      <Surface tone="container" border="soft" shadow="none" padding="md">
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-5">
+          <div>
+            <dt className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("ORDERED BEATS")}</dt>
+            <dd className="mt-1 font-display text-xl font-black">{beats.length}</dd>
+            <p className="mt-1 font-body text-xs text-ink-muted">{t("kept in story order")}</p>
+          </div>
+          <div>
+            <dt className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("SOURCE ACCOUNTING")}</dt>
+            <dd className="mt-1 font-display text-xl font-black">{ledger.length}</dd>
+            <p className="mt-1 font-body text-xs text-ink-muted">{t("source units accounted")}</p>
+          </div>
+          <div>
+            <dt className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("LETTERING ITEMS")}</dt>
+            <dd className="mt-1 font-display text-xl font-black">{letteringCount}</dd>
+            <p className="mt-1 font-body text-xs text-ink-muted">{t("dialogue, captions, and SFX")}</p>
+          </div>
+          <div>
+            <dt className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("STORY CONTINUITY")}</dt>
+            <dd className="mt-1 font-display text-xl font-black">{transitionCount + appearanceChangeCount}</dd>
+            <p className="mt-1 font-body text-xs text-ink-muted">
+              {transitionCount} {t("transitions")} · {appearanceChangeCount} {t("appearance changes")}
+            </p>
+          </div>
+        </dl>
+        <dl className="mt-5 border-t border-ink-black/12 pt-3">
+          <dt className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("SOURCE DISPOSITION")}</dt>
+          <dd className="mt-1 font-body text-sm font-semibold">
+            {ledger.length - compressedCount - omittedCount} {t("retained or depicted")} · {compressedCount} {t("compressed")} · {omittedCount} {t("omitted")}
+          </dd>
+        </dl>
+      </Surface>
+
+      <Surface padding="md" border="soft" shadow="none">
+        <h3 className="font-display text-lg font-black uppercase">{t("NARRATIVE TREATMENT")}</h3>
+        <h4 className="mt-4 font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-hero-red">{t("CAUSAL SPINE")}</h4>
+        <ul className="mt-3 space-y-2 font-body text-sm leading-6">
+          {(treatment?.causal_spine ?? []).map((line, index) => (
+            <li key={`spine-${index}`} className="bg-surface-container px-3 py-2">{line}</li>
+          ))}
+        </ul>
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          {treatmentSignals.map(([label, values]) => values && values.length > 0 && (
+            <div key={label}>
+              <h4 className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-hero-red">{t(label)}</h4>
+              <ul className="mt-2 space-y-1 font-body text-xs leading-5 text-ink-muted">
+                {values.map((value) => <li key={value}>· {value}</li>)}
+              </ul>
+            </div>
+          ))}
         </div>
-      )}
-    </div>
+      </Surface>
+
+      <section aria-label={t("BEAT REGISTER")}>
+        <div className="mb-3 flex items-baseline justify-between gap-3 border-b-[2px] border-ink-black pb-2">
+          <h3 className="font-display text-lg font-black uppercase">{t("BEAT REGISTER")}</h3>
+          <span className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">
+            {countLabel(beats.length, t("beat"), t("beats"))}
+          </span>
+        </div>
+        <ol className="space-y-1">
+          {beats.map((beat) => (
+            <li key={beat.id} className="grid grid-cols-[2.25rem_minmax(0,1fr)] items-start gap-3 bg-surface-container px-3 py-3">
+              <span className="font-display text-lg font-black leading-none">{beat.order}</span>
+              <div className="min-w-0">
+                <p className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.1em] text-hero-red">
+                  {t(beat.narrative_function ?? "beat")} · {beat.source_unit_ids?.length ?? 0} {t("source units")}
+                  {beat.lettering?.length ? ` · ${beat.lettering.length} ${t("lettering")}` : ""}
+                </p>
+                <p className="mt-1 font-body text-sm font-semibold leading-5">{beat.summary}</p>
+                {beat.story_functions && beat.story_functions.length > 0 && (
+                  <p className="mt-1 font-body text-xs leading-5 text-ink-muted">
+                    {beat.story_functions.map((value) => t(value)).join(" · ")}
+                  </p>
+                )}
+              </div>
+            </li>
+          ))}
+        </ol>
+      </section>
+    </>
   );
 }
 
-function ScriptBody({ project }: { project: string }) {
-  const { data: screenplays, isLoading } = useScreenplays(project);
-  if (isLoading) return <DrawerLoading />;
-  if (!screenplays?.length) return <DrawerPlaceholder kind="script" />;
-  return (
-    <div className="space-y-3">
-      {screenplays.map((sp) => (
-        <ScriptScene key={sp.scene_id} project={project} sceneId={sp.scene_id} title={sp.title} beatCount={sp.beat_count} />
-      ))}
-    </div>
+function PagePlanDetails({
+  pages,
+  targetPageMin,
+  targetPageMax,
+}: {
+  pages: CompletePageSummary[];
+  targetPageMin: number;
+  targetPageMax: number;
+}) {
+  const { t } = useI18n();
+  const pageCount = pages.length;
+  const beatCount = new Set(
+    pages.flatMap((item) => item.page.content.flatMap((content) => content.beat_ids)),
+  ).size;
+  const letteringCount = pages.reduce(
+    (total, item) => total + item.page.content.reduce((count, content) => count + content.lettering.length, 0),
+    0,
   );
-}
+  const spreadPageCount = pages.filter((item) => item.page.spread_role !== "single").length;
+  const densityCounts = pages.reduce<Record<string, number>>((counts, item) => {
+    counts[item.page.density_intent] = (counts[item.page.density_intent] ?? 0) + 1;
+    return counts;
+  }, {});
+  const densitySummary = ["sparse", "standard", "dense"]
+    .filter((density) => densityCounts[density])
+    .map((density) => `${densityCounts[density]} ${t(density)}`)
+    .join(" · ");
 
-// ── Shot plan ─────────────────────────────────────────────────────────────────
-
-function ShotPlanScene({ project, sceneId, panelCount }: { project: string; sceneId: string; panelCount: number }) {
-  const [open, setOpen] = useState(true);
-  const { data: panels } = usePanelsForScene(open ? project : undefined, sceneId);
   return (
-    <div className="border-[2px] border-ink-black/12 bg-bristol">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-baseline gap-3 px-4 py-3 text-left transition-colors hover:bg-pulp-paper/60"
-      >
-        <span className="font-meta text-[0.52rem] tracking-[0.18em] text-hero-red">{sceneTitle(sceneId).toUpperCase()}</span>
-        <span className="min-w-0 flex-1" />
-        <span className="font-meta text-[0.5rem] tracking-[0.12em] text-ink-black/40">
-          {panelCount} PANELS {open ? "▴" : "▾"}
-        </span>
-      </button>
-      {open && panels && (
-        <ul className="divide-y divide-ink-black/8 border-t border-ink-black/10">
-          {panels.map((panel) => (
-            <li key={panel.panel_number} className="flex items-baseline gap-3 px-4 py-2">
-              <span className="font-meta text-[0.52rem] tracking-[0.12em] text-ink-black/40">
-                P{String(panel.panel_number).padStart(2, "0")}
-              </span>
-              {/* Plain-word shot labels — never codes like "P01 medium ·H". */}
-              <span className="font-body text-[0.8rem] font-semibold capitalize text-ink-black">
-                {words(panel.shot_type)} · {words(panel.camera_angle)}
-              </span>
-              <span className="min-w-0 flex-1 truncate text-[0.72rem] text-ink-black/50">
-                {words(panel.mood)}
+    <>
+      <Surface tone="container" border="soft" shadow="none" padding="md">
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-5">
+          <div>
+            <dt className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("PLANNED PAGES")}</dt>
+            <dd className="mt-1 font-display text-xl font-black">{pageCount}</dd>
+            <p className="mt-1 font-body text-xs text-ink-muted">{t("Target range")} {targetPageMin}–{targetPageMax}</p>
+          </div>
+          <div>
+            <dt className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("STORY BEATS")}</dt>
+            <dd className="mt-1 font-display text-xl font-black">{beatCount}</dd>
+            <p className="mt-1 font-body text-xs text-ink-muted">{t("allocated across pages")}</p>
+          </div>
+          <div>
+            <dt className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("LETTERING")}</dt>
+            <dd className="mt-1 font-display text-xl font-black">{letteringCount}</dd>
+            <p className="mt-1 font-body text-xs text-ink-muted">{t("dialogue, captions, and SFX")}</p>
+          </div>
+          <div>
+            <dt className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("SPREAD PAGES")}</dt>
+            <dd className="mt-1 font-display text-xl font-black">{spreadPageCount}</dd>
+            <p className="mt-1 font-body text-xs text-ink-muted">{t("linked to a facing page")}</p>
+          </div>
+        </dl>
+        <div className="mt-5 border-t border-ink-black/12 pt-3">
+          <dt className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("DENSITY MIX")}</dt>
+          <dd className="mt-1 font-body text-sm font-semibold">{densitySummary || t("Page density is not available yet.")}</dd>
+        </div>
+      </Surface>
+
+      <section aria-label={t("PAGE REGISTER")}>
+        <div className="mb-3 flex items-baseline justify-between gap-3 border-b-[2px] border-ink-black pb-2">
+          <h3 className="font-display text-lg font-black uppercase">{t("PAGE REGISTER")}</h3>
+          <span className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">
+            {countLabel(pageCount, t("page"), t("pages"))}
+          </span>
+        </div>
+        <ol className="space-y-1">
+          {pages.map((item) => (
+            <li key={item.page.page_number} className="grid grid-cols-[2.25rem_minmax(0,1fr)_auto] items-start gap-3 bg-surface-container px-3 py-3">
+              <span className="font-display text-lg font-black leading-none">{item.page.page_number}</span>
+              <div className="min-w-0">
+                <p className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.1em] text-hero-red">
+                  {t(item.page.page_turn_role)} · {t(item.page.emphasis)} · {t(item.page.spread_role)}
+                </p>
+                <p className="mt-1 font-body text-sm font-semibold leading-5">{item.page.layout_intent}</p>
+                <p className="mt-1 font-body text-xs leading-5 text-ink-muted">{item.page.rhythm_intent}</p>
+              </div>
+              <span className="font-meta text-[0.54rem] font-bold uppercase tracking-[0.1em] text-ink-muted">
+                {t(item.page.density_intent)}
               </span>
             </li>
           ))}
-        </ul>
-      )}
-    </div>
+        </ol>
+      </section>
+    </>
   );
 }
 
-function ShotPlanBody({ project }: { project: string }) {
-  const { data: summaries, isLoading } = usePanelSummaries(project);
-  const { data: status } = useProjectStatus(project);
-  const { handleRun, isPending } = useRunAction();
-
-  if (isLoading) return <DrawerLoading />;
-  if (!summaries?.length) {
-    const action = getShotPlanAction(status);
-    if (action.kind !== "none") {
-      return (
-        <div className="flex min-h-[30vh] flex-col items-center justify-center gap-4 px-6 text-center">
-          <span className="font-meta text-[0.6rem] tracking-[0.2em] text-hero-red">FAILED</span>
-          <p className="max-w-[36ch] text-[0.85rem] leading-6 text-ink-black/60">
-            Shot planning failed. Retry to generate the panel layout.
-          </p>
-          <Button
-            size="sm"
-            variant="primary"
-            disabled={isPending || status?.is_running}
-            onClick={() =>
-              handleRun(project, action.backendStage, {
-                rerun: action.kind === "rerun",
-                actionLabel: action.label,
-              })
-            }
-          >
-            {isPending ? "Working…" : action.label}
-          </Button>
-        </div>
-      );
-    }
-    return <DrawerPlaceholder kind="shot-plan" />;
-  }
-  return (
-    <div className="space-y-3">
-      {summaries.map((s) => (
-        <ShotPlanScene key={s.scene_id} project={project} sceneId={s.scene_id} panelCount={s.panel_count} />
-      ))}
-    </div>
-  );
-}
-
-// ── Prompts ───────────────────────────────────────────────────────────────────
-
-function PromptScene({ project, sceneId, promptCount }: { project: string; sceneId: string; promptCount: number }) {
-  const [open, setOpen] = useState(true);
-  const { data: prompts } = usePromptsForScene(open ? project : undefined, sceneId);
-  return (
-    <div className="border-[2px] border-ink-black/12 bg-bristol">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-baseline gap-3 px-4 py-3 text-left transition-colors hover:bg-pulp-paper/60"
-      >
-        <span className="font-meta text-[0.52rem] tracking-[0.18em] text-hero-red">{sceneTitle(sceneId).toUpperCase()}</span>
-        <span className="min-w-0 flex-1" />
-        <span className="font-meta text-[0.5rem] tracking-[0.12em] text-ink-black/40">
-          {promptCount} PROMPTS {open ? "▴" : "▾"}
-        </span>
-      </button>
-      {open && prompts && (
-        <ul className="divide-y divide-ink-black/8 border-t border-ink-black/10">
-          {prompts.map((prompt) => {
-            const cast = (prompt.subjects ?? []).map((s) => s.name).filter(Boolean).join(", ");
-            return (
-              <li key={prompt.panel_number} className="px-4 py-2.5">
-                <div className="flex items-baseline gap-3">
-                  <span className="font-meta text-[0.52rem] tracking-[0.12em] text-ink-black/40">
-                    P{String(prompt.panel_number).padStart(2, "0")}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate font-body text-[0.8rem] font-semibold text-ink-black">
-                    {prompt.composition || words(prompt.setting?.split("\n")[0])}
-                  </span>
-                </div>
-                <div className="mt-1 grid gap-x-4 gap-y-0.5 text-[0.7rem] leading-5 text-ink-black/60 sm:grid-cols-2">
-                  {cast && <span className="truncate"><span className="text-ink-black/40">Cast:</span> {cast}</span>}
-                  {prompt.setting && <span className="truncate"><span className="text-ink-black/40">Setting:</span> {prompt.setting.split("\n")[0]}</span>}
-                  {prompt.lighting && <span className="truncate"><span className="text-ink-black/40">Light:</span> {prompt.lighting}</span>}
-                  {prompt.mood && <span className="truncate"><span className="text-ink-black/40">Mood:</span> {prompt.mood}</span>}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function PromptsBody({ project }: { project: string }) {
-  const { data: summaries, isLoading } = usePromptSummaries(project);
-  if (isLoading) return <DrawerLoading />;
-  if (!summaries?.length) return <DrawerPlaceholder kind="prompts" />;
-  return (
-    <div className="space-y-3">
-      {summaries.map((s) => (
-        <PromptScene key={s.scene_id} project={project} sceneId={s.scene_id} promptCount={s.prompt_count} />
-      ))}
-    </div>
-  );
-}
-
-// ── Shared chrome ─────────────────────────────────────────────────────────────
-
-function DrawerLoading() {
-  return <p className="font-meta text-[0.55rem] tracking-[0.18em] text-ink-black/40">LOADING…</p>;
-}
-
-function DrawerPlaceholder({ kind }: { kind: DrawerKind }) {
-  return (
-    <div className="flex min-h-[30vh] flex-col items-center justify-center gap-3 px-6 text-center">
-      <span className="font-meta text-[0.6rem] tracking-[0.2em] text-ink-black/30">NOT WRITTEN YET</span>
-      <p className="max-w-[36ch] text-[0.85rem] leading-6 text-ink-black/60">{DRAWER_META[kind].placeholder}</p>
-    </div>
-  );
-}
-
-/**
- * Footer action for the auto-step drawers: re-run this step (and everything
- * downstream) from the frontend. These stages run automatically and are
- * otherwise read-only, so this is how the four-station UI re-exposes
- * "re-run from a determinate stage" for the auto chain. Hidden until the step
- * has produced output; disabled while any stage is running. Reuses
- * RerunStageAction's guarded confirmation (downstream impact + credit estimate).
- */
-function InspectDrawerRerun({ project, kind }: { project: string; kind: DrawerKind }) {
-  const { data: status } = useProjectStatus(project);
-  const stage = rerunStageForDrawer(kind);
-  if (status?.stages[stage]?.status !== "complete") return null;
-  return (
-    <div className="flex min-h-[76px] items-center justify-between gap-3 border-t-[3px] border-ink-black bg-bristol px-4 py-2">
-      <p className="max-w-[22ch] text-[0.7rem] leading-5 text-ink-black/55">
-        Regenerate this step and everything after it.
-      </p>
-      <RerunStageAction
-        project={project}
-        stage={stage}
-        label={DRAWER_META[kind].title}
-        disabled={status?.is_running}
-      />
-    </div>
-  );
-}
-
-/**
- * Read-only inspect drawer for auto pipeline steps (script, shot plan,
- * prompts). Opens over the content area; never blocks progression.
- */
 export function InspectDrawer({ project, kind, onClose }: InspectDrawerProps) {
-  useEffect(() => {
-    if (kind) {
-      void trackProductEvent("inspect_drawer_opened", {
-        projectId: project,
-        properties: { drawer: kind },
-      });
-    }
-  }, [kind, project]);
+  const { t } = useI18n();
+  const adaptation = useAdaptation(kind === "adaptation" ? project : undefined);
+  const plan = useBookPlan(kind === "page-plan" ? project : undefined);
+  const completePages = useCompletePages(kind === "page-plan" ? project : undefined);
 
   if (!kind) return null;
-  const meta = DRAWER_META[kind];
+  const title = kind === "adaptation" ? t("BOOK ADAPTATION") : t("PAGE PLAN");
+  const loading = kind === "adaptation" ? adaptation.isLoading : plan.isLoading;
+  const error = kind === "adaptation" ? adaptation.error : plan.error;
 
   return (
-    <div className="fixed inset-0 z-40" role="dialog" aria-modal="true" aria-label={meta.title}>
-      <div className="absolute inset-0 bg-ink-black/35" onClick={onClose} />
-      <aside className="absolute right-0 top-0 flex h-full w-[460px] max-w-[94vw] flex-col border-l-[2px] border-ink-black bg-pulp-paper">
-        <div className="flex h-shell-top shrink-0 items-center justify-between border-b-[2px] border-ink-black bg-bristol px-4">
-          <div>
-            <div className="font-meta text-[0.5rem] tracking-[0.2em] text-ink-black/45">{meta.kicker}</div>
-            <div className="font-display text-[1.25rem] font-bold uppercase leading-tight tracking-[-0.03em]">
-              {meta.title}
-            </div>
+    <aside
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      className="fixed inset-0 z-[120] flex justify-end bg-ink-black/60"
+      onClick={onClose}
+    >
+      <div
+        className="h-full w-full max-w-2xl overflow-y-auto border-l-[3px] border-ink-black bg-pulp-paper shadow-ink"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="relative sticky top-0 z-10 flex min-h-14 items-center justify-between gap-4 border-b-[3px] border-ink-black bg-bristol px-5 py-3 md:h-shell-top md:py-4">
+          <div className="min-w-0">
+            <p className="font-meta text-[0.54rem] font-bold uppercase tracking-[0.14em] text-hero-red">{t("AUTOMATIC WORK")}</p>
+            <h2 className="truncate font-display text-[1.55rem] font-black uppercase leading-[0.9] tracking-[-0.03em]">{title}</h2>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="flex h-11 w-11 items-center justify-center text-ink-black/50 transition-colors hover:text-hero-red"
-          >
-            ✕
-          </button>
+          <Button variant="outline" size="xs" onClick={onClose}>{t("CLOSE")}</Button>
+          <span aria-hidden="true" className="absolute inset-x-0 bottom-0 h-[4px] bg-hero-red" />
+        </header>
+
+        <div className="space-y-5 p-5">
+          {loading && <p className="font-meta text-sm font-bold">{t("LOADING…")}</p>}
+          {error && (
+            <Surface tone="gold" border="hard" shadow="none" padding="md">
+              <p className="font-body text-sm font-bold">{t("This automatic work is not available yet.")}</p>
+            </Surface>
+          )}
+
+          {kind === "adaptation" && adaptation.data && (
+            <>
+              <AdaptationDetails adaptation={adaptation.data} />
+            </>
+          )}
+
+          {kind === "page-plan" && plan.data && (
+            <>
+              <Surface padding="md" border="soft" shadow="none">
+                <h3 className="font-display text-lg font-black uppercase">{t("Book rhythm")}</h3>
+                <p className="mt-2 font-body text-sm leading-6">
+                  {plan.data.rhythm_summary || t("The page and spread rhythm is ready.")}
+                </p>
+              </Surface>
+              {completePages.data?.pages ? (
+                <PagePlanDetails
+                  pages={completePages.data.pages}
+                  targetPageMin={plan.data.target_page_min}
+                  targetPageMax={plan.data.target_page_max}
+                />
+              ) : (
+                <Surface tone="container" border="soft" shadow="none" padding="md">
+                  <h3 className="font-display text-lg font-black uppercase">{t("Planned pages")}</h3>
+                  <p className="mt-2 font-body text-sm">{t("Loading page details…")}</p>
+                </Surface>
+              )}
+            </>
+          )}
         </div>
-        <div className={cn("min-h-0 flex-1 overflow-y-auto p-4")}>
-          {kind === "script" && <ScriptBody project={project} />}
-          {kind === "shot-plan" && <ShotPlanBody project={project} />}
-          {kind === "prompts" && <PromptsBody project={project} />}
-        </div>
-        <InspectDrawerRerun project={project} kind={kind} />
-      </aside>
-    </div>
+      </div>
+    </aside>
   );
 }

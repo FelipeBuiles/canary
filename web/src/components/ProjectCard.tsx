@@ -7,11 +7,13 @@ import { useI18n } from "../i18n";
 
 const STAGE_COVER_STYLE: Partial<Record<StageName, { bg: string }>> = {
   extract:   { bg: "#2d3a2e" },
+  brief:     { bg: "#362017" },
+  style:     { bg: "#31151a" },
   cast:      { bg: "#0d1a2b" },
+  adapt:     { bg: "#20162d" },
   plan:      { bg: "#1a1530" },
-  direct:    { bg: "#1c1408" },
   draw:      { bg: "#0d1425" },
-  compose:   { bg: "#101a12" },
+  finish:    { bg: "#101a12" },
 };
 const FALLBACK_BG = "#111827";
 
@@ -37,7 +39,7 @@ function statusLine(project: ProjectSummary, t: (s: string) => string): { label:
       className: "bg-narrator-gold text-ink-black",
     };
   }
-  if (project.furthest_stage === "compose") {
+  if (project.furthest_stage === "finish") {
     return { label: t("Complete"), className: "bg-chip-sage text-archive-sage" };
   }
   if (project.furthest_stage) {

@@ -39,31 +39,28 @@ function estimateProjectCredits({
   fileSizeBytes,
   renderPreset,
   devMode,
-  maxPanelsPerScene,
 }: {
   fileSizeBytes: number;
   renderPreset: RenderPreset;
   devMode: boolean;
-  maxPanelsPerScene: number;
 }): CreditRange {
   // Estimate scenes from file size (~10 KB per scene)
   const estimatedScenes = devMode
     ? 1
     : Math.max(1, Math.min(150, Math.round(fileSizeBytes / 10_000)));
 
-  // Panels: scenes × avg fill factor (scenes rarely hit the max)
-  const estimatedPanels = Math.round(estimatedScenes * maxPanelsPerScene * 0.7);
+  const estimatedPages = devMode ? 1 : Math.max(1, Math.round(estimatedScenes * 2.5));
 
-  let imageCostPerPanel =
+  let imageCostPerPage =
     renderPreset === "high_quality" ? 0.075 : renderPreset === "balanced" ? 0.042 : 0.015;
-  if (devMode) imageCostPerPanel *= 0.6; // dev mode downscales image quality
+  if (devMode) imageCostPerPage *= 0.6;
 
   // Text-stage costs (USD)
   const extractCost = Math.max(0.01, fileSizeBytes * 0.000003); // ~$0.003/KB
   const castCost = 0.05; // character & location reference images
   const perSceneText = 0.035; // adapt + plan per scene
   const textCostUsd = extractCost + castCost + estimatedScenes * perSceneText;
-  const imageCostUsd = estimatedPanels * imageCostPerPanel;
+  const imageCostUsd = estimatedPages * imageCostPerPage;
   const totalUsd = textCostUsd + imageCostUsd;
 
   // 100 credits per $1 (default rate matches backend PULP_CREDITS_PER_PROVIDER_USD)
@@ -133,8 +130,6 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
 
   const ext = file ? "." + file.name.split(".").pop()?.toLowerCase() : "";
   const extOk = !file || ACCEPTED.includes(ext);
-  const presetPanelsPerScene =
-    devMode || renderPreset === "fast_draft" ? 6 : renderPreset === "high_quality" ? 10 : 8;
   const sourceReady = tab === "file"
     ? Boolean(file && extOk)
     : Boolean(selectedStory || pastedUrlOrCode.trim());
@@ -161,25 +156,17 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
       overrides.dev_image_scale = 0.6;
       overrides.dev_image_steps = 8;
       overrides.dev_image_concurrency = 5;
-      overrides.max_panels_per_scene = 6;
-      overrides.max_panels_per_page = 6;
     } else {
       // Normal quality preset handling.
       if (renderPreset === "fast_draft") {
         overrides.quality_preset = "fast";
         overrides.dev_mode = false;
-        overrides.max_panels_per_scene = 6;
-        overrides.max_panels_per_page = 6;
       } else if (renderPreset === "high_quality") {
         overrides.quality_preset = "quality";
         overrides.dev_mode = false;
-        overrides.max_panels_per_scene = 10;
-        overrides.max_panels_per_page = 5;
       } else {
         overrides.quality_preset = "balanced";
         overrides.dev_mode = false;
-        overrides.max_panels_per_scene = 8;
-        overrides.max_panels_per_page = 6;
       }
     }
 
@@ -453,7 +440,6 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                                 fileSizeBytes: story.words * 6,
                                 renderPreset: devMode ? "fast_draft" : renderPreset,
                                 devMode,
-                                maxPanelsPerScene: presetPanelsPerScene,
                               }))} />
                             </div>
                             {story.rating && (
@@ -547,7 +533,6 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                     : 15000, // Fallback default size (~15KB)
                 renderPreset: devMode ? "fast_draft" : renderPreset,
                 devMode,
-                maxPanelsPerScene: presetPanelsPerScene,
               })
             : null;
           
@@ -574,10 +559,10 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                   <>
                     {devMode ? "1 scene (dev)" : `about ${sceneCount} scene${sceneCount !== 1 ? "s" : ""}`}
                     <br />
-                    about {presetPanelsPerScene} {t("panels per scene")}
+                    {t("Set the target page range in Story")}
                   </>
                 ) : (
-                  <>about {presetPanelsPerScene} {t("panels per scene")}</>
+                  <>{t("Set the target page range in Story")}</>
                 )}
               </div>
             </div>

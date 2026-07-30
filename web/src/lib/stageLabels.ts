@@ -1,13 +1,12 @@
 export const STAGE_LABELS: Record<string, string> = {
   extract:    "Story",
+  brief:      "Adaptation Brief",
   style:      "Art Style",
   cast:       "Characters & Places",
-  adapt:      "Story Draft",
-  plan:       "Panel Plan",
-  storyboard: "Panel Breakdown",
-  direct:     "Image Instructions",
-  draw:       "Draw Panels",
-  compose:    "Pages & Export",
+  adapt:      "Book Adaptation",
+  plan:       "Page Plan",
+  draw:       "Complete Pages",
+  finish:     "Book & Export",
 };
 
 export function stageLabel(stage: string | null): string {

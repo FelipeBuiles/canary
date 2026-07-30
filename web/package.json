@@ -7,9 +7,9 @@
     "brand:build": "node --experimental-strip-types brand-system/src/build.ts",
     "brand:check": "tsc -p brand-system/tsconfig.json && node --experimental-strip-types brand-system/src/validate.ts",
     "brand:preview": "npm run brand:build && vite --open /brand-system/preview/",
-    "sync-tokens": "node scripts/sync-tokens.mjs",
-    "dev": "npm run sync-tokens && vite",
-    "build": "npm run sync-tokens && tsc -b && vite build",
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "audit:production": "node scripts/audit-production.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
@@ -22,7 +22,7 @@
     "lucide-react": "^1.8.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "react-router-dom": "^7.14.1",
+    "react-router-dom": "7.18.2",
     "zustand": "^5.0.12"
   },
   "devDependencies": {

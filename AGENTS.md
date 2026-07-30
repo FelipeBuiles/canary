@@ -38,7 +38,8 @@ is implemented in `s6_storyboard.py`.
 **UI stations (frontend grouping only):** The web UI presents the 9 backend
 stages as 4 user-facing "stations" (implemented June 2026). Backend stages stay
 discrete — stations are presentation/navigation only, never backend
-consolidation. Plan + status: `docs/proposals/four-station-redesign.md`.
+consolidation. The mapping in `web/src/lib/stations.ts` is authoritative for
+the implemented UI.
 
 | Station | Backend stages | User gate |
 |---|---|---|
@@ -50,6 +51,12 @@ consolidation. Plan + status: `docs/proposals/four-station-redesign.md`.
 Auto stages never block: they run as a chain after cast approval and surface
 as read-only inspect drawers (placeholder shown if not yet generated). Stage
 order is unchanged — do not reorder stages for the UI.
+
+**Accepted replacement architecture:** the full-page pipeline recorded in
+ADRs 0003-0015 (`docs/adr/`) replaces the panel-era design; remaining migration
+work is tracked in
+`docs/superpowers/plans/2026-07-25-full-page-generation/README.md`. That
+migration must not preserve or extend legacy panel stages for compatibility.
 
 Key invariants of the implemented redesign:
 
@@ -96,11 +103,10 @@ accuracy.
   style is selected (`is_style_selected` in `styles.py`). The status API returns
   `style_selected: bool` sourced from `config.yaml`. Frontend uses this field
   (not `useStyles` data) for gate checks to avoid stale-cache bugs.
-- **Image model routing:** `image-quality` routes to Gemini 3 Pro Image
-  (Nano Banana 2 Pro) via the vertex-multimodal handler; only `image-reve`
-  routes to Reve (`REVE_ALIASES`). `GPT_IMAGE_2_ALIASES` is now empty —
-  `is_gpt_image_2()` only matches literal `gpt-image-2` strings, not gateway
-  aliases.
+- **Image model routing:** `image-balanced` routes to the GA Gemini 3 Pro Image
+  (Nano Banana Pro) model via the vertex-multimodal handler; `image-quality`
+  routes to GPT Image 2; and only `image-reve` routes to Reve (`REVE_ALIASES`).
+  `GPT_IMAGE_2_ALIASES` includes `image-quality`.
 - **Panel aspect:** All aspect-ratio → dimension logic lives in `panel_aspect.py`
   (`GenerationShape`, `dimensions_for_generation_aspect`, `aspect_within_tolerance`).
   Do not inline dimension math in stage or route code.

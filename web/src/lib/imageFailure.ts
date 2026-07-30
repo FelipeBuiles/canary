@@ -3,12 +3,19 @@ export type Translate = (text: string) => string;
 type FailureCopy = {
   title: string;
   message: string;
+  guidance?: string;
 };
 
-const FAILURE_COPY: Record<string, { title: string; message: string }> = {
+const FAILURE_COPY: Record<string, FailureCopy> = {
+  analysis_error: {
+    title: "TEXT CHECK INCOMPLETE",
+    message: "The page was drawn successfully, but its lettering check could not be completed.",
+    guidance: "Retry the text check. This reuses the existing page and does not redraw it.",
+  },
   provider_blocked: {
-    title: "IMAGE REQUEST BLOCKED",
-    message: "The image service rejected this request for safety reasons. Edit the prompt to remove the blocked content, then try again.",
+    title: "WE COULDN'T DRAW THIS PAGE",
+    message: "The image provider declined this scene but did not say which detail caused it. Your page plan is unchanged.",
+    guidance: "Draw without references keeps the page plan and exact lettering, but character and setting details may vary. You can review the result before continuing.",
   },
   rate_limited: {
     title: "IMAGE SERVICE BUSY",
@@ -51,6 +58,7 @@ export function getImageFailureCopy(
     return {
       title: t(known.title),
       message: t(known.message),
+      guidance: known.guidance ? t(known.guidance) : undefined,
     };
   }
 

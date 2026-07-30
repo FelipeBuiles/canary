@@ -13,9 +13,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
-
-from novel_to_comic.assembly.html_renderer import FONTS_DIR
 from novel_to_comic.model_costs import DEFAULT_COST_MAP_PATH, refresh_litellm_cost_cache
+from novel_to_comic.clients.structured_call import validation_error_summary
+from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing
 from novel_to_comic.usage import audit_pricing
 
 from .generation_jobs import generation_worker
@@ -25,10 +25,12 @@ from .ratelimit import configure_rate_limiting
 from .sentry import configure_sentry
 from .routers import (
     billing,
+    cast_assets,
     config,
     credits,
     export,
     events,
+    files,
     labs,
     operator_billing,
     pages,
@@ -39,6 +41,8 @@ from .routers import (
 )
 from .metrics import metrics_response
 from .release import release_identity
+
+FONTS_DIR = Path(__file__).resolve().parents[1] / "fonts"
 
 
 class SPAStaticFiles(StaticFiles):
@@ -275,6 +279,21 @@ async def _lifespan(app: FastAPI):
 
 def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app = FastAPI(title="Scenewright", lifespan=_lifespan)
+
+    @app.exception_handler(ArtifactMissing)
+    async def artifact_missing_exception_handler(request, exc: ArtifactMissing):
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(ArtifactInvalid)
+    async def artifact_invalid_exception_handler(request, exc: ArtifactInvalid):
+        log.warning(
+            "Stored artifact rejected name=%s action=rerun_%s reason=%s",
+            exc.name,
+            (exc.owner_stage or "owner").lower(),
+            validation_error_summary(exc.validation_error),
+        )
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
     app.middleware("http")(request_log_middleware)
     env = (os.environ.get("CANARY_ENV") or os.environ.get("ENV") or "dev").lower()
     if env == "production":
@@ -424,6 +443,18 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         styles.router,
         prefix="/api/projects/{project_id}",
         tags=["styles"],
+    )
+    app.include_router(
+        cast_assets.router,
+        prefix="/api/projects/{project_id}",
+        tags=["cast"],
+    )
+    # Registered last: the asset reader owns a greedy `{file_path:path}` route,
+    # so every named project route must be matched before it is considered.
+    app.include_router(
+        files.router,
+        prefix="/api/projects/{project_id}",
+        tags=["files"],
     )
     # Labs is an image-model experimentation surface that bills provider quota
     # directly and is not credit-gated. It defaults OFF; set

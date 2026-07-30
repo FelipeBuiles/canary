@@ -1,509 +1,219 @@
-"""Stage data API — reads JSON artifacts from the project directory."""
+"""Read and edit canonical artifacts owned by target pipeline stages."""
 
-import json
-import re
-from pathlib import Path
+from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from novel_to_comic import artifacts
-
-from novel_to_comic.models.panel import PanelBreakdown
-from novel_to_comic.models.prompt import ImagePrompt
-from novel_to_comic import panel_store
-from novel_to_comic.panel_store import save_breakdown, save_prompt
-from novel_to_comic.panel_versions import archived_panel_version_count, list_panel_versions, restore_panel_version
+from novel_to_comic.briefing import revise_persisted_brief
 from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.source_extraction import (
+    SourceSceneAnchor,
+    align_scene_anchors,
+    build_source_document,
+)
+from novel_to_comic.stages import REGISTRY
+from novel_to_comic.state import StageState, StageStatus, save_state
+from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 
-from ..auth import get_current_user
-from ..narration_editor import apply_patch as apply_narration_patch, estimate_patch_impact
-from ..deps import get_project, project_key
-from ..generation_jobs import find_active_generation_job
-from novel_to_comic.frozen_requests import invalidate_prepared_requests
-from ..panel_acceptance import accept_panel, clear_panel_acceptance, is_panel_accepted
-from ..panel_flags import clear_panel_flag, flag_panel, is_panel_flagged
-from ..product_events import capture_server_event
+from ..deps import get_project
+
 
 router = APIRouter()
 
 
-def _image_revision(path: Path) -> str | None:
-    if not path.exists():
-        return None
-    stat = path.stat()
-    return f"{stat.st_mtime_ns}-{stat.st_size}"
+class BriefEdit(BaseModel):
+    expected_revision: int = Field(ge=1)
+    changes: dict
 
 
-# ── Story Bible (EXTRACT) ─────────────────────────────────────────────────────
+def _not_found(exc: ArtifactMissing) -> HTTPException:
+    return HTTPException(404, str(exc))
+
+
+@router.get("/story")
+def get_story(project=Depends(get_project)):
+    project_dir, _config, _state = project
+    target = TargetArtifacts(project_dir)
+    try:
+        brief = target.read_brief()
+    except ArtifactMissing:
+        brief = None
+    try:
+        story_bible = artifacts.read_story_bible(project_dir)
+    except ArtifactMissing as exc:
+        raise _not_found(exc) from exc
+    return {
+        "story_bible": story_bible,
+        "brief": brief,
+    }
 
 
 @router.get("/story-bible")
 def get_story_bible(project=Depends(get_project)):
-    project_dir, config, state = project
-    if not artifacts.story_bible_path(project_dir).exists():
-        raise HTTPException(404, "Story bible not found")
-    return artifacts.read_story_bible(project_dir).model_dump()
+    project_dir, _config, _state = project
+    try:
+        return artifacts.read_story_bible(project_dir)
+    except ArtifactMissing as exc:
+        raise _not_found(exc) from exc
 
 
 @router.put("/story-bible")
 def update_story_bible(body: dict, project=Depends(get_project)):
-    project_dir, config, state = project
-    if not artifacts.story_bible_path(project_dir).exists():
-        raise HTTPException(404, "Story bible not found")
+    project_dir, _config, state = project
+    bible = StoryBible.model_validate(body)
+    target = TargetArtifacts(project_dir)
+    # Source scenes are derived from the bible's scene anchors, so an edited
+    # bible has to re-derive them or source.json keeps describing scenes that no
+    # longer exist. Rebuilt before the bible is written: an anchor that cannot
+    # resolve is rejected instead of persisted into a contradiction.
     try:
-        updated_bible = StoryBible.model_validate(body)
-    except Exception as e:
-        raise HTTPException(400, f"Invalid story bible data: {e}")
-    artifacts.write_story_bible(project_dir, updated_bible)
-    return updated_bible.model_dump()
+        source = target.read_source()
+    except ArtifactMissing:
+        source = None
+    if source is not None:
+        try:
+            align_scene_anchors(bible, source.text)
+            rebuilt = build_source_document(
+                source.text,
+                tuple(
+                    SourceSceneAnchor(
+                        id=scene.id,
+                        title=scene.title,
+                        opening_quote=scene.source_start_quote,
+                    )
+                    for scene in bible.scenes
+                ),
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+    artifacts.write_story_bible(project_dir, bible)
+    if source is not None:
+        target.write_source(rebuilt)
+    for path in (
+        project_dir / "brief",
+        project_dir / "samples",
+        project_dir / "refs",
+        project_dir / "plates",
+        project_dir / "adapt",
+        project_dir / "plan",
+        project_dir / "draw",
+        project_dir / "finish",
+        project_dir / "exports",
+    ):
+        if path.is_dir():
+            import shutil
+
+            shutil.rmtree(path)
+        elif path.exists():
+            path.unlink()
+    for stage in ("brief", "style", "cast", "adapt", "plan", "draw", "finish"):
+        state.stages[stage] = StageState()
+    save_state(state, project_dir)
+    return {"story_bible": bible, "brief": None}
 
 
-# ── Cast primary refs ────────────────────────────────────────────────────────
+@router.get("/brief")
+def get_brief(project=Depends(get_project)):
+    project_dir, _config, _state = project
+    try:
+        return TargetArtifacts(project_dir).read_brief()
+    except ArtifactMissing as exc:
+        raise _not_found(exc) from exc
+
+
+@router.put("/brief")
+def update_brief(body: BriefEdit, project=Depends(get_project)):
+    project_dir, _config, state = project
+    target = TargetArtifacts(project_dir)
+    try:
+        brief = revise_persisted_brief(
+            target,
+            expected_revision=body.expected_revision,
+            **body.changes,
+        )
+    except (ArtifactMissing, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    state.stages["brief"].status = StageStatus.AWAITING_REVIEW
+    state.stages["brief"].approved = None
+    for stage in ("adapt", "plan", "draw", "finish"):
+        state.stages[stage] = StageState()
+    for path in REGISTRY["adapt"].clean_paths(project_dir):
+        if path.is_dir():
+            import shutil
+
+            shutil.rmtree(path)
+        elif path.exists():
+            path.unlink()
+    save_state(state, project_dir)
+    return brief
+
+
+@router.get("/validation/{stage}")
+def get_stage_validation(stage: str, project=Depends(get_project)):
+    """Return a blocking stage's own evidence, including any recommendation."""
+
+    project_dir, _config, _state = project
+    if stage not in {"adapt", "plan"}:
+        raise HTTPException(404, f"Stage {stage!r} does not persist a validation")
+    try:
+        return TargetArtifacts(project_dir).read_validation(stage)
+    except ArtifactMissing as exc:
+        raise _not_found(exc) from exc
+
+
+@router.get("/adaptation")
+def get_book_adaptation(project=Depends(get_project)):
+    project_dir, _config, _state = project
+    try:
+        return TargetArtifacts(project_dir).read_adaptation()
+    except ArtifactMissing as exc:
+        raise _not_found(exc) from exc
+
+
+@router.get("/book-plan")
+def get_book_plan(project=Depends(get_project)):
+    project_dir, _config, _state = project
+    try:
+        return TargetArtifacts(project_dir).read_plan()
+    except ArtifactMissing as exc:
+        raise _not_found(exc) from exc
+
+
+@router.get("/comic-pages")
+def list_comic_pages(project=Depends(get_project)):
+    project_dir, _config, _state = project
+    target = TargetArtifacts(project_dir)
+    try:
+        plan = target.read_plan()
+        return [target.read_page(item.page_number) for item in plan.pages]
+    except ArtifactMissing as exc:
+        raise _not_found(exc) from exc
+
+
+@router.get("/comic-pages/{page_number}")
+def get_comic_page(page_number: int, project=Depends(get_project)):
+    project_dir, _config, _state = project
+    try:
+        return TargetArtifacts(project_dir).read_page(page_number)
+    except ArtifactMissing as exc:
+        raise _not_found(exc) from exc
 
 
 @router.get("/cast/primary-refs")
 def get_primary_refs(project=Depends(get_project)):
-    project_dir, config, state = project
+    project_dir, _config, _state = project
     return {"primary_refs": artifacts.read_primary_refs(project_dir)}
 
 
 @router.put("/cast/{char_id}/primary-ref")
 def set_primary_ref(char_id: str, body: dict, project=Depends(get_project)):
-    project_dir, config, state = project
+    project_dir, _config, _state = project
     pose = body.get("pose")
-    if pose is not None and pose not in artifacts.CHARACTER_REF_POSES:
-        raise HTTPException(400, f"Unknown pose: {pose}. Valid: {list(artifacts.CHARACTER_REF_POSES)}")
-    if pose is not None and not artifacts.character_ref_pose_path(project_dir, char_id, pose).exists():
-        raise HTTPException(404, f"Ref not found: {char_id}/{pose}.png")
+    if pose not in artifacts.CHARACTER_REF_POSES:
+        raise HTTPException(400, "pose must be 'portrait' or 'full_body'")
     data = artifacts.read_primary_refs(project_dir)
-    if pose is None:
-        data.pop(char_id, None)
-    else:
-        data[char_id] = pose
+    data[char_id] = pose
     artifacts.write_primary_refs(project_dir, data)
     return {"char_id": char_id, "pose": pose, "primary_refs": data}
-
-
-# ── Screenplays (ADAPT) ───────────────────────────────────────────────────────
-
-
-@router.get("/screenplays")
-def list_screenplays(project=Depends(get_project)):
-    project_dir, config, state = project
-    return [
-        {"scene_id": sp.scene_id, "title": sp.scene_id.replace("_", " ").title(), "beat_count": len(sp.beats)}
-        for sp in artifacts.list_screenplays(project_dir)
-    ]
-
-
-@router.get("/screenplays/{scene_id}")
-def get_screenplay(scene_id: str, project=Depends(get_project)):
-    project_dir, config, state = project
-    if not artifacts.screenplay_path(project_dir, scene_id).exists():
-        raise HTTPException(404, f"Screenplay for {scene_id} not found")
-    return artifacts.read_screenplay(project_dir, scene_id).model_dump()
-
-
-# ── Panel Breakdowns (STORYBOARD) ─────────────────────────────────────────────
-
-
-@router.get("/layout-plan")
-def get_layout_plan(project=Depends(get_project)):
-    project_dir, config, state = project
-    if not artifacts.layout_plan_path(project_dir).exists():
-        raise HTTPException(404, "Layout plan not found")
-    return artifacts.read_layout_plan(project_dir).model_dump()
-
-
-@router.post("/layout-plan/narration-decisions/{beat_id}/impact")
-def estimate_narration_decision_impact(beat_id: str, body: dict, project=Depends(get_project)):
-    project_dir, config, state = project
-    try:
-        return estimate_patch_impact(project_dir, beat_id, body, config, state)
-    except FileNotFoundError:
-        raise HTTPException(404, "Layout plan not found")
-    except KeyError:
-        raise HTTPException(404, f"Narration decision {beat_id} not found")
-
-
-@router.put("/layout-plan/narration-decisions/{beat_id}")
-def update_narration_decision(beat_id: str, body: dict, project=Depends(get_project)):
-    project_dir, _config, _state = project
-    try:
-        decision, impact = apply_narration_patch(project_dir, beat_id, body)
-    except FileNotFoundError:
-        raise HTTPException(404, "Layout plan not found")
-    except KeyError:
-        raise HTTPException(404, f"Narration decision {beat_id} not found")
-    except Exception as e:
-        raise HTTPException(400, f"Invalid narration decision update: {e}")
-    return {"decision": decision.model_dump(), "impact": impact}
-
-
-# ── Panel Breakdowns (STORYBOARD) ─────────────────────────────────────────────
-
-
-@router.get("/panels")
-def list_panels(project=Depends(get_project)):
-    project_dir, config, state = project
-    storyboard_dir = project_dir / "storyboard"
-    if not storyboard_dir.exists():
-        return []
-    return [
-        {"scene_id": d.name, "panel_count": len(list(d.glob("panel_*.json")))}
-        for d in sorted(storyboard_dir.iterdir())
-        if d.is_dir() and list(d.glob("panel_*.json"))
-    ]
-
-
-@router.get("/panels/{scene_id}")
-def get_panels_for_scene(scene_id: str, project=Depends(get_project)):
-    project_dir, config, state = project
-    scene_dir = project_dir / "storyboard" / scene_id
-    if not scene_dir.is_dir():
-        raise HTTPException(404, f"Panels for {scene_id} not found")
-    results = []
-    for f in sorted(scene_dir.glob("panel_*.json")):
-        try:
-            results.append(PanelBreakdown.model_validate_json(f.read_text()).model_dump())
-        except Exception:
-            pass
-    return results
-
-
-@router.put("/panels/{scene_id}/{panel_number}")
-def update_panel(scene_id: str, panel_number: int, body: dict, project=Depends(get_project)):
-    project_dir, _config, _state = project
-    if not artifacts.panel_breakdown_path(project_dir, scene_id, panel_number).exists():
-        raise HTTPException(404, f"Panel {scene_id}/{panel_number} not found")
-    try:
-        updated = save_breakdown(project_dir, scene_id, panel_number, body)
-    except Exception as e:
-        raise HTTPException(400, f"Invalid panel data: {e}")
-    return updated.model_dump()
-
-
-# ── Image Prompts (DIRECT) ────────────────────────────────────────────────────
-
-
-@router.get("/prompts")
-def list_prompts(project=Depends(get_project)):
-    project_dir, config, state = project
-    prompts_dir = project_dir / "direct"
-    if not prompts_dir.exists():
-        return []
-    return [
-        {
-            "scene_id": d.name,
-            "prompt_count": len(list(d.glob("panel_*.json"))),
-            "panel_numbers": sorted(
-                int(path.stem.removeprefix("panel_"))
-                for path in d.glob("panel_*.json")
-                if path.stem.removeprefix("panel_").isdigit()
-            ),
-        }
-        for d in sorted(prompts_dir.iterdir())
-        if d.is_dir() and list(d.glob("panel_*.json"))
-    ]
-
-
-@router.get("/prompts/{scene_id}")
-def get_prompts_for_scene(scene_id: str, project=Depends(get_project)):
-    project_dir, config, state = project
-    scene_dir = project_dir / "direct" / scene_id
-    if not scene_dir.is_dir():
-        raise HTTPException(404, f"Prompts for {scene_id} not found")
-    return [p.model_dump() for p in artifacts.list_panel_prompts(project_dir, scene_id)]
-
-
-@router.put("/prompts/{scene_id}/{panel_number}")
-async def update_prompt(scene_id: str, panel_number: int, body: dict, project=Depends(get_project)):
-    """Apply an explicit patch of authoritative prompt fields.
-
-    Body contract (Slice 01): ``{"fields": {<authoritative field>: <value>}}``.
-    The server loads the existing prompt and applies the patch through
-    ``apply_prompt_patch``, which centralizes derived-field invalidation and
-    rejects forbidden keys (derived fields, reference paths, identity anchors,
-    system constraints).  A full client-supplied ``ImagePrompt`` is no longer
-    trusted as authoritative state.
-    """
-    project_dir, _config, _state = project
-    if not artifacts.panel_prompt_path(project_dir, scene_id, panel_number).exists():
-        raise HTTPException(404, f"Prompt {scene_id}/{panel_number} not found")
-
-    fields = body.get("fields") if isinstance(body, dict) else None
-    if not isinstance(fields, dict) or not fields:
-        raise HTTPException(400, "Request body must be a JSON object with a non-empty 'fields' mapping.")
-
-    existing = panel_store.load_prompt(project_dir, scene_id, panel_number)
-    if existing is None:
-        raise HTTPException(404, f"Prompt {scene_id}/{panel_number} not found")
-    try:
-        patched = panel_store.apply_prompt_patch(existing, fields)
-        updated = save_prompt(project_dir, scene_id, panel_number, patched.model_dump())
-    except ValueError as e:
-        raise HTTPException(400, f"Invalid prompt patch: {e}")
-    except Exception as e:
-        raise HTTPException(400, f"Invalid prompt data: {e}")
-    invalidate_prepared_requests(
-        project_dir,
-        f"{scene_id}:panel_{panel_number:03d}",
-    )
-    return updated.model_dump()
-
-
-# ── Generated Images (DRAW) ───────────────────────────────────────────────────
-
-
-@router.get("/images")
-def list_images(
-    request: Request,
-    project_id: str,
-    project=Depends(get_project),
-    user_id: str = Depends(get_current_user),
-):
-    project_dir, config, state = project
-    pkey = project_key(user_id, project_id)
-    images_dir = project_dir / "draw"
-    if not images_dir.exists():
-        return []
-
-    generate_state = state.stages.get("draw")
-    failed_items = set(generate_state.items_failed) if generate_state else set()
-
-    def failure_summary(scene_id: str, panel_num: int) -> tuple[str | None, str | None, str | None]:
-        failure_path = artifacts.panel_image_failure_path(project_dir, scene_id, panel_num)
-        if not failure_path.exists():
-            return None, None, None
-        try:
-            data = json.loads(failure_path.read_text())
-            classification = data.get("classification")
-            user_message = data.get("user_message")
-            error = data.get("error") if isinstance(data.get("error"), dict) else None
-            raw_message = error.get("message") if error else None
-            raw_type = error.get("type") if error else None
-            if not isinstance(user_message, str) or not user_message.strip():
-                if isinstance(raw_message, str):
-                    user_message = raw_message
-            if isinstance(user_message, str) and len(user_message) > 180:
-                user_message = f"{user_message[:177].rstrip()}..."
-            detail: str | None = None
-            if isinstance(raw_message, str) and raw_message.strip():
-                prefix = f"{raw_type}: " if isinstance(raw_type, str) and raw_type else ""
-                detail = (prefix + raw_message).strip()
-                if len(detail) > 2000:
-                    detail = f"{detail[:1997].rstrip()}..."
-            return (
-                classification if isinstance(classification, str) else None,
-                user_message.strip() if isinstance(user_message, str) else None,
-                detail,
-            )
-        except Exception:
-            return None, None, None
-
-    results = []
-    seen: set[tuple[str, int]] = set()
-    for scene_dir in sorted(images_dir.iterdir()):
-        if not scene_dir.is_dir():
-            continue
-        for img_file in sorted(scene_dir.glob("panel_*.png")):
-            stem = img_file.stem
-            panel_num = int(stem.replace("panel_", ""))
-            item_key = f"{scene_dir.name}/{stem}"
-            is_failed = item_key in failed_items
-
-            prompt_path = artifacts.panel_prompt_path(project_dir, scene_dir.name, panel_num)
-            planned_panel_id = None
-            if prompt_path.exists():
-                try:
-                    planned_panel_id = ImagePrompt.model_validate_json(prompt_path.read_text()).planned_panel_id
-                except Exception:
-                    planned_panel_id = None
-            failure_classification, failure_message, failure_detail = failure_summary(scene_dir.name, panel_num)
-            active_job = find_active_generation_job(
-                request.app,
-                pkey,
-                "panel_regen",
-                {"scene_id": scene_dir.name, "panel_number": panel_num},
-            )
-            if active_job:
-                status: str = active_job.status
-            elif is_failed or failure_classification:
-                status = "failed"
-            else:
-                status = "done"
-
-            results.append({
-                "scene_id": scene_dir.name,
-                "panel_number": panel_num,
-                "planned_panel_id": planned_panel_id,
-                "status": status,
-                "image_available": True,
-                "image_revision": _image_revision(img_file),
-                "accepted": is_panel_accepted(project_dir, scene_dir.name, panel_num),
-                "flagged": is_panel_flagged(project_dir, scene_dir.name, panel_num),
-                "version_count": archived_panel_version_count(project_dir, scene_dir.name, panel_num),
-                "failure_classification": failure_classification,
-                "failure_message": failure_message,
-                "failure_detail": failure_detail,
-            })
-            seen.add((scene_dir.name, panel_num))
-
-        for failure_file in sorted(scene_dir.glob("panel_*.png.failure.json")):
-            match = re.search(r"panel_(\d+)\.png\.failure\.json$", failure_file.name)
-            if not match:
-                continue
-            panel_num = int(match.group(1))
-            if (scene_dir.name, panel_num) in seen:
-                continue
-            prompt_path = artifacts.panel_prompt_path(project_dir, scene_dir.name, panel_num)
-            planned_panel_id = None
-            if prompt_path.exists():
-                try:
-                    planned_panel_id = ImagePrompt.model_validate_json(prompt_path.read_text()).planned_panel_id
-                except Exception:
-                    planned_panel_id = None
-            failure_classification, failure_message, failure_detail = failure_summary(scene_dir.name, panel_num)
-            results.append({
-                "scene_id": scene_dir.name,
-                "panel_number": panel_num,
-                "planned_panel_id": planned_panel_id,
-                "status": "failed",
-                "image_available": False,
-                "image_revision": None,
-                "accepted": False,
-                "flagged": is_panel_flagged(project_dir, scene_dir.name, panel_num),
-                "version_count": archived_panel_version_count(project_dir, scene_dir.name, panel_num),
-                "failure_classification": failure_classification,
-                "failure_message": failure_message,
-                "failure_detail": failure_detail,
-            })
-            seen.add((scene_dir.name, panel_num))
-
-    for failed_item in sorted(failed_items):
-        parts = failed_item.split("/")
-        scene_idx = next((idx for idx in range(len(parts) - 1, -1, -1) if parts[idx].startswith("scene_")), -1)
-        scene_id = parts[scene_idx] if scene_idx >= 0 else (parts[0] if parts else "")
-        panel_part = parts[scene_idx + 1] if scene_idx >= 0 and scene_idx + 1 < len(parts) else (parts[1] if len(parts) > 1 else "")
-        match = re.search(r"panel_(\d+)", panel_part)
-        if not scene_id or not match:
-            continue
-        panel_num = int(match.group(1))
-        if (scene_id, panel_num) in seen:
-            continue
-
-        prompt_path = artifacts.panel_prompt_path(project_dir, scene_id, panel_num)
-        planned_panel_id = None
-        if prompt_path.exists():
-            try:
-                planned_panel_id = ImagePrompt.model_validate_json(prompt_path.read_text()).planned_panel_id
-            except Exception:
-                planned_panel_id = None
-        failure_classification, failure_message, failure_detail = failure_summary(scene_id, panel_num)
-        results.append({
-            "scene_id": scene_id,
-            "panel_number": panel_num,
-            "planned_panel_id": planned_panel_id,
-            "status": "failed",
-            "image_available": False,
-            "image_revision": None,
-            "accepted": False,
-            "flagged": is_panel_flagged(project_dir, scene_id, panel_num),
-            "version_count": archived_panel_version_count(project_dir, scene_id, panel_num),
-            "failure_classification": failure_classification,
-            "failure_message": failure_message,
-            "failure_detail": failure_detail,
-        })
-        seen.add((scene_id, panel_num))
-
-    return results
-
-
-@router.post("/images/{scene_id}/{panel_number}/accept")
-def accept_image_panel(scene_id: str, panel_number: int, project=Depends(get_project)):
-    project_dir, config, state = project
-    try:
-        entry = accept_panel(project_dir, scene_id, panel_number)
-    except FileNotFoundError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    return {
-        "scene_id": scene_id,
-        "panel_number": panel_number,
-        "accepted": True,
-        "accepted_at": entry["accepted_at"],
-    }
-
-
-@router.delete("/images/{scene_id}/{panel_number}/accept")
-def unaccept_image_panel(scene_id: str, panel_number: int, project=Depends(get_project)):
-    project_dir, config, state = project
-    clear_panel_acceptance(project_dir, scene_id, panel_number)
-    return {
-        "scene_id": scene_id,
-        "panel_number": panel_number,
-        "accepted": False,
-    }
-
-
-@router.post("/images/{scene_id}/{panel_number}/flag")
-def flag_image_panel(
-    scene_id: str,
-    panel_number: int,
-    project_id: str,
-    project=Depends(get_project),
-    user_id: str = Depends(get_current_user),
-):
-    project_dir, config, state = project
-    entry = flag_panel(project_dir, scene_id, panel_number)
-    capture_server_event(
-        "panel_flagged",
-        user_id=user_id,
-        project_id=project_id,
-        properties={},
-    )
-    return {
-        "scene_id": scene_id,
-        "panel_number": panel_number,
-        "flagged": True,
-        "flagged_at": entry["flagged_at"],
-    }
-
-
-@router.delete("/images/{scene_id}/{panel_number}/flag")
-def unflag_image_panel(scene_id: str, panel_number: int, project=Depends(get_project)):
-    project_dir, config, state = project
-    clear_panel_flag(project_dir, scene_id, panel_number)
-    return {
-        "scene_id": scene_id,
-        "panel_number": panel_number,
-        "flagged": False,
-    }
-
-
-@router.get("/images/{scene_id}/{panel_number}/versions")
-def get_image_panel_versions(scene_id: str, panel_number: int, project=Depends(get_project)):
-    project_dir, config, state = project
-    versions = list_panel_versions(project_dir, scene_id, panel_number)
-    archived_count = len([version for version in versions if not version.get("current")])
-    return {
-        "scene_id": scene_id,
-        "panel_number": panel_number,
-        "has_history": archived_count > 0,
-        "versions": versions,
-    }
-
-
-@router.post("/images/{scene_id}/{panel_number}/versions/{version}/restore")
-def restore_image_panel_version(scene_id: str, panel_number: int, version: int, project=Depends(get_project)):
-    project_dir, config, state = project
-    try:
-        restored = restore_panel_version(project_dir, scene_id, panel_number, version)
-    except FileNotFoundError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    clear_panel_acceptance(project_dir, scene_id, panel_number)
-    return {
-        "scene_id": scene_id,
-        "panel_number": panel_number,
-        "restored": restored,
-        "versions": list_panel_versions(project_dir, scene_id, panel_number),
-    }

@@ -92,3 +92,12 @@ class TestCleanExceptionMessage:
         exc = httpx.HTTPStatusError("400 Bad Request", request=request, response=response)
         assert clean_exception_message(exc) == "HTTPStatusError: 400 Bad Request - Invalid model parameter"
 
+    def test_httpx_read_timeout_is_not_an_empty_error(self):
+        import httpx
+
+        request = httpx.Request("POST", "http://localhost:4000/v1/chat/completions")
+        exc = httpx.ReadTimeout("", request=request)
+
+        assert clean_exception_message(exc) == (
+            "ReadTimeout: The AI provider did not respond before the request timeout."
+        )

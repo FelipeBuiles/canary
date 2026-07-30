@@ -72,31 +72,64 @@ describe("stationDestination", () => {
   });
 });
 
+describe("target station contract", () => {
+  it("exposes only Story, Look, Pages, and Book", () => {
+    expect(STATIONS.map(({ key, label, primaryRoute }) => ({
+      key,
+      label,
+      primaryRoute,
+    }))).toEqual([
+      { key: "story", label: "Story", primaryRoute: "story" },
+      { key: "look", label: "Look", primaryRoute: "styles" },
+      { key: "pages", label: "Pages", primaryRoute: "pages" },
+      { key: "book", label: "Book", primaryRoute: "book" },
+    ]);
+  });
+
+  it("makes Brief the Story decision and keeps Adapt and Plan inspectable in Pages", () => {
+    const story = STATIONS.find((station) => station.key === "story")!;
+    const pages = STATIONS.find((station) => station.key === "pages")!;
+
+    expect(story.substeps).toEqual([
+      expect.objectContaining({
+        key: "brief",
+        kind: "gated",
+        backendStages: ["extract", "brief"],
+        route: "story",
+      }),
+    ]);
+    expect(pages.substeps).toEqual([
+      expect.objectContaining({ key: "adapt", kind: "auto", backendStages: ["adapt"] }),
+      expect.objectContaining({ key: "plan", kind: "auto", backendStages: ["plan"] }),
+      expect.objectContaining({ key: "draw", kind: "gated", backendStages: ["draw"], route: "pages" }),
+    ]);
+  });
+});
+
 describe("getStationState", () => {
-  it("does not keep Story in review after a downstream station has progressed", async () => {
+  it("keeps Story in review when a draft brief reopens after Look completed", async () => {
     const { getStationState } = await import("../lib/stations");
     const story = STATIONS.find((station) => station.key === "story")!;
     const status = projectStatus({
-      extract: stage("awaiting_review"),
+      extract: stage("complete"),
+      brief: stage("awaiting_review"),
       style: stage("complete"),
-      cast: stage("failed"),
+      cast: stage("complete"),
       adapt: stage("pending"),
     });
 
-    expect(getStationState(story, status)).toBe("done");
+    expect(getStationState(story, status)).toBe("review");
   });
 
   it("shows running when an active stage follows an earlier failure", async () => {
     const { getStationState } = await import("../lib/stations");
-    const panels = STATIONS.find((station) => station.key === "panels")!;
+    const pages = STATIONS.find((station) => station.key === "pages")!;
     const status = projectStatus({
       plan: stage("failed"),
-      storyboard: stage("complete"),
-      direct: stage("running"),
-      draw: stage("pending"),
+      draw: stage("running"),
     });
 
-    expect(getStationState(panels, status)).toBe("running");
+    expect(getStationState(pages, status)).toBe("running");
   });
 
   it("still shows failed when no stage is running", async () => {

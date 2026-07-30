@@ -397,8 +397,8 @@ def test_compiled_location_facets_match_empty_preserve_scope():
     assert "no canonical location facets" in instruction.semantic_instruction
 
 
-def test_location_state_rejects_unsupported_reference_role(tmp_path: Path):
-    from novel_to_comic.state_assets import StateConditioningError, build_state_reference_plan
+def test_location_state_uses_supported_gpt_image_reference_role(tmp_path: Path):
+    from novel_to_comic.state_assets import build_state_reference_plan
 
     loc = _location()
     _write_parent(artifacts.location_plate_path(tmp_path, loc.id))
@@ -411,8 +411,9 @@ def test_location_state_rejects_unsupported_reference_role(tmp_path: Path):
         Config(image_model="gpt-image-2"), tmp_path, loc, state,
     )
 
-    with pytest.raises(StateConditioningError, match="does not support"):
-        build_state_reference_plan(spec, tmp_path)
+    plan = build_state_reference_plan(spec, tmp_path)
+
+    assert [asset.role for asset in plan.selected] == ["location_plate"]
 
 
 def test_location_total_destruction_omits_canonical_parent(tmp_path: Path):
@@ -980,10 +981,9 @@ def test_single_state_estimate_uses_final_state_reference_count(monkeypatch, tmp
     assert captured["ref_count"] == 2
 
 
-def test_state_estimate_propagates_unsupported_route_error(tmp_path: Path):
+def test_state_estimate_counts_gpt_image_location_reference(tmp_path: Path):
     from novel_to_comic.models.story_bible import StoryBible
     from novel_to_comic.stages import s3_cast
-    from novel_to_comic.state_assets import StateConditioningError
 
     loc = _location()
     state = AppearanceState(
@@ -998,7 +998,6 @@ def test_state_estimate_propagates_unsupported_route_error(tmp_path: Path):
     ))
     _write_parent(artifacts.location_plate_path(tmp_path, loc.id))
 
-    with pytest.raises(StateConditioningError, match="does not support"):
-        s3_cast.estimate_state_reference_count(
-            Config(image_model="gpt-image-2"), tmp_path, "location", loc.id, state.id,
-        )
+    assert s3_cast.estimate_state_reference_count(
+        Config(image_model="gpt-image-2"), tmp_path, "location", loc.id, state.id,
+    ) == 1

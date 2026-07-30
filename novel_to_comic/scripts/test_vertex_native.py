@@ -80,7 +80,7 @@ def _usage_dict(response: types.GenerateContentResponse) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="gemini-3.1-flash-image-preview")
+    parser.add_argument("--model", default="gemini-3-pro-image")
     parser.add_argument("--project", default=os.environ.get("VERTEXAI_PROJECT") or os.environ.get("GOOGLE_CLOUD_PROJECT") or "")
     parser.add_argument("--location", default=os.environ.get("VERTEXAI_LOCATION") or os.environ.get("GOOGLE_CLOUD_LOCATION") or "global")
     parser.add_argument("--credentials", type=Path, default=Path(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or _default_credentials_path()))

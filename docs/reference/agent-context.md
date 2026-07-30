@@ -6,17 +6,21 @@ extension, and rollback contract is
 field descriptions below are historical/editing descriptions, not
 provider-bound authority.
 
-Detailed reference for agentic coding sessions. **Status: Current reference
-(2026-07-18).** The root `AGENTS.md` stays compact. Open this file when work
-touches pipeline architecture, stage contracts, generation, assembly, or
-project artifacts.
+Detailed reference for agentic coding sessions. **Status: partially
+superseded (2026-07-30).** The root `AGENTS.md`, `CONTEXT.md`, current
+implementation, and ADRs 0003-0015 are authoritative for the full-page
+pipeline. This file still contains useful operational background, but its
+nine-stage/panel-era maps must not guide launch copy or new implementation.
+Open [the current market and launch-readiness reassessment](../research/2026-07-30-market-and-launch-readiness.md)
+for the release and proof gates.
 
 ---
 
 ## Project Overview
 
-**What it is:** A Python/React application that converts novels (EPUB/TXT/PDF) into
-comic books (PDF/CBZ) via a 9-stage LLM + image-generation pipeline.
+**What it is:** A Python/React application that converts novels (EPUB/TXT/PDF)
+into complete, lettered comic pages and comic books (PDF/CBZ) through the
+current eight-stage full-page pipeline.
 
 **Status:** Early MVP. The web server is the primary interface — the CLI only
 has `init` and `serve`. All pipeline operations are HTTP API endpoints.
@@ -445,7 +449,7 @@ Runtime image calls go through LiteLLM OpenAI-compatible image endpoints.
 `image_provider` is legacy metadata and should not be used for routing new code.
 
 Defaults:
-- `image_model: "image-quality"` (Seedream 5.0 Pro)
+- `image_model: "image-quality"` (GPT Image 2)
 - `fallback_image_model: "image-fast"`
 
 `dev_mode: true` substitutes `fallback_image_model` when `image_model` is at the
@@ -457,8 +461,8 @@ Two new config fields control LLM pre-processing passes before image generation:
 
 Current image aliases:
 - `image-fast`: Gemini 3.1 Flash Lite Image route, also used by dev mode.
-- `image-balanced`: Gemini 3.1 Flash Lite Image route, retained for explicit balanced projects and legacy configs.
-- `image-quality`: Seedream 5.0 Pro route, starting at ~$0.0675/image plus additional-reference and larger-output charges, routed through the fal queue custom handler with up to 10 references. `REVE_ALIASES` includes only `image-reve`.
+- `image-balanced`: Gemini 3 Pro Image (Nano Banana Pro) route.
+- `image-quality`: GPT Image 2 route through OpenAI's image generation/editing endpoints, with up to 4 identity/prop references. `REVE_ALIASES` includes only `image-reve`.
 - `image-reve`: Reve image generation (Reve remains available at this alias and via labs entries).
 
 Set `layout_prompts_enabled: true` in the project `config.yaml` to use Reve v2
@@ -467,12 +471,12 @@ layout transport failures fall back to v2 `create`, while existing frozen
 requests remain unchanged.
 
 `is_reve_model(model)` returns true for `image-reve` and any alias in `REVE_ALIASES` or starting with `reve/`. It does not match `image-quality`.
-`is_seedream_model(model)` returns true for `image-quality` and literal Seedream provider routes.
-`is_gpt_image_2(model)` only matches literal `gpt-image-2` / `openai/gpt-image-2` strings; `GPT_IMAGE_2_ALIASES` is now empty — no gateway alias routes to GPT Image 2 by default.
+`is_seedream_model(model)` matches literal Seedream provider routes, not `image-quality`.
+`is_gpt_image_2(model)` matches `image-quality`, literal `gpt-image-2`, and `openai/gpt-image-2`; `GPT_IMAGE_2_ALIASES` contains `image-quality`.
 
 Draw-stage reference behavior is provider-aware:
 - **Reve** (`is_reve_model`): uploads up to 4 refs — up to 3 subject crops (one per character, framing-selected), then continuity, prop, style, location plate to fill remaining slots. Uses `_reve_refs()`. Ordinary requests use v2 `/image/create` with `<frame>N</frame>` markers; when `layout_prompts_enabled` is on, panel requests use v2 `/image/render_layout` with compound references and structural region bindings. Reve's API accepts up to 8 references, but the product selector keeps the four-reference budget to reduce conditioning noise.
-- **GPT Image 2** (`is_gpt_image_2`): uploads a minimal subject reference set (character crops + props only), keeps style samples/location plates/continuity text-only to avoid edit-reference leakage. Only triggered for literal `gpt-image-2` model strings now.
+- **GPT Image 2** (`is_gpt_image_2`): uploads a minimal subject reference set (character crops + props only), keeps style samples/location plates/continuity text-only to avoid edit-reference leakage. This behavior applies to `image-quality`.
 - **Seedream** (`is_seedream_model`): uploads up to 10 references in canonical role-priority order and can use style samples, location plates, and explicit `match_cut` continuity.
 - **Other routes** (Gemini etc.): can use style samples, location plates, and a previous-panel image for explicit `match_cut` transitions.
 

@@ -12,7 +12,7 @@ from typing import Any
 
 from .costs import settle_labs_result_cost
 from . import storage
-from .providers.base import LabsImageInput, LabsImageResult, LabsProvider, ProviderError
+from .providers.base import LabsImageInput, LabsProvider, ProviderError
 from .providers.fal import FalProvider
 from .providers.litellm import LitellmProvider
 from .providers.together import TogetherProvider
@@ -120,15 +120,15 @@ async def _run_cell(
 
     experimental_wire = None
     experimental_plan = None
-    if not state.spec.production_equivalent and entry.provider in {"litellm", "reve"}:
+    if entry.provider in {"litellm", "reve"}:
         from novel_to_comic.generation_input import GenerationPromptInput
         from novel_to_comic.image_references import AuthorityScope, ReferenceAsset
-        from novel_to_comic.non_panel_generation import (
+        from novel_to_comic.asset_generation import (
             AssetGenerationInput,
             compile_non_panel_request,
             reference_plan_for_assets,
         )
-        from novel_to_comic.panel_aspect import generation_shape_for_aspect
+        from novel_to_comic.image_geometry import generation_shape_for_aspect
         from .providers.litellm import _config_for_model
 
         reference_roles = list(inp.extra.get("reference_roles") or [])
@@ -146,8 +146,8 @@ async def _run_cell(
         wire_alias = "image-reve" if entry.provider == "reve" else entry.endpoint
         wire_config = _config_for_model(wire_alias)
         experimental_input = AssetGenerationInput(
-            asset_kind="panel",
-            asset_identity=f"labs:{state.run_id}:panel:{panel.idx}:{variant}",
+            asset_kind="labs_image",
+            asset_identity=f"labs:{state.run_id}:image:{panel.idx}:{variant}",
             prompt=GenerationPromptInput(
                 visual_brief=inp.prompt,
                 width=inp.width,
@@ -166,79 +166,19 @@ async def _run_cell(
         inp.extra["provider_wire_json"] = experimental_wire.to_json()
 
     started = datetime.now(UTC)
-    production_wire = None
-    production_request_id: str | None = None
     try:
         async with semaphore:
-            if state.spec.production_equivalent:
-                if not panel.production_wire_json:
-                    raise ProviderError(
-                        "production-equivalent Labs panels require a compiled production request"
-                    )
-                from novel_to_comic.frozen_requests import (
-                    execute_frozen_request,
-                    submit_frozen_request,
-                )
-                from novel_to_comic.panel_generation import apply_panel_experiment
-                from novel_to_comic.provider_wire import ProviderWireRequest
-                from .providers.litellm import _config_for_model
-
-                production_wire = apply_panel_experiment(
-                    ProviderWireRequest.from_json(panel.production_wire_json),
-                    panel.experiment_inputs,
-                )
-                if production_wire.requested_alias != entry.endpoint:
-                    raise ProviderError(
-                        "production-equivalent wire model does not match the selected Labs model"
-                    )
-                frozen = submit_frozen_request(
-                    projects_dir,
-                    production_wire,
-                    idempotency_key=(
-                        f"labs:{state.run_id}:{panel.idx}:{entry.id}:{variant}:"
-                        f"{production_wire.execution_fingerprint}"
-                    ),
-                )
-                production_request_id = frozen.request_id
-                output_path = storage.cell_image_path(
-                    projects_dir, state.run_id, panel.idx, entry.id, variant
-                )
-                result_path = await execute_frozen_request(
-                    project_dir=projects_dir,
-                    request_id=frozen.request_id,
-                    config=_config_for_model(production_wire.requested_alias or entry.endpoint),
-                    output_path=output_path,
-                    feature="labs.production_equivalent_panel",
-                )
-                result_bytes = result_path.value.read_bytes()
-                result = LabsImageResult(
-                    image_bytes=result_bytes,
-                    mime="image/png",
-                    provider_model=production_wire.configured_provider_model,
-                )
-            else:
-                result = await provider.generate(
-                    endpoint=entry.endpoint, inp=inp, params=entry.params
-                )
+            result = await provider.generate(
+                endpoint=entry.endpoint, inp=inp, params=entry.params
+            )
         cost = settle_labs_result_cost(entry, inp, result)
         provenance = None
-        if production_wire is not None:
-            from novel_to_comic.panel_generation import wire_provenance
-
-            provenance = wire_provenance(
-                production_wire,
-                request_id=production_request_id,
-                actual_provider_model=result.provider_model,
-                provider_request_id=result.provider_request_id,
-                cost_usd=cost.cost_usd,
-                asset_identity=f"labs:{state.run_id}:panel:{panel.idx}:{variant}",
-            )
-        elif experimental_wire is not None:
+        if experimental_wire is not None:
             from novel_to_comic.image_provenance import common_image_provenance
 
             provenance = common_image_provenance(
-                asset_kind="panel",
-                asset_identity=f"labs:{state.run_id}:panel:{panel.idx}:{variant}",
+                asset_kind="labs_image",
+                asset_identity=f"labs:{state.run_id}:image:{panel.idx}:{variant}",
                 compiled_sha256=experimental_wire.compiled_request_sha256,
                 prompt_source_sha256=None,
                 wire=experimental_wire,
@@ -271,9 +211,9 @@ async def _run_cell(
                 "mime": result.mime,
                 "provider_request_id": result.provider_request_id,
                 "started_at": started.isoformat(),
-                "production_equivalent": production_wire is not None,
+                "production_equivalent": False,
                 "execution_fingerprint": (
-                    production_wire.execution_fingerprint if production_wire else None
+                    experimental_wire.execution_fingerprint if experimental_wire else None
                 ),
                 "provenance": provenance,
             },
@@ -281,21 +221,12 @@ async def _run_cell(
     except (ProviderError, Exception) as exc:
         log.warning("labs cell failed: model=%s panel=%s err=%s", entry.id, panel.idx, exc)
         failure_provenance = None
-        if production_wire is not None:
-            from novel_to_comic.panel_generation import wire_provenance
-
-            failure_provenance = wire_provenance(
-                production_wire,
-                request_id=production_request_id,
-                failure={"type": type(exc).__name__, "message": str(exc)},
-                asset_identity=f"labs:{state.run_id}:panel:{panel.idx}:{variant}",
-            )
-        elif experimental_wire is not None:
+        if experimental_wire is not None:
             from novel_to_comic.image_provenance import common_image_provenance
 
             failure_provenance = common_image_provenance(
-                asset_kind="panel",
-                asset_identity=f"labs:{state.run_id}:panel:{panel.idx}:{variant}",
+                asset_kind="labs_image",
+                asset_identity=f"labs:{state.run_id}:image:{panel.idx}:{variant}",
                 compiled_sha256=experimental_wire.compiled_request_sha256,
                 prompt_source_sha256=None,
                 wire=experimental_wire,
@@ -319,9 +250,9 @@ async def _run_cell(
                 "status": "failed",
                 "error": str(exc),
                 "started_at": started.isoformat(),
-                "production_equivalent": production_wire is not None,
+                "production_equivalent": False,
                 "execution_fingerprint": (
-                    production_wire.execution_fingerprint if production_wire else None
+                    experimental_wire.execution_fingerprint if experimental_wire else None
                 ),
                 "provenance": failure_provenance,
             },

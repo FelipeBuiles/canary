@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import logging
+import shutil
 import warnings
 from pathlib import Path
 
@@ -16,10 +17,15 @@ from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.config import Config, mock_mode_active, save_config
 from novel_to_comic.image_models import image_model_profile_for_config
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.non_panel_generation import asset_matches_request
-from novel_to_comic.state import (
-    StageStatus, begin_stage, complete_stage, fail_stage, record_item_done, save_state,
+from novel_to_comic.asset_generation import asset_matches_request
+from novel_to_comic.style_contract import (
+    page_style_template,
+    style_template_for_suggestion,
 )
+from novel_to_comic.state import (
+    StageState, StageStatus, begin_stage, complete_stage, fail_stage, record_item_done, save_state,
+)
+from novel_to_comic.stages import REGISTRY
 from novel_to_comic.stages.s2_style import (
     STYLE_VALIDATION_ACTION,
     STYLE_VALIDATION_COMPOSITION,
@@ -72,15 +78,17 @@ _MAX_STYLE_IMAGE_PIXELS = 40_000_000
 
 def is_style_selected(project_dir, config) -> bool:
     """Check whether an active style has been selected for this project."""
+    active = page_style_template(config.style_template)
     return any(
-        s.get("template", "").strip() == config.style_template.strip()
+        style_template_for_suggestion(s) == active
         for s in load_suggestions(project_dir)
     )
 
 
 def _active_suggestion(suggestions: list[dict], config: Config) -> tuple[int | None, str | None]:
+    active = page_style_template(config.style_template)
     for index, suggestion in enumerate(suggestions, 1):
-        if suggestion.get("template", "").strip() == config.style_template.strip():
+        if style_template_for_suggestion(suggestion) == active:
             return index, suggestion.get("id")
     return None, None
 
@@ -259,7 +267,9 @@ def get_styles(project_id: str, project=Depends(get_project)):
         style_reference = style_direction_image(project_dir, direction)
         validation_fresh = False
         if validation_path.exists() and bible:
-            validation_config = config.model_copy(update={"style_template": s["template"]})
+            validation_config = config.model_copy(
+                update={"style_template": style_template_for_suggestion(s)}
+            )
             validation_request = build_style_sample_request(
                 validation_config, bible, style_validation_brief(bible),
                 candidate_id=f"{s['id']}:validation",
@@ -468,7 +478,7 @@ async def create_style_direction(
             config,
             project_dir,
             has_style_reference=prepared["reference_supported"],
-            template=prepared["candidate"]["template"],
+            template=style_template_for_suggestion(prepared["candidate"]),
             candidate_id=prepared["candidate"]["id"],
             reference_size=prepared["reference_size"],
         )
@@ -521,7 +531,9 @@ async def create_style_direction(
             ):
                 brief = await ensure_style_sample_brief(config, bible, project_dir)
                 await generate_sample_image(
-                    config.model_copy(update={"style_template": candidate["template"]}),
+                    config.model_copy(
+                        update={"style_template": style_template_for_suggestion(candidate)}
+                    ),
                     bible, sample_path, brief=brief, candidate_id=candidate["id"],
                     style_reference=image_path,
                 )
@@ -821,7 +833,7 @@ async def generate_style_samples(
             continue
 
         s = suggestions[idx - 1]
-        template = s.get("template", config.style_template)
+        template = style_template_for_suggestion(s)
         candidate_id = s.get("id")
         direction = load_style_direction(project_dir, s.get("direction_id")) if s.get("direction_id") else None
         style_reference = style_direction_image(project_dir, direction)
@@ -908,7 +920,7 @@ async def generate_style_validation(
         config,
         project_dir,
         bible,
-        suggestion["template"],
+        style_template_for_suggestion(suggestion),
         f"{suggestion_id}:validation",
         style_reference=style_reference,
         subject_action=STYLE_VALIDATION_ACTION,
@@ -931,7 +943,9 @@ async def generate_style_validation(
     )
     brief = style_validation_brief(bible)
     output_path = artifacts.style_validation_path(project_dir, suggestion_id)
-    sample_config = config.model_copy(update={"style_template": suggestion["template"]})
+    sample_config = config.model_copy(
+        update={"style_template": style_template_for_suggestion(suggestion)}
+    )
 
     async def _runner() -> None:
         try:
@@ -990,10 +1004,21 @@ def set_active_style(
     if index < 1 or index > len(suggestions):
         raise HTTPException(400, f"Index {index} out of range (1-{len(suggestions)})")
 
-    template = suggestions[index - 1].get("template", config.style_template)
+    template = style_template_for_suggestion(suggestions[index - 1])
+    changed = template.strip() != config.style_template.strip()
     config = config.model_copy(update={"style_template": template})
     save_config(config, project_dir)
-    if clear_style_failures_after_selection(state):
+    if changed:
+        clear_style_failures_after_selection(state)
+        for stage in ("cast", "adapt", "plan", "draw", "finish"):
+            state.stages[stage] = StageState()
+        for path in REGISTRY["cast"].clean_paths(project_dir):
+            if path.is_dir():
+                shutil.rmtree(path)
+            elif path.exists():
+                path.unlink()
+        save_state(state, project_dir)
+    elif clear_style_failures_after_selection(state):
         save_state(state, project_dir)
 
     result = {"status": "updated", "index": index, "style_template": template}

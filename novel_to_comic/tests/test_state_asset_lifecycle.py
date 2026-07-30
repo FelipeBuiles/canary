@@ -172,52 +172,6 @@ def test_location_spec_dimensions_match_route_strategy(tmp_path: Path):
     assert spec.configured_route == "gpt_image_2"
 
 
-def test_explicit_state_routes_are_registered():
-    from novel_to_comic.server.routers.pipeline import router
-    paths = {route.path for route in router.routes}
-    assert "/characters/{char_id}/states/{state_id}/regenerate" in paths
-    assert "/locations/{loc_id}/states/{state_id}/regenerate" in paths
-    assert "/{kind}s/{entity_id}/states/{state_id}/versions" in paths
-    assert "/{kind}s/{entity_id}/states/{state_id}/versions/{version}/restore" in paths
-    assert "/{kind}s/{entity_id}/states/{state_id}/metadata" in paths
-    assert "/location-plate-versions/restore" in paths
-
-
-def test_legacy_character_state_restore_revalidates_lineage(tmp_path: Path, monkeypatch):
-    from novel_to_comic.server.routers.pipeline import restore_character_ref_version
-
-    calls = {}
-
-    monkeypatch.setattr(
-        "novel_to_comic.panel_versions.restore_asset_version",
-        lambda image_path, project_dir, version: calls.setdefault("restored", image_path),
-    )
-    monkeypatch.setattr(
-        "novel_to_comic.panel_versions.list_asset_versions",
-        lambda image_path, project_dir: [],
-    )
-    monkeypatch.setattr(
-        "novel_to_comic.stages.s3_cast._crop_sheet_to_poses",
-        lambda image_path: None,
-    )
-    monkeypatch.setattr(
-        "novel_to_comic.state_assets.revalidate_state_asset_lineage",
-        lambda state_path, parent_path: calls.update(
-            state_path=state_path, parent_path=parent_path,
-        ) or {},
-    )
-
-    restore_character_ref_version(
-        char_id="char_001", version=1, state_id="silver",
-        project=(tmp_path, Config(), None),
-    )
-
-    assert calls["state_path"] == artifacts.character_state_ref_sheet_path(
-        tmp_path, "char_001", "silver",
-    )
-    assert calls["parent_path"] == artifacts.character_ref_sheet_path(tmp_path, "char_001")
-
-
 def test_state_generation_uses_compiled_wire_with_canonical_conditioning(
     tmp_path: Path, monkeypatch,
 ):

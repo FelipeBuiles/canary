@@ -4,7 +4,6 @@ export { RoomTabs, type RoomTab } from "./RoomTabs";
 export { Toolbar } from "./Toolbar";
 
 export { ApprovalBar } from "./ApprovalBar";
-export { PanelPreparationChecklist } from "./PanelPreparationChecklist";
 export { CreditsGate } from "./CreditsGate";
 export { ConfirmDrawer, type ConfirmDrawerProps } from "./ConfirmDrawer";
 export { ConfirmModal, type ConfirmModalProps } from "./ConfirmModal";
@@ -15,4 +14,4 @@ export { RoomHeader } from "./RoomHeader";
 export { RoomShell } from "./RoomShell";
 export { SceneSidebar } from "./SceneSidebar";
 export { StagePlaceholder } from "./StagePlaceholder";
-export { WarningOverrideDrawer, type WarningOverrideDrawerProps } from "./WarningOverrideDrawer";
+export { StaleStageNotice } from "./StaleStageNotice";

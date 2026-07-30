@@ -143,7 +143,7 @@ def test_metrics_scrape_bypasses_host_check_without_weakening_api(tmp_path, monk
 
 def test_stage_that_handles_its_exception_is_recorded_as_failed(tmp_path):
     state = create_initial_state("demo", "novel.txt")
-    captured: list[str] = []
+    captured: list[tuple[str, dict]] = []
 
     async def fake_run_credited_stage(**_kwargs):
         state.stages["extract"].status = StageStatus.FAILED
@@ -155,7 +155,9 @@ def test_stage_that_handles_its_exception_is_recorded_as_failed(tmp_path):
         patch.object(
             pipeline,
             "capture_server_event",
-            side_effect=lambda name, **_kwargs: captured.append(name),
+            side_effect=lambda name, **kwargs: captured.append(
+                (name, kwargs.get("properties") or {})
+            ),
         ),
     ):
         asyncio.run(
@@ -172,4 +174,11 @@ def test_stage_that_handles_its_exception_is_recorded_as_failed(tmp_path):
             )
         )
 
-    assert captured == ["stage_started", "stage_failed"]
+    assert [name for name, _properties in captured] == [
+        "stage_started",
+        "stage_failed",
+    ]
+    # A failed stage must still produce a recordable event: the properties the
+    # pipeline emits have to satisfy the server allowlist.
+    for name, properties in captured:
+        _clean_properties(name, properties, source="server")

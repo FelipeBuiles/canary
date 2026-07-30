@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 import uuid
 from email.utils import parsedate_to_datetime
@@ -18,7 +19,10 @@ from typing import Any
 
 import httpx
 
-from novel_to_comic.ai.context import current_ai_request_context
+from novel_to_comic.ai.context import (
+    current_ai_request_context,
+    current_stream_observer,
+)
 from novel_to_comic.ai.errors import AIRefusalError, AITransportError
 from novel_to_comic.ai.finalisation import (
     begin_image_call,
@@ -43,9 +47,43 @@ _TRANSPORT_ERRORS = (
     httpx.ConnectError,
     httpx.ReadError,
     httpx.WriteError,
-    httpx.PoolTimeout,
+    # TimeoutException covers Connect/Read/Write/PoolTimeout. Without it a
+    # ReadTimeout escapes _post_with_retry unretried *and* unwrapped, killing
+    # the whole stage and discarding every sibling shard's completed work.
+    httpx.TimeoutException,
 )
+# Read/write timeouts already burned the full read budget before raising, so
+# each retry costs another ~10 minutes of wall clock and re-bills the
+# completion. One retry rides out a wedged connection; more just stalls.
+_SLOW_TIMEOUT_ERRORS = (httpx.ReadTimeout, httpx.WriteTimeout)
+_MAX_TIMEOUT_RETRIES = 1
 _MAX_RETRIES = 3
+# Text completions stream, so _READ_TIMEOUT becomes a per-chunk idle budget
+# rather than a cap on the whole generation. That removes the cliff where a long
+# adapt repair blocks on one read until the read timeout fires, but it also
+# means a slowly-trickling response could run forever — hence a separate
+# wall-clock ceiling on the whole stream.
+_READ_TIMEOUT = 600.0
+_STREAM_TOTAL_TIMEOUT = 1800.0
+# Keepalive comments and empty chunks reset the per-chunk read timeout, so a
+# gateway that accepts the request but never produces content would otherwise
+# ride the total budget. Bound the wait for the *first content* separately —
+# above _READ_TIMEOUT, so this only fires when non-content bytes are actively
+# masking a stall. Time-to-first-content is legitimately long here: an observed
+# adapt treatment call spent ~520s before emitting just 2k output tokens, so a
+# bound under the read timeout would kill healthy requests.
+_STREAM_FIRST_CONTENT_TIMEOUT = 900.0
+
+
+def _stream_text_enabled() -> bool:
+    """Whether text completions stream. Set CANARY_AI_STREAM_TEXT=0 to opt out.
+
+    Streaming is what lets a generation outlive the read timeout, so it is the
+    default — but it is one env var away from off if it ever misbehaves against
+    a provider mid-run.
+    """
+    raw = os.environ.get("CANARY_AI_STREAM_TEXT", "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
 # 429s get their own, longer retry budget: the provider is asking us to slow
 # down, not reporting a failure. Backoff windows double from the base up to
 # the cap (4/8/16/32/60s), so the full budget rides out a quota refill cycle.
@@ -60,7 +98,7 @@ _JSON_PARSE_MAX_RETRIES = 2
 
 # Anthropic deprecated the `temperature` request param on Claude Opus 4.7;
 # sending it returns 400. Haiku 4.5 / Sonnet 4.6 still accept it.
-_TEMPERATURE_DEPRECATED_ALIASES = frozenset({"screenplay-quality"})
+_TEMPERATURE_DEPRECATED_ALIASES = frozenset({"adapt-quality"})
 
 
 def _retry_after_seconds(response: httpx.Response) -> float | None:
@@ -87,62 +125,345 @@ def _jittered(window: float) -> float:
     return window / 2 + random.uniform(0.0, window / 2)
 
 
-async def _post_with_retry(url: str, *, headers: dict[str, str], json: dict[str, Any] | None = None, data: dict[str, Any] | None = None, files: list | None = None) -> httpx.Response:
+class _RetryPacer:
+    """Backoff bookkeeping shared by the buffered and streaming POST paths.
+
+    429s get their own, longer budget; read/write timeouts get a shorter one
+    because each of those attempts already burned the full read budget.
+    """
+
+    def __init__(self) -> None:
+        self.last_exc: Exception | None = None
+        self._transient_attempts = 0
+        self._rate_limit_attempts = 0
+
+    def record_retryable_status(self, response: httpx.Response) -> None:
+        self.last_exc = httpx.HTTPStatusError(
+            f"Server returned {response.status_code}",
+            request=response.request,
+            response=response,
+        )
+
+    def record_exception(self, exc: Exception) -> None:
+        self.last_exc = exc
+
+    async def pause_or_raise(
+        self,
+        *,
+        rate_limited: bool,
+        retry_after: float | None = None,
+        slow_timeout: bool = False,
+    ) -> None:
+        """Sleep before the next attempt, or re-raise once the budget is spent."""
+        if rate_limited:
+            self._rate_limit_attempts += 1
+            if self._rate_limit_attempts > _MAX_RATE_LIMIT_RETRIES:
+                raise self.last_exc  # type: ignore[misc]
+            if retry_after is not None:
+                delay = retry_after + random.uniform(0.0, 1.0)
+            else:
+                delay = _jittered(
+                    min(
+                        _RATE_LIMIT_BASE_DELAY * 2 ** (self._rate_limit_attempts - 1),
+                        _RATE_LIMIT_MAX_DELAY,
+                    )
+                )
+            logger.warning(
+                "Rate limited (429), waiting %.1fs before retry %d/%d",
+                delay,
+                self._rate_limit_attempts,
+                _MAX_RATE_LIMIT_RETRIES,
+            )
+        else:
+            self._transient_attempts += 1
+            budget = _MAX_TIMEOUT_RETRIES if slow_timeout else _MAX_RETRIES
+            if self._transient_attempts > budget:
+                raise self.last_exc  # type: ignore[misc]
+            if slow_timeout:
+                logger.warning(
+                    "Request timed out (%s), retry %d/%d",
+                    self.last_exc or type(self.last_exc).__name__,
+                    self._transient_attempts,
+                    budget,
+                )
+            delay = _jittered(min(2.0 ** (self._transient_attempts - 1), 10.0))
+        await asyncio.sleep(delay)
+
+
+async def _post_with_retry(
+    url: str,
+    *,
+    headers: dict[str, str],
+    json: dict[str, Any] | None = None,
+    data: dict[str, Any] | None = None,
+    files: list | None = None,
+) -> httpx.Response:
     """POST with automatic retry on transient HTTP errors and connection failures.
 
     429 responses are retried on a separate, longer budget and honor the
     server's Retry-After header when present.
     """
-    last_exc: Exception | None = None
-    transient_attempts = 0
-    rate_limit_attempts = 0
+    pacer = _RetryPacer()
     while True:
         rate_limited = False
+        slow_timeout = False
         retry_after: float | None = None
         try:
             if files:
-                response = await _http.post(url, headers=headers, data=data, files=files)
+                response = await _http.post(
+                    url, headers=headers, data=data, files=files
+                )
+            elif data is not None:
+                response = await _http.post(url, headers=headers, data=data)
             else:
                 response = await _http.post(url, headers=headers, json=json)
             if response.status_code not in _RETRYABLE_STATUS_CODES:
                 return response
             rate_limited = response.status_code == 429
             retry_after = _retry_after_seconds(response)
-            last_exc = httpx.HTTPStatusError(
-                f"Server returned {response.status_code}",
-                request=response.request,
-                response=response,
-            )
+            pacer.record_retryable_status(response)
         except _TRANSPORT_ERRORS as exc:
-            last_exc = exc
-        if rate_limited:
-            rate_limit_attempts += 1
-            if rate_limit_attempts > _MAX_RATE_LIMIT_RETRIES:
-                raise last_exc  # type: ignore[misc]
-            if retry_after is not None:
-                delay = retry_after + random.uniform(0.0, 1.0)
-            else:
-                delay = _jittered(
-                    min(_RATE_LIMIT_BASE_DELAY * 2 ** (rate_limit_attempts - 1), _RATE_LIMIT_MAX_DELAY)
+            pacer.record_exception(exc)
+            slow_timeout = isinstance(exc, _SLOW_TIMEOUT_ERRORS)
+        await pacer.pause_or_raise(
+            rate_limited=rate_limited,
+            retry_after=retry_after,
+            slow_timeout=slow_timeout,
+        )
+
+
+# Top-level chunk fields worth keeping when collapsing a stream: cost extraction
+# and refusal detection read these off the buffered body.
+_STREAM_CARRIED_FIELDS = (
+    "id",
+    "object",
+    "model",
+    "system_fingerprint",
+    "prompt_feedback",
+    "error",
+    "response_cost",
+    "cost",
+    "_hidden_params",
+)
+
+
+def _chunk_content_length(chunk: dict[str, Any]) -> int:
+    choices = chunk.get("choices") or []
+    if not choices:
+        return 0
+    content = (choices[0].get("delta") or {}).get("content")
+    return len(content) if isinstance(content, str) else 0
+
+
+def _collapse_chat_chunks(chunks: list[dict[str, Any]]) -> dict[str, Any]:
+    """Reassemble streamed deltas into a non-streaming chat-completion body."""
+    collapsed: dict[str, Any] = {}
+    parts: list[str] = []
+    finish_reason: str | None = None
+    refusal: Any = None
+    filter_results: Any = None
+    usage: dict[str, Any] = {}
+    for chunk in chunks:
+        for field in _STREAM_CARRIED_FIELDS:
+            if chunk.get(field) is not None and field not in collapsed:
+                collapsed[field] = chunk[field]
+        if chunk.get("usage"):
+            usage = chunk["usage"]
+        choices = chunk.get("choices") or []
+        if not choices:
+            continue
+        choice = choices[0]
+        delta = choice.get("delta") or {}
+        if delta.get("content"):
+            parts.append(str(delta["content"]))
+        if delta.get("refusal") and refusal is None:
+            refusal = delta["refusal"]
+        if choice.get("finish_reason"):
+            finish_reason = choice["finish_reason"]
+        if choice.get("content_filter_results") and filter_results is None:
+            filter_results = choice["content_filter_results"]
+    message: dict[str, Any] = {"role": "assistant", "content": "".join(parts)}
+    if refusal is not None:
+        message["refusal"] = refusal
+    rebuilt: dict[str, Any] = {
+        "index": 0,
+        "message": message,
+        "finish_reason": finish_reason,
+    }
+    if filter_results is not None:
+        rebuilt["content_filter_results"] = filter_results
+    collapsed["choices"] = [rebuilt]
+    if usage:
+        collapsed["usage"] = usage
+    return collapsed
+
+
+async def _read_chat_stream(
+    url: str,
+    *,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], httpx.Response]:
+    """Run one streaming attempt, returning a buffered-shaped body plus response.
+
+    Raises HTTPStatusError for retryable statuses; other error statuses come
+    back fully read so the caller's raise_for_status/_gateway_http_error path
+    can still inspect the body.
+    """
+    async with _http.stream("POST", url, headers=headers, json=payload) as response:
+        if response.status_code >= 400:
+            await response.aread()
+            if response.status_code in _RETRYABLE_STATUS_CODES:
+                raise httpx.HTTPStatusError(
+                    f"Server returned {response.status_code}",
+                    request=response.request,
+                    response=response,
                 )
+            return {}, response
+        chunks: list[dict[str, Any]] = []
+        raw: list[str] = []
+        observer = current_stream_observer()
+        streamed_chars = 0
+        dropped = 0
+        opened = time.perf_counter()
+        first_content_at: float | None = None
+        # `data:` lines accumulate until they parse, or until a blank line ends
+        # the event. Dispatching as soon as the payload is valid JSON handles the
+        # usual one-object-per-line shape even from a server that omits the
+        # spec's blank-line separator; accumulating handles a genuinely
+        # multi-line payload. A per-line parse would instead silently swallow
+        # anything that didn't parse, leaving a hole in the reassembled text
+        # that resurfaces as a JSON error far from its cause.
+        event_data: list[str] = []
+
+        def notify(chars: int) -> None:
+            if observer is None:
+                return
+            # Never let progress reporting break a paid request.
+            try:
+                observer(chars)
+            except Exception:
+                logger.debug("stream observer raised", exc_info=True)
+
+        def dispatch(blob: str) -> bool:
+            """Consume one complete data payload; False if it isn't valid yet."""
+            nonlocal streamed_chars, first_content_at
+            if not blob or blob == "[DONE]":
+                return True
+            try:
+                chunk = json.loads(blob)
+            except ValueError:
+                return False
+            if not isinstance(chunk, dict):
+                return False
+            chunks.append(chunk)
+            content_chars = _chunk_content_length(chunk)
+            if content_chars and first_content_at is None:
+                first_content_at = time.perf_counter()
+                logger.info(
+                    "Stream first content after %.1fs", first_content_at - opened
+                )
+            streamed_chars += content_chars
+            notify(streamed_chars)
+            return True
+
+        def end_event() -> None:
+            nonlocal dropped
+            if not event_data:
+                return
+            if not dispatch("\n".join(event_data)):
+                dropped += 1
+            event_data.clear()
+
+        # Report before the first chunk so a stage waiting on a slow model shows
+        # as in-flight rather than as a dead progress bar.
+        notify(0)
+        try:
+            async with asyncio.timeout(_STREAM_TOTAL_TIMEOUT):
+                async for line in response.aiter_lines():
+                    line = line.rstrip("\r")
+                    if not line:
+                        end_event()
+                    elif line.startswith("data:"):
+                        event_data.append(line[len("data:") :].lstrip())
+                        if dispatch("\n".join(event_data)):
+                            event_data.clear()
+                    elif line.startswith(":"):
+                        continue  # SSE comment / keepalive
+                    else:
+                        raw.append(line)
+                    if (
+                        first_content_at is None
+                        and time.perf_counter() - opened
+                        > _STREAM_FIRST_CONTENT_TIMEOUT
+                    ):
+                        raise httpx.ReadTimeout(
+                            "no content in the first "
+                            f"{_STREAM_FIRST_CONTENT_TIMEOUT:.0f}s of the stream "
+                            f"({len(chunks)} non-content events received)",
+                            request=response.request,
+                        )
+                end_event()
+        except TimeoutError as exc:
+            raise httpx.ReadTimeout(
+                f"stream exceeded its {_STREAM_TOTAL_TIMEOUT:.0f}s total budget "
+                f"({streamed_chars} chars received)",
+                request=response.request,
+            ) from exc
+        if dropped:
             logger.warning(
-                "Rate limited (429), waiting %.1fs before retry %d/%d",
-                delay,
-                rate_limit_attempts,
-                _MAX_RATE_LIMIT_RETRIES,
+                "Dropped %d unparsable stream event(s); reassembled text may "
+                "have holes",
+                dropped,
             )
-        else:
-            transient_attempts += 1
-            if transient_attempts > _MAX_RETRIES:
-                raise last_exc  # type: ignore[misc]
-            delay = _jittered(min(2.0 ** (transient_attempts - 1), 10.0))
-        await asyncio.sleep(delay)
+        if not chunks:
+            # A gateway that ignores `stream` answers with a buffered body; use
+            # it rather than reporting an empty completion.
+            try:
+                buffered = json.loads("".join(raw))
+            except ValueError:
+                buffered = None
+            if isinstance(buffered, dict) and buffered.get("choices"):
+                return buffered, response
+        collapsed = _collapse_chat_chunks(chunks)
+        # Carried so a downstream JSON parse failure can say whether the text
+        # arrived intact. Private prefix: not a provider field.
+        collapsed["_canary_stream"] = {"events": len(chunks), "dropped": dropped}
+        return collapsed, response
+
+
+async def _stream_with_retry(
+    url: str,
+    *,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], httpx.Response]:
+    """Streaming counterpart to _post_with_retry, with the same retry budgets."""
+    pacer = _RetryPacer()
+    while True:
+        rate_limited = False
+        slow_timeout = False
+        retry_after: float | None = None
+        try:
+            return await _read_chat_stream(url, headers=headers, payload=payload)
+        except httpx.HTTPStatusError as exc:
+            rate_limited = exc.response.status_code == 429
+            retry_after = _retry_after_seconds(exc.response)
+            pacer.record_exception(exc)
+        except _TRANSPORT_ERRORS as exc:
+            pacer.record_exception(exc)
+            slow_timeout = isinstance(exc, _SLOW_TIMEOUT_ERRORS)
+        await pacer.pause_or_raise(
+            rate_limited=rate_limited,
+            retry_after=retry_after,
+            slow_timeout=slow_timeout,
+        )
 
 
 # Shared connection pool — LiteLLM runs as a local/nearby sidecar so keepalive
 # connections give a meaningful speedup at high panel concurrency (50-200 images).
 _http = httpx.AsyncClient(
-    timeout=httpx.Timeout(connect=30, read=600, write=300, pool=5),
+    timeout=httpx.Timeout(connect=30, read=_READ_TIMEOUT, write=300, pool=5),
     limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
 )
 
@@ -153,7 +474,9 @@ def _base_url(config: Config) -> str:
             "mock_mode is enabled for this project but the server operator has not set "
             "CANARY_MOCK_GENERATIONS_ENABLED=true; refusing to fall back to paid models"
         )
-    base_url = config.mock_model_base_url if config.mock_mode else config.litellm_base_url
+    base_url = (
+        config.mock_model_base_url if config.mock_mode else config.litellm_base_url
+    )
     return base_url.rstrip("/")
 
 
@@ -174,7 +497,9 @@ def _hash_payload(value: str | bytes) -> str:
 
 
 def _payload_size(value: str | bytes) -> int:
-    return len(value if isinstance(value, bytes) else value.encode("utf-8", errors="replace"))
+    return len(
+        value if isinstance(value, bytes) else value.encode("utf-8", errors="replace")
+    )
 
 
 def _redacted_params(params: dict[str, Any]) -> dict[str, Any]:
@@ -184,7 +509,9 @@ def _redacted_params(params: dict[str, Any]) -> dict[str, Any]:
     return redacted
 
 
-def _content_summary(system_prompt: str | None = None, user_content: str | bytes | None = None) -> dict[str, Any]:
+def _content_summary(
+    system_prompt: str | None = None, user_content: str | bytes | None = None
+) -> dict[str, Any]:
     summary: dict[str, Any] = {}
     if system_prompt is not None:
         summary["system_prompt_sha256"] = _hash_payload(system_prompt)
@@ -192,7 +519,9 @@ def _content_summary(system_prompt: str | None = None, user_content: str | bytes
     if user_content is not None:
         summary["user_content_sha256"] = _hash_payload(user_content)
         summary["user_content_bytes"] = _payload_size(user_content)
-        summary["user_content_type"] = "bytes" if isinstance(user_content, bytes) else "text"
+        summary["user_content_type"] = (
+            "bytes" if isinstance(user_content, bytes) else "text"
+        )
     return summary
 
 
@@ -202,15 +531,19 @@ def _image_summary(refs: list[tuple[Path, bytes | None]]) -> list[dict[str, Any]
         if data is None:
             items.append({"name": path.name, "missing": True})
         else:
-            items.append({
-                "name": path.name,
-                "bytes": len(data),
-                "sha256": hashlib.sha256(data).hexdigest(),
-            })
+            items.append(
+                {
+                    "name": path.name,
+                    "bytes": len(data),
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                }
+            )
     return items
 
 
-def _metadata(feature: str, operation: str, model_alias: str, event_id: str) -> dict[str, Any]:
+def _metadata(
+    feature: str, operation: str, model_alias: str, event_id: str
+) -> dict[str, Any]:
     ctx = current_ai_request_context()
     tags = [ctx.stage, operation]
     return {
@@ -288,7 +621,9 @@ def _extract_usage(
 ) -> UsageRecord:
     usage = data.get("usage") or {}
     input_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
-    output_tokens = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+    output_tokens = int(
+        usage.get("completion_tokens") or usage.get("output_tokens") or 0
+    )
     total_tokens = int(usage.get("total_tokens") or input_tokens + output_tokens)
     if not input_tokens and total_tokens and output_tokens:
         input_tokens = max(0, total_tokens - output_tokens)
@@ -378,19 +713,37 @@ def _gateway_transport_error(
     model: str,
     endpoint: str,
 ) -> AITransportError:
+    # Read/write timeouts run on the shorter _MAX_TIMEOUT_RETRIES budget, so
+    # reporting _MAX_RETRIES + 1 for them overstates what was actually tried.
+    if isinstance(exc, _SLOW_TIMEOUT_ERRORS):
+        attempts = _MAX_TIMEOUT_RETRIES + 1
+        detail = (
+            f" (per-chunk read timeout {_READ_TIMEOUT:.0f}s, "
+            f"stream budget {_STREAM_TOTAL_TIMEOUT:.0f}s)"
+        )
+    else:
+        attempts = _MAX_RETRIES + 1
+        detail = ""
     return AITransportError(
         f"AI gateway request failed for {feature} "
         f"(model={model}, endpoint={endpoint}): transport {type(exc).__name__} "
-        f"after {_MAX_RETRIES + 1} attempts",
+        f"after {attempts} attempts{detail}",
         phase="gateway_request",
     )
 
 
-def _error_json(exc: BaseException | None = None, response: httpx.Response | None = None) -> dict[str, Any]:
+def _error_json(
+    exc: BaseException | None = None, response: httpx.Response | None = None
+) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     if response is not None:
         payload["status_code"] = response.status_code
-        payload["body"] = response.text[:2000]
+        try:
+            payload["body"] = response.text[:2000]
+        except httpx.ResponseNotRead:
+            # A streamed response is consumed chunk-by-chunk, so there is no
+            # buffered body to log; the collapsed body goes to response_data.
+            payload["body"] = None
     if exc is not None:
         payload["exception"] = type(exc).__name__
     return payload
@@ -417,23 +770,25 @@ def _insert_event(
     try:
         from novel_to_comic.server.db import get_db
 
-        get_db().table("ai_usage_events").insert({
-            "id": event_id,
-            "user_id": ctx.user_id,
-            "project_id": ctx.project_id,
-            "workspace_id": ctx.workspace_id,
-            "project_name": ctx.project_name,
-            "stage": ctx.stage,
-            "feature": feature,
-            "operation": operation,
-            "status": "started",
-            "model_alias": model_alias,
-            "request_id": ctx.request_id,
-            "params_json": params_json,
-            "request_summary_json": request_summary_json,
-            "metadata_json": metadata_json,
-            "estimated_cost_usd": estimated_cost_usd,
-        }).execute()
+        get_db().table("ai_usage_events").insert(
+            {
+                "id": event_id,
+                "user_id": ctx.user_id,
+                "project_id": ctx.project_id,
+                "workspace_id": ctx.workspace_id,
+                "project_name": ctx.project_name,
+                "stage": ctx.stage,
+                "feature": feature,
+                "operation": operation,
+                "status": "started",
+                "model_alias": model_alias,
+                "request_id": ctx.request_id,
+                "params_json": params_json,
+                "request_summary_json": request_summary_json,
+                "metadata_json": metadata_json,
+                "estimated_cost_usd": estimated_cost_usd,
+            }
+        ).execute()
     except Exception as exc:
         logger.warning("ai_usage_events insert failed for %s: %s", event_id, exc)
 
@@ -457,13 +812,20 @@ def _finalize_event(
     langfuse_output: Any = None,
     started_at: datetime.datetime | None = None,
 ) -> None:
-    provider_model = str((response_data or {}).get("model") or (usage.provider_model if usage else None) or model_alias)
+    provider_model = str(
+        (response_data or {}).get("model")
+        or (usage.provider_model if usage else None)
+        or model_alias
+    )
     cost = calculate_cost_breakdown(usage) if usage is not None else None
     cost_usd = cost.cost_usd if cost is not None else None
     billable = bool(
         usage
         and usage_has_billable_activity(usage)
-        and (status == "succeeded" or (config is not None and _should_bill_failed(config, usage)))
+        and (
+            status == "succeeded"
+            or (config is not None and _should_bill_failed(config, usage))
+        )
     )
     try:
         from novel_to_comic.server.metrics import record_ai_call
@@ -541,14 +903,15 @@ def _finalize_event(
             estimated_cost_usd,
             usage.cost_usd if usage else 0.0,
         )
+    event_persisted = True
     try:
         from novel_to_comic.server.db import get_db
 
         get_db().table("ai_usage_events").update(update).eq("id", event_id).execute()
     except Exception as exc:
+        event_persisted = False
         logger.warning("ai_usage_events update failed for %s: %s", event_id, exc)
-        return
-    if billable and usage is not None:
+    if event_persisted and billable and usage is not None:
         _settle_event_usage(usage, feature=feature, status=status)
     if status != "cancelled" and metadata is not None:
         _log_langfuse_generation(
@@ -596,10 +959,14 @@ def _pricing_estimate_drift_pct(
         return None
     if usage is None or usage.cost_usd is None:
         return None
-    return ((float(usage.cost_usd) - float(estimated_cost_usd)) / float(estimated_cost_usd)) * 100.0
+    return (
+        (float(usage.cost_usd) - float(estimated_cost_usd)) / float(estimated_cost_usd)
+    ) * 100.0
 
 
-async def _post_langfuse_batch(host: str, auth: str, batch: list[dict[str, Any]]) -> None:
+async def _post_langfuse_batch(
+    host: str, auth: str, batch: list[dict[str, Any]]
+) -> None:
     try:
         await _http.post(
             f"{host}/api/public/ingestion",
@@ -705,7 +1072,9 @@ def _log_langfuse_generation(
                 "startTime": start_time.isoformat(),
                 "endTime": end_time.isoformat(),
                 "level": "DEFAULT" if status == "succeeded" else "ERROR",
-                "statusMessage": (str(error)[:500] if error else None) if status != "succeeded" else None,
+                "statusMessage": (str(error)[:500] if error else None)
+                if status != "succeeded"
+                else None,
             },
         },
     ]
@@ -849,6 +1218,7 @@ async def generate_structured_object(
     max_output_tokens: int | None = None,
     json_schema: dict[str, Any] | None = None,
     feature: str = "text.generate_json",
+    image_attachments: tuple[tuple[bytes, str], ...] = (),
 ) -> ApiResult[dict]:
     if isinstance(user_content, bytes):
         raise ValueError(
@@ -859,6 +1229,7 @@ async def generate_structured_object(
     attempt_user_content = user_content
     last_exc: json.JSONDecodeError | None = None
     last_text: str = ""
+    prior_usage: list[UsageRecord] = []
     for attempt in range(_JSON_PARSE_MAX_RETRIES + 1):
         data = await _chat_completion(
             config=config,
@@ -870,26 +1241,47 @@ async def generate_structured_object(
             json_mode=True,
             json_schema=json_schema,
             feature=feature,
+            image_attachments=image_attachments,
         )
         text = _strip_code_fence(data["text"])
         try:
-            return ApiResult(value=json.loads(text), usage=data["usage"])
+            return ApiResult(
+                value=json.loads(text),
+                usage=data["usage"],
+                additional_usage=tuple(prior_usage),
+            )
         except json.JSONDecodeError as exc:
+            if data["usage"] is not None:
+                prior_usage.append(data["usage"])
             last_exc = exc
             last_text = text
+            # finish_reason and the stream counters separate the two causes that
+            # look identical here: the model hit its output cap (finish_reason
+            # length/max_tokens — a real truncation), or the stream lost an
+            # event (dropped > 0 — reassembly left a hole).
+            stream_info = data.get("stream") or {}
             logger.warning(
-                "JSON parse failed for %s (model=%s) on attempt %d/%d: %s at char %d",
+                "JSON parse failed for %s (model=%s) on attempt %d/%d: %s at "
+                "char %d (finish_reason=%s, chars=%d, stream_events=%s, "
+                "dropped_events=%s)",
                 feature,
                 model,
                 attempt + 1,
                 _JSON_PARSE_MAX_RETRIES + 1,
                 exc.msg,
                 exc.pos,
+                data.get("finish_reason"),
+                len(text),
+                stream_info.get("events", "n/a"),
+                stream_info.get("dropped", "n/a"),
             )
             if attempt < _JSON_PARSE_MAX_RETRIES:
                 limit_note = ""
                 if str(data.get("finish_reason") or "").lower() in {
-                    "length", "max_tokens", "max_token", "max_output_tokens"
+                    "length",
+                    "max_tokens",
+                    "max_token",
+                    "max_output_tokens",
                 }:
                     limit_note = (
                         " Your previous response reached the output token limit; "
@@ -918,13 +1310,22 @@ async def _chat_completion(
     json_mode: bool,
     feature: str,
     json_schema: dict[str, Any] | None = None,
+    image_attachments: tuple[tuple[bytes, str], ...] = (),
 ) -> dict[str, Any]:
     event_id = str(uuid.uuid4())
     operation = "text"
     metadata = _metadata(feature, operation, model, event_id)
     response_format: dict[str, Any] | None
     if json_schema:
-        response_format = {"type": "json_schema", "json_schema": json_schema}
+        schema_name = re.sub(r"[^a-zA-Z0-9_-]", "_", feature)[:64]
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": schema_name,
+                "strict": True,
+                "schema": json_schema,
+            },
+        }
     elif json_mode:
         response_format = {"type": "json_object"}
     else:
@@ -932,11 +1333,25 @@ async def _chat_completion(
     effective_system = system_prompt
     if json_mode and "json" not in (system_prompt + user_content).lower():
         effective_system += "\n\nRespond with valid JSON."
+    # An image-reading call keeps ``user_content`` as its text part so cost
+    # estimation, request summaries, and Langfuse logging stay comparable with
+    # text-only calls; only the wire message becomes multimodal.
+    message_content: str | list[dict[str, Any]] = user_content
+    if image_attachments:
+        message_content = [{"type": "text", "text": user_content}]
+        for image_bytes, media_type in image_attachments:
+            encoded = base64.b64encode(image_bytes).decode()
+            message_content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{media_type};base64,{encoded}"},
+                }
+            )
     payload: dict[str, Any] = {
         "model": model,
         "messages": [
             {"role": "system", "content": effective_system},
-            {"role": "user", "content": user_content},
+            {"role": "user", "content": message_content},
         ],
         "metadata": metadata,
     }
@@ -946,8 +1361,17 @@ async def _chat_completion(
         payload["response_format"] = response_format
     if max_output_tokens is not None:
         payload["max_completion_tokens"] = max_output_tokens
+    # Stream so the read timeout is per-chunk: long adapt repairs exceed the
+    # read budget as a single blocking response. include_usage puts the usage
+    # block on a final chunk, which streaming otherwise omits.
+    streaming = _stream_text_enabled()
+    if streaming:
+        payload["stream"] = True
+        payload["stream_options"] = {"include_usage": True}
 
-    estimated_cost_usd = estimate_text_cost(model, effective_system + "\n" + user_content) or None
+    estimated_cost_usd = (
+        estimate_text_cost(model, effective_system + "\n" + user_content) or None
+    )
     _insert_event(
         event_id=event_id,
         model_alias=model,
@@ -965,32 +1389,62 @@ async def _chat_completion(
         {"role": "user", "content": _truncate_for_log(user_content)},
     ]
     response: httpx.Response | None = None
+    data: dict[str, Any] = {}
     try:
         endpoint = "/v1/chat/completions"
+        # Breadcrumb before the request: Langfuse only records a call once it
+        # finishes, so an in-flight request leaves no trace there at all.
+        logger.info(
+            "AI request issued feature=%s model=%s streaming=%s event_id=%s",
+            feature,
+            model,
+            streaming,
+            event_id,
+        )
         try:
-            response = await _post_with_retry(
-                f"{_base_url(config)}{endpoint}",
-                headers=_headers(config, event_id),
-                json=payload,
-            )
+            if streaming:
+                data, response = await _stream_with_retry(
+                    f"{_base_url(config)}{endpoint}",
+                    headers=_headers(config, event_id),
+                    payload=payload,
+                )
+            else:
+                response = await _post_with_retry(
+                    f"{_base_url(config)}{endpoint}",
+                    headers=_headers(config, event_id),
+                    json=payload,
+                )
+                data = {}
         except httpx.HTTPStatusError as exc:
             raise _gateway_http_error(
-                exc.response, feature=feature, model=model, endpoint=endpoint,
+                exc.response,
+                feature=feature,
+                model=model,
+                endpoint=endpoint,
             ) from exc
         except _TRANSPORT_ERRORS as exc:
             raise _gateway_transport_error(
-                exc, feature=feature, model=model, endpoint=endpoint,
+                exc,
+                feature=feature,
+                model=model,
+                endpoint=endpoint,
             ) from exc
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             raise _gateway_http_error(
-                response, feature=feature, model=model, endpoint=endpoint,
+                response,
+                feature=feature,
+                model=model,
+                endpoint=endpoint,
             ) from exc
-        data = response.json()
+        if not streaming:
+            data = response.json()
         refusal = _refusal_reason(data)
         if refusal:
-            raise AIRefusalError(f"AI request was refused by gateway/provider ({refusal})")
+            raise AIRefusalError(
+                f"AI request was refused by gateway/provider ({refusal})"
+            )
         choice = (data.get("choices") or [{}])[0]
         text = (choice.get("message") or {}).get("content")
         if not text:
@@ -999,7 +1453,9 @@ async def _chat_completion(
             # exhaustion (finish_reason length/MAX_TOKENS with high
             # completion_tokens). Otherwise every cause looks identical in logs.
             detail = f"finish_reason={choice.get('finish_reason')!r}"
-            feedback = data.get("prompt_feedback") or choice.get("content_filter_results")
+            feedback = data.get("prompt_feedback") or choice.get(
+                "content_filter_results"
+            )
             if feedback:
                 detail += f", feedback={feedback!r}"
             completion_tokens = (data.get("usage") or {}).get("completion_tokens")
@@ -1040,6 +1496,7 @@ async def _chat_completion(
             "text": text,
             "usage": usage,
             "finish_reason": choice.get("finish_reason"),
+            "stream": data.get("_canary_stream") or {},
         }
     except asyncio.CancelledError as exc:
         _finalize_event(
@@ -1059,7 +1516,8 @@ async def _chat_completion(
         )
         raise
     except AIRefusalError as exc:
-        data = response.json() if response is not None and response.content else {}
+        # `data` is the collapsed stream body — a streamed response has no
+        # buffered content to re-parse here.
         usage = _extract_usage(data, event_id, model, operation) if data else None
         _finalize_event(
             event_id=event_id,
@@ -1110,90 +1568,67 @@ async def _chat_completion(
 
 
 async def generate_wire_image(
-    *, config: Config, wire: "ProviderWireRequest", output_path: Path,
+    *,
+    config: Config,
+    wire: "ProviderWireRequest",
+    output_path: Path,
     feature: str = "image.generate_wire",
 ) -> ApiResult[Path]:
     """Submit an immutable exact-wire request through the isolated adapter."""
     from novel_to_comic.ai.providers import selector
     from novel_to_comic.ai.providers.litellm_http import LitellmHttpProvider
-    from novel_to_comic.ai.providers.reve_layout import ReveLayoutProvider
-    from novel_to_comic.provider_wire import materialize_wire_references, without_layout
+    from novel_to_comic.provider_wire import materialize_wire_references
 
     if wire.execution_fingerprint != wire.recompute_execution_fingerprint():
         raise ValueError("ProviderWireRequest execution fingerprint mismatch")
 
-    # A frozen request is an exact persisted execution contract. The rollout
-    # gate is applied while compiling new requests; do not rewrite an already
-    # frozen layout request because a later config toggle changed.
     transport_wire = wire
     blobs = materialize_wire_references(transport_wire)
     ref_reads = [
         (Path(ref.source_path), data)
         for ref, data in zip(transport_wire.references, blobs, strict=True)
     ]
-    provider = selector.pick(
-        transport_wire.requested_alias or "", config, layout=transport_wire.layout,
-    )
-    if isinstance(provider, ReveLayoutProvider):
-        params = provider.request_params_for_wire(transport_wire)
-    elif isinstance(provider, LitellmHttpProvider):
+    provider = selector.pick(transport_wire.requested_alias or "", config)
+    if isinstance(provider, LitellmHttpProvider):
         params, _files = provider.prepare_wire_request(transport_wire)
     else:
-        raise ValueError(f"wire transport is not implemented for adapter {provider.name}")
+        raise ValueError(
+            f"wire transport is not implemented for adapter {provider.name}"
+        )
     ctx = begin_image_call(
         config=config,
-        model=transport_wire.requested_alias or transport_wire.configured_provider_model,
+        model=transport_wire.requested_alias
+        or transport_wire.configured_provider_model,
         feature=feature,
         prompt=transport_wire.prompt_parts[0],
         params=params,
         ref_reads=ref_reads,
     )
     try:
-        if isinstance(provider, ReveLayoutProvider):
-            try:
-                raw = await provider.generate_wire(
-                    wire=transport_wire,
-                    reference_bytes=blobs,
-                    config=config,
-                    event_id=ctx.event_id,
-                    metadata=ctx.metadata,
-                )
-            except AIRefusalError:
-                raise
-            except Exception as exc:
-                # render_layout is experimental. Keep ordinary v2 create as a
-                # transparent availability fallback, but never retry a
-                # content refusal through a second paid request.
-                logger.warning(
-                    "Reve render_layout failed for %s; falling back to v2 create: %s",
-                    transport_wire.requested_alias or transport_wire.configured_provider_model,
-                    type(exc).__name__,
-                )
-                fallback_wire = without_layout(transport_wire)
-                fallback_provider = LitellmHttpProvider()
-                raw = await fallback_provider.generate_wire(
-                    wire=fallback_wire,
-                    config=config,
-                    event_id=ctx.event_id,
-                    metadata=ctx.metadata,
-                )
-        else:
-            raw = await provider.generate_wire(
-                wire=transport_wire,
-                config=config,
-                event_id=ctx.event_id,
-                metadata=ctx.metadata,
-            )
+        raw = await provider.generate_wire(
+            wire=transport_wire,
+            config=config,
+            event_id=ctx.event_id,
+            metadata=ctx.metadata,
+        )
         return await finalise_image_success(
-            ctx=ctx, config=config,
-            model=transport_wire.requested_alias or transport_wire.configured_provider_model,
-            feature=feature, output_path=output_path, raw=raw,
+            ctx=ctx,
+            config=config,
+            model=transport_wire.requested_alias
+            or transport_wire.configured_provider_model,
+            feature=feature,
+            output_path=output_path,
+            raw=raw,
         )
     except Exception as exc:
         finalise_image_failure(
-            ctx=ctx, config=config,
-            model=transport_wire.requested_alias or transport_wire.configured_provider_model,
-            feature=feature, error=exc, error_response=getattr(exc, "response", None),
+            ctx=ctx,
+            config=config,
+            model=transport_wire.requested_alias
+            or transport_wire.configured_provider_model,
+            feature=feature,
+            error=exc,
+            error_response=getattr(exc, "response", None),
         )
         raise
 
@@ -1238,11 +1673,14 @@ def _diagnose_empty_image_response(data: dict[str, Any]) -> str:
         ratings = first_cand.get("safety_ratings") or first_cand.get("safetyRatings")
         if isinstance(ratings, list):
             blocked = [
-                r.get("category") for r in ratings
+                r.get("category")
+                for r in ratings
                 if isinstance(r, dict) and r.get("blocked")
             ]
             if blocked:
-                crumbs.append(f"safety_ratings blocked: {', '.join(str(c) for c in blocked)}")
+                crumbs.append(
+                    f"safety_ratings blocked: {', '.join(str(c) for c in blocked)}"
+                )
 
     pf = data.get("prompt_feedback") or data.get("promptFeedback")
     if isinstance(pf, dict):

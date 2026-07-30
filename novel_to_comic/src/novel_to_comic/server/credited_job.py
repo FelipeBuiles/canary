@@ -181,10 +181,9 @@ def enqueue_credited_job(
                     elif kind == "prop_ref_regen":
                         item_id = payload.get("prop_id")
                 elif stage == "draw":
-                    scene_id = payload.get("scene_id")
-                    panel_number = payload.get("panel_number")
-                    if scene_id and panel_number is not None:
-                        item_id = f"{scene_id}/panel_{panel_number:03d}"
+                    page_number = payload.get("page_number")
+                    if page_number is not None:
+                        item_id = f"page_{int(page_number):03d}"
 
                 if item_id and item_id in stage_state.items_failed:
                     stage_state.items_failed.remove(item_id)
@@ -218,6 +217,92 @@ def enqueue_credited_job(
         user_id=user_id,
         semaphore=semaphore,
     )
+    return job, True
+
+
+@_serialize_frozen_enqueue
+def enqueue_reserved_generation_job(
+    app: FastAPI,
+    *,
+    project_name: str,
+    user_id: str,
+    project_id: str | None,
+    project_dir: Path,
+    stage: str,
+    kind: str,
+    label: str,
+    payload: dict[str, Any],
+    work: Callable[[], Awaitable[ApiResult[Any]]],
+    debit_description: str,
+    reservation_credits: int,
+    semaphore: asyncio.Semaphore | None = None,
+) -> tuple[GenerationJob, bool]:
+    """Queue one request with a hold spanning execution, failure, or cancellation."""
+
+    existing = find_active_generation_job(
+        app,
+        project_name=project_name,
+        kind=kind,
+        payload=payload,
+    )
+    if existing is not None:
+        return existing, False
+
+    db = get_db()
+    reservation_id, ledger_job_id = reserve_credits(
+        db,
+        user_id,
+        project_id,
+        stage,
+        reservation_credits,
+    )
+
+    async def _runner() -> None:
+        try:
+            with ai_request_context(
+                user_id=user_id,
+                project_id=project_id,
+                project_name=project_dir.name,
+                workspace_id=str(project_dir.parent),
+                stage=stage,
+                job_id=ledger_job_id,
+            ):
+                result = await work()
+            # Every provider call this job made is settled under the same
+            # ledger job, which keeps one audit row per call while rounding
+            # whole credits once for the job as a whole.
+            for usage in (result.usage, *result.additional_usage):
+                if usage is None:
+                    continue
+                debit_model_usage(
+                    get_db(),
+                    user_id,
+                    project_id,
+                    usage,
+                    stage=stage,
+                    description=debit_description,
+                    job_id=ledger_job_id,
+                )
+        finally:
+            if reservation_id is not None:
+                release_reservation(get_db(), reservation_id)
+
+    try:
+        prune_finished_generation_jobs(app)
+        job = enqueue_generation_job(
+            app,
+            project_name=project_name,
+            kind=kind,
+            label=label,
+            payload=payload,
+            runner=_runner,
+            user_id=user_id,
+            semaphore=semaphore,
+        )
+    except BaseException:
+        if reservation_id is not None:
+            release_reservation(get_db(), reservation_id)
+        raise
     return job, True
 
 

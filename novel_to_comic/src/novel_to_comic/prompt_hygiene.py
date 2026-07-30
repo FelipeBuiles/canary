@@ -31,7 +31,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from novel_to_comic.models.prompt import ImagePrompt
+from novel_to_comic.generation_input import GenerationPromptInput
 from novel_to_comic.text_utils import clean as _clean
 
 #: Hard cap on the number of must-show (``visual_requirements``) details that
@@ -198,7 +198,7 @@ class AnchorTextConflict:
     cue: str
 
 
-def detect_anchor_text_conflicts(prompt: ImagePrompt) -> list[AnchorTextConflict]:
+def detect_anchor_text_conflicts(prompt: GenerationPromptInput) -> list[AnchorTextConflict]:
     """Detect protected anchors that request readable text.
 
     Never mutates the anchor. Returns a diagnostic per conflicting anchor so
@@ -251,7 +251,7 @@ def _significant_tokens(text: str) -> set[str]:
     }
 
 
-def _known_tokens_from_subjects(prompt: ImagePrompt) -> set[str]:
+def _known_tokens_from_subjects(prompt: GenerationPromptInput) -> set[str]:
     """Tokens already owned by subject identity/action/expression/position."""
     known: set[str] = set()
     for subject in getattr(prompt, "subjects", []) or []:
@@ -261,7 +261,7 @@ def _known_tokens_from_subjects(prompt: ImagePrompt) -> set[str]:
 
 
 def dedupe_visual_requirements(
-    prompt: ImagePrompt,
+    prompt: GenerationPromptInput,
 ) -> tuple[list[str], set[str]]:
     """Normalize and semantically deduplicate ``visual_requirements``.
 

@@ -26,7 +26,9 @@ clean exit; on exception it calls ``fail`` and re-raises.
 from __future__ import annotations
 
 from contextlib import contextmanager
+import datetime
 import logging
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Generator
 
@@ -49,6 +51,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("canary.stage_cost")
 
+# A streamed completion yields hundreds of chunks; SSE consumers only need
+# enough to keep a bar moving and prove the request is alive.
+_ACTIVITY_MIN_INTERVAL_S = 1.5
+_ACTIVITY_MIN_FRACTION_DELTA = 0.02
+
 
 class StageRuntime:
     """Owns state transitions, event emission, and persistence for one stage run."""
@@ -65,6 +72,8 @@ class StageRuntime:
         self._project_dir = project_dir
         self._on_event = on_event
         self._emit = on_event or _NOOP
+        self._last_activity_at = 0.0
+        self._last_activity_fraction: float | None = None
 
     @property
     def on_event(self) -> EventCallback | None:
@@ -151,33 +160,71 @@ class StageRuntime:
     def progress(self, done: int, total: int) -> None:
         self._emit({"type": "stage_progress", "stage": self.name, "done": done, "total": total})
 
+    def activity(
+        self,
+        *,
+        fraction: float | None = None,
+        detail: str | None = None,
+        force: bool = False,
+    ) -> None:
+        """Report sub-item progress inside the item currently being worked on.
+
+        Deliberately separate from ``progress``: this is not persisted and may
+        move backwards (a retried request restarts its stream), so it must not
+        touch the ``items_done`` counters the status poll reconciles against.
+
+        Throttled, because a streamed completion emits hundreds of chunks —
+        pass ``force`` for transitions the UI must not miss.
+        """
+        if fraction is not None:
+            fraction = min(1.0, max(0.0, fraction))
+        now = time.monotonic()
+        if not force:
+            moved = (
+                fraction is not None
+                and self._last_activity_fraction is not None
+                and abs(fraction - self._last_activity_fraction)
+                >= _ACTIVITY_MIN_FRACTION_DELTA
+            )
+            elapsed = now - self._last_activity_at
+            if elapsed < _ACTIVITY_MIN_INTERVAL_S and not moved:
+                return
+        self._last_activity_at = now
+        self._last_activity_fraction = fraction
+        self._emit({
+            "type": "stage_activity",
+            "stage": self.name,
+            "fraction": fraction,
+            "detail": detail,
+            "at": datetime.datetime.now(datetime.UTC).isoformat(),
+        })
+
     def log(self, message: str, level: str = "info") -> None:
         self._emit({"type": "log", "stage": self.name, "level": level, "message": message})
 
-    def emit_panel_start(self, scene_id: str, panel_number: int) -> None:
+    def emit_page_start(self, page_number: int) -> None:
         from datetime import datetime, timezone
         self._emit({
-            "type": "panel_start",
+            "type": "page_start",
             "stage": self.name,
-            "scene_id": scene_id,
-            "panel_number": panel_number,
+            "page_number": page_number,
             "started_at": datetime.now(timezone.utc).isoformat(),
         })
 
-    def emit_panel_done(
+    def emit_page_done(
         self,
-        scene_id: str,
-        panel_number: int,
+        page_number: int,
         *,
+        revision: int,
         status: str,
         duration_ms: int,
         error: str | None = None,
     ) -> None:
         self._emit({
-            "type": "panel_done",
+            "type": "page_done",
             "stage": self.name,
-            "scene_id": scene_id,
-            "panel_number": panel_number,
+            "page_number": page_number,
+            "revision": revision,
             "status": status,
             "duration_ms": duration_ms,
             "error": error,
@@ -191,12 +238,15 @@ class StageRuntime:
         self, cost: float = 0.0, usage: UsageRecord | None = None
     ) -> None:
         record_item_done(self._state, self.name, cost, usage)
+        save_state(self._state, self._project_dir)
 
     def record_api_usage(self, usage: UsageRecord) -> None:
         record_api_usage(self._state, self.name, usage)
+        save_state(self._state, self._project_dir)
 
     def record_item_failed(self, item_id: str) -> None:
         record_item_failed(self._state, self.name, item_id)
+        save_state(self._state, self._project_dir)
 
     # ------------------------------------------------------------------
     # Persistence
@@ -215,3 +265,4 @@ class StageRuntime:
 
     def set_estimated_cost(self, cost_usd: float) -> None:
         self._state.stages[self.name].estimated_cost_usd = cost_usd
+        save_state(self._state, self._project_dir)

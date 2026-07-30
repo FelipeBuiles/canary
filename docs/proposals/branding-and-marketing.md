@@ -1,5 +1,16 @@
 # Canary — Product Naming & Marketing Strategy
 
+> **Architecture warning (2026-07-25):** retain this document for audience,
+> naming, trust, and positioning research only. References to a nine-stage
+> pipeline, per-panel generation/revision, or deterministic lettering are
+> superseded by the full-page architecture in ADRs 0003-0015 (`docs/adr/`).
+
+> **Current launch source (2026-07-30):** use
+> [the market and launch-readiness reassessment](../research/2026-07-30-market-and-launch-readiness.md)
+> for current product claims, market facts, offer decisions, and launch gates.
+> This proposal remains the longer strategic research record; competitor,
+> naming, pricing, and acquisition facts below need revalidation before reuse.
+
 > Deep research (competitive landscape + market demand + naming/domain/trademark
 > clearance) and a full go-to-market plan for the lean / pre-revenue tier. Dated
 > 2026-07-02.
@@ -26,8 +37,8 @@ launch hypotheses below have already moved.
 - Position Scenewright as an instrument the author directs, not a black-box
   replacement for the author.
 - Whole-manuscript ingestion, four creative checkpoints, reference-guided
-  continuity, per-panel correction, final lettering, and PDF/CBZ export are
-  implemented product truths.
+  continuity, complete-page correction, visible lettering, and PDF/CBZ export
+  are implemented product truths.
 - The rights posture is real but must stay precise: the author retains the
   manuscript; Scenewright makes no ownership claim over generated output;
   copyrightability of purely generated material remains case-specific.
@@ -49,8 +60,8 @@ launch hypotheses below have already moved.
    Whole-book ingestion, consistency, export, rights, and pay-as-you-go are now
    category expectations, not unique claims. Scenewright's strongest current
    difference is the depth and visibility of author control: inspectable
-   checkpoints, source-faithful adaptation, focused panel revision, lettering,
-   and explicit per-step cost.
+   checkpoints, source-faithful adaptation, focused complete-page correction,
+   lettering, and explicit per-step cost.
 3. **Pricing references are stale.** ComicInk currently advertises roughly 30
    pages for $9.99 and 240 for $54.99; LlamaGen's current plans start at $18/mo.
    The `$10 / 8-page` and `$80–200 / book` suggestions below should not guide
@@ -78,13 +89,14 @@ are live. The major gap was acquisition: there was no public homepage, public
 workflow explanation, proof reel, pricing story, case study, or responsible-use
 explanation. This review adds the public homepage and corrects the unsupported
 “500 free credits” signup claim. Still missing are a verified trial/grant,
-authorized author case studies, a measured 30–50-panel continuity proof, and
-the proposed authorship log.
+authorized author case studies, a measured complete-page continuity proof, and
+the proposed authorship log. The current launch report defines the smaller
+pilot gate and replaces the old panel benchmark.
 
 Homepage claims should stay within what the product can prove:
 
 - “Turn your novel into a graphic novel you direct.”
-- “Choose the look. Approve the cast. Review and revise individual panels.”
+- “Choose the look. Approve the cast. Review and revise complete pages.”
 - “AI-assisted visual adaptation, directed by you.”
 - “Export PDF and CBZ.”
 - “Your manuscript stays yours. We claim no ownership over generated output.”

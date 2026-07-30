@@ -144,16 +144,16 @@ models:
       vertex-multimodal custom provider — native Vertex multimodal shape,
       role-labeled reference images.
 
-  - id: gemini-flash-lite-production-balanced
-    label: "Gemini 3.1 Flash Lite Image (production balanced)"
+  - id: gemini-pro-image-production-balanced
+    label: "Gemini 3 Pro Image / Nano Banana Pro (production balanced)"
     provider: litellm
     endpoint: image-balanced
     tier: balanced
     multi_ref: true
     max_refs: 8
-    approx_cost: 0.034
+    approx_cost: 0.134
     notes: >-
-      Production image-balanced tier. Gemini 3.1 Flash Lite Image routed through the
+      Production image-balanced tier. Gemini 3 Pro Image (Nano Banana Pro) routed through the
       vertex-multimodal custom provider — native Vertex multimodal shape,
       role-labeled reference images.
 
@@ -170,17 +170,17 @@ models:
       verify the fal queue routing preserves multi-reference conditioning
       before promoting image-balanced.
 
-  - id: seedream-v5-pro-production-quality
-    label: "Seedream 5.0 Pro (production quality)"
+  - id: gpt-image-2-production-quality
+    label: "GPT Image 2 (production quality)"
     provider: litellm
     endpoint: image-quality
     tier: premium
     multi_ref: true
-    max_refs: 10
-    approx_cost: 0.0675
+    max_refs: 4
+    approx_cost: 0.032
     notes: >-
-      Production image-quality tier. Seedream 5.0 Pro routed through the local
-      LiteLLM gateway with up to 10 role-labeled reference images.
+      Production image-quality tier. GPT Image 2 routed through OpenAI's image
+      generation and editing endpoints with high-fidelity image inputs.
 
   - id: reve-proxy
     label: "Reve (LiteLLM Proxy)"
