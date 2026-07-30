@@ -132,12 +132,15 @@ function StageDocket({
 // ── Pending state ─────────────────────────────────────────────────────────────
 
 interface StagePendingProps {
+  project: string;
   stage: StageName;
+  allowStart: boolean;
 }
 
-export function StagePending({ stage }: StagePendingProps) {
+export function StagePending({ project, stage, allowStart }: StagePendingProps) {
   const { t } = useI18n();
   const meta = STAGE_META[stage];
+  const { handleRun, isPending } = useRunAction();
 
   return (
     <StageDocket stage={stage} state="WAITING IN THE PRODUCTION LINE" tone="muted">
@@ -162,6 +165,17 @@ export function StagePending({ stage }: StagePendingProps) {
             ))}
           </div>
       </div>
+      {allowStart && (
+        <div className="mt-5 flex">
+          <Button
+            size="md"
+            disabled={isPending}
+            onClick={() => handleRun(project, stage)}
+          >
+            {isPending ? t("Starting…") : t("Start adaptation")}
+          </Button>
+        </div>
+      )}
     </StageDocket>
   );
 }
@@ -289,6 +303,7 @@ interface StagePlaceholderProps {
   itemsDone?: number;
   itemsTotal?: number;
   retryAsRerun?: boolean;
+  allowPendingStart?: boolean;
 }
 
 export function StagePlaceholder({
@@ -299,6 +314,7 @@ export function StagePlaceholder({
   itemsDone,
   itemsTotal,
   retryAsRerun = false,
+  allowPendingStart = false,
 }: StagePlaceholderProps) {
   const { t } = useI18n();
   // Credit gate takes priority over every other placeholder state — a user
@@ -324,7 +340,13 @@ export function StagePlaceholder({
     return <StageRunning stage={stage} itemsDone={itemsDone} itemsTotal={itemsTotal} />;
   }
   if (status === "pending") {
-    return <StagePending stage={stage} />;
+    return (
+      <StagePending
+        project={project}
+        stage={stage}
+        allowStart={allowPendingStart}
+      />
+    );
   }
   if (status === "failed" || stale) {
     return <StageFailed project={project} stage={stage} rerun={retryAsRerun} />;

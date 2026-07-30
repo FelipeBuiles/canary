@@ -667,6 +667,112 @@ def test_canonicalization_leaves_the_first_state_in_a_scope_as_authored() -> Non
     assert canonical.beats[0].appearance_changes[0].from_state_id is None
 
 
+def test_canonicalization_realizes_ledgered_dialogue_and_protected_wording() -> None:
+    protected = (
+        "That is not dead which can eternal lie, "
+        "And with strange aeons even death may die."
+    )
+    source_text = (
+        "The ritual ended: “Ph’nglui mglw’nafh Cthulhu R’lyeh "
+        "wgah’nagl fhtagn.”\n"
+        "The book preserved a couplet:\n\n"
+        "“That is not dead which can eternal lie,\n"
+        "And with strange aeons even death may die.”"
+    )
+    split = source_text.index("The book")
+    source = SourceDocument(
+        text=source_text,
+        units=[
+            SourceUnit(
+                id="source_000186",
+                ordinal=1,
+                start_offset=0,
+                end_offset=split,
+                text=source_text[:split],
+            ),
+            SourceUnit(
+                id="source_000255",
+                ordinal=2,
+                start_offset=split,
+                end_offset=len(source_text),
+                text=source_text[split:],
+            ),
+        ],
+        scenes=[
+            SourceScene(
+                id="scene_001",
+                title="The ritual",
+                first_unit_id="source_000186",
+                last_unit_id="source_000255",
+            )
+        ],
+    )
+    brief = AdaptationBrief.model_validate(
+        {
+            **_approved_brief().model_dump(mode="json"),
+            "protected_language": [protected],
+            "content_sha256": "",
+        }
+    )
+    base = _book_adaptation()
+    first = base.beats[0].model_copy(
+        update={
+            "id": "beat_0011",
+            "source_unit_ids": ("source_000186",),
+            "lettering": (),
+        }
+    )
+    second = base.beats[0].model_copy(
+        update={
+            "id": "beat_0017",
+            "order": 2,
+            "source_unit_ids": ("source_000255",),
+            "lettering": (),
+        }
+    )
+    candidate = base.model_copy(
+        update={
+            "source_sha256": source.source_sha256,
+            "brief_revision": brief.revision,
+            "brief_sha256": brief.content_sha256,
+            "content_sha256": "",
+            "beats": (first, second),
+            "ledger": (
+                AdaptationLedgerEntry(
+                    source_unit_id="source_000186",
+                    disposition="dialogue",
+                    adapted_beat_ids=("beat_0011",),
+                    preserved_function="ritual chant",
+                ),
+                AdaptationLedgerEntry(
+                    source_unit_id="source_000255",
+                    disposition="depicted",
+                    adapted_beat_ids=("beat_0017",),
+                    preserved_function="Necronomicon quote",
+                ),
+            ),
+        }
+    )
+
+    canonical = _canonicalize_candidate_requirements(candidate, source, brief)
+    result = validate_book_adaptation(source, brief, canonical)
+
+    assert {
+        failure.code for failure in result.invariant_failures
+    }.isdisjoint({"source_disposition_not_realized", "protected_language_missing"})
+    dialogue = canonical.beats[0].lettering[0]
+    assert dialogue.kind == "dialogue"
+    assert dialogue.source_unit_ids == ("source_000186",)
+    assert dialogue.text == (
+        "Ph’nglui mglw’nafh Cthulhu R’lyeh wgah’nagl fhtagn."
+    )
+    caption = canonical.beats[1].lettering[0]
+    assert caption.kind == "caption"
+    assert caption.source_unit_ids == ("source_000255",)
+    assert caption.text == protected
+    assert canonical.ledger[1].disposition == "caption"
+
+
 def test_requirements_are_partitioned_to_the_shard_that_realizes_them() -> None:
     """The shard that contains a requirement's source should own it.
 

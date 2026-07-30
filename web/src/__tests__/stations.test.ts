@@ -107,18 +107,18 @@ describe("target station contract", () => {
 });
 
 describe("getStationState", () => {
-  it("does not keep Story in review after a downstream station has progressed", async () => {
+  it("keeps Story in review when a draft brief reopens after Look completed", async () => {
     const { getStationState } = await import("../lib/stations");
     const story = STATIONS.find((station) => station.key === "story")!;
     const status = projectStatus({
       extract: stage("complete"),
       brief: stage("awaiting_review"),
       style: stage("complete"),
-      cast: stage("failed"),
+      cast: stage("complete"),
       adapt: stage("pending"),
     });
 
-    expect(getStationState(story, status)).toBe("done");
+    expect(getStationState(story, status)).toBe("review");
   });
 
   it("shows running when an active stage follows an earlier failure", async () => {

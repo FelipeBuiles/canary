@@ -71,24 +71,6 @@ def test_credit_failure_leaves_no_direction_artifacts(tmp_path):
     assert not (tmp_path / "samples").exists()
 
 
-def test_unsupported_image_only_rejects_before_write(tmp_path):
-    request = _request()
-    project_dir, _config, state = _project(tmp_path)
-    with patch(
-        "novel_to_comic.server.routers.styles.assert_sufficient_credits"
-    ) as credit_check:
-        with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(create_style_direction(
-                request, "demo", direction_text=None, image=_png_upload(),
-                label=None, with_neighbors=False,
-                project=(project_dir, Config(image_model="gpt-image-2"), state),
-                user_id="user",
-            ))
-    assert exc_info.value.status_code == 400
-    credit_check.assert_not_called()
-    assert not (tmp_path / "samples").exists()
-
-
 @pytest.mark.parametrize("initial", [StageStatus.PENDING, StageStatus.FAILED])
 def test_custom_direction_repairs_canonical_style_lifecycle(tmp_path, initial):
     async def scenario():

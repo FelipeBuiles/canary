@@ -78,7 +78,7 @@ def test_generation_job_payload_classifies_provider_block():
     async def blocked_runner():
         raise RuntimeError(
             "AI gateway request failed for complete_page_draw "
-            "(model=gemini-3.1-flash-image, endpoint=/v1/images/edits): "
+            "(model=gemini-3-pro-image, endpoint=/v1/images/edits): "
             "400 Bad Request — Vertex response did not contain image bytes: "
             "no candidates returned | prompt_feedback: "
             "block_reason=BlockedReason.OTHER"

@@ -19,7 +19,8 @@ IMAGE_MODEL_ALIASES = (
 )
 
 _GEMINI_FLASH_LITE_MODEL = "vertex-multimodal/gemini-3.1-flash-lite-image"
-_GEMINI_FLASH_IMAGE_MODEL = "vertex-multimodal/gemini-3.1-flash-image"
+_GEMINI_PRO_IMAGE_MODEL = "vertex-multimodal/gemini-3-pro-image"
+_GPT_IMAGE_2_MODEL = "openai/gpt-image-2"
 _SEEDREAM_V5_PRO_MODEL = "fal-queue/bytedance/seedream/v5/pro/edit"
 _REVE_CREATE_MODEL = "reve/create"
 
@@ -28,7 +29,7 @@ class ImageRoute(str, Enum):
     """Stable application routes independent of mutable UI tier labels."""
 
     GEMINI_FLASH_LITE = "gemini_flash_lite"
-    GEMINI_FLASH_IMAGE = "gemini_flash_image"
+    GEMINI_PRO_IMAGE = "gemini_pro_image"
     SEEDREAM = "seedream"
     REVE = "reve"
     GPT_IMAGE_2 = "gpt_image_2"
@@ -51,14 +52,14 @@ _ALIAS_DESCRIPTIONS: dict[str, ImageModelDescription] = {
         provider_model=_GEMINI_FLASH_LITE_MODEL,
     ),
     GATEWAY_IMAGE_BALANCED: ImageModelDescription(
-        route=ImageRoute.GEMINI_FLASH_IMAGE,
-        display_name="Balanced — Gemini 3.1 Flash Image (Nano Banana 2)",
-        provider_model=_GEMINI_FLASH_IMAGE_MODEL,
+        route=ImageRoute.GEMINI_PRO_IMAGE,
+        display_name="Balanced — Gemini 3 Pro Image (Nano Banana Pro)",
+        provider_model=_GEMINI_PRO_IMAGE_MODEL,
     ),
     GATEWAY_IMAGE_QUALITY: ImageModelDescription(
-        route=ImageRoute.SEEDREAM,
-        display_name="Quality — Seedream 5.0 Pro",
-        provider_model=_SEEDREAM_V5_PRO_MODEL,
+        route=ImageRoute.GPT_IMAGE_2,
+        display_name="Quality — GPT Image 2",
+        provider_model=_GPT_IMAGE_2_MODEL,
     ),
     GATEWAY_IMAGE_REVE: ImageModelDescription(
         route=ImageRoute.REVE,
@@ -91,10 +92,10 @@ def describe_image_model(model: str) -> ImageModelDescription:
             display_name="Gemini 3.1 Flash Lite Image",
             provider_model=normalized,
         )
-    if normalized == _GEMINI_FLASH_IMAGE_MODEL:
+    if normalized == _GEMINI_PRO_IMAGE_MODEL:
         return ImageModelDescription(
-            route=ImageRoute.GEMINI_FLASH_IMAGE,
-            display_name="Gemini 3.1 Flash Image (Nano Banana 2)",
+            route=ImageRoute.GEMINI_PRO_IMAGE,
+            display_name="Gemini 3 Pro Image (Nano Banana Pro)",
             provider_model=normalized,
         )
     if normalized in {
@@ -159,7 +160,7 @@ _ALL_CONTROLS: tuple[str, ...] = (
 _PROMPT_CHAR_LIMITS: dict[ImageRoute, int | None] = {
     ImageRoute.REVE: 4000,
     ImageRoute.GEMINI_FLASH_LITE: None,
-    ImageRoute.GEMINI_FLASH_IMAGE: None,
+    ImageRoute.GEMINI_PRO_IMAGE: None,
     ImageRoute.SEEDREAM: None,
     ImageRoute.GPT_IMAGE_2: None,
     ImageRoute.UNKNOWN: None,
@@ -174,7 +175,7 @@ _NATIVE_ASPECTS: dict[ImageRoute, tuple[str, ...]] = {
         "5:4", "1:1", "4:5", "3:4", "2:3", "9:16", "1:2", "1:3", "1:4",
     ),
     ImageRoute.GEMINI_FLASH_LITE: (),
-    ImageRoute.GEMINI_FLASH_IMAGE: (),
+    ImageRoute.GEMINI_PRO_IMAGE: (),
     ImageRoute.SEEDREAM: (),
     ImageRoute.GPT_IMAGE_2: (),
     ImageRoute.UNKNOWN: (),
@@ -190,7 +191,7 @@ _NATIVE_ASPECTS: dict[ImageRoute, tuple[str, ...]] = {
 _SUPPORTED_CONTROLS: dict[ImageRoute, frozenset[str]] = {
     ImageRoute.REVE: frozenset(),
     ImageRoute.GEMINI_FLASH_LITE: frozenset({"quality"}),
-    ImageRoute.GEMINI_FLASH_IMAGE: frozenset({"quality"}),
+    ImageRoute.GEMINI_PRO_IMAGE: frozenset({"quality"}),
     ImageRoute.SEEDREAM: frozenset({"quality"}),
     ImageRoute.GPT_IMAGE_2: frozenset({"quality"}),
     ImageRoute.UNKNOWN: frozenset(),
@@ -268,12 +269,13 @@ class ImageModelProfile:
 # images, but Canary keeps its production selector at four to reduce
 # conditioning noise; the Gemini Flash Lite route accepts many more
 # (the contents-list has headroom),
-# and GPT Image 2 processes every supplied image at high fidelity so it keeps
-# references to identity only.
+# and GPT Image 2 processes every supplied image at high fidelity, so Canary
+# keeps a conservative four-reference budget. Context-specific selectors may
+# further narrow roles (for example, panel generation keeps style text-only).
 _ROUTE_REFERENCE_CAPS: dict[ImageRoute, int] = {
     ImageRoute.REVE: 4,
     ImageRoute.GEMINI_FLASH_LITE: 10,
-    ImageRoute.GEMINI_FLASH_IMAGE: 10,
+    ImageRoute.GEMINI_PRO_IMAGE: 10,
     ImageRoute.SEEDREAM: 10,
     ImageRoute.GPT_IMAGE_2: 4,
     ImageRoute.UNKNOWN: 10,
@@ -281,18 +283,6 @@ _ROUTE_REFERENCE_CAPS: dict[ImageRoute, int] = {
 
 
 def _profile_for_route(route: ImageRoute) -> ImageModelProfile:
-    if route is ImageRoute.GPT_IMAGE_2:
-        # GPT Image 2 treats every supplied image as edit conditioning; keep it
-        # to identity only (subjects + props). Style samples and location plates
-        # leak texture/noise and repeated backgrounds.
-        return ImageModelProfile(
-            route=route,
-            max_references=_ROUTE_REFERENCE_CAPS[route],
-            supported_roles=frozenset({"subject", "prop"}),
-            prompt_char_limit=_PROMPT_CHAR_LIMITS[route],
-            native_aspect_modes=_NATIVE_ASPECTS[route],
-            supported_controls=_SUPPORTED_CONTROLS[route],
-        )
     return ImageModelProfile(
         route=route,
         max_references=_ROUTE_REFERENCE_CAPS[route],

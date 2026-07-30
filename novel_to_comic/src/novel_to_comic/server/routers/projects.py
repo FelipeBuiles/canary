@@ -49,6 +49,8 @@ from novel_to_comic.asset_generation import (
 )
 from novel_to_comic.state import (
     STAGE_NAMES,
+    StageState,
+    StageStatus,
     create_initial_state,
     is_stale,
     load_state,
@@ -124,6 +126,33 @@ def _stage_payload(
         "stale": stale,
         "in_flight": in_flight or [],
     }
+
+
+def _reopen_unapproved_brief(project_dir: Path, state) -> bool:
+    """Repair pipeline state that advanced beyond an unapproved brief."""
+    try:
+        brief = TargetArtifacts(project_dir).read_brief()
+    except (ArtifactMissing, ValueError):
+        return False
+
+    brief_stage = state.stages["brief"]
+    downstream = ("adapt", "plan", "draw", "finish")
+    brief_state_needs_repair = (
+        brief_stage.status == StageStatus.COMPLETE or brief_stage.approved is True
+    )
+    downstream_needs_reset = any(
+        state.stages[stage].status != StageStatus.PENDING for stage in downstream
+    )
+    if brief.status == "approved" or not (
+        brief_state_needs_repair or downstream_needs_reset
+    ):
+        return False
+
+    brief_stage.status = StageStatus.AWAITING_REVIEW
+    brief_stage.approved = None
+    for stage in downstream:
+        state.stages[stage] = StageState()
+    return True
 
 
 def _target_page_count(project_dir: Path) -> int:
@@ -588,8 +617,11 @@ def project_status(
     project_dir, config, state = project
     running = _is_project_running(user_id, project_id, request)
 
+    state_changed = not running and _reopen_unapproved_brief(project_dir, state)
     style_selected = is_style_selected(project_dir, config)
     if style_selected and clear_style_failures_after_selection(state):
+        state_changed = True
+    if state_changed:
         save_state(state, project_dir)
 
     stages = {}

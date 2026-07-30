@@ -383,9 +383,28 @@ def _verify_complete_page_images(
     images: list[Any],
 ) -> None:
     references = manifest["references"]
-    if len(references) != len(images):
-        raise ValueError("complete-page reference count mismatch")
-    for reference, image in zip(references, images, strict=True):
+    correction = manifest.get("correction")
+    expected_count = len(references) + (1 if correction is not None else 0)
+    if expected_count != len(images):
+        filenames = [_item_filename(image) or "<unnamed>" for image in images]
+        raise ValueError(
+            "complete-page reference count mismatch "
+            f"(expected={expected_count}, received={len(images)}, "
+            f"references={len(references)}, correction={correction is not None}, "
+            f"files={filenames!r})"
+        )
+    reference_images = images
+    if correction is not None:
+        if not isinstance(correction, dict):
+            raise ValueError("complete-page correction must be an object")
+        parent_digest = correction.get("parent_render_image_sha256")
+        parent_data = _read_bytes(images[0])
+        if parent_data is None:
+            raise ValueError("complete-page edit source is unreadable")
+        if hashlib.sha256(parent_data).hexdigest() != parent_digest:
+            raise ValueError("complete-page edit source digest mismatch")
+        reference_images = images[1:]
+    for reference, image in zip(references, reference_images, strict=True):
         data = _read_bytes(image)
         if data is None:
             raise ValueError(
@@ -402,10 +421,24 @@ def _exact_complete_page_contents(
     image_parts: list[Any],
 ) -> list[Any]:
     references = manifest["references"]
-    if len(references) != len(image_parts):
+    correction = manifest.get("correction")
+    expected_count = len(references) + (1 if correction is not None else 0)
+    if expected_count != len(image_parts):
         raise ValueError("complete-page reference count mismatch")
     contents: list[Any] = []
-    for reference, part in zip(references, image_parts, strict=True):
+    reference_parts = image_parts
+    if correction is not None:
+        contents.extend(
+            (
+                image_parts[0],
+                (
+                    "Parent complete page revision to correct. Preserve all "
+                    "unmentioned artwork and apply the frozen correction instruction."
+                ),
+            )
+        )
+        reference_parts = image_parts[1:]
+    for reference, part in zip(references, reference_parts, strict=True):
         contents.extend(
             (
                 part,
@@ -943,7 +976,7 @@ def _estimated_image_cost(
         # Nano Banana 2 Lite — image output at $30/1M tokens (1120 tokens for a
         # 1K image = $0.0336); input refs at $0.25/1M tokens (1120 tokens = $0.00028).
         return 0.0336 + 0.00028 * ref_count
-    if normalized == "gemini-3-pro-image-preview":
+    if normalized in {"gemini-3-pro-image", "gemini-3-pro-image-preview"}:
         return 0.134 + 0.00112 * ref_count
     return None
 

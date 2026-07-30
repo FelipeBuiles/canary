@@ -28,6 +28,7 @@ let stageStatuses: Record<"adapt" | "plan" | "draw", TestStageInfo> = {
   draw: { status: "awaiting_review", stale: false },
 };
 let completePagesUnavailable = false;
+let pageIssues: Array<Record<string, unknown>> | undefined;
 let adaptationIssues: EditorialIssue[] = [];
 let planIssues: EditorialIssue[] = [];
 let planValidation: {
@@ -88,7 +89,7 @@ vi.mock("../api/queries", () => ({
         active_render: {
           render: { page_number: 1, revision: 2, parent_revision: 1 },
         },
-        issues: [{
+        issues: pageIssues ?? [{
           id: "page-issue-1",
           issue_type: "identity",
           classification: "editorial_issue",
@@ -171,6 +172,7 @@ describe("PagesRoom", () => {
     trackGenerationJobs.mockClear();
     includeUndrawnPage = false;
     completePagesUnavailable = false;
+    pageIssues = undefined;
     adaptationIssues = [{
       id: "adapt-issue-1",
       owner_stage: "adapt",
@@ -301,6 +303,28 @@ describe("PagesRoom", () => {
     );
   });
 
+  it("offers to start Adapt when a recovered project is pending", () => {
+    stageStatuses = {
+      adapt: { status: "pending", stale: false },
+      plan: { status: "pending", stale: false },
+      draw: { status: "pending", stale: false },
+    };
+    completePagesUnavailable = true;
+
+    renderRoom();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start adaptation" }));
+    expect(runPipeline).toHaveBeenCalledWith(
+      {
+        project: "demo",
+        stage: "adapt",
+        rerun: false,
+        retryFailed: undefined,
+      },
+      expect.any(Object),
+    );
+  });
+
   it("offers to retry Adapt when a server restart left it stale", () => {
     stageStatuses = {
       adapt: { status: "running", stale: true },
@@ -418,7 +442,10 @@ describe("PagesRoom", () => {
       requestedCorrection: "Keep the reveal, but restore the approved face.",
     }));
 
-    fireEvent.click(screen.getByRole("button", { name: "CORRECT COMPLETE PAGE" }));
+    expect(screen.getByText(
+      "This redraws the whole page as a new revision using this finding. Your current page and approved script stay saved.",
+    )).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "CREATE CORRECTED REVISION" }));
     expect(correctIssue).toHaveBeenCalledWith(
       {
         project: "demo",
@@ -428,6 +455,73 @@ describe("PagesRoom", () => {
       expect.any(Object),
     );
     expect(trackGenerationJobs).toHaveBeenLastCalledWith("demo", ["job-correction-1"]);
+  });
+
+  it("shows the reason when a corrected revision cannot be created", () => {
+    correctIssue.mockImplementation((_variables, options) => {
+      options?.onError?.(new Error("Saved edition conflict"));
+    });
+    renderRoom();
+    fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "CREATE CORRECTED REVISION" }));
+
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Could not create corrected revision. Saved edition conflict",
+    );
+  });
+
+  it("offers queue-all or one-by-one when Draw starts", () => {
+    includeUndrawnPage = true;
+    stageStatuses = {
+      adapt: { status: "complete", stale: false },
+      plan: { status: "complete", stale: false },
+      draw: { status: "pending", stale: false },
+    };
+    renderRoom();
+
+    expect(screen.getByText("How do you want to draw this edition?")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "GO ONE BY ONE" }));
+    expect(runPipeline).toHaveBeenLastCalledWith(
+      { project: "demo", stage: "draw", queuePages: false },
+      expect.any(Object),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "QUEUE ALL PAGES" }));
+    expect(runPipeline).toHaveBeenLastCalledWith(
+      { project: "demo", stage: "draw", queuePages: true },
+      expect.any(Object),
+    );
+    expect(screen.getByRole("img", {
+      name: "Page 2: generation in progress",
+    })).toBeTruthy();
+  });
+
+  it("explains the exact OCR mismatch before offering a redraw", () => {
+    pageIssues = [{
+      id: "page-issue-ocr",
+      issue_type: "misspelled_lettering",
+      classification: "invariant_failure",
+      correction_kind: "render_fidelity",
+      correction_owner: "draw",
+      page_number: 1,
+      render_revision: 2,
+      evidence: [
+        'expected_text=["Open the door.", "Run!"]',
+        'recognized_text=["Open the dor.", "Run!"]',
+      ],
+      requested_correction: "OCR lettering does not exactly match canonical wording.",
+      status: "open",
+      resolution_revision: null,
+    }];
+    renderRoom();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
+
+    expect(screen.getByText("Some lettering does not match")).toBeTruthy();
+    expect(screen.getByText("Open the door. · Run!")).toBeTruthy();
+    expect(screen.getByText("Open the dor. · Run!")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "CREATE CORRECTED REVISION" })).toBeTruthy();
   });
 
   it("generates one complete page from an undrawn page card", () => {

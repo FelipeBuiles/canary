@@ -903,14 +903,15 @@ def _finalize_event(
             estimated_cost_usd,
             usage.cost_usd if usage else 0.0,
         )
+    event_persisted = True
     try:
         from novel_to_comic.server.db import get_db
 
         get_db().table("ai_usage_events").update(update).eq("id", event_id).execute()
     except Exception as exc:
+        event_persisted = False
         logger.warning("ai_usage_events update failed for %s: %s", event_id, exc)
-        return
-    if billable and usage is not None:
+    if event_persisted and billable and usage is not None:
         _settle_event_usage(usage, feature=feature, status=status)
     if status != "cancelled" and metadata is not None:
         _log_langfuse_generation(

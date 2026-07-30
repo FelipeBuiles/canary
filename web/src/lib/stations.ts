@@ -119,9 +119,7 @@ export function getStationState(station: Station, status: ProjectStatus | undefi
     if (!stageFailed(status, stage)) return false;
     return !gatedStageSuperseded(stage);
   })) return "failed";
-  if (gatedStages.some((s) =>
-    stageStatusOf(status, s) === "awaiting_review" && !gatedStageSuperseded(s)
-  )) return "review";
+  if (gatedStages.some((s) => stageStatusOf(status, s) === "awaiting_review")) return "review";
   if (gatedStages.every((s) => stageStatusOf(status, s) === "complete" || gatedStageSuperseded(s))) return "done";
   return "wait";
 }

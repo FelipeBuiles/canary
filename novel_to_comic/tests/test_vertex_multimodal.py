@@ -9,6 +9,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from litellm_handlers.vertex_multimodal import (
     _extract_image,
+    _estimated_image_cost,
     _image_config_kwargs,
     _image_size_for_dimensions,
     _map_to_supported_aspect,
@@ -61,6 +62,74 @@ def test_complete_page_manifest_binds_exact_ordered_bytes_and_prompt():
     assert contents[-1] == "Render one complete page."
 
 
+def test_complete_page_correction_accepts_parent_render_before_references():
+    raw = _complete_page_manifest()
+    raw["correction"] = {
+        "issue_id": "issue-lettering",
+        "parent_render_revision": 1,
+        "parent_render_image_sha256": hashlib.sha256(b"parent-page").hexdigest(),
+        "instruction": "Correct the visible lettering.",
+    }
+    raw["request_sha256"] = hashlib.sha256(
+        json.dumps(
+            {key: value for key, value in raw.items() if key != "request_sha256"},
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+    manifest = _parse_complete_page_request(json.dumps(raw))
+    images = [
+        ("complete-page-edit-source.png", b"parent-page", "image/png"),
+        ("ward.png", b"ward", "image/png"),
+    ]
+
+    _verify_complete_page_images(manifest, images)
+    parent_part = object()
+    reference_part = object()
+    contents = _exact_complete_page_contents(
+        manifest,
+        [parent_part, reference_part],
+    )
+
+    assert contents[0] is parent_part
+    assert "complete page revision to correct" in contents[1]
+    assert contents[2] is reference_part
+    assert "blood below the right eye" in contents[3]
+    assert contents[-1] == "Render one complete page."
+
+
+def test_complete_page_count_mismatch_reports_safe_request_shape():
+    raw = _complete_page_manifest()
+    raw["correction"] = {
+        "issue_id": "issue-lettering",
+        "parent_render_revision": 1,
+        "parent_render_image_sha256": hashlib.sha256(b"parent-page").hexdigest(),
+        "instruction": "Correct the visible lettering.",
+    }
+    raw["request_sha256"] = hashlib.sha256(
+        json.dumps(
+            {key: value for key, value in raw.items() if key != "request_sha256"},
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+    manifest = _parse_complete_page_request(json.dumps(raw))
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"expected=2, received=1, references=1, correction=True, "
+            r"files=\['complete-page-ref-1'\]"
+        ),
+    ):
+        _verify_complete_page_images(
+            manifest,
+            [("complete-page-ref-1", b"ward", "image/png")],
+        )
+
+
 def test_complete_page_manifest_rejects_tampering():
     raw = _complete_page_manifest()
     raw["prompt"] = "Render a panel instead."
@@ -90,16 +159,24 @@ def test_flash_lite_image_clamps_unsupported_resolution_to_1k():
 
 
 def test_complete_page_dimensions_select_native_2k_output():
-    assert _image_size_for_dimensions(1696, 2528) == "2K"
+    assert _image_size_for_dimensions(2048, 3072) == "2K"
     assert _image_config_kwargs(
         2 / 3,
         None,
-        model="gemini-3.1-flash-image",
+        model="gemini-3-pro-image",
         image_size="2K",
     ) == {
         "aspect_ratio": "2:3",
         "image_size": "2K",
     }
+
+
+def test_gemini_pro_ga_model_uses_current_image_and_reference_costs():
+    assert _estimated_image_cost(
+        "gemini-3-pro-image",
+        2,
+        image_size="2K",
+    ) == pytest.approx(0.13624)
 
 
 def test_legacy_vertex_sdk_can_safely_omit_square_aspect_control():
@@ -116,7 +193,7 @@ def test_translate_vertex_error_rate_limit():
     exc.status = "RESOURCE_EXHAUSTED"
     exc.message = "Resource has been exhausted"
 
-    translated = _translate_vertex_error(exc, "gemini-3-pro-image-preview")
+    translated = _translate_vertex_error(exc, "gemini-3-pro-image")
     assert isinstance(translated, litellm.RateLimitError)
     assert "Vertex image generation failed" in str(translated)
     assert "RESOURCE_EXHAUSTED" in str(translated)
@@ -129,7 +206,7 @@ def test_translate_vertex_error_other_api_error():
     exc.status = "INVALID_ARGUMENT"
     exc.message = "Invalid image size"
 
-    translated = _translate_vertex_error(exc, "gemini-3-pro-image-preview")
+    translated = _translate_vertex_error(exc, "gemini-3-pro-image")
     assert isinstance(translated, litellm.APIError)
     assert translated.status_code == 400
     assert "Vertex image generation failed" in str(translated)
