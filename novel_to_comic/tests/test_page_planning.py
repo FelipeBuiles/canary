@@ -568,13 +568,10 @@ def test_two_pass_plan_canonicalizes_explicit_lettering_order(
         pages = []
         for page_number in page_numbers:
             panel_count = (page_number % 3) + 1
-            lettering_ids = []
+            lettering_ids_by_panel = [[] for _ in range(panel_count)]
             if page_number == 1:
-                lettering_ids = [
-                    "lettering_0001_second",
-                    "lettering_0001",
-                    "lettering_0001",
-                ]
+                lettering_ids_by_panel[0] = ["lettering_0001_second"]
+                lettering_ids_by_panel[1] = ["lettering_0001"]
             pages.append(
                 {
                     "emphasis": "initial",
@@ -590,7 +587,7 @@ def test_two_pass_plan_canonicalizes_explicit_lettering_order(
                             "visual_intent": (
                                 f"Visual moment {page_number}.{panel}."
                             ),
-                            "lettering_ids": lettering_ids if panel == 1 else [],
+                            "lettering_ids": lettering_ids_by_panel[panel - 1],
                             "entity_ids": [],
                         }
                         for panel in range(1, panel_count + 1)
@@ -627,8 +624,103 @@ def test_two_pass_plan_canonicalizes_explicit_lettering_order(
     assert [call["feature"] for call in calls].count("plan.map") == 1
     assert [call["feature"] for call in calls].count("plan.detail") == 3
     assert [
-        item.id for item in artifacts.read_page(1).content[0].lettering
+        item.id
+        for content in artifacts.read_page(1).content
+        for item in content.lettering
     ] == ["lettering_0001", "lettering_0001_second"]
+
+
+def test_plan_canonicalizes_lettering_order_across_repeated_beat_panels(
+    tmp_path: Path,
+) -> None:
+    payload = _adaptation().model_dump(mode="json")
+    payload["content_sha256"] = ""
+    first_lettering = payload["beats"][0]["lettering"][0]
+    payload["beats"][0]["lettering"] = [
+        first_lettering,
+        {
+            **first_lettering,
+            "id": "lettering_0001_second",
+            "text": "The reef rises again.",
+        },
+    ]
+    adaptation = BookAdaptation.model_validate(payload)
+    response = {
+        "rhythm_summary": "The approach repeats before the turn.",
+        "pages": [
+            {
+                "page_number": 1,
+                "page_turn_role": "setup",
+                "spread_role": "single",
+                "emphasis": "prolongation",
+                "density_intent": "standard",
+                "rhythm_intent": "Hold on the approach.",
+                "layout_intent": "Two adjacent approach panels.",
+                "content": [
+                    {
+                        "beat_ids": ["beat_0001"],
+                        "visual_intent": "The first approach panel.",
+                        "lettering_ids": ["lettering_0001_second"],
+                    },
+                    {
+                        "beat_ids": ["beat_0001"],
+                        "visual_intent": "The second approach panel.",
+                        "lettering_ids": ["lettering_0001"],
+                    },
+                ],
+            },
+            {
+                "page_number": 2,
+                "page_turn_role": "release",
+                "spread_role": "single",
+                "emphasis": "release",
+                "density_intent": "standard",
+                "rhythm_intent": "The turn follows the approach.",
+                "layout_intent": "The yacht turns away.",
+                "content": [
+                    {
+                        "beat_ids": ["beat_0002"],
+                        "visual_intent": "Johansen turns the yacht away.",
+                        "lettering_ids": ["lettering_0002"],
+                    }
+                ],
+            },
+        ],
+    }
+    calls: list[dict] = []
+
+    async def generate(**request):
+        calls.append(request)
+        return ApiResult(value=response)
+
+    artifacts = TargetArtifacts(tmp_path)
+    plan = asyncio.run(
+        produce_book_plan(
+            adaptation,
+            ApprovedVisualReferenceInventory(),
+            ApprovedPageRange(minimum=2, maximum=2),
+            artifacts=artifacts,
+            ctx=StageRuntime(
+                "plan",
+                PipelineState(
+                    project_name="repeated-lettering",
+                    novel_path="novel.txt",
+                    created_at=datetime.now(timezone.utc),
+                ),
+                tmp_path,
+            ),
+            model="test-planner",
+            generate=generate,
+        )
+    )
+
+    assert len(calls) == 1
+    assert [
+        item.id
+        for page in plan.pages
+        for content in artifacts.read_page(page.page_number).content
+        for item in content.lettering
+    ] == ["lettering_0001", "lettering_0001_second", "lettering_0002"]
 
 
 def test_producer_retries_repetitive_single_panel_grammar_once(
