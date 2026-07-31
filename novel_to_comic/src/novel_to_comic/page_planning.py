@@ -277,7 +277,13 @@ def _normalize_draft_references(
                     elif state_id in reference_states:
                         canonical = reference_states[state_id]
                     else:
-                        canonical = state_id
+                        # Appearance-state citations are Plan-owned metadata,
+                        # and the approved inventory is their authority. An
+                        # unknown token is usually an entity/reference ID put
+                        # in the wrong field by the model; preserving it would
+                        # only defer a deterministic correction to the final
+                        # invariant pass and spend another model attempt.
+                        continue
                     if canonical is not None and canonical not in canonical_states:
                         canonical_states.append(canonical)
                 normalized_item["appearance_state_ids"] = canonical_states
@@ -893,15 +899,29 @@ def _detail_matches_map(
         )
         return tuple(errors)
     for page, mapped in zip(draft.pages, target_pages, strict=True):
+        actual = tuple(
+            beat_id for content in page.content for beat_id in content.beat_ids
+        )
         allocated = tuple(
-            dict.fromkeys(
-                beat_id for content in page.content for beat_id in content.beat_ids
-            )
+            dict.fromkeys(actual)
         )
         if allocated != mapped.beat_ids:
             errors.append(
                 f"Page {mapped.page_number} must carry {list(mapped.beat_ids)!r}; "
                 f"detail carried {list(allocated)!r}."
+            )
+            continue
+        positions = {
+            beat_id: position for position, beat_id in enumerate(mapped.beat_ids)
+        }
+        actual_positions = [positions[beat_id] for beat_id in actual]
+        if any(
+            later < earlier
+            for earlier, later in zip(actual_positions, actual_positions[1:])
+        ):
+            errors.append(
+                f"Page {mapped.page_number} must carry its mapped beats in "
+                f"monotonic order; detail cited {list(actual)!r}."
             )
     return tuple(errors)
 

@@ -29,6 +29,9 @@ from novel_to_comic.models.page import (
 )
 from novel_to_comic.models.validation import EditorialIssue
 from novel_to_comic.page_planning import (
+    _BookPlanDraft,
+    _PageMapEntry,
+    _detail_matches_map,
     _merged_editorial_issues,
     _planning_view,
     PlanInvariantError,
@@ -278,6 +281,160 @@ def _long_adaptation_with_multiple_lettering_items() -> BookAdaptation:
             },
         ]
     return BookAdaptation.model_validate(payload)
+
+
+def test_detail_validation_rejects_a_rewound_beat_sequence() -> None:
+    draft = _BookPlanDraft.model_validate(
+        {
+            "rhythm_summary": "A two-beat page.",
+            "pages": [
+                {
+                    "emphasis": "initial",
+                    "density_intent": "standard",
+                    "rhythm_intent": "The action advances.",
+                    "layout_intent": "Two ordered beats with a returning error.",
+                    "content": [
+                        {
+                            "beat_ids": ["beat_0035"],
+                            "visual_intent": "The first beat begins.",
+                        },
+                        {
+                            "beat_ids": ["beat_0036"],
+                            "visual_intent": "The second beat advances the action.",
+                        },
+                        {
+                            "beat_ids": ["beat_0035"],
+                            "visual_intent": "The page incorrectly returns backward.",
+                        },
+                        {
+                            "beat_ids": ["beat_0036"],
+                            "visual_intent": "The page incorrectly advances again.",
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+    page_map = _PageMapEntry(
+        page_number=1,
+        beat_ids=("beat_0035", "beat_0036"),
+        emphasis="initial",
+        density_intent="standard",
+        rhythm_intent="The action advances.",
+    )
+
+    errors = _detail_matches_map(draft, (page_map,))
+
+    assert errors
+    assert "monotonic" in " ".join(errors)
+
+
+def test_two_pass_detail_retry_repairs_a_rewound_page_at_the_detail_boundary(
+    tmp_path: Path,
+) -> None:
+    adaptation = _long_adaptation()
+    calls: list[dict] = []
+    detail_attempts: dict[tuple[int, ...], int] = {}
+
+    async def generate(**request):
+        calls.append(request)
+        if request["feature"] == "plan.map":
+            return ApiResult(
+                value={
+                    "rhythm_summary": "Twelve measured story pages.",
+                    "pages": [
+                        {
+                            "beat_ids": [
+                                f"beat_{index:04d}",
+                                f"beat_{index + 1:04d}",
+                            ],
+                            "emphasis": "initial",
+                            "density_intent": "standard",
+                            "rhythm_intent": f"Advance events {index} and {index + 1}.",
+                        }
+                        for index in range(1, 25, 2)
+                    ],
+                },
+                usage=None,
+            )
+
+        match = re.search(
+            r'"target_page_numbers":\[(.*?)\]',
+            request["user_content"],
+        )
+        assert match is not None
+        page_numbers = tuple(
+            int(value) for value in match.group(1).split(",") if value
+        )
+        attempt = detail_attempts.get(page_numbers, 0)
+        detail_attempts[page_numbers] = attempt + 1
+        pages = []
+        for page_number in page_numbers:
+            first_beat = (page_number - 1) * 2 + 1
+            beat_ids = (
+                f"beat_{first_beat:04d}",
+                f"beat_{first_beat + 1:04d}",
+            )
+            if page_numbers[0] == 1 and attempt == 0 and page_number == 1:
+                content_beats = [
+                    (beat_ids[0], "The first beat begins."),
+                    (beat_ids[1], "The second beat advances the action."),
+                    (beat_ids[0], "The invalid detail returns backward."),
+                    (beat_ids[1], "The invalid detail advances again."),
+                ]
+            else:
+                content_beats = [
+                    (beat_ids[0], "The first mapped beat advances in order."),
+                    (beat_ids[1], "The second mapped beat advances in order."),
+                ]
+            content = [
+                {
+                    "beat_ids": beats.split("|"),
+                    "panel_role": "standard",
+                    "visual_intent": visual_intent,
+                    "entity_ids": [],
+                }
+                for beats, visual_intent in content_beats
+            ]
+            pages.append(
+                {
+                    "emphasis": "initial",
+                    "density_intent": "standard",
+                    "rhythm_intent": f"Advance page {page_number}.",
+                    "layout_intent": "Ordered story moments.",
+                    "content": content,
+                }
+            )
+        return ApiResult(
+            value={"rhythm_summary": "Local detail.", "pages": pages},
+            usage=None,
+        )
+
+    plan = asyncio.run(
+        produce_book_plan(
+            adaptation,
+            ApprovedVisualReferenceInventory(),
+            ApprovedPageRange(minimum=12, maximum=12),
+            artifacts=TargetArtifacts(tmp_path),
+            ctx=StageRuntime(
+                "plan",
+                PipelineState(
+                    project_name="rewound-detail",
+                    novel_path="novel.txt",
+                    created_at=datetime.now(timezone.utc),
+                ),
+                tmp_path,
+            ),
+            model="test-planner",
+            generate=generate,
+        )
+    )
+
+    assert len(plan.pages) == 12
+    assert detail_attempts[tuple(range(1, 9))] == 2
+    assert detail_attempts[tuple(range(9, 13))] == 1
+    assert [call["feature"] for call in calls].count("plan.map") == 1
+    assert [call["feature"] for call in calls].count("plan.detail") == 3
 
 
 def test_long_plan_uses_global_map_bounded_detail_and_local_repair(
@@ -2247,6 +2404,9 @@ def test_mechanical_allocation_and_reference_ids_are_canonicalized(
                             "character_johansen:base",
                             "character_johansen:johansen_soaked",
                             "location_alert:base",
+                            # Production slip: an entity ID was emitted in the
+                            # appearance-state field and must be discarded.
+                            "loc_001",
                         ],
                     }
                 ],

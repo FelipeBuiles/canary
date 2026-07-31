@@ -20,6 +20,15 @@ describe("StageRunning log ticker", () => {
     expect(screen.getByText("1 / 4")).toBeTruthy();
   });
 
+  it("clamps stale over-complete totals to a valid percentage", () => {
+    renderStage(<StageRunning stage="plan" itemsDone={16} itemsTotal={9} />);
+
+    expect(screen.getByText("16 / 9")).toBeTruthy();
+    expect(screen.getByText("100%")).toBeTruthy();
+    expect(screen.queryByText("178%")).toBeNull();
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("100");
+  });
+
   it("shows the last three readable log lines for the running stage only", () => {
     usePipelineStore.setState({
       events: [
