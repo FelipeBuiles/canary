@@ -1699,10 +1699,22 @@ def _validate_locked_lettering(
     *,
     known_speaker_ids: set[str],
 ) -> None:
+    _validate_lettering_items(
+        (item for beat in lettering.beats for item in beat.lettering),
+        known_speaker_ids=known_speaker_ids,
+        error_prefix="invalid locked lettering",
+    )
+
+
+def _validate_lettering_items(
+    items: Iterable[LetteringItem],
+    *,
+    known_speaker_ids: set[str],
+    error_prefix: str,
+) -> None:
     errors = [
         f"{item.id}: {'; '.join(evidence)}"
-        for beat in lettering.beats
-        for item in beat.lettering
+        for item in items
         if (
             evidence := _lettering_contract_errors(
                 item,
@@ -1711,7 +1723,19 @@ def _validate_locked_lettering(
         )
     ]
     if errors:
-        raise ValueError("invalid locked lettering: " + " | ".join(errors))
+        raise ValueError(f"{error_prefix}: " + " | ".join(errors))
+
+
+def _validate_book_draft_lettering(
+    draft: _BookDraft,
+    *,
+    known_speaker_ids: set[str],
+) -> None:
+    _validate_lettering_items(
+        (item for beat in draft.beats for item in beat.lettering),
+        known_speaker_ids=known_speaker_ids,
+        error_prefix="invalid adaptation lettering",
+    )
 
 
 async def _generate_locked_lettering(
@@ -1787,12 +1811,14 @@ async def _generate_book_draft(
     checkpoint_name: str | None = None,
     artifacts: TargetArtifacts | None = None,
     model: str | None = None,
+    known_speaker_ids: set[str],
 ) -> _BookDraft:
     checkpoint_key = (
         _checkpoint_key(model=model, feature="adapt.book", prompt=prompt)
         if checkpoint_name is not None and artifacts is not None and model is not None
         else None
     )
+    attempt_prompt = prompt
     if (
         checkpoint_key is not None
         and checkpoint_name is not None
@@ -1805,9 +1831,19 @@ async def _generate_book_draft(
             model_type=_BookDraft,
         )
         if isinstance(cached, _BookDraft):
-            return cached
+            try:
+                _validate_book_draft_lettering(
+                    cached,
+                    known_speaker_ids=known_speaker_ids,
+                )
+                return cached
+            except ValueError as error:
+                attempt_prompt = _schema_repair_prompt(
+                    prompt,
+                    cached.model_dump(mode="json"),
+                    error,
+                )
 
-    attempt_prompt = prompt
     for attempt in range(1, _MAX_ADAPT_ATTEMPTS + 1):
         result = await generate(
             system_prompt=(
@@ -1832,7 +1868,11 @@ async def _generate_book_draft(
             if isinstance(value, Mapping):
                 value = {key: inner for key, inner in value.items() if key != "ledger"}
             draft = _BookDraft.model_validate(value)
-        except ValidationError as error:
+            _validate_book_draft_lettering(
+                draft,
+                known_speaker_ids=known_speaker_ids,
+            )
+        except (ValidationError, ValueError) as error:
             if attempt == _MAX_ADAPT_ATTEMPTS:
                 raise
             attempt_prompt = _schema_repair_prompt(prompt, result.value, error)
@@ -1865,6 +1905,7 @@ async def _generate_book_drafts(
     checkpoint_names: list[str] | None = None,
     artifacts: TargetArtifacts | None = None,
     model: str | None = None,
+    known_speaker_ids: set[str],
 ) -> list[_BookDraft]:
     semaphore = asyncio.Semaphore(_ADAPT_MAX_CONCURRENCY)
     completed = 0
@@ -1893,6 +1934,7 @@ async def _generate_book_drafts(
                     ),
                     artifacts=artifacts,
                     model=model,
+                    known_speaker_ids=known_speaker_ids,
                 )
         if record_progress:
             ctx.record_item_done()
@@ -2423,6 +2465,7 @@ async def produce_book_adaptation(
         )
         candidate: BookAdaptation | None = None
         validation = AdaptationValidation()
+        known_speaker_ids = {character.id for character in story_bible.characters}
         semaphore = asyncio.Semaphore(_ADAPT_MAX_CONCURRENCY)
         completed_blueprints = 0
 
@@ -2476,9 +2519,7 @@ async def produce_book_adaptation(
                 draft = await _generate_locked_lettering(
                     prompt=lettering_prompts[index],
                     blueprint=blueprints[index],
-                    known_speaker_ids={
-                        character.id for character in story_bible.characters
-                    },
+                    known_speaker_ids=known_speaker_ids,
                     checkpoint_name=f"lettering/shard_{index + 1:03d}",
                     model=model,
                     artifacts=artifacts,
@@ -2601,6 +2642,7 @@ async def produce_book_adaptation(
                 ],
                 artifacts=artifacts,
                 model=model,
+                known_speaker_ids=known_speaker_ids,
             )
             repaired = [
                 _canonicalize_draft_requirements(

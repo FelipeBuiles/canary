@@ -16,6 +16,7 @@ from novel_to_comic.book_adaptation import (
     _LedgerException,
     _adaptation_shards,
     _canonicalize_candidate_requirements,
+    _generate_book_draft,
     _materialize_draft_ledger,
     _repair_source_scope,
     _splice_draft_repair,
@@ -2748,6 +2749,61 @@ def test_locked_lettering_rejects_onscreen_speech_without_entity_id() -> None:
             lettering,
             known_speaker_ids={"char_006"},
         )
+
+
+def test_adaptation_repair_retries_invalid_onscreen_lettering(
+    tmp_path: Path,
+) -> None:
+    expected = _book_adaptation()
+    invalid_item = expected.beats[0].lettering[0].model_copy(
+        update={
+            "kind": "dialogue",
+            "speaker": "Gregor Samsa",
+            "speaker_entity_id": None,
+            "delivery": "onscreen",
+        }
+    )
+    valid_item = invalid_item.model_copy(update={"speaker_entity_id": "char_001"})
+    responses = [
+        _BookDraft(
+            beats=(
+                expected.beats[0].model_copy(
+                    update={"lettering": (invalid_item,)}
+                ),
+            ),
+        ).model_dump(mode="json"),
+        _BookDraft(
+            beats=(
+                expected.beats[0].model_copy(update={"lettering": (valid_item,)}),
+            ),
+        ).model_dump(mode="json"),
+    ]
+    calls: list[dict] = []
+
+    async def generate(**request):
+        calls.append(request)
+        return ApiResult(value=responses.pop(0), usage=None)
+
+    draft = asyncio.run(
+        _generate_book_draft(
+            prompt="repair prompt",
+            generate=generate,
+            ctx=StageRuntime(
+                "adapt",
+                PipelineState(
+                    project_name="lettering-repair-test",
+                    novel_path="novel.txt",
+                    created_at=datetime.now(timezone.utc),
+                ),
+                tmp_path,
+            ),
+            known_speaker_ids={"char_001"},
+        )
+    )
+
+    assert draft.beats[0].lettering[0].speaker_entity_id == "char_001"
+    assert len(calls) == 2
+    assert "On-screen lettering requires speaker_entity_id" in calls[1]["user_content"]
 
 
 def test_missing_compact_ledger_exception_becomes_a_repairable_failure() -> None:
