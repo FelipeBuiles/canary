@@ -192,7 +192,9 @@ export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0 }: StageRunn
   const { t } = useI18n();
   const meta = STAGE_META[stage];
   const hasProgress = itemsTotal > 0;
-  const pct = hasProgress ? Math.round((itemsDone / itemsTotal) * 100) : 0;
+  const pct = hasProgress
+    ? Math.min(100, Math.max(0, Math.round((itemsDone / itemsTotal) * 100)))
+    : 0;
 
   // Live ticker: the last few human-readable log lines the pipeline emitted
   // for this stage over SSE. Error lines are excluded — failures have their
