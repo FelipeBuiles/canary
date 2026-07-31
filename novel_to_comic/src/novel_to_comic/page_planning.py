@@ -208,7 +208,14 @@ def _normalize_book_plan_draft(
             content_id = f"page_{page_number:03d}_content_{order:03d}"
             normalized_item["id"] = content_id
             normalized_item["order"] = order
-            cited = list(normalized_item.get("lettering_ids") or ())
+            cited = list(
+                dict.fromkeys(normalized_item.get("lettering_ids") or ())
+            )
+            cited = [
+                lettering_id
+                for lettering_id in cited
+                if lettering_id not in allocated_lettering
+            ]
             for beat_id in normalized_item.get("beat_ids") or ():
                 for lettering_id in lettering_by_beat.get(beat_id, ()):
                     if (
@@ -380,9 +387,10 @@ def build_book_plan_prompt(
         "content item as the beat that owns them, in reading order; never copy, "
         "rewrite, shorten, clip, or omit the wording itself. Every lettering ID of "
         "an allocated beat must be cited exactly once. When lettering has "
-        "delivery='onscreen', include its speaker_entity_id in that content item's "
-        "entity_ids and make visual_intent visibly stage that speaker so balloon "
-        "ownership is unambiguous. Off-screen delivery must not receive a tail "
+        "delivery='onscreen', make visual_intent visibly stage its speaker so "
+        "balloon ownership is unambiguous; code derives the canonical speaker "
+        "entity into that content item's entity_ids. Off-screen delivery must not "
+        "receive a tail "
         "pointing at a visible character. Pages may bridge "
         "source-scene boundaries. Group adjacent story beats into varied multi-panel "
         "pages when that preserves action, reaction, detail, causality, and rhythm. "
@@ -570,7 +578,8 @@ def _detail_batch_prompt(
         "canonicalizes page numbers, content IDs/order, ordinary lettering "
         "allocation, and reading order. Cite lettering_ids only to move a repeated "
         "beat's lettering away from its first occurrence. Never rewrite lettering. "
-        "Stage every on-screen speaker visibly. Avoid consecutive fully silent "
+        "Code derives canonical on-screen speaker entity citations; stage every "
+        "on-screen speaker visibly in visual_intent. Avoid consecutive fully silent "
         "pages and reserve one-panel pages for exceptional moments."
         + concern_text
         + "\n"
@@ -1042,19 +1051,13 @@ async def _produce_book_plan_two_pass(
     author_pins: tuple[AuthorGeometryPin, ...] | list[AuthorGeometryPin],
 ) -> BookPlan:
     pin_by_beat = _validate_author_pins(adaptation, author_pins)
-    estimated_batches = max(
-        1,
-        (target_range.minimum + _PLAN_DETAIL_BATCH_PAGES - 1)
-        // _PLAN_DETAIL_BATCH_PAGES,
-    )
     estimate = estimate_book_plan_cost(
         adaptation,
         references,
         target_range,
         model=model,
     )
-    total_steps = 1 + estimated_batches
-    with ctx.execute(total=total_steps, estimated_cost_usd=estimate):
+    with ctx.execute(total=0, estimated_cost_usd=estimate):
         try:
             page_map, history = await _generate_page_map(
                 adaptation,
@@ -1069,12 +1072,17 @@ async def _produce_book_plan_two_pass(
                 attempts=1,
             )
             raise
-        ctx.record_item_done()
-        ctx.progress(1, total_steps)
         ranges = [
             (start, min(start + _PLAN_DETAIL_BATCH_PAGES, len(page_map.pages)))
             for start in range(0, len(page_map.pages), _PLAN_DETAIL_BATCH_PAGES)
         ]
+        # One step is reserved for canonicalization, validation, and artifact
+        # persistence so the stage cannot report completion while that work is
+        # still running.
+        total_steps = 2 + len(ranges)
+        ctx.set_progress_total(total_steps)
+        ctx.record_item_done()
+        ctx.progress(1, total_steps)
         ctx.set_estimated_cost(
             estimate
             + sum(
@@ -1164,6 +1172,8 @@ async def _produce_book_plan_two_pass(
             page_count=len(page_map.pages),
         )
         if grouped:
+            total_steps += len(grouped)
+            ctx.set_progress_total(total_steps)
             by_index = {
                 start // _PLAN_DETAIL_BATCH_PAGES: (start, stop, batch)
                 for start, stop, batch in batches
@@ -1180,6 +1190,8 @@ async def _produce_book_plan_two_pass(
                     ctx=ctx,
                     concerns=tuple(concerns),
                 )
+                ctx.record_item_done()
+                ctx.progress(ctx.stage_state.items_done, total_steps)
                 by_index[index] = (start, stop, repaired)
             batches = list(by_index.values())
             draft = _merge_detail_drafts(
@@ -1237,7 +1249,8 @@ async def _produce_book_plan_two_pass(
         for page in pages:
             artifacts.write_page(page)
         artifacts.write_plan(plan)
-        ctx.progress(1 + len(ranges), 1 + len(ranges))
+        ctx.record_item_done()
+        ctx.progress(total_steps, total_steps)
     return plan
 
 
@@ -1479,6 +1492,28 @@ def _derived_state_citations(
     return tuple(entity_ids), tuple(state_ids), unapproved
 
 
+def _derived_speaker_citations(
+    entity_ids: tuple[str, ...],
+    lettering: tuple[LetteringItem, ...],
+) -> tuple[str, ...]:
+    """Make Adapt's on-screen speaker placement mechanically visible.
+
+    ``speaker_entity_id`` and ``delivery`` are canonical Adapt decisions. The
+    planner still authors the visual intent, but it must not pay for a repair
+    merely because the model omitted the speaker from its derived entity list.
+    """
+
+    visible_entities = list(entity_ids)
+    for item in lettering:
+        if (
+            item.delivery == "onscreen"
+            and item.speaker_entity_id is not None
+            and item.speaker_entity_id not in visible_entities
+        ):
+            visible_entities.append(item.speaker_entity_id)
+    return tuple(visible_entities)
+
+
 def _canonical_pages(
     adaptation: BookAdaptation,
     draft: "_BookPlanDraft",
@@ -1576,6 +1611,7 @@ def _canonical_pages(
                 beat_by_id,
                 approved_pairs,
             )
+            entity_ids = _derived_speaker_citations(entity_ids, tuple(lettering))
             unapproved_changes.extend(unapproved)
             payload = content.model_dump(
                 exclude={"lettering_ids", "entity_ids", "appearance_state_ids"}

@@ -286,6 +286,12 @@ def test_long_plan_uses_global_map_bounded_detail_and_local_repair(
     adaptation = _long_adaptation()
     calls: list[dict] = []
     detail_targets: list[tuple[int, ...]] = []
+    progress_at_repair: list[tuple[int, int]] = []
+    state = PipelineState(
+        project_name="long-plan",
+        novel_path="novel.txt",
+        created_at=datetime.now(timezone.utc),
+    )
 
     async def generate(**request):
         calls.append(request)
@@ -314,6 +320,10 @@ def test_long_plan_uses_global_map_bounded_detail_and_local_repair(
         page_numbers = tuple(int(value) for value in match.group(1).split(",") if value)
         detail_targets.append(page_numbers)
         repairing = "repetitive_page_composition" in request["user_content"]
+        if repairing:
+            progress_at_repair.append(
+                (state.stages["plan"].items_done, state.stages["plan"].items_total)
+            )
         pages = []
         for page_number in page_numbers:
             panel_count = 1 if page_number <= 4 and not repairing else 2
@@ -346,15 +356,7 @@ def test_long_plan_uses_global_map_bounded_detail_and_local_repair(
             ApprovedVisualReferenceInventory(),
             ApprovedPageRange(minimum=24, maximum=24),
             artifacts=artifacts,
-            ctx=StageRuntime(
-                "plan",
-                PipelineState(
-                    project_name="long-plan",
-                    novel_path="novel.txt",
-                    created_at=datetime.now(timezone.utc),
-                ),
-                tmp_path,
-            ),
+            ctx=StageRuntime("plan", state, tmp_path),
             model="test-planner",
             generate=generate,
         )
@@ -369,14 +371,18 @@ def test_long_plan_uses_global_map_bounded_detail_and_local_repair(
     assert len(plan.pages) == 24
     assert len(artifacts.read_page(1).content) == 2
     assert artifacts.read_page(1).content[0].lettering[0].id == "lettering_0001"
+    assert progress_at_repair == [(4, 6)]
+    assert state.stages["plan"].items_done == state.stages["plan"].items_total == 6
 
 
 def test_two_pass_plan_canonicalizes_explicit_lettering_order(
     tmp_path: Path,
 ) -> None:
     adaptation = _long_adaptation_with_multiple_lettering_items()
+    calls: list[dict] = []
 
     async def generate(**request):
+        calls.append(request)
         if request["feature"] == "plan.map":
             return ApiResult(
                 value={
@@ -404,10 +410,12 @@ def test_two_pass_plan_canonicalizes_explicit_lettering_order(
         )
         pages = []
         for page_number in page_numbers:
+            panel_count = (page_number % 3) + 1
             lettering_ids = []
             if page_number == 1:
                 lettering_ids = [
                     "lettering_0001_second",
+                    "lettering_0001",
                     "lettering_0001",
                 ]
             pages.append(
@@ -419,11 +427,16 @@ def test_two_pass_plan_canonicalizes_explicit_lettering_order(
                     "content": [
                         {
                             "beat_ids": [f"beat_{page_number:04d}"],
-                            "panel_role": "standard",
-                            "visual_intent": f"Visual moment {page_number}.",
-                            "lettering_ids": lettering_ids,
+                            "panel_role": (
+                                "standard" if panel == 1 else "detail"
+                            ),
+                            "visual_intent": (
+                                f"Visual moment {page_number}.{panel}."
+                            ),
+                            "lettering_ids": lettering_ids if panel == 1 else [],
                             "entity_ids": [],
                         }
+                        for panel in range(1, panel_count + 1)
                     ],
                 }
             )
@@ -454,6 +467,8 @@ def test_two_pass_plan_canonicalizes_explicit_lettering_order(
     )
 
     assert len(plan.pages) == 24
+    assert [call["feature"] for call in calls].count("plan.map") == 1
+    assert [call["feature"] for call in calls].count("plan.detail") == 3
     assert [
         item.id for item in artifacts.read_page(1).content[0].lettering
     ] == ["lettering_0001", "lettering_0001_second"]
@@ -2634,6 +2649,37 @@ def _run_plan(
     except PlanInvariantError as error:
         outcome = error
     return artifacts, calls, outcome
+
+
+def _onscreen_adaptation() -> BookAdaptation:
+    payload = _adaptation().model_dump(mode="json")
+    payload["content_sha256"] = ""
+    payload["beats"][1]["lettering"][0]["delivery"] = "onscreen"
+    payload["beats"][1]["lettering"][0]["speaker_entity_id"] = (
+        "character_johansen"
+    )
+    return BookAdaptation.model_validate(payload)
+
+
+def test_plan_derives_onscreen_speaker_entity_citation_without_retry(
+    tmp_path: Path,
+) -> None:
+    response = _two_page_response({"entity_ids": ["location_alert"]})
+    response["pages"][1]["content"][0]["entity_ids"] = ["location_alert"]
+
+    artifacts, calls, plan = _run_plan(
+        _onscreen_adaptation(),
+        _inventory(),
+        response,
+        tmp_path,
+    )
+
+    assert isinstance(plan, BookPlan)
+    assert len(calls) == 1
+    assert artifacts.read_page(2).content[0].entity_ids == (
+        "location_alert",
+        "character_johansen",
+    )
 
 
 def test_an_adapted_appearance_change_is_derived_into_the_page_citations(
