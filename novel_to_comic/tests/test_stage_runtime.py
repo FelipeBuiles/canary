@@ -125,6 +125,23 @@ class TestEventEmission:
         ctx.progress(1, 3)
         assert any(e["type"] == "stage_progress" and e["done"] == 1 for e in events)
 
+    def test_set_progress_total_cannot_fall_behind_completed_work(self, tmp_path):
+        events = []
+        state = _state(tmp_path)
+        ctx = StageRuntime("plan", state, tmp_path, on_event=events.append)
+        ctx.begin(total=1)
+        ctx.record_item_done()
+        ctx.set_progress_total(0)
+
+        assert state.stages["plan"].items_done == 1
+        assert state.stages["plan"].items_total == 1
+        assert events[-1] == {
+            "type": "stage_progress",
+            "stage": "plan",
+            "done": 1,
+            "total": 1,
+        }
+
     def test_log_emits_event(self, tmp_path):
         events = []
         state = _state(tmp_path)

@@ -160,6 +160,21 @@ class StageRuntime:
     def progress(self, done: int, total: int) -> None:
         self._emit({"type": "stage_progress", "stage": self.name, "done": done, "total": total})
 
+    def set_progress_total(self, total: int) -> None:
+        """Update the total when a stage discovers its actual work.
+
+        Some stages cannot know their work item count until an initial model
+        response arrives. Never lower the total below work already completed,
+        so a late estimate cannot make the UI report more than 100%.
+        """
+
+        if total < 0:
+            raise ValueError("progress total cannot be negative")
+        total = max(total, self.stage_state.items_done)
+        self.stage_state.items_total = total
+        self.save()
+        self.progress(self.stage_state.items_done, total)
+
     def activity(
         self,
         *,
