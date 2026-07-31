@@ -22,6 +22,7 @@ import {
 } from "../../api/queries";
 import { ApprovalBar, ConfirmDrawer, RegenAction, RoomHeader, RoomShell, RerunStageAction, StagePlaceholder, SectionHeader, EntityCard } from "../../components/composites";
 import { useRunAction } from "../../hooks/useRunAction";
+import { useLiveStageAsset } from "../../hooks/useLiveStageAsset";
 import { Tag } from "../../components/ui/Tag";
 import { Button } from "../../components/ui/Button";
 import { ImageModal } from "../../components/ui/ImageModal";
@@ -46,35 +47,6 @@ const REF_VIEWS = [
   { pose: "portrait", label: "Portrait" },
   { pose: "full_body", label: "Full body" },
 ] as const;
-
-/**
- * Reveal one asset as soon as its file exists, while the stage is still running.
- *
- * Cast writes every reference to disk as it finishes it, but stage progress
- * events carry counts, not ids — so the room cannot tell which asset is in
- * flight. Each card therefore probes its own file on the poll interval and
- * shows it the moment it loads, instead of every card hiding behind a
- * placeholder until the whole stage completes.
- */
-function useLiveStageAsset(src: string, timestamp: number, stageRegenerating: boolean) {
-  const [loaded, setLoaded] = useState(false);
-
-  const probe = stageRegenerating ? (
-    <img
-      key={timestamp}
-      src={`${src}?t=${timestamp}`}
-      className="hidden"
-      onLoad={() => setLoaded(true)}
-      onError={() => setLoaded(false)}
-      alt=""
-      aria-hidden="true"
-    />
-  ) : null;
-
-  // Gated on the stage rather than reset by an effect, so a result from a
-  // previous run can never leak into the card's own load/error handling.
-  return { hasImage: stageRegenerating && loaded, probe };
-}
 
 /**
  * Read-only derived views sent to the image model. Panel framing chooses the
@@ -201,6 +173,7 @@ export function StateRefRow({
                 <img
                   src={src}
                   alt={`${s.label} reference`}
+                  loading="lazy"
                   className="h-full w-full object-cover"
                   onError={() => setFailed((f) => ({ ...f, [src]: true }))}
                 />
@@ -486,11 +459,6 @@ function CharacterCastCard({
       }, 0);
       return () => window.clearTimeout(timer);
     }
-
-    const interval = window.setInterval(() => {
-      setTimestamp(Date.now());
-    }, 2000);
-    return () => window.clearInterval(interval);
   }, [stageRegenerating]);
 
   const startRegen = () => {
@@ -922,11 +890,6 @@ function LocationPlateCard({
       }, 0);
       return () => window.clearTimeout(timer);
     }
-
-    const interval = window.setInterval(() => {
-      setTimestamp(Date.now());
-    }, 2000);
-    return () => window.clearInterval(interval);
   }, [stageRegenerating]);
 
   const startRegen = () => {
@@ -1176,11 +1139,6 @@ function PropRefCard({
       }, 0);
       return () => window.clearTimeout(timer);
     }
-
-    const interval = window.setInterval(() => {
-      setTimestamp(Date.now());
-    }, 2000);
-    return () => window.clearInterval(interval);
   }, [stageRegenerating]);
 
   const startRegen = () => {

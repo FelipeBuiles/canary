@@ -73,6 +73,7 @@ def test_every_asset_url_the_ui_builds_is_routable(tmp_path: Path):
         response = client.get(f"/api/projects/demo/files/{relative}")
         assert response.status_code == 200, relative
         assert response.content == relative.encode()
+        assert response.headers["cache-control"] == "private, max-age=60"
 
 
 def test_a_style_proof_is_served_where_the_styles_route_promises_it(tmp_path: Path):

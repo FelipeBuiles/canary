@@ -83,6 +83,8 @@ def classify_image_failure(
         "connection refused",
         "connection reset",
         "connecterror",
+        "gateway connection could not be established",
+        "gateway disconnected before sending a response",
         "network error",
         "service unavailable",
         "temporarily unavailable",

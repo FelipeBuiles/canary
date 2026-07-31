@@ -50,5 +50,8 @@ def serve_project_file(file_path: str, project=Depends(get_project)):
     return FileResponse(
         full,
         media_type=media_type,
-        headers={"Cache-Control": "no-cache"},
+        # The UI adds a cache-busting query token whenever an asset changes.
+        # Keep duplicate probe/visible-image requests in the browser cache,
+        # without making authenticated project files publicly cacheable.
+        headers={"Cache-Control": "private, max-age=60"},
     )

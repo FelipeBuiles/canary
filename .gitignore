@@ -169,6 +169,7 @@ $RECYCLE.BIN/
 *.temp
 *.orig
 *.rej
+docs/exports/
 
 # keep graph outputs, skip heavy/local-only files
 

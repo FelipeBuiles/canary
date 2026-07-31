@@ -464,6 +464,8 @@ def test_fly_routes_on_local_liveness_and_uses_conservative_limits():
         "hard_limit": 50,
         "soft_limit": 30,
     }
+    assert config["vm"][0]["memory"] == "4gb"
+    assert config["vm"][0]["memory_mb"] == 4096
 
 
 def test_production_docker_build_fails_without_supabase_build_args():
