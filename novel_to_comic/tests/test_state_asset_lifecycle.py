@@ -172,6 +172,54 @@ def test_location_spec_dimensions_match_route_strategy(tmp_path: Path):
     assert spec.configured_route == "gpt_image_2"
 
 
+def test_cast_location_state_missing_parent_is_recorded_not_stage_fatal(
+    tmp_path: Path, monkeypatch,
+):
+    """A failed canonical plate must not escape through its state sibling."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from novel_to_comic.models.story_bible import StoryBible
+    from novel_to_comic.stages.s3_cast import _generate_location_plates
+
+    loc = _location()
+    state = AppearanceState(
+        id="loc_001_cleared",
+        label="Cleared",
+        visual_anchor="empty lake house lot, no building, sunny noon",
+        visually_significant=True,
+    )
+    loc.appearance_states = [state]
+    failed: list[str] = []
+    ctx = SimpleNamespace(
+        on_event=lambda event: None,
+        stage_state=SimpleNamespace(items_done=0, items_total=2),
+        record_item_failed=failed.append,
+        record_item_done=lambda **kwargs: None,
+        progress=lambda done, total: None,
+        log=lambda message, level="info": None,
+    )
+
+    async def fail_canonical_request(*args, **kwargs):
+        raise RuntimeError("gateway unavailable")
+
+    monkeypatch.setattr(
+        "novel_to_comic.stages.s3_cast.submit_non_panel_request",
+        fail_canonical_request,
+    )
+
+    asyncio.run(
+        _generate_location_plates(
+            Config(), tmp_path, StoryBible(
+                title="T", author="A", total_scenes=1,
+                characters=[], locations=[loc], props=[], scenes=[], narrative_arcs=[],
+            ), ctx,
+        )
+    )
+
+    assert failed == ["loc_001", "loc_001_cleared"]
+
+
 def test_state_generation_uses_compiled_wire_with_canonical_conditioning(
     tmp_path: Path, monkeypatch,
 ):

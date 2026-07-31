@@ -1158,6 +1158,17 @@ async def _generate_location_plates(
             label = f"{loc.name} ({state_id})" if state_id else loc.name
             output_path = plates_dir / f"{stem}.png"
             if state_id:
+                parent_path = artifacts.location_plate_path(project_dir, loc.id)
+                if not parent_path.exists():
+                    ctx.record_item_failed(stem)
+                    ctx.log(
+                        f"Skipped {state_id} plate for {loc.name}: canonical plate is unavailable",
+                        level="error",
+                    )
+                    ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+                    if task is not None:
+                        progress.advance(task)
+                    return
                 state = next(s for s in loc.appearance_states if s.id == state_id)
                 spec = build_location_state_spec(
                     config, project_dir, loc, state, style_path=style_ref

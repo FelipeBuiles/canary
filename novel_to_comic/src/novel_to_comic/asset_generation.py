@@ -24,6 +24,10 @@ from novel_to_comic.image_provenance import (
     common_image_provenance,
     failed_image_provenance,
 )
+from novel_to_comic.image_failure import (
+    classify_image_failure,
+    user_message_for_image_failure,
+)
 from novel_to_comic.generation_request_preview import compiled_request_context
 from novel_to_comic.image_references import (
     AuthorityScope,
@@ -299,9 +303,11 @@ def _meta_payload(request: NonPanelRequest, provenance: dict[str, Any], *, error
         # root. Keep the asset-specific extension alongside the common envelope.
         payload.update(request.input.lineage)
     if error is not None:
+        classification = classify_image_failure(error)
         payload.update({
-            "classification": "generation_error",
-            "recoverable": True,
+            "classification": classification,
+            "recoverable": classification != "configuration_error",
+            "user_message": user_message_for_image_failure(classification),
             "error": {
                 "type": type(error).__name__,
                 "message": "image asset generation failed",

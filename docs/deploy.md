@@ -42,8 +42,10 @@
 both the web app (its own venv) and the LiteLLM proxy (an isolated venv at
 `/app/.venv-litellm`, to keep their dependency trees from contending). The
 entrypoint (`litellm/entrypoint.sh`) starts the proxy in the background, waits
-for `/health/liveliness`, then `exec`s uvicorn as PID 1. Provider API keys live
-in `canary-web`'s fly secrets; only the proxy process reads them.
+for `/health/liveliness`, then supervises both processes. If LiteLLM exits after
+boot, the entrypoint restarts it with a bounded restart budget instead of
+leaving a healthy-looking web app with a dead image gateway. Provider API keys
+live in `canary-web`'s fly secrets; only the proxy process reads them.
 
 ## Prerequisites (before you touch Fly)
 
@@ -347,11 +349,10 @@ the secret with `fly secrets unset SENTRY_DSN -a canary-web`.
 
 `Out of memory: Killed process (litellm) total-vm:~926MB` → the machine couldn't
 fit both the proxy's then-resident baseline (~870 MB) and Playwright/Chromium
-plus uvicorn. The proxy footprint has since fallen substantially and `fly.toml`
-now pins `memory = '2gb'`. Treat 2 GB as a monitored floor: validate a full
-draw plus compose/export after memory or dependency changes, alert on
-`fly_instance_exit_oom`, and restore 4 GB if available memory approaches
-256 MiB. The compose stage can add a Chromium process that peaks near 500 MB.
+plus uvicorn. The co-located production machine now pins `memory = '4gb'` so
+the image gateway has headroom during cast/draw and compose/export. Keep
+alerting on `fly_instance_exit_oom`; the compose stage can add a Chromium
+process that peaks near 500 MB.
 
 If you see OOMs mid-generation specifically, Playwright is the likeliest
 culprit, not litellm.

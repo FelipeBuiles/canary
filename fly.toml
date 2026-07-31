@@ -60,10 +60,10 @@ primary_region = 'iad'
 
 [[vm]]
   size = 'shared-cpu-2x'
-  memory = '2gb'
+  memory = '4gb'
   cpu_kind = 'shared'
   cpus = 2
-  memory_mb = 2048
+  memory_mb = 4096
 
 [[metrics]]
   port = 8000

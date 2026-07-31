@@ -116,8 +116,8 @@ RUN python -m venv /app/.venv-litellm \
 COPY litellm/config.yaml /app/config.yaml
 COPY litellm_handlers/ /app/litellm_handlers/
 
-# Copy the merged entrypoint (materializes GCP creds → starts litellm in the
-# background → execs uvicorn in the foreground as PID 1).
+# Copy the merged entrypoint (materializes GCP creds → starts litellm → waits
+# for readiness → supervises litellm and the web process together).
 COPY litellm/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 

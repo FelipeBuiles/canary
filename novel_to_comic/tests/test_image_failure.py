@@ -8,6 +8,17 @@ def test_classifies_common_panel_failures():
         (RuntimeError("429 Resource has been exhausted"), "rate_limited"),
         (TimeoutError("provider timed out"), "timed_out"),
         (ConnectionError("connection refused"), "service_unavailable"),
+        (
+            RuntimeError(
+                'wire image transport failed ({"failure": "gateway connection '
+                'could not be established"})'
+            ),
+            "service_unavailable",
+        ),
+        (
+            RuntimeError("gateway disconnected before sending a response"),
+            "service_unavailable",
+        ),
         (ValueError("The image provider returned an empty response"), "empty_response"),
         (ValueError("FAL_KEY is not set"), "configuration_error"),
         (ValueError("unexpected provider response"), "generation_error"),

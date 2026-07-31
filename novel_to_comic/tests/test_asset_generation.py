@@ -231,6 +231,47 @@ def test_non_panel_failure_persists_request_provenance_without_provider_result(t
     assert str(tmp_path) not in json.dumps(failure)
 
 
+def test_non_panel_gateway_failure_persists_retryable_service_classification(
+    tmp_path, monkeypatch,
+):
+    config = Config(image_model="image-balanced")
+    request = compile_non_panel_request(
+        config,
+        AbstractStyleProofInput(
+            asset_identity="style_sample:gateway-failed",
+            prompt=GenerationPromptInput(
+                visual_brief="A deterministic proof.", width=819, height=1024,
+                generation_shape="portrait",
+            ),
+        ),
+        reference_plan=_empty_plan(config),
+    )
+    output_path = tmp_path / "samples" / "gateway-failed.png"
+
+    async def fake_execute_frozen_request(**kwargs):
+        raise RuntimeError(
+            "wire image transport failed: gateway connection could not be established"
+        )
+
+    monkeypatch.setattr(
+        "novel_to_comic.asset_generation.execute_frozen_request",
+        fake_execute_frozen_request,
+    )
+    with pytest.raises(RuntimeError):
+        asyncio.run(submit_non_panel_request(
+            config=config, project_dir=tmp_path, request=request,
+            output_path=output_path, feature="style.sample", kind="style_sample",
+        ))
+
+    failure = json.loads(output_path.with_suffix(".png.failure.json").read_text())
+    assert failure["classification"] == "service_unavailable"
+    assert failure["recoverable"] is True
+    assert failure["user_message"] == (
+        "We could not reach the image service. "
+        "Check your connection and try this panel again."
+    )
+
+
 def test_asset_restore_only_reactivates_archived_bytes_and_metadata(tmp_path, monkeypatch):
     output_path = tmp_path / "refs" / "props" / "prop_001" / "ref.png"
     output_path.parent.mkdir(parents=True)
