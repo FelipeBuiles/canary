@@ -1,10 +1,13 @@
+import { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
+  useCompletePages,
   useExport,
   useFinishPreflight,
   useProjectStatus,
 } from "../../api/queries";
-import { downloadExportUrl } from "../../api/pages";
+import { downloadExportUrl, pageRenderUrl } from "../../api/pages";
+import { BookReader } from "../../components/BookReader";
 import {
   RoomHeader,
   RoomShell,
@@ -15,6 +18,7 @@ import { Button } from "../../components/ui/Button";
 import { StatusPill } from "../../components/ui/StatusPill";
 import { Surface } from "../../components/ui/Surface";
 import { useI18n } from "../../i18n";
+import { readerPages } from "../../lib/bookReader";
 import type { FinishPreflight, InvariantFailure } from "../../types/api";
 
 type FinishFindingGroup = {
@@ -66,6 +70,9 @@ export function BookRoom() {
     shouldRunPreflight,
   );
   const exportBook = useExport();
+  const { data: completePages } = useCompletePages(id);
+  const bookPages = useMemo(() => readerPages(completePages), [completePages]);
+  const [readerOpen, setReaderOpen] = useState(false);
 
   if (!id) return null;
   if (finishStatus === "pending" && status?.stages.draw?.status !== "complete") {
@@ -114,6 +121,51 @@ export function BookRoom() {
         title={t("FINISH & EXPORT")}
         lead={t("Finish verifies every complete page, production dimensions, issue decisions, and package order.")}
       />
+
+      {bookPages.length > 0 && (
+        <section>
+          <SectionHeader
+            variant="underline"
+            title={t("READ THE BOOK")}
+            description={t("Read the drawn pages exactly as they will print. Reading never re-generates a page and never downloads the book again.")}
+          />
+          <Surface padding="md" border="hard" shadow="paper">
+            <div className="flex flex-wrap items-center gap-5">
+              <button
+                type="button"
+                onClick={() => setReaderOpen(true)}
+                aria-label={t("Open the book reader")}
+                className="w-28 shrink-0 border-[2px] border-ink-black bg-bristol focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red"
+              >
+                <img
+                  src={pageRenderUrl(id, bookPages[0].pageNumber, bookPages[0].revision)}
+                  alt={t("First page of the book")}
+                  className="block aspect-[2/3] w-full object-contain"
+                />
+              </button>
+              <div className="min-w-0 flex-1">
+                <p className="font-display text-2xl font-black uppercase">
+                  {bookPages.length} {bookPages.length === 1 ? t("page drawn") : t("pages drawn")}
+                </p>
+                <p className="mt-1 max-w-[52ch] font-body text-sm font-semibold leading-6 text-ink-muted">
+                  {t("Turn pages with the arrow keys, read facing pages as spreads, and switch to fit-width for a closer look.")}
+                </p>
+                <Button className="mt-4" onClick={() => setReaderOpen(true)}>
+                  {t("START READING")}
+                </Button>
+              </div>
+            </div>
+          </Surface>
+        </section>
+      )}
+
+      {readerOpen && (
+        <BookReader
+          project={id}
+          pages={bookPages}
+          onClose={() => setReaderOpen(false)}
+        />
+      )}
 
       <section>
         <SectionHeader

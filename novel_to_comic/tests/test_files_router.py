@@ -140,6 +140,25 @@ def test_project_credentials_are_not_reachable_as_assets(tmp_path: Path):
         assert response.status_code == 403, secret
 
 
+def test_a_page_render_is_cacheable_forever(tmp_path: Path):
+    # The book reader pages through a whole book off the bytes the Panels grid
+    # already fetched. That only holds if a render revision — which is
+    # immutable, corrections write a new revision — is cached without
+    # revalidation. Private: renders belong to one user's project.
+    client, project_dir = _client(tmp_path)
+    render = TargetArtifacts(project_dir).render_path(1, 1)
+    render.parent.mkdir(parents=True)
+    render.write_bytes(b"page-one-render")
+
+    response = client.get("/api/projects/demo/pages/1/renders/1")
+
+    assert response.status_code == 200
+    assert response.content == b"page-one-render"
+    assert response.headers["cache-control"] == (
+        "private, max-age=31536000, immutable"
+    )
+
+
 def test_named_project_routes_are_not_shadowed_by_the_asset_reader(tmp_path: Path):
     # The asset route is greedy; registering it before a named route would make
     # that route unreachable. `pages` has no artifacts here, so a 404 from the

@@ -313,7 +313,16 @@ def get_page_render(
     path = TargetArtifacts(project_dir).render_path(page_number, revision)
     if not path.exists():
         raise HTTPException(404, "Page render not found")
-    return FileResponse(path, media_type="image/png")
+    return FileResponse(
+        path,
+        media_type="image/png",
+        # A render revision is immutable — a correction writes a new revision
+        # rather than overwriting this file. Caching it hard is what lets the
+        # book reader page through a whole book with no network at all, off
+        # the bytes the Panels grid already fetched. Private: project renders
+        # are per-user and must not land in a shared proxy cache.
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
 
 
 @router.post("/pages/{page_number}/generate")
