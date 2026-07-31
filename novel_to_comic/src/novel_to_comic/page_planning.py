@@ -174,6 +174,12 @@ def _normalize_book_plan_draft(
     lettering_by_beat = {
         beat.id: tuple(item.id for item in beat.lettering) for beat in adaptation.beats
     }
+    lettering_order = {
+        item.id: position
+        for position, item in enumerate(
+            item for beat in adaptation.beats for item in beat.lettering
+        )
+    }
     explicitly_placed = {
         lettering_id
         for page in normalized_pages
@@ -211,6 +217,12 @@ def _normalize_book_plan_draft(
                         and lettering_id not in cited
                     ):
                         cited.append(lettering_id)
+            cited.sort(
+                key=lambda lettering_id: lettering_order.get(
+                    lettering_id,
+                    len(lettering_order),
+                )
+            )
             normalized_item["lettering_ids"] = cited
             allocated_lettering.update(cited)
             reading_order.extend((content_id, *cited))
