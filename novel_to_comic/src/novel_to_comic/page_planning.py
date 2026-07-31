@@ -237,6 +237,7 @@ def _normalize_book_plan_draft(
         normalized_page["content"] = normalized_content
         normalized_page["reading_order"] = reading_order
         normalized_pages[local_page_number - 1] = normalized_page
+    _canonicalize_lettering_placement_order(normalized_pages, lettering_by_beat)
     normalized["pages"] = normalized_pages
     return normalized
 
@@ -291,6 +292,71 @@ def _normalize_draft_references(
         normalized_page["content"] = normalized_content
         normalized_pages.append(normalized_page)
     return normalized_pages
+
+
+def _canonicalize_lettering_placement_order(
+    pages: list[Any],
+    lettering_by_beat: Mapping[str, tuple[str, ...]],
+) -> None:
+    """Keep each beat's lettering in Adapt order across repeated panels.
+
+    A repeated beat may legitimately span multiple adjacent content items. The
+    model can therefore cite that beat's lettering on different items, but it
+    must not be able to reverse the canonical records between those items. The
+    slots are kept where the model placed them; only IDs owned by the same beat
+    are redistributed in Adapt order. If a malformed response is missing a
+    slot, leave it for the existing invariant path to attribute and report.
+    """
+
+    owner_by_lettering = {
+        lettering_id: beat_id
+        for beat_id, lettering_ids in lettering_by_beat.items()
+        for lettering_id in lettering_ids
+    }
+    for beat_id, canonical_ids in lettering_by_beat.items():
+        if not canonical_ids:
+            continue
+        slots: list[tuple[list[Any], int]] = []
+        for page in pages:
+            if not isinstance(page, Mapping):
+                continue
+            content_items = page.get("content")
+            if not isinstance(content_items, list):
+                continue
+            for content in content_items:
+                if not isinstance(content, Mapping):
+                    continue
+                ids = content.get("lettering_ids")
+                if not isinstance(ids, list):
+                    continue
+                for index, lettering_id in enumerate(ids):
+                    if owner_by_lettering.get(lettering_id) == beat_id:
+                        slots.append((ids, index))
+        if len(slots) != len(canonical_ids):
+            continue
+        for (ids, index), lettering_id in zip(slots, canonical_ids, strict=True):
+            ids[index] = lettering_id
+    for page in pages:
+        if not isinstance(page, Mapping):
+            continue
+        content_items = page.get("content")
+        if not isinstance(content_items, list):
+            continue
+        reading_order: list[str] = []
+        for content in content_items:
+            if not isinstance(content, Mapping):
+                continue
+            content_id = content.get("id")
+            if isinstance(content_id, str):
+                reading_order.append(content_id)
+            lettering_ids = content.get("lettering_ids")
+            if isinstance(lettering_ids, list):
+                reading_order.extend(
+                    lettering_id
+                    for lettering_id in lettering_ids
+                    if isinstance(lettering_id, str)
+                )
+        page["reading_order"] = reading_order
 
 
 StructuredGenerator = Callable[
