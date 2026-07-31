@@ -264,6 +264,22 @@ def _long_adaptation(beat_count: int = 24) -> BookAdaptation:
     )
 
 
+def _long_adaptation_with_multiple_lettering_items() -> BookAdaptation:
+    payload = _long_adaptation().model_dump()
+    payload["content_sha256"] = ""
+    for beat in payload["beats"]:
+        first = beat["lettering"][0]
+        beat["lettering"] = [
+            first,
+            {
+                **first,
+                "id": f"{first['id']}_second",
+                "text": f"Follow-up {beat['order']}.",
+            },
+        ]
+    return BookAdaptation.model_validate(payload)
+
+
 def test_long_plan_uses_global_map_bounded_detail_and_local_repair(
     tmp_path: Path,
 ) -> None:
@@ -353,6 +369,94 @@ def test_long_plan_uses_global_map_bounded_detail_and_local_repair(
     assert len(plan.pages) == 24
     assert len(artifacts.read_page(1).content) == 2
     assert artifacts.read_page(1).content[0].lettering[0].id == "lettering_0001"
+
+
+def test_two_pass_plan_canonicalizes_explicit_lettering_order(
+    tmp_path: Path,
+) -> None:
+    adaptation = _long_adaptation_with_multiple_lettering_items()
+
+    async def generate(**request):
+        if request["feature"] == "plan.map":
+            return ApiResult(
+                value={
+                    "rhythm_summary": "Twenty-four measured story pages.",
+                    "pages": [
+                        {
+                            "beat_ids": [f"beat_{index:04d}"],
+                            "emphasis": "initial",
+                            "density_intent": "standard",
+                            "rhythm_intent": f"Advance event {index}.",
+                        }
+                        for index in range(1, 25)
+                    ],
+                },
+                usage=None,
+            )
+
+        match = re.search(
+            r'"target_page_numbers":\[(.*?)\]',
+            request["user_content"],
+        )
+        assert match is not None
+        page_numbers = tuple(
+            int(value) for value in match.group(1).split(",") if value
+        )
+        pages = []
+        for page_number in page_numbers:
+            lettering_ids = []
+            if page_number == 1:
+                lettering_ids = [
+                    "lettering_0001_second",
+                    "lettering_0001",
+                ]
+            pages.append(
+                {
+                    "emphasis": "initial",
+                    "density_intent": "standard",
+                    "rhythm_intent": f"Advance event {page_number}.",
+                    "layout_intent": "One supported visual moment.",
+                    "content": [
+                        {
+                            "beat_ids": [f"beat_{page_number:04d}"],
+                            "panel_role": "standard",
+                            "visual_intent": f"Visual moment {page_number}.",
+                            "lettering_ids": lettering_ids,
+                            "entity_ids": [],
+                        }
+                    ],
+                }
+            )
+        return ApiResult(
+            value={"rhythm_summary": "Local detail.", "pages": pages},
+            usage=None,
+        )
+
+    artifacts = TargetArtifacts(tmp_path)
+    plan = asyncio.run(
+        produce_book_plan(
+            adaptation,
+            ApprovedVisualReferenceInventory(),
+            ApprovedPageRange(minimum=24, maximum=24),
+            artifacts=artifacts,
+            ctx=StageRuntime(
+                "plan",
+                PipelineState(
+                    project_name="long-plan-lettering",
+                    novel_path="novel.txt",
+                    created_at=datetime.now(timezone.utc),
+                ),
+                tmp_path,
+            ),
+            model="test-planner",
+            generate=generate,
+        )
+    )
+
+    assert len(plan.pages) == 24
+    assert [
+        item.id for item in artifacts.read_page(1).content[0].lettering
+    ] == ["lettering_0001", "lettering_0001_second"]
 
 
 def test_producer_retries_repetitive_single_panel_grammar_once(
