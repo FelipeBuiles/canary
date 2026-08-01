@@ -27,6 +27,7 @@ const PrimitiveReference = lazy(() =>
 );
 const AccountPage = lazy(() => import("./pages/AccountPage").then(({ AccountPage }) => ({ default: AccountPage })));
 const CreditsPage = lazy(() => import("./pages/CreditsPage").then(({ CreditsPage }) => ({ default: CreditsPage })));
+const BackofficePage = lazy(() => import("./pages/BackofficePage").then(({ BackofficePage }) => ({ default: BackofficePage })));
 const ProjectSettingsPage = lazy(() =>
   import("./pages/ProjectSettingsPage").then(({ ProjectSettingsPage }) => ({ default: ProjectSettingsPage })),
 );
@@ -69,6 +70,12 @@ function RootRoute() {
   return session ? lazyRoute(Shell) : lazyRoute(HomePage);
 }
 
+function BackofficeRoute() {
+  // The operator desk intentionally ships as a local development surface only.
+  // It has no hosted entry point until a server-side operator API is added.
+  return import.meta.env.DEV ? lazyRoute(BackofficePage) : <Navigate to="/" replace />;
+}
+
 export function App() {
   return (
     <I18nProvider>
@@ -77,6 +84,9 @@ export function App() {
         <Route path="/login" element={lazyRoute(LoginPage)} />
         <Route path="/signup" element={lazyRoute(SignupPage)} />
         <Route path="/reset-password" element={lazyRoute(ResetPasswordPage)} />
+
+        {/* Local-only operator workspace; never exposed by a production build. */}
+        <Route path="/backoffice" element={<BackofficeRoute />} />
 
         {/* Public homepage for visitors; signed-in users keep `/` as Library. */}
         <Route path="/" element={<RootRoute />}>
