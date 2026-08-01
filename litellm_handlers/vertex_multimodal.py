@@ -266,8 +266,14 @@ class VertexMultimodalLLM(CustomLLM):
             )
         client = genai.Client(vertexai=True, project=project, location=location)
         try:
+            # TEXT is not optional: Gemini 3 Pro Image is a thinking model that
+            # emits reasoning text alongside the image, and every documented
+            # call for it requests both modalities. IMAGE-only works on the
+            # Flash image routes but leaves Pro with no legal candidate, which
+            # Vertex reports as an opaque prompt block (block_reason=OTHER).
+            # _extract_image ignores text parts, so the image path is unchanged.
             config_kwargs: dict[str, Any] = {
-                "response_modalities": ["IMAGE"],
+                "response_modalities": ["TEXT", "IMAGE"],
                 "safety_settings": _SAFETY_OFF,
             }
             controls = dict(manifest.get("controls", []))
@@ -872,6 +878,19 @@ def _extract_image(response: types.GenerateContentResponse) -> tuple[bytes, str]
     if response.candidates:
         for idx, candidate in enumerate(response.candidates):
             cand_details = [f"candidate #{idx}"]
+            # With TEXT+IMAGE requested, a refusal arrives as prose in place of
+            # the image — the only place the provider says why.
+            texts = [
+                part.text
+                for part in (
+                    candidate.content.parts
+                    if candidate.content and candidate.content.parts
+                    else []
+                )
+                if getattr(part, "text", None)
+            ]
+            if texts:
+                cand_details.append(f"text={' '.join(texts)[:500]!r}")
             finish_reason = getattr(candidate, "finish_reason", None)
             if finish_reason is not None:
                 cand_details.append(f"finish_reason={finish_reason}")

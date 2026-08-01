@@ -19,6 +19,19 @@ let preflightLoading = false;
 let finishStatus = "pending";
 let drawStatus = "complete";
 
+function drawnPage(
+  pageNumber: number,
+  spreadRole: "single" | "left" | "right" | "spread" = "single",
+  revision: number | null = 1,
+) {
+  return {
+    page: { page_number: pageNumber, spread_role: spreadRole },
+    active_render: revision === null ? null : { render: { revision } },
+  };
+}
+
+let drawnPages: ReturnType<typeof drawnPage>[] = [drawnPage(1)];
+
 vi.mock("../api/queries", () => ({
   useProjectStatus: () => ({
     data: {
@@ -54,6 +67,7 @@ vi.mock("../api/queries", () => ({
   },
   useExport: () => ({ mutate: exportBook, isPending: false, data: null, error: null }),
   useCreditBalance: () => ({ data: undefined }),
+  useCompletePages: () => ({ data: { pages: drawnPages } }),
 }));
 
 import { BookRoom } from "../pages/rooms/BookRoom";
@@ -80,6 +94,7 @@ describe("BookRoom", () => {
     preflightLoading = false;
     finishStatus = "pending";
     drawStatus = "complete";
+    drawnPages = [drawnPage(1)];
   });
 
   it("runs Finish preflight automatically after Draw completes", () => {
@@ -149,5 +164,57 @@ describe("BookRoom", () => {
     renderRoom();
 
     expect(screen.getByRole("button", { name: "EXPORT PDF" })).toHaveProperty("disabled", true);
+  });
+
+  it("offers the reader once pages are drawn", () => {
+    drawnPages = [drawnPage(1), drawnPage(2)];
+    renderRoom();
+
+    expect(screen.getByRole("heading", { name: "READ THE BOOK" })).toBeTruthy();
+    expect(screen.getByText("2 pages drawn")).toBeTruthy();
+  });
+
+  it("hides the reader when no page has been drawn", () => {
+    drawnPages = [drawnPage(1, "single", null)];
+    renderRoom();
+
+    expect(screen.queryByRole("heading", { name: "READ THE BOOK" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "START READING" })).toBeNull();
+  });
+
+  it("reads pages from the same render URLs the Panels grid already loaded", () => {
+    drawnPages = [drawnPage(1), drawnPage(2)];
+    renderRoom();
+
+    fireEvent.click(screen.getByRole("button", { name: "START READING" }));
+
+    const reader = screen.getByRole("dialog", { name: "Book reader" });
+    expect(reader).toBeTruthy();
+    const sources = Array.from(reader.querySelectorAll("img")).map((img) => img.getAttribute("src"));
+    expect(sources).toContain("/api/projects/demo/pages/1/renders/1");
+  });
+
+  it("turns pages with the arrow keys and closes on Escape", () => {
+    drawnPages = [drawnPage(1), drawnPage(2)];
+    renderRoom();
+
+    fireEvent.click(screen.getByRole("button", { name: "START READING" }));
+    expect(screen.getByText("Page 1")).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(screen.getByText("Page 2")).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Book reader" })).toBeNull();
+  });
+
+  it("reads a facing pair as one spread", () => {
+    drawnPages = [drawnPage(1), drawnPage(2, "left"), drawnPage(3, "right")];
+    renderRoom();
+
+    fireEvent.click(screen.getByRole("button", { name: "START READING" }));
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+
+    expect(screen.getByText("Pages 2–3")).toBeTruthy();
   });
 });
