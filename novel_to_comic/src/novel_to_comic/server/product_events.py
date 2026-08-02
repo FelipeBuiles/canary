@@ -29,6 +29,7 @@ SERVER_EVENT_PROPERTIES: dict[str, frozenset[str]] = {
     "checkout_started": frozenset({"package_id", "gross_amount_cents", "currency"}),
     "credits_purchased": frozenset({"package_id", "credits", "gross_amount_cents", "currency"}),
     "refund_completed": frozenset({"credits", "gross_amount_cents", "currency"}),
+    "operator_credit_granted": frozenset({"amount_credits", "app_environment", "stripe_mode"}),
     "export_succeeded": frozenset({"format", "cached"}),
 }
 

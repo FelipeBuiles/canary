@@ -543,6 +543,33 @@ describe("PagesRoom", () => {
     });
   });
 
+  it("keeps OCR issue actions below the explanation instead of squeezing it", () => {
+    pageIssues = [{
+      id: "page-issue-draw-page-001-render-002-misspelled_lettering",
+      issue_type: "misspelled_lettering",
+      classification: "invariant_failure",
+      correction_kind: "render_fidelity",
+      correction_owner: "draw",
+      page_number: 1,
+      render_revision: 2,
+      evidence: [
+        'expected_text=["Open the door.", "Run!"]',
+        'recognized_text=["Open the dor.", "Run!"]',
+      ],
+      requested_correction: "OCR lettering does not exactly match canonical wording.",
+      status: "open",
+      resolution_revision: null,
+    }];
+    renderRoom();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
+
+    const actionGroup = screen.getByRole("button", { name: "CREATE CORRECTED REVISION" }).parentElement;
+    const issueLayout = actionGroup?.parentElement;
+    expect(issueLayout?.className).toContain("space-y-3");
+    expect(issueLayout?.className).not.toContain("flex-wrap");
+  });
+
   it("generates one complete page from an undrawn page card", () => {
     includeUndrawnPage = true;
     generatePage.mockImplementation((_variables, options) => {

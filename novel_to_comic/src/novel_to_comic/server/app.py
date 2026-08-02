@@ -25,6 +25,7 @@ from .ratelimit import configure_rate_limiting
 from .sentry import configure_sentry
 from .routers import (
     billing,
+    backoffice,
     cast_assets,
     config,
     credits,
@@ -347,13 +348,23 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         int(os.environ.get("CANARY_GENERATION_JOB_TIMEOUT_SECONDS", "900")),
     )
 
-    # CORS for Vite dev server
-    if dev:
+    # CORS for the local operator desk. Production can explicitly allow a
+    # local Vite origin when an operator intentionally connects to prod; the
+    # operator token remains mandatory and no credentials are sent by CORS.
+    configured_backoffice_origins = [
+        origin.strip()
+        for origin in os.environ.get("CANARY_BACKOFFICE_ORIGINS", "").split(",")
+        if origin.strip()
+    ]
+    cors_origins = configured_backoffice_origins or (
+        ["http://localhost:5173", "http://127.0.0.1:5173"] if dev else []
+    )
+    if cors_origins:
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=["http://localhost:5173"],
-            allow_methods=["*"],
-            allow_headers=["*"],
+            allow_origins=cors_origins,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Content-Type", "X-Canary-Ops-Token"],
         )
 
     @app.get("/api/health", tags=["meta"])
@@ -410,6 +421,11 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app.include_router(
         operator_billing.router,
         prefix="/api/ops/billing",
+        tags=["operations"],
+    )
+    app.include_router(
+        backoffice.router,
+        prefix="/api/ops/backoffice",
         tags=["operations"],
     )
     app.include_router(events.router, prefix="/api/events", tags=["analytics"])

@@ -1,6 +1,6 @@
 export type BackofficeView = "overview" | "users" | "support" | "analytics";
 
-export type UserStatus = "active" | "trial" | "past_due" | "suspended";
+export type UserStatus = "active" | "trial" | "past_due" | "suspended" | "unconfirmed";
 export type UserFilter = "all" | "active" | "attention" | "trial";
 export type TicketPriority = "urgent" | "normal" | "low";
 export type TicketStatus = "open" | "waiting" | "resolved";
@@ -11,7 +11,7 @@ export interface BackofficeUser {
   email: string;
   initials: string;
   avatarTone: "red" | "gold" | "blue" | "sage" | "ink";
-  plan: "Studio" | "Starter" | "Trial";
+  plan: string;
   status: UserStatus;
   projects: number;
   credits: number;
@@ -23,6 +23,43 @@ export interface BackofficeUser {
   timezone: string;
   lastEvent: string;
   tags: string[];
+  source?: "live" | "preview";
+  errors?: BackofficeError[];
+  projectsDetail?: BackofficeProject[];
+  activeJobs?: BackofficeJob[];
+}
+
+export interface BackofficeError {
+  source: string;
+  stage: string;
+  projectId?: string | null;
+  projectName?: string | null;
+  status: string;
+  message: string;
+  errorType?: string;
+  occurredAt?: string | null;
+}
+
+export interface BackofficeJob {
+  id: string;
+  label: string;
+  kind: string;
+  status: "queued" | "running" | "complete" | "failed";
+  projectId?: string | null;
+  queuedAt?: string | null;
+  startedAt?: string | null;
+}
+
+export interface BackofficeProject {
+  id: string;
+  name: string;
+  slug: string;
+  createdAt?: string | null;
+  status: "idle" | "running" | "review" | "ready" | "error" | "stalled" | "complete";
+  isActive: boolean;
+  currentStage: string;
+  errors: BackofficeError[];
+  jobs: Array<BackofficeJob & { finishedAt?: string | null; error?: string | null }>;
 }
 
 export interface SupportMessage {
