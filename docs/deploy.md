@@ -95,6 +95,7 @@ LITELLM_MASTER_KEY=sk-litellm-<from above>
 LITELLM_SALT_KEY=<from above>
 LITELLM_API_KEY=<same value as LITELLM_MASTER_KEY>
 CANARY_OPS_TOKEN=<random operator-only token, e.g. openssl rand -hex 32>
+CANARY_BACKOFFICE_ORIGINS=http://localhost:5173  # only when a local desk connects to prod
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 GEMINI_API_KEY=AIza...
@@ -268,6 +269,21 @@ Treat this as a pre-deploy observation, not an atomic drain lock: a user can
 start work after the check. During the soft launch, announce a short maintenance
 window or otherwise pause generation intake, wait for `safe_to_deploy: true`,
 then deploy. A server-enforced drain mode is the next step before unattended CD.
+
+### Use the local operator desk
+
+Open `/backoffice` from the Vite dev server. It asks for `CANARY_OPS_TOKEN`
+instead of embedding the secret in the frontend. Leave the server URL blank for
+local development, or enter the production origin to inspect production from
+the same local desk. A production server must allow that exact local origin in
+`CANARY_BACKOFFICE_ORIGINS`.
+
+The desk labels the active Stripe mode from the server-only secret key: local
+and staging should use `sk_test_...` (shown as **sandbox**), while production
+should use `sk_live_...` (shown as **live**). A mismatch is surfaced as a
+warning. Manual credit grants are ledger adjustments and never call Stripe;
+they are written once with an idempotency marker and recorded as an operator
+product event.
 
 ### Verify the proxy is reachable from the web process
 

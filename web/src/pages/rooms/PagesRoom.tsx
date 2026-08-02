@@ -317,8 +317,8 @@ function IssueHistory({
               shadow="none"
               padding="md"
             >
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
+            <div className="space-y-3">
+              <div>
                 <StatusPill tone={issue.status === "resolved" || issue.status === "dismissed" ? "sage" : issue.classification === "invariant_failure" ? "red" : "gold"}>
                   {t(issue.status.toUpperCase())}
                 </StatusPill>
@@ -372,7 +372,7 @@ function IssueHistory({
                 )}
               </div>
               {issue.status === "open" && (
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap justify-end gap-2">
                   {issue.correction_owner === "draw" && (
                     <Button
                       size="xs"
