@@ -13,6 +13,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from novel_to_comic.provider_wire import (
+    PROVIDER_WIRE_DISCRIMINATOR,
+    PROVIDER_WIRE_SCHEMA_VERSION,
     ProviderWireReference,
     ProviderWireRequest,
 )
@@ -38,12 +40,13 @@ def _wire(sources: list[Path], *, prompt: str = "frozen prompt") -> ProviderWire
                 preserve_facets=("face", "hair"),
                 ignore_facets=(),
             )
-        )
+    )
     request = ProviderWireRequest(
-        discriminator="canary.provider-wire/1",
-        schema_version=1,
+        discriminator=PROVIDER_WIRE_DISCRIMINATOR,
+        schema_version=PROVIDER_WIRE_SCHEMA_VERSION,
         requested_alias="image-quality",
         expected_route="balanced",
+        provider_key="openai",
         configured_provider_model="gateway/image-quality",
         prompt_parts=(prompt,),
         references=tuple(references),

@@ -842,6 +842,9 @@ export function PagesRoom() {
                   pageFailure.error,
                 )
               : null;
+            const canRetryGeneration = Boolean(pageFailure?.recoverable)
+              && !revision
+              && pageFailure?.classification !== "provider_blocked";
             return (
               <EntityCard key={item.page.page_number} padding="cozy">
                 <button
@@ -927,6 +930,17 @@ export function PagesRoom() {
                           {t("TRY AGAIN UNCHANGED")}
                         </Button>
                       </div>
+                    )}
+                    {canRetryGeneration && (
+                      <Button
+                        className="mt-3"
+                        size="xs"
+                        fullWidth
+                        onClick={() => drawPage(item.page.page_number)}
+                        disabled={generate.isPending || pageIsDrawing}
+                      >
+                        {pageIsDrawing ? t("DRAWING PAGE…") : t("TRY AGAIN")}
+                      </Button>
                     )}
                     {failurePhase === "analysis" && revision && (
                       <Button

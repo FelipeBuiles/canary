@@ -1,4 +1,4 @@
-"""Minimal isolated parser for ``canary.provider-wire/1`` manifests.
+"""Minimal isolated parser for ``canary.provider-wire/2`` manifests.
 
 This module deliberately imports no application package.  It validates the
 portable envelope used by custom LiteLLM handlers; semantic compilation stays
@@ -13,8 +13,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-DISCRIMINATOR = "canary.provider-wire/1"
-SCHEMA_VERSION = 1
+DISCRIMINATOR = "canary.provider-wire/2"
+SCHEMA_VERSION = 2
 
 
 def parse_provider_wire(payload: str) -> dict[str, Any]:
@@ -26,6 +26,8 @@ def parse_provider_wire(payload: str) -> dict[str, Any]:
         raise ValueError("not a ProviderWireRequest")
     if manifest.get("schema_version") != SCHEMA_VERSION:
         raise ValueError("unsupported ProviderWireRequest schema")
+    if not isinstance(manifest.get("provider_key"), str) or not manifest["provider_key"]:
+        raise ValueError("ProviderWireRequest provider key missing")
     supplied = manifest.get("execution_fingerprint")
     # Fingerprint projection must not mutate the parsed request that the
     # adapter subsequently consumes (references are nested dictionaries).

@@ -638,6 +638,30 @@ describe("PagesRoom", () => {
     expect(screen.getByRole("button", { name: "DRAW WITHOUT REFERENCES" })).toBeTruthy();
   });
 
+  it("lets the author retry a recoverable image-service failure", () => {
+    includeUndrawnPage = true;
+    persistedPageFailure = {
+      page_number: 2,
+      request_sha256: "f".repeat(64),
+      failed_at: "2026-07-30T16:00:00Z",
+      phase: "generation",
+      classification: "service_unavailable",
+      recoverable: true,
+      user_message: "We could not reach the image service.",
+      error: "gateway connection could not be established",
+    };
+
+    renderRoom();
+
+    const retry = screen.getByRole("button", { name: "TRY AGAIN" });
+    expect(retry).toBeTruthy();
+    fireEvent.click(retry);
+    expect(generatePage).toHaveBeenCalledWith(
+      { project: "demo", pageNumber: 2 },
+      expect.any(Object),
+    );
+  });
+
   it("retries a failed text check without redrawing the page", () => {
     persistedRenderedFailure = {
       page_number: 1,

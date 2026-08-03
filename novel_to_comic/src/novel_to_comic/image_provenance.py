@@ -114,6 +114,7 @@ def common_image_provenance(
         "warnings": [_redact(warning, project_dir) for warning in getattr(reference_plan, "warnings", ())],
         "requested_alias": getattr(wire, "requested_alias", None),
         "expected_route": getattr(wire, "expected_route", None),
+        "provider_key": getattr(wire, "provider_key", None),
         "configured_provider_model": getattr(wire, "configured_provider_model", None),
         "actual_provider_model": actual_provider_model,
         "requested_dimensions": {

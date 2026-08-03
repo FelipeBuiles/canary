@@ -21,8 +21,8 @@ from novel_to_comic.image_geometry import (
     aspect_for_dimensions,
 )
 
-PROVIDER_WIRE_SCHEMA_VERSION = 1
-PROVIDER_WIRE_DISCRIMINATOR = "canary.provider-wire/1"
+PROVIDER_WIRE_SCHEMA_VERSION = 2
+PROVIDER_WIRE_DISCRIMINATOR = "canary.provider-wire/2"
 
 # Slice 12 completes the non-panel migration. Keep this as an explicit empty
 # ledger so architecture tests fail loudly if a raw caller is reintroduced.
@@ -54,6 +54,7 @@ class ProviderWireRequest:
     schema_version: int
     requested_alias: str | None
     expected_route: str
+    provider_key: str
     configured_provider_model: str
     prompt_parts: tuple[str, ...]
     references: tuple[ProviderWireReference, ...]
@@ -178,6 +179,7 @@ def compile_provider_wire_request(compiled: CompiledGenerationRequest) -> Provid
         schema_version=PROVIDER_WIRE_SCHEMA_VERSION,
         requested_alias=compiled.requested_alias,
         expected_route=compiled.expected_route.value,
+        provider_key=compiled.provider_key,
         configured_provider_model=compiled.configured_provider_model,
         prompt_parts=(_wire_prompt(compiled),),
         references=refs,

@@ -10,6 +10,7 @@ GATEWAY_IMAGE_FAST = "image-fast"
 GATEWAY_IMAGE_BALANCED = "image-balanced"
 GATEWAY_IMAGE_QUALITY = "image-quality"
 GATEWAY_IMAGE_REVE = "image-reve"
+GATEWAY_IMAGE_SEEDREAM_TEST = "image-balanced-seedream-test"
 
 IMAGE_MODEL_ALIASES = (
     GATEWAY_IMAGE_FAST,
@@ -21,8 +22,19 @@ IMAGE_MODEL_ALIASES = (
 _GEMINI_FLASH_LITE_MODEL = "vertex-multimodal/gemini-3.1-flash-lite-image"
 _GEMINI_PRO_IMAGE_MODEL = "vertex-multimodal/gemini-3-pro-image"
 _GPT_IMAGE_2_MODEL = "openai/gpt-image-2"
+_SEEDREAM_V5_LITE_MODEL = "fal-queue/bytedance/seedream/v5/lite/edit"
 _SEEDREAM_V5_PRO_MODEL = "fal-queue/bytedance/seedream/v5/pro/edit"
 _REVE_CREATE_MODEL = "reve/create"
+
+# Provider keys are intentionally open-ended strings rather than a closed enum.
+# The model catalog can describe providers that are not active in the current
+# production aliases, and adding a future provider does not change the quality
+# alias contract.
+IMAGE_PROVIDER_OPENAI = "openai"
+IMAGE_PROVIDER_VERTEX_MULTIMODAL = "vertex-multimodal"
+IMAGE_PROVIDER_FAL_QUEUE = "fal-queue"
+IMAGE_PROVIDER_REVE = "reve"
+IMAGE_PROVIDER_UNKNOWN = "unknown"
 
 
 class ImageRoute(str, Enum):
@@ -38,11 +50,12 @@ class ImageRoute(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class ImageModelDescription:
-    """Display and provider identity for one effective image model string."""
+    """Display, provider, and model identity for one effective model string."""
 
     route: ImageRoute
     display_name: str
     provider_model: str
+    provider_key: str
 
 
 _ALIAS_DESCRIPTIONS: dict[str, ImageModelDescription] = {
@@ -50,21 +63,33 @@ _ALIAS_DESCRIPTIONS: dict[str, ImageModelDescription] = {
         route=ImageRoute.GEMINI_FLASH_LITE,
         display_name="Fast — Gemini 3.1 Flash Lite Image",
         provider_model=_GEMINI_FLASH_LITE_MODEL,
+        provider_key=IMAGE_PROVIDER_VERTEX_MULTIMODAL,
     ),
     GATEWAY_IMAGE_BALANCED: ImageModelDescription(
         route=ImageRoute.GEMINI_PRO_IMAGE,
         display_name="Balanced — Gemini 3 Pro Image (Nano Banana Pro)",
         provider_model=_GEMINI_PRO_IMAGE_MODEL,
+        provider_key=IMAGE_PROVIDER_VERTEX_MULTIMODAL,
     ),
     GATEWAY_IMAGE_QUALITY: ImageModelDescription(
         route=ImageRoute.GPT_IMAGE_2,
         display_name="Quality — GPT Image 2",
         provider_model=_GPT_IMAGE_2_MODEL,
+        provider_key=IMAGE_PROVIDER_OPENAI,
     ),
     GATEWAY_IMAGE_REVE: ImageModelDescription(
         route=ImageRoute.REVE,
         display_name="Reve",
         provider_model=_REVE_CREATE_MODEL,
+        provider_key=IMAGE_PROVIDER_REVE,
+    ),
+    # Labs-only gateway alias. It is intentionally not part of the production
+    # alias inventory exposed by ``image_model_aliases()``.
+    GATEWAY_IMAGE_SEEDREAM_TEST: ImageModelDescription(
+        route=ImageRoute.SEEDREAM,
+        display_name="Seedream 5.0 Lite",
+        provider_model=_SEEDREAM_V5_LITE_MODEL,
+        provider_key=IMAGE_PROVIDER_FAL_QUEUE,
     ),
 }
 
@@ -79,26 +104,31 @@ def describe_image_model(model: str) -> ImageModelDescription:
             route=ImageRoute.GPT_IMAGE_2,
             display_name="GPT Image 2",
             provider_model=normalized,
+            provider_key=IMAGE_PROVIDER_OPENAI,
         )
     if normalized.startswith("reve/"):
         return ImageModelDescription(
             route=ImageRoute.REVE,
             display_name="Reve",
             provider_model=normalized,
+            provider_key=IMAGE_PROVIDER_REVE,
         )
     if normalized == _GEMINI_FLASH_LITE_MODEL:
         return ImageModelDescription(
             route=ImageRoute.GEMINI_FLASH_LITE,
             display_name="Gemini 3.1 Flash Lite Image",
             provider_model=normalized,
+            provider_key=IMAGE_PROVIDER_VERTEX_MULTIMODAL,
         )
     if normalized == _GEMINI_PRO_IMAGE_MODEL:
         return ImageModelDescription(
             route=ImageRoute.GEMINI_PRO_IMAGE,
             display_name="Gemini 3 Pro Image (Nano Banana Pro)",
             provider_model=normalized,
+            provider_key=IMAGE_PROVIDER_VERTEX_MULTIMODAL,
         )
     if normalized in {
+        _SEEDREAM_V5_LITE_MODEL,
         _SEEDREAM_V5_PRO_MODEL,
         "bytedance/seedream/v5/pro/edit",
     } or "seedream" in normalized:
@@ -106,11 +136,13 @@ def describe_image_model(model: str) -> ImageModelDescription:
             route=ImageRoute.SEEDREAM,
             display_name="Seedream 5.0 Pro",
             provider_model=normalized,
+            provider_key=IMAGE_PROVIDER_FAL_QUEUE,
         )
     return ImageModelDescription(
         route=ImageRoute.UNKNOWN,
         display_name=(model or "").strip(),
         provider_model=(model or "").strip(),
+        provider_key=IMAGE_PROVIDER_UNKNOWN,
     )
 
 
@@ -225,6 +257,10 @@ class ImageModelProfile:
         rejects them before transport so no UI/config knob implies a provider
         parameter that is never sent.
 
+    ``provider_key`` selects the transport serializer. It is separate from the
+    concrete ``provider_model`` so model versions can change without changing
+    the wire dispatch.
+
     Construct via :func:`image_model_profile` (or :func:`image_model_profile_for`),
     never inline — the numbers live in one place so characterization tests can
     pin them.
@@ -236,6 +272,7 @@ class ImageModelProfile:
     prompt_char_limit: int | None
     native_aspect_modes: tuple[str, ...]
     supported_controls: frozenset[str]
+    provider_key: str = IMAGE_PROVIDER_UNKNOWN
 
     @property
     def accepts_contextual_refs(self) -> bool:
@@ -282,7 +319,21 @@ _ROUTE_REFERENCE_CAPS: dict[ImageRoute, int] = {
 }
 
 
-def _profile_for_route(route: ImageRoute) -> ImageModelProfile:
+_ROUTE_PROVIDER_KEYS: dict[ImageRoute, str] = {
+    ImageRoute.GEMINI_FLASH_LITE: IMAGE_PROVIDER_VERTEX_MULTIMODAL,
+    ImageRoute.GEMINI_PRO_IMAGE: IMAGE_PROVIDER_VERTEX_MULTIMODAL,
+    ImageRoute.SEEDREAM: IMAGE_PROVIDER_FAL_QUEUE,
+    ImageRoute.REVE: IMAGE_PROVIDER_REVE,
+    ImageRoute.GPT_IMAGE_2: IMAGE_PROVIDER_OPENAI,
+    ImageRoute.UNKNOWN: IMAGE_PROVIDER_UNKNOWN,
+}
+
+
+def _profile_for_route(
+    route: ImageRoute,
+    *,
+    provider_key: str | None = None,
+) -> ImageModelProfile:
     return ImageModelProfile(
         route=route,
         max_references=_ROUTE_REFERENCE_CAPS[route],
@@ -290,6 +341,7 @@ def _profile_for_route(route: ImageRoute) -> ImageModelProfile:
         prompt_char_limit=_PROMPT_CHAR_LIMITS[route],
         native_aspect_modes=_NATIVE_ASPECTS[route],
         supported_controls=_SUPPORTED_CONTROLS[route],
+        provider_key=provider_key or _ROUTE_PROVIDER_KEYS[route],
     )
 
 
@@ -300,7 +352,11 @@ def image_model_profile(model: str) -> ImageModelProfile:
     :func:`describe_image_model`. The profile is derived from the resolved
     route, so aliases and literal provider model strings resolve consistently.
     """
-    return _profile_for_route(describe_image_model(model).route)
+    description = describe_image_model(model)
+    return _profile_for_route(
+        description.route,
+        provider_key=description.provider_key,
+    )
 
 
 def image_model_profile_for_config(config) -> ImageModelProfile:

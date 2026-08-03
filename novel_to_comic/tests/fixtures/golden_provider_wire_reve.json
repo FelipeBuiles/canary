@@ -2,8 +2,8 @@
   "compiled_request_sha256": "f247c977126dae228a7b31a8913e1f1ac6bea45b6b29aeecf432eb1705843f15",
   "configured_provider_model": "reve/create",
   "controls": [],
-  "discriminator": "canary.provider-wire/1",
-  "execution_fingerprint": "15badf84e2672baf0e2e4d3f009bf035b1b8f28f963af4db65d311297cee3231",
+  "discriminator": "canary.provider-wire/2",
+  "execution_fingerprint": "a3d354295e88b35a1d2b5bbbc10415730e4391473e68d23dec9185dab27b04c4",
   "expected_route": "reve",
   "height": 1344,
   "prompt_parts": [
@@ -54,8 +54,9 @@
       "role_label": "location_plate:loc_tavern"
     }
   ],
+  "provider_key": "reve",
   "requested_alias": "image-reve",
-  "schema_version": 1,
+  "schema_version": 2,
   "structured_aspect": "9:16",
   "width": 768
 }
