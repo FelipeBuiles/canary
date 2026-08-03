@@ -14,16 +14,22 @@ from novel_to_comic.generation_request_preview import (
     compiled_request_context,
     frozen_request_preview,
 )
-from novel_to_comic.provider_wire import ProviderWireReference, ProviderWireRequest
+from novel_to_comic.provider_wire import (
+    PROVIDER_WIRE_DISCRIMINATOR,
+    PROVIDER_WIRE_SCHEMA_VERSION,
+    ProviderWireReference,
+    ProviderWireRequest,
+)
 
 
 def _wire(source: Path) -> ProviderWireRequest:
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     wire = ProviderWireRequest(
-        discriminator="canary.provider-wire/1",
-        schema_version=1,
+        discriminator=PROVIDER_WIRE_DISCRIMINATOR,
+        schema_version=PROVIDER_WIRE_SCHEMA_VERSION,
         requested_alias="image-balanced",
         expected_route="gemini_pro_image",
+        provider_key="vertex-multimodal",
         configured_provider_model="vertex-multimodal/gemini-3-pro-image",
         prompt_parts=("protected anchor sentinel",),
         references=(ProviderWireReference(

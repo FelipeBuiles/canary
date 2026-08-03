@@ -181,6 +181,7 @@ def frozen_request_preview(
         "requested_model": {
             "alias": wire.get("requested_alias"),
             "expected_route": wire.get("expected_route"),
+            "provider_key": wire.get("provider_key"),
             "configured_target": wire.get("configured_provider_model"),
         },
         "geometry": {

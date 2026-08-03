@@ -142,6 +142,7 @@ function StyleCard({
   }, [isGenerating]);
 
   const showLoading = isGenerating || (!suggestion.has_sample && generationDisabled);
+  const sampleRetryAvailable = !suggestion.has_sample && !isGenerating && !generationDisabled;
   const isActive = suggestion.is_active;
   const canSelect = !isActive && !isGenerating && !selectionDisabled;
 
@@ -171,7 +172,7 @@ function StyleCard({
             ) : imgFailed ? (
               <div className="flex aspect-[4/5] w-full flex-col items-center justify-center">
                 <div className="font-meta text-[0.58rem] font-bold tracking-[0.1em] text-ink-muted">
-                  {t("NO STYLE SUGGESTIONS YET")}
+                  {suggestion.has_sample ? t("NO STYLE SUGGESTIONS YET") : t("SAMPLE PROOF FAILED")}
                 </div>
               </div>
             ) : (
@@ -265,6 +266,22 @@ function StyleCard({
               onClick={onRefresh}
             >
               {t("REFRESH PROOF")}
+            </Button>
+          </div>
+        )}
+
+        {sampleRetryAvailable && (
+          <div className="mt-4 flex items-center justify-between gap-3 border-[2px] border-hero-red/35 bg-hero-red/10 px-3 py-2.5">
+            <span className="font-meta text-[0.62rem] font-bold tracking-[0.08em] text-hero-red">
+              {t("SAMPLE PROOF FAILED")}
+            </span>
+            <Button
+              variant="outline"
+              size="xs"
+              disabled={generationDisabled || isGenerating}
+              onClick={onRefresh}
+            >
+              {t("TRY SAMPLE AGAIN")}
             </Button>
           </div>
         )}

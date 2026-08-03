@@ -406,7 +406,17 @@ def compile_page_generation_request(
         ):
             raise ValueError("edit source bytes do not match correction lineage")
     authorities = _selected_authorities(page, inventory)
-    uploaded_authorities = () if depiction == "less_graphic" else authorities
+    max_references = selected_edition.capability_profile.max_image_references
+    uploaded_authorities = (
+        ()
+        if depiction == "less_graphic"
+        else authorities[:max_references]
+    )
+    unuploaded_authorities = (
+        authorities
+        if depiction == "less_graphic"
+        else authorities[max_references:]
+    )
     references: list[PageReference] = []
     loaded: list[bytes] = []
     for order, authority in enumerate(uploaded_authorities, start=1):
@@ -440,7 +450,7 @@ def compile_page_generation_request(
         tuple(references),
         correction,
         depiction,
-        authorities if depiction == "less_graphic" else (),
+        unuploaded_authorities,
         style_template,
     )
     request = FrozenPageGenerationRequest.compile(

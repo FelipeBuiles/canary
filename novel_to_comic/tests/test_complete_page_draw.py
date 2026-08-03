@@ -42,7 +42,7 @@ from novel_to_comic.page_drawing import (
     production_page_capability_profile,
     select_book_edition,
 )
-from novel_to_comic.server.routers.pages import _correction_retry
+from novel_to_comic.server.routers.pages import _correction_retry, _generation_retry
 from novel_to_comic.server.credited_job import enqueue_reserved_generation_job
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import ApiResult, UsageRecord
@@ -340,6 +340,27 @@ def test_request_identity_records_retry_lineage(tmp_path: Path) -> None:
         )
 
 
+def test_failed_generation_retry_advances_request_lineage(tmp_path: Path) -> None:
+    original = _compile(tmp_path)
+    artifacts = TargetArtifacts(tmp_path / "project")
+    artifacts.write_request(original.request, request_revision=1)
+
+    retry = _generation_retry(artifacts, page_number=7)
+    retried = compile_page_generation_request(
+        _page(),
+        _edition(),
+        _inventory(),
+        _reference_files(tmp_path),
+        retry=retry,
+    )
+
+    assert retry == RetryProvenance(
+        attempt=2,
+        retries_request_sha256=original.request.request_sha256,
+    )
+    assert retried.request.request_sha256 != original.request.request_sha256
+
+
 def test_less_graphic_depiction_preserves_authority_and_softens_visual_treatment(
     tmp_path: Path,
 ) -> None:
@@ -502,17 +523,66 @@ def test_page_correction_uses_current_model_after_edition_advances(
     )
 
 
-def test_reference_capacity_fails_during_compilation(tmp_path: Path) -> None:
+def test_reference_capacity_limits_uploaded_references(tmp_path: Path) -> None:
     edition = _edition(_profile(max_image_references=1))
 
-    with pytest.raises(ValueError, match="reference count"):
-        compile_page_generation_request(
-            _page(),
-            edition,
-            _inventory(),
-            _reference_files(tmp_path),
-            retry=RetryProvenance(attempt=1),
+    compiled = compile_page_generation_request(
+        _page(),
+        edition,
+        _inventory(),
+        _reference_files(tmp_path),
+        retry=RetryProvenance(attempt=1),
+    )
+
+    assert len(compiled.request.references) == 1
+    assert compiled.request.references[0].entity_id == "ward"
+    assert "green-black stone; exact seven-pointed crown" in compiled.request.prompt
+
+
+def test_canonical_page_keeps_overflow_authorities_in_prompt(
+    tmp_path: Path,
+) -> None:
+    extra_entities = [f"extra_{index}" for index in range(1, 8)]
+    base_page = _page()
+    page = base_page.model_copy(
+        update={
+            "content": (
+                base_page.content[0].model_copy(
+                    update={"entity_ids": ["ward", "idol", *extra_entities]}
+                ),
+            )
+        }
+    )
+    references = list(_inventory().references)
+    files = _reference_files(tmp_path)
+    for index, entity_id in enumerate(extra_entities, start=1):
+        reference_id = f"{entity_id}-ref"
+        references.append(
+            ApprovedVisualReference(
+                id=reference_id,
+                entity_id=entity_id,
+                visual_anchor=f"extra anchor {index}",
+            )
         )
+        path = tmp_path / f"{entity_id}.png"
+        path.write_bytes(f"extra-{index}".encode())
+        files[reference_id] = ApprovedReferenceFile(
+            reference_id=reference_id,
+            path=path,
+            media_type="image/png",
+        )
+
+    compiled = compile_page_generation_request(
+        page,
+        _edition(_profile(max_image_references=8)),
+        ApprovedVisualReferenceInventory(references=references),
+        files,
+        retry=RetryProvenance(attempt=1),
+    )
+
+    assert len(compiled.request.references) == 8
+    assert compiled.request.references[-1].entity_id == "extra_6"
+    assert "extra anchor 7" in compiled.request.prompt
 
 
 class _RecordingTransport:

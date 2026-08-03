@@ -23,7 +23,11 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, TYPE_CHECKING
 
-from novel_to_comic.provider_wire import ProviderWireError, ProviderWireRequest
+from novel_to_comic.provider_wire import (
+    PROVIDER_WIRE_SCHEMA_VERSION,
+    ProviderWireError,
+    ProviderWireRequest,
+)
 
 if TYPE_CHECKING:
     from novel_to_comic.config import Config
@@ -34,7 +38,7 @@ FROZEN_REQUEST_SCHEMA_VERSION = 1
 FROZEN_REQUEST_DISCRIMINATOR = "canary.frozen-request/1"
 FROZEN_REQUEST_VERSION = "frozen-generation-request/1"
 FROZEN_REQUEST_PREPARATION_VERSION = "frozen-reference-staging/1"
-FROZEN_REQUEST_SOURCE_VERSION = "provider-wire/1"
+FROZEN_REQUEST_SOURCE_VERSION = f"provider-wire/{PROVIDER_WIRE_SCHEMA_VERSION}"
 
 REQUESTS_DIRNAME = "requests"
 BLOBS_DIRNAME = "blobs"

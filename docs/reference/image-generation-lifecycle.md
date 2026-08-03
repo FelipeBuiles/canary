@@ -8,11 +8,16 @@ compatible during this development phase.
 
 Every image follows one path: structured source data becomes canonical prompt
 IR; state-compatible overlays are applied; `image_models.py` resolves one model
-profile; `ReferencePlan` selects and orders references once;
+profile and provider key; `ReferencePlan` selects and orders references once;
 `CompiledGenerationRequest` owns final prompt sections, instructions, geometry,
 and controls; `ProviderWireRequest` serializes that request; submission freezes
 the manifest and content-addressed reference bytes; and the result or failure
 receives common redaction-safe provenance.
+
+The provider key is frozen in the wire request and selects the serializer.
+Product quality aliases and concrete provider model versions do not select
+serializer behavior; multiple providers may share the same serializer, and new
+providers register their own key and serializer.
 
 Protected character, location, and prop anchors remain byte-for-byte source
 material. Active appearance/location state overrides contradictory canonical
@@ -57,7 +62,8 @@ contain credentials, signed URLs, absolute user paths, or raw payloads.
 
 ## Provider extension rules
 
-A provider/alias must add a truthful profile in `image_models.py`, golden
+A provider/alias must add a truthful profile and provider key in
+`image_models.py`, golden
 reference-policy coverage, compiled/wire snapshots, geometry tests, and common
 provenance coverage. Its isolated handler must require the versioned wire and
 preserve exact prompt bytes, reference instructions/order, geometry, and

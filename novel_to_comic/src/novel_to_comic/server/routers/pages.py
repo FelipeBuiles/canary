@@ -120,6 +120,23 @@ def _correction_retry(
     )
 
 
+def _generation_retry(target: TargetArtifacts, page_number: int) -> RetryProvenance:
+    """Advance the frozen request identity after an incomplete generation."""
+
+    prior_requests = [
+        target.read_request(page_number, revision)
+        for revision in target.request_revisions(page_number)
+    ]
+    prior_attempts = [request for request in prior_requests if request.correction is None]
+    if not prior_attempts:
+        return RetryProvenance(attempt=1)
+    prior = max(prior_attempts, key=lambda request: request.retry.attempt)
+    return RetryProvenance(
+        attempt=prior.retry.attempt + 1,
+        retries_request_sha256=prior.request_sha256,
+    )
+
+
 def _active_correction_job(request: Request, *, pkey: str, issue_id: str):
     return next(
         (
@@ -336,6 +353,12 @@ def generate_page(
 ):
     project_dir, config, _state = project
     target = TargetArtifacts(project_dir)
+    revisions = target.provenance_revisions(page_number)
+    if revisions:
+        raise HTTPException(
+            409,
+            "Page already has a render; create an issue and request a correction.",
+        )
     try:
         page = target.read_page(page_number)
         edition = target.read_book_edition()
@@ -345,18 +368,12 @@ def generate_page(
             edition,
             approved_visual_inventory(project_dir),
             approved_reference_files(project_dir),
-            retry=RetryProvenance(attempt=1),
+            retry=_generation_retry(target, page_number),
             depiction=generation.depiction if generation is not None else "canonical",
             style_template=config.style_template,
         )
     except (ArtifactMissing, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
-    revisions = target.provenance_revisions(page_number)
-    if revisions:
-        raise HTTPException(
-            409,
-            "Page already has a render; create an issue and request a correction.",
-        )
     adapter = VertexCompletePageAdapter(GoogleVertexCompletePageTransport(config))
     pkey = project_key(user_id, project_id)
     queue = request.app.state.event_queues.get(pkey)

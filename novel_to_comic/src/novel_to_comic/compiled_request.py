@@ -451,9 +451,10 @@ class CompiledGenerationRequest:
     schema_version: int
     asset_kind: AssetKind
     asset_identity: str
-    # Route/model identity (configured, NOT observed provider execution identity)
+    # Route/provider/model identity (configured, NOT observed provider execution identity)
     requested_alias: str | None
     expected_route: ImageRoute
+    provider_key: str
     configured_provider_model: str
     # Style
     selected_style_text: str | None
@@ -598,6 +599,7 @@ def _compiled_hash_projection(req: CompiledGenerationRequest) -> str:
             "asset_identity": req.asset_identity,
             "requested_alias": req.requested_alias,
             "expected_route": req.expected_route.value,
+            "provider_key": req.provider_key,
             "configured_provider_model": req.configured_provider_model,
             "selected_style_text": req.selected_style_text,
             "selected_style_source_hash": req.selected_style_source_hash,
@@ -950,6 +952,7 @@ def compile_generation_request(
         asset_identity=identity,
         requested_alias=requested_alias,
         expected_route=route_profile.route,
+        provider_key=route_profile.provider_key,
         configured_provider_model=configured_provider_model,
         selected_style_text=_clean(selected_style_text) or None,
         selected_style_source_hash=selected_style_source_hash,

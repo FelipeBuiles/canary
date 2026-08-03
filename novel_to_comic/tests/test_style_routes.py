@@ -19,6 +19,7 @@ from novel_to_comic.server.routers.styles import (
     _prepare_style_direction,
     _suggest_batch_credit_estimate,
     create_style_direction,
+    generate_style_samples,
     generate_style_validation,
     get_styles,
     style_direction_estimate,
@@ -114,6 +115,46 @@ def test_style_task_guard_blocks_overlap():
         with pytest.raises(HTTPException) as exc_info:
             _assert_no_style_task(request, "user:demo")
         assert exc_info.value.status_code == 409
+
+    asyncio.run(scenario())
+
+
+def test_style_sample_retry_queues_only_the_requested_missing_card(tmp_path):
+    async def scenario():
+        request = _request()
+        project = _project(tmp_path, StageStatus.FAILED)
+        suggestion = normalize_suggestion({
+            "label": "Ink", "medium": "ink", "template": "Bold ink",
+        })
+        save_suggestions(tmp_path, [suggestion], "Demo")
+        captured = {}
+
+        def fake_enqueue(*_args, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(id="job", status="queued")
+
+        with (
+            patch("novel_to_comic.server.routers.styles._assert_no_pipeline_task"),
+            patch("novel_to_comic.server.routers.styles._assert_no_style_task"),
+            patch("novel_to_comic.server.routers.styles.prune_finished_generation_jobs"),
+            patch("novel_to_comic.server.routers.styles.find_active_generation_job", return_value=None),
+            patch("novel_to_comic.server.routers.styles.get_db", return_value=object()),
+            patch("novel_to_comic.server.routers.styles.assert_sufficient_credits"),
+            patch("novel_to_comic.server.routers.styles.enqueue_generation_job", side_effect=fake_enqueue),
+            patch("novel_to_comic.server.routers.styles.generation_semaphore_for_config", return_value=None),
+            patch("novel_to_comic.server.routers.styles.generation_job_payload", return_value={"id": "job"}),
+        ):
+            result = await generate_style_samples(
+                request,
+                "demo",
+                {"ids": [suggestion["id"]]},
+                project=project,
+                user_id="user",
+            )
+
+        assert result["indices"] == [1]
+        assert result["ids"] == [suggestion["id"]]
+        assert captured["payload"] == {"index": 1}
 
     asyncio.run(scenario())
 
@@ -802,3 +843,4 @@ def test_failed_combined_neighbor_proofs_do_not_persist_duplicates(tmp_path):
         assert persisted[0]["origin"] == "user_text"
 
     asyncio.run(scenario())
+
