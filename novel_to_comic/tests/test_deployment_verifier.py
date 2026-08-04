@@ -79,3 +79,32 @@ def test_verifier_rejects_wrong_release_and_missing_headers(
     assert evidence["security_headers"]["missing"] == sorted(
         verifier.REQUIRED_SECURITY_HEADERS
     )
+
+
+def test_verifier_uses_cloudflare_compatible_user_agent(monkeypatch) -> None:
+    verifier = _load_verifier()
+    captured = {}
+
+    class Response:
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"status": "ok"}'
+
+    def urlopen(request, **_kwargs):
+        captured["request"] = request
+        return Response()
+
+    monkeypatch.setattr(verifier.urllib.request, "urlopen", urlopen)
+
+    verifier._get_json("https://example.test", "/api/version")
+
+    assert captured["request"].get_header("User-agent") == (
+        "Canary-deployment-verifier/1.0"
+    )
