@@ -468,6 +468,18 @@ def test_fly_routes_on_local_liveness_and_uses_conservative_limits():
     assert config["vm"][0]["memory_mb"] == 4096
 
 
+def test_deploy_workflow_bypasses_public_proxy_for_ops_guard():
+    root = Path(__file__).resolve().parents[2]
+    workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    deploy_job = workflow[workflow.index("\n  deploy:\n") :]
+    confirm_start = deploy_job.index("      - name: Confirm production is idle")
+    rollback_start = deploy_job.index("      - name: Record rollback target")
+    confirmation_step = deploy_job[confirm_start:rollback_start]
+
+    assert "SCENEWRIGHT_APP_URL: https://canary-web.fly.dev" in confirmation_step
+    assert "https://scenewright.ink" not in confirmation_step
+
+
 def test_production_docker_build_fails_without_supabase_build_args():
     root = Path(__file__).resolve().parents[2]
     dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
