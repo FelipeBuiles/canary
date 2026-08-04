@@ -2519,15 +2519,10 @@ def test_mechanical_allocation_and_reference_ids_are_canonicalized(
                     {
                         "id": "page_002_content_001",
                         "order": 1,
-                        # The approach remains visible as the escape begins.
-                        "beat_ids": ["beat_0001", "beat_0002"],
+                        "beat_ids": ["beat_0002"],
                         "visual_intent": "The approach resolves into escape.",
                         "lettering_ids": ["lettering_0002"],
                         "entity_ids": ["character_johansen", "location_alert"],
-                        "appearance_state_ids": [
-                            "character_johansen:johansen_soaked",
-                            "location_alert:base",
-                        ],
                     }
                 ],
                 "reading_order": [
@@ -2569,10 +2564,7 @@ def test_mechanical_allocation_and_reference_ids_are_canonicalized(
     assert artifacts.read_page(1).content[0].appearance_state_ids == (
         "johansen_soaked",
     )
-    assert artifacts.read_page(2).content[0].beat_ids == (
-        "beat_0001",
-        "beat_0002",
-    )
+    assert artifacts.read_page(2).content[0].beat_ids == ("beat_0002",)
     assert artifacts.read_page(2).content[0].appearance_state_ids == (
         "johansen_soaked",
     )

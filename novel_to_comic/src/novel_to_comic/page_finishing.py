@@ -18,9 +18,11 @@ from novel_to_comic.models.draw import PageIssue, PageRenderRevision, RenderAnal
 from novel_to_comic.models.finish import (
     DrawCorrectionRequest,
     ExportPackage,
+    FINISH_PREFLIGHT_VALIDATOR_VERSION,
     FinishPreflight,
     FinishProductionSpec,
     FinishResult,
+    PreflightDiagnostic,
     PreflightPage,
 )
 from novel_to_comic.models.page import ComicPage
@@ -49,6 +51,25 @@ def _failure(
     evidence: tuple[str, ...],
 ) -> InvariantFailure:
     return InvariantFailure(
+        id=f"finish-page-{page_number:03d}-{code}",
+        owner_stage=owner_stage,
+        code=code,
+        message=message,
+        artifact_ids=artifact_ids,
+        evidence=evidence,
+    )
+
+
+def _diagnostic(
+    *,
+    page_number: int,
+    owner_stage: str,
+    code: str,
+    message: str,
+    artifact_ids: tuple[str, ...],
+    evidence: tuple[str, ...],
+) -> PreflightDiagnostic:
+    return PreflightDiagnostic(
         id=f"finish-page-{page_number:03d}-{code}",
         owner_stage=owner_stage,
         code=code,
@@ -106,10 +127,18 @@ def _ocr_is_exact(
     return True
 
 
-def _appearance_failures(
+def _appearance_diagnostics(
     adaptation: BookAdaptation,
     pages: tuple[ComicPage, ...],
-) -> dict[int, list[InvariantFailure]]:
+) -> dict[int, list[PreflightDiagnostic]]:
+    """Record legacy state-citation gaps without blocking an author at Finish.
+
+    Plan now carries active state references forward before Draw. Existing books
+    can still contain the older sparse citations, but Finish cannot repair them
+    and an author has no corresponding action in Book. Keep that evidence for
+    Dev Content while allowing already reviewed pages to export.
+    """
+
     beats = {beat.id: beat for beat in adaptation.beats}
     state_owner = {
         change.to_state_id: change.entity_id
@@ -119,7 +148,7 @@ def _appearance_failures(
     active: dict[str, str] = {}
     activated: dict[str, set[str]] = defaultdict(set)
     seen_beats: set[str] = set()
-    failures: dict[int, list[InvariantFailure]] = defaultdict(list)
+    diagnostics: dict[int, list[PreflightDiagnostic]] = defaultdict(list)
     for page in pages:
         for content in page.content:
             for beat_id in content.beat_ids:
@@ -135,8 +164,8 @@ def _appearance_failures(
                         change.from_state_id is not None
                         and current != change.from_state_id
                     ):
-                        failures[page.page_number].append(
-                            _failure(
+                        diagnostics[page.page_number].append(
+                            _diagnostic(
                                 page_number=page.page_number,
                                 owner_stage="adapt",
                                 code="cross_page_appearance_state",
@@ -182,8 +211,8 @@ def _appearance_failures(
                             f"Page content cites states not yet activated for "
                             f"{entity_id!r}: {not_yet_activated!r}."
                         )
-                    failures[page.page_number].append(
-                        _failure(
+                    diagnostics[page.page_number].append(
+                        _diagnostic(
                             page_number=page.page_number,
                             owner_stage="plan",
                             code="cross_page_appearance_state",
@@ -192,7 +221,7 @@ def _appearance_failures(
                             evidence=(evidence,),
                         )
                     )
-    return failures
+    return diagnostics
 
 
 def _load_active_render(
@@ -502,13 +531,14 @@ def finish_book(
     adaptation = artifacts.read_adaptation()
     edition = artifacts.read_book_edition()
     pages = tuple(artifacts.read_page(item.page_number) for item in plan.pages)
-    appearance = _appearance_failures(adaptation, pages)
+    appearance = _appearance_diagnostics(adaptation, pages)
     preflight_pages: list[PreflightPage] = []
     correction_requests: list[DrawCorrectionRequest] = []
     normalized_paths: list[Path] = []
 
     for selected, page in zip(plan.pages, pages, strict=True):
-        failures = list(appearance.get(page.page_number, ()))
+        diagnostics = list(appearance.get(page.page_number, ()))
+        failures: list[InvariantFailure] = []
         issues = _read_issues(artifacts, selected.page_number)
         if (
             plan.adaptation_revision != adaptation.revision
@@ -848,6 +878,7 @@ def finish_book(
                 ),
                 normalized_image_sha256=normalized_sha256,
                 invariant_failures=tuple(failures),
+                diagnostics=tuple(diagnostics),
                 unresolved_editorial_issue_ids=unresolved,
                 accepted_editorial_issue_ids=accepted,
             )
@@ -856,6 +887,7 @@ def finish_book(
     preflight = FinishPreflight(
         edition_revision=edition.revision,
         edition_sha256=edition.content_sha256,
+        validator_version=FINISH_PREFLIGHT_VALIDATOR_VERSION,
         production=production,
         pages=tuple(preflight_pages),
         correction_requests=tuple(correction_requests),

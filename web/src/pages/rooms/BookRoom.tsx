@@ -19,6 +19,7 @@ import { StatusPill } from "../../components/ui/StatusPill";
 import { Surface } from "../../components/ui/Surface";
 import { useI18n } from "../../i18n";
 import { readerPages } from "../../lib/bookReader";
+import { useShowDevContent } from "../../lib/devContent";
 import type { FinishPreflight, InvariantFailure } from "../../types/api";
 
 type FinishFindingGroup = {
@@ -57,9 +58,34 @@ function groupFinishFindings(preflight?: FinishPreflight): FinishFindingGroup[] 
   return Array.from(groups.values());
 }
 
+function groupFinishDiagnostics(preflight?: FinishPreflight): FinishFindingGroup[] {
+  if (!preflight) return [];
+  const groups = new Map<string, FinishFindingGroup>();
+  preflight.pages.forEach((page) => {
+    (page.diagnostics ?? []).forEach((diagnostic) => {
+      const key = `${page.page_number}:${diagnostic.code}:${diagnostic.message}`;
+      const existing = groups.get(key);
+      if (existing) {
+        existing.count += 1;
+        existing.evidence = Array.from(new Set([...existing.evidence, ...diagnostic.evidence]));
+        return;
+      }
+      groups.set(key, {
+        key,
+        pageNumber: page.page_number,
+        message: diagnostic.message,
+        evidence: diagnostic.evidence,
+        count: 1,
+      });
+    });
+  });
+  return Array.from(groups.values());
+}
+
 export function BookRoom() {
   const { id } = useParams<{ id: string }>();
   const { t } = useI18n();
+  const [showDevContent] = useShowDevContent();
   const { data: status } = useProjectStatus(id);
   const finishStatus = status?.stages.finish?.status ?? "pending";
   const drawComplete = status?.stages.draw?.status === "complete";
@@ -103,6 +129,7 @@ export function BookRoom() {
   const exportBlockers = technicalFindingCount + unresolvedIssues;
   const canExport = !!preflight && !isLoading && exportBlockers === 0;
   const finishFindings = groupFinishFindings(preflight);
+  const finishDiagnostics = showDevContent ? groupFinishDiagnostics(preflight) : [];
   const editorialTone = unresolvedIssues > 0
     ? "red"
     : acceptedIssues > 0
@@ -176,9 +203,9 @@ export function BookRoom() {
 
         {isLoading ? (
           <Surface padding="lg" border="soft" shadow="none" role="status" aria-live="polite">
-            <p className="font-meta text-sm font-bold">{t("CHECKING THE BOOK…")}</p>
+            <p className="font-meta text-sm font-bold">{t("PREPARING PREFLIGHT…")}</p>
             <p className="mt-2 max-w-[60ch] font-body text-sm font-semibold leading-6 text-ink-muted">
-              {t("Finish is checking every page before export.")}
+              {t("Finish is loading the last check and will run again only if this edition changed.")}
             </p>
           </Surface>
         ) : preflight ? (
@@ -253,6 +280,40 @@ export function BookRoom() {
                 {finding.evidence.length > 0 && (
                   <p className="mt-2 font-body text-xs leading-5 text-ink-black/70">
                     {finding.evidence.join(" · ")}
+                  </p>
+                )}
+              </Surface>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {finishDiagnostics.length ? (
+        <section aria-label={t("TECHNICAL DIAGNOSTICS")}>
+          <SectionHeader
+            variant="underline"
+            title={t("TECHNICAL DIAGNOSTICS")}
+            description={t("Internal continuity evidence for development. It does not block export or require an editorial decision.")}
+          />
+          <div className="space-y-3">
+            {finishDiagnostics.map((diagnostic) => (
+              <Surface key={diagnostic.key} tone="gold" padding="md" border="soft" shadow="none">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="font-meta text-xs font-bold tracking-[0.08em] text-ink-muted">
+                      {`${t("Page")} ${diagnostic.pageNumber}`}
+                    </p>
+                    <p className="mt-1 font-body text-sm font-bold leading-6">{diagnostic.message}</p>
+                  </div>
+                  {diagnostic.count > 1 && (
+                    <span className="shrink-0 font-meta text-xs font-bold text-ink-muted">
+                      ×{diagnostic.count}
+                    </span>
+                  )}
+                </div>
+                {diagnostic.evidence.length > 0 && (
+                  <p className="mt-2 font-body text-xs leading-5 text-ink-black/70">
+                    {diagnostic.evidence.join(" · ")}
                   </p>
                 )}
               </Surface>

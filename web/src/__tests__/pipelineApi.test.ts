@@ -4,7 +4,7 @@ import {
   regenLocationState,
 } from "../api/pipeline";
 import { createStyleDirection, fetchStyleSampleEstimate, generateStyleSamples, generateStyleValidation, setActiveStyle, suggestStyles } from "../api/styles";
-import { runFinishPreflight, triggerExport } from "../api/pages";
+import { getFinishPreflight, runFinishPreflight, triggerExport } from "../api/pages";
 import { apiFetch } from "../api/client";
 
 vi.mock("../api/client", () => ({
@@ -104,6 +104,14 @@ describe("generation API", () => {
     expect(mockedApiFetch).toHaveBeenCalledWith(
       "/projects/proj%20one/export/preflight",
       { method: "POST" },
+    );
+  });
+
+  it("reads the persisted Finish preflight before requesting a new one", async () => {
+    await getFinishPreflight("proj one");
+
+    expect(mockedApiFetch).toHaveBeenCalledWith(
+      "/projects/proj%20one/export/preflight",
     );
   });
 });

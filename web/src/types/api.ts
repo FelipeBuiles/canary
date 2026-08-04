@@ -576,11 +576,19 @@ export interface BookPlan {
 
 export interface FinishPreflight {
   edition_revision: number;
+  validator_version?: number;
   pages: Array<{
     page_number: number;
     comic_page_revision: number;
     render_revision: number;
     invariant_failures: InvariantFailure[];
+    diagnostics?: Array<{
+      id: string;
+      owner_stage: StageName;
+      code: string;
+      message: string;
+      evidence: string[];
+    }>;
     unresolved_editorial_issue_ids: string[];
     accepted_editorial_issue_ids: string[];
   }>;
