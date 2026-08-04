@@ -10,7 +10,12 @@ from fastapi.responses import FileResponse, RedirectResponse
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.stages import REGISTRY
 from novel_to_comic.storage import export_url, r2_configured, upload_export
-from novel_to_comic.target_artifacts import TargetArtifacts
+from novel_to_comic.models.finish import FINISH_PREFLIGHT_VALIDATOR_VERSION
+from novel_to_comic.target_artifacts import (
+    ArtifactInvalid,
+    ArtifactMissing,
+    TargetArtifacts,
+)
 
 from ..auth import get_current_user
 from ..deps import get_project
@@ -28,6 +33,23 @@ def _get_export_lock(app, project_name: str) -> asyncio.Lock:
         locks = {}
         setattr(app.state, _EXPORT_LOCKS_ATTR, locks)
     return locks.setdefault(project_name, asyncio.Lock())
+
+
+@router.get("/preflight")
+def get_preflight(
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),  # noqa: ARG001 — auth gate
+):
+    """Return the persisted current preflight without running it again."""
+
+    project_dir, _config, _state = project
+    try:
+        preflight = TargetArtifacts(project_dir).read_preflight()
+    except (ArtifactMissing, ArtifactInvalid) as exc:
+        raise HTTPException(404, "No current Finish preflight is available") from exc
+    if preflight.validator_version != FINISH_PREFLIGHT_VALIDATOR_VERSION:
+        raise HTTPException(404, "Finish preflight must be refreshed")
+    return preflight
 
 
 @router.post("/preflight")

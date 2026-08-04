@@ -1616,8 +1616,15 @@ def _canonical_pages(
     }
     beat_by_id = {beat.id: beat for beat in adaptation.beats}
     approved_pairs = _approved_state_pairs(references)
+    state_owner_by_id = {
+        reference.appearance_state_id: reference.entity_id
+        for reference in references.references
+        if reference.appearance_state_id is not None
+    }
     unapproved_changes: list[tuple[str, str, str]] = []
     claimed: set[str] = set()
+    active_state_by_entity: dict[str, str] = {}
+    applied_state_change_beats: set[str] = set()
     pages: list[ComicPage] = []
     for page in draft.pages:
         content_items: list[PageContent] = []
@@ -1698,6 +1705,35 @@ def _canonical_pages(
                 approved_pairs,
             )
             entity_ids = _derived_speaker_citations(entity_ids, tuple(lettering))
+            for beat_id in content.beat_ids:
+                beat = beat_by_id.get(beat_id)
+                if beat is None or beat_id in applied_state_change_beats:
+                    continue
+                for change in beat.appearance_changes:
+                    if (change.entity_id, change.to_state_id) in approved_pairs:
+                        active_state_by_entity[change.entity_id] = change.to_state_id
+                applied_state_change_beats.add(beat_id)
+
+            # Appearance changes are Adapt's canonical chronology. Once a
+            # state is active, later page content that depicts the entity must
+            # keep using that state authority until the next change. An
+            # explicit state citation remains authoritative so timeline or
+            # composite imagery can intentionally show an earlier look.
+            explicitly_stated_entities = {
+                state_owner_by_id[state_id]
+                for state_id in state_ids
+                if state_id in state_owner_by_id
+            }
+            carried_state_ids = list(state_ids)
+            for entity_id in entity_ids:
+                active_state = active_state_by_entity.get(entity_id)
+                if (
+                    active_state is not None
+                    and entity_id not in explicitly_stated_entities
+                    and active_state not in carried_state_ids
+                ):
+                    carried_state_ids.append(active_state)
+            state_ids = tuple(carried_state_ids)
             unapproved_changes.extend(unapproved)
             payload = content.model_dump(
                 exclude={"lettering_ids", "entity_ids", "appearance_state_ids"}

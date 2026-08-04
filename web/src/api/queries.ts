@@ -1,4 +1,5 @@
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { isNotFoundError } from "./client";
 import { listProjects, getProjectStatus, createProject, deleteProject, fetchProjectCoverEstimate, generateProjectCover, listShortStories, importStory } from "./projects";
 import { runPipeline, approveStage, regenRef, regenStateRef, regenLocationState, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchAssetRegenEstimate, getCharacterRefVersions, restoreCharacterRefVersion } from "./pipeline";
 import type { AdaptationBrief, ConfigOverrides, StoryBible, ProjectStatus, StageInfo, CreditBalance, CostEstimate } from "../types/api";
@@ -26,6 +27,7 @@ import {
   getStageValidation,
   getCompletePage,
   listCompletePages,
+  getFinishPreflight,
   runFinishPreflight,
   triggerExport,
 } from "./pages";
@@ -648,9 +650,18 @@ export function useFinishPreflight(project: string | undefined, enabled = true) 
   return useQuery({
     queryKey: ["project", project, "finish-preflight"],
     queryFn: async () => {
-      const result = await runFinishPreflight(project!);
-      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
-      return result.preflight;
+      try {
+        // Finish persists an exact artifact. Reading it first means reopening
+        // Book in another tab or browser never rechecks an unchanged edition.
+        return await getFinishPreflight(project!);
+      } catch (error) {
+        if (!isNotFoundError(error)) throw error;
+        // A missing artifact means one of Finish's inputs changed (or this is
+        // the first Book visit), so run the provider-free preflight once.
+        const result = await runFinishPreflight(project!);
+        qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+        return result.preflight;
+      }
     },
     enabled: !!project && enabled,
     retry: false,

@@ -109,7 +109,7 @@ export function correctPageIssue(
 }
 
 export function getFinishPreflight(project: string): Promise<FinishPreflight> {
-  return apiFetch(`${projectPath(project)}/files/finish/preflight.json`);
+  return apiFetch(`${projectPath(project)}/export/preflight`);
 }
 
 export function runFinishPreflight(

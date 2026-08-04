@@ -6,7 +6,28 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from novel_to_comic.models.validation import InvariantFailure
+from novel_to_comic.models.validation import InvariantFailure, StageName
+
+
+FINISH_PREFLIGHT_VALIDATOR_VERSION = 2
+
+
+class PreflightDiagnostic(BaseModel):
+    """Non-blocking implementation evidence retained for technical inspection.
+
+    A diagnostic can be useful while hardening the pipeline without becoming an
+    export blocker or asking an author to make a decision the product does not
+    expose. It deliberately has no ``blocking`` or editorial disposition.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(min_length=1)
+    owner_stage: StageName
+    code: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+    artifact_ids: tuple[str, ...] = ()
+    evidence: tuple[str, ...] = Field(min_length=1)
 
 
 class PreflightPage(BaseModel):
@@ -30,6 +51,7 @@ class PreflightPage(BaseModel):
         default=None, min_length=64, max_length=64
     )
     invariant_failures: tuple[InvariantFailure, ...] = ()
+    diagnostics: tuple[PreflightDiagnostic, ...] = ()
     unresolved_editorial_issue_ids: tuple[str, ...] = ()
     accepted_editorial_issue_ids: tuple[str, ...] = ()
 
@@ -94,6 +116,9 @@ class FinishPreflight(BaseModel):
 
     edition_revision: int = Field(ge=1)
     edition_sha256: str = Field(min_length=64, max_length=64)
+    # Version 1 represents preflights persisted before continuity metadata was
+    # made diagnostic-only. Book reloads those once, then retains version 2.
+    validator_version: int = Field(default=1, ge=1)
     production: FinishProductionSpec | None = None
     pages: tuple[PreflightPage, ...] = Field(min_length=1)
     correction_requests: tuple[DrawCorrectionRequest, ...] = ()

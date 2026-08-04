@@ -277,8 +277,24 @@ class TargetArtifacts:
             elif path.exists():
                 path.unlink()
 
+    def invalidate_finish(self) -> None:
+        """Discard a preflight and packages derived from superseded inputs.
+
+        The persisted preflight is reused between browser sessions, so every
+        mutation that can affect its verdict must invalidate it at the artifact
+        boundary. Keeping this here avoids each page/issue route needing to
+        remember the Book-stage cache.
+        """
+
+        for path in (self.project_dir / "finish", self.exports_dir):
+            if path.is_dir():
+                shutil.rmtree(path)
+            elif path.exists():
+                path.unlink()
+
     def write_adaptation(self, adaptation: BookAdaptation) -> None:
         self._write_model(self.adaptation_path, adaptation)
+        self.invalidate_finish()
 
     def read_adaptation(self) -> BookAdaptation:
         return self._read_model("book_adaptation", self.adaptation_path, BookAdaptation)
@@ -326,6 +342,7 @@ class TargetArtifacts:
             page,
         )
         self._write_model(self.page_path(page.page_number), page)
+        self.invalidate_finish()
 
     def read_page(self, page_number: int) -> ComicPage:
         return self._read_model("comic_page", self.page_path(page_number), ComicPage)
@@ -349,12 +366,14 @@ class TargetArtifacts:
 
     def write_plan(self, plan: BookPlan) -> None:
         self._write_model(self.plan_path, plan)
+        self.invalidate_finish()
 
     def read_plan(self) -> BookPlan:
         return self._read_model("book_plan", self.plan_path, BookPlan)
 
     def write_book_edition(self, edition: BookEdition) -> None:
         self._write_immutable_model(self.book_edition_path, edition, BookEdition)
+        self.invalidate_finish()
 
     def replace_book_edition(self, edition: BookEdition) -> None:
         """Advance the active edition while preserving prior request provenance."""
@@ -363,6 +382,7 @@ class TargetArtifacts:
         if edition.id != current.id or edition.revision != current.revision + 1:
             raise ValueError("replacement book edition must advance the current edition")
         self._write_model(self.book_edition_path, edition)
+        self.invalidate_finish()
 
     def read_book_edition(self) -> BookEdition:
         return self._read_model("book_edition", self.book_edition_path, BookEdition)
@@ -405,6 +425,7 @@ class TargetArtifacts:
             return
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(image)
+        self.invalidate_finish()
 
     def read_render(self, page_number: int, render_revision: int) -> bytes:
         path = self.render_path(page_number, render_revision)
@@ -417,7 +438,10 @@ class TargetArtifacts:
             provenance.render.page_number,
             provenance.render.revision,
         )
+        created = not path.exists()
         self._write_immutable_model(path, provenance, PageGenerationProvenance)
+        if created:
+            self.invalidate_finish()
 
     def read_provenance(
         self,
@@ -433,7 +457,10 @@ class TargetArtifacts:
 
     def write_analysis(self, analysis: RenderAnalysis) -> None:
         path = self.analysis_path(analysis.page_number, analysis.render_revision)
+        created = not path.exists()
         self._write_immutable_model(path, analysis, RenderAnalysis)
+        if created:
+            self.invalidate_finish()
 
     def read_analysis(
         self,
@@ -449,6 +476,7 @@ class TargetArtifacts:
         path.write_text(
             TypeAdapter(tuple[PageIssue, ...]).dump_json(issues, indent=2).decode()
         )
+        self.invalidate_finish()
 
     def read_issues(self, page_number: int) -> tuple[PageIssue, ...]:
         path = self.issues_path(page_number)

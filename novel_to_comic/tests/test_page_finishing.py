@@ -37,7 +37,7 @@ from novel_to_comic.models.page import (
     PlannedPageRevision,
 )
 from novel_to_comic.models.validation import InvariantFailure
-from novel_to_comic.page_finishing import _appearance_failures, finish_book
+from novel_to_comic.page_finishing import _appearance_diagnostics, finish_book
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import UsageRecord
 
@@ -325,6 +325,26 @@ def test_finish_preflight_can_run_without_packaging_or_clearing_exports(
     assert artifacts.read_preflight() == result.preflight
 
 
+def test_finish_inputs_invalidate_persisted_preflight_and_exports(
+    tmp_path: Path,
+) -> None:
+    artifacts, _ = _write_valid_book(tmp_path)
+    finish_book(
+        artifacts,
+        production=FinishProductionSpec(canvas_width=120, canvas_height=180),
+        formats=("pdf",),
+    )
+
+    assert artifacts.preflight_path.exists()
+    assert artifacts.export_path("pdf").exists()
+
+    # Review decisions are Finish inputs just as much as the page bytes are.
+    artifacts.write_issues(1, ())
+
+    assert not artifacts.preflight_path.exists()
+    assert not artifacts.export_path("pdf").exists()
+
+
 def test_stale_render_blocks_export_and_emits_complete_page_draw_request(
     tmp_path: Path,
 ) -> None:
@@ -497,7 +517,7 @@ def test_repeated_beat_states_are_not_replayed_or_rejected() -> None:
         reading_order=["content-1", "content-2"],
     )
 
-    assert _appearance_failures(adaptation, (page,)) == {}
+    assert _appearance_diagnostics(adaptation, (page,)) == {}
 
 
 def test_deliberately_accepted_editorial_issue_is_recorded_but_open_one_blocks(
@@ -579,7 +599,7 @@ def test_active_page_manifest_order_mismatch_blocks_instead_of_exporting(
     assert not artifacts.export_path("pdf").exists()
 
 
-def test_cross_page_appearance_state_is_verified_from_adapted_changes(
+def test_cross_page_appearance_state_is_a_non_blocking_diagnostic(
     tmp_path: Path,
 ) -> None:
     artifacts, first_image = _write_valid_book(tmp_path)
@@ -718,10 +738,10 @@ def test_cross_page_appearance_state_is_verified_from_adapted_changes(
         ),
     )
 
-    assert result.preflight.ready_to_export is False
+    assert result.preflight.ready_to_export is True
     assert "cross_page_appearance_state" in {
-        failure.code
-        for failure in result.preflight.pages[1].invariant_failures
+        diagnostic.code
+        for diagnostic in result.preflight.pages[1].diagnostics
     }
     assert result.preflight.correction_requests == ()
 

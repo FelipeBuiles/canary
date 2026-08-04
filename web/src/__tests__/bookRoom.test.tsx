@@ -15,6 +15,13 @@ let invariantFailures: Array<{
   evidence: string[];
   blocking?: true;
 }> = [];
+let diagnostics: Array<{
+  id: string;
+  owner_stage: "plan";
+  code: string;
+  message: string;
+  evidence: string[];
+}> = [];
 let preflightLoading = false;
 let finishStatus = "pending";
 let drawStatus = "complete";
@@ -53,6 +60,7 @@ vi.mock("../api/queries", () => ({
             comic_page_revision: 2,
             render_revision: 3,
             invariant_failures: invariantFailures,
+            diagnostics,
             unresolved_editorial_issue_ids: unresolvedIssueIds,
             accepted_editorial_issue_ids: acceptedIssueIds,
           },
@@ -91,6 +99,8 @@ describe("BookRoom", () => {
     unresolvedIssueIds = [];
     acceptedIssueIds = ["page-issue-1"];
     invariantFailures = [];
+    diagnostics = [];
+    window.localStorage.removeItem("canary.showDevContent");
     preflightLoading = false;
     finishStatus = "pending";
     drawStatus = "complete";
@@ -141,11 +151,42 @@ describe("BookRoom", () => {
     expect(screen.getByRole("button", { name: "EXPORT PDF" })).toHaveProperty("disabled", true);
   });
 
+  it("keeps non-blocking continuity diagnostics out of the author view", () => {
+    diagnostics = [{
+      id: "finish-page-001-cross_page_appearance_state",
+      owner_stage: "plan",
+      code: "cross_page_appearance_state",
+      message: "Page-scoped appearance state is stale across pages.",
+      evidence: ["Internal state evidence."],
+    }];
+
+    renderRoom();
+
+    expect(screen.queryByText("Page-scoped appearance state is stale across pages.")).toBeNull();
+    expect(screen.getByRole("button", { name: "EXPORT PDF" })).not.toHaveProperty("disabled", true);
+  });
+
+  it("shows continuity diagnostics only with Dev Content enabled", () => {
+    window.localStorage.setItem("canary.showDevContent", "1");
+    diagnostics = [{
+      id: "finish-page-001-cross_page_appearance_state",
+      owner_stage: "plan",
+      code: "cross_page_appearance_state",
+      message: "Page-scoped appearance state is stale across pages.",
+      evidence: ["Internal state evidence."],
+    }];
+
+    renderRoom();
+
+    expect(screen.getByRole("heading", { name: "TECHNICAL DIAGNOSTICS" })).toBeTruthy();
+    expect(screen.getByText("Page-scoped appearance state is stale across pages.")).toBeTruthy();
+  });
+
   it("keeps export disabled while the automatic preflight is running", () => {
     preflightLoading = true;
     renderRoom();
 
-    expect(screen.getByText("CHECKING THE BOOK…")).toBeTruthy();
+    expect(screen.getByText("PREPARING PREFLIGHT…")).toBeTruthy();
     expect(screen.getByRole("button", { name: "EXPORT PDF" })).toHaveProperty("disabled", true);
   });
 
