@@ -159,7 +159,6 @@ jobs:
       contents: read
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-      SCENEWRIGHT_APP_URL: https://scenewright.ink
     steps:
       - uses: actions/checkout@v7
 
@@ -189,6 +188,9 @@ jobs:
       - name: Confirm production is idle
         env:
           CANARY_OPS_TOKEN: ${{ secrets.CANARY_OPS_TOKEN }}
+          # Keep the deployment guard off the public Cloudflare proxy. The
+          # direct Fly hostname is still protected by CANARY_OPS_TOKEN.
+          SCENEWRIGHT_APP_URL: https://canary-web.fly.dev
         run: python scripts/check_deploy_safe.py
 
       - name: Record rollback target
@@ -224,6 +226,8 @@ jobs:
       - name: Verify deployed release
         env:
           EXPECTED_CANARY_VERSION: ${{ github.sha }}
+          # This deliberately checks the user-facing route through Cloudflare.
+          SCENEWRIGHT_APP_URL: https://scenewright.ink
         run: python scripts/verify_deployment.py
 
       - name: Record deployed release
