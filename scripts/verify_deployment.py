@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import urllib.error
 import urllib.request
 from typing import Any
@@ -18,10 +17,14 @@ REQUIRED_SECURITY_HEADERS = {
     "strict-transport-security",
     "x-content-type-options",
 }
+DEPLOYMENT_VERIFIER_USER_AGENT = "Canary-deployment-verifier/1.0"
 
 
 def _get_json(origin: str, path: str) -> tuple[dict[str, Any], Any]:
-    request = urllib.request.Request(f"{origin}{path}")
+    request = urllib.request.Request(
+        f"{origin}{path}",
+        headers={"User-Agent": DEPLOYMENT_VERIFIER_USER_AGENT},
+    )
     with urllib.request.urlopen(request, timeout=20) as response:
         payload = json.load(response)
         return payload, response.headers
