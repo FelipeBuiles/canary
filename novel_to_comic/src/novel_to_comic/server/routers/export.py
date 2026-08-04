@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.stages import REGISTRY
-from novel_to_comic.storage import export_url, r2_configured, upload_export
+from novel_to_comic.storage import r2_configured, upload_export
 from novel_to_comic.models.finish import FINISH_PREFLIGHT_VALIDATOR_VERSION
 from novel_to_comic.target_artifacts import (
     ArtifactInvalid,
@@ -99,7 +99,16 @@ async def trigger_export(
     target = TargetArtifacts(project_dir)
     export_path = target.export_path(fmt)
     if export_path.exists() and not force:
-        return {"status": "exists", "path": export_path.name, "url": None}
+        data = export_path.read_bytes()
+        return {
+            "status": "exists",
+            "path": export_path.name,
+            "url": (
+                upload_export(user_id, project_dir.name, export_path.name, data)
+                if r2_configured()
+                else None
+            ),
+        }
 
     lock = _get_export_lock(request.app, project_dir.name)
     if lock.locked():
@@ -159,9 +168,12 @@ def download_export(
     if not export_path.exists():
         raise HTTPException(404, f"No {fmt} export found. Run Finish first.")
     if r2_configured():
-        return RedirectResponse(
-            export_url(user_id, project_dir.name, export_path.name)
-        )
+        return RedirectResponse(upload_export(
+            user_id,
+            project_dir.name,
+            export_path.name,
+            export_path.read_bytes(),
+        ))
     media_type = "application/pdf" if fmt == "pdf" else "application/zip"
     return FileResponse(
         export_path,

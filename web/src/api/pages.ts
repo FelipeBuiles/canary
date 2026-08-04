@@ -40,6 +40,17 @@ export function pageRenderUrl(project: string, pageNumber: number, revision: num
   return `/api${projectPath(project)}/pages/${pageNumber}/renders/${revision}`;
 }
 
+export type PageRenderRendition = "thumbnail" | "reader";
+
+export function pageRenderPreviewUrl(
+  project: string,
+  pageNumber: number,
+  revision: number,
+  rendition: PageRenderRendition,
+): string {
+  return `/api${projectPath(project)}/pages/${pageNumber}/renders/${revision}/preview/${rendition}`;
+}
+
 export function analyzeCompletePage(
   project: string,
   pageNumber: number,

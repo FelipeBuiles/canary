@@ -155,6 +155,22 @@ class TargetArtifacts:
             / f"render_{render_revision:03d}.png"
         )
 
+    def render_preview_path(
+        self,
+        page_number: int,
+        render_revision: int,
+        rendition: str,
+    ) -> Path:
+        if rendition not in {"thumbnail", "reader"}:
+            raise ValueError(f"unknown page render rendition: {rendition}")
+        return (
+            self.project_dir
+            / "draw"
+            / "pages"
+            / f"page_{page_number:03d}"
+            / f"render_{render_revision:03d}.{rendition}.webp"
+        )
+
     def analysis_path(self, page_number: int, render_revision: int) -> Path:
         return (
             self.project_dir
@@ -200,7 +216,7 @@ class TargetArtifacts:
         return self.project_dir / "exports"
 
     def normalized_page_path(self, page_number: int) -> Path:
-        return self.project_dir / "finish" / "pages" / f"page_{page_number:03d}.png"
+        return self.project_dir / "finish" / "pages" / f"page_{page_number:03d}.jpg"
 
     def export_path(self, format: str) -> Path:
         if format not in {"pdf", "cbz"}:

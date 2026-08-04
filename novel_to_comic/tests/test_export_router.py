@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from fastapi.testclient import TestClient
 
@@ -96,3 +96,29 @@ def test_get_preflight_reuses_only_the_current_validator_version(tmp_path: Path)
 
     assert current.status_code == 200
     assert current.json()["validator_version"] == FINISH_PREFLIGHT_VALIDATOR_VERSION
+
+
+def test_export_download_uploads_the_current_bytes_to_r2_when_configured(
+    tmp_path: Path,
+    monkeypatch,
+):
+    client = _client(tmp_path)
+    target = TargetArtifacts(tmp_path / "demo")
+    export = target.export_path("pdf")
+    export.parent.mkdir(parents=True)
+    export.write_bytes(b"finalized PDF")
+    upload = MagicMock(return_value="https://media.scenewright.ink/export.pdf")
+    monkeypatch.setattr(
+        "novel_to_comic.server.routers.export.r2_configured",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "novel_to_comic.server.routers.export.upload_export",
+        upload,
+    )
+
+    response = client.get("/api/projects/demo/export/pdf", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "https://media.scenewright.ink/export.pdf"
+    upload.assert_called_once_with("test-user", "demo", "comic.pdf", b"finalized PDF")

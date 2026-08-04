@@ -343,9 +343,16 @@ def _normalize_page(
         path.parent.mkdir(parents=True, exist_ok=True)
         normalized.save(
             path,
-            "PNG",
+            "JPEG",
             icc_profile=srgb.tobytes(),
             dpi=(production.dpi, production.dpi),
+            quality=production.jpeg_quality,
+            # Comic inks and lettering are particularly susceptible to colour
+            # bleeding from chroma subsampling. Retain 4:4:4 while still
+            # removing PNG's much larger lossless payload.
+            subsampling=0,
+            optimize=True,
+            progressive=True,
         )
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -366,7 +373,7 @@ def _clear_derived_outputs(artifacts: TargetArtifacts) -> None:
             path.unlink()
     pages_dir = artifacts.project_dir / "finish" / "pages"
     if pages_dir.is_dir():
-        for path in pages_dir.glob("page_*.png"):
+        for path in (*pages_dir.glob("page_*.png"), *pages_dir.glob("page_*.jpg")):
             path.unlink()
 
 
@@ -382,6 +389,7 @@ def _read_existing_preflight(
 def _page_identity(preflight: FinishPreflight) -> tuple:
     return (
         preflight.edition_sha256,
+        preflight.production,
         tuple(
             (
                 page.page_number,
@@ -477,16 +485,18 @@ def _package_exports(
             with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
                 for page_number, path in zip(page_numbers, page_paths, strict=True):
                     archive.writestr(
-                        f"page_{page_number:03d}.png",
+                        f"page_{page_number:03d}.jpg",
                         path.read_bytes(),
                     )
             _atomic_write(output, buffer.getvalue())
             with zipfile.ZipFile(output) as archive:
-                expected = [f"page_{number:03d}.png" for number in page_numbers]
+                expected = [f"page_{number:03d}.jpg" for number in page_numbers]
                 if archive.namelist() != expected or archive.testzip() is not None:
                     raise ValueError("CBZ order or archive integrity is invalid")
                 for name in expected:
                     with Image.open(io.BytesIO(archive.read(name))) as image:
+                        if image.format != "JPEG":
+                            raise ValueError("CBZ pages must use optimized JPEG encoding")
                         if image.size != (
                             production.canvas_width,
                             production.canvas_height,

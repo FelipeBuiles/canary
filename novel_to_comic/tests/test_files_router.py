@@ -11,11 +11,13 @@ cannot take it with it.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+from PIL import Image
 from starlette.testclient import TestClient
 
 from novel_to_comic import artifacts
@@ -157,6 +159,27 @@ def test_a_page_render_is_cacheable_forever(tmp_path: Path):
     assert response.headers["cache-control"] == (
         "private, max-age=31536000, immutable"
     )
+
+
+def test_a_page_render_preview_is_a_small_immutable_webp(tmp_path: Path):
+    client, project_dir = _client(tmp_path)
+    render = TargetArtifacts(project_dir).render_path(1, 1)
+    render.parent.mkdir(parents=True)
+    source = io.BytesIO()
+    Image.new("RGB", (1696, 2528), "navy").save(source, "PNG")
+    render.write_bytes(source.getvalue())
+
+    response = client.get("/api/projects/demo/pages/1/renders/1/preview/thumbnail")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/webp"
+    assert response.headers["cache-control"] == (
+        "private, max-age=31536000, immutable"
+    )
+    with Image.open(io.BytesIO(response.content)) as preview:
+        assert preview.format == "WEBP"
+        assert preview.size == (424, 632)
+    assert TargetArtifacts(project_dir).render_preview_path(1, 1, "thumbnail").exists()
 
 
 def test_named_project_routes_are_not_shadowed_by_the_asset_reader(tmp_path: Path):
