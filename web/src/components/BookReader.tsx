@@ -1,5 +1,5 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import { pageRenderUrl } from "../api/pages";
+import { pageRenderPreviewUrl } from "../api/pages";
 import { useI18n } from "../i18n";
 import { cn } from "../lib/cn";
 import {
@@ -67,7 +67,7 @@ function ReaderImage({
         </>
       )}
       <img
-        src={pageRenderUrl(project, page.pageNumber, page.revision)}
+        src={pageRenderPreviewUrl(project, page.pageNumber, page.revision, "reader")}
         alt={alt}
         decoding="async"
         onLoad={() => setLoaded(true)}
@@ -178,7 +178,7 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
       for (const step of [safeIndex + offset, safeIndex - offset]) {
         views[step]?.pages.forEach((page) => {
           const image = new Image();
-          image.src = pageRenderUrl(project, page.pageNumber, page.revision);
+          image.src = pageRenderPreviewUrl(project, page.pageNumber, page.revision, "reader");
         });
       }
     }

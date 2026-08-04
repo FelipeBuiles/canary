@@ -16,7 +16,7 @@ import {
   useRunPipeline,
   useStageValidation,
 } from "../../api/queries";
-import { pageRenderUrl } from "../../api/pages";
+import { pageRenderPreviewUrl } from "../../api/pages";
 import {
   ApprovalBar,
   EntityCard,
@@ -521,7 +521,7 @@ function PageReview({
           <div>
             {revision ? (
               <img
-                src={pageRenderUrl(project, item.page.page_number, revision)}
+                src={pageRenderPreviewUrl(project, item.page.page_number, revision, "reader")}
                 alt={`${t("Complete page")} ${item.page.page_number}, ${t("revision")} ${revision}`}
                 className="mx-auto max-h-[72vh] w-auto border-[2px] border-ink-black bg-bristol object-contain shadow-paper"
               />
@@ -864,8 +864,10 @@ export function PagesRoom() {
                       />
                     ) : revision ? (
                       <img
-                        src={pageRenderUrl(id, item.page.page_number, revision)}
+                        src={pageRenderPreviewUrl(id, item.page.page_number, revision, "thumbnail")}
                         alt={`${t("Complete page thumbnail")} ${item.page.page_number}, ${t("revision")} ${revision}`}
+                        loading="lazy"
+                        decoding="async"
                         className="h-full w-full object-contain"
                       />
                     ) : (

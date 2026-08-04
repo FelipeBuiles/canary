@@ -18,6 +18,7 @@ from novel_to_comic.page_drawing import (
     ensure_current_page_edition,
     enqueue_complete_page_draw,
 )
+from novel_to_comic.page_previews import ensure_page_render_preview
 from novel_to_comic.page_ocr import GatewayPageOCRAdapter
 from novel_to_comic.page_review import (
     accept_editorial_page_issue,
@@ -338,6 +339,35 @@ def get_page_render(
         # book reader page through a whole book with no network at all, off
         # the bytes the Panels grid already fetched. Private: project renders
         # are per-user and must not land in a shared proxy cache.
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
+
+
+@router.get("/pages/{page_number}/renders/{revision}/preview/{rendition}")
+def get_page_render_preview(
+    page_number: int,
+    revision: int,
+    rendition: Literal["thumbnail", "reader"],
+    project=Depends(get_project),
+):
+    """Serve an immutable screen rendition without exposing the PNG master."""
+
+    project_dir, _config, _state = project
+    artifacts = TargetArtifacts(project_dir)
+    try:
+        path = ensure_page_render_preview(
+            artifacts,
+            page_number=page_number,
+            render_revision=revision,
+            rendition=rendition,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "Page render not found") from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(422, "Page preview could not be created") from exc
+    return FileResponse(
+        path,
+        media_type="image/webp",
         headers={"Cache-Control": "private, max-age=31536000, immutable"},
     )
 

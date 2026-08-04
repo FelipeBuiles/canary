@@ -5,6 +5,8 @@ returns False and callers should fall back to serving files from disk.
 """
 
 import os
+from hashlib import sha256
+from pathlib import PurePath
 
 import boto3
 
@@ -25,14 +27,33 @@ def _client():
     )
 
 
-def export_url(user_id: str, project_name: str, filename: str) -> str:
-    """Return the public R2 URL for an export file without uploading."""
-    key = f"{user_id}/{project_name}/exports/{filename}"
+def _export_key(user_id: str, project_name: str, filename: str, data: bytes) -> str:
+    """Build an immutable content-addressed key for one finalized export."""
+
+    safe_name = PurePath(filename).name
+    if safe_name != filename:
+        raise ValueError("export filename must not contain a path")
+    return f"{user_id}/{project_name}/exports/{sha256(data).hexdigest()}/{safe_name}"
+
+
+def export_url(user_id: str, project_name: str, filename: str, data: bytes) -> str:
+    """Return the cache-safe public R2 URL for these exact export bytes."""
+
+    key = _export_key(user_id, project_name, filename, data)
     return f"{os.environ['R2_PUBLIC_URL'].rstrip('/')}/{key}"
 
 
 def upload_export(user_id: str, project_name: str, filename: str, data: bytes) -> str:
-    """Upload an export file to R2 and return its public URL."""
-    key = f"{user_id}/{project_name}/exports/{filename}"
-    _client().put_object(Bucket=os.environ["R2_BUCKET"], Key=key, Body=data)
+    """Upload one immutable export to R2 with CDN-friendly response metadata."""
+
+    key = _export_key(user_id, project_name, filename, data)
+    media_type = "application/pdf" if filename.endswith(".pdf") else "application/zip"
+    _client().put_object(
+        Bucket=os.environ["R2_BUCKET"],
+        Key=key,
+        Body=data,
+        ContentType=media_type,
+        CacheControl="public, max-age=31536000, immutable",
+        ContentDisposition=f'attachment; filename="{filename}"',
+    )
     return f"{os.environ['R2_PUBLIC_URL'].rstrip('/')}/{key}"

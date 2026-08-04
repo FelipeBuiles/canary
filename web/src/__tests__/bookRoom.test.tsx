@@ -194,10 +194,10 @@ describe("BookRoom", () => {
     renderRoom();
 
     fireEvent.click(screen.getByRole("button", { name: "EXPORT PDF" }));
-    expect(exportBook).toHaveBeenCalledWith({
-      project: "demo",
-      format: "pdf",
-    });
+    expect(exportBook).toHaveBeenCalledWith(
+      { project: "demo", format: "pdf" },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
   });
 
   it("blocks export while preflight still has an unresolved page issue", () => {
@@ -223,7 +223,7 @@ describe("BookRoom", () => {
     expect(screen.queryByRole("button", { name: "START READING" })).toBeNull();
   });
 
-  it("reads pages from the same render URLs the Panels grid already loaded", () => {
+  it("reads pages from the screen rendition tied to each render revision", () => {
     drawnPages = [drawnPage(1), drawnPage(2)];
     renderRoom();
 
@@ -232,7 +232,7 @@ describe("BookRoom", () => {
     const reader = screen.getByRole("dialog", { name: "Book reader" });
     expect(reader).toBeTruthy();
     const sources = Array.from(reader.querySelectorAll("img")).map((img) => img.getAttribute("src"));
-    expect(sources).toContain("/api/projects/demo/pages/1/renders/1");
+    expect(sources).toContain("/api/projects/demo/pages/1/renders/1/preview/reader");
   });
 
   it("turns pages with the arrow keys and closes on Escape", () => {

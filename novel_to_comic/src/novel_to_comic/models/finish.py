@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from novel_to_comic.models.validation import InvariantFailure, StageName
 
 
-FINISH_PREFLIGHT_VALIDATOR_VERSION = 2
+FINISH_PREFLIGHT_VALIDATOR_VERSION = 3
 
 
 class PreflightDiagnostic(BaseModel):
@@ -66,6 +66,7 @@ class FinishProductionSpec(BaseModel):
     bleed_px: int = Field(default=0, ge=0)
     dpi: int = Field(default=300, gt=0)
     color_profile: Literal["sRGB"] = "sRGB"
+    jpeg_quality: int = Field(default=88, ge=70, le=95)
 
     @model_validator(mode="after")
     def _validate_bleed(self) -> "FinishProductionSpec":
@@ -116,8 +117,9 @@ class FinishPreflight(BaseModel):
 
     edition_revision: int = Field(ge=1)
     edition_sha256: str = Field(min_length=64, max_length=64)
-    # Version 1 represents preflights persisted before continuity metadata was
-    # made diagnostic-only. Book reloads those once, then retains version 2.
+    # Version 1 predates diagnostic-only continuity metadata; version 2 still
+    # described lossless PNG packages. Book reloads either once, then retains
+    # version 3's optimized JPEG package contract.
     validator_version: int = Field(default=1, ge=1)
     production: FinishProductionSpec | None = None
     pages: tuple[PreflightPage, ...] = Field(min_length=1)

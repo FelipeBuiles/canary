@@ -259,10 +259,10 @@ def _write_corrected_revision(
     )
 
 
-def test_finish_exports_complete_page_renders_without_changing_pixels(
+def test_finish_exports_complete_page_renders_as_optimized_jpegs(
     tmp_path: Path,
 ) -> None:
-    artifacts, source_image = _write_valid_book(tmp_path)
+    artifacts, _source_image = _write_valid_book(tmp_path)
 
     result = finish_book(
         artifacts,
@@ -281,17 +281,15 @@ def test_finish_exports_complete_page_renders_without_changing_pixels(
     assert result.preflight.pages[0].trim_height == 160
     assert result.preflight.pages[0].color_profile == "sRGB"
     normalized = artifacts.normalized_page_path(1).read_bytes()
-    with (
-        Image.open(io.BytesIO(source_image)) as source,
-        Image.open(io.BytesIO(normalized)) as finished,
-    ):
-        assert finished.tobytes() == source.tobytes()
+    with Image.open(io.BytesIO(normalized)) as finished:
+        assert finished.format == "JPEG"
         assert finished.size == (120, 180)
         assert finished.info["icc_profile"]
     with zipfile.ZipFile(artifacts.export_path("cbz")) as archive:
-        assert archive.namelist() == ["page_001.png"]
-        assert archive.read("page_001.png") == normalized
-        with Image.open(io.BytesIO(archive.read("page_001.png"))) as page:
+        assert archive.namelist() == ["page_001.jpg"]
+        assert archive.read("page_001.jpg") == normalized
+        with Image.open(io.BytesIO(archive.read("page_001.jpg"))) as page:
+            assert page.format == "JPEG"
             assert page.size == (120, 180)
     pdf = PdfReader(artifacts.export_path("pdf"))
     assert len(pdf.pages) == 1

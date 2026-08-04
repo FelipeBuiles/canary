@@ -6,7 +6,7 @@ import {
   useFinishPreflight,
   useProjectStatus,
 } from "../../api/queries";
-import { downloadExportUrl, pageRenderUrl } from "../../api/pages";
+import { downloadExportUrl, pageRenderPreviewUrl } from "../../api/pages";
 import { BookReader } from "../../components/BookReader";
 import {
   RoomHeader,
@@ -99,6 +99,7 @@ export function BookRoom() {
   const { data: completePages } = useCompletePages(id);
   const bookPages = useMemo(() => readerPages(completePages), [completePages]);
   const [readerOpen, setReaderOpen] = useState(false);
+  const [exportUrls, setExportUrls] = useState<Partial<Record<"pdf" | "cbz", string>>>({});
 
   if (!id) return null;
   if (finishStatus === "pending" && status?.stages.draw?.status !== "complete") {
@@ -141,6 +142,19 @@ export function BookRoom() {
       ? `${acceptedIssues} ${acceptedIssues === 1 ? t("accepted editorial issue") : t("accepted editorial issues")}`
       : t("No editorial issues");
 
+  function createExport(format: "pdf" | "cbz") {
+    if (!id) return;
+    exportBook.mutate(
+      { project: id, format },
+      {
+        onSuccess: (result) => {
+          if (!result.url) return;
+          setExportUrls((current) => ({ ...current, [format]: result.url }));
+        },
+      },
+    );
+  }
+
   return (
     <RoomShell project={id}>
       <RoomHeader
@@ -165,7 +179,7 @@ export function BookRoom() {
                 className="w-28 shrink-0 border-[2px] border-ink-black bg-bristol focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red"
               >
                 <img
-                  src={pageRenderUrl(id, bookPages[0].pageNumber, bookPages[0].revision)}
+                  src={pageRenderPreviewUrl(id, bookPages[0].pageNumber, bookPages[0].revision, "thumbnail")}
                   alt={t("First page of the book")}
                   className="block aspect-[2/3] w-full object-contain"
                 />
@@ -350,14 +364,14 @@ export function BookRoom() {
         )}
         <div className="flex flex-wrap gap-3">
           <Button
-            onClick={() => exportBook.mutate({ project: id, format: "pdf" })}
+            onClick={() => createExport("pdf")}
             disabled={exportBook.isPending || isLoading || !canExport}
           >
             {t("EXPORT PDF")}
           </Button>
           <Button
             variant="outline"
-            onClick={() => exportBook.mutate({ project: id, format: "cbz" })}
+            onClick={() => createExport("cbz")}
             disabled={exportBook.isPending || isLoading || !canExport}
           >
             {t("EXPORT CBZ")}
@@ -365,7 +379,7 @@ export function BookRoom() {
           {preflight?.packages.map((item) => (
             <a
               key={item.format}
-              href={downloadExportUrl(id, item.format)}
+              href={exportUrls[item.format] ?? downloadExportUrl(id, item.format)}
               className="inline-flex min-h-11 items-center border-[2px] border-ink-black bg-bristol px-4 font-meta text-xs font-bold tracking-[0.1em] text-ink-black"
             >
               {t("DOWNLOAD")} {item.format.toUpperCase()}

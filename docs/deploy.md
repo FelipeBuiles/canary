@@ -318,7 +318,7 @@ retention before inviting testers:
 ```bash
 fly volumes show <volume-id>
 fly volumes update <volume-id> --scheduled-snapshots=true --snapshot-retention 14
-# Optional: wire a post-compose hook to push exports/ to R2 (storage.py exists).
+# Optional: configure R2 delivery for finalized exports (instructions below).
 ```
 
 Perform one restore drill before launch; a snapshot that has never been restored
@@ -327,6 +327,39 @@ is not yet a proven recovery path.
 The `canary_projects` volume is currently provisioned at 10 GB. Monitor
 `fly_volume_used_pct` and extend it before it reaches 80%; Fly volumes can grow
 but cannot shrink.
+
+## Optional — Cloudflare R2 delivery for finalized exports
+
+The app can upload each finalized PDF/CBZ to R2 and redirect downloads to an
+immutable content-addressed URL. Configure it only with an R2 **custom domain**
+such as `https://media.scenewright.ink`; `r2.dev` is development-only and is
+not served through Cloudflare's cache controls.
+
+Create a dedicated bucket and an API token limited to Object Read & Write for
+that bucket. Add these values to the same server-only Fly secret file, then
+import it:
+
+```env
+R2_ENDPOINT=https://<cloudflare-account-id>.r2.cloudflarestorage.com
+R2_ACCESS_KEY=<R2 API token access key>
+R2_SECRET_KEY=<R2 API token secret>
+R2_BUCKET=scenewright-exports
+R2_PUBLIC_URL=https://media.scenewright.ink
+```
+
+Exports receive `Cache-Control: public, max-age=31536000, immutable` and the
+object key includes its SHA-256, so a cached URL can never serve a later export
+revision. Verify this after the first export:
+
+```bash
+curl -I "https://media.scenewright.ink/<export URL path returned by Canary>"
+```
+
+Expect `cache-control: public, max-age=31536000, immutable`; repeat after a
+short delay and check `cf-cache-status`. This bucket deliberately serves only
+finalized downloads. Draw/Book screen images remain authenticated, private app
+responses until an authenticated edge design is introduced — a public R2 bucket
+must not be used for authors' in-progress material.
 
 ## Step 5 — go-live checklist
 

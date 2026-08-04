@@ -60,6 +60,16 @@ art and redaction-safe provenance may outlive replay blobs when policy permits,
 but exact replay then becomes unavailable. Manifests and provenance must not
 contain credentials, signed URLs, absolute user paths, or raw payloads.
 
+## Delivery renditions
+
+The Draw PNG is the immutable canonical page-render artifact. The application
+may derive immutable WebP screen renditions from a render revision — currently
+`thumbnail` for the gallery and `reader` for Book — but they are never a Draw
+input, source of truth, or Finish input. A new render revision receives new
+rendition paths, so authenticated browser responses may safely use a long
+private immutable cache lifetime. Finish derives its independent print/export
+JPEG from the canonical PNG; no preview rendition is eligible for packaging.
+
 ## Provider extension rules
 
 A provider/alias must add a truthful profile and provider key in
