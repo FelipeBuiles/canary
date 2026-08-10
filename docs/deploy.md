@@ -180,6 +180,22 @@ fly logs -a canary-web
 #   Then the machine must stay up past the 1m readiness grace period.
 ```
 
+The app deliberately disables Fly Proxy autostop/autostart and uses a `never`
+restart policy. This means a manual `fly machine stop` remains stopped, while
+the machine must be started explicitly:
+
+```bash
+fly machine start -a canary-web
+```
+
+If the Machine was created before the `[[restart]]` block was added, apply the
+policy directly once (the next deploy will keep it in sync):
+
+```bash
+fly machines list -a canary-web
+fly machine update <machine-id> --restart no
+```
+
 If the proxy fails to come up, the entrypoint aborts early (it polls
 `/health/liveliness` for ~60s, then bails if the proxy process died). Check
 `fly logs` for the litellm traceback — most commonly a missing provider key

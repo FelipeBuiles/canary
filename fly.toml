@@ -37,6 +37,13 @@ primary_region = 'iad'
   # booting the app — start it explicitly with `fly machine start -a canary-web`.
   auto_start_machines = false
 
+# A manual `fly machine stop` sends SIGINT to the entrypoint, which exits with
+# status 143. Without an explicit policy Fly can treat that non-zero exit as a
+# crash and start the Machine again. Deliberate stops should stay stopped;
+# restart it explicitly with `fly machine start -a canary-web`.
+[[restart]]
+  policy = 'never'
+
   [http_service.concurrency]
     type = 'requests'
     # One shared-CPU Machine also runs LiteLLM, generation workers, and
