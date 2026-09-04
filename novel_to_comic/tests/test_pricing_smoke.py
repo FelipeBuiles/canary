@@ -13,7 +13,9 @@ from novel_to_comic.state import create_initial_state
     [
         ("fast", range(4, 41)),
         ("balanced", range(6, 61)),
-        ("quality", range(20, 201)),
+        # Quality now uses Gemini 3.7 Flash instead of the more expensive
+        # Gemini 3.1 Pro route, so the same project estimates lower.
+        ("quality", range(10, 201)),
     ],
 )
 def test_extract_estimate_for_typical_project_stays_in_sane_range(

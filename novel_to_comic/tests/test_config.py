@@ -220,10 +220,11 @@ def test_gemini_text_aliases_use_latest_flash_tiers():
     }
 
     assert models["extract-fast"] == "vertex_ai/gemini-3.5-flash-lite"
-    assert models["extract-balanced"] == "vertex_ai/gemini-3.6-flash"
+    assert models["extract-balanced"] == "vertex_ai/gemini-3.8-flash"
+    assert models["extract-quality"] == "vertex_ai/gemini-3.8-flash"
     assert models["plan-fast"] == "vertex_ai/gemini-3.5-flash-lite"
-    assert models["plan-balanced"] == "vertex_ai/gemini-3.6-flash"
-    assert models["plan-quality"] == "vertex_ai/gemini-3.6-flash"
+    assert models["plan-balanced"] == "vertex_ai/gemini-3.8-flash"
+    assert models["plan-quality"] == "vertex_ai/gemini-3.8-flash"
     assert {
         model for alias, model in models.items() if alias.startswith("prompt-")
     } == {"vertex_ai/gemini-3.5-flash-lite"}
@@ -237,15 +238,15 @@ def test_gemini_text_aliases_use_latest_flash_tiers():
         alias: params.get("reasoning_effort") for alias, params in text_params.items()
     } == {
         "plan-fast": "disable",
-        "plan-balanced": "disable",
-        "plan-quality": "disable",
+        "plan-balanced": "low",
+        "plan-quality": "low",
         "prompt-fast": "disable",
         "prompt-balanced": "disable",
         "prompt-quality": "disable",
     }
 
 
-def test_balanced_adapt_uses_low_thinking_gemini_pro():
+def test_balanced_adapt_uses_low_thinking_gemini_flash():
     gateway_config = Path(__file__).resolve().parents[2] / "litellm" / "config.yaml"
     data = yaml.safe_load(gateway_config.read_text())
     params = next(
@@ -254,7 +255,7 @@ def test_balanced_adapt_uses_low_thinking_gemini_pro():
         if item["model_name"] == "adapt-balanced"
     )
 
-    assert params["model"] == "vertex_ai/gemini-3.1-pro-preview"
+    assert params["model"] == "vertex_ai/gemini-3.8-flash"
     assert params["reasoning_effort"] == "low"
 
 

@@ -1,7 +1,8 @@
 """Stage 1: Novel → Story Bible JSON.
 
-Reads the full novel and makes one long-context call to Gemini 3.1 Pro
-to extract characters, locations, scenes, and narrative arcs.
+Reads the full novel and makes one long-context call through the configured
+Gemini 3.7 Flash text route to extract characters, locations, scenes, and
+narrative arcs.
 """
 
 import json

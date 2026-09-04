@@ -1062,7 +1062,7 @@ class TestStreamingOptOut:
         _patch_http(
             monkeypatch,
             {
-                "model": "vertex_ai/gemini-3.1-pro-preview",
+                "model": "vertex_ai/gemini-3.8-flash",
                 "choices": [{"message": {"content": '{"ok": true}'}}],
                 "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
             },
@@ -1084,6 +1084,7 @@ class TestStreamingOptOut:
         sent = _FakeAsyncClient.last_request["json"]
         assert "stream" not in sent
         assert "stream_options" not in sent
+        assert "temperature" not in sent
 
 
 class TestRetryAfterSeconds:
