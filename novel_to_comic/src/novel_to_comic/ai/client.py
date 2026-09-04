@@ -97,8 +97,32 @@ _RATE_LIMIT_MAX_DELAY = 60.0
 _JSON_PARSE_MAX_RETRIES = 2
 
 # Anthropic deprecated the `temperature` request param on Claude Opus 4.7;
-# sending it returns 400. Haiku 4.5 / Sonnet 4.6 still accept it.
-_TEMPERATURE_DEPRECATED_ALIASES = frozenset({"adapt-quality"})
+# sending it returns 400. Google also deprecated sampling parameters for
+# Gemini 3.6 Flash, Gemini 3.7 Flash, and Gemini 3.5 Flash-Lite. Keep those
+# aliases out of the OpenAI-compatible payload instead of relying on the
+# gateway to drop them.
+_TEMPERATURE_DEPRECATED_ALIASES = frozenset(
+    {
+        "adapt-quality",
+        "extract-fast",
+        "extract-balanced",
+        "extract-quality",
+        "adapt-balanced",
+        "plan-fast",
+        "plan-balanced",
+        "plan-quality",
+        "prompt-fast",
+        "prompt-balanced",
+        "prompt-quality",
+        "ocr-balanced",
+        "gemini-3.5-flash-lite",
+        "gemini-3.6-flash",
+        "gemini-3.8-flash",
+        "vertex_ai/gemini-3.5-flash-lite",
+        "vertex_ai/gemini-3.6-flash",
+        "vertex_ai/gemini-3.8-flash",
+    }
+)
 
 
 def _retry_after_seconds(response: httpx.Response) -> float | None:

@@ -8,18 +8,18 @@
 
 aliases:
   extract-fast: vertex_ai/gemini-3.5-flash-lite
-  extract-balanced: vertex_ai/gemini-3.6-flash
-  extract-quality: vertex_ai/gemini-3.1-pro-preview
+  extract-balanced: vertex_ai/gemini-3.8-flash
+  extract-quality: vertex_ai/gemini-3.8-flash
   adapt-fast: anthropic/claude-haiku-4-5
-  adapt-balanced: vertex_ai/gemini-3.1-pro-preview
+  adapt-balanced: vertex_ai/gemini-3.8-flash
   adapt-quality: anthropic/claude-opus-4-7
   plan-fast: vertex_ai/gemini-3.5-flash-lite
-  plan-balanced: vertex_ai/gemini-3.6-flash
-  plan-quality: vertex_ai/gemini-3.6-flash
+  plan-balanced: vertex_ai/gemini-3.8-flash
+  plan-quality: vertex_ai/gemini-3.8-flash
   prompt-fast: vertex_ai/gemini-3.5-flash-lite
   prompt-balanced: vertex_ai/gemini-3.5-flash-lite
   prompt-quality: vertex_ai/gemini-3.5-flash-lite
-  ocr-balanced: vertex_ai/gemini-3.6-flash
+  ocr-balanced: vertex_ai/gemini-3.8-flash
   image-fast: vertex_ai/gemini-3.1-flash-lite-image
   image-balanced: vertex_ai/gemini-3-pro-image
   image-balanced-seedream-test: bytedance/seedream/v5/lite/edit
@@ -67,10 +67,6 @@ model_overrides:
     input_cost_per_token: 0.0000001
     output_cost_per_token: 0.0000004
     mode: chat
-  gemini-3.1-pro-preview:
-    input_cost_per_token: 0.000002
-    output_cost_per_token: 0.000012
-    mode: chat
   # Gemini 3.5 Flash — stable frontier-speed model for agentic and coding tasks.
   # source: https://ai.google.dev/gemini-api/docs/pricing,
   # verified 2026-05-24.
@@ -78,12 +74,22 @@ model_overrides:
     input_cost_per_token: 0.0000015
     output_cost_per_token: 0.000009
     mode: chat
-  # Gemini 3.6 Flash — lower-cost, more token-efficient successor to 3.5 Flash.
-  # source: https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-3-6-flash-3-5-flash-lite-3-5-flash-cyber/,
-  # verified 2026-07-21.
+  # Gemini 3.7 Flash — current stable Flash route. Vertex's promotional
+  # standard price is $0.75/$3.75 per 1M input/output tokens through
+  # 2026-12-31, then $1.50/$7.50.
+  # source: https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing,
+  # verified 2026-08-13.
+  gemini-3.8-flash:
+    input_cost_per_token: 0.00000075
+    output_cost_per_token: 0.00000375
+    mode: chat
+  # Gemini 3.6 Flash — retained for direct/legacy callers. Use the same
+  # current promotional price table as 3.7 Flash.
+  # source: https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing,
+  # verified 2026-08-13.
   gemini-3.6-flash:
-    input_cost_per_token: 0.0000015
-    output_cost_per_token: 0.0000075
+    input_cost_per_token: 0.00000075
+    output_cost_per_token: 0.00000375
     mode: chat
   # Gemini 3 Flash Preview — Pro-level intelligence at Flash speed/price.
   # Note the asymmetric naming: the flash text model is in the `3-` family

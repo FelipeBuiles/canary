@@ -2,7 +2,7 @@ model_list:
   # ─── Stage 1: full-novel extraction ───────────────────────────────────────
   - model_name: extract-fast
     litellm_params:
-      model: vertex_ai/gemini-3.5-flash-lite
+      model: vertex_ai/gemini-3.8-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       # Canary adapts public-domain literature (Grimm, Lovecraft, …) whose
@@ -22,13 +22,13 @@ model_list:
           threshold: "OFF"
   - model_name: extract-balanced
     litellm_params:
-      model: vertex_ai/gemini-3.6-flash
+      model: vertex_ai/gemini-3.8-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
   - model_name: extract-quality
     litellm_params:
-      model: vertex_ai/gemini-3.1-pro-preview
+      model: vertex_ai/gemini-3.8-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
@@ -40,7 +40,7 @@ model_list:
       api_key: os.environ/ANTHROPIC_API_KEY
   - model_name: adapt-balanced
     litellm_params:
-      model: vertex_ai/gemini-3.1-pro-preview
+      model: vertex_ai/gemini-3.8-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
@@ -60,20 +60,20 @@ model_list:
       reasoning_effort: "disable"
   - model_name: plan-balanced
     litellm_params:
-      model: vertex_ai/gemini-3.6-flash
+      model: vertex_ai/gemini-3.8-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
-      reasoning_effort: "disable"
+      reasoning_effort: "low"
   # Panel planning is structured transformation over already-extracted data;
-  # hidden model reasoning is disabled to avoid billing invisible token spend.
+  # keep thinking at low effort to limit invisible token spend.
   - model_name: plan-quality
     litellm_params:
-      model: vertex_ai/gemini-3.6-flash
+      model: vertex_ai/gemini-3.8-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
-      reasoning_effort: "disable"
+      reasoning_effort: "low"
 
   # ─── Stage 5: image-prompt assembly (template filling) ────────────────────
   # Prompt models now serve explicit style suggestions and instructed rewrites;
@@ -107,7 +107,7 @@ model_list:
   # same model regardless of the project's quality preset.
   - model_name: ocr-balanced
     litellm_params:
-      model: vertex_ai/gemini-3.6-flash
+      model: vertex_ai/gemini-3.8-flash
       vertex_project: os.environ/VERTEXAI_PROJECT
       vertex_location: os.environ/VERTEXAI_LOCATION
       safety_settings: *vertex_safety_off
