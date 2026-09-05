@@ -44,6 +44,7 @@ def approved_visual_inventory(project_dir: Path) -> ApprovedVisualReferenceInven
                 id=reference_id(entity.id),
                 entity_id=entity.id,
                 visual_anchor=entity.visual_anchor,
+                label=entity.name,
             )
         )
         for appearance in getattr(entity, "appearance_states", ()):
@@ -53,6 +54,8 @@ def approved_visual_inventory(project_dir: Path) -> ApprovedVisualReferenceInven
                     entity_id=entity.id,
                     appearance_state_id=appearance.id,
                     visual_anchor=appearance.visual_anchor,
+                    label=entity.name,
+                    continuity_guard=appearance.continuity_guard or "",
                 )
             )
     return ApprovedVisualReferenceInventory(references=references)
@@ -122,6 +125,15 @@ def approved_reference_files(
             path=artifacts.prop_ref_path(project_dir, prop.id),
             media_type="image/png",
         )
+        for appearance in prop.appearance_states:
+            state_reference = reference_id(prop.id, appearance.id)
+            files[state_reference] = ApprovedReferenceFile(
+                reference_id=state_reference,
+                path=(artifacts.prop_ref_path(project_dir, prop.id)
+                      if appearance.canonical_equivalent or not appearance.visually_significant
+                      else artifacts.prop_state_ref_path(project_dir, prop.id, appearance.id)),
+                media_type="image/png",
+            )
     return files
 
 

@@ -40,6 +40,7 @@ function drawnPage(
 let drawnPages: ReturnType<typeof drawnPage>[] = [drawnPage(1)];
 
 vi.mock("../api/queries", () => ({
+  useProviderUsage: () => ({ data: undefined }),
   useProjectStatus: () => ({
     data: {
       finish_ready: finishStatus === "complete",

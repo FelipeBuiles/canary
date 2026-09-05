@@ -221,6 +221,7 @@ async def _post_with_retry(
     json: dict[str, Any] | None = None,
     data: dict[str, Any] | None = None,
     files: list | None = None,
+    retry_ambiguous: bool = True,
 ) -> httpx.Response:
     """POST with automatic retry on transient HTTP errors and connection failures.
 
@@ -243,10 +244,18 @@ async def _post_with_retry(
                 response = await _http.post(url, headers=headers, json=json)
             if response.status_code not in _RETRYABLE_STATUS_CODES:
                 return response
+            if not retry_ambiguous and response.status_code != 429:
+                return response
             rate_limited = response.status_code == 429
             retry_after = _retry_after_seconds(response)
             pacer.record_retryable_status(response)
         except _TRANSPORT_ERRORS as exc:
+            if not retry_ambiguous and not isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)):
+                raise AITransportError(
+                    "Page submission outcome is unknown; it was not automatically repeated. "
+                    "Check the provider result before requesting another paid generation.",
+                    phase="ambiguous_submission",
+                ) from exc
             pacer.record_exception(exc)
             slow_timeout = isinstance(exc, _SLOW_TIMEOUT_ERRORS)
         await pacer.pause_or_raise(
@@ -577,6 +586,8 @@ def _metadata(
         "session_id": ctx.project_id or ctx.project_name or ctx.workspace_id,
         "user_id": ctx.user_id,
         "tags": [tag for tag in tags if tag],
+        "page_number": ctx.page_number,
+        "is_correction": ctx.is_correction,
         "metadata": {
             "event_id": event_id,
             "model_alias": model_alias,

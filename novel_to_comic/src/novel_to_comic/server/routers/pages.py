@@ -22,7 +22,6 @@ from novel_to_comic.page_previews import ensure_page_render_preview
 from novel_to_comic.page_ocr import GatewayPageOCRAdapter
 from novel_to_comic.page_review import (
     accept_editorial_page_issue,
-    build_correction_request,
     dismiss_page_issue,
     record_page_issue,
     summarize_page_issues,
@@ -35,7 +34,7 @@ from novel_to_comic.state import StageStatus, complete_stage, load_state, save_s
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 
 from ..auth import get_current_user
-from ..deps import get_project, project_key
+from ..deps import get_project, get_project_dir, project_key
 from ..generation_jobs import generation_job_payload
 
 
@@ -110,7 +109,7 @@ def _correction_retry(
         request
         for request in prior_requests
         if request.correction is not None
-        and request.correction.issue_id == issue_id
+        and issue_id in request.correction.issue_ids
     ]
     if not prior_attempts:
         return RetryProvenance(attempt=1)
@@ -145,7 +144,7 @@ def _active_correction_job(request: Request, *, pkey: str, issue_id: str):
             for job in request.app.state.generation_jobs.values()
             if job.project_name == pkey
             and job.kind == "complete_page_draw"
-            and job.payload.get("issue_id") == issue_id
+            and (job.payload.get("issue_id") == issue_id or issue_id in job.payload.get("issue_ids", []))
             and job.status in {"queued", "running"}
         ),
         None,
@@ -434,7 +433,9 @@ def generate_page(
 @router.post("/pages/{page_number}/analyze")
 async def analyze_page(
     page_number: int,
+    project_id: str,
     project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
 ):
     """Read an existing render back without regenerating the page.
 
@@ -454,12 +455,15 @@ async def analyze_page(
     except ArtifactMissing as exc:
         raise HTTPException(409, str(exc)) from exc
     try:
-        analysis = await analyze_complete_page(
-            page=page,
-            render=active.render,
-            image=image,
-            ocr=GatewayPageOCRAdapter(config, page_number=page_number),
-            artifacts=target,
+        from ..credited_job import run_credited_page_check
+        from novel_to_comic.config import PAGE_OCR_ESTIMATED_COST_USD
+        analysis = await run_credited_page_check(
+            user_id=user_id, project_id=project_id, project_dir=project_dir,
+            page_number=page_number, estimated_cost_usd=float(PAGE_OCR_ESTIMATED_COST_USD),
+            work=lambda: analyze_complete_page(
+                page=page, render=active.render, image=image,
+                ocr=GatewayPageOCRAdapter(config, page_number=page_number), artifacts=target,
+            ),
         )
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -561,16 +565,21 @@ def correct_page_issue(
         page = target.read_page(page_number)
         edition = target.read_book_edition()
         edition = ensure_current_page_edition(target, edition)
-        parent = target.read_provenance(
-            page_number,
-            issue.render_revision,
-        ).render
-        correction = build_correction_request(
-            issue=issue,
-            page=page,
-            parent=parent,
-            profile=edition.capability_profile,
-            artifacts=target,
+        provenance = _latest_provenance(target, page_number)
+        if provenance is None:
+            raise ValueError("a rendered page is required before correcting findings")
+        parent = provenance.render
+        pending = tuple(item for item in target.read_issues(page_number)
+                        if item.status in {"open", "revised"} and item.correction_owner == "draw")
+        if issue.id not in {item.id for item in pending}:
+            raise ValueError("only an unresolved Draw issue can be corrected")
+        from novel_to_comic.models.draw import PageRenderCorrection
+        correction = PageRenderCorrection(
+            issue_ids=tuple(item.id for item in pending), page_number=page_number,
+            comic_page_revision=page.revision, comic_page_sha256=page.content_sha256,
+            parent_render_revision=parent.revision, parent_render_image_sha256=parent.image_sha256,
+            mode="instructed", instruction="Correct all of these findings in one complete page revision:\n" +
+                "\n".join(f"- {item.requested_correction}" for item in pending),
         )
         compiled = compile_page_generation_request(
             page,
@@ -585,7 +594,7 @@ def correct_page_issue(
             correction=correction,
             edit_source_bytes=target.read_render(
                 page_number,
-                issue.render_revision,
+                parent.revision,
             ),
             style_template=config.style_template,
         )
@@ -608,7 +617,7 @@ def correct_page_issue(
         artifacts=target,
         page=page,
         ocr=GatewayPageOCRAdapter(config, page_number=page_number),
-        parent_render_revision=issue.render_revision,
+        parent_render_revision=parent.revision,
         issue=issue,
         on_success=_draw_success_callback(
             request,
@@ -617,3 +626,82 @@ def correct_page_issue(
         ),
     )
     return {"status": "queued", "job": generation_job_payload(request.app, job)}
+
+
+@router.get("/provider-usage")
+def project_provider_usage(
+    project_id: str,
+    project_dir=Depends(get_project_dir),
+    user_id: str = Depends(get_current_user),
+):
+    """Provider costs, including failed calls, separate from charged credits."""
+    from ..db import get_db
+    from novel_to_comic.project_usage import page_usage_links, summarize_provider_usage
+
+    events = []
+    try:
+        for start in range(0, 100_000, 1000):
+            batch = (get_db().table("ai_usage_events")
+                     .select("id,stage,feature,status,cost_usd,cost_source,metadata_json")
+                     .eq("user_id", user_id).eq("project_id", project_id)
+                     .order("id").range(start, start + 999).execute().data or [])
+            events.extend(batch)
+            if len(batch) < 1000:
+                break
+        else:
+            raise HTTPException(503, "Provider usage exceeds the supported report size.")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, "Provider usage is unavailable; no zero-cost total can be inferred.") from exc
+    from novel_to_comic.target_artifacts import ArtifactInvalid
+    try:
+        links = page_usage_links(TargetArtifacts(project_dir))
+        link_error = None
+    except (ArtifactMissing, ArtifactInvalid) as exc:
+        links = {}
+        link_error = str(exc)
+    report = summarize_provider_usage(events, links)
+    report["artifact_link_error"] = link_error
+    if link_error:
+        report["complete"] = False
+    return report
+
+
+@router.post("/pages/{page_number}/visual-review")
+async def visual_review_page(page_number: int, project_id: str,
+                             project=Depends(get_project), user_id: str = Depends(get_current_user)):
+    from ..credited_job import run_credited_page_check
+    from novel_to_comic.page_visual_review import review_page_visuals
+    from novel_to_comic.config import PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD
+
+    project_dir, config, _state = project
+    target = TargetArtifacts(project_dir)
+    active = _latest_provenance(target, page_number)
+    if active is None:
+        raise HTTPException(409, "Page has no render to review")
+    try:
+        page = target.read_page(page_number)
+        compiled = compile_page_generation_request(
+            page, target.read_book_edition(), approved_visual_inventory(project_dir),
+            approved_reference_files(project_dir), retry=RetryProvenance(attempt=1), style_template=config.style_template,
+        )
+        result = await run_credited_page_check(
+            user_id=user_id, project_id=project_id, project_dir=project_dir, page_number=page_number,
+            estimated_cost_usd=float(PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD),
+            work=lambda: review_page_visuals(config=config, page=page, render=active.render,
+                image=target.read_render(page_number, active.render.revision), compiled=compiled, artifacts=target),
+        )
+        return result.value
+    except (ArtifactMissing, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get("/pages/{page_number}/visual-review/estimate")
+def visual_review_estimate(page_number: int, project=Depends(get_project)):
+    from novel_to_comic.config import PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD
+    from ..credits import credit_estimate_for_provider_cost
+
+    if _latest_provenance(TargetArtifacts(project[0]), page_number) is None:
+        raise HTTPException(409, "Page has no render to review")
+    return credit_estimate_for_provider_cost(float(PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD), 'draw', reserve=False)

@@ -496,7 +496,7 @@ def _profile() -> PageCapabilityProfile:
         output_width=1696,
         output_height=2528,
         max_prompt_characters=32_000,
-        retry_semantics="idempotent_request",
+        retry_semantics="bounded_submission",
         price_per_page_usd="0.134",
     )
 
@@ -636,3 +636,12 @@ def test_correction_supersedes_without_overwriting_parent_or_creating_panels(
     assert artifacts.read_render(34, 2) == b"corrected-complete-page"
     assert artifacts.read_issues(34)[0].resolution_revision == 2
     assert not list((tmp_path / "draw").rglob("*panel*"))
+
+
+def test_reading_order_checks_geometry_even_when_ocr_array_matches_copy():
+    from novel_to_comic.page_review import _compare_lettering
+    page = _page()
+    extraction = asyncio.run(_OCR(*[item.text for c in page.content for item in c.lettering]).extract(b'image')).value
+    extraction = extraction.model_copy(update={"observed_reading_order": tuple(reversed(extraction.observed_reading_order))})
+    _, failures, _ = _compare_lettering(page, _render(), extraction)
+    assert [failure.code for failure in failures] == ["reordered_lettering"]

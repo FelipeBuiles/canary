@@ -219,7 +219,7 @@ def test_gemini_text_aliases_use_latest_flash_tiers():
         if str(item.get("model_name", "")).startswith(("extract-", "plan-", "prompt-"))
     }
 
-    assert models["extract-fast"] == "vertex_ai/gemini-3.5-flash-lite"
+    assert models["extract-fast"] == "vertex_ai/gemini-3.8-flash"
     assert models["extract-balanced"] == "vertex_ai/gemini-3.8-flash"
     assert models["extract-quality"] == "vertex_ai/gemini-3.8-flash"
     assert models["plan-fast"] == "vertex_ai/gemini-3.5-flash-lite"
@@ -420,3 +420,8 @@ class TestSaveConfig:
             assert 'image_model: "image-quality"' in content
             loaded, _ = load_config(Path(tmpdir))
             assert loaded.target_language == "fr"
+
+
+def test_gateway_does_not_multiply_client_retry_attempts():
+    gateway_config = Path(__file__).resolve().parents[2] / 'litellm' / 'config.yaml'
+    assert yaml.safe_load(gateway_config.read_text())['litellm_settings']['num_retries'] == 0

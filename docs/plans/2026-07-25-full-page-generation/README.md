@@ -4,7 +4,7 @@
 **Status:** Implementation substantially complete on `render-full-pages`;
 Ticket 09 acceptance evidence, documentation cleanup, and release integration
 remain before launch.
-**Design:** ADRs 0003-0015 in [`docs/adr/`](../../../adr/) — the dated design
+**Design:** ADRs 0003-0015 in [`docs/adr/`](../../adr/) — the dated design
 document was removed once its decisions were recorded there.
 
 ## Purpose

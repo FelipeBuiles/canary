@@ -136,6 +136,8 @@ vi.mock("../api/queries", () => ({
     refetch: vi.fn().mockResolvedValue(undefined),
   }),
   useGenerateCompletePage: () => ({ mutate: generatePage, isPending: false }),
+  useVisualReviewEstimate: () => ({ data: { estimate_credits: 2 } }),
+  useReviewPageVisuals: () => ({ mutate: vi.fn(), isPending: false }),
   useAnalyzeCompletePage: () => ({ mutate: analyzePage, isPending: false }),
   useCreatePageIssue: () => ({ mutate: createIssue, isPending: false }),
   useCorrectPageIssue: () => ({ mutate: correctIssue, isPending: false }),
@@ -202,7 +204,7 @@ describe("PagesRoom", () => {
     };
   });
 
-  it("keeps internal editorial diagnostics out of the author journey", () => {
+  it("shows editorial suggestions while keeping machine evidence hidden", () => {
     adaptationIssues = [
       {
         id: "adapt-issue-1",
@@ -245,14 +247,15 @@ describe("PagesRoom", () => {
 
     renderRoom();
 
-    expect(screen.queryByText("4 diagnostics")).toBeNull();
-    expect(screen.queryByText("SHOW DIAGNOSTICS")).toBeNull();
-    expect(screen.queryByText("The aftermath is compressed.")).toBeNull();
-    expect(screen.queryByText("The reveal lacks a page-turn setup.")).toBeNull();
+    expect(screen.getByText("4 diagnostics")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "SHOW DIAGNOSTICS" }));
+    expect(screen.getByText("The aftermath is compressed.")).toBeTruthy();
+    expect(screen.getByText("The reveal lacks a page-turn setup.")).toBeTruthy();
+    expect(screen.queryByText("Expected the studio; found Providence.")).toBeNull();
     expect(screen.getByText("PAGE GALLERY")).toBeTruthy();
   });
 
-  it("shows validation signals as internal diagnostics with Dev Content enabled", () => {
+  it("shows diagnostic evidence with Dev Content enabled", () => {
     window.localStorage.setItem(SHOW_DEV_CONTENT_KEY, "1");
     adaptationIssues = [
       {
@@ -281,10 +284,10 @@ describe("PagesRoom", () => {
     renderRoom();
 
     expect(screen.getByText("3 diagnostics")).toBeTruthy();
-    expect(screen.getByText("DEV CONTENT")).toBeTruthy();
+    expect(screen.getByText("EDITORIAL REVIEW")).toBeTruthy();
     expect(
       screen.getByText(
-        "Internal validation signals for development inspection. They do not block the book or require author action.",
+        "Review these story and pacing suggestions before drawing. They do not block the book.",
       ),
     ).toBeTruthy();
     expect(screen.queryByText("The aftermath is compressed.")).toBeNull();
@@ -455,9 +458,9 @@ describe("PagesRoom", () => {
     }));
 
     expect(screen.getByText(
-      "This redraws the whole page as a new revision using this finding. Your current page and approved script stay saved.",
+      "This creates one page revision addressing all unresolved Draw findings. Review the result to confirm visual fixes.",
     )).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "CREATE CORRECTED REVISION" }));
+    fireEvent.click(screen.getByRole("button", { name: "CORRECT PAGE FINDINGS" }));
     expect(correctIssue).toHaveBeenCalledWith(
       {
         project: "demo",
@@ -476,7 +479,7 @@ describe("PagesRoom", () => {
     renderRoom();
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "CREATE CORRECTED REVISION" }));
+    fireEvent.click(screen.getByRole("button", { name: "CORRECT PAGE FINDINGS" }));
 
     expect(screen.getByRole("alert").textContent).toContain(
       "Could not create corrected revision. Saved edition conflict",
@@ -534,7 +537,7 @@ describe("PagesRoom", () => {
     expect(screen.getByText("Open the door. · Run!")).toBeTruthy();
     expect(screen.getByText("Open the dor. · Run!")).toBeTruthy();
     expect(screen.getByText("EXACT DIFFERENCE")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "CREATE CORRECTED REVISION" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "CORRECT PAGE FINDINGS" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "DISMISS FALSE POSITIVE" }));
     expect(dismissIssue).toHaveBeenCalledWith({
       project: "demo",
@@ -564,7 +567,7 @@ describe("PagesRoom", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
 
-    const actionGroup = screen.getByRole("button", { name: "CREATE CORRECTED REVISION" }).parentElement;
+    const actionGroup = screen.getByRole("button", { name: "CORRECT PAGE FINDINGS" }).parentElement;
     const issueLayout = actionGroup?.parentElement;
     expect(issueLayout?.className).toContain("space-y-3");
     expect(issueLayout?.className).not.toContain("flex-wrap");

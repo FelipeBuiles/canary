@@ -191,7 +191,7 @@ def test_named_project_routes_are_not_shadowed_by_the_asset_reader(tmp_path: Pat
     assert response.json()["detail"] != "File not found"
 
 
-def test_pages_route_reads_page_saved_before_panel_roles_were_authored(
+def test_pages_route_rejects_legacy_hash_and_requests_replanning(
     tmp_path: Path,
 ):
     client, project_dir = _client(tmp_path)
@@ -246,7 +246,5 @@ def test_pages_route_reads_page_saved_before_panel_roles_were_authored(
 
     response = client.get("/api/projects/demo/pages")
 
-    assert response.status_code == 200
-    returned = response.json()["pages"][0]["page"]
-    assert returned["content_sha256"] == stored_hash
-    assert returned["content"][0]["panel_role"] == "standard"
+    assert response.status_code == 409
+    assert "Rerun Plan" in response.text

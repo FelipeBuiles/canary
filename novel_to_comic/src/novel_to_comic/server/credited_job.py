@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable
 from functools import wraps
 from pathlib import Path
 from threading import RLock
+from weakref import WeakValueDictionary
 from typing import Any
 
 from fastapi import FastAPI
@@ -164,6 +165,8 @@ def enqueue_credited_job(
             workspace_id=str(project_dir.parent),
             stage=stage,
             job_id=job_id,
+            page_number=payload.get("page_number"),
+            is_correction=bool(payload.get("issue_ids") or payload.get("issue_id")),
         ):
             result = await work()
         # Remove successfully regenerated item from items_failed if it exists
@@ -457,3 +460,28 @@ def enqueue_frozen_generation_job(
             project_dir, frozen.request_id, "queued", job_id=job.id,
         )
     return job, created
+
+
+_PAGE_CHECK_LOCKS: WeakValueDictionary = WeakValueDictionary()
+
+
+async def run_credited_page_check(*, user_id: str, project_id: str, project_dir: Path,
+                                  page_number: int, estimated_cost_usd: float,
+                                  work: Callable[[], Awaitable[Any]]) -> Any:
+    """Run a synchronous page-check endpoint under a releasable credit hold."""
+    from .credits import credit_estimate_for_provider_cost
+
+    key = (user_id, project_id, page_number)
+    lock = _PAGE_CHECK_LOCKS.setdefault(key, asyncio.Lock())
+    async with lock:
+        db = get_db()
+        estimate = credit_estimate_for_provider_cost(estimated_cost_usd, 'draw', reserve=True)
+        reservation, job_id = reserve_credits(db, user_id, project_id, 'draw', estimate["reserved_credits"] or 0)
+        try:
+            with ai_request_context(user_id=user_id, project_id=project_id,
+                                    project_name=project_dir.name, stage='draw', job_id=job_id,
+                                    page_number=page_number):
+                return await work()
+        finally:
+            if reservation:
+                release_reservation(db, reservation)

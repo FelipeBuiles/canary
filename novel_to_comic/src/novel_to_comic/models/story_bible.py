@@ -130,6 +130,8 @@ class Prop(BaseModel):
     name: str  # "The Monkey's Paw"
     visual_anchor: str  # What it looks like — injected verbatim into every panel prompt that shows it
     first_appearance_scene: Optional[str] = None
+    appearance_states: list[AppearanceState] = []
+    appearance_timeline: list[StateActivation] = []
 
 
 class StoryBible(BaseModel):

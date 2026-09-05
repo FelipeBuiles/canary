@@ -37,6 +37,8 @@ class ApprovedVisualReference(BaseModel):
     appearance_state_id: str | None = None
     visual_anchor: str = Field(min_length=1)
     approved: Literal[True] = True
+    label: str = ""
+    continuity_guard: str = ""
 
 
 class ApprovedVisualReferenceInventory(BaseModel):
@@ -109,15 +111,15 @@ class PageContent(BaseModel):
     visual_intent: str = Field(min_length=1)
     lettering: tuple[LetteringItem, ...] = ()
     entity_ids: tuple[str, ...] = ()
-    appearance_state_ids: tuple[str, ...] = ()
+    appearance_states: dict[str, str] = Field(default_factory=dict)
     pinned_geometry: PinnedGeometry | None = None
 
     @model_validator(mode="after")
     def _validate_references(self) -> "PageContent":
         if len(self.entity_ids) != len(set(self.entity_ids)):
             raise ValueError("page-scoped entity IDs must be unique")
-        if len(self.appearance_state_ids) != len(set(self.appearance_state_ids)):
-            raise ValueError("page-scoped appearance-state IDs must be unique")
+        if not set(self.appearance_states) <= set(self.entity_ids):
+            raise ValueError("appearance states must belong to visible entities")
         return self
 
 
@@ -144,17 +146,6 @@ class ComicPage(RevisionedArtifact):
     layout_intent: str = ""
     content: tuple[PageContent, ...] = Field(min_length=1)
     reading_order: tuple[str, ...] = Field(min_length=1)
-
-    def _compatible_content_hashes(self) -> tuple[str, ...]:
-        """Accept the authored hash from before semantic panel roles existed."""
-
-        if all("panel_role" in item.model_fields_set for item in self.content):
-            return ()
-        payload = self.model_dump(mode="json", exclude={"content_sha256"})
-        for index, item in enumerate(self.content):
-            if "panel_role" not in item.model_fields_set:
-                payload["content"][index].pop("panel_role", None)
-        return (self._content_digest(payload),)
 
     @model_validator(mode="after")
     def _validate_page(self) -> "ComicPage":

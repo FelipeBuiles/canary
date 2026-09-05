@@ -421,7 +421,7 @@ export interface PageContent {
   visual_intent: string;
   lettering: LetteringItem[];
   entity_ids: string[];
-  appearance_state_ids: string[];
+  appearance_states: Record<string, string>;
 }
 
 export interface ComicPage {
@@ -464,7 +464,7 @@ export interface PageIssue {
   requested_correction: string;
   detected_region_ids?: string[];
   lettering_item_ids?: string[];
-  status: "open" | "accepted" | "resolved" | "dismissed";
+  status: "open" | "revised" | "accepted" | "resolved" | "dismissed";
   resolution_revision: number | null;
   dismissal_reason?: string | null;
 }

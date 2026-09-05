@@ -29,11 +29,6 @@ class RevisionedArtifact(BaseModel):
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
-    def _compatible_content_hashes(self) -> tuple[str, ...]:
-        """Previously valid hashes for defaults added after persistence."""
-
-        return ()
-
     @model_validator(mode="after")
     def _verify_content_hash(self) -> "RevisionedArtifact":
         payload = self.model_dump(mode="json", exclude={"content_sha256"})
@@ -41,7 +36,6 @@ class RevisionedArtifact(BaseModel):
         if (
             self.content_sha256
             and self.content_sha256 != digest
-            and self.content_sha256 not in self._compatible_content_hashes()
         ):
             raise ValueError("content_sha256 does not match artifact content")
         if not self.content_sha256:
@@ -196,9 +190,9 @@ class AdaptedBeat(BaseModel):
         ],
         ...,
     ] = ()
-    brief_requirements: tuple[str, ...] = ()
     brief_requirement_ids: tuple[str, ...] = ()
     source_unit_ids: tuple[str, ...] = Field(min_length=1)
+    entity_ids: tuple[str, ...] = ()
     lettering: tuple[LetteringItem, ...] = ()
     transitions: tuple[ContinuityTransition, ...] = ()
     appearance_changes: tuple[AppearanceChange, ...] = ()

@@ -91,6 +91,8 @@ GATEWAY_PAGE_OCR = "ocr-balanced"
 # provider call, so a page's credit hold has to cover it; the settled debit
 # always comes from the usage the provider actually reported.
 PAGE_OCR_ESTIMATED_COST_USD = "0.004"
+# Optional page + approved-reference comparison allowance.
+PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD = "0.02"
 
 
 def is_gpt_image_2(model: str) -> bool:

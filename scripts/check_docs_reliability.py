@@ -54,7 +54,7 @@ def source_contracts(failures: list[str]) -> tuple[list[str], set[str], set[str]
 
 def check_stage_table(path: Path, stages: list[str], checkpoints: set[str], failures: list[str]) -> None:
     text = path.read_text()
-    rows = re.findall(r"^\|\s*(\d+)\s*\|.*?`(extract|style|cast|adapt|plan|storyboard|direct|draw|compose)`.*?\|\s*(Yes|No)\s*\|", text, re.M)
+    rows = re.findall(r"^\|\s*(\d+)\s*\|.*?`([a-z_]+)`.*?\|\s*(Yes|No)\s*\|", text, re.M)
     documented = [name for _, name, _ in sorted(rows, key=lambda row: int(row[0]))]
     if documented != stages:
         fail(f"{path.relative_to(ROOT)} stage table is {documented}, expected {stages}", failures)

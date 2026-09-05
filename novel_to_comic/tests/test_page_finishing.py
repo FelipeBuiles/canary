@@ -122,7 +122,7 @@ def _edition() -> BookEdition:
             output_width=120,
             output_height=180,
             max_prompt_characters=10_000,
-            retry_semantics="idempotent_request",
+            retry_semantics="bounded_submission",
             price_per_page_usd="0",
         ),
     )
@@ -501,7 +501,7 @@ def test_repeated_beat_states_are_not_replayed_or_rejected() -> None:
                 beat_ids=["beat-1"],
                 visual_intent="Ward is soaked.",
                 entity_ids=["ward"],
-                appearance_state_ids=["ward-wet", "ward-dry"],
+                appearance_states={"ward": "ward-wet"},
             ),
             PageContent(
                 id="content-2",
@@ -509,7 +509,7 @@ def test_repeated_beat_states_are_not_replayed_or_rejected() -> None:
                 beat_ids=["beat-1"],
                 visual_intent="Ward is dry.",
                 entity_ids=["ward"],
-                appearance_state_ids=["ward-wet", "ward-dry"],
+                appearance_states={"ward": "ward-dry"},
             ),
         ],
         reading_order=["content-1", "content-2"],
@@ -597,7 +597,7 @@ def test_active_page_manifest_order_mismatch_blocks_instead_of_exporting(
     assert not artifacts.export_path("pdf").exists()
 
 
-def test_cross_page_appearance_state_is_a_non_blocking_diagnostic(
+def test_cross_page_appearance_state_blocks_export(
     tmp_path: Path,
 ) -> None:
     artifacts, first_image = _write_valid_book(tmp_path)
@@ -641,7 +641,7 @@ def test_cross_page_appearance_state_is_a_non_blocking_diagnostic(
         }
     )
     first_payload["content"][0]["entity_ids"] = ["ward"]
-    first_payload["content"][0]["appearance_state_ids"] = ["ward-wet"]
+    first_payload["content"][0]["appearance_states"] = {"ward": "ward-wet"}
     first_page = ComicPage.model_validate(first_payload)
     second_page = ComicPage(
         revision=1,
@@ -736,12 +736,12 @@ def test_cross_page_appearance_state_is_a_non_blocking_diagnostic(
         ),
     )
 
-    assert result.preflight.ready_to_export is True
+    assert result.preflight.ready_to_export is False
     assert "cross_page_appearance_state" in {
         diagnostic.code
-        for diagnostic in result.preflight.pages[1].diagnostics
+        for diagnostic in result.preflight.pages[1].invariant_failures
     }
-    assert result.preflight.correction_requests == ()
+    assert result.preflight.correction_requests == ()  # Repair the Plan state citation, not the image.
 
 
 def test_packaging_integrity_failure_leaves_no_partial_export(

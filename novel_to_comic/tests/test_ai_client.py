@@ -1116,3 +1116,34 @@ class TestRetryAfterSeconds:
 
     def test_negative_delta_clamps_to_zero(self):
         assert client._retry_after_seconds(self._response({"retry-after": "-5"})) == 0.0
+
+
+def test_bounded_submission_does_not_repeat_ambiguous_paid_request(monkeypatch):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        raise httpx.ReadTimeout('response lost after submission', request=request)
+
+    _mock_transport(monkeypatch, handler)
+    with pytest.raises(client.AITransportError) as error:
+        asyncio.run(client._post_with_retry(
+            'http://gw/v1/images', headers={}, json={}, retry_ambiguous=False,
+        ))
+    assert error.value.phase == 'ambiguous_submission'
+    assert len(calls) == 1
+
+
+def test_bounded_submission_does_not_repeat_server_failure(monkeypatch):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(503, json={'error': 'upstream response lost'})
+
+    _mock_transport(monkeypatch, handler)
+    response = asyncio.run(client._post_with_retry(
+        'http://gw/v1/images', headers={}, json={}, retry_ambiguous=False,
+    ))
+    assert response.status_code == 503
+    assert len(calls) == 1

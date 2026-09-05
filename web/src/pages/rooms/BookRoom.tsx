@@ -5,6 +5,7 @@ import {
   useExport,
   useFinishPreflight,
   useProjectStatus,
+  useProviderUsage,
 } from "../../api/queries";
 import { downloadExportUrl, pageRenderPreviewUrl } from "../../api/pages";
 import { BookReader } from "../../components/BookReader";
@@ -86,6 +87,7 @@ export function BookRoom() {
   const { id } = useParams<{ id: string }>();
   const { t } = useI18n();
   const [showDevContent] = useShowDevContent();
+  const providerUsage = useProviderUsage(id, showDevContent);
   const { data: status } = useProjectStatus(id);
   const finishStatus = status?.stages.finish?.status ?? "pending";
   const drawComplete = status?.stages.draw?.status === "complete";
@@ -160,8 +162,27 @@ export function BookRoom() {
       <RoomHeader
         kicker={t("BOOK")}
         title={t("FINISH & EXPORT")}
-        lead={t("Finish verifies every complete page, production dimensions, issue decisions, and package order.")}
+        lead={t("Finish checks page files, lettering results, production dimensions, issue decisions, and package order.")}
       />
+
+      {showDevContent && (
+        <Surface padding="md" border="soft" shadow="none">
+          <h2 className="font-meta font-bold">{t("PROVIDER COSTS")}</h2>
+          {providerUsage.error && <p role="alert">{t("Provider usage is unavailable.")}</p>}
+          {providerUsage.data && <>
+            <p>${providerUsage.data.known_cost_usd.toFixed(4)} {t("recorded provider cost; separate from charged credits")}</p>
+            {providerUsage.data.artifact_link_error && <p role="status">{providerUsage.data.artifact_link_error}</p>}
+            {!providerUsage.data.complete && <p>{t("Incomplete cost evidence")}: {providerUsage.data.unknown_cost_count} {t("unpriced calls")}, {providerUsage.data.artifact_calls_missing_from_events} {t("missing events")}</p>}
+            <p className="font-body text-xs">{Object.entries(providerUsage.data.cost_sources).map(([source, count]) => `${source}: ${count}`).join(" · ")}</p>
+            <table className="mt-3 w-full text-left font-body text-sm">
+              <thead><tr><th>{t("Page")}</th><th>{t("Operation")}</th><th>{t("Calls")}</th><th>USD</th></tr></thead>
+              <tbody>{providerUsage.data.groups.map((group) => <tr key={`${group.page_number}:${group.category}`}>
+                <td>{group.page_number ?? "—"}</td><td>{group.category}</td><td>{group.call_count}</td><td>{group.known_cost_usd.toFixed(4)}{group.unknown_cost_count ? " + ?" : ""}</td>
+              </tr>)}</tbody>
+            </table>
+          </>}
+        </Surface>
+      )}
 
       {bookPages.length > 0 && (
         <section>

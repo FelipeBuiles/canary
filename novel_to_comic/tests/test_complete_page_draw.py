@@ -59,7 +59,7 @@ def _profile(**updates: object) -> PageCapabilityProfile:
         "output_width": 1696,
         "output_height": 2528,
         "max_prompt_characters": 32_000,
-        "retry_semantics": "idempotent_request",
+        "retry_semantics": "bounded_submission",
         "price_per_page_usd": "0.134",
     }
     payload.update(updates)
@@ -102,7 +102,7 @@ def _page(*, revision: int = 2, visual_intent: str = "Ward sees the idol.") -> C
                     )
                 ],
                 entity_ids=["ward", "idol"],
-                appearance_state_ids=["ward-bloodied"],
+                appearance_states={"ward": "ward-bloodied"},
             )
         ],
         reading_order=["content-1", "letter-1"],
@@ -212,18 +212,17 @@ def test_compiler_freezes_exact_page_authority_and_selected_reference_order(
     assert "idol-ref" not in request.prompt
 
 
-def test_provider_prompt_never_exposes_internal_entity_ids_as_visible_copy(
-    tmp_path: Path,
-) -> None:
-    page = _page(visual_intent="Ward studies loc_001 while holding prop_002.")
-
-    request = _compile(tmp_path, page=page).request
-
-    assert "loc_001" not in request.prompt
-    assert "prop_002" not in request.prompt
-    assert "the referenced location" in request.prompt
-    assert "the referenced prop" in request.prompt
-    assert request.references[0].entity_id == "ward"
+def test_provider_prompt_maps_distinct_subjects_to_named_references(tmp_path: Path) -> None:
+    page = _page(visual_intent="ward studies idol.")
+    inventory = _inventory()
+    inventory = inventory.model_copy(update={"references": tuple(
+        ref.model_copy(update={"label": "Charles Ward" if ref.entity_id == "ward" else "Green idol"})
+        for ref in inventory.references
+    )})
+    compiled = compile_page_generation_request(page, _edition(), inventory, _reference_files(tmp_path), retry=RetryProvenance(attempt=1))
+    assert 'Charles Ward studies Green idol.' in compiled.request.prompt
+    assert '"image":"Reference 1"' in compiled.request.prompt
+    assert '"visible_subjects"' in compiled.request.prompt
 
 
 def test_compiler_explicitly_forbids_visible_text_on_unlettered_pages(
@@ -373,55 +372,30 @@ def test_less_graphic_depiction_preserves_authority_and_softens_visual_treatment
         depiction="less_graphic",
     )
 
-    assert "Every figure must be fully clothed" in compiled.request.prompt
-    assert "Lettering strings are typeset copy only" in compiled.request.prompt
-    assert compiled.request.references == ()
-    assert compiled.reference_bytes == ()
+    assert "Do not alter unaffected subjects" in compiled.request.prompt
+    assert "Typeset only the exact lettering strings" in compiled.request.prompt
+    assert len(compiled.request.references) == 2
+    assert len(compiled.reference_bytes) == 2
     assert "It was the same face." in compiled.request.prompt
     assert "Ward’s torn left sleeve; blood below the right eye" in compiled.request.prompt
 
 
-def test_edition_advances_to_current_profile_after_the_model_changes(
-    tmp_path: Path,
-) -> None:
-    artifacts = TargetArtifacts(tmp_path / "project")
-    old = _edition(
-        _profile(
-            id="unavailable-preview",
-            model="gemini-3-pro-image-preview",
-        output_width=1696,
-        output_height=2528,
-        )
-    )
+def test_edition_rejects_changes_to_current_profile_after_the_model_changes(tmp_path: Path) -> None:
+    artifacts = TargetArtifacts(tmp_path)
+    old = _edition(_profile(model="old-model"))
     artifacts.write_book_edition(old)
-    provenance_dir = tmp_path / "project" / "draw" / "pages" / "page_001"
-    provenance_dir.mkdir(parents=True)
-    (provenance_dir / "provenance_001.json").write_text("{}")
-
-    updated = ensure_current_page_edition(artifacts, old)
-
-    assert updated.revision == old.revision + 1
-    assert updated.capability_profile == production_page_capability_profile()
-    assert artifacts.read_book_edition() == updated
+    with pytest.raises(ValueError, match="Start a new edition"):
+        ensure_current_page_edition(artifacts, old)
+    assert artifacts.read_book_edition() == old
 
 
-def test_edition_advances_after_current_model_was_saved_with_wrong_dimensions(
-    tmp_path: Path,
-) -> None:
-    artifacts = TargetArtifacts(tmp_path / "project")
-    invalid_dimensions = _edition(
-        _profile(output_width=2048, output_height=3072)
-    )
-    artifacts.write_book_edition(invalid_dimensions)
-
-    updated = ensure_current_page_edition(artifacts, invalid_dimensions)
-
-    assert updated.revision == invalid_dimensions.revision + 1
-    assert (updated.capability_profile.output_width, updated.capability_profile.output_height) == (
-        1696,
-        2528,
-    )
-    assert artifacts.read_book_edition() == updated
+def test_edition_rejects_changes_after_current_model_was_saved_with_wrong_dimensions(tmp_path: Path) -> None:
+    artifacts = TargetArtifacts(tmp_path)
+    old = _edition(_profile(output_width=2048, output_height=3072))
+    artifacts.write_book_edition(old)
+    with pytest.raises(ValueError, match="Start a new edition"):
+        ensure_current_page_edition(artifacts, old)
+    assert artifacts.read_book_edition() == old
 
 
 def test_failed_request_gets_its_own_revision_before_render_retry(
@@ -473,70 +447,18 @@ def test_book_edition_rejects_non_production_capability_before_cost() -> None:
         )
 
 
-def test_page_correction_uses_current_model_after_edition_advances(
-    tmp_path: Path,
-) -> None:
-    legacy_profile = _profile(
-        id="nano-banana-2-complete-page-v1",
-        model="gemini-3.1-flash-image",
-        output_width=1696,
-        output_height=2528,
-        price_per_page_usd="0.101",
-    )
-    artifacts = TargetArtifacts(tmp_path / "project")
-    artifacts.write_book_edition(_edition(legacy_profile))
-    provenance_dir = tmp_path / "project" / "draw" / "pages" / "page_001"
-    provenance_dir.mkdir(parents=True)
-    (provenance_dir / "provenance_001.json").write_text("{}")
-    edition = ensure_current_page_edition(
-        artifacts,
-        artifacts.read_book_edition(),
-    )
-    page = _page()
-    parent_bytes = b"legacy-page-render"
-    correction = PageRenderCorrection(
-        issue_id="issue-model-change",
-        page_number=page.page_number,
-        comic_page_revision=page.revision,
-        comic_page_sha256=page.content_sha256,
-        parent_render_revision=1,
-        parent_render_image_sha256=hashlib.sha256(parent_bytes).hexdigest(),
-        mode="instructed",
-        instruction="Use the newly approved prop reference.",
-    )
-
-    compiled = compile_page_generation_request(
-        page,
-        edition,
-        _inventory(),
-        _reference_files(tmp_path),
-        retry=RetryProvenance(attempt=1),
-        correction=correction,
-        edit_source_bytes=parent_bytes,
-    )
-
-    assert compiled.request.model == "gemini-3-pro-image"
-    assert compiled.request.profile_id == "nano-banana-pro-complete-page-v1"
-    assert compiled.request.correction == correction
-    assert VertexCompletePageAdapter(MagicMock()).prepare(compiled).model == (
-        "gemini-3-pro-image"
-    )
+def test_page_correction_uses_current_model_after_edition_rejects_changes(tmp_path: Path) -> None:
+    artifacts = TargetArtifacts(tmp_path)
+    old = _edition(_profile(model="gemini-3.1-flash-image"))
+    artifacts.write_book_edition(old)
+    with pytest.raises(ValueError, match="Start a new edition"):
+        ensure_current_page_edition(artifacts, old)
+    assert artifacts.read_book_edition() == old
 
 
-def test_reference_capacity_limits_uploaded_references(tmp_path: Path) -> None:
-    edition = _edition(_profile(max_image_references=1))
-
-    compiled = compile_page_generation_request(
-        _page(),
-        edition,
-        _inventory(),
-        _reference_files(tmp_path),
-        retry=RetryProvenance(attempt=1),
-    )
-
-    assert len(compiled.request.references) == 1
-    assert compiled.request.references[0].entity_id == "ward"
-    assert "green-black stone; exact seven-pointed crown" in compiled.request.prompt
+def test_reference_capacity_fails_before_generation_instead_of_dropping_identity(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="will not be silently dropped"):
+        compile_page_generation_request(_page(), _edition(_profile(max_image_references=1)), _inventory(), _reference_files(tmp_path), retry=RetryProvenance(attempt=1))
 
 
 def test_canonical_page_keeps_overflow_authorities_in_prompt(
@@ -572,27 +494,14 @@ def test_canonical_page_keeps_overflow_authorities_in_prompt(
             media_type="image/png",
         )
 
-    compiled = compile_page_generation_request(
-        page,
-        _edition(_profile(max_image_references=8)),
-        ApprovedVisualReferenceInventory(references=references),
-        files,
-        retry=RetryProvenance(attempt=1),
-    )
-
-    assert len(compiled.request.references) == 8
-    assert compiled.request.references[-1].entity_id == "extra_6"
-    assert "extra anchor 7" in compiled.request.prompt
-
-
-class _RecordingTransport:
-    def __init__(self, result: CompletePageProviderResult) -> None:
-        self.result = result
-        self.submitted = []
-
-    async def generate(self, request):
-        self.submitted.append(request)
-        return self.result
+    with pytest.raises(ValueError, match="requires 9 approved references"):
+        compile_page_generation_request(
+            page,
+            _edition(_profile(max_image_references=8)),
+            ApprovedVisualReferenceInventory(references=references),
+            files,
+            retry=RetryProvenance(attempt=1),
+        )
 
 
 def _provider_result() -> CompletePageProviderResult:
@@ -1155,7 +1064,7 @@ def _ordered_page(*, state_first: bool) -> ComicPage:
             )
         ],
         entity_ids=["ward", "idol"],
-        appearance_state_ids=["ward-bloodied"],
+        appearance_states={"ward": "ward-bloodied"},
     )
     plain = PageContent(
         id="content-plain",
@@ -1220,7 +1129,7 @@ def test_correction_revisions_are_allocated_when_the_job_runs(tmp_path: Path) ->
     assert initial.render.revision == 1
 
     correction = PageRenderCorrection(
-        issue_id="issue-hand",
+        issue_ids=("issue-hand",),
         page_number=7,
         comic_page_revision=page.revision,
         comic_page_sha256=page.content_sha256,
@@ -1263,7 +1172,7 @@ def test_failed_page_correction_gets_new_retry_lineage(tmp_path: Path) -> None:
     artifacts = TargetArtifacts(tmp_path / "project")
     page = _page()
     correction = PageRenderCorrection(
-        issue_id="issue-lettering",
+        issue_ids=("issue-lettering",),
         page_number=page.page_number,
         comic_page_revision=page.revision,
         comic_page_sha256=page.content_sha256,
@@ -1430,3 +1339,94 @@ def test_an_existing_render_can_be_analyzed_without_redrawing_it(
     assert analysis.lettering_valid is True
     assert analysis.analysis_usage is not None
     assert artifacts.read_analysis(7, 1) == analysis
+
+
+def test_entity_scoped_state_names_do_not_collide(tmp_path: Path):
+    from novel_to_comic.page_drawing import _selected_authorities
+    page = _page().model_copy(update={"content": (PageContent(id="p1", order=1, beat_ids=("b1",), visual_intent="Alice waits.", entity_ids=("alice",), appearance_states={"alice": "wet"}),), "reading_order": ("p1",)})
+    inventory = ApprovedVisualReferenceInventory(references=tuple(ApprovedVisualReference(id=f"{e}:wet", entity_id=e, appearance_state_id="wet", visual_anchor=f"{e}, wet coat") for e in ("alice", "bob")))
+    assert [ref.id for ref in _selected_authorities(page, inventory)] == ["alice:wet"]
+
+
+class _RecordingTransport:
+    def __init__(self, result: CompletePageProviderResult) -> None:
+        self.result = result
+        self.submitted = []
+
+    async def generate(self, request):
+        self.submitted.append(request)
+        return self.result
+
+
+def test_visual_review_uses_exact_references_and_reuses_saved_result(tmp_path):
+    from novel_to_comic.page_visual_review import review_page_visuals
+
+    compiled = _compile(tmp_path)
+    artifacts = TargetArtifacts(tmp_path)
+    provenance = asyncio.run(draw_complete_page(
+        compiled, adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
+        artifacts=artifacts, page=_page(),
+    ))
+    generate = AsyncMock(return_value=ApiResult(value={
+        'findings': [{'category': 'prop', 'panel_number': 1, 'observation': 'The idol has two horns.',
+                      'expected': 'The reference has one horn.', 'correction': 'Restore the single horn.'}],
+        'uncertain': ['The rear of the idol is occluded.'],
+    }))
+    kwargs = dict(config=Config(), page=_page(), render=provenance.render,
+                  image=_provider_result().image_bytes, compiled=compiled, artifacts=artifacts, generate=generate)
+    report = asyncio.run(review_page_visuals(**kwargs))
+    repeated = asyncio.run(review_page_visuals(**kwargs))
+    assert generate.await_count == 1
+    assert repeated.value == report.value
+    attachments = generate.call_args.kwargs['image_attachments']
+    assert attachments[0][0] == _provider_result().image_bytes
+    assert tuple(image for image, _ in attachments[1:]) == compiled.reference_bytes
+    assert len(artifacts.read_issues(_page().page_number)) == 1
+    assert artifacts.read_issues(_page().page_number)[0].classification == 'editorial_issue'
+    assert artifacts.read_issues(_page().page_number)[0].status == 'open'
+
+
+def test_final_page_prompt_preserves_geometry_reading_order_and_state_guard(tmp_path):
+    from novel_to_comic.models.page import PinnedGeometry
+
+    page = _page()
+    content = page.content[0].model_copy(update={'pinned_geometry': PinnedGeometry(x=0, y=0, width=1, height=0.5)})
+    page = page.model_copy(update={'content': (content,)})
+    inventory = _inventory().model_copy(update={'references': tuple(
+        ref.model_copy(update={'continuity_guard': 'Never restore the torn left sleeve.'})
+        if ref.entity_id == 'ward' else ref for ref in _inventory().references
+    )})
+    request = compile_page_generation_request(page, _edition(), inventory, _reference_files(tmp_path), retry=RetryProvenance(attempt=1)).request
+    assert '"reading_order":["Panel 1","Panel 1 lettering 1"]' in request.prompt
+    assert '"pinned_geometry":{"height":0.5,"width":1.0,"x":0.0,"y":0.0}' in request.prompt
+    assert 'Never restore the torn left sleeve.' in request.prompt
+
+
+def test_visual_review_route_compiles_current_authority_without_redrawing(tmp_path):
+    from novel_to_comic.server.routers.pages import visual_review_page
+
+    artifacts = TargetArtifacts(tmp_path)
+    page = _page()
+    files = _reference_files(tmp_path)
+    artifacts.write_page(page)
+    artifacts.write_book_edition(_edition())
+    asyncio.run(draw_complete_page(_compile(tmp_path, files=files),
+        adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
+        artifacts=artifacts, page=page))
+
+    async def admitted(**kwargs):
+        return await kwargs['work']()
+
+    with patch('novel_to_comic.server.routers.pages.approved_visual_inventory', return_value=_inventory()), \
+         patch('novel_to_comic.server.routers.pages.approved_reference_files', return_value=files), \
+         patch('novel_to_comic.server.credited_job.run_credited_page_check', side_effect=admitted), \
+         patch('novel_to_comic.clients.text.generate_json', new_callable=AsyncMock,
+               return_value=ApiResult(value={'findings': [], 'uncertain': []})) as generate:
+        report = asyncio.run(visual_review_page(page.page_number, 'project',
+            project=(tmp_path, Config(), None), user_id='user'))
+        assert report.render_revision == 1
+        assert report.findings == ()
+        asyncio.run(visual_review_page(page.page_number, 'project',
+            project=(tmp_path, Config(), None), user_id='user'))
+        assert generate.await_count == 1
+    assert artifacts.provenance_revisions(page.page_number) == (1,)

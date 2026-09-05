@@ -670,10 +670,11 @@ def _state_asset_prompt(spec: StateAssetGenerationSpec) -> GenerationPromptInput
     else:
         subjects = []
         anchors = [PromptAnchor(
-            kind="location", entity_id=spec.entity_id, name=spec.entity_id,
+            kind="prop" if spec.asset_kind == "prop_state_ref" else "location", entity_id=spec.entity_id, name=spec.entity_id,
             appearance_state_id=spec.state_id, text=spec.active_state_anchor,
         )]
-        composition = "Wide environment design plate with no characters or text."
+        composition = ("Single prop on a neutral background; no characters or text."
+                       if spec.asset_kind == "prop_state_ref" else "Wide environment design plate with no characters or text.")
     return GenerationPromptInput(
         anchors=tuple(anchors), subjects=tuple(subjects), composition=composition,
         visual_brief=spec.state_direction or None,
@@ -682,6 +683,9 @@ def _state_asset_prompt(spec: StateAssetGenerationSpec) -> GenerationPromptInput
             "canonical parent's head-to-body ratio, silhouette, facial modeling, degree "
             "of simplification, line weight, and rendering density; never chibi, "
             "super-deformed, big-headed, doll-like, toy-like, mascot-like, or caricatured."
+            if spec.asset_kind == "character_state_ref" else
+            "The active-state anchor wins over changed facets. Preserve compatible canonical "
+            "shape and materials, line weight, and rendering density."
         ),
         width=spec.effective_width, height=spec.effective_height,
         generation_width=spec.effective_width, generation_height=spec.effective_height,
@@ -704,6 +708,7 @@ def _compile_state_asset_wire(
     plan = build_state_reference_plan(spec, project_dir, route_profile=profile)
     input_data = (
         CharacterStateReferenceInput if spec.asset_kind == "character_state_ref"
+        else PropReferenceInput if spec.asset_kind == "prop_state_ref"
         else LocationStatePlateInput
     )(
         asset_identity=f"{spec.entity_id}:{spec.state_id}",
@@ -1283,6 +1288,26 @@ async def _generate_prop_refs(
                 progress.advance(task)
 
         await asyncio.gather(*(_one_prop(prop) for prop in props_to_gen))
+        from novel_to_comic.state_assets import build_prop_state_spec
+        for prop in props_to_gen:
+            for state in prop.appearance_states:
+                if state.canonical_equivalent or not state.visually_significant:
+                    continue
+                output_path = artifacts.prop_state_ref_path(project_dir, prop.id, state.id)
+                try:
+                    spec = build_prop_state_spec(config, project_dir, prop, state, style_path=style_ref)
+                    wire = _compile_state_asset_wire(config, spec, project_dir)
+                    if asset_matches_request(output_path, wire):
+                        ctx.record_item_done(cost=0.0)
+                    else:
+                        async with semaphore:
+                            result = await _generate_state_asset_wire(config, spec, output_path, project_dir, feature="cast.prop_state_ref", request=wire)
+                        ctx.record_item_done(usage=result.usage)
+                except Exception as exc:
+                    ctx.record_item_failed(f"{prop.id}:{state.id}")
+                    ctx.log(f"Failed prop state {prop.name}/{state.label}: {exc}", level="error")
+                ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+
 
 
 async def run(
@@ -1315,7 +1340,7 @@ async def run(
             if not loc_ids or loc.id in loc_ids
         )
     if should_generate_prop_refs:
-        total_items += len([p for p in story_bible.props if not prop_ids or p.id in prop_ids])
+        total_items += sum(1 + sum(state.visually_significant and not state.canonical_equivalent for state in p.appearance_states) for p in story_bible.props if not prop_ids or p.id in prop_ids)
 
     with ctx.execute(total=total_items):
         if should_generate_refs:
@@ -1348,7 +1373,7 @@ async def run(
         if not is_partial:
             console.print("[yellow]Cast stage complete — awaiting review.[/yellow]")
             console.print("Review character refs in: refs/")
-            console.print("Run [bold]pipeline approve --project . --stage cast[/bold] to continue.")
+            console.print("Approve Cast in the web UI to continue.")
 
 
 from novel_to_comic.stages import Stage, clean_cascade  # noqa: E402
@@ -1374,6 +1399,7 @@ def estimate_state_reference_count(
         StateConditioningError,
         build_character_state_spec,
         build_location_state_spec,
+        build_prop_state_spec,
         build_state_reference_plan,
         state_is_total_transformation,
     )
@@ -1405,6 +1431,15 @@ def estimate_state_reference_count(
             raise ValueError(f"Location state not found: {entity_id}/{state_id}")
         spec = build_location_state_spec(config, project_dir, entity, state, style_path=style_ref)
         required_role = "location_plate"
+    elif asset_kind == "prop":
+        entity = next((item for item in story_bible.props if item.id == entity_id), None)
+        if entity is None:
+            raise ValueError(f"Prop not found: {entity_id}")
+        state = next((item for item in entity.appearance_states if item.id == state_id), None)
+        if state is None:
+            raise ValueError(f"Prop state not found: {entity_id}/{state_id}")
+        spec = build_prop_state_spec(config, project_dir, entity, state, style_path=style_ref)
+        required_role = "prop"
     else:
         raise ValueError(f"Unknown state asset kind: {asset_kind}")
 
@@ -1417,6 +1452,7 @@ def estimate_state_reference_count(
     parent_path = (
         artifacts.character_ref_sheet_path(project_dir, entity_id)
         if asset_kind == "character"
+        else artifacts.prop_ref_path(project_dir, entity_id) if asset_kind == "prop"
         else artifacts.location_plate_path(project_dir, entity_id)
     )
     if not parent_path.exists():
@@ -1507,6 +1543,16 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
                 config, project_dir, "location", entity_id, state_id,
             ),
         )
+    for prop in story_bible.props:
+        for appearance in prop.appearance_states:
+            if (appearance.visually_significant and not appearance.canonical_equivalent
+                    and not artifacts.prop_state_ref_path(project_dir, prop.id, appearance.id).exists()):
+                total += estimate_image_cost(
+                    model, 1, quality=quality,
+                    ref_count=estimate_state_reference_count(
+                        config, project_dir, "prop", prop.id, appearance.id,
+                    ),
+                )
     return total
 
 

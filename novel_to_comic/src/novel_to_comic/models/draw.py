@@ -47,7 +47,7 @@ class PageCapabilityProfile(BaseModel):
     output_height: int = Field(gt=0)
     output_media_type: Literal["image/png"] = "image/png"
     max_prompt_characters: int = Field(gt=0)
-    retry_semantics: Literal["idempotent_request"]
+    retry_semantics: Literal["bounded_submission"]
     max_attempts: int = Field(default=3, ge=1)
     price_per_page_usd: Decimal = Field(ge=0)
     price_per_reference_usd: Decimal = Field(default=Decimal("0"), ge=0)
@@ -76,6 +76,8 @@ class PageReference(BaseModel):
     visual_anchor: str = Field(min_length=1)
     entity_id: str = Field(min_length=1)
     appearance_state_id: str | None = None
+    label: str = ""
+    continuity_guard: str = ""
 
 
 class RetryProvenance(BaseModel):
@@ -372,7 +374,7 @@ class PageRenderCorrection(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    issue_id: str = Field(min_length=1)
+    issue_ids: tuple[str, ...] = Field(min_length=1)
     page_number: int = Field(ge=1)
     comic_page_revision: int = Field(ge=1)
     comic_page_sha256: str = Field(min_length=64, max_length=64)
@@ -383,8 +385,14 @@ class PageRenderCorrection(BaseModel):
     detected_region_ids: tuple[str, ...] = ()
     artifact_kind: Literal["complete_page"] = "complete_page"
 
+    @property
+    def issue_id(self) -> str:
+        return self.issue_ids[0]
+
     @model_validator(mode="after")
     def _validate_mode(self) -> "PageRenderCorrection":
+        if len(set(self.issue_ids)) != len(self.issue_ids):
+            raise ValueError("correction issue IDs must be unique")
         if self.mode == "region_targeted" and not self.detected_region_ids:
             raise ValueError("region-targeted correction requires a detected region")
         if self.mode == "instructed" and self.detected_region_ids:
@@ -457,7 +465,7 @@ class PageIssue(BaseModel):
     detected_region_ids: tuple[str, ...] = ()
     entity_ids: tuple[str, ...] = ()
     appearance_state_ids: tuple[str, ...] = ()
-    status: Literal["open", "accepted", "resolved", "dismissed"]
+    status: Literal["open", "revised", "accepted", "resolved", "dismissed"]
     resolution_revision: int | None = Field(default=None, ge=1)
     dismissal_reason: str | None = None
 
@@ -469,9 +477,9 @@ class PageIssue(BaseModel):
             raise ValueError("only a copy change may be routed to Adapt")
         if self.correction_kind == "copy_change" and self.correction_owner != "adapt":
             raise ValueError("copy changes must be routed to Adapt")
-        if self.status == "resolved" and self.resolution_revision is None:
+        if self.status in {"resolved", "revised"} and self.resolution_revision is None:
             raise ValueError("resolved page issue requires a resolution revision")
-        if self.status != "resolved" and self.resolution_revision is not None:
+        if self.status not in {"resolved", "revised"} and self.resolution_revision is not None:
             raise ValueError("only a resolved page issue has a resolution revision")
         if self.status == "dismissed" and not self.dismissal_reason:
             raise ValueError("dismissed page issue requires a reason")

@@ -131,20 +131,9 @@ def _appearance_diagnostics(
     adaptation: BookAdaptation,
     pages: tuple[ComicPage, ...],
 ) -> dict[int, list[PreflightDiagnostic]]:
-    """Record legacy state-citation gaps without blocking an author at Finish.
-
-    Plan now carries active state references forward before Draw. Existing books
-    can still contain the older sparse citations, but Finish cannot repair them
-    and an author has no corresponding action in Book. Keep that evidence for
-    Dev Content while allowing already reviewed pages to export.
-    """
+    """Check explicit state chronology before exporting the edition."""
 
     beats = {beat.id: beat for beat in adaptation.beats}
-    state_owner = {
-        change.to_state_id: change.entity_id
-        for beat in adaptation.beats
-        for change in beat.appearance_changes
-    }
     active: dict[str, str] = {}
     activated: dict[str, set[str]] = defaultdict(set)
     seen_beats: set[str] = set()
@@ -184,14 +173,10 @@ def _appearance_diagnostics(
                     active[change.entity_id] = change.to_state_id
                     activated[change.entity_id].add(change.to_state_id)
                 seen_beats.add(beat.id)
-            cited_by_entity: dict[str, list[str]] = defaultdict(list)
-            for state_id in content.appearance_state_ids:
-                owner = state_owner.get(state_id)
-                if owner is not None:
-                    cited_by_entity[owner].append(state_id)
             for entity_id in content.entity_ids:
                 expected = active.get(entity_id)
-                cited = cited_by_entity.get(entity_id, [])
+                cited = ([content.appearance_states[entity_id]]
+                         if entity_id in content.appearance_states else [])
                 not_yet_activated = [
                     state_id
                     for state_id in cited
@@ -547,8 +532,12 @@ def finish_book(
     normalized_paths: list[Path] = []
 
     for selected, page in zip(plan.pages, pages, strict=True):
-        diagnostics = list(appearance.get(page.page_number, ()))
-        failures: list[InvariantFailure] = []
+        diagnostics = []
+        failures: list[InvariantFailure] = [
+            _failure(page_number=page.page_number, owner_stage=item.owner_stage, code=item.code,
+                     message=item.message, artifact_ids=item.artifact_ids, evidence=item.evidence)
+            for item in appearance.get(page.page_number, ())
+        ]
         issues = _read_issues(artifacts, selected.page_number)
         if (
             plan.adaptation_revision != adaptation.revision
@@ -610,6 +599,13 @@ def finish_book(
         failures.extend(render_failures)
         analysis: RenderAnalysis | None = None
         if render is not None:
+            if render.provider != edition.capability_profile.provider or render.model != edition.capability_profile.model:
+                failures.append(_failure(
+                    page_number=page.page_number, owner_stage="draw", code="edition_model_mismatch",
+                    message="This render belongs to a different page model; regenerate the edition.",
+                    artifact_ids=(f"render_{render.revision:03d}",),
+                    evidence=(f"Render model={render.model}; edition model={edition.capability_profile.model}.",),
+                ))
             if render.is_stale_for(page):
                 failures.append(
                     _failure(
@@ -773,7 +769,7 @@ def finish_book(
         unresolved = tuple(
             issue.id
             for issue in issues
-            if issue.status == "open"
+            if issue.status in {"open", "revised"}
             and issue.classification == "editorial_issue"
         )
         accepted = tuple(
@@ -785,7 +781,7 @@ def finish_book(
         open_invariants = [
             issue
             for issue in issues
-            if issue.status == "open"
+            if issue.status in {"open", "revised"}
             and issue.classification == "invariant_failure"
         ]
         open_draw = [

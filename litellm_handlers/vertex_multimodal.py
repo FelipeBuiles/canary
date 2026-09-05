@@ -449,10 +449,9 @@ def _exact_complete_page_contents(
             (
                 part,
                 (
-                    f"Reference {reference['order']} for entity "
-                    f"{reference['entity_id']!r}; appearance_state_id="
-                    f"{reference.get('appearance_state_id')!r}; visual_anchor="
-                    f"{reference['visual_anchor']}"
+                    f"Reference {reference['order']}: "
+                    f"{reference.get('label') or 'approved subject'}. "
+                    "Use only for the subjects assigned this reference in the page instructions."
                 ),
             )
         )

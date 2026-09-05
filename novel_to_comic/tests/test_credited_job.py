@@ -305,3 +305,24 @@ class TestEnqueueCreditedJob:
         loaded_state = load_state(tmp_path)
         assert "page_001" not in loaded_state.stages["draw"].items_failed
         assert loaded_state.stages["draw"].items_done == 6
+
+
+def test_page_check_sets_billing_context_and_releases_hold_on_failure(tmp_path):
+    import pytest
+    from novel_to_comic.ai.context import current_ai_request_context
+    from novel_to_comic.server.credited_job import run_credited_page_check
+
+    async def work():
+        ctx = current_ai_request_context()
+        assert (ctx.user_id, ctx.project_id, ctx.page_number, ctx.stage) == ('u1', 'p1', 7, 'draw')
+        raise RuntimeError('vision service unavailable')
+
+    with patch('novel_to_comic.server.credited_job.get_db') as db, \
+         patch('novel_to_comic.server.credited_job.reserve_credits', return_value=('hold', 'job')) as reserve, \
+         patch('novel_to_comic.server.credited_job.release_reservation') as release:
+        with pytest.raises(RuntimeError):
+            asyncio.run(run_credited_page_check(user_id='u1', project_id='p1', project_dir=tmp_path,
+                page_number=7, estimated_cost_usd=0.02, work=work))
+        assert reserve.call_args.args[-1] > 0
+        release.assert_called_once_with(db.return_value, 'hold')
+    assert current_ai_request_context().user_id is None
