@@ -148,8 +148,8 @@ litellm_settings:
   # that's where "default-message-value" inputs and missing image cost came
   # from on traces.
   set_verbose: false
-  num_retries: 3
-  retry_after: 2
+  # Canary owns bounded retries; gateway retries could repeat a paid image call.
+  num_retries: 0
   drop_params: true
   custom_provider_map:
     - provider: fal-queue

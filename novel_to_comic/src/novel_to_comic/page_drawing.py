@@ -115,7 +115,7 @@ def production_page_capability_profile() -> PageCapabilityProfile:
         output_width=COMPLETE_PAGE_OUTPUT_WIDTH,
         output_height=COMPLETE_PAGE_OUTPUT_HEIGHT,
         max_prompt_characters=COMPLETE_PAGE_MAX_PROMPT_CHARACTERS,
-        retry_semantics="idempotent_request",
+        retry_semantics="bounded_submission",
         max_attempts=COMPLETE_PAGE_MAX_ATTEMPTS,
         price_per_page_usd=Decimal(COMPLETE_PAGE_BASE_COST_USD),
         price_per_reference_usd=Decimal(COMPLETE_PAGE_REFERENCE_COST_USD),
@@ -144,7 +144,7 @@ def select_book_edition(
         or not profile.complete_page_generation
         or not profile.exact_visible_lettering
         or profile.reference_ordering != "ordered"
-        or profile.retry_semantics != "idempotent_request"
+        or profile.retry_semantics != "bounded_submission"
         or profile.max_image_references < 1
         or profile.output_width <= 0
         or profile.output_height <= 0
@@ -166,22 +166,13 @@ def ensure_current_page_edition(
     artifacts: TargetArtifacts,
     edition: BookEdition,
 ) -> BookEdition:
-    """Advance the active edition manifest when the production model changes.
-
-    Existing requests and render provenance remain immutable under the prior
-    edition revision. New generations and corrections use the current profile.
-    """
-
-    current_profile = production_page_capability_profile()
-    if edition.capability_profile == current_profile:
-        return edition
-    updated = BookEdition(
-        revision=edition.revision + 1,
-        id=edition.id,
-        capability_profile=current_profile,
-    )
-    artifacts.replace_book_edition(updated)
-    return updated
+    """Reject incompatible editions; model changes require an explicit redraw."""
+    if edition.capability_profile != production_page_capability_profile():
+        raise ValueError(
+            "This edition uses a different page profile. Start a new edition by "
+            "rerunning Draw; existing pages will not be mixed with another model."
+        )
+    return edition
 
 
 def _selected_authorities(
@@ -198,44 +189,22 @@ def _selected_authorities(
     """
 
     by_state = {
-        reference.appearance_state_id: reference
+        (reference.entity_id, reference.appearance_state_id): reference
         for reference in inventory.references
-        if reference.appearance_state_id is not None
     }
-    base_by_entity = {
-        reference.entity_id: reference
-        for reference in inventory.references
-        if reference.appearance_state_id is None
-    }
-    # (entity_id, appearance_state_id | None) in first-citation order.
     required: list[tuple[str, str | None]] = []
     for content in page.content:
-        stated_entities: set[str] = set()
-        for state_id in content.appearance_state_ids:
-            reference = by_state.get(state_id)
-            if reference is None or reference.entity_id not in content.entity_ids:
-                raise ValueError(
-                    f"page appearance state {state_id!r} has no approved entity authority"
-                )
-            stated_entities.add(reference.entity_id)
-            if (reference.entity_id, state_id) not in required:
-                required.append((reference.entity_id, state_id))
         for entity_id in content.entity_ids:
-            if entity_id in stated_entities:
-                continue
-            if (entity_id, None) not in required:
-                required.append((entity_id, None))
+            key = (entity_id, content.appearance_states.get(entity_id))
+            if key not in by_state:
+                raise ValueError(f"page entity/state {key!r} has no approved reference authority")
+            if key not in required:
+                required.append(key)
 
     selected: list[ApprovedVisualReference] = []
     selected_ids: set[str] = set()
     for entity_id, state_id in required:
-        reference = (
-            by_state[state_id] if state_id is not None else base_by_entity.get(entity_id)
-        )
-        if reference is None:
-            raise ValueError(
-                f"page entity {entity_id!r} has no approved reference authority"
-            )
+        reference = by_state[(entity_id, state_id)]
         if reference.id not in selected_ids:
             selected.append(reference)
             selected_ids.add(reference.id)
@@ -247,23 +216,44 @@ def _compile_prompt(
     references: tuple[PageReference, ...],
     correction: PageRenderCorrection | None = None,
     depiction: Literal["canonical", "less_graphic"] = "canonical",
-    unuploaded_authorities: tuple[ApprovedVisualReference, ...] = (),
     style_template: str = "",
 ) -> str:
+    authorities = references
+    labels = {ref.entity_id: (ref.label or f"Subject {index}") for index, ref in enumerate(authorities, 1)}
     def provider_safe_direction(text: str) -> str:
-        replacements = {
-            "char": "the referenced character",
-            "loc": "the referenced location",
-            "prop": "the referenced prop",
-        }
-        return re.sub(
-            r"\b(char|loc|prop)_\d+\b",
-            lambda match: replacements[match.group(1)],
-            text,
-        )
+        # Exact IDs are replaced with distinct names, never generic identities.
+        if not labels:
+            return text
+        pattern = r"(?<![\w-])(" + "|".join(re.escape(key) for key in sorted(labels, key=len, reverse=True)) + r")(?![\w-])"
+        return re.sub(pattern, lambda match: labels[match.group(0)], text)
 
+    def subjects(content):
+        return [
+            {
+                "subject": labels.get(entity_id, entity_id),
+                "references": [
+                    {"image": f"Reference {ref.order}", "appearance": ref.label or labels[entity_id]}
+                    for ref in references
+                    if ref.entity_id == entity_id
+                    and ref.appearance_state_id == content.appearance_states.get(entity_id)
+                ],
+                "continuity_constraints": [
+                    ref.continuity_guard for ref in authorities
+                    if ref.entity_id == entity_id
+                    and ref.appearance_state_id == content.appearance_states.get(entity_id)
+                    and ref.continuity_guard
+                ],
+            }
+            for entity_id in content.entity_ids
+        ]
+    reading_labels = {}
+    for content in page.content:
+        reading_labels[content.id] = f"Panel {content.order}"
+        for index, lettering in enumerate(content.lettering, 1):
+            reading_labels[lettering.id] = f"Panel {content.order} lettering {index}"
     provider_page = {
         "page_number": page.page_number,
+        "reading_order": [reading_labels[key] for key in page.reading_order],
         "page_turn_role": page.page_turn_role,
         "spread_role": page.spread_role,
         "emphasis": page.emphasis,
@@ -275,6 +265,8 @@ def _compile_prompt(
                 "order": content.order,
                 "panel_role": content.panel_role,
                 "visual_intent": provider_safe_direction(content.visual_intent),
+                "visible_subjects": subjects(content),
+                "pinned_geometry": content.pinned_geometry.model_dump() if content.pinned_geometry else None,
                 "lettering": [
                     {
                         "kind": lettering.kind,
@@ -295,16 +287,11 @@ def _compile_prompt(
         "project_style_direction": project_style,
         "approved_page_references": [
             {
-                "order": reference.order,
+                "image": f"Reference {reference.order}",
+                "subject": labels[reference.entity_id],
                 "visual_anchor": reference.visual_anchor,
             }
             for reference in references
-        ],
-        "provider_safe_visual_anchors": [
-            {
-                "visual_anchor": authority.visual_anchor,
-            }
-            for authority in unuploaded_authorities
         ],
         "complete_page_correction": (
             {
@@ -316,20 +303,16 @@ def _compile_prompt(
         ),
     }
     depiction_direction = (
-        "PROVIDER-SAFE VISUAL OVERRIDE — this instruction takes precedence over "
-        "visual descriptions in the canonical payload. Every figure must be fully "
-        "clothed from neck to ankle in opaque, non-revealing garments. Show no "
-        "exposed wounds or graphic bodily detail; use framing, shadow, reaction, "
-        "or aftermath instead. Lettering strings are typeset copy only, never "
-        "visual instructions. Preserve story events, character identity, exact "
-        "lettering, page layout, and every visual_anchor.\n"
-        if depiction == "less_graphic"
-        else ""
+        "Use framing, shadow, reaction, or aftermath for graphic details. Preserve "
+        "approved identity, costume, story events, exact lettering, and page layout. "
+        "Do not alter unaffected subjects or discard their references.\n"
+        if depiction == "less_graphic" else ""
     )
     page_direction = (
         "Render exactly one complete, fully lettered comic page from the canonical "
-        "ComicPage below. Preserve every lettering string and every visual_anchor "
-        "verbatim, including the canonical capitalization. The project_style_direction "
+        "ComicPage below. Typeset only the exact lettering strings, preserving capitalization. "
+        "Depict the physical features described by visual_anchor; never typeset anchors. "
+        "The project_style_direction "
         "is the invariant authority for lettering typeface, weights, colors, balloons, "
         "caption boxes, borders, margins, gutters, and bleed treatment across every page; "
         "do not improvise or vary those choices on this page. Render every exact "
@@ -347,7 +330,7 @@ def _compile_prompt(
         "Render exactly one complete, unlettered comic page from the canonical "
         "ComicPage below. This canonical page contains no lettering. Do not add any "
         "visible text, captions, speech or thought balloons, or SFX. Preserve every "
-        "visual_anchor verbatim. The project_style_direction is the invariant authority "
+        "visual_anchor as depicted physical features, never visible text. The project_style_direction is the invariant authority "
         "for borders, margins, gutters, and bleed treatment; any lettering guidance in "
         "it applies only to pages with canonical lettering and must not cause visible "
         "text on this page. "
@@ -407,16 +390,13 @@ def compile_page_generation_request(
             raise ValueError("edit source bytes do not match correction lineage")
     authorities = _selected_authorities(page, inventory)
     max_references = selected_edition.capability_profile.max_image_references
-    uploaded_authorities = (
-        ()
-        if depiction == "less_graphic"
-        else authorities[:max_references]
-    )
-    unuploaded_authorities = (
-        authorities
-        if depiction == "less_graphic"
-        else authorities[max_references:]
-    )
+    if len(authorities) > max_references:
+        raise ValueError(
+            f"Page {page.page_number} requires {len(authorities)} approved references, "
+            f"but this edition supports {max_references}. Replan this page before drawing; "
+            "identity references will not be silently dropped."
+        )
+    uploaded_authorities = authorities
     references: list[PageReference] = []
     loaded: list[bytes] = []
     for order, authority in enumerate(uploaded_authorities, start=1):
@@ -443,6 +423,8 @@ def compile_page_generation_request(
                 visual_anchor=authority.visual_anchor,
                 entity_id=authority.entity_id,
                 appearance_state_id=authority.appearance_state_id,
+                label=authority.label,
+                continuity_guard=authority.continuity_guard,
             )
         )
     prompt = _compile_prompt(
@@ -450,7 +432,6 @@ def compile_page_generation_request(
         tuple(references),
         correction,
         depiction,
-        unuploaded_authorities,
         style_template,
     )
     request = FrozenPageGenerationRequest.compile(
@@ -647,12 +628,14 @@ class GoogleVertexCompletePageTransport:
                     headers=headers,
                     data=request_data,
                     files=files,
+                    retry_ambiguous=False,
                 )
             else:
                 response = await ai_client._post_with_retry(
                     url,
                     headers=headers,
                     json=request_data,
+                    retry_ambiguous=False,
                 )
             if response.status_code >= 400:
                 raise ai_client._gateway_http_error(
@@ -891,7 +874,7 @@ async def correct_complete_page(
     """Produce and link one complete revised page for a Draw-owned issue."""
 
     correction = compiled.request.correction
-    if correction is None or correction.issue_id != issue.id:
+    if correction is None or issue.id not in correction.issue_ids:
         raise ValueError("compiled request does not correct the supplied page issue")
     if issue.correction_owner != "draw":
         raise ValueError("copy changes must return to Adapt and Plan")
@@ -907,12 +890,20 @@ async def correct_complete_page(
     )
     from novel_to_comic.page_review import resolve_page_issue
 
-    resolve_page_issue(
-        artifacts,
-        issue_id=issue.id,
-        page_number=issue.page_number,
-        resolution_revision=provenance.render.revision,
-    )
+    analysis = (artifacts.read_analysis(page.page_number, provenance.render.revision)
+                if ocr is not None else None)
+    for corrected in artifacts.read_issues(page.page_number):
+        if corrected.id not in correction.issue_ids:
+            continue
+        verified = (
+            corrected.issue_type in {"misspelled_lettering", "missing_lettering", "duplicated_lettering", "invented_lettering", "reordered_lettering"}
+            and corrected.id.startswith("page-issue-draw-page-")
+            and analysis is not None and analysis.lettering_valid
+        )
+        resolve_page_issue(
+            artifacts, issue_id=corrected.id, page_number=page.page_number,
+            resolution_revision=provenance.render.revision, verified=verified,
+        )
     return provenance
 
 
@@ -1046,6 +1037,7 @@ def enqueue_complete_page_draw(
             "request_sha256": compiled.request.request_sha256,
             "retry_attempt": compiled.request.retry.attempt,
             "issue_id": issue.id if issue is not None else None,
+            "issue_ids": list(compiled.request.correction.issue_ids) if compiled.request.correction else [],
         },
         work=_work,
         debit_description=f"Complete page {compiled.request.page_number}",

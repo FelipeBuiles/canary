@@ -151,3 +151,34 @@ export function triggerExport(
 export function downloadExportUrl(project: string, format: "pdf" | "cbz"): string {
   return `/api${projectPath(project)}/export/${format}`;
 }
+
+export interface VisualReviewReport {
+  page_number: number;
+  render_revision: number;
+  findings: { category: string; panel_number: number; observation: string; expected: string; correction: string }[];
+  uncertain: string[];
+}
+
+export function reviewPageVisuals(project: string, pageNumber: number): Promise<VisualReviewReport> {
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/visual-review`, { method: "POST" });
+}
+
+export interface ProviderUsageSummary {
+  artifact_link_error: string | null;
+  cost_sources: Record<string, number>;
+  known_cost_usd: number;
+  call_count: number;
+  failed_call_count: number;
+  unknown_cost_count: number;
+  artifact_calls_missing_from_events: number;
+  complete: boolean;
+  groups: { page_number: number | null; category: string; call_count: number; known_cost_usd: number; unknown_cost_count: number }[];
+}
+
+export function getProviderUsage(project: string): Promise<ProviderUsageSummary> {
+  return apiFetch(`${projectPath(project)}/provider-usage`);
+}
+
+export function getVisualReviewEstimate(project: string, pageNumber: number): Promise<{ estimate_credits: number }> {
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/visual-review/estimate`);
+}

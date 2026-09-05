@@ -228,26 +228,26 @@ def _compare_lettering(
         observation.id for observation in extraction.lettering
     ]
     matched_order = [match.observation_id for match in ordered]
+    if _region_order_contradicts(ordered, extraction):
+        failures.append(
+            _failure(
+                page=page,
+                render=render,
+                code="reordered_lettering",
+                message="Detected page regions contradict canonical reading order.",
+                artifact_ids=canonical_ids,
+                evidence=(
+                    *evidence,
+                    f"observed_reading_order={extraction.observed_reading_order!r}",
+                ),
+            )
+        )
+        return ordered, tuple(failures), ()
     if matched_order != [
         observation_id
         for observation_id in observation_order
         if observation_id in set(matched_order)
     ]:
-        if _region_order_contradicts(ordered, extraction):
-            failures.append(
-                _failure(
-                    page=page,
-                    render=render,
-                    code="reordered_lettering",
-                    message="Detected page regions contradict canonical reading order.",
-                    artifact_ids=canonical_ids,
-                    evidence=(
-                        *evidence,
-                        f"observed_reading_order={extraction.observed_reading_order!r}",
-                    ),
-                )
-            )
-            return ordered, tuple(failures), ()
         issues.append(
             EditorialIssue(
                 id=(
@@ -283,6 +283,11 @@ async def analyze_page_render(
     image_sha256 = hashlib.sha256(image).hexdigest()
     if image_sha256 != render.image_sha256:
         raise ValueError("page render bytes do not match render lineage")
+    if artifacts.analysis_path(page.page_number, render.revision).exists():
+        saved = artifacts.read_analysis(page.page_number, render.revision)
+        if saved.render_image_sha256 != render.image_sha256:
+            raise ValueError("saved OCR analysis belongs to different render bytes")
+        return PageAnalysisResult(analysis=saved, usage=None)
     read = await ocr.extract(image)
     extraction = read.value
     matches, failures, issues = _compare_lettering(page, render, extraction)
@@ -386,12 +391,12 @@ def summarize_page_issues(
             issues.extend(artifacts.read_issues(number))
     return PageIssueSummary(
         unresolved_issue_ids=tuple(
-            issue.id for issue in issues if issue.status == "open"
+            issue.id for issue in issues if issue.status in {"open", "revised"}
         ),
         blocking_issue_ids=tuple(
             issue.id
             for issue in issues
-            if issue.status == "open"
+            if issue.status in {"open", "revised"}
             and issue.classification == "invariant_failure"
         ),
         accepted_editorial_issue_ids=tuple(
@@ -407,7 +412,7 @@ def request_issue_correction(
 ) -> AdaptCopyCorrectionRequest | PageCorrectionIntent:
     """Route copy upstream or select a supported complete-page edit mode."""
 
-    if issue.status != "open":
+    if issue.status not in {"open", "revised"}:
         raise ValueError("only an open page issue can request correction")
     if issue.correction_owner == "adapt":
         return AdaptCopyCorrectionRequest(
@@ -458,7 +463,7 @@ def build_correction_request(
         if any(region_id not in known_regions for region_id in intent.detected_region_ids):
             raise ValueError("page issue cites an unknown detected region")
     return PageRenderCorrection(
-        issue_id=issue.id,
+        issue_ids=(issue.id,),
         page_number=page.page_number,
         comic_page_revision=page.revision,
         comic_page_sha256=page.content_sha256,
@@ -476,6 +481,7 @@ def resolve_page_issue(
     issue_id: str,
     page_number: int,
     resolution_revision: int,
+    verified: bool = True,
 ) -> PageIssue:
     """Link an issue to the complete page revision produced for it."""
 
@@ -484,11 +490,11 @@ def resolve_page_issue(
     updated: list[PageIssue] = []
     for issue in issues:
         if issue.id == issue_id:
-            if issue.status != "open":
+            if issue.status not in {"open", "revised"}:
                 raise ValueError("only an open page issue can be resolved")
             resolved = issue.model_copy(
                 update={
-                    "status": "resolved",
+                    "status": "resolved" if verified else "revised",
                     "resolution_revision": resolution_revision,
                 }
             )
@@ -515,12 +521,12 @@ def accept_editorial_page_issue(
     updated: list[PageIssue] = []
     for issue in issues:
         if issue.id == issue_id:
-            if issue.status != "open":
+            if issue.status not in {"open", "revised"}:
                 raise ValueError("only an open page issue can be accepted")
             if issue.classification == "invariant_failure":
                 raise ValueError("an invariant failure cannot be deliberately accepted")
             accepted = PageIssue.model_validate(
-                issue.model_copy(update={"status": "accepted"}).model_dump()
+                issue.model_copy(update={"status": "resolved" if issue.status == "revised" else "accepted"}).model_dump()
             )
             updated.append(accepted)
         else:
@@ -553,7 +559,7 @@ def dismiss_page_issue(
     updated: list[PageIssue] = []
     for issue in issues:
         if issue.id == issue_id:
-            if issue.status != "open":
+            if issue.status not in {"open", "revised"}:
                 raise ValueError("only an open page issue can be dismissed")
             if not issue.id.startswith("page-issue-draw-page-"):
                 raise ValueError("only an automated Draw finding can be dismissed")
@@ -561,6 +567,7 @@ def dismiss_page_issue(
                 issue.model_copy(
                     update={
                         "status": "dismissed",
+                        "resolution_revision": None,
                         "dismissal_reason": clean_reason,
                     }
                 ).model_dump()

@@ -18,6 +18,9 @@ import {
 import {
   acceptPageIssue,
   analyzeCompletePage,
+  reviewPageVisuals,
+  getProviderUsage,
+  getVisualReviewEstimate,
   correctPageIssue,
   createPageIssue,
   dismissPageIssue,
@@ -569,6 +572,7 @@ function invalidatePageReview(qc: ReturnType<typeof useQueryClient>, project: st
     qc.invalidateQueries({ queryKey: ["project", project, "complete-pages", pageNumber] });
   }
   qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+  qc.invalidateQueries({ queryKey: ["provider-usage", project] });
 }
 
 export function useGenerateCompletePage() {
@@ -903,5 +907,31 @@ export function useLabsRun(runId: string | undefined) {
       const data = query.state.data;
       return data && data.status === "running" ? 1500 : false;
     },
+  });
+}
+
+export function useReviewPageVisuals() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, pageNumber }: { project: string; pageNumber: number }) => reviewPageVisuals(project, pageNumber),
+    onSettled: (_data, _error, { project, pageNumber }) => invalidatePageReview(qc, project, pageNumber),
+  });
+}
+
+export function useProviderUsage(project: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ["provider-usage", project],
+    queryFn: () => getProviderUsage(project!),
+    enabled: !!project && enabled,
+    staleTime: 30_000,
+  });
+}
+
+export function useVisualReviewEstimate(project: string, pageNumber: number, enabled: boolean) {
+  return useQuery({
+    queryKey: ["visual-review-estimate", project, pageNumber],
+    queryFn: () => getVisualReviewEstimate(project, pageNumber),
+    enabled,
+    staleTime: 60_000,
   });
 }

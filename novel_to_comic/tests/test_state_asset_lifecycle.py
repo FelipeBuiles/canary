@@ -33,7 +33,7 @@ def _location() -> Location:
 
 def test_character_state_spec_uses_exact_anchor_without_base_outfit_or_hands(tmp_path: Path):
     char = _character()
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('age', 'hair', 'anatomy', 'clothing'),
         id="older_stumps", label="Older without hands",
         visual_anchor="Mara, age 70, cropped white hair, healed wrist stumps, black tunic",
         visually_significant=True,
@@ -52,7 +52,7 @@ def test_character_state_spec_uses_exact_anchor_without_base_outfit_or_hands(tmp
 
 def test_location_state_wins_over_mutable_canonical_facets(tmp_path: Path):
     loc = _location()
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('architecture', 'damage', 'water_level', 'weather', 'light', 'atmosphere'),
         id="loc_001_storm_ruin", label="Storm ruin",
         visual_anchor="collapsed stone walls, roof gone, drained cracked lakebed, stormy moonlit night",
         visually_significant=True,
@@ -85,7 +85,7 @@ def test_parent_replacement_marks_only_dependent_state_stale(tmp_path: Path):
     state_sheet.write_bytes(b"state")
     spec = build_character_state_spec(
         Config(), tmp_path, _character(),
-        AppearanceState(id="silver", label="Silver", visual_anchor="Mara with silver hands", visually_significant=True),
+        AppearanceState(changed_facets=('anatomy',), id="silver", label="Silver", visual_anchor="Mara with silver hands", visually_significant=True),
     )
     artifacts.write_asset_meta(state_sheet, spec.lineage_metadata())
 
@@ -108,7 +108,7 @@ def test_unrelated_parent_change_does_not_mark_state_stale(tmp_path: Path):
     state_sheet.write_bytes(b"state")
     spec = build_character_state_spec(
         Config(), tmp_path, _character(),
-        AppearanceState(id="silver", label="Silver", visual_anchor="Mara with silver hands", visually_significant=True),
+        AppearanceState(changed_facets=('anatomy',), id="silver", label="Silver", visual_anchor="Mara with silver hands", visually_significant=True),
     )
     artifacts.write_asset_meta(state_sheet, spec.lineage_metadata())
 
@@ -125,7 +125,7 @@ def test_unconditioned_spec_is_never_claimed_as_current(tmp_path: Path):
     parent.write_bytes(b"parent")
     spec = build_character_state_spec(
         Config(), tmp_path, _character(),
-        AppearanceState(id="silver", label="Silver", visual_anchor="Mara with silver hands"),
+        AppearanceState(changed_facets=('anatomy',), id="silver", label="Silver", visual_anchor="Mara with silver hands"),
     )
     assert spec.lineage_mode == "unconditioned"
     assert spec.lineage_status == LineageStatus.UNVERIFIED
@@ -239,7 +239,7 @@ def test_state_generation_uses_compiled_wire_with_canonical_conditioning(
 
     spec = build_character_state_spec(
         Config(), tmp_path, _character(),
-        AppearanceState(id="silver", label="Silver", visual_anchor="SENTINEL silver hands"),
+        AppearanceState(changed_facets=('anatomy',), id="silver", label="Silver", visual_anchor="SENTINEL silver hands"),
     )
     captured = {}
 

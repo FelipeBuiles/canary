@@ -274,3 +274,6 @@ NARRATIVE ARCS
 - Every scene_id in the scenes array must appear in the top-level scenes array.
 
 Output only the JSON object. No markdown fences. No explanation.
+
+EXPLICIT VISUAL STATE CONTRACT
+For every character, location, and recurring prop state, return changed_facets (only the physical facets actually changed) and replaces_identity (true only for an explicit total identity replacement). Do not infer replacement from creature names. Supported facets: age, hair, face, build, anatomy, clothing, damage, weather, light, water_level, architecture, landmarks, materials, atmosphere, shape, contents, color. Props use the same appearance_states and appearance_timeline as characters and locations: record opening, breakage, emptying, and other story-relevant visible changes. Keep self-contained visual_anchor text separate from these structured fields.

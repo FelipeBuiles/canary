@@ -34,8 +34,18 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
         return 0.0
     profile = production_page_capability_profile()
     # Every page is generated and then read back, and both are billable.
-    per_page = float(profile.price_per_page_usd) + float(PAGE_OCR_ESTIMATED_COST_USD)
-    return per_page * len(target.read_plan().pages)
+    from novel_to_comic.page_drawing import _selected_authorities
+    from novel_to_comic.stages.s5_plan import approved_visual_inventory
+
+    inventory = approved_visual_inventory(project_dir)
+    total = 0.0
+    for selected in target.read_plan().pages:
+        page = target.read_page(selected.page_number)
+        references = _selected_authorities(page, inventory)
+        total += float(profile.price_per_page_usd)
+        total += float(profile.price_per_reference_usd) * len(references)
+        total += float(PAGE_OCR_ESTIMATED_COST_USD)
+    return total
 
 
 STAGE = Stage(

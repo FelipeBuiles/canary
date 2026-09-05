@@ -1019,7 +1019,7 @@ def _comic_page() -> ComicPage:
                 visual_intent="The open door dominates the page.",
                 lettering=[lettering],
                 entity_ids=["character_witness", "location_room"],
-                appearance_state_ids=["witness_before_entry"],
+                appearance_states={"character_witness": "witness_before_entry"},
             )
         ],
         reading_order=["content_001", "lettering_0001"],
@@ -1088,7 +1088,7 @@ def _page_profile() -> PageCapabilityProfile:
         output_width=2048,
         output_height=3072,
         max_prompt_characters=32_000,
-        retry_semantics="idempotent_request",
+        retry_semantics="bounded_submission",
         price_per_page_usd="0.30",
     )
 

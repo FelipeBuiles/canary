@@ -238,10 +238,7 @@ def _book_adaptation() -> BookAdaptation:
                     "aftermath",
                     "character_turn",
                 ],
-                brief_requirements=[
-                    "The witness sees the door open.",
-                    "The witness abandons the investigation.",
-                ],
+
                 brief_requirement_ids=[
                     "essential_event_001",
                     "character_turn_001",
@@ -424,10 +421,7 @@ def test_faithful_adaptation_cannot_erase_almost_an_entire_source_scene() -> Non
                 summary="The witness reviews one surviving clue.",
                 narrative_function="initial",
                 story_functions=["causal_event", "character_turn"],
-                brief_requirements=[
-                    *brief.essential_events,
-                    *brief.character_turns,
-                ],
+
                 brief_requirement_ids=[
                     "essential_event_001",
                     "character_turn_001",
@@ -508,9 +502,7 @@ def test_faithful_adaptation_rejects_reader_critical_silent_runs() -> None:
             summary=source.units[index - 1].text.strip(),
             narrative_function=("peak" if index == 2 else "prolongation"),
             story_functions=functions[index - 1],
-            brief_requirements=(
-                [*brief.essential_events, *brief.character_turns] if index == 1 else []
-            ),
+
             brief_requirement_ids=(
                 ["essential_event_001", "character_turn_001"] if index == 1 else []
             ),
@@ -695,7 +687,7 @@ def test_page_minimum_does_not_force_adapt_to_pad_the_story_with_beats() -> None
     }
 
 
-def test_saved_candidate_recovers_requirement_metadata_and_protected_caption() -> None:
+def test_saved_candidate_preserves_caption_but_does_not_invent_requirement_coverage() -> None:
     source = _source_document()
     brief = _approved_brief().model_copy(
         update={"protected_language": ("I fled into the rain.",)}
@@ -707,7 +699,6 @@ def test_saved_candidate_recovers_requirement_metadata_and_protected_caption() -
         "The witness sees the door open, then abandons the investigation "
         "and flees into the rain."
     )
-    payload["beats"][0]["brief_requirements"] = []
     payload["beats"][0]["brief_requirement_ids"] = []
     payload["beats"][0]["lettering"] = payload["beats"][0]["lettering"][:1]
     candidate = BookAdaptation.model_validate(payload)
@@ -718,13 +709,10 @@ def test_saved_candidate_recovers_requirement_metadata_and_protected_caption() -
         brief,
     )
 
-    assert recovered.beats[0].brief_requirement_ids == (
-        "essential_event_001",
-        "character_turn_001",
-    )
+    assert recovered.beats[0].brief_requirement_ids == ()
     assert recovered.beats[0].lettering[-1].text == "I fled into the rain."
     assert recovered.beats[0].lettering[-1].source_unit_ids == ("source_000002",)
-    assert validate_book_adaptation(source, brief, recovered).invariant_failures == ()
+    assert {failure.code for failure in validate_book_adaptation(source, brief, recovered).invariant_failures} >= {"missing_essential_event", "missing_character_turn"}
 
 
 def test_source_unit_cannot_have_two_ledger_dispositions() -> None:
@@ -923,7 +911,7 @@ def test_appearance_state_and_transition_chronology_validate(
         "summary": "The witness enters.",
         "source_unit_ids": ["source_000002"],
         "lettering": [],
-        "brief_requirements": [],
+
         "appearance_changes": [
             {
                 "entity_id": "witness",
@@ -990,7 +978,7 @@ def _two_beat_payload(*, from_state: str, from_state_id: str | None) -> dict:
         "summary": "The witness enters.",
         "source_unit_ids": ["source_000002"],
         "lettering": [],
-        "brief_requirements": [],
+
         "appearance_changes": [
             {
                 "entity_id": "witness",
@@ -1635,10 +1623,6 @@ def test_a_reworded_requirement_is_covered_not_missing() -> None:
     payload = _book_adaptation().model_dump()
     payload["content_sha256"] = ""
     payload["treatment"]["essential_events"] = ["the witness sees the door open"]
-    payload["beats"][0]["brief_requirements"] = [
-        "“The witness sees the door open”",
-        "The witness abandons the investigation!",
-    ]
 
     result = validate_book_adaptation(
         _source_document(),
@@ -1652,9 +1636,6 @@ def test_a_reworded_requirement_is_covered_not_missing() -> None:
 def test_a_genuinely_uncovered_requirement_still_blocks() -> None:
     payload = _book_adaptation().model_dump()
     payload["content_sha256"] = ""
-    payload["beats"][0]["brief_requirements"] = [
-        "The witness abandons the investigation."
-    ]
     payload["beats"][0]["brief_requirement_ids"] = ["character_turn_001"]
 
     result = validate_book_adaptation(
@@ -1752,11 +1733,6 @@ def test_essential_events_and_character_turns_require_explicit_beat_coverage(
 ) -> None:
     payload = _book_adaptation().model_dump()
     payload["content_sha256"] = ""
-    payload["beats"][0]["brief_requirements"] = [
-        requirement
-        for requirement in payload["beats"][0]["brief_requirements"]
-        if requirement != missing_requirement
-    ]
     missing_id = (
         "essential_event_001"
         if code == "missing_essential_event"
@@ -1975,7 +1951,7 @@ def test_producer_canonicalizes_approved_requirement_metadata(
     )
     beat = expected.beats[0].model_copy(
         update={
-            "brief_requirement_ids": ("character_turn_001",),
+            "brief_requirement_ids": ("character_turn_001", "essential_event_001"),
         }
     )
     calls: list[dict] = []
@@ -2031,7 +2007,7 @@ def test_retry_recovers_a_paid_candidate_without_another_model_call(
         }
     )
     beat = expected.beats[0].model_copy(
-        update={"brief_requirement_ids": ("character_turn_001",)}
+        update={"brief_requirement_ids": ("character_turn_001", "essential_event_001")}
     )
     candidate = BookAdaptation.model_validate(
         {
@@ -2157,14 +2133,6 @@ def test_large_book_adaptation_is_written_in_bounded_internal_shards(
                         "summary": f"Adapt {source_ids[0]} through {source_ids[-1]}.",
                         "narrative_function": "prolongation",
                         "story_functions": ["causal_event"],
-                        "brief_requirements": (
-                            [
-                                "The witness sees the door open.",
-                                "The witness abandons the investigation.",
-                            ]
-                            if carries_requirements
-                            else []
-                        ),
                         "brief_requirement_ids": (
                             ["essential_event_001", "character_turn_001"]
                             if carries_requirements
@@ -2289,7 +2257,7 @@ def test_a_blocked_adaptation_gets_one_repair_pass_with_its_failures(
         "beats": [
             {
                 **expected.beats[0].model_dump(mode="json"),
-                "brief_requirements": [],
+
                 "brief_requirement_ids": [],
             }
         ],
@@ -2367,7 +2335,7 @@ def test_a_failed_adaptation_preserves_the_last_candidate(
         update={
             "source_unit_ids": ("source_000001",),
             "story_functions": ("reveal",),
-            "brief_requirements": ("The witness sees the door open.",),
+
             "brief_requirement_ids": ("essential_event_001",),
             "lettering": (expected.beats[0].lettering[0],),
         }
@@ -2380,7 +2348,7 @@ def test_a_failed_adaptation_preserves_the_last_candidate(
             "narrative_function": "transition",
             "source_unit_ids": ("source_000002",),
             "story_functions": ("transition", "character_turn"),
-            "brief_requirements": ("The witness abandons the investigation.",),
+
             "brief_requirement_ids": ("character_turn_001",),
             "transitions": (
                 ContinuityTransition(
@@ -2557,7 +2525,7 @@ def test_a_repaired_attempt_is_billed_without_inflating_progress(
         "beats": [
             {
                 **expected.beats[0].model_dump(mode="json"),
-                "brief_requirements": [],
+
                 "brief_requirement_ids": [],
             }
         ],

@@ -81,7 +81,7 @@ def test_character_state_plan_has_canonical_identity_then_style(tmp_path: Path):
     parent = artifacts.character_ref_sheet_path(tmp_path, char.id)
     parent_hash = _write_parent(parent)
     style_path, style_hash = _write_style(tmp_path)
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('anatomy',),
         id="silver", label="Silver hands",
         visual_anchor="Mara, age 30, long black hair, silver prosthetic hands, red coat",
         visually_significant=True,
@@ -125,7 +125,7 @@ def test_character_states_contain_no_contradictory_canonical_matching_rule(
     char = _character()
     parent = artifacts.character_ref_sheet_path(tmp_path, char.id)
     _write_parent(parent)
-    state = AppearanceState(id="s1", label="S", visual_anchor=anchor, visually_significant=True)
+    state = AppearanceState(changed_facets=("clothing" if expected_conflict_facet == "wardrobe" else expected_conflict_facet,), id="s1", label="S", visual_anchor=anchor, visually_significant=True)
     spec = build_character_state_spec(Config(), tmp_path, char, state)
     plan = build_state_reference_plan(spec, tmp_path)
 
@@ -146,7 +146,7 @@ def test_character_co_located_outfit_change_preserves_identity_facets(tmp_path: 
         first_appearance_scene="scene_001",
     )
     _write_parent(artifacts.character_ref_sheet_path(tmp_path, char.id))
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('clothing',),
         id="green", label="Green coat",
         visual_anchor=(
             "Mara with a youthful face, long black hair, slender build wearing a green coat"
@@ -176,7 +176,7 @@ def test_character_total_transformation_omits_canonical_parent(tmp_path: Path):
     parent = artifacts.character_ref_sheet_path(tmp_path, char.id)
     _write_parent(parent)
     # Total transformation: every facet (age, hair, anatomy, clothing) replaced.
-    state = AppearanceState(
+    state = AppearanceState(replaces_identity=True,
         id="beast", label="Transformed beast",
         visual_anchor=(
             "Mara transformed into a winged serpent beast, scaled body, tail, "
@@ -203,7 +203,7 @@ def test_state_only_keeps_compatible_style_for_non_keyword_transformation(tmp_pa
     parent = artifacts.character_ref_sheet_path(tmp_path, char.id)
     _write_parent(parent)
     style_path, _ = _write_style(tmp_path)
-    state = AppearanceState(
+    state = AppearanceState(replaces_identity=True,
         id="cloud", label="Cloud form",
         visual_anchor="Mara is now an amorphous cloud of light, incorporeal and diffuse",
         visually_significant=True,
@@ -228,7 +228,7 @@ def test_location_state_plan_has_location_identity_reference(tmp_path: Path):
     parent = artifacts.location_plate_path(tmp_path, loc.id)
     parent_hash = _write_parent(parent)
     style_path, _ = _write_style(tmp_path)
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('light',),
         id="loc_001_dusk", label="Dusk",
         visual_anchor="stone lake house, intact slate roof, full blue lake at dusk",
         visually_significant=True,
@@ -277,7 +277,7 @@ def test_location_state_reference_facets_exclude_overridden_architecture(tmp_pat
     loc = _location()
     parent = artifacts.location_plate_path(tmp_path, loc.id)
     _write_parent(parent)
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('architecture', 'damage'),
         id="loc_001_collapse", label="Collapse",
         visual_anchor="collapsed stone walls, roof gone, rubble everywhere, full blue lake, sunny noon",
         visually_significant=True,
@@ -297,7 +297,7 @@ def test_location_state_reference_facets_exclude_changed_materials(tmp_path: Pat
 
     loc = _location()
     _write_parent(artifacts.location_plate_path(tmp_path, loc.id))
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('materials',), replaces_identity=True,
         id="loc_001_glass", label="Glass pavilion",
         visual_anchor="mirrored glass pavilion, full blue lake, sunny noon",
         visually_significant=True,
@@ -319,7 +319,7 @@ def test_location_state_material_change_preserves_co_located_identity(tmp_path: 
         time_of_day="noon", mood="peaceful",
     )
     _write_parent(artifacts.location_plate_path(tmp_path, loc.id))
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('materials',),
         id="brick", label="Brick chapel",
         visual_anchor="brick chapel by the lake, full blue lake, sunny noon",
         visually_significant=True,
@@ -343,7 +343,7 @@ def test_location_architecture_value_change_is_not_preserved(tmp_path: Path):
         time_of_day="noon", mood="peaceful",
     )
     _write_parent(artifacts.location_plate_path(tmp_path, loc.id))
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('architecture',),
         id="flat", label="Flat roof",
         visual_anchor="stone lake house with flat roof, full blue lake, sunny noon",
         visually_significant=True,
@@ -363,7 +363,7 @@ def test_missing_style_candidate_is_persisted_as_diagnostic(tmp_path: Path):
     char = _character()
     _write_parent(artifacts.character_ref_sheet_path(tmp_path, char.id))
     missing_style = tmp_path / "missing-style.png"
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('anatomy',),
         id="silver", label="Silver hands",
         visual_anchor="Mara, age 30, long black hair, silver hands, red coat",
         visually_significant=True,
@@ -402,7 +402,7 @@ def test_location_state_uses_supported_gpt_image_reference_role(tmp_path: Path):
 
     loc = _location()
     _write_parent(artifacts.location_plate_path(tmp_path, loc.id))
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('light',),
         id="loc_001_dusk", label="Dusk",
         visual_anchor="stone lake house, intact slate roof, full blue lake at dusk",
         visually_significant=True,
@@ -424,7 +424,7 @@ def test_location_total_destruction_omits_canonical_parent(tmp_path: Path):
     parent = artifacts.location_plate_path(tmp_path, loc.id)
     _write_parent(parent)
     # Total destruction: architecture, water, weather, light, atmosphere all replaced.
-    state = AppearanceState(
+    state = AppearanceState(replaces_identity=True,
         id="loc_001_gone", label="Annihilated",
         visual_anchor=(
             "smoking crater where the house stood, scorched earth, ash-filled sky, "
@@ -456,7 +456,7 @@ def test_tight_cap_drops_style_before_canonical_identity(tmp_path: Path):
     parent = artifacts.character_ref_sheet_path(tmp_path, char.id)
     _write_parent(parent)
     style_path, _ = _write_style(tmp_path)
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('anatomy',),
         id="silver", label="Silver hands",
         visual_anchor="Mara, age 30, long black hair, silver hands, red coat",
         visually_significant=True,
@@ -488,7 +488,7 @@ def test_missing_canonical_parent_fails_before_provider_io(tmp_path: Path):
 
     char = _character()
     # NOTE: deliberately do NOT write the parent sheet.
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('anatomy',),
         id="silver", label="Silver hands",
         visual_anchor="Mara, age 30, long black hair, silver hands, red coat",
         visually_significant=True,
@@ -506,7 +506,7 @@ def test_digest_mismatched_canonical_parent_fails_before_provider_io(tmp_path: P
     char = _character()
     parent = artifacts.character_ref_sheet_path(tmp_path, char.id)
     _write_parent(parent, b"original-bytes")
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('anatomy',),
         id="silver", label="Silver hands",
         visual_anchor="Mara, age 30, long black hair, silver hands, red coat",
         visually_significant=True,
@@ -524,7 +524,7 @@ def test_unreadable_canonical_parent_fails_with_structured_error(tmp_path: Path)
     char = _character()
     parent = artifacts.character_ref_sheet_path(tmp_path, char.id)
     _write_parent(parent)
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('anatomy',),
         id="silver", label="Silver hands",
         visual_anchor="Mara, age 30, long black hair, silver hands, red coat",
         visually_significant=True,
@@ -549,7 +549,7 @@ def test_state_metadata_records_lineage_mode_conditioned(tmp_path: Path):
     parent = artifacts.character_ref_sheet_path(tmp_path, char.id)
     parent_hash = _write_parent(parent)
     style_path, style_hash = _write_style(tmp_path)
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('anatomy',),
         id="silver", label="Silver hands",
         visual_anchor="Mara, age 30, long black hair, silver hands, red coat",
         visually_significant=True,
@@ -570,7 +570,7 @@ def test_style_digest_refreshes_when_selected_bytes_change(tmp_path: Path):
     char = _character()
     _write_parent(artifacts.character_ref_sheet_path(tmp_path, char.id))
     style_path, _ = _write_style(tmp_path, b"style-v1")
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('anatomy',),
         id="silver", label="Silver hands",
         visual_anchor="Mara, age 30, long black hair, silver hands, red coat",
         visually_significant=True,
@@ -592,7 +592,7 @@ def test_state_only_metadata_records_exception(tmp_path: Path):
     char = _character()
     parent = artifacts.character_ref_sheet_path(tmp_path, char.id)
     parent_hash = _write_parent(parent)
-    state = AppearanceState(
+    state = AppearanceState(replaces_identity=True,
         id="beast", label="Beast",
         visual_anchor=(
             "Mara transformed into a winged serpent beast, scaled body, tail, "
@@ -622,7 +622,7 @@ def test_state_wire_carries_canonical_reference_and_hashes(tmp_path: Path, monke
     parent = artifacts.character_ref_sheet_path(tmp_path, char.id)
     _write_parent(parent)
     style_path, _ = _write_style(tmp_path)
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('anatomy',),
         id="silver", label="Silver hands",
         visual_anchor="SENTINEL Mara, age 30, long black hair, silver hands, red coat",
         visually_significant=True,
@@ -658,7 +658,7 @@ def test_state_wire_includes_state_direction_and_addendum(tmp_path: Path, monkey
 
     char = _character()
     _write_parent(artifacts.character_ref_sheet_path(tmp_path, char.id))
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('anatomy',),
         id="silver", label="Silver hands",
         visual_anchor="SENTINEL active silver hands",
         visually_significant=True,
@@ -694,7 +694,7 @@ def test_state_only_wire_has_no_canonical_reference(tmp_path: Path, monkeypatch)
     char = _character()
     parent = artifacts.character_ref_sheet_path(tmp_path, char.id)
     _write_parent(parent)
-    state = AppearanceState(
+    state = AppearanceState(replaces_identity=True,
         id="beast", label="Beast",
         visual_anchor="SENTINEL winged serpent beast, no human face, no clothing",
         visually_significant=True,
@@ -722,7 +722,7 @@ def test_state_wire_compilation_populates_cache_metadata_before_transport(tmp_pa
 
     char = _character()
     _write_parent(artifacts.character_ref_sheet_path(tmp_path, char.id))
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('anatomy',),
         id="silver", label="Silver hands",
         visual_anchor="Mara, age 30, long black hair, silver hands, red coat",
         visually_significant=True,
@@ -751,7 +751,7 @@ def test_regenerate_character_state_persists_conditioned_metadata(tmp_path: Path
     char = _character()
     parent = artifacts.character_ref_sheet_path(tmp_path, char.id)
     _write_parent(parent)
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('anatomy',),
         id="silver", label="Silver hands",
         visual_anchor="Mara, age 30, long black hair, silver hands, red coat",
         visually_significant=True,
@@ -793,7 +793,7 @@ def test_generate_location_state_persists_conditioned_metadata(tmp_path: Path, m
     loc = _location()
     parent = artifacts.location_plate_path(tmp_path, loc.id)
     _write_parent(parent)
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('light',),
         id="loc_001_dusk", label="Dusk",
         visual_anchor="stone lake house, intact slate roof, full blue lake at dusk",
         visually_significant=True,
@@ -837,7 +837,7 @@ def test_canonical_reroll_keeps_states_stale_no_auto_spend(tmp_path: Path, monke
     _write_parent(parent, b"v1")
     state_sheet = artifacts.character_state_ref_sheet_path(tmp_path, char.id, "silver")
     _write_parent(state_sheet, b"state-v1")
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('anatomy',),
         id="silver", label="Silver hands",
         visual_anchor="Mara, age 30, long black hair, silver hands, red coat",
         visually_significant=True,
@@ -891,7 +891,7 @@ def test_no_paid_image_call_during_conditioning(tmp_path: Path, monkeypatch):
     char = _character()
     parent = artifacts.character_ref_sheet_path(tmp_path, char.id)
     _write_parent(parent)
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('anatomy',),
         id="silver", label="Silver hands",
         visual_anchor="Mara, age 30, long black hair, silver hands, red coat",
         visually_significant=True,
@@ -912,7 +912,7 @@ def test_cast_estimate_uses_final_state_reference_count(tmp_path: Path, monkeypa
     from novel_to_comic.stages import s3_cast
 
     char = _character()
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('anatomy',),
         id="silver", label="Silver hands",
         visual_anchor="Mara, age 30, long black hair, silver hands, red coat",
         visually_significant=True,
@@ -943,7 +943,7 @@ def test_state_only_first_run_estimate_omits_missing_parent_reference(tmp_path: 
     from novel_to_comic.stages import s3_cast
 
     char = _character()
-    state = AppearanceState(
+    state = AppearanceState(replaces_identity=True,
         id="cloud", label="Cloud form",
         visual_anchor="Mara is now an amorphous cloud of light, incorporeal and diffuse",
         visually_significant=True,
@@ -986,7 +986,7 @@ def test_state_estimate_counts_gpt_image_location_reference(tmp_path: Path):
     from novel_to_comic.stages import s3_cast
 
     loc = _location()
-    state = AppearanceState(
+    state = AppearanceState(changed_facets=('light',),
         id="night", label="Night",
         visual_anchor="stone lake house at night, moonlit, dark sky",
         visually_significant=True,
@@ -1001,3 +1001,40 @@ def test_state_estimate_counts_gpt_image_location_reference(tmp_path: Path):
     assert s3_cast.estimate_state_reference_count(
         Config(image_model="gpt-image-2"), tmp_path, "location", loc.id, state.id,
     ) == 1
+
+
+def test_transformation_words_do_not_override_declared_identity(tmp_path):
+    from novel_to_comic.state_assets import build_state_reference_plan
+
+    character = _character()
+    _write_parent(artifacts.character_ref_sheet_path(tmp_path, character.id))
+    state = AppearanceState(
+        id='wolf_coat', label='Wolf coat',
+        visual_anchor='Mara wearing a wolf costume, same human face and hands',
+        changed_facets=('clothing',),
+    )
+    spec = build_character_state_spec(Config(), tmp_path, character, state)
+    plan = build_state_reference_plan(spec, tmp_path)
+    assert spec.lineage_mode == LineageMode.CONDITIONED
+    subject = next(asset for asset in plan.selected if asset.role == 'subject')
+    assert 'wardrobe' in subject.ignore_facets
+    assert 'face' not in subject.ignore_facets
+
+
+def test_prop_state_compiles_with_prop_authority_and_guard(tmp_path):
+    from novel_to_comic.models.story_bible import Prop
+    from novel_to_comic.state_assets import build_prop_state_spec
+    from novel_to_comic.stages.s3_cast import _compile_state_asset_wire
+
+    prop = Prop(id='tablet', name='Tablet', visual_anchor='square stone tablet, five carved lines')
+    artifacts.prop_ref_path(tmp_path, prop.id).parent.mkdir(parents=True)
+    _write_minimal_png(artifacts.prop_ref_path(tmp_path, prop.id))
+    state = AppearanceState(
+        id='broken', label='Broken', visual_anchor='square stone tablet with one corner missing, five carved lines',
+        changed_facets=('damage',), continuity_guard='Keep the missing upper-right corner; never restore it.',
+    )
+    spec = build_prop_state_spec(Config(), tmp_path, prop, state)
+    wire = _compile_state_asset_wire(Config(), spec, tmp_path)
+    assert wire.input.asset_kind == 'prop_ref'
+    assert wire.input.lineage['asset_kind'] == 'prop_state_ref'
+    assert state.visual_anchor in wire.compiled.final_prompt

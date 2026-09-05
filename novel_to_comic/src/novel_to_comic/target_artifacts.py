@@ -471,6 +471,23 @@ class TargetArtifacts:
             PageGenerationProvenance,
         )
 
+    def visual_review_path(self, page_number: int, render_revision: int, input_sha256: str) -> Path:
+        return self.analysis_path(page_number, render_revision).parent / f"visual_{render_revision:03d}_{input_sha256}.json"
+
+    def read_visual_reviews(self, page_number: int, render_revision: int):
+        from novel_to_comic.page_visual_review import PageVisualReview
+        directory = self.analysis_path(page_number, render_revision).parent
+        return tuple(self._read_model("visual_review", path, PageVisualReview)
+                     for path in sorted(directory.glob(f"visual_{render_revision:03d}_*.json")))
+
+    def write_visual_review(self, report) -> None:
+        from novel_to_comic.page_visual_review import PageVisualReview
+        self._write_immutable_model(self.visual_review_path(report.page_number, report.render_revision, report.input_sha256), report, PageVisualReview)
+
+    def read_visual_review(self, page_number: int, render_revision: int, input_sha256: str):
+        from novel_to_comic.page_visual_review import PageVisualReview
+        return self._read_model("visual_review", self.visual_review_path(page_number, render_revision, input_sha256), PageVisualReview)
+
     def write_analysis(self, analysis: RenderAnalysis) -> None:
         path = self.analysis_path(analysis.page_number, analysis.render_revision)
         created = not path.exists()

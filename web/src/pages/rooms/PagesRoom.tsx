@@ -3,6 +3,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   useAcceptPageIssue,
   useAnalyzeCompletePage,
+  useReviewPageVisuals,
+  useVisualReviewEstimate,
   useAdaptation,
   useApproveStage,
   useBookPlan,
@@ -173,12 +175,12 @@ function EditorialDiagnostics({ issues }: { issues: EditorialIssue[] }) {
     }, []),
     [uniqueIssues],
   );
-  if (!showDevContent || uniqueIssues.length === 0) return null;
+  if (uniqueIssues.length === 0) return null;
   const diagnosticLabel = uniqueIssues.length === 1
     ? t("diagnostic")
     : t("diagnostics");
   return (
-    <section aria-label={t("INTERNAL EDITORIAL DIAGNOSTICS")}>
+    <section aria-label={t("EDITORIAL REVIEW")}>
       <Surface tone="container" border="soft" shadow="none" padding="md">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="min-w-0">
@@ -187,11 +189,11 @@ function EditorialDiagnostics({ issues }: { issues: EditorialIssue[] }) {
                 {uniqueIssues.length} {diagnosticLabel}
               </StatusPill>
               <span className="font-meta text-xs font-bold text-ink-muted">
-                {t("DEV CONTENT")}
+                {t("EDITORIAL REVIEW")}
               </span>
             </div>
             <p className="mt-2 max-w-[68ch] font-body text-sm leading-6 text-ink-black/75">
-              {t("Internal validation signals for development inspection. They do not block the book or require author action.")}
+              {t("Review these story and pacing suggestions before drawing. They do not block the book.")}
             </p>
           </div>
           <Button
@@ -230,11 +232,11 @@ function EditorialDiagnostics({ issues }: { issues: EditorialIssue[] }) {
                           </span>
                         )}
                       </div>
-                      <ul className="mt-1 space-y-1 font-mono text-xs leading-5 text-ink-muted">
+                      {showDevContent && <ul className="mt-1 space-y-1 font-mono text-xs leading-5 text-ink-muted">
                         {summary.issues.flatMap((issue) => issue.evidence).map((evidence, index) => (
                           <li key={`${summary.key}:${index}`}>{evidence}</li>
                         ))}
-                      </ul>
+                      </ul>}
                     </li>
                   ))}
                 </ul>
@@ -312,7 +314,7 @@ function IssueHistory({
         return (
           <li key={issue.id}>
             <Surface
-              tone={issue.classification === "invariant_failure" && issue.status === "open" ? "pulp" : "bristol"}
+              tone={issue.classification === "invariant_failure" && (issue.status === "open" || issue.status === "revised") ? "pulp" : "bristol"}
               border="soft"
               shadow="none"
               padding="md"
@@ -371,9 +373,9 @@ function IssueHistory({
                   </p>
                 )}
               </div>
-              {issue.status === "open" && (
+              {(issue.status === "open" || issue.status === "revised") && (
                 <div className="flex flex-wrap justify-end gap-2">
-                  {issue.correction_owner === "draw" && (
+                  {issue.correction_owner === "draw" && issue.id === issues.find((candidate) => (candidate.status === "open" || candidate.status === "revised") && candidate.correction_owner === "draw")?.id && (
                     <Button
                       size="xs"
                       onClick={() => {
@@ -398,7 +400,7 @@ function IssueHistory({
                       }}
                       disabled={correct.isPending || pageIsDrawing}
                     >
-                      {t("CREATE CORRECTED REVISION")}
+                      {t("CORRECT PAGE FINDINGS")}
                     </Button>
                   )}
                   {issue.classification === "editorial_issue" && (
@@ -412,7 +414,7 @@ function IssueHistory({
                       })}
                       disabled={accept.isPending}
                     >
-                      {t("ACCEPT AS-IS")}
+                      {t(issue.status === "revised" ? "CONFIRM FIX" : "ACCEPT AS-IS")}
                     </Button>
                   )}
                   {issue.classification === "invariant_failure"
@@ -441,9 +443,9 @@ function IssueHistory({
                 {t("Could not create corrected revision.")} {correctionError.message}
               </p>
             )}
-            {issue.status === "open" && issue.correction_owner === "draw" && (
+            {(issue.status === "open" || issue.status === "revised") && issue.correction_owner === "draw" && (
               <p className="mt-3 font-body text-xs leading-5 text-ink-black/70">
-                {t("This redraws the whole page as a new revision using this finding. Your current page and approved script stay saved.")}
+                {t("This creates one page revision addressing all unresolved Draw findings. Review the result to confirm visual fixes.")}
               </p>
             )}
             </Surface>
@@ -469,8 +471,10 @@ function PageReview({
 }) {
   const { t } = useI18n();
   const createIssue = useCreatePageIssue();
+  const visualReview = useReviewPageVisuals();
   const [correction, setCorrection] = useState("");
   const revision = item.active_render?.render.revision;
+  const visualEstimate = useVisualReviewEstimate(project, item.page.page_number, !!revision);
 
   useEffect(() => {
     function closeOnEscape(event: KeyboardEvent) {
@@ -546,6 +550,22 @@ function PageReview({
               <p className="bg-narrator-gold px-3 py-2 font-meta text-xs font-bold">
                 {t("Revision")} {item.active_render.render.parent_revision} → {t("Revision")} {revision}
               </p>
+            )}
+
+            {revision && (
+              <section className="space-y-3">
+                <p className="font-body text-sm">{t("OCR checks lettering. Use a visual check for reference, object, and scene discrepancies; review its findings yourself.")}</p>
+                <Button size="xs" variant="outline" disabled={visualReview.isPending || pageIsDrawing || !visualEstimate.data}
+                  onClick={() => visualReview.mutate({ project, pageNumber: item.page.page_number })}>
+                  {t(visualReview.isPending ? "CHECKING VISUALS…" : "CHECK VISUAL CONSISTENCY")}
+                  {visualEstimate.data ? ` · ~${visualEstimate.data.estimate_credits} ${t("credits")}` : ""}
+                </Button>
+                <p className="font-body text-xs text-ink-muted">{t("This optional check uses credits. Reopening the same completed check does not call the model again.")}</p>
+                {visualEstimate.error && <p role="alert">{visualEstimate.error.message}</p>}
+                {visualReview.error && <p role="alert">{visualReview.error.message}</p>}
+                {visualReview.data && <p role="status">{visualReview.data.findings.length} {t("visual findings to review")}</p>}
+                {visualReview.data?.uncertain.map((note, index) => <p className="font-body text-xs" key={index}>{note}</p>)}
+              </section>
             )}
 
             <section>
@@ -878,8 +898,8 @@ export function PagesRoom() {
                   </div>
                   <div className="mt-3 flex items-center justify-between gap-2">
                     <span className="font-display text-lg font-black uppercase">{t("Page")} {item.page.page_number}</span>
-                    {item.issues.some((issue) => issue.status === "open") && (
-                      <StatusPill tone="gold">{item.issues.filter((issue) => issue.status === "open").length}</StatusPill>
+                    {item.issues.some((issue) => (issue.status === "open" || issue.status === "revised")) && (
+                      <StatusPill tone="gold">{item.issues.filter((issue) => (issue.status === "open" || issue.status === "revised")).length}</StatusPill>
                     )}
                   </div>
                   <p className="mt-1 font-meta text-xs text-ink-muted">

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal
@@ -18,7 +17,7 @@ from novel_to_comic.models.story_bible import Character, Location
 from novel_to_comic.image_models import image_model_profile_for_config
 from novel_to_comic.image_ref_strategy import RefStrategy
 
-STATE_ASSET_SPEC_VERSION = 1
+STATE_ASSET_SPEC_VERSION = 2
 
 
 class LineageMode(StrEnum):
@@ -36,57 +35,10 @@ class LineageStatus(StrEnum):
     UNVERIFIED = "unverified"
 
 
-_FACET_PATTERNS: dict[str, tuple[str, ...]] = {
-    "age": (r"\bage[sd]?\b", r"\byears? old\b", r"\b(?:young|old|elderly|teen)\b"),
-    "hair": (r"\bhair\b", r"\bbald\b", r"\bbraids?\b"),
-    "face": (r"\bface\b", r"\b(?:visage|countenance|features)\b", r"\bno human face\b"),
-    "build": (r"\b(?:build|physique|frame|stature|muscular|slender|stocky|hulking|scaled body)\b",),
-    "anatomy": (r"\b(?:hand|limb|arm|leg|stump|prosthe|wing|tail|body)\w*\b",),
-    "clothing": (r"\b(?:wear|coat|tunic|dress|shirt|trouser|robe|outfit|jacket|armor|clothing)\w*\b",),
-    "damage": (r"\b(?:damage|ruin|collapse|crack|burn|broken|destroy|wound|scar|blood)\w*\b",),
-    "weather": (r"\b(?:rain|storm|snow|fog|sunny|wind|weather)\w*\b",),
-    "light": (r"\b(?:day|night|dawn|dusk|noon|moon|sun|light|dark)\w*\b",),
-    "water_level": (r"\b(?:lake|river|water|flood|drain|dry|mud)\w*\b",),
-    "architecture": (r"\b(?:wall|roof|building|house|tower|bridge|architecture|"
-                     r"pavilion|chapel|cathedral|church|gatehouse|courtyard|"
-                     r"archway)\w*\b",),
-    "landmarks": (r"\b(?:landmark|chapel|pavilion|cathedral|church|statue|fountain|"
-                  r"monument|lighthouse|dock|pier|gatehouse|garden|courtyard|"
-                  r"archway|obelisk)\w*\b",),
-    "materials": (r"\b(?:stone|brick|wood|wooden|timber|glass|mirrored|mirror|"
-                  r"metal|steel|iron|concrete|marble|slate|tile|masonry|plaster|"
-                  r"material|surface|texture)\w*\b",),
-    "atmosphere": (r"\b(?:mood|peaceful|tense|desolate|atmosphere|eerie|calm|storm)\w*\b",),
-}
 
 # Value-bearing spans keep a change to one facet from looking like a change to
 # every facet named in the same clause. The broad facet patterns above discover
 # which facets are present; these patterns compare the local values.
-_FACET_VALUE_PATTERNS: dict[str, tuple[str, ...]] = {
-    "age": (
-        r"\bage\w*\s+[\w-]+(?:\s+[\w-]+)?\b",
-        r"\b\d+\s+years?\s+old\b",
-        r"\b(?:young|old|elderly|teen)\b",
-    ),
-    "hair": (r"\b(?:[\w-]+\s+){0,3}(?:hair|bald|braids?\w*)\b",),
-    "face": (
-        r"\b(?:[\w-]+\s+){0,3}(?:face|visage|countenance|features)\b",
-        r"\bno\s+(?:human\s+)?face\b",
-    ),
-    "build": (
-        r"\b(?:[\w-]+\s+){0,2}(?:build|physique|frame|stature)\b",
-        r"\b(?:muscular|slender|stocky|hulking)\b",
-    ),
-    "anatomy": (
-        r"\b(?:[\w-]+\s+){0,3}(?:hand|limb|arm|leg|stump|prosthe|wing|tail|body)\w*\b",
-    ),
-    "clothing": (
-        r"\bwear\w*\s+(?:a\s+|an\s+|the\s+)?(?:[\w-]+\s+){0,2}"
-        r"(?:coat|tunic|dress|shirt|trouser|robe|outfit|jacket|armor|clothing)\w*\b",
-        r"\b(?:[\w-]+\s+){0,2}(?:coat|tunic|dress|shirt|trouser|robe|outfit|"
-        r"jacket|armor|clothing)\w*\b",
-    ),
-}
 
 
 def _sha256(path: Path | None) -> str | None:
@@ -107,12 +59,6 @@ def _relative(path: Path | None, project_dir: Path) -> str | None:
         return str(path)
 
 
-def _facets(text: str) -> tuple[str, ...]:
-    lowered = text.lower()
-    return tuple(
-        facet for facet, patterns in _FACET_PATTERNS.items()
-        if any(re.search(pattern, lowered) for pattern in patterns)
-    )
 
 
 def _revision(path: Path) -> int:
@@ -121,85 +67,21 @@ def _revision(path: Path) -> int:
     return sum(1 for line in path.read_text().splitlines() if line.strip())
 
 
-def _stable_clauses(anchor: str, overridden: set[str]) -> list[str]:
-    clauses = [part.strip() for part in re.split(r"[,;]", anchor) if part.strip()]
-    return [clause for clause in clauses if not (set(_facets(clause)) & overridden)]
 
 
-def _facet_clauses(anchor: str) -> dict[str, list[str]]:
-    """Map each facet to the clauses in which it appears.
-
-    Character state anchors use the clause text to distinguish values such as
-    ``age 70`` from ``age 30`` while still allowing a self-contained state to
-    omit unrelated canonical facets.
-    """
-    out: dict[str, list[str]] = {}
-    for clause in (part.strip() for part in re.split(r"[,;]", anchor) if part.strip()):
-        for facet in _facets(clause):
-            out.setdefault(facet, []).append(clause.lower())
-    return out
 
 
-def _facet_evidence(text: str, facet: str) -> tuple[str, ...]:
-    """Return normalized value-bearing matches for one character facet."""
-    patterns = _FACET_VALUE_PATTERNS.get(facet, _FACET_PATTERNS[facet])
-    lowered = text.lower()
-    return tuple(sorted({
-        match.group(0).strip()
-        for pattern in patterns
-        for match in re.finditer(pattern, lowered)
-    }))
 
 
-def _changed_facets(canonical_anchor: str, state_anchor: str) -> set[str]:
-    """Facets whose clause content differs between canonical and state.
-
-    A state anchor is self-contained: it restates identity (age, hair) even when
-    unchanged. Compare the clauses that explicitly name a facet; an omitted
-    facet is not treated as replaced because state anchors may focus on only the
-    changed appearance.
-    """
-    state = _facet_clauses(state_anchor)
-    changed: set[str] = set()
-    for facet in state:
-        state_evidence = _facet_evidence(state_anchor, facet)
-        canon_evidence = _facet_evidence(canonical_anchor, facet)
-        if not canon_evidence or state_evidence != canon_evidence:
-            changed.add(facet)
-    return changed
 
 
-def _location_facet_terms(text: str, facet: str) -> tuple[str, ...]:
-    """Return facet-specific lexical evidence for a location anchor.
-
-    A single location clause may name several independent facets (for example,
-    ``stone chapel by the lake``). Comparing whole clauses would incorrectly
-    treat a material change as an architecture, landmark, and water-level
-    change. Location identity facets therefore compare only their own terms.
-    """
-    lowered = text.lower()
-    terms: set[str] = set()
-    patterns = (*_FACET_PATTERNS[facet], *_LOCATION_FACET_VALUE_PATTERNS.get(facet, ()))
-    for pattern in patterns:
-        terms.update(match.group(0) for match in re.finditer(pattern, lowered))
-    return tuple(sorted(terms))
 
 
-def _changed_location_facets(canonical_anchor: str, state_anchor: str) -> set[str]:
-    """Return location facets explicitly changed by the state anchor."""
-    changed: set[str] = set()
-    for facet in _LOCATION_TOTAL_FACETS:
-        state_terms = _location_facet_terms(state_anchor, facet)
-        if not state_terms:
-            continue
-        if state_terms != _location_facet_terms(canonical_anchor, facet):
-            changed.add(facet)
-    return changed
 
 
 class StateAssetGenerationSpec(BaseModel):
     spec_version: int = STATE_ASSET_SPEC_VERSION
-    asset_kind: Literal["character_state_ref", "location_state_plate"]
+    asset_kind: Literal["character_state_ref", "location_state_plate", "prop_state_ref"]
     entity_id: str
     state_id: str
     active_state_anchor: str
@@ -209,6 +91,7 @@ class StateAssetGenerationSpec(BaseModel):
     canonical_parent_sha256: str | None
     preserved_facets: tuple[str, ...]
     overridden_facets: tuple[str, ...]
+    replaces_identity: bool = False
     style_path: str | None = None
     style_sha256: str | None = None
     configured_route_model: str
@@ -263,6 +146,7 @@ class StateAssetGenerationSpec(BaseModel):
             "provenance_link": None,
             "preserved_facets": list(self.preserved_facets),
             "overridden_facets": list(self.overridden_facets),
+            "replaces_identity": self.replaces_identity,
         }
 
 
@@ -273,8 +157,8 @@ def build_character_state_spec(
     parent = artifacts.character_ref_sheet_path(project_dir, char.id)
     instructions = artifacts.character_state_ref_instructions_path(project_dir, char.id, state.id)
     addendum = artifacts.read_active_addendum(instructions)
-    overridden = set(_facets(state.visual_anchor))
-    stable_features = [f for f in char.distinguishing_features if not (set(_facets(f)) & overridden)]
+    overridden = set(state.changed_facets)
+    stable_features = [] if state.replaces_identity else char.distinguishing_features
     prompt_parts = [
         config.style_template.strip(),
         f"CHARACTER STATE REFERENCE SHEET — {char.name} ({state.label}).",
@@ -313,7 +197,7 @@ def build_character_state_spec(
         baseline_affect=state.baseline_affect or char.baseline_affect,
         canonical_parent_path=_relative(parent, project_dir) or "", canonical_parent_sha256=parent_hash,
         preserved_facets=("identity", *(() if not stable_features else ("distinguishing_features",))),
-        overridden_facets=tuple(sorted(overridden)), style_path=_relative(style_path, project_dir),
+        overridden_facets=tuple(sorted(overridden)), replaces_identity=state.replaces_identity, style_path=_relative(style_path, project_dir),
         style_sha256=_sha256(style_path), configured_route_model=config.effective_image_model(),
         configured_route=image_model_profile_for_config(config).route.value,
         requested_shape="square", effective_width=1024, effective_height=1024,
@@ -331,8 +215,8 @@ def build_location_state_spec(
     parent = artifacts.location_plate_path(project_dir, loc.id)
     instructions = artifacts.location_state_plate_instructions_path(project_dir, loc.id, state.id)
     addendum = artifacts.read_active_addendum(instructions)
-    overridden = set(_facets(state.visual_anchor))
-    stable = _stable_clauses(loc.visual_anchor, overridden)
+    overridden = set(state.changed_facets)
+    stable = []  # The self-contained anchor owns the state; no prose inference.
     prompt_parts = [config.style_template.strip(), "LOCATION STATE DESIGN PLATE", state.visual_anchor]
     direction_parts = ["LOCATION STATE DESIGN PLATE"]
     if stable:
@@ -353,7 +237,7 @@ def build_location_state_spec(
         active_state_anchor=state.visual_anchor, canonical_parent_identity=loc.visual_anchor,
         canonical_parent_path=_relative(parent, project_dir) or "", canonical_parent_sha256=parent_hash,
         preserved_facets=tuple(f"landmark:{item}" for item in stable),
-        overridden_facets=tuple(sorted(overridden)), style_path=_relative(style_path, project_dir),
+        overridden_facets=tuple(sorted(overridden)), replaces_identity=state.replaces_identity, style_path=_relative(style_path, project_dir),
         style_sha256=_sha256(style_path), configured_route_model=config.effective_image_model(),
         configured_route=image_model_profile_for_config(config).route.value,
         requested_shape="landscape", effective_width=width, effective_height=height,
@@ -480,29 +364,11 @@ _LOCATION_OVERRIDABLE_FACETS: dict[str, tuple[str, ...]] = {
 #: a parent's identity facets is overridden, the parent is contradictory and is
 #: omitted rather than sent. Identity facets are face, hair, build — when all
 #: three are changed, the canonical parent has nothing compatible to offer.
-_CHARACTER_TOTAL_FACETS = {"face", "hair", "build", "age", "anatomy", "clothing"}
-_LOCATION_TOTAL_FACETS = {
-    "architecture", "landmarks", "materials", "damage", "water_level",
-    "weather", "light", "atmosphere",
-}
 
-_LOCATION_FACET_VALUE_PATTERNS: dict[str, tuple[str, ...]] = {
-    "architecture": (
-        r"\b(?:steep|flat|pitched|gable|domed|arched|sloped|thatched|"
-        r"collapsed|intact|ruined|destroyed|rebuilt|missing|gone)\b",
-    ),
-}
 
 #: Patterns that signal a total identity replacement (human → non-human form),
 #: even when not every identity facet keyword appears. Used as an additional
 #: total-transformation signal beyond facet-keyword comparison.
-_TOTAL_IDENTITY_NEGATION = (
-    re.compile(r"\bno\s+(?:human\s+)?face\b"),
-    re.compile(r"\b(?:transformed?|metamorphos\w+|became?\w*)\s+(?:into|to)\b"),
-    re.compile(r"\b(?:serpent|beast|creature|monster|dragon|wolf|animal|insect)\b"),
-    re.compile(r"\b(?:amorphous|incorporeal|cloud\s+of\s+light|mist\s+form|"
-               r"smoke\s+form|energy\s+form|spectral|ethereal)\b"),
-)
 
 
 class StateConditioningError(ValueError):
@@ -510,33 +376,11 @@ class StateConditioningError(ValueError):
 
 
 def _character_state_is_total(spec: StateAssetGenerationSpec) -> bool:
-    changed = _changed_facets(spec.canonical_parent_identity, spec.active_state_anchor)
-    changed_mapped = _map_overridden_facets(
-        tuple(sorted(changed & _CHARACTER_TOTAL_FACETS)), _CHARACTER_OVERRIDABLE_FACETS
-    )
-    identity_negated = any(
-        pattern.search(spec.active_state_anchor.lower())
-        for pattern in _TOTAL_IDENTITY_NEGATION
-    )
-    identity_replaced = set(changed_mapped) >= set(_CHARACTER_IDENTITY_FACETS)
-    return identity_replaced or identity_negated
+    return spec.replaces_identity
 
 
 def _location_state_is_total(spec: StateAssetGenerationSpec) -> bool:
-    changed = _changed_location_facets(
-        spec.canonical_parent_identity, spec.active_state_anchor,
-    )
-    changed_loc = changed & _LOCATION_TOTAL_FACETS
-    changed_identity = changed & set(_LOCATION_IDENTITY_FACETS)
-    lowered_anchor = spec.active_state_anchor.lower()
-    structure_negated = bool(re.search(
-        r"\b(?:no\s+(?:walls?|roof|building|house|tower|bridge)|crater|annihilat\w+|"
-        r"everything\s+destroy\w+|nothing\s+(?:remains|left)|leveled|flattened)\b",
-        lowered_anchor,
-    ))
-    return not (set(_LOCATION_IDENTITY_FACETS) - changed_identity) or (
-        structure_negated and "architecture" in changed_loc
-    )
+    return spec.replaces_identity
 
 
 def state_is_total_transformation(spec: StateAssetGenerationSpec) -> bool:
@@ -582,9 +426,9 @@ def _build_character_conditioning_assets(
     # A total transformation replaces every useful identity facet (face, hair,
     # build), or explicitly describes a non-human/incompatible form.
     is_total = _character_state_is_total(spec)
-    changed = _changed_facets(spec.canonical_parent_identity, spec.active_state_anchor)
+    changed = set(spec.overridden_facets)
     changed_mapped = _map_overridden_facets(
-        tuple(sorted(changed & _CHARACTER_TOTAL_FACETS)), _CHARACTER_OVERRIDABLE_FACETS
+        tuple(sorted(changed)), _CHARACTER_OVERRIDABLE_FACETS
     )
     # A total transformation replaces every useful identity facet — face is the
     # only thing the canonical parent could still offer, but a winged serpent
@@ -645,10 +489,7 @@ def _build_location_conditioning_assets(
         SemanticCandidate,
     )
 
-    changed = _changed_location_facets(
-        spec.canonical_parent_identity, spec.active_state_anchor,
-    )
-    changed_loc = changed & _LOCATION_TOTAL_FACETS
+    changed_loc = set(spec.overridden_facets)
     # A total location destruction explicitly negates core structure and is
     # irrecoverable. When the anchor removes the primary landmark AND signals
     # annihilation, the canonical plate is contradictory and omitted.
@@ -656,7 +497,7 @@ def _build_location_conditioning_assets(
     if is_total:
         dropped = [DroppedReference(
             candidate=SemanticCandidate(
-                path=parent_path, role="location_plate", entity_id=spec.entity_id,
+                path=parent_path, role="prop" if spec.asset_kind == "prop_state_ref" else "location_plate", entity_id=spec.entity_id,
                 appearance_state_id=spec.state_id, label=spec.entity_id,
             ),
             reason=DropReason.STATE_CONFLICT,
@@ -669,12 +510,12 @@ def _build_location_conditioning_assets(
         return [], dropped, True
 
     preserve_facets = tuple(
-        facet for facet in _LOCATION_IDENTITY_FACETS if facet not in changed_loc
+        facet for facet in (("shape", "materials", "color") if spec.asset_kind == "prop_state_ref" else _LOCATION_IDENTITY_FACETS) if facet not in changed_loc
     )
     ignore_facets = tuple(sorted(changed_loc))
     asset = ReferenceAsset(
         path=parent_path,
-        role="location_plate",
+        role="prop" if spec.asset_kind == "prop_state_ref" else "location_plate",
         entity_id=spec.entity_id,
         appearance_state_id=spec.state_id,
         authority_scope=AuthorityScope.CONTEXTUAL,
@@ -781,9 +622,11 @@ def build_state_reference_plan(
         route_profile = image_model_profile_for_route(route)
 
     is_character = spec.asset_kind == "character_state_ref"
+    is_prop = spec.asset_kind == "prop_state_ref"
     parent_path = (
         artifacts.character_ref_sheet_path(project_dir, spec.entity_id)
-        if is_character else artifacts.location_plate_path(project_dir, spec.entity_id)
+        if is_character else artifacts.prop_ref_path(project_dir, spec.entity_id)
+        if is_prop else artifacts.location_plate_path(project_dir, spec.entity_id)
     )
 
     # ── 1. Verify canonical parent exists and matches the recorded digest. ──
@@ -820,7 +663,7 @@ def build_state_reference_plan(
             spec, project_dir, parent_path, parent_hash, route_profile=route_profile,
         )
 
-    required_role = "subject" if is_character else "location_plate"
+    required_role = "subject" if is_character else "prop" if is_prop else "location_plate"
     if not is_total and required_role not in route_profile.supported_roles:
         raise StateConditioningError(
             f"route {route_profile.route.value} does not support {required_role} "
@@ -937,3 +780,19 @@ __all__ = [
     "build_state_reference_plan", "mark_dependent_states_stale",
     "revalidate_state_asset_lineage", "state_is_total_transformation",
 ]
+
+
+def build_prop_state_spec(config: Config, project_dir: Path, prop, state: AppearanceState, *, style_path: Path | None = None) -> StateAssetGenerationSpec:
+    parent = artifacts.prop_ref_path(project_dir, prop.id)
+    direction = f"Depict only {prop.name} in state {state.label}. Neutral background. No text. " + (state.continuity_guard or "")
+    return StateAssetGenerationSpec(
+        asset_kind="prop_state_ref", entity_id=prop.id, state_id=state.id,
+        active_state_anchor=state.visual_anchor, canonical_parent_identity=prop.visual_anchor,
+        canonical_parent_path=_relative(parent, project_dir) or "", canonical_parent_sha256=_sha256(parent),
+        preserved_facets=("identity",), overridden_facets=state.changed_facets,
+        replaces_identity=state.replaces_identity,
+        style_path=_relative(style_path, project_dir), style_sha256=_sha256(style_path),
+        configured_route_model=config.effective_image_model(), configured_route=image_model_profile_for_config(config).route.value,
+        requested_shape="square", effective_width=1024, effective_height=1024,
+        lineage_status=LineageStatus.UNVERIFIED, rendered_prompt=direction + "\n" + state.visual_anchor, state_direction=direction,
+    )

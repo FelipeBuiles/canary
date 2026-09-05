@@ -81,7 +81,7 @@ class _PageContentDraft(BaseModel):
     visual_intent: str = Field(min_length=1)
     lettering_ids: tuple[str, ...] = ()
     entity_ids: tuple[str, ...] = ()
-    appearance_state_ids: tuple[str, ...] = ()
+    appearance_states: dict[str, str] = Field(default_factory=dict)
 
 
 class _PageDraft(BaseModel):
@@ -153,7 +153,6 @@ class _BookPageMap(BaseModel):
 
 def _normalize_book_plan_draft(
     value: Mapping[str, Any],
-    references: ApprovedVisualReferenceInventory,
     adaptation: BookAdaptation,
     *,
     page_number_offset: int = 0,
@@ -170,7 +169,7 @@ def _normalize_book_plan_draft(
     pages = normalized.get("pages")
     if not isinstance(pages, (list, tuple)):
         return normalized
-    normalized_pages = _normalize_draft_references(pages, references)
+    normalized_pages = list(pages)
     lettering_by_beat = {
         beat.id: tuple(item.id for item in beat.lettering) for beat in adaptation.beats
     }
@@ -240,58 +239,6 @@ def _normalize_book_plan_draft(
     _canonicalize_lettering_placement_order(normalized_pages, lettering_by_beat)
     normalized["pages"] = normalized_pages
     return normalized
-
-
-def _normalize_draft_references(
-    pages: list[Any] | tuple[Any, ...],
-    references: ApprovedVisualReferenceInventory,
-) -> list[Any]:
-    reference_states = {
-        reference.id: reference.appearance_state_id
-        for reference in references.references
-    }
-    known_states = {
-        state_id for state_id in reference_states.values() if state_id is not None
-    }
-    normalized_pages: list[Any] = []
-    for page in pages:
-        if not isinstance(page, Mapping):
-            normalized_pages.append(page)
-            continue
-        normalized_page = dict(page)
-        content_items = normalized_page.get("content")
-        if not isinstance(content_items, (list, tuple)):
-            normalized_pages.append(normalized_page)
-            continue
-        normalized_content: list[Any] = []
-        for content in content_items:
-            if not isinstance(content, Mapping):
-                normalized_content.append(content)
-                continue
-            normalized_item = dict(content)
-            state_ids = normalized_item.get("appearance_state_ids")
-            if isinstance(state_ids, (list, tuple)):
-                canonical_states: list[Any] = []
-                for state_id in state_ids:
-                    if state_id in known_states:
-                        canonical = state_id
-                    elif state_id in reference_states:
-                        canonical = reference_states[state_id]
-                    else:
-                        # Appearance-state citations are Plan-owned metadata,
-                        # and the approved inventory is their authority. An
-                        # unknown token is usually an entity/reference ID put
-                        # in the wrong field by the model; preserving it would
-                        # only defer a deterministic correction to the final
-                        # invariant pass and spend another model attempt.
-                        continue
-                    if canonical is not None and canonical not in canonical_states:
-                        canonical_states.append(canonical)
-                normalized_item["appearance_state_ids"] = canonical_states
-            normalized_content.append(normalized_item)
-        normalized_page["content"] = normalized_content
-        normalized_pages.append(normalized_page)
-    return normalized_pages
 
 
 def _canonicalize_lettering_placement_order(
@@ -380,6 +327,7 @@ def _planning_view(adaptation: BookAdaptation) -> dict[str, Any]:
             {
                 "id": beat.id,
                 "summary": beat.summary,
+                "entity_ids": beat.entity_ids,
                 "narrative_function": beat.narrative_function,
                 "story_functions": beat.story_functions,
                 "brief_requirement_ids": beat.brief_requirement_ids,
@@ -405,6 +353,7 @@ def _planning_view(adaptation: BookAdaptation) -> dict[str, Any]:
 
 def _reference_view(
     references: ApprovedVisualReferenceInventory,
+    entity_ids: set[str] | None = None,
 ) -> list[dict[str, str | None]]:
     """Keep the identity mapping Plan needs while excluding approval metadata."""
 
@@ -413,9 +362,12 @@ def _reference_view(
             "id": reference.id,
             "entity_id": reference.entity_id,
             "appearance_state_id": reference.appearance_state_id,
+            "label": reference.label,
             "visual_anchor": reference.visual_anchor,
+            "continuity_guard": reference.continuity_guard,
         }
         for reference in references.references
+        if entity_ids is None or reference.entity_id in entity_ids
     ]
 
 
@@ -473,12 +425,10 @@ def build_book_plan_prompt(
         "surrounding lettered beats so an unfamiliar reader retains causal context. "
         "Author a "
         "panel_role for every content item and ensure layout_intent describes those "
-        "same ordered panels. appearance_state_ids contains only the inventory's "
-        "appearance_state_id values (for example, feverish), never reference IDs "
-        "(for example, char_003:feverish); omit base references because base is not "
-        "an appearance state. You do not need to restate the appearance change an "
+        "same ordered panels. appearance_states maps each visible entity_id to its "
+        "appearance_state_id; omit base appearances. You do not need to restate the appearance change an "
         "allocated beat already declares: its entity and target state are added to "
-        "that content item for you. Cite entity_ids and appearance_state_ids for "
+        "that content item for you. Cite entity_ids and appearance_states for "
         "what is visible on the panel beyond those changes. Own actual page count, "
         + page_range_instruction
         + " "
@@ -629,6 +579,15 @@ def _detail_batch_prompt(
     planning["beats"] = [
         beat for beat in planning["beats"] if beat["id"] in target_beat_ids
     ]
+    # Only prune when every target beat has an authored entity scope. Empty
+    # scopes need the complete inventory so a visual-only scene is not starved.
+    scoped = planning["beats"]
+    entity_scope = ({entity_id for beat in scoped for entity_id in beat["entity_ids"]}
+                    if scoped and all(beat["entity_ids"] for beat in scoped) else None)
+    if entity_scope is not None:
+        for beat in scoped:
+            entity_scope.update(change["entity_id"] for change in beat["appearance_changes"])
+            entity_scope.update(item["speaker_entity_id"] for item in beat["lettering"] if item.get("speaker_entity_id"))
     concern_text = ""
     if concerns:
         concern_text = (
@@ -664,7 +623,7 @@ def _detail_batch_prompt(
                 ],
                 "target_page_numbers": [page.page_number for page in target_pages],
                 "planning_view": planning,
-                "approved_visual_reference_inventory": _reference_view(references),
+                "approved_visual_reference_inventory": _reference_view(references, entity_scope),
             },
             ensure_ascii=False,
             separators=(",", ":"),
@@ -739,6 +698,45 @@ def estimate_book_plan_cost(
     return total
 
 
+def _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat):
+    pages = _canonical_pages(adaptation, draft, pin_by_beat, references)
+    validation = validate_book_plan(adaptation, references, target_range, pages)
+    return pages, PlanValidation(
+        invariant_failures=validation.invariant_failures,
+        editorial_issues=_merged_editorial_issues(validation.editorial_issues,
+            draft.editorial_issues, adaptation=adaptation, pages=pages),
+    )
+
+
+def _write_valid_plan(*, artifacts, adaptation, target_range, pages, rhythm_summary, validation) -> BookPlan:
+    """Publish the same canonical contract for small and batched books."""
+    plan = BookPlan(
+        revision=1,
+        adaptation_revision=adaptation.revision,
+        adaptation_sha256=adaptation.content_sha256,
+        target_page_min=target_range.minimum,
+        target_page_max=(
+            max(target_range.maximum, len(pages))
+            if target_range.allow_expansion
+            else target_range.maximum
+        ),
+        rhythm_summary=rhythm_summary,
+        pages=[
+            PlannedPageRevision(
+                page_number=page.page_number,
+                revision=page.revision,
+                content_sha256=page.content_sha256,
+            )
+            for page in pages
+        ],
+        editorial_issues=validation.editorial_issues,
+    )
+    for page in pages:
+        artifacts.write_page(page)
+    artifacts.write_plan(plan)
+    return plan
+
+
 async def _produce_book_plan_one_shot(
     adaptation: BookAdaptation,
     references: ApprovedVisualReferenceInventory,
@@ -785,7 +783,6 @@ async def _produce_book_plan_one_shot(
                 draft = _BookPlanDraft.model_validate(
                     _normalize_book_plan_draft(
                         result.value,
-                        references,
                         adaptation,
                     )
                 )
@@ -799,27 +796,11 @@ async def _produce_book_plan_one_shot(
                 attempt_prompt = _schema_repair_prompt(prompt, result.value, error)
                 continue
             try:
-                pages = _canonical_pages(adaptation, draft, pin_by_beat, references)
+                pages, validation = _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat)
             except PlanInvariantError as allocation_error:
                 validation = allocation_error.validation
             except ValidationError as error:
                 validation = _canonical_page_validation(error)
-            else:
-                validation = validate_book_plan(
-                    adaptation,
-                    references,
-                    target_range,
-                    pages,
-                )
-                validation = PlanValidation(
-                    invariant_failures=validation.invariant_failures,
-                    editorial_issues=_merged_editorial_issues(
-                        validation.editorial_issues,
-                        draft.editorial_issues,
-                        adaptation=adaptation,
-                        pages=pages,
-                    ),
-                )
             history.append(_attempt_record(attempt, validation))
             if not validation.invariant_failures:
                 retryable_issues = tuple(
@@ -862,30 +843,9 @@ async def _produce_book_plan_one_shot(
         if validation.invariant_failures:
             raise PlanInvariantError(validation)
 
-        plan = BookPlan(
-            revision=1,
-            adaptation_revision=adaptation.revision,
-            adaptation_sha256=adaptation.content_sha256,
-            target_page_min=target_range.minimum,
-            target_page_max=(
-                max(target_range.maximum, len(pages))
-                if target_range.allow_expansion
-                else target_range.maximum
-            ),
-            rhythm_summary=draft.rhythm_summary,
-            pages=[
-                PlannedPageRevision(
-                    page_number=page.page_number,
-                    revision=page.revision,
-                    content_sha256=page.content_sha256,
-                )
-                for page in pages
-            ],
-            editorial_issues=validation.editorial_issues,
-        )
-        for page in pages:
-            artifacts.write_page(page)
-        artifacts.write_plan(plan)
+        plan = _write_valid_plan(artifacts=artifacts, adaptation=adaptation,
+            target_range=target_range, pages=pages, rhythm_summary=draft.rhythm_summary,
+            validation=validation)
     return plan
 
 
@@ -1100,7 +1060,6 @@ def _merge_detail_drafts(
                 issue.model_dump(mode="json") for issue in authored_issues
             ],
         },
-        references,
         adaptation,
     )
     return _BookPlanDraft.model_validate(normalized)
@@ -1170,7 +1129,10 @@ async def _produce_book_plan_two_pass(
         ctx.record_item_done()
         ctx.progress(1, total_steps)
         ctx.set_estimated_cost(
-            estimate
+            estimate_text_cost(
+                model, _build_page_map_prompt(adaptation, target_range),
+                output_chars=max(4_000, len(page_map.pages) * 350),
+            )
             + sum(
                 estimate_text_cost(
                     model,
@@ -1223,22 +1185,7 @@ async def _produce_book_plan_two_pass(
             page_map,
             batches,
         )
-        pages = _canonical_pages(adaptation, draft, pin_by_beat, references)
-        validation = validate_book_plan(
-            adaptation,
-            references,
-            target_range,
-            pages,
-        )
-        validation = PlanValidation(
-            invariant_failures=validation.invariant_failures,
-            editorial_issues=_merged_editorial_issues(
-                validation.editorial_issues,
-                draft.editorial_issues,
-                adaptation=adaptation,
-                pages=pages,
-            ),
-        )
+        pages, validation = _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat)
 
         repairable = (
             *validation.invariant_failures,
@@ -1286,22 +1233,7 @@ async def _produce_book_plan_two_pass(
                 page_map,
                 batches,
             )
-            pages = _canonical_pages(adaptation, draft, pin_by_beat, references)
-            validation = validate_book_plan(
-                adaptation,
-                references,
-                target_range,
-                pages,
-            )
-            validation = PlanValidation(
-                invariant_failures=validation.invariant_failures,
-                editorial_issues=_merged_editorial_issues(
-                    validation.editorial_issues,
-                    draft.editorial_issues,
-                    adaptation=adaptation,
-                    pages=pages,
-                ),
-            )
+            pages, validation = _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat)
 
         _persist_validation(
             artifacts,
@@ -1311,30 +1243,9 @@ async def _produce_book_plan_two_pass(
         )
         if validation.invariant_failures:
             raise PlanInvariantError(validation)
-        plan = BookPlan(
-            revision=1,
-            adaptation_revision=adaptation.revision,
-            adaptation_sha256=adaptation.content_sha256,
-            target_page_min=target_range.minimum,
-            target_page_max=(
-                max(target_range.maximum, len(pages))
-                if target_range.allow_expansion
-                else target_range.maximum
-            ),
-            rhythm_summary=page_map.rhythm_summary,
-            pages=[
-                PlannedPageRevision(
-                    page_number=page.page_number,
-                    revision=page.revision,
-                    content_sha256=page.content_sha256,
-                )
-                for page in pages
-            ],
-            editorial_issues=validation.editorial_issues,
-        )
-        for page in pages:
-            artifacts.write_page(page)
-        artifacts.write_plan(plan)
+        plan = _write_valid_plan(artifacts=artifacts, adaptation=adaptation,
+            target_range=target_range, pages=pages, rhythm_summary=page_map.rhythm_summary,
+            validation=validation)
         ctx.record_item_done()
         ctx.progress(total_steps, total_steps)
     return plan
@@ -1353,6 +1264,9 @@ async def produce_book_plan(
     author_pins: tuple[AuthorGeometryPin, ...] | list[AuthorGeometryPin] = (),
 ) -> BookPlan:
     """Produce one canonical plan through the cheapest quality-safe workflow."""
+
+    from novel_to_comic.generation_checkpoints import checkpointed_generator
+    generate = checkpointed_generator(generate, artifacts=artifacts, stage="plan", model=model)
 
     if len(adaptation.beats) < _TWO_PASS_PLAN_MIN_BEATS:
         return await _produce_book_plan_one_shot(
@@ -1549,7 +1463,7 @@ def _derived_state_citations(
     content: "_PageContentDraft",
     beat_by_id: Mapping[str, Any],
     approved_pairs: set[tuple[str, str]],
-) -> tuple[tuple[str, ...], tuple[str, ...], list[tuple[str, str, str]]]:
+) -> tuple[tuple[str, ...], dict[str, str], list[tuple[str, str, str]]]:
     """Fold each carried beat's appearance changes into the content citations.
 
     Which entity changes into which state on which beat is Adapt's decision,
@@ -1561,8 +1475,8 @@ def _derived_state_citations(
     """
 
     entity_ids = list(content.entity_ids)
-    state_ids = list(content.appearance_state_ids)
-    unapproved: list[tuple[str, str]] = []
+    states = dict(content.appearance_states)
+    unapproved: list[tuple[str, str, str]] = []
     for beat_id in content.beat_ids:
         beat = beat_by_id.get(beat_id)
         if beat is None:
@@ -1573,9 +1487,8 @@ def _derived_state_citations(
                 continue
             if change.entity_id not in entity_ids:
                 entity_ids.append(change.entity_id)
-            if change.to_state_id not in state_ids:
-                state_ids.append(change.to_state_id)
-    return tuple(entity_ids), tuple(state_ids), unapproved
+            states[change.entity_id] = change.to_state_id
+    return tuple(entity_ids), states, unapproved
 
 
 def _derived_speaker_citations(
@@ -1616,11 +1529,6 @@ def _canonical_pages(
     }
     beat_by_id = {beat.id: beat for beat in adaptation.beats}
     approved_pairs = _approved_state_pairs(references)
-    state_owner_by_id = {
-        reference.appearance_state_id: reference.entity_id
-        for reference in references.references
-        if reference.appearance_state_id is not None
-    }
     unapproved_changes: list[tuple[str, str, str]] = []
     claimed: set[str] = set()
     active_state_by_entity: dict[str, str] = {}
@@ -1699,7 +1607,7 @@ def _canonical_pages(
                     )
                 claimed.add(lettering_id)
                 lettering.append(item)
-            entity_ids, state_ids, unapproved = _derived_state_citations(
+            entity_ids, states, unapproved = _derived_state_citations(
                 content,
                 beat_by_id,
                 approved_pairs,
@@ -1719,30 +1627,18 @@ def _canonical_pages(
             # keep using that state authority until the next change. An
             # explicit state citation remains authoritative so timeline or
             # composite imagery can intentionally show an earlier look.
-            explicitly_stated_entities = {
-                state_owner_by_id[state_id]
-                for state_id in state_ids
-                if state_id in state_owner_by_id
-            }
-            carried_state_ids = list(state_ids)
             for entity_id in entity_ids:
-                active_state = active_state_by_entity.get(entity_id)
-                if (
-                    active_state is not None
-                    and entity_id not in explicitly_stated_entities
-                    and active_state not in carried_state_ids
-                ):
-                    carried_state_ids.append(active_state)
-            state_ids = tuple(carried_state_ids)
+                if entity_id in active_state_by_entity:
+                    states.setdefault(entity_id, active_state_by_entity[entity_id])
             unapproved_changes.extend(unapproved)
             payload = content.model_dump(
-                exclude={"lettering_ids", "entity_ids", "appearance_state_ids"}
+                exclude={"lettering_ids", "entity_ids", "appearance_states"}
             )
             content_items.append(
                 PageContent(
                     **payload,
                     entity_ids=entity_ids,
-                    appearance_state_ids=state_ids,
+                    appearance_states=states,
                     lettering=tuple(lettering),
                     pinned_geometry=_geometry_for_content(
                         content.beat_ids,
@@ -2245,16 +2141,7 @@ def validate_book_plan(
             )
 
     known_entities = {reference.entity_id for reference in references.references}
-    known_states = {
-        reference.appearance_state_id
-        for reference in references.references
-        if reference.appearance_state_id is not None
-    }
-    state_owners = {
-        reference.appearance_state_id: reference.entity_id
-        for reference in references.references
-        if reference.appearance_state_id is not None
-    }
+    known_states = _approved_state_pairs(references)
     unknown_entities = sorted(
         {
             entity_id
@@ -2266,11 +2153,11 @@ def validate_book_plan(
     )
     unknown_states = sorted(
         {
-            state_id
+            f"{entity_id}:{state_id}"
             for page in pages
             for content in page.content
-            for state_id in content.appearance_state_ids
-            if state_id not in known_states
+            for entity_id, state_id in content.appearance_states.items()
+            if (entity_id, state_id) not in known_states
         }
     )
     if unknown_entities or unknown_states:
@@ -2288,32 +2175,6 @@ def validate_book_plan(
             )
         )
 
-    for page in pages:
-        for content in page.content:
-            for state_id in content.appearance_state_ids:
-                owner_id = state_owners.get(state_id)
-                if owner_id is not None and owner_id not in content.entity_ids:
-                    failures.append(
-                        InvariantFailure(
-                            id=(
-                                "plan_failure_reference_state_owner_"
-                                f"{content.id}_{state_id}"
-                            ),
-                            owner_stage="plan",
-                            code="reference_authority",
-                            message=(
-                                "A page-scoped appearance state must cite its "
-                                "authoritative entity."
-                            ),
-                            artifact_ids=[content.id, owner_id, state_id],
-                            evidence=[
-                                f"Appearance state {state_id!r} belongs to "
-                                f"{owner_id!r}, which is absent from content "
-                                f"{content.id!r}."
-                            ],
-                        )
-                    )
-
     beat_by_id = {beat.id: beat for beat in adaptation.beats}
     for page in pages:
         for content in page.content:
@@ -2324,7 +2185,7 @@ def validate_book_plan(
                 for change in beat.appearance_changes:
                     if (
                         change.entity_id not in content.entity_ids
-                        or change.to_state_id not in content.appearance_state_ids
+                        or content.appearance_states.get(change.entity_id) != change.to_state_id
                     ):
                         failures.append(
                             InvariantFailure(

@@ -1,20 +1,11 @@
-"""Models for character appearance over story time.
+"""Appearance catalogs and timelines shared by characters, locations, and props.
 
-A character's look can change across the narrative — e.g. The Girl Without
-Hands: real hands → bloodied stumps → silver prostheses → restored hands. The
-base look lives on ``Character.visual_anchor``; each subsequent change is a
-``StateActivation`` at a ``StoryPosition``. The active look for any panel is
-resolved by ``appearance.active_state`` — explicitly, never by fuzzy text
-matching.
-
-Locations use the SAME model — an ``AppearanceState`` catalog plus an
-``appearance_timeline`` — resolved per panel by ``appearance.active_state``.
-This is the one mechanism for every entity whose visible look changes over the
-story; the draw stage still keys per-state location plates off the resolved
-the book adaptation and page plan.
+Adapt records changes; Plan explicitly assigns each visible entity its state.
+Anchors are self-contained, verbatim authorities. Conditioning uses declared
+changed facets and identity replacement, never inferred prose keywords.
 """
 
-from typing import Optional
+from typing import Optional, Literal
 
 from pydantic import BaseModel
 
@@ -71,6 +62,13 @@ class AppearanceState(BaseModel):
     # cracked mud, not water"). Injected as a hard constraint and into the brief
     # pass whenever this state is the active, visually-significant look.
     continuity_guard: Optional[str] = None
+    changed_facets: tuple[Literal[
+        "age", "hair", "face", "build", "anatomy", "clothing", "damage",
+        "weather", "light", "water_level", "architecture", "landmarks",
+        "materials", "atmosphere", "shape", "contents", "color",
+    ], ...] = ()
+    replaces_identity: bool = False
+
 
 
 class StateActivation(BaseModel):

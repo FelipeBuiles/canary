@@ -185,9 +185,9 @@ class _BlueprintBeat(BaseModel):
         ],
         ...,
     ] = ()
-    brief_requirements: tuple[str, ...] = ()
     brief_requirement_ids: tuple[str, ...] = ()
     source_unit_ids: tuple[str, ...] = Field(min_length=1)
+    entity_ids: tuple[str, ...] = ()
     transitions: tuple[ContinuityTransition, ...] = ()
     appearance_changes: tuple[AppearanceChange, ...] = ()
 
@@ -310,37 +310,11 @@ def _canonicalize_draft_requirements(
     draft: _BookDraft,
     brief: AdaptationBrief,
 ) -> _BookDraft:
-    """Reconcile exact approved wording and stable IDs on adapted beats."""
-
-    registry = _requirement_registry(brief)
-    id_by_requirement = {
-        requirement: requirement_id for requirement_id, requirement in registry.items()
-    }
-    beats: list[AdaptedBeat] = []
-    for beat in draft.beats:
-        requirement_ids = list(beat.brief_requirement_ids)
-        requirement_ids.extend(
-            id_by_requirement[requirement]
-            for requirement in beat.brief_requirements
-            if requirement in id_by_requirement
-        )
-        requirement_ids = list(dict.fromkeys(requirement_ids))
-
-        requirements = list(beat.brief_requirements)
-        requirements.extend(
-            registry[requirement_id]
-            for requirement_id in requirement_ids
-            if requirement_id in registry
-        )
-        beats.append(
-            beat.model_copy(
-                update={
-                    "brief_requirement_ids": tuple(requirement_ids),
-                    "brief_requirements": tuple(dict.fromkeys(requirements)),
-                }
-            )
-        )
-    return draft.model_copy(update={"beats": tuple(beats)})
+    """Keep one stable requirement citation per beat; text lives in the Brief."""
+    return draft.model_copy(update={"beats": tuple(
+        beat.model_copy(update={"brief_requirement_ids": tuple(dict.fromkeys(beat.brief_requirement_ids))})
+        for beat in draft.beats
+    )})
 
 
 def _canonicalize_candidate_requirements(
@@ -383,58 +357,8 @@ def _canonicalize_candidate_requirements(
         brief,
     )
     beats = list(draft.beats)
-    registry = _requirement_registry(brief)
-    for requirement_id, requirement in registry.items():
-        if any(requirement_id in beat.brief_requirement_ids for beat in beats):
-            continue
-        prefix, raw_index = requirement_id.rsplit("_", 1)
-        candidates = beats
-        if prefix == "essential_event":
-            requirement_index = int(raw_index)
-            lower = max(
-                (
-                    beat.order
-                    for beat in beats
-                    for assigned_id in beat.brief_requirement_ids
-                    if assigned_id.startswith("essential_event_")
-                    and int(assigned_id.rsplit("_", 1)[1]) < requirement_index
-                ),
-                default=1,
-            )
-            upper = min(
-                (
-                    beat.order
-                    for beat in beats
-                    for assigned_id in beat.brief_requirement_ids
-                    if assigned_id.startswith("essential_event_")
-                    and int(assigned_id.rsplit("_", 1)[1]) > requirement_index
-                ),
-                default=len(beats),
-            )
-            candidates = [beat for beat in beats if lower <= beat.order <= upper]
-        best, overlap = _closest_requirement_beat(
-            candidates,
-            requirement=requirement,
-            story_function=(
-                "causal_event" if prefix == "essential_event" else "character_turn"
-            ),
-        )
-        if best is None or overlap < 2:
-            continue
-        beat_index = beats.index(best)
-        beats[beat_index] = best.model_copy(
-            update={
-                "brief_requirement_ids": (
-                    *best.brief_requirement_ids,
-                    requirement_id,
-                ),
-                "brief_requirements": (
-                    *best.brief_requirements,
-                    requirement,
-                ),
-            }
-        )
-
+    # Missing requirement citations are validation failures. Word overlap is not
+    # evidence that a story requirement was actually realized.
     canonical = BookAdaptation.model_validate(
         {
             **candidate.model_dump(mode="json"),
@@ -580,7 +504,6 @@ def _closest_requirement_beat(
         searchable = " ".join(
             (
                 beat.summary,
-                *beat.brief_requirements,
                 *(item.text for item in beat.lettering),
             )
         )
@@ -877,7 +800,12 @@ def _story_bible_view(
             for location in story_bible.locations
             if scene_ids is None or location.id in location_ids
         ],
-        "props": [{"id": prop.id, "name": prop.name} for prop in story_bible.props],
+        "props": [
+            {"id": prop.id, "name": prop.name,
+             "appearance_states": [state.model_dump(mode="json") for state in prop.appearance_states],
+             "appearance_timeline": [item.model_dump(mode="json") for item in prop.appearance_timeline]}
+            for prop in story_bible.props
+        ],
         "scenes": [
             {
                 "id": scene.id,
@@ -1092,12 +1020,14 @@ def build_book_adaptation_prompt(
         "reactions, consequences, transitions, aftermath, character turns, and "
         "appearance-state changes explicitly. Every continuity transition must "
         "set scope_id to a stable Story Bible entity ID for knowledge/emotion, or "
-        "a stable narrative-thread ID for time/place. Copy each approved essential "
-        "event and character turn from the brief into brief_requirements on the "
-        "beat that carries it, and copy its stable registry key into "
-        "brief_requirement_ids. The target page range is not a beat-count target: "
+        "a stable narrative-thread ID for time/place. Cite each approved requirement "
+        "by its stable registry key in brief_requirement_ids on the beat that "
+        "actually realizes it. Do not repeat requirement text in the beat contract. "
+        "The target page range is not a beat-count target: "
         "derive granularity from the story rather than producing one beat per page. "
-        "Each adapted beat should carry one drawable story moment. Split compound "
+        "Each adapted beat should carry one drawable story moment. List its visible "
+        "character, location, and recurring prop IDs in entity_ids using the Story Bible; "
+        "do not invent IDs or omit props whose appearance matters. Split compound "
         "action, reaction, transition, reveal, consequence, and aftermath into "
         "separate visual beats whenever each moment needs distinct visual weight; "
         "never pad by duplicating content. "
@@ -2802,7 +2732,6 @@ def _best_requirement_beat(
         searchable = " ".join(
             (
                 beat.summary,
-                *beat.brief_requirements,
                 *(item.text for item in beat.lettering),
             )
         )
@@ -2823,6 +2752,16 @@ def validate_book_adaptation(
 
     failures: list[InvariantFailure] = []
     issues: list[EditorialIssue] = []
+    if story_bible is not None:
+        known_entities = {entity.id for entity in (*story_bible.characters, *story_bible.locations, *story_bible.props)}
+        unknown_entities = {entity_id for beat in adaptation.beats for entity_id in beat.entity_ids} - known_entities
+        if unknown_entities:
+            failures.append(InvariantFailure(
+                id="adapt_failure_unknown_entity", owner_stage="adapt", code="unknown_entity",
+                message="Visible entity citations must resolve in the Story Bible.",
+                artifact_ids=tuple(sorted(unknown_entities)),
+                evidence=(f"Unknown entity IDs: {sorted(unknown_entities)!r}",),
+            ))
     if adaptation.source_sha256 != source.source_sha256:
         failures.append(
             InvariantFailure(
@@ -3027,14 +2966,21 @@ def validate_book_adaptation(
             )
         )
 
-    # Stable IDs carry identity; the accompanying strings remain editorial
-    # wording and may be paraphrased without manufacturing a missing requirement.
+    # The approved Brief is the sole requirement text registry.
     registry = _requirement_registry(brief)
     covered_requirement_ids = {
         requirement_id
         for beat in adaptation.beats
         for requirement_id in beat.brief_requirement_ids
     }
+    unknown_requirement_ids = covered_requirement_ids - set(registry)
+    if unknown_requirement_ids:
+        failures.append(InvariantFailure(
+            id="adapt_failure_unknown_requirement", owner_stage="adapt", code="unknown_requirement",
+            message="Requirement citations must resolve in the approved Brief registry.",
+            artifact_ids=tuple(sorted(unknown_requirement_ids)),
+            evidence=(f"Unknown requirement IDs: {sorted(unknown_requirement_ids)!r}",),
+        ))
     for prefix, requirements, treatment_ids, code, label, story_function in (
         (
             "essential_event",

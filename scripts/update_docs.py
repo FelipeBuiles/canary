@@ -72,7 +72,7 @@ def write_config_fields_doc(fields: list[dict]) -> None:
         lines.append(f"| `{f['name']}` | `{f['type']}` | {f['default']} | {f['comment']} |\n")
 
     out = REFS / "config-fields.md"
-    out.write_text("".join(lines))
+    out.write_text("".join(lines).rstrip() + "\n")
     print(f"  wrote {out.relative_to(ROOT)}")
 
 
@@ -138,7 +138,7 @@ def write_models_doc(models: dict) -> None:
         lines.append("\n")
 
     out = REFS / "models.md"
-    out.write_text("".join(lines))
+    out.write_text("".join(lines).rstrip() + "\n")
     print(f"  wrote {out.relative_to(ROOT)}")
 
 
@@ -212,7 +212,7 @@ def write_api_routes_doc(routes: list[dict]) -> None:
     ]
 
     out = REFS / "api-routes.md"
-    out.write_text("".join(lines))
+    out.write_text("".join(lines).rstrip() + "\n")
     print(f"  wrote {out.relative_to(ROOT)}")
 
 

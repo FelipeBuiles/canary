@@ -2492,14 +2492,7 @@ def test_mechanical_allocation_and_reference_ids_are_canonicalized(
                         "entity_ids": ["character_johansen", "location_alert"],
                         # Exact production slip: reference IDs are copied into
                         # the appearance-state field, including base references.
-                        "appearance_state_ids": [
-                            "character_johansen:base",
-                            "character_johansen:johansen_soaked",
-                            "location_alert:base",
-                            # Production slip: an entity ID was emitted in the
-                            # appearance-state field and must be discarded.
-                            "loc_001",
-                        ],
+                        "appearance_states": {"character_johansen": "johansen_soaked"},
                     }
                 ],
                 "reading_order": [
@@ -2561,13 +2554,9 @@ def test_mechanical_allocation_and_reference_ids_are_canonicalized(
 
     assert len(calls) == 1
     assert len(plan.pages) == 2
-    assert artifacts.read_page(1).content[0].appearance_state_ids == (
-        "johansen_soaked",
-    )
+    assert artifacts.read_page(1).content[0].appearance_states == {"character_johansen": "johansen_soaked"}
     assert artifacts.read_page(2).content[0].beat_ids == ("beat_0002",)
-    assert artifacts.read_page(2).content[0].appearance_state_ids == (
-        "johansen_soaked",
-    )
+    assert artifacts.read_page(2).content[0].appearance_states == {"character_johansen": "johansen_soaked"}
 
 
 def test_an_adapted_beat_may_expand_across_adjacent_planned_panels(
@@ -2945,7 +2934,7 @@ def test_an_adapted_appearance_change_is_derived_into_the_page_citations(
     assert len(calls) == 1
     content = artifacts.read_page(1).content[0]
     assert content.entity_ids == ("location_alert", "character_johansen")
-    assert content.appearance_state_ids == ("johansen_soaked",)
+    assert content.appearance_states == {"character_johansen": "johansen_soaked"}
     validation = artifacts.read_validation("plan")
     assert validation.invariant_failures == ()
 
@@ -2959,7 +2948,7 @@ def test_deriving_an_appearance_change_never_duplicates_a_cited_id(
         _two_page_response(
             {
                 "entity_ids": ["character_johansen", "location_alert"],
-                "appearance_state_ids": ["johansen_soaked"],
+                "appearance_states": {"character_johansen": "johansen_soaked"},
             }
         ),
         tmp_path,
@@ -2968,7 +2957,7 @@ def test_deriving_an_appearance_change_never_duplicates_a_cited_id(
     assert isinstance(plan, BookPlan)
     content = artifacts.read_page(1).content[0]
     assert content.entity_ids == ("character_johansen", "location_alert")
-    assert content.appearance_state_ids == ("johansen_soaked",)
+    assert content.appearance_states == {"character_johansen": "johansen_soaked"}
 
 
 def test_an_unapproved_appearance_state_is_attributed_to_adapt_not_repaired(
@@ -3001,3 +2990,21 @@ def test_an_unapproved_appearance_state_is_attributed_to_adapt_not_repaired(
     assert validation.attempt_history[0].invariant_codes == (
         "unapproved_appearance_state",
     )
+
+
+def test_detail_context_prunes_only_explicit_scopes_and_keeps_speakers():
+    from novel_to_comic.page_planning import _BookPageMap, _detail_batch_prompt
+
+    adaptation = _adaptation()
+    beats = tuple(beat.model_copy(update={'entity_ids': ('location_alert',)}) for beat in adaptation.beats)
+    second = beats[1].model_copy(update={'lettering': (beats[1].lettering[0].model_copy(update={'speaker_entity_id': 'character_johansen'}),)})
+    adaptation = adaptation.model_copy(update={'beats': (beats[0], second)})
+    inventory = _inventory().model_copy(update={'references': (*_inventory().references,
+        ApprovedVisualReference(id='unrelated', entity_id='unrelated', visual_anchor='unrelated distant mansion'))})
+    mapping = _BookPageMap(rhythm_summary='Two beats.', pages=(
+        _PageMapEntry(page_number=1, beat_ids=tuple(beat.id for beat in beats), emphasis='release', density_intent='standard', rhythm_intent='Two beats.'),
+    ))
+    prompt = _detail_batch_prompt(adaptation, inventory, mapping, start=0, stop=1)
+    assert 'unrelated distant mansion' not in prompt
+    assert 'gaunt Norwegian sailor' in prompt
+    assert 'small steam yacht' in prompt

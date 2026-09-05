@@ -54,9 +54,6 @@
         "causal_event",
         "reveal"
       ],
-      "brief_requirements": [
-        "Johansen sees the titan rise."
-      ],
       "brief_requirement_ids": [
         "essential_event_001"
       ],
@@ -86,7 +83,6 @@
         "causal_event",
         "consequence"
       ],
-      "brief_requirements": [],
       "brief_requirement_ids": [],
       "source_unit_ids": [
         "source_000002",
@@ -114,9 +110,6 @@
       "story_functions": [
         "transition",
         "character_turn"
-      ],
-      "brief_requirements": [
-        "Johansen abandons any hope of an ordinary life."
       ],
       "brief_requirement_ids": [
         "character_turn_001"

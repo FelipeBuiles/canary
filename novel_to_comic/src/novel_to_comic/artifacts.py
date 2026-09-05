@@ -285,3 +285,7 @@ def export_pdf_path(project_dir: Path) -> Path:
 
 def export_cbz_path(project_dir: Path) -> Path:
     return project_dir / "exports" / "comic.cbz"
+
+
+def prop_state_ref_path(project_dir: Path, prop_id: str, state_id: str) -> Path:
+    return project_dir / "refs" / "props" / prop_id / "states" / state_id / "ref.png"

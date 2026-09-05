@@ -4,356 +4,468 @@ _Auto-generated from `models/*.py`. Do not edit manually._
 
 These are the Pydantic models that flow between pipeline stages. `story_bible.json` carries the StoryBible. `panels/scene_NNN/panel_NNN.json` carries PanelBreakdown. `prompts/scene_NNN/panel_NNN.json` carries ImagePrompt. `assembly/pages/page_NNN.json` carries ComicPage.
 
-## Bubble _(comic_page.py)_
+## RevisionedArtifact _(adaptation.py)_
 
 | Field | Type | Default |
 |-------|------|---------|
-| `id` | `str` |  |
-| `type` | `Literal['speech', 'thought', 'narration']` | `'speech'` |
-| `text` | `str` |  |
-| `speaker_id` | `str | None` | `None` |
-| `speaker_name` | `str | None` | `None` |
-| `source_beat_id` | `str | None` | `None` |
-| `source_text` | `str | None` | `None` |
-| `narration_mode` | `str | None` | `None` |
-| `preferred_zone` | `str | None` | `None` |
-| `side` | `Literal['left', 'right', 'center']` | `'left'` |
-| `full_width` | `bool | None` | `None` |
-| `x` | `float | None` | `None` |
-| `y` | `float | None` | `None` |
-| `width` | `float | None` | `None` |
-| `tail_x` | `float | None` | `None` |
-| `tail_y` | `float | None` | `None` |
-| `tail_direction` | `Literal['auto', 'up', 'down']` | `'auto'` |
-| `font_family` | `str | None` | `None` |
-| `font_size` | `int | None` | `None` |
-| `font_color` | `str | None` | `None` |
-| `fill_color` | `str | None` | `None` |
-| `border_color` | `str | None` | `None` |
-| `border_width` | `int | None` | `None` |
+| `revision` | `int` | `Field(ge=1)` |
+| `content_sha256` | `str` | `''` |
 
-## Sfx _(comic_page.py)_
+## NarrativeTreatment _(adaptation.py)_
 
 | Field | Type | Default |
 |-------|------|---------|
-| `text` | `str` |  |
-| `kind` | `SfxKind` | `'impact'` |
-| `intensity` | `Literal[1, 2, 3]` | `2` |
-| `anchor` | `SfxAnchor` | `'auto'` |
-| `x` | `float | None` | `None` |
-| `y` | `float | None` | `None` |
-| `rotation` | `float` | `-4.0` |
-| `font_size` | `int | None` | `None` |
+| `causal_spine` | `tuple[str, ...]` | `Field(min_length=1)` |
+| `character_arcs` | `tuple[str, ...]` | `()` |
+| `essential_events` | `tuple[str, ...]` | `()` |
+| `essential_event_ids` | `tuple[str, ...]` | `()` |
+| `character_turns` | `tuple[str, ...]` | `()` |
+| `character_turn_ids` | `tuple[str, ...]` | `()` |
+| `reveals` | `tuple[str, ...]` | `()` |
+| `reactions` | `tuple[str, ...]` | `()` |
+| `consequences` | `tuple[str, ...]` | `()` |
+| `transitions` | `tuple[str, ...]` | `()` |
+| `aftermath` | `tuple[str, ...]` | `()` |
+| `motifs` | `tuple[str, ...]` | `()` |
+| `relative_emphasis` | `tuple[str, ...]` | `()` |
 
-## PagePanel _(comic_page.py)_
-
-| Field | Type | Default |
-|-------|------|---------|
-| `id` | `str` |  |
-| `planned_panel_id` | `str | None` | `None` |
-| `image_path` | `str` |  |
-| `scene_id` | `str` |  |
-| `panel_number` | `int` |  |
-| `importance` | `str | None` | `None` |
-| `generation_mode` | `str | None` | `None` |
-| `bubbles` | `list[Bubble]` | `Field(default_factory=list)` |
-| `sfx` | `list[Sfx]` | `Field(default_factory=list)` |
-| `image_offset_x` | `float | None` | `None` |
-| `image_offset_y` | `float | None` | `None` |
-| `grid_column` | `str | None` | `None` |
-| `grid_row` | `str | None` | `None` |
-| `x` | `float | None` | `None` |
-| `y` | `float | None` | `None` |
-| `width` | `float | None` | `None` |
-| `height` | `float | None` | `None` |
-| `clip_path` | `str | None` | `None` |
-| `z_index` | `int | None` | `None` |
-| `shape_intent` | `str | None` | `None` |
-
-## ComicPage _(comic_page.py)_
+## LetteringItem _(adaptation.py)_
 
 | Field | Type | Default |
 |-------|------|---------|
-| `page_number` | `int` |  |
-| `source_page_id` | `str | None` | `None` |
-| `layout` | `str` | `'4'` |
-| `layout_mode` | `Literal['grid', 'freeform']` | `'grid'` |
-| `panels` | `list[PagePanel]` | `Field(default_factory=list)` |
+| `id` | `str` | `Field(min_length=1)` |
+| `kind` | `Literal['dialogue', 'thought', 'caption', 'sfx']` |  |
+| `text` | `str` | `Field(min_length=1)` |
+| `speaker` | `str | None` | `None` |
+| `speaker_entity_id` | `str | None` | `None` |
+| `delivery` | `Literal['onscreen', 'offscreen', 'narration', 'quoted_text', 'display'] | None` | `None` |
+| `source_unit_ids` | `tuple[str, ...]` | `()` |
 
-## LayoutPlanBeatRef _(layout_plan.py)_
-
-| Field | Type | Default |
-|-------|------|---------|
-| `beat_id` | `str` |  |
-| `scene_id` | `str` |  |
-| `beat_index` | `int` |  |
-| `type` | `str` |  |
-| `character_id` | `str | None` | `None` |
-| `content` | `str` |  |
-| `source_text` | `str | None` | `None` |
-| `direction` | `str | None` | `None` |
-| `transition_type` | `str | None` | `None` |
-| `narration_reason` | `str | None` | `None` |
-| `emphasis_hint` | `str | None` | `None` |
-| `shot_hint` | `str | None` | `None` |
-| `transition_significance` | `str | None` | `None` |
-
-## NarrationDecision _(layout_plan.py)_
+## AppearanceChange _(adaptation.py)_
 
 | Field | Type | Default |
 |-------|------|---------|
-| `beat_id` | `str` |  |
-| `scene_id` | `str` |  |
-| `beat_index` | `int` |  |
-| `source_text` | `str` |  |
-| `caption_text` | `str | None` | `None` |
-| `candidate_reason` | `str | None` | `None` |
-| `decision` | `NarrationDecisionStatus` |  |
-| `mode` | `NarrationMode | None` | `None` |
-| `panel_id` | `str | None` | `None` |
-| `preferred_zone` | `CaptionZone` | `'top'` |
-| `decision_reason` | `str` |  |
-| `fallback_decision` | `bool` | `False` |
-| `caption_text_override` | `str | None` | `None` |
+| `entity_id` | `str` | `Field(min_length=1)` |
+| `from_state_id` | `str | None` | `None` |
+| `to_state_id` | `str` | `Field(min_length=1)` |
+| `description` | `str` | `Field(min_length=1)` |
 
-## PanelGeometry _(layout_plan.py)_
+## ContinuityTransition _(adaptation.py)_
 
 | Field | Type | Default |
 |-------|------|---------|
-| `panel_id` | `str` |  |
-| `shape_intent` | `ShapeIntent` | `'rect'` |
-| `region` | `list[float]` | `Field(default_factory=lambda: [0.0, 0.0, 1.0, 1...` |
-| `polygon` | `list[list[float]]` | `Field(default_factory=list)` |
-| `aspect_ratio` | `float | None` | `None` |
-| `bleed` | `bool` | `False` |
-| `z_index` | `int` | `0` |
+| `dimension` | `Literal['time', 'place', 'knowledge', 'emotional_state']` |  |
+| `scope_id` | `str` | `Field(min_length=1, description='Stable charact...` |
+| `from_state` | `str` | `Field(min_length=1)` |
+| `to_state` | `str` | `Field(min_length=1)` |
+| `description` | `str` | `Field(min_length=1)` |
 
-## LLMPanelSpec _(layout_plan.py)_
+## AdaptedBeat _(adaptation.py)_
 
 | Field | Type | Default |
 |-------|------|---------|
-| `beat_indices` | `list[int]` |  |
-| `characters_present` | `list[str]` | `Field(default_factory=list)` |
-| `character_actions` | `dict[str, str]` | `Field(default_factory=dict)` |
-| `character_expressions` | `dict[str, str]` | `Field(default_factory=dict)` |
-| `key_objects` | `list[str]` | `Field(default_factory=list)` |
-| `visual_requirements` | `list[str]` | `Field(default_factory=list)` |
-| `shot_type` | `str` | `'medium'` |
-| `camera_angle` | `str` | `'eye-level'` |
-| `camera_note` | `str` | `''` |
-| `lighting` | `str` | `''` |
-| `mood` | `str` | `'neutral'` |
-| `background_description` | `str` | `''` |
-| `importance` | `PanelImportance` | `'standard'` |
-| `shape_intent` | `ShapeIntent` | `'rect'` |
-| `transition_out` | `str | None` | `None` |
-| `page_break_after` | `bool` | `False` |
-| `location_state_id` | `str | None` | `None` |
+| `id` | `str` | `Field(min_length=1)` |
+| `order` | `int` | `Field(ge=1)` |
+| `summary` | `str` | `Field(min_length=1)` |
+| `narrative_function` | `Literal['establisher', 'initial', 'prolongation', 'peak', 'release', 'transition']` |  |
+| `story_functions` | `tuple[Literal['causal_event', 'reveal', 'reaction', 'consequence', 'transition', 'aftermath', 'character_turn'], ...]` | `()` |
+| `brief_requirement_ids` | `tuple[str, ...]` | `()` |
+| `source_unit_ids` | `tuple[str, ...]` | `Field(min_length=1)` |
+| `entity_ids` | `tuple[str, ...]` | `()` |
+| `lettering` | `tuple[LetteringItem, ...]` | `()` |
+| `transitions` | `tuple[ContinuityTransition, ...]` | `()` |
+| `appearance_changes` | `tuple[AppearanceChange, ...]` | `()` |
 
-## LLMNarrationDecisionSpec _(layout_plan.py)_
+## AdaptationLedgerEntry _(adaptation.py)_
 
 | Field | Type | Default |
 |-------|------|---------|
-| `beat_index` | `int` |  |
-| `decision` | `NarrationDecisionStatus` |  |
-| `mode` | `NarrationMode | None` | `None` |
-| `panel_index` | `int | None` | `None` |
-| `preferred_zone` | `CaptionZone` | `'top'` |
-| `decision_reason` | `str` |  |
+| `source_unit_id` | `str` | `Field(min_length=1)` |
+| `disposition` | `Literal['depicted', 'dialogue', 'thought', 'caption', 'visual_motif', 'compressed_into', 'intentionally_omitted']` |  |
+| `adapted_beat_ids` | `tuple[str, ...]` | `()` |
+| `reason` | `str | None` | `None` |
+| `preserved_function` | `str` | `Field(min_length=1)` |
 
-## PlannedSfx _(layout_plan.py)_
-
-| Field | Type | Default |
-|-------|------|---------|
-| `text` | `str` |  |
-| `kind` | `SfxKind` | `'impact'` |
-| `intensity` | `Literal[1, 2, 3]` | `2` |
-
-## PlannedPanel _(layout_plan.py)_
-
-| Field | Type | Default |
-|-------|------|---------|
-| `panel_id` | `str` |  |
-| `scene_id` | `str` |  |
-| `panel_number` | `int` |  |
-| `beat_ids` | `list[str]` | `Field(default_factory=list)` |
-| `importance` | `PanelImportance` | `'standard'` |
-| `shape_intent` | `ShapeIntent` | `'rect'` |
-| `aspect_preference` | `float | None` | `None` |
-| `aspect_range` | `list[float]` | `Field(default_factory=list)` |
-| `generation_aspect_ratio` | `float | None` | `None` |
-| `generation_width` | `int | None` | `None` |
-| `generation_height` | `int | None` | `None` |
-| `generation_shape` | `GenerationShape | None` | `None` |
-| `generation_aspect_source` | `GenerationAspectSource | None` | `None` |
-| `crop_policy` | `str` | `'flexible'` |
-| `dialogue_load` | `int` | `0` |
-| `caption_load` | `int` | `0` |
-| `transition_in` | `str | None` | `None` |
-| `transition_out` | `str | None` | `None` |
-| `generation_mode` | `GenerationMode` | `'master'` |
-| `image_fit_status` | `ImageFitStatus` | `'unknown'` |
-| `regeneration_status` | `RegenerationStatus` | `'not_needed'` |
-| `shot_type` | `str` | `'medium'` |
-| `camera_angle` | `str` | `'eye-level'` |
-| `characters_present` | `list[str]` | `Field(default_factory=list)` |
-| `character_actions` | `dict[str, str]` | `Field(default_factory=dict)` |
-| `character_expressions` | `dict[str, str]` | `Field(default_factory=dict)` |
-| `character_positions` | `dict[str, str]` | `Field(default_factory=dict)` |
-| `key_objects` | `list[str]` | `Field(default_factory=list)` |
-| `visual_requirements` | `list[str]` | `Field(default_factory=list)` |
-| `background_description` | `str` | `''` |
-| `camera_note` | `str` | `''` |
-| `lighting` | `str` | `''` |
-| `mood` | `str` | `''` |
-| `dialogue` | `list[dict[str, str | None]]` | `Field(default_factory=list)` |
-| `sfx` | `list[PlannedSfx]` | `Field(default_factory=list)` |
-| `has_narration_caption` | `bool` | `False` |
-| `narration_mode` | `NarrationMode | None` | `None` |
-| `preferred_caption_zone` | `CaptionZone | None` | `None` |
-| `page_break_after` | `bool` | `False` |
-| `location_state_id` | `str | None` | `None` |
-
-## PlannedPage _(layout_plan.py)_
-
-| Field | Type | Default |
-|-------|------|---------|
-| `page_id` | `str` |  |
-| `page_number` | `int` |  |
-| `panel_ids` | `list[str]` | `Field(default_factory=list)` |
-| `panel_geometries` | `list[PanelGeometry]` | `Field(default_factory=list)` |
-| `scene_ids` | `list[str]` | `Field(default_factory=list)` |
-| `scene_boundary_mode` | `SceneBoundaryMode` | `'scene_contained'` |
-| `page_rhythm_role` | `PageRhythmRole` | `'regular'` |
-| `layout_template` | `str` | `''` |
-| `spread_id` | `str | None` | `None` |
-| `cross_scene_reason` | `str | None` | `None` |
-
-## LayoutPlanMetadata _(layout_plan.py)_
-
-| Field | Type | Default |
-|-------|------|---------|
-| `planner_version` | `int` | `1` |
-| `planning_mode` | `str` | `'llm_v1'` |
-| `source_screenplay_hash` | `str` |  |
-| `source_scene_ids` | `list[str]` | `Field(default_factory=list)` |
-| `max_panels_per_page` | `int` |  |
-
-## LayoutPlan _(layout_plan.py)_
-
-| Field | Type | Default |
-|-------|------|---------|
-| `schema_version` | `int` | `1` |
-| `metadata` | `LayoutPlanMetadata` |  |
-| `beats` | `list[LayoutPlanBeatRef]` | `Field(default_factory=list)` |
-| `planned_panels` | `list[PlannedPanel]` | `Field(default_factory=list)` |
-| `planned_pages` | `list[PlannedPage]` | `Field(default_factory=list)` |
-| `narration_decisions` | `list[NarrationDecision]` | `Field(default_factory=list)` |
-| `warnings` | `list[str]` | `Field(default_factory=list)` |
-| `user_overrides` | `dict[str, object]` | `Field(default_factory=dict)` |
-| `regeneration_impact` | `dict[str, str]` | `Field(default_factory=dict)` |
-
-## LetteringStyle _(lettering.py)_
-
-| Field | Type | Default |
-|-------|------|---------|
-| `mode` | `str` | `'auto'` |
-| `preset` | `str | None` | `None` |
-| `theme` | `str` | `'default'` |
-| `font_pair` | `str` | `'golden-age'` |
-| `vars` | `dict[str, str]` | `Field(default_factory=dict)` |
-| `label` | `str` | `''` |
-| `rationale` | `str` | `''` |
-| `source` | `str` | `'fallback'` |
-| `style_template_hash` | `str` | `''` |
-| `generated_at` | `str` | `''` |
-
-## DialogueLine _(panel.py)_
-
-| Field | Type | Default |
-|-------|------|---------|
-| `character_id` | `Optional[str]` | `None` |
-| `text` | `str` |  |
-| `type` | `str` |  |
-| `source_beat_id` | `Optional[str]` | `None` |
-| `source_text` | `Optional[str]` | `None` |
-| `narration_mode` | `Optional[str]` | `None` |
-| `preferred_zone` | `Optional[str]` | `None` |
-
-## PanelBreakdown _(panel.py)_
+## StoryPosition _(appearance.py)_
 
 | Field | Type | Default |
 |-------|------|---------|
 | `scene_id` | `str` |  |
-| `panel_number` | `int` |  |
-| `shot_type` | `str` |  |
-| `camera_angle` | `str` |  |
-| `characters_present` | `list[str]` |  |
-| `character_actions` | `dict[str, str]` |  |
-| `character_expressions` | `dict[str, str]` |  |
-| `character_positions` | `dict[str, str]` |  |
-| `background_description` | `str` |  |
-| `lighting` | `str` |  |
-| `mood` | `str` |  |
-| `dialogue` | `list[DialogueLine]` | `[]` |
-| `sfx` | `list[str]` | `[]` |
-| `transition_type` | `Optional[str]` | `None` |
-| `transition_note` | `Optional[str]` | `None` |
+| `beat` | `Optional[int]` | `None` |
 
-## ScreenplayBeat _(panel.py)_
-
-| Field | Type | Default |
-|-------|------|---------|
-| `type` | `str` |  |
-| `character_id` | `Optional[str]` | `None` |
-| `content` | `str` |  |
-| `source_text` | `Optional[str]` | `None` |
-| `direction` | `Optional[str]` | `None` |
-| `transition_type` | `Optional[str]` | `None` |
-| `narration_reason` | `Optional[str]` | `None` |
-| `location_state_id` | `Optional[str]` | `None` |
-
-## Screenplay _(panel.py)_
-
-| Field | Type | Default |
-|-------|------|---------|
-| `scene_id` | `str` |  |
-| `location_id` | `str` |  |
-| `characters` | `list[str]` |  |
-| `beats` | `list[ScreenplayBeat]` |  |
-
-## LayoutBbox _(prompt.py)_
-
-| Field | Type | Default |
-|-------|------|---------|
-| `x0` | `float` | `0.0` |
-| `y0` | `float` | `0.0` |
-| `x1` | `float` | `1.0` |
-| `y1` | `float` | `1.0` |
-
-## LayoutRegion _(prompt.py)_
+## Transition _(appearance.py)_
 
 | Field | Type | Default |
 |-------|------|---------|
 | `label` | `str` |  |
-| `prompt` | `str` |  |
-| `bbox` | `LayoutBbox` | `Field(default_factory=LayoutBbox)` |
-| `reference_key` | `str | None` | `None` |
-| `parent` | `str | None` | `None` |
-| `region_type` | `Literal['coarse_detail', 'medium_detail', 'fine_detail', 'text', 'hand', 'face'] | None` | `None` |
-| `image_region_index` | `int | None` | `None` |
+| `depicted_at` | `Optional[StoryPosition]` | `None` |
+| `cause` | `Optional[str]` | `None` |
 
-## PromptLayout _(prompt.py)_
+## AppearanceState _(appearance.py)_
 
 | Field | Type | Default |
 |-------|------|---------|
-| `prompt` | `str | None` | `None` |
-| `normalized_edit_instruction` | `str | None` | `None` |
-| `regions` | `list[LayoutRegion]` | `Field(default_factory=list)` |
-| `width` | `int | None` | `None` |
-| `height` | `int | None` | `None` |
+| `id` | `str` |  |
+| `label` | `str` |  |
+| `visual_anchor` | `str` |  |
+| `visually_significant` | `bool` | `False` |
+| `baseline_affect` | `Optional[str]` | `None` |
+| `canonical_equivalent` | `bool` | `False` |
+| `continuity_guard` | `Optional[str]` | `None` |
+| `changed_facets` | `tuple[Literal['age', 'hair', 'face', 'build', 'anatomy', 'clothing', 'damage', 'weather', 'light', 'water_level', 'architecture', 'landmarks', 'materials', 'atmosphere', 'shape', 'contents', 'color'], ...]` | `()` |
+| `replaces_identity` | `bool` | `False` |
 
-## PromptSubject _(prompt.py)_
+## StateActivation _(appearance.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `state_id` | `str` |  |
+| `at` | `StoryPosition` |  |
+| `transition` | `Optional[Transition]` | `None` |
+
+## PageCapabilityProfile _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `id` | `str` | `Field(min_length=1)` |
+| `provider` | `str` | `Field(min_length=1)` |
+| `model` | `str` | `Field(min_length=1)` |
+| `complete_page_generation` | `Literal[True]` | `True` |
+| `exact_visible_lettering` | `Literal[True]` | `True` |
+| `max_image_references` | `int` | `Field(ge=0)` |
+| `reference_ordering` | `Literal['ordered']` |  |
+| `editing_modes` | `tuple[Literal['instructed', 'region_targeted'], ...]` | `()` |
+| `output_width` | `int` | `Field(gt=0)` |
+| `output_height` | `int` | `Field(gt=0)` |
+| `output_media_type` | `Literal['image/png']` | `'image/png'` |
+| `max_prompt_characters` | `int` | `Field(gt=0)` |
+| `retry_semantics` | `Literal['bounded_submission']` |  |
+| `max_attempts` | `int` | `Field(default=3, ge=1)` |
+| `price_per_page_usd` | `Decimal` | `Field(ge=0)` |
+| `price_per_reference_usd` | `Decimal` | `Field(default=Decimal('0'), ge=0)` |
+
+## PageReference _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `id` | `str` | `Field(min_length=1)` |
+| `order` | `int` | `Field(ge=1)` |
+| `media_type` | `str` | `Field(min_length=1)` |
+| `content_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `visual_anchor` | `str` | `Field(min_length=1)` |
+| `entity_id` | `str` | `Field(min_length=1)` |
+| `appearance_state_id` | `str | None` | `None` |
+| `label` | `str` | `''` |
+| `continuity_guard` | `str` | `''` |
+
+## RetryProvenance _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `attempt` | `int` | `Field(ge=1)` |
+| `retries_request_sha256` | `str | None` | `Field(default=None, min_length=64, max_length=64)` |
+
+## FrozenPageGenerationRequest _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `request_sha256` | `str` | `''` |
+| `page_number` | `int` | `Field(ge=1)` |
+| `comic_page_revision` | `int` | `Field(ge=1)` |
+| `comic_page_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `edition_id` | `str` | `Field(min_length=1)` |
+| `edition_revision` | `int` | `Field(ge=1)` |
+| `edition_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `profile_id` | `str` | `Field(min_length=1)` |
+| `profile_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `provider` | `str` | `Field(min_length=1)` |
+| `model` | `str` | `Field(min_length=1)` |
+| `prompt` | `str` | `Field(min_length=1)` |
+| `lettering` | `tuple[LetteringItem, ...]` |  |
+| `references` | `tuple[PageReference, ...]` | `()` |
+| `output_width` | `int` | `Field(gt=0)` |
+| `output_height` | `int` | `Field(gt=0)` |
+| `output_media_type` | `Literal['image/png']` |  |
+| `estimated_cost_usd` | `Decimal` | `Field(ge=0)` |
+| `artifact_kind` | `Literal['complete_page']` | `'complete_page'` |
+| `retry` | `RetryProvenance` |  |
+| `correction` | `PageRenderCorrection | None` | `None` |
+
+## PageRenderRevision _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `page_number` | `int` | `Field(ge=1)` |
+| `revision` | `int` | `Field(ge=1)` |
+| `parent_revision` | `int | None` | `Field(default=None, ge=1)` |
+| `comic_page_revision` | `int` | `Field(ge=1)` |
+| `comic_page_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `request_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `image_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `width` | `int` | `Field(gt=0)` |
+| `height` | `int` | `Field(gt=0)` |
+| `provider` | `str` | `Field(min_length=1)` |
+| `model` | `str` | `Field(min_length=1)` |
+| `latency_ms` | `int` | `Field(ge=0)` |
+| `cost_usd` | `Decimal` | `Field(ge=0)` |
+
+## CompletePageProviderResult _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `artifact_kind` | `Literal['complete_page']` |  |
+| `image_bytes` | `bytes` | `Field(min_length=1)` |
+| `media_type` | `Literal['image/png']` |  |
+| `width` | `int` | `Field(gt=0)` |
+| `height` | `int` | `Field(gt=0)` |
+| `latency_ms` | `int` | `Field(ge=0)` |
+| `provider_request_id` | `str | None` | `None` |
+| `actual_provider_model` | `str` | `Field(min_length=1)` |
+| `usage` | `UsageRecord` |  |
+
+## PageGenerationProvenance _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `render` | `PageRenderRevision` |  |
+| `usage` | `UsageRecord` |  |
+| `provider_request_id` | `str | None` | `None` |
+
+## PageGenerationFailure _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `page_number` | `int` | `Field(ge=1)` |
+| `request_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `failed_at` | `datetime` |  |
+| `phase` | `Literal['generation', 'analysis']` | `'generation'` |
+| `classification` | `str` | `Field(min_length=1)` |
+| `recoverable` | `bool` |  |
+| `user_message` | `str` | `Field(min_length=1)` |
+| `error` | `str` | `Field(min_length=1)` |
+
+## ObservedRegion _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `id` | `str` | `Field(min_length=1)` |
+| `polygon` | `tuple[tuple[float, float], ...]` | `Field(min_length=3)` |
+
+## OCRTextObservation _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `id` | `str` | `Field(min_length=1)` |
+| `text` | `str` | `Field(min_length=1)` |
+| `detected_region_id` | `str | None` | `None` |
+| `role` | `Literal['comic_lettering', 'incidental_text']` | `'comic_lettering'` |
+
+## OCRExtraction _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `lettering` | `tuple[OCRTextObservation, ...]` | `()` |
+| `incidental_text` | `tuple[OCRTextObservation, ...]` | `()` |
+| `observed_regions` | `tuple[ObservedRegion, ...]` | `()` |
+| `observed_reading_order` | `tuple[str, ...]` | `()` |
+
+## LetteringMatch _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `lettering_item_id` | `str` | `Field(min_length=1)` |
+| `observation_id` | `str` | `Field(min_length=1)` |
+| `canonical_text` | `str` | `Field(min_length=1)` |
+| `observed_text` | `str` | `Field(min_length=1)` |
+
+## RenderAnalysis _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `page_number` | `int` | `Field(ge=1)` |
+| `render_revision` | `int` | `Field(ge=1)` |
+| `render_image_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `punctuation_policy` | `Literal['typographic_lettering_v2']` | `'typographic_lettering_v2'` |
+| `recognized_lettering` | `dict[str, str]` | `Field(default_factory=dict)` |
+| `ocr_observations` | `tuple[OCRTextObservation, ...]` | `()` |
+| `incidental_text` | `tuple[OCRTextObservation, ...]` | `()` |
+| `lettering_matches` | `tuple[LetteringMatch, ...]` | `()` |
+| `observed_regions` | `tuple[ObservedRegion, ...]` | `()` |
+| `observed_reading_order` | `tuple[str, ...]` | `()` |
+| `invariant_failures` | `tuple[InvariantFailure, ...]` | `()` |
+| `editorial_issues` | `tuple[EditorialIssue, ...]` | `()` |
+| `evidence` | `tuple[str, ...]` | `()` |
+| `analysis_usage` | `UsageRecord | None` | `None` |
+
+## PageRenderCorrection _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `issue_ids` | `tuple[str, ...]` | `Field(min_length=1)` |
+| `page_number` | `int` | `Field(ge=1)` |
+| `comic_page_revision` | `int` | `Field(ge=1)` |
+| `comic_page_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `parent_render_revision` | `int` | `Field(ge=1)` |
+| `parent_render_image_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `mode` | `Literal['instructed', 'region_targeted']` |  |
+| `instruction` | `str` | `Field(min_length=1)` |
+| `detected_region_ids` | `tuple[str, ...]` | `()` |
+| `artifact_kind` | `Literal['complete_page']` | `'complete_page'` |
+
+## PageCorrectionIntent _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `issue_id` | `str` | `Field(min_length=1)` |
+| `page_number` | `int` | `Field(ge=1)` |
+| `parent_render_revision` | `int` | `Field(ge=1)` |
+| `mode` | `Literal['instructed', 'region_targeted']` |  |
+| `instruction` | `str` | `Field(min_length=1)` |
+| `detected_region_ids` | `tuple[str, ...]` | `()` |
+| `artifact_kind` | `Literal['complete_page']` | `'complete_page'` |
+
+## AdaptCopyCorrectionRequest _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `issue_id` | `str` | `Field(min_length=1)` |
+| `page_number` | `int` | `Field(ge=1)` |
+| `owner_stage` | `Literal['adapt']` | `'adapt'` |
+| `requested_change` | `str` | `Field(min_length=1)` |
+| `source_unit_ids` | `tuple[str, ...]` | `()` |
+| `adapted_beat_ids` | `tuple[str, ...]` | `()` |
+| `lettering_item_ids` | `tuple[str, ...]` | `()` |
+| `requires_replan` | `Literal[True]` | `True` |
+
+## PageIssueSummary _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `unresolved_issue_ids` | `tuple[str, ...]` | `()` |
+| `blocking_issue_ids` | `tuple[str, ...]` | `()` |
+| `accepted_editorial_issue_ids` | `tuple[str, ...]` | `()` |
+
+## PageIssue _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `id` | `str` | `Field(min_length=1)` |
+| `issue_type` | `str` | `Field(min_length=1)` |
+| `classification` | `Literal['invariant_failure', 'editorial_issue']` | `'editorial_issue'` |
+| `correction_kind` | `Literal['render_fidelity', 'copy_change']` | `'render_fidelity'` |
+| `correction_owner` | `Literal['adapt', 'draw']` | `'draw'` |
+| `page_number` | `int` | `Field(ge=1)` |
+| `render_revision` | `int` | `Field(ge=1)` |
+| `evidence` | `tuple[str, ...]` | `Field(min_length=1)` |
+| `requested_correction` | `str` | `Field(min_length=1)` |
+| `source_unit_ids` | `tuple[str, ...]` | `()` |
+| `adapted_beat_ids` | `tuple[str, ...]` | `()` |
+| `lettering_item_ids` | `tuple[str, ...]` | `()` |
+| `detected_region_ids` | `tuple[str, ...]` | `()` |
+| `entity_ids` | `tuple[str, ...]` | `()` |
+| `appearance_state_ids` | `tuple[str, ...]` | `()` |
+| `status` | `Literal['open', 'revised', 'accepted', 'resolved', 'dismissed']` |  |
+| `resolution_revision` | `int | None` | `Field(default=None, ge=1)` |
+| `dismissal_reason` | `str | None` | `None` |
+
+## PreflightDiagnostic _(finish.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `id` | `str` | `Field(min_length=1)` |
+| `owner_stage` | `StageName` |  |
+| `code` | `str` | `Field(min_length=1)` |
+| `message` | `str` | `Field(min_length=1)` |
+| `artifact_ids` | `tuple[str, ...]` | `()` |
+| `evidence` | `tuple[str, ...]` | `Field(min_length=1)` |
+
+## PreflightPage _(finish.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `page_number` | `int` | `Field(ge=1)` |
+| `comic_page_revision` | `int` | `Field(ge=1)` |
+| `comic_page_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `render_revision` | `int` | `Field(ge=1)` |
+| `render_image_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `analysis_render_revision` | `int | None` | `Field(default=None, ge=1)` |
+| `width` | `int | None` | `Field(default=None, gt=0)` |
+| `height` | `int | None` | `Field(default=None, gt=0)` |
+| `trim_width` | `int | None` | `Field(default=None, gt=0)` |
+| `trim_height` | `int | None` | `Field(default=None, gt=0)` |
+| `bleed_px` | `int` | `Field(default=0, ge=0)` |
+| `color_profile` | `str | None` | `None` |
+| `normalized_image_sha256` | `str | None` | `Field(default=None, min_length=64, max_length=64)` |
+| `invariant_failures` | `tuple[InvariantFailure, ...]` | `()` |
+| `diagnostics` | `tuple[PreflightDiagnostic, ...]` | `()` |
+| `unresolved_editorial_issue_ids` | `tuple[str, ...]` | `()` |
+| `accepted_editorial_issue_ids` | `tuple[str, ...]` | `()` |
+
+## FinishProductionSpec _(finish.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `canvas_width` | `int` | `Field(gt=0)` |
+| `canvas_height` | `int` | `Field(gt=0)` |
+| `bleed_px` | `int` | `Field(default=0, ge=0)` |
+| `dpi` | `int` | `Field(default=300, gt=0)` |
+| `color_profile` | `Literal['sRGB']` | `'sRGB'` |
+| `jpeg_quality` | `int` | `Field(default=88, ge=70, le=95)` |
+
+## DrawCorrectionRequest _(finish.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `id` | `str` | `Field(min_length=1)` |
+| `owner_stage` | `Literal['draw']` | `'draw'` |
+| `page_number` | `int` | `Field(ge=1)` |
+| `render_revision` | `int | None` | `Field(default=None, ge=1)` |
+| `failure_codes` | `tuple[str, ...]` | `Field(min_length=1)` |
+| `issue_ids` | `tuple[str, ...]` | `()` |
+| `requested_correction` | `str` | `Field(min_length=1)` |
+| `artifact_kind` | `Literal['complete_page']` | `'complete_page'` |
+
+## ExportPackage _(finish.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `format` | `Literal['pdf', 'cbz']` |  |
+| `relative_path` | `str` | `Field(min_length=1)` |
+| `content_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `byte_size` | `int` | `Field(gt=0)` |
+| `page_numbers` | `tuple[int, ...]` | `Field(min_length=1)` |
+
+## FinishPreflight _(finish.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `edition_revision` | `int` | `Field(ge=1)` |
+| `edition_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `validator_version` | `int` | `Field(default=1, ge=1)` |
+| `production` | `FinishProductionSpec | None` | `None` |
+| `pages` | `tuple[PreflightPage, ...]` | `Field(min_length=1)` |
+| `correction_requests` | `tuple[DrawCorrectionRequest, ...]` | `()` |
+| `packages` | `tuple[ExportPackage, ...]` | `()` |
+| `packaging_failures` | `tuple[InvariantFailure, ...]` | `()` |
+
+## FinishResult _(finish.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `preflight` | `FinishPreflight` |  |
+| `packages` | `tuple[ExportPackage, ...]` | `()` |
+
+## PromptAnchor _(generation.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `kind` | `Literal['character', 'location', 'prop']` |  |
+| `entity_id` | `str` |  |
+| `name` | `str` |  |
+| `appearance_state_id` | `str | None` | `None` |
+| `text` | `str` |  |
+
+## PromptSubject _(generation.py)_
 
 | Field | Type | Default |
 |-------|------|---------|
@@ -362,49 +474,113 @@ These are the Pydantic models that flow between pipeline stages. `story_bible.js
 | `identity` | `str` |  |
 | `action` | `str` | `''` |
 | `expression` | `str` | `''` |
+| `baseline_affect` | `str | None` | `None` |
 | `position` | `str` | `''` |
+| `appearance_state_id` | `str | None` | `None` |
+| `appearance_state_canonical_equivalent` | `bool` | `False` |
+| `appearance_locked` | `bool` | `False` |
+| `appearance_guard` | `str | None` | `None` |
 
-## ImagePrompt _(prompt.py)_
+## ApprovedPageRange _(page.py)_
 
 | Field | Type | Default |
 |-------|------|---------|
-| `prompt_version` | `int` | `1` |
-| `planned_panel_id` | `str | None` | `None` |
-| `scene_id` | `str` |  |
-| `panel_number` | `int` |  |
-| `generation_mode` | `str | None` | `None` |
-| `shape_intent` | `str | None` | `None` |
-| `generation_aspect_ratio` | `float | None` | `None` |
-| `generation_width` | `int | None` | `None` |
-| `generation_height` | `int | None` | `None` |
-| `generation_shape` | `str | None` | `None` |
-| `generation_aspect_source` | `str | None` | `None` |
-| `crop_policy` | `str | None` | `None` |
-| `transition_in` | `str | None` | `None` |
-| `transition_out` | `str | None` | `None` |
-| `location_state_id` | `str | None` | `None` |
-| `has_narration_caption` | `bool` | `False` |
-| `narration_mode` | `str | None` | `None` |
-| `preferred_caption_zone` | `str | None` | `None` |
-| `full_prompt` | `str` | `''` |
-| `distilled_prompt` | `str | None` | `None` |
-| `visual_brief` | `str | None` | `None` |
-| `style` | `str | None` | `None` |
-| `composition` | `str | None` | `None` |
-| `setting` | `str | None` | `None` |
-| `lighting` | `str | None` | `None` |
-| `mood` | `str | None` | `None` |
-| `subjects` | `list[PromptSubject]` | `Field(default_factory=list)` |
-| `key_objects` | `list[str]` | `Field(default_factory=list)` |
-| `visual_requirements` | `list[str]` | `Field(default_factory=list)` |
-| `props` | `list[str]` | `Field(default_factory=list)` |
-| `constraints` | `str | None` | `None` |
-| `layout` | `PromptLayout | None` | `None` |
-| `reference_image_paths` | `list[str]` | `Field(default_factory=list)` |
-| `width` | `int` |  |
-| `height` | `int` |  |
-| `steps` | `int` |  |
-| `continuity_note` | `str | None` | `None` |
+| `minimum` | `int` | `Field(ge=1)` |
+| `maximum` | `int` | `Field(ge=1)` |
+| `allow_expansion` | `bool` | `False` |
+| `approved` | `Literal[True]` | `True` |
+
+## ApprovedVisualReference _(page.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `id` | `str` | `Field(min_length=1)` |
+| `entity_id` | `str` | `Field(min_length=1)` |
+| `appearance_state_id` | `str | None` | `None` |
+| `visual_anchor` | `str` | `Field(min_length=1)` |
+| `approved` | `Literal[True]` | `True` |
+| `label` | `str` | `''` |
+| `continuity_guard` | `str` | `''` |
+
+## ApprovedVisualReferenceInventory _(page.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `references` | `tuple[ApprovedVisualReference, ...]` | `()` |
+
+## PinnedGeometry _(page.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `x` | `float` | `Field(ge=0, le=1)` |
+| `y` | `float` | `Field(ge=0, le=1)` |
+| `width` | `float` | `Field(gt=0, le=1)` |
+| `height` | `float` | `Field(gt=0, le=1)` |
+
+## AuthorGeometryPin _(page.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `beat_id` | `str` | `Field(min_length=1)` |
+| `geometry` | `PinnedGeometry` |  |
+
+## PageContent _(page.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `id` | `str` | `Field(min_length=1)` |
+| `order` | `int` | `Field(ge=1)` |
+| `beat_ids` | `tuple[str, ...]` | `Field(min_length=1)` |
+| `panel_role` | `Literal['establishing', 'standard', 'detail', 'reaction', 'action', 'transition', 'splash', 'inset']` | `'standard'` |
+| `visual_intent` | `str` | `Field(min_length=1)` |
+| `lettering` | `tuple[LetteringItem, ...]` | `()` |
+| `entity_ids` | `tuple[str, ...]` | `()` |
+| `appearance_states` | `dict[str, str]` | `Field(default_factory=dict)` |
+| `pinned_geometry` | `PinnedGeometry | None` | `None` |
+
+## PlannedPageRevision _(page.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `page_number` | `int` | `Field(ge=1)` |
+| `revision` | `int` | `Field(ge=1)` |
+| `content_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+
+## SourceUnit _(source.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `id` | `str` | `Field(min_length=1)` |
+| `ordinal` | `int` | `Field(ge=1)` |
+| `start_offset` | `int` | `Field(ge=0)` |
+| `end_offset` | `int` | `Field(gt=0)` |
+| `text` | `str` | `Field(min_length=1)` |
+
+## SourceContextReference _(source.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `label` | `str` | `Field(min_length=1)` |
+| `unit_ids` | `tuple[str, ...]` | `Field(min_length=1)` |
+
+## SourceScene _(source.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `id` | `str` | `Field(min_length=1)` |
+| `title` | `str` | `Field(min_length=1)` |
+| `first_unit_id` | `str` | `Field(min_length=1)` |
+| `last_unit_id` | `str` | `Field(min_length=1)` |
+| `context` | `tuple[SourceContextReference, ...]` | `()` |
+
+## SourceDocument _(source.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `text` | `str` | `Field(min_length=1)` |
+| `source_sha256` | `str` | `''` |
+| `units` | `tuple[SourceUnit, ...]` | `Field(min_length=1)` |
+| `scenes` | `tuple[SourceScene, ...]` | `Field(min_length=1)` |
 
 ## CharacterRelationship _(story_bible.py)_
 
@@ -423,18 +599,12 @@ These are the Pydantic models that flow between pipeline stages. `story_bible.js
 | `age_range` | `str` |  |
 | `gender` | `str` |  |
 | `distinguishing_features` | `list[str]` |  |
+| `baseline_affect` | `str | None` | `None` |
 | `default_outfit` | `str` |  |
 | `relationships` | `list[CharacterRelationship]` | `[]` |
 | `first_appearance_scene` | `str` |  |
-
-## LocationState _(story_bible.py)_
-
-| Field | Type | Default |
-|-------|------|---------|
-| `id` | `str` |  |
-| `name` | `str` |  |
-| `visual_anchor` | `str` |  |
-| `description` | `Optional[str]` | `None` |
+| `appearance_states` | `list[AppearanceState]` | `[]` |
+| `appearance_timeline` | `list[StateActivation]` | `[]` |
 
 ## Location _(story_bible.py)_
 
@@ -445,7 +615,8 @@ These are the Pydantic models that flow between pipeline stages. `story_bible.js
 | `visual_anchor` | `str` |  |
 | `time_of_day` | `Optional[str]` | `None` |
 | `mood` | `str` |  |
-| `states` | `list[LocationState]` | `[]` |
+| `appearance_states` | `list[AppearanceState]` | `[]` |
+| `appearance_timeline` | `list[StateActivation]` | `[]` |
 
 ## TransientObject _(story_bible.py)_
 
@@ -469,8 +640,6 @@ These are the Pydantic models that flow between pipeline stages. `story_bible.js
 | `scene_type` | `str` |  |
 | `narrative_beat` | `str` |  |
 | `source_start_quote` | `str` |  |
-| `character_appearances` | `dict[str, str]` | `{}` |
-| `location_state_id` | `Optional[str]` | `None` |
 | `transient_objects` | `list[TransientObject]` | `[]` |
 
 ## NarrativeArc _(story_bible.py)_
@@ -490,6 +659,8 @@ These are the Pydantic models that flow between pipeline stages. `story_bible.js
 | `name` | `str` |  |
 | `visual_anchor` | `str` |  |
 | `first_appearance_scene` | `Optional[str]` | `None` |
+| `appearance_states` | `list[AppearanceState]` | `[]` |
+| `appearance_timeline` | `list[StateActivation]` | `[]` |
 
 ## StoryBible _(story_bible.py)_
 
@@ -504,3 +675,34 @@ These are the Pydantic models that flow between pipeline stages. `story_bible.js
 | `narrative_arcs` | `list[NarrativeArc]` |  |
 | `style_notes` | `Optional[str]` | `None` |
 | `props` | `list[Prop]` | `[]` |
+
+## _ValidationResult _(validation.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `id` | `str` | `Field(min_length=1)` |
+| `owner_stage` | `StageName` |  |
+| `code` | `str` | `Field(min_length=1)` |
+| `message` | `str` | `Field(min_length=1)` |
+| `source_unit_ids` | `tuple[str, ...]` | `()` |
+| `artifact_ids` | `tuple[str, ...]` | `()` |
+| `evidence` | `tuple[str, ...]` | `Field(min_length=1)` |
+
+## ValidationAttempt _(validation.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `attempt` | `int` | `Field(ge=1)` |
+| `invariant_codes` | `tuple[str, ...]` | `()` |
+| `editorial_codes` | `tuple[str, ...]` | `()` |
+
+## StageValidation _(validation.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `owner_stage` | `StageName` |  |
+| `attempts` | `int` | `Field(default=1, ge=1)` |
+| `invariant_failures` | `tuple[InvariantFailure, ...]` | `()` |
+| `editorial_issues` | `tuple[EditorialIssue, ...]` | `()` |
+| `recommendations` | `tuple[str, ...]` | `()` |
+| `attempt_history` | `tuple[ValidationAttempt, ...]` | `()` |

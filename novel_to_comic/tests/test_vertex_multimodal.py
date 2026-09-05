@@ -58,7 +58,8 @@ def test_complete_page_manifest_binds_exact_ordered_bytes_and_prompt():
     contents = _exact_complete_page_contents(manifest, [marker])
 
     assert contents[0] is marker
-    assert "blood below the right eye" in contents[1]
+    assert "Reference 1:" in contents[1]
+    assert "char_" not in contents[1]
     assert contents[-1] == "Render one complete page."
 
 
@@ -95,7 +96,7 @@ def test_complete_page_correction_accepts_parent_render_before_references():
     assert contents[0] is parent_part
     assert "complete page revision to correct" in contents[1]
     assert contents[2] is reference_part
-    assert "blood below the right eye" in contents[3]
+    assert "Reference 1:" in contents[3]
     assert contents[-1] == "Render one complete page."
 
 
