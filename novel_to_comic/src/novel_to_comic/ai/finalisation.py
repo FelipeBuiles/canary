@@ -101,7 +101,7 @@ def _write_image_outputs(
         os.close(parent_fd)
 
 
-def begin_image_call(
+async def begin_image_call(
     *,
     config: Config,
     model: str,
@@ -124,35 +124,61 @@ def begin_image_call(
         prompt_text=prompt,
     ) or None
     reference_summary = ai_client._image_summary(ref_reads)
-    ai_client._insert_event(
-        event_id=event_id,
-        model_alias=model,
-        feature=feature,
-        operation=operation,
-        params_json=ai_client._redacted_params(params),
-        request_summary_json={
-            "prompt_sha256": ai_client._hash_payload(prompt),
-            "prompt_bytes": ai_client._payload_size(prompt),
-            "references": reference_summary,
-        },
-        metadata_json=metadata,
-        estimated_cost_usd=estimated_cost_usd,
+    started = time.perf_counter()
+    started_at = datetime.datetime.now(datetime.UTC)
+    langfuse_input = {
+        "prompt": ai_client._truncate_for_log(prompt),
+        "size": params.get("size"),
+        "quality": params.get("quality"),
+        "ref_count": len(ref_data),
+        "references": reference_summary,
+    }
+    insert_task = asyncio.create_task(
+        ai_client._insert_event_async(
+            event_id=event_id,
+            model_alias=model,
+            feature=feature,
+            operation=operation,
+            params_json=ai_client._redacted_params(params),
+            request_summary_json={
+                "prompt_sha256": ai_client._hash_payload(prompt),
+                "prompt_bytes": ai_client._payload_size(prompt),
+                "references": reference_summary,
+            },
+            metadata_json=metadata,
+            estimated_cost_usd=estimated_cost_usd,
+        )
     )
+    try:
+        await ai_client._await_usage_task(insert_task)
+    except asyncio.CancelledError as exc:
+        # The request was never issued, but the started row must still reach
+        # a terminal state: wait out the insert, book the cancellation, then
+        # propagate. Exactly once — the callers' catchers never see a ctx.
+        await ai_client._finalize_event_shielded(
+            event_id=event_id,
+            status="cancelled",
+            feature=feature,
+            model_alias=model,
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            error=exc,
+            config=config,
+            operation=operation,
+            metadata=metadata,
+            estimated_cost_usd=estimated_cost_usd,
+            langfuse_input=langfuse_input,
+            started_at=started_at,
+        )
+        raise
     return ImageCallContext(
         event_id=event_id,
         operation=operation,
         metadata=metadata,
         params=params,
         estimated_cost_usd=estimated_cost_usd,
-        started=time.perf_counter(),
-        started_at=datetime.datetime.now(datetime.UTC),
-        langfuse_input={
-            "prompt": ai_client._truncate_for_log(prompt),
-            "size": params.get("size"),
-            "quality": params.get("quality"),
-            "ref_count": len(ref_data),
-            "references": reference_summary,
-        },
+        started=started,
+        started_at=started_at,
+        langfuse_input=langfuse_input,
     )
 
 
@@ -168,11 +194,32 @@ async def finalise_image_success(
     from novel_to_comic.ai import client as ai_client
 
     raw_response = raw.raw_response or {}
-    await asyncio.to_thread(
-        _write_image_outputs,
-        output_path,
-        raw.image_bytes,
-    )
+    try:
+        await asyncio.to_thread(
+            _write_image_outputs,
+            output_path,
+            raw.image_bytes,
+        )
+    except asyncio.CancelledError as exc:
+        # The file write runs detached in its worker thread; book the
+        # cancellation exactly once here. Callers keep the success write
+        # outside their cancellation catchers, so this cannot double-write.
+        await ai_client._finalize_event_shielded(
+            event_id=ctx.event_id,
+            status="cancelled",
+            feature=feature,
+            model_alias=model,
+            latency_ms=int((time.perf_counter() - ctx.started) * 1000),
+            error=exc,
+            error_response=None,
+            config=config,
+            operation=ctx.operation,
+            metadata=ctx.metadata,
+            estimated_cost_usd=ctx.estimated_cost_usd,
+            langfuse_input=ctx.langfuse_input,
+            started_at=ctx.started_at,
+        )
+        raise
     usage = ai_client._extract_usage(
         raw_response,
         ctx.event_id,
@@ -187,7 +234,7 @@ async def finalise_image_success(
         "size": ctx.params.get("size"),
         "actual_provider_model": raw.actual_provider_model,
     }
-    ai_client._finalize_event(
+    await ai_client._finalize_event_shielded(
         event_id=ctx.event_id,
         status="succeeded",
         feature=feature,
@@ -211,7 +258,7 @@ async def finalise_image_success(
     )
 
 
-def finalise_image_cancelled(
+async def finalise_image_cancelled(
     *,
     ctx: ImageCallContext,
     config: Config,
@@ -222,7 +269,7 @@ def finalise_image_cancelled(
 ) -> None:
     from novel_to_comic.ai import client as ai_client
 
-    ai_client._finalize_event(
+    await ai_client._finalize_event_shielded(
         event_id=ctx.event_id,
         status="cancelled",
         feature=feature,
@@ -239,7 +286,7 @@ def finalise_image_cancelled(
     )
 
 
-def finalise_image_refusal(
+async def finalise_image_refusal(
     *,
     ctx: ImageCallContext,
     config: Config,
@@ -247,15 +294,15 @@ def finalise_image_refusal(
     feature: str,
     error: AIRefusalError,
 ) -> None:
-    from novel_to_comic.ai import client as ai_client
 
+    from novel_to_comic.ai import client as ai_client
     data = error.response_data or {}
     usage = (
         ai_client._extract_usage(data, ctx.event_id, model, ctx.operation, error.response_headers)
         if data
         else None
     )
-    ai_client._finalize_event(
+    await ai_client._finalize_event_shielded(
         event_id=ctx.event_id,
         status="refused",
         feature=feature,
@@ -274,7 +321,7 @@ def finalise_image_refusal(
     )
 
 
-def finalise_image_failure(
+async def finalise_image_failure(
     *,
     ctx: ImageCallContext,
     config: Config,
@@ -294,7 +341,7 @@ def finalise_image_failure(
             operation="image",
             image_count=1,
         )
-    ai_client._finalize_event(
+    await ai_client._finalize_event_shielded(
         event_id=ctx.event_id,
         status="failed",
         feature=feature,

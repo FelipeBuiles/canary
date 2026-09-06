@@ -1,3 +1,46 @@
+## Delegation and model-cost policy
+
+The main agent is the orchestrator. Preserve its context and model usage for planning,
+architectural decisions, ambiguity resolution, integration, and final verification.
+
+For any non-trivial task, actively look for work that can be delegated to subagents.
+
+Prefer the `worker` agent for:
+- repository exploration and codebase searches
+- reading many files
+- tracing implementations or call chains
+- implementing well-scoped changes
+- repetitive or mechanical edits
+- test execution and investigation of failures
+- large refactors after the approach has been decided
+- documentation generation
+- summarizing large outputs
+- independent research
+- first-pass code review
+
+The main agent should normally:
+1. understand the user's goal;
+2. decide the approach and decompose the work;
+3. delegate substantial execution work to `worker`;
+4. inspect the worker results;
+5. resolve difficult decisions or inconsistencies itself;
+6. perform a final review and answer the user.
+
+Do not delegate tiny operations where delegation overhead exceeds the work.
+
+Prefer parallel workers for independent tasks.
+
+Workers are execution resources, not decision makers. Do not blindly accept their
+conclusions; verify important changes before presenting the final result.
+
+Use `worker` for normal delegated implementation, exploration, tests,
+and mechanical work.
+
+Use `deep-worker` for difficult debugging, architecture analysis,
+large refactors, or tasks where substantial reasoning is valuable.
+
+Prefer worker unless deep reasoning is actually needed.
+
 # Canary — Agent Guidelines
 
 Canary turns novels into complete, lettered comic pages. Read `CONTEXT.md` for

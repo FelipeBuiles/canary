@@ -61,7 +61,10 @@ class StageState(BaseModel):
     # future per-call billing. Stored as dicts for JSON portability.
     usage_log: list[dict] = Field(default_factory=list)
     error: Optional[str] = None
-    # Structured credit-failure detail. Set only when a stage fails because
+    # Bounded traceback retained for local-first debugging. The API only
+    # exposes this field in development diagnostics mode.
+    error_detail: Optional[str] = None
+    # Structured credit-failure detail. Set only when a stage failed because
     # the user's balance couldn't cover the reservation (see fail_stage). Cleared
     # on every non-credit failure so a stale code can't linger across re-runs.
     error_code: Optional[str] = None
@@ -180,7 +183,7 @@ def begin_stage(
     s.cost_usd = 0.0
     s.usage_log = []
     s.error = None
-
+    s.error_detail = None
 
 def complete_stage(state: PipelineState, stage: str) -> None:
     """Mark a stage as complete (or awaiting review if it's a checkpoint stage)."""
@@ -193,19 +196,25 @@ def complete_stage(state: PipelineState, stage: str) -> None:
     state.total_cost_usd = sum(st.cost_usd for st in state.stages.values()) + state.misc_cost_usd
 
 
-def fail_stage(state: PipelineState, stage: str, error: str, *, detail: dict | None = None) -> None:
-    """Mark a stage as failed.
+def fail_stage(
+    state: PipelineState,
+    stage: str,
+    error: str,
+    *,
+    detail: dict | None = None,
+    error_detail: str | None = None,
+) -> None:
+    """Mark a stage as failed and retain bounded local diagnostic detail.
 
-    Pass ``detail`` (the structured payload from the credits layer, shaped like
-    ``{"error": "insufficient_credits", "balance_credits": ..., ...}``) to
-    persist the credit-failure reason on the stage. Non-credit failures always
-    clear any previously-set credit fields so a stale code can't linger across
-    a re-run that fails for a different reason.
+    ``detail`` is the structured credit-failure payload. ``error_detail`` is a
+    traceback or other developer-facing explanation and must never contain
+    prompts or provider credentials.
     """
     s = state.stages[stage]
     s.status = StageStatus.FAILED
     s.finished_at = datetime.now(timezone.utc)
     s.error = error
+    s.error_detail = (error_detail or "")[-12_000:] or None
     if detail and detail.get("error") == "insufficient_credits":
         s.error_code = "insufficient_credits"
         s.balance_credits = detail.get("balance_credits")

@@ -31,7 +31,11 @@ def configure_telemetry() -> bool:
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from opentelemetry.sdk.trace.export import (
+            BatchSpanProcessor,
+            ConsoleSpanExporter,
+            SimpleSpanProcessor,
+        )
     except Exception as e:
         logger.warning("OpenTelemetry requested but packages are missing: %s", e)
         return False
@@ -45,7 +49,10 @@ def configure_telemetry() -> bool:
     )
 
     provider = TracerProvider(resource=resource)
-    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    if _bool_env("CANARY_OTEL_CONSOLE", default=False):
+        provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
+    else:
+        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
     try:
         trace.set_tracer_provider(provider)
     except Exception:

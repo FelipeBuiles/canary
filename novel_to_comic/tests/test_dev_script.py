@@ -63,7 +63,7 @@ case "$url" in
     [ "$attempts" -ge 2 ]
     ;;
   http://127.0.0.1:8000/api/health/ready)
-    printf '%s' '{"dependencies":{"litellm":"healthy"}}'
+    printf '%s' '{"dependencies":{"litellm":"healthy"},"pipeline_contract":"eight-stage-v2"}'
     ;;
   http://127.0.0.1:5173)
     exit 0
@@ -93,3 +93,106 @@ esac
     assert curl_attempts.read_text().strip() == "2"
     assert "LiteLLM (http://127.0.0.1:4000/health/liveliness)" in result.stdout
     assert "[dev] ready: http://127.0.0.1:5173" in result.stdout
+
+
+def _write_check_stubs(bin_dir: Path) -> None:
+    _write_executable(
+        bin_dir / "docker",
+        """#!/bin/sh
+printf '%s\\n' "$*" >> "$DEV_TEST_DOCKER_LOG"
+case "$1" in
+  info)
+    exit 0
+    ;;
+  compose)
+    case "$*" in
+      *"ps -q litellm-db") printf '%s\\n' 'litellm-db-id' ;;
+      *"ps -q litellm") printf '%s\\n' 'litellm-id' ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  inspect)
+    case "$*" in
+      *litellm-db-id) printf '%s\\n' 'healthy' ;;
+      *litellm-id) printf '%s\\n' 'running' ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+""",
+    )
+    _write_executable(
+        bin_dir / "curl",
+        """#!/bin/sh
+for arg do
+  url="$arg"
+done
+
+case "$url" in
+  http://127.0.0.1:4000/health/liveliness)
+    exit 0
+    ;;
+  http://127.0.0.1:8000/api/health/ready)
+    printf '%s' "$DEV_TEST_BACKEND_PAYLOAD"
+    ;;
+  http://127.0.0.1:5173)
+    exit 0
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+""",
+    )
+    _write_executable(bin_dir / "sleep", "#!/bin/sh\nexit 0\n")
+
+
+def _run_dev_check(
+    tmp_path: Path, backend_payload: str
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_check_stubs(bin_dir)
+    docker_log = tmp_path / "docker-invocations"
+    docker_log.write_text("")
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["DEV_TEST_BACKEND_PAYLOAD"] = backend_payload
+    env["DEV_TEST_DOCKER_LOG"] = str(docker_log)
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "dev.sh"), "--check"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    return result, docker_log.read_text()
+
+
+def test_check_rejects_backend_missing_pipeline_contract(tmp_path: Path) -> None:
+    result, docker_log = _run_dev_check(
+        tmp_path, '{"dependencies":{"litellm":"healthy"}}'
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "incompatible" in result.stdout + result.stderr
+    assert "up -d" not in docker_log
+
+
+def test_check_accepts_pipeline_contract_with_json_whitespace(
+    tmp_path: Path,
+) -> None:
+    payload = (
+        '{ "dependencies" : { "litellm" : "healthy" },'
+        ' "pipeline_contract" : "eight-stage-v2" }'
+    )
+    result, _ = _run_dev_check(tmp_path, payload)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Backend (http://127.0.0.1:8000)" in result.stdout

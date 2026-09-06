@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import json
@@ -546,6 +547,7 @@ class GoogleVertexCompletePageTransport:
         from novel_to_comic.ai import client as ai_client
         from novel_to_comic.ai.finalisation import (
             begin_image_call,
+            finalise_image_cancelled,
             finalise_image_failure,
         )
 
@@ -604,7 +606,7 @@ class GoogleVertexCompletePageTransport:
             "canary_idempotency_key": request.idempotency_key,
         }
         feature = "complete_page_draw"
-        ctx = begin_image_call(
+        ctx = await begin_image_call(
             config=self._config,
             model=COMPLETE_PAGE_GATEWAY_MODEL,
             feature=feature,
@@ -681,7 +683,32 @@ class GoogleVertexCompletePageTransport:
                 key: value for key, value in payload.items() if key != "data"
             }
             response_data["model"] = actual_provider_model
-            ai_client._finalize_event(
+        except asyncio.CancelledError as exc:
+            await finalise_image_cancelled(
+                ctx=ctx,
+                config=self._config,
+                model=COMPLETE_PAGE_GATEWAY_MODEL,
+                feature=feature,
+                error=exc,
+                error_response=response,
+            )
+            raise
+        except BaseException as exc:
+            await finalise_image_failure(
+                ctx=ctx,
+                config=self._config,
+                model=COMPLETE_PAGE_GATEWAY_MODEL,
+                feature=feature,
+                error=exc,
+                error_response=response,
+            )
+            raise
+        # The success write runs outside the cancellation catcher: it is
+        # shielded, so a cancel landing mid-write waits it out, then
+        # propagates without a second terminal write overwriting success.
+        # Only real errors route to failure here; CancelledError propagates.
+        try:
+            await ai_client._finalize_event_shielded(
                 event_id=ctx.event_id,
                 status="succeeded",
                 feature=feature,
@@ -703,19 +730,8 @@ class GoogleVertexCompletePageTransport:
                 },
                 started_at=ctx.started_at,
             )
-            return CompletePageProviderResult(
-                artifact_kind="complete_page",
-                image_bytes=image_bytes,
-                media_type="image/png",
-                width=width,
-                height=height,
-                latency_ms=latency_ms,
-                provider_request_id=payload.get("id"),
-                actual_provider_model=actual_provider_model,
-                usage=usage,
-            )
-        except BaseException as exc:
-            finalise_image_failure(
+        except Exception as exc:
+            await finalise_image_failure(
                 ctx=ctx,
                 config=self._config,
                 model=COMPLETE_PAGE_GATEWAY_MODEL,
@@ -724,6 +740,17 @@ class GoogleVertexCompletePageTransport:
                 error_response=response,
             )
             raise
+        return CompletePageProviderResult(
+            artifact_kind="complete_page",
+            image_bytes=image_bytes,
+            media_type="image/png",
+            width=width,
+            height=height,
+            latency_ms=latency_ms,
+            provider_request_id=payload.get("id"),
+            actual_provider_model=actual_provider_model,
+            usage=usage,
+        )
 
 
 async def draw_complete_page(

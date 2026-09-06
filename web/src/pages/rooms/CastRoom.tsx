@@ -1399,6 +1399,8 @@ export function CastRoom() {
           status={stageStatus}
           itemsDone={stageInfo?.items_done}
           itemsTotal={stageInfo?.items_total}
+          error={stageInfo?.error}
+          errorDetail={stageInfo?.error_detail}
         />
       </RoomShell>
     );

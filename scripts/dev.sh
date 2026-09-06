@@ -98,14 +98,20 @@ http_responds() {
   curl --silent --show-error --max-time 3 "$1" >/dev/null 2>&1
 }
 
+backend_contract_current() {
+  printf '%s' "$1" | grep -Eq '"pipeline_contract"[[:space:]]*:[[:space:]]*"eight-stage-v2"'
+}
+
 backend_healthy_for_mode() {
   local payload
   payload="$(curl --silent --show-error --fail --max-time 3 \
     "$BACKEND_URL/api/health/ready" 2>/dev/null)" || return 1
   if [ "$MODE" = "mock" ]; then
-    printf '%s' "$payload" | grep -q '"mock_models"'
+    printf '%s' "$payload" | grep -q '"mock_models"' &&
+      backend_contract_current "$payload"
   else
-    printf '%s' "$payload" | grep -q '"litellm"'
+    printf '%s' "$payload" | grep -q '"litellm"' &&
+      backend_contract_current "$payload"
   fi
 }
 
@@ -244,8 +250,8 @@ fi
 if backend_healthy_for_mode; then
   ok "Backend ($BACKEND_URL)"
 elif http_responds "$BACKEND_URL/api/health/ready"; then
-  failed "Backend is already running but is unhealthy or in the wrong mode"
-  echo "[dev] Stop the process on port 8000 before switching between live and mock mode." >&2
+  failed "Backend ($BACKEND_URL) is already running but is incompatible (stale pipeline contract or wrong mode)"
+  echo "[dev] This launcher stops nothing automatically: stop the process on port 8000, then rerun in the right mode." >&2
   required_failed=true
 elif [ "$CHECK_ONLY" = false ] && [ "$required_failed" = false ]; then
   starting "backend at $BACKEND_URL"
@@ -254,9 +260,11 @@ elif [ "$CHECK_ONLY" = false ] && [ "$required_failed" = false ]; then
     if [ "$MODE" = "mock" ]; then
       exec env CANARY_MOCK_GENERATIONS_ENABLED=true \
         CANARY_MOCK_MODEL_BASE_URL="$MOCK_URL" \
+        CANARY_LOCAL_DIAGNOSTICS=true \
         uv run pipeline serve --dev --projects-dir "$REPO_ROOT/projects"
     else
-      exec uv run pipeline serve --dev --projects-dir "$REPO_ROOT/projects"
+      exec env CANARY_LOCAL_DIAGNOSTICS=true \
+        uv run pipeline serve --dev --projects-dir "$REPO_ROOT/projects"
     fi
   ) &
   backend_pid=$!

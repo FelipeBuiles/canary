@@ -107,6 +107,7 @@ def _stage_payload(
     # state.json save. The wall-clock heuristic in is_stale() only fires
     # when the task is gone (server restart, crash).
     stale = is_stale(s) and not is_task_alive
+    from ..diagnostics import local_diagnostics_enabled
 
     return {
         "status": status,
@@ -117,6 +118,7 @@ def _stage_payload(
         "cost_credits": provider_usd_to_credits(s.cost_usd),
         "estimated_cost_credits": provider_usd_to_credits(s.estimated_cost_usd),
         "error": error,
+        "error_detail": s.error_detail if local_diagnostics_enabled() else None,
         "error_code": s.error_code,
         "balance_credits": s.balance_credits,
         "required_credits": s.required_credits,

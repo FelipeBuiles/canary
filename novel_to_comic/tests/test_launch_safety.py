@@ -334,7 +334,7 @@ def test_readiness_endpoint_uses_http_200_on_success(tmp_path: Path):
         response = endpoint()
 
     assert response.status_code == 200
-
+    assert b'"pipeline_contract":"eight-stage-v2"' in response.body
 
 def test_public_version_endpoint_reports_build_identity(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("CANARY_VERSION", "abc123")
