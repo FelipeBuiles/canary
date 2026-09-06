@@ -733,6 +733,8 @@ export function PagesRoom() {
           itemsTotal={interruptedStageInfo?.items_total}
           retryAsRerun={planNeedsAdapt}
           allowPendingStart={interruptedStage === "adapt"}
+          error={interruptedStageInfo?.error}
+          errorDetail={interruptedStageInfo?.error_detail}
         />
         <BlockingFailureList validation={adaptValidation ?? planValidation} />
       </RoomShell>

@@ -84,6 +84,42 @@ class TestExecuteContextManager:
         assert state.stages["adapt"].status == StageStatus.FAILED
         assert "boom" in state.stages["adapt"].error
 
+
+    def test_local_diagnostics_record_traceback_only_when_enabled(
+        self, tmp_path, monkeypatch
+    ):
+        state = _state(tmp_path)
+        monkeypatch.setenv("CANARY_ENV", "dev")
+        monkeypatch.setenv("CANARY_LOCAL_DIAGNOSTICS", "true")
+        ctx = StageRuntime("adapt", state, tmp_path)
+        with pytest.raises(ValueError, match="boom"):
+            with ctx.execute(total=1):
+                raise ValueError("boom")
+
+        assert "ValueError: boom" in state.stages["adapt"].error_detail
+        journal = tmp_path / ".canary" / "diagnostics.jsonl"
+        assert journal.exists()
+        assert "stage_failed" in journal.read_text()
+        restored = load_state(tmp_path)
+        assert "ValueError: boom" in restored.stages["adapt"].error_detail
+        with StageRuntime("adapt", restored, tmp_path).execute():
+            pass
+        recovered = load_state(tmp_path).stages["adapt"]
+        assert recovered.status == StageStatus.COMPLETE
+        assert recovered.error is None
+        assert recovered.error_detail is None
+
+    def test_production_diagnostics_keep_tracebacks_private(self, tmp_path, monkeypatch):
+        state = _state(tmp_path)
+        monkeypatch.setenv("CANARY_ENV", "production")
+        monkeypatch.setenv("CANARY_LOCAL_DIAGNOSTICS", "true")
+        ctx = StageRuntime("adapt", state, tmp_path)
+        with pytest.raises(ValueError, match="boom"):
+            with ctx.execute(total=1):
+                raise ValueError("boom")
+
+        assert state.stages["adapt"].error_detail is None
+        assert not (tmp_path / ".canary" / "diagnostics.jsonl").exists()
     def test_execute_saves_state_on_begin(self, tmp_path):
         state = _state(tmp_path)
         ctx = StageRuntime("plan", state, tmp_path)

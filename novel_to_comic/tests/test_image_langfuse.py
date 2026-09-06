@@ -120,3 +120,90 @@ def test_image_models_emit_langfuse_trace_and_generation_payloads(
     assert generation["type"] == "generation-create"
     assert generation["body"]["traceId"] == "request-trace"
     assert generation["body"]["model"] == provider_model
+
+
+def _emit_text_generation() -> list[list[dict]]:
+    posted: list[list[dict]] = []
+
+    async def capture_batch(host: str, auth: str, batch: list[dict]) -> None:
+        posted.append(batch)
+
+    return posted, capture_batch
+
+
+def test_langfuse_redacts_prompt_content_by_default(monkeypatch):
+    import json
+
+    posted, capture_batch = _emit_text_generation()
+    monkeypatch.delenv("CANARY_LOG_INCLUDE_PROMPTS", raising=False)
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "public")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "secret")
+    monkeypatch.setenv("LANGFUSE_HOST", "https://langfuse.test")
+    monkeypatch.setattr(client, "_post_langfuse_batch", capture_batch)
+
+    async def emit() -> None:
+        now = datetime.datetime.now(datetime.UTC)
+        client._log_langfuse_generation(
+            metadata={"trace_id": "trace-1", "metadata": {}},
+            feature="test.text",
+            operation="text",
+            model_alias="plan-balanced",
+            provider_model="openai/gpt-5.4-mini",
+            status="succeeded",
+            generation_id="event-1",
+            input_payload=[
+                {"role": "user", "content": "secret prompt body"},
+            ],
+            output_payload="secret response body",
+            usage=None,
+            cost_usd=None,
+            start_time=now,
+            end_time=now,
+        )
+        await asyncio.sleep(0)
+
+    asyncio.run(emit())
+
+    assert len(posted) == 1
+    dumped = json.dumps(posted[0])
+    assert "secret prompt body" not in dumped
+    assert "secret response body" not in dumped
+
+
+def test_langfuse_exports_prompt_content_with_explicit_opt_in(monkeypatch):
+    import json
+
+    posted, capture_batch = _emit_text_generation()
+    monkeypatch.setenv("CANARY_LOG_INCLUDE_PROMPTS", "1")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "public")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "secret")
+    monkeypatch.setenv("LANGFUSE_HOST", "https://langfuse.test")
+    monkeypatch.setattr(client, "_post_langfuse_batch", capture_batch)
+
+    async def emit() -> None:
+        now = datetime.datetime.now(datetime.UTC)
+        client._log_langfuse_generation(
+            metadata={"trace_id": "trace-1", "metadata": {}},
+            feature="test.text",
+            operation="text",
+            model_alias="plan-balanced",
+            provider_model="openai/gpt-5.4-mini",
+            status="succeeded",
+            generation_id="event-1",
+            input_payload=[
+                {"role": "user", "content": "visible prompt body"},
+            ],
+            output_payload="visible response body",
+            usage=None,
+            cost_usd=None,
+            start_time=now,
+            end_time=now,
+        )
+        await asyncio.sleep(0)
+
+    asyncio.run(emit())
+
+    assert len(posted) == 1
+    dumped = json.dumps(posted[0])
+    assert "visible prompt body" in dumped
+    assert "visible response body" in dumped

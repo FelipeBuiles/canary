@@ -37,24 +37,31 @@ const storyDecision = {
     target_page_max: 28,
   },
 };
+const runPipeline = vi.fn();
+
+let storyState: { data: typeof storyDecision | null; isLoading: boolean; error: Error | null } = {
+  data: storyDecision,
+  isLoading: false,
+  error: null,
+};
+
+let projectStages: Record<string, Record<string, unknown>> = {
+  extract: { status: "complete" },
+  brief: { status: "awaiting_review" },
+};
 
 vi.mock("../api/queries", () => ({
-  useStory: () => ({
-    data: storyDecision,
-    isLoading: false,
-    error: null,
-  }),
+  useStory: () => storyState,
   useProjectStatus: () => ({
     data: {
-      stages: {
-        extract: { status: "complete" },
-        brief: { status: "awaiting_review" },
-      },
+      stages: projectStages,
     },
   }),
   useUpdateBrief: () => ({ mutate: updateBrief, isPending: false }),
   useApproveStage: () => ({ mutate: approveBrief, isPending: false }),
+  useRunPipeline: () => ({ mutate: runPipeline, isPending: false }),
   useCreditBalance: () => ({ data: undefined }),
+  useStageEstimate: () => ({ data: undefined }),
 }));
 
 import { StoryRoom } from "../pages/rooms/StoryRoom";
@@ -75,6 +82,12 @@ describe("StoryRoom", () => {
   beforeEach(() => {
     updateBrief.mockReset();
     approveBrief.mockReset();
+    runPipeline.mockReset();
+    storyState = { data: storyDecision, isLoading: false, error: null };
+    projectStages = {
+      extract: { status: "complete" },
+      brief: { status: "awaiting_review" },
+    };
   });
 
   it("reviews the Story Bible and adaptation Brief together", () => {
@@ -117,4 +130,90 @@ describe("StoryRoom", () => {
       expect.any(Object),
     );
   });
+});
+
+describe("StoryRoom stage fallback precedence", () => {
+  beforeEach(() => {
+    runPipeline.mockReset();
+    storyState = { data: null, isLoading: false, error: null };
+    projectStages = { extract: { status: "complete" } };
+  });
+
+  function renderStoryAt(initialEntry: string) {
+    render(
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <I18nProvider>
+          <Routes>
+            <Route path="/project/:id/story" element={<StoryRoom />} />
+            <Route path="/story" element={<StoryRoom />} />
+          </Routes>
+        </I18nProvider>
+      </MemoryRouter>,
+    );
+  }
+
+  it("shows an actionable load error when the route has no project id", () => {
+    renderStoryAt("/story");
+
+    expect(screen.getByText("COULD NOT LOAD")).toBeTruthy();
+    expect(screen.getByText("Project id is missing from the route.")).toBeTruthy();
+    expect(screen.queryByText("PROOF UNAVAILABLE")).toBeNull();
+  });
+
+  it("shows the failed stage error and technical details instead of a missing-brief failure", () => {
+    projectStages = {
+      extract: { status: "complete" },
+      brief: { status: "failed", error: "Brief run failed", error_detail: "traceback: boom" },
+    };
+    renderStoryAt("/project/demo/story");
+
+    expect(screen.getByText("PRESS STOPPED")).toBeTruthy();
+    expect(screen.getByText("Brief run failed")).toBeTruthy();
+    expect(screen.getByText("TECHNICAL DETAILS")).toBeTruthy();
+    expect(screen.getByText("traceback: boom")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry stage" })).toBeTruthy();
+    expect(screen.queryByText("PROOF UNAVAILABLE")).toBeNull();
+    expect(screen.queryByText("ERROR DETAILS")).toBeNull();
+  });
+
+  it("keeps a running stage visible while its artifact is still missing", () => {
+    projectStages = {
+      extract: { status: "complete" },
+      brief: { status: "running" },
+    };
+    renderStoryAt("/project/demo/story");
+
+    expect(screen.getByText("RUNNING")).toBeTruthy();
+    expect(screen.queryByText("COULD NOT LOAD")).toBeNull();
+    expect(screen.queryByText("PROOF UNAVAILABLE")).toBeNull();
+  });
+
+  it("keeps a real fetch error actionable while the stage is still running", () => {
+    storyState = { data: null, isLoading: false, error: new Error("Backend 404: story not found") };
+    projectStages = {
+      extract: { status: "complete" },
+      brief: { status: "running" },
+    };
+    renderStoryAt("/project/demo/story");
+
+    expect(screen.getByText("COULD NOT LOAD")).toBeTruthy();
+    expect(screen.getByText("ERROR DETAILS")).toBeTruthy();
+    expect(screen.getByText("Backend 404: story not found")).toBeTruthy();
+    expect(screen.queryByText("PROOF UNAVAILABLE")).toBeNull();
+  });
+  it("shows an actionable load error when a ready stage has no artifact", () => {
+    projectStages = {
+      extract: { status: "complete" },
+      brief: { status: "complete" },
+    };
+    renderStoryAt("/project/demo/story");
+
+    expect(screen.getByText("COULD NOT LOAD")).toBeTruthy();
+    expect(
+      screen.getByText("The development server reported this stage ready, but its data was missing from the response."),
+    ).toBeTruthy();
+    expect(screen.queryByText("PROOF UNAVAILABLE")).toBeNull();
+    expect(screen.queryByText("AWAITING REVIEW")).toBeNull();
+  });
+
 });

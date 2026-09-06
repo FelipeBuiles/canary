@@ -26,6 +26,7 @@ from novel_to_comic.ai.context import (
 from novel_to_comic.ai.errors import AIRefusalError, AITransportError
 from novel_to_comic.ai.finalisation import (
     begin_image_call,
+    finalise_image_cancelled,
     finalise_image_failure,
     finalise_image_success,
 )
@@ -716,26 +717,36 @@ def _gateway_http_error(
     model: str,
     endpoint: str,
 ) -> AITransportError:
-    """Build a bounded, useful error without echoing arbitrary response data."""
+    """Build a bounded error that preserves provider diagnostics, not payload data."""
     detail = ""
+    provider_code = ""
+    error_type = ""
     try:
         body = response.json()
     except Exception:
         body = None
     if isinstance(body, dict):
         error = body.get("error")
-        if isinstance(error, dict) and isinstance(error.get("message"), str):
-            detail = error["message"]
+        if isinstance(error, dict):
+            if isinstance(error.get("message"), str):
+                detail = error["message"]
+            metadata = error.get("metadata")
+            if isinstance(metadata, dict):
+                provider_code = str(metadata.get("provider_code") or "")[:120]
+                error_type = str(metadata.get("error_type") or "")[:120]
         elif isinstance(body.get("detail"), str):
             detail = body["detail"]
         elif isinstance(body.get("message"), str):
             detail = body["message"]
     detail = " ".join(detail.split())[:800]
-    suffix = f" — {detail}" if detail else ""
+    suffix_parts = [part for part in (detail, provider_code, error_type) if part]
+    suffix = f" — {'; '.join(suffix_parts)}" if suffix_parts else ""
+    reason = getattr(response, "reason_phrase", "")
+    status_text = f"{response.status_code} {reason}".strip()
     return AITransportError(
         f"AI gateway request failed for {feature} "
         f"(model={model}, endpoint={endpoint}): "
-        f"{response.status_code} {response.reason_phrase}{suffix}",
+        f"{status_text}{suffix}",
         phase="gateway_request",
         response=response,
     )
@@ -827,6 +838,10 @@ def _insert_event(
     except Exception as exc:
         logger.warning("ai_usage_events insert failed for %s: %s", event_id, exc)
 
+async def _insert_event_async(**kwargs: Any) -> None:
+    """Persist the started event off the event loop, but await completion."""
+    await asyncio.to_thread(_insert_event, **kwargs)
+
 
 def _finalize_event(
     *,
@@ -846,6 +861,7 @@ def _finalize_event(
     langfuse_input: Any = None,
     langfuse_output: Any = None,
     started_at: datetime.datetime | None = None,
+    langfuse_scheduler: Any = None,
 ) -> None:
     provider_model = str(
         (response_data or {}).get("model")
@@ -949,23 +965,68 @@ def _finalize_event(
     if event_persisted and billable and usage is not None:
         _settle_event_usage(usage, feature=feature, status=status)
     if status != "cancelled" and metadata is not None:
-        _log_langfuse_generation(
-            metadata=metadata,
-            feature=feature,
-            operation=operation,
-            model_alias=model_alias,
-            provider_model=provider_model,
-            status=status,
-            generation_id=event_id,
-            input_payload=langfuse_input,
-            output_payload=langfuse_output,
-            usage=usage,
-            cost_usd=cost_usd,
-            pricing_estimate_drift_pct=drift_pct,
-            start_time=started_at or datetime.datetime.now(datetime.UTC),
-            end_time=datetime.datetime.now(datetime.UTC),
-            error=error,
-        )
+        try:
+            _log_langfuse_generation(
+                metadata=metadata,
+                feature=feature,
+                operation=operation,
+                model_alias=model_alias,
+                provider_model=provider_model,
+                status=status,
+                generation_id=event_id,
+                input_payload=langfuse_input,
+                output_payload=langfuse_output,
+                usage=usage,
+                cost_usd=cost_usd,
+                pricing_estimate_drift_pct=drift_pct,
+                start_time=started_at or datetime.datetime.now(datetime.UTC),
+                end_time=datetime.datetime.now(datetime.UTC),
+                error=error,
+                scheduler=langfuse_scheduler,
+            )
+        except Exception as exc:
+            # Optional telemetry must never affect the model outcome.
+            logger.warning("Langfuse export failed for %s: %s", event_id, exc)
+
+async def _finalize_event_async(**kwargs: Any) -> None:
+    """Finalize usage off the event loop while awaiting durability and billing."""
+    loop = asyncio.get_running_loop()
+
+    def schedule(coro: Any) -> None:
+        loop.call_soon_threadsafe(asyncio.create_task, coro)
+
+    await asyncio.to_thread(
+        _finalize_event,
+        **kwargs,
+        langfuse_scheduler=schedule,
+    )
+
+
+async def _await_usage_task(task: asyncio.Task[None]) -> None:
+    """Drain an authoritative write despite repeated cancellation requests."""
+    cancellation: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+    task.result()
+    if cancellation is not None:
+        raise cancellation
+
+
+async def _finalize_event_shielded(**kwargs: Any) -> None:
+    """Await authoritative billing persistence even if cancellation intervenes.
+
+    Offloading finalisation to a worker thread introduced an interruptible
+    await where the old synchronous call could not be interrupted. Shielding
+    alone would detach the write on cancel, so run it as a task and — if
+    cancellation wins the race — wait out the task before re-raising. The
+    caller never returns ahead of persistence, and no second terminal write
+    can start concurrently with the in-flight one.
+    """
+    task = asyncio.create_task(_finalize_event_async(**kwargs))
+    await _await_usage_task(task)
 
 
 def _truncate_for_log(text: str, max_chars: int = 4000) -> str:
@@ -1003,7 +1064,7 @@ async def _post_langfuse_batch(
     host: str, auth: str, batch: list[dict[str, Any]]
 ) -> None:
     try:
-        await _http.post(
+        response = await _http.post(
             f"{host}/api/public/ingestion",
             headers={
                 "Authorization": f"Basic {auth}",
@@ -1011,8 +1072,25 @@ async def _post_langfuse_batch(
             },
             json={"batch": batch},
         )
+        response.raise_for_status()
     except Exception as exc:
         logger.warning("Langfuse ingestion failed: %s", exc)
+
+
+def _langfuse_prompt_export_enabled() -> bool:
+    """Whether optional Langfuse export may carry prompt/response content.
+
+    Reuses the CANARY_LOG_INCLUDE_PROMPTS privacy convention: prompt text
+    stays out of third-party telemetry unless explicitly opted in. Usage
+    counts, cost, model names, and error types are never content and are
+    always exported.
+    """
+    return os.environ.get("CANARY_LOG_INCLUDE_PROMPTS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _log_langfuse_generation(
@@ -1032,16 +1110,15 @@ def _log_langfuse_generation(
     end_time: datetime.datetime,
     pricing_estimate_drift_pct: float | None = None,
     error: BaseException | None = None,
+    scheduler: Any = None,
 ) -> None:
-    """Send one generation observation (and its trace) to Langfuse via REST.
-
-    Replaces LiteLLM's built-in langfuse callback so we control input/output
-    formatting (especially for image endpoints, where prompt/output don't fit
-    the chat-completion shape LiteLLM assumes).
-    """
+    """Queue one bounded generation observation for optional Langfuse export."""
     endpoint = _langfuse_endpoint()
     if endpoint is None or metadata is None:
         return
+    if not _langfuse_prompt_export_enabled():
+        input_payload = {"redacted": True}
+        output_payload = {"redacted": True}
     host, auth = endpoint
     trace_id = metadata.get("trace_id") or generation_id
     tags = [tag for tag in (metadata.get("tags") or []) if tag]
@@ -1130,11 +1207,25 @@ def _log_langfuse_generation(
             }
         )
 
+    coroutine = None
     try:
-        asyncio.create_task(_post_langfuse_batch(host, auth, batch))
-    except RuntimeError:
-        # No running loop (synchronous test context, etc.); skip silently.
+        if scheduler is None:
+            # Resolve the loop before creating the coroutine so a missing
+            # loop cannot strand an un-awaited coroutine object.
+            asyncio.get_running_loop()
+        coroutine = _post_langfuse_batch(host, auth, batch)
+        if scheduler is not None:
+            scheduler(coroutine)
+        else:
+            asyncio.create_task(coroutine)
+        coroutine = None
+    except Exception:
+        # Optional telemetry must never affect the model outcome. A missing
+        # loop (synchronous test context, etc.) simply skips the export.
         pass
+    finally:
+        if coroutine is not None:
+            coroutine.close()
 
 
 def _settle_event_usage(usage: UsageRecord, *, feature: str, status: str) -> None:
@@ -1407,16 +1498,9 @@ async def _chat_completion(
     estimated_cost_usd = (
         estimate_text_cost(model, effective_system + "\n" + user_content) or None
     )
-    _insert_event(
-        event_id=event_id,
-        model_alias=model,
-        feature=feature,
-        operation=operation,
-        params_json=_redacted_params(payload),
-        request_summary_json=_content_summary(effective_system, user_content),
-        metadata_json=metadata,
-        estimated_cost_usd=estimated_cost_usd,
-    )
+    # Everything the terminal handlers reference must exist before the first
+    # cancellable await: offloading the insert to a thread means cancellation
+    # can now land here, and the CancelledError handler reads all of these.
     started = time.perf_counter()
     started_at = datetime.datetime.now(datetime.UTC)
     langfuse_input = [
@@ -1425,6 +1509,40 @@ async def _chat_completion(
     ]
     response: httpx.Response | None = None
     data: dict[str, Any] = {}
+    insert_task = asyncio.create_task(
+        _insert_event_async(
+            event_id=event_id,
+            model_alias=model,
+            feature=feature,
+            operation=operation,
+            params_json=_redacted_params(payload),
+            request_summary_json=_content_summary(effective_system, user_content),
+            metadata_json=metadata,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+    )
+    try:
+        await _await_usage_task(insert_task)
+    except asyncio.CancelledError as exc:
+        # The request was never issued, but the started row must still reach
+        # a terminal state: wait out the insert, book the cancellation, then
+        # propagate. Exactly once — the main try block is never entered.
+        await _finalize_event_shielded(
+            event_id=event_id,
+            status="cancelled",
+            feature=feature,
+            model_alias=model,
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            error=exc,
+            error_response=response,
+            config=config,
+            operation=operation,
+            metadata=metadata,
+            estimated_cost_usd=estimated_cost_usd,
+            langfuse_input=langfuse_input,
+            started_at=started_at,
+        )
+        raise
     try:
         endpoint = "/v1/chat/completions"
         # Breadcrumb before the request: Langfuse only records a call once it
@@ -1450,25 +1568,27 @@ async def _chat_completion(
                     json=payload,
                 )
                 data = {}
+            if response is not None and response.status_code >= 400:
+                response.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            raise _gateway_http_error(
+            gateway_error = _gateway_http_error(
                 exc.response,
                 feature=feature,
                 model=model,
                 endpoint=endpoint,
-            ) from exc
+            )
+            logger.error(
+                "AI gateway rejected request feature=%s model=%s event_id=%s status=%s error=%s",
+                feature,
+                model,
+                event_id,
+                exc.response.status_code,
+                gateway_error,
+            )
+            raise gateway_error from exc
         except _TRANSPORT_ERRORS as exc:
             raise _gateway_transport_error(
                 exc,
-                feature=feature,
-                model=model,
-                endpoint=endpoint,
-            ) from exc
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise _gateway_http_error(
-                response,
                 feature=feature,
                 model=model,
                 endpoint=endpoint,
@@ -1511,30 +1631,12 @@ async def _chat_completion(
                 output_text=text,
                 call_id=event_id,
             )
-        _finalize_event(
-            event_id=event_id,
-            status="succeeded",
-            feature=feature,
-            model_alias=model,
-            latency_ms=int((time.perf_counter() - started) * 1000),
-            usage=usage,
-            response_data=data,
-            config=config,
-            operation=operation,
-            metadata=metadata,
-            estimated_cost_usd=estimated_cost_usd,
-            langfuse_input=langfuse_input,
-            langfuse_output=_truncate_for_log(text),
-            started_at=started_at,
-        )
-        return {
-            "text": text,
-            "usage": usage,
-            "finish_reason": choice.get("finish_reason"),
-            "stream": data.get("_canary_stream") or {},
-        }
     except asyncio.CancelledError as exc:
-        _finalize_event(
+        # Shielded: the task must not return before billing persistence
+        # completes, even if a second cancellation arrives mid-write. The
+        # success write lives outside this catcher, so a late cancel can
+        # never overwrite a completed success with a cancelled status.
+        await _finalize_event_shielded(
             event_id=event_id,
             status="cancelled",
             feature=feature,
@@ -1554,7 +1656,7 @@ async def _chat_completion(
         # `data` is the collapsed stream body — a streamed response has no
         # buffered content to re-parse here.
         usage = _extract_usage(data, event_id, model, operation) if data else None
-        _finalize_event(
+        await _finalize_event_shielded(
             event_id=event_id,
             status="refused",
             feature=feature,
@@ -1583,7 +1685,7 @@ async def _chat_completion(
                 output_text="",
                 call_id=event_id,
             )
-        _finalize_event(
+        await _finalize_event_shielded(
             event_id=event_id,
             status="failed",
             feature=feature,
@@ -1600,6 +1702,31 @@ async def _chat_completion(
             started_at=started_at,
         )
         raise
+    # The success write runs outside the cancellation catcher: it is shielded,
+    # so a cancel landing mid-write waits it out, then propagates without a
+    # second terminal write overwriting the succeeded status.
+    await _finalize_event_shielded(
+        event_id=event_id,
+        status="succeeded",
+        feature=feature,
+        model_alias=model,
+        latency_ms=int((time.perf_counter() - started) * 1000),
+        usage=usage,
+        response_data=data,
+        config=config,
+        operation=operation,
+        metadata=metadata,
+        estimated_cost_usd=estimated_cost_usd,
+        langfuse_input=langfuse_input,
+        langfuse_output=_truncate_for_log(text),
+        started_at=started_at,
+    )
+    return {
+        "text": text,
+        "usage": usage,
+        "finish_reason": choice.get("finish_reason"),
+        "stream": data.get("_canary_stream") or {},
+    }
 
 
 async def generate_wire_image(
@@ -1630,7 +1757,7 @@ async def generate_wire_image(
         raise ValueError(
             f"wire transport is not implemented for adapter {provider.name}"
         )
-    ctx = begin_image_call(
+    ctx = await begin_image_call(
         config=config,
         model=transport_wire.requested_alias
         or transport_wire.configured_provider_model,
@@ -1646,6 +1773,32 @@ async def generate_wire_image(
             event_id=ctx.event_id,
             metadata=ctx.metadata,
         )
+    except asyncio.CancelledError as exc:
+        await finalise_image_cancelled(
+            ctx=ctx,
+            config=config,
+            model=transport_wire.requested_alias
+            or transport_wire.configured_provider_model,
+            feature=feature,
+            error=exc,
+            error_response=getattr(exc, "response", None),
+        )
+        raise
+    except Exception as exc:
+        await finalise_image_failure(
+            ctx=ctx,
+            config=config,
+            model=transport_wire.requested_alias
+            or transport_wire.configured_provider_model,
+            feature=feature,
+            error=exc,
+            error_response=getattr(exc, "response", None),
+        )
+        raise
+    # The success write runs outside the cancellation catcher: it is shielded,
+    # so a cancel landing mid-write waits it out, then propagates without a
+    # second terminal write overwriting the succeeded status.
+    try:
         return await finalise_image_success(
             ctx=ctx,
             config=config,
@@ -1656,7 +1809,7 @@ async def generate_wire_image(
             raw=raw,
         )
     except Exception as exc:
-        finalise_image_failure(
+        await finalise_image_failure(
             ctx=ctx,
             config=config,
             model=transport_wire.requested_alias

@@ -70,8 +70,14 @@ def configure_logging() -> None:
     )
     logging.getLogger("uvicorn.access").disabled = True
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    from .diagnostics import local_diagnostics_enabled
+
+    if local_diagnostics_enabled():
+        logging.getLogger("canary.diagnostics").info(
+            "[bold blue]Local diagnostics[/] enabled; failures are recorded in "
+            "the project .canary/diagnostics.jsonl journal."
+        )
     configure_telemetry()
-    configure_sentry()
 
 
 _STATIC_FILE_PATH_FRAGMENTS = (
@@ -157,11 +163,12 @@ async def request_log_middleware(
     response.headers["X-Request-ID"] = request_id
     if _should_log_request(request, response.status_code, elapsed_ms):
         api_logger.info(
-            "[bold magenta]API[/] %s [white]%s[/] -> [bold]%s[/] elapsed=%.0fms",
+            "[bold magenta]API[/] %s [white]%s[/] -> [bold]%s[/] elapsed=%.0fms request_id=%s",
             request.method,
             request.url.path,
             response.status_code,
             elapsed_ms,
+            request_id,
         )
     return response
 

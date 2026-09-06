@@ -1147,3 +1147,215 @@ def test_bounded_submission_does_not_repeat_server_failure(monkeypatch):
     ))
     assert response.status_code == 503
     assert len(calls) == 1
+
+
+def test_finalize_shielded_completes_billing_before_cancellation_surfaces(
+    monkeypatch,
+):
+    """Repeated cancellation cannot return ahead of the authoritative write."""
+    import threading
+
+    async def main():
+        started = asyncio.Event()
+        release = threading.Event()
+        finished = threading.Event()
+        loop = asyncio.get_running_loop()
+
+        def finalize(**kwargs):
+            loop.call_soon_threadsafe(started.set)
+            assert release.wait(timeout=5), "test did not release persistence"
+            finished.set()
+
+        monkeypatch.setattr(client, "_finalize_event", finalize)
+        task = asyncio.create_task(
+            client._finalize_event_shielded(
+                event_id="evt-cancel",
+                status="succeeded",
+                feature="test.cancel",
+                model_alias="plan-balanced",
+                latency_ms=1,
+            )
+        )
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            for _ in range(3):
+                task.cancel()
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+                assert not task.done()
+        finally:
+            release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # Assert before asyncio.run's executor shutdown can hide detached work.
+        assert finished.is_set()
+
+    asyncio.run(main())
+
+
+def test_chat_completion_cancellation_records_cancelled_status(
+    monkeypatch, _patch_events
+):
+    async def hang(url, *, headers, payload):
+        await asyncio.sleep(60)
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr(client, "_stream_with_retry", hang)
+
+    async def main():
+        task = asyncio.create_task(
+            client._chat_completion(
+                config=Config(),
+                model="plan-balanced",
+                system_prompt="Return JSON.",
+                user_content="{}",
+                temperature=0.0,
+                max_output_tokens=None,
+                json_mode=False,
+                feature="test.cancel",
+            )
+        )
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(main())
+
+    kinds = [kind for kind, _ in _patch_events]
+    assert kinds[0] == "insert"
+    assert _patch_events[-1][0] == "finalize"
+    assert _patch_events[-1][1]["status"] == "cancelled"
+
+
+def test_chat_completion_cancel_during_insert_still_records_cancelled(
+    monkeypatch, _patch_events
+):
+    """Cancelling the newly offloaded insert await must not break bookkeeping."""
+    import time
+
+    def slow_insert(**kwargs):
+        time.sleep(0.3)
+        _patch_events.append(("insert", kwargs))
+
+    monkeypatch.setattr(client, "_insert_event", slow_insert)
+    _patch_http(
+        monkeypatch,
+        {
+            "id": "resp_1",
+            "model": "openai/gpt-5.4-mini",
+            "choices": [{"message": {"content": "hello"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 3},
+        },
+    )
+
+    async def main():
+        task = asyncio.create_task(
+            client._chat_completion(
+                config=Config(),
+                model="plan-balanced",
+                system_prompt="Say hi.",
+                user_content="hi",
+                temperature=0.0,
+                max_output_tokens=None,
+                json_mode=False,
+                feature="test.cancel",
+            )
+        )
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(main())
+
+    assert _patch_events[-1][0] == "finalize"
+    assert _patch_events[-1][1]["status"] == "cancelled"
+
+
+def test_finalise_image_cancelled_records_cancelled_status(_patch_events):
+    import datetime
+    import time
+
+    from novel_to_comic.ai.finalisation import (
+        ImageCallContext,
+        finalise_image_cancelled,
+    )
+
+    ctx = ImageCallContext(
+        event_id="img-evt-cancel",
+        operation="image",
+        metadata={},
+        params={},
+        estimated_cost_usd=None,
+        started=time.perf_counter(),
+        started_at=datetime.datetime.now(datetime.UTC),
+        langfuse_input={},
+    )
+    asyncio.run(
+        finalise_image_cancelled(
+            ctx=ctx,
+            config=Config(),
+            model="image-balanced",
+            feature="test.img",
+            error=asyncio.CancelledError(),
+        )
+    )
+
+    assert _patch_events[-1][0] == "finalize"
+    assert _patch_events[-1][1]["status"] == "cancelled"
+    assert _patch_events[-1][1]["event_id"] == "img-evt-cancel"
+
+
+def test_chat_completion_late_cancel_does_not_overwrite_success(
+    monkeypatch, _patch_events
+):
+    """A cancel landing during the success write keeps the succeeded status."""
+    import threading
+    import time
+
+    entered = threading.Event()
+
+    def slow_finalize(**kwargs):
+        _patch_events.append(("finalize", kwargs))
+        entered.set()
+        time.sleep(0.3)
+
+    monkeypatch.setattr(client, "_finalize_event", slow_finalize)
+    _patch_http(
+        monkeypatch,
+        {
+            "id": "resp_1",
+            "model": "openai/gpt-5.4-mini",
+            "choices": [{"message": {"content": "hello"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 3},
+        },
+    )
+
+    async def main():
+        task = asyncio.create_task(
+            client._chat_completion(
+                config=Config(),
+                model="plan-balanced",
+                system_prompt="Say hi.",
+                user_content="hi",
+                temperature=0.0,
+                max_output_tokens=None,
+                json_mode=False,
+                feature="test.cancel",
+            )
+        )
+        for _ in range(500):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0.01)
+        assert entered.is_set()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(main())
+
+    finalizes = [kwargs for kind, kwargs in _patch_events if kind == "finalize"]
+    assert len(finalizes) == 1
+    assert finalizes[0]["status"] == "succeeded"

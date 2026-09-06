@@ -7,6 +7,7 @@ import json
 import logging
 import shutil
 import time
+import traceback
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -97,12 +98,31 @@ async def _run_stage(
         from novel_to_comic.text_utils import clean_exception_message
 
         message = clean_exception_message(exc)
+        from ..diagnostics import local_diagnostics_enabled, record_diagnostic
+
+        error_detail = traceback.format_exc() if local_diagnostics_enabled() else None
         if state.stages[stage].status != StageStatus.FAILED:
-            fail_stage(state, stage, message)
+            fail_stage(
+                state,
+                stage,
+                message,
+                error_detail=error_detail,
+            )
             save_state(state, project_dir)
             queue.put_nowait(
                 {"type": "stage_fail", "stage": stage, "message": message}
             )
+        elif error_detail and not state.stages[stage].error_detail:
+            state.stages[stage].error_detail = error_detail
+            save_state(state, project_dir)
+        record_diagnostic(
+            project_dir,
+            "stage_failed",
+            stage=stage,
+            message=message,
+            error=exc,
+            error_detail=error_detail,
+        )
         logger.exception(
             "Stage failed project=%s stage=%s elapsed=%.1fs",
             project_dir.name,
@@ -570,23 +590,28 @@ def reset_stage(
         raise HTTPException(400, f"Unknown stage: {stage}")
     if state.stages[stage].status != StageStatus.FAILED:
         raise HTTPException(409, f"Stage '{stage}' is not failed.")
-    state.stages[stage] = StageState()
-    save_state(state, project_dir)
-    release_stage_reservations(get_db(), user_id, project_id, stage)
-    return {"status": "reset", "stage": stage}
-
-
-@router.post("/reset-stale")
-def reset_stale(
+@router.get("/stage-error/{stage}")
+def get_stage_error(
+    stage: str,
     project_id: str,
     project=Depends(get_project),
-    user_id: str = Depends(get_current_user),
 ):
-    project_dir, _config, state = project
-    stale = get_stale_stages(state)
-    if not stale:
-        return {"status": "ok", "reset": []}
-    reset = reset_stale_stages(state)
+    _project_dir, _config, state = project
+    if stage not in STAGE_NAMES:
+        raise HTTPException(400, f"Unknown stage: {stage}")
+    stage_state = state.stages[stage]
+    if stage_state.status != StageStatus.FAILED:
+        raise HTTPException(404, f"Stage '{stage}' is not failed.")
+    from ..diagnostics import local_diagnostics_enabled
+
+    return {
+        "stage": stage,
+        "error": stage_state.error or "Unknown error",
+        "error_detail": (
+            stage_state.error_detail if local_diagnostics_enabled() else None
+        ),
+        "items_failed": stage_state.items_failed,
+    }
     save_state(state, project_dir)
     for stage in reset:
         release_stage_reservations(get_db(), user_id, project_id, stage)

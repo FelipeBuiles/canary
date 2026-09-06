@@ -266,31 +266,62 @@ export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0 }: StageRunn
   );
 }
 
-// ── Failed state ──────────────────────────────────────────────────────────────
+// ── Failed and unavailable states ────────────────────────────────────────────
 
 interface StageFailedProps {
   project: string;
   stage: StageName;
   rerun: boolean;
+  error?: string | null;
+  errorDetail?: string | null;
 }
 
-function StageFailed({ project, stage, rerun }: StageFailedProps) {
+function StageFailed({ project, stage, rerun, error, errorDetail }: StageFailedProps) {
   const { t } = useI18n();
   const { handleRun, isPending } = useRunAction();
   return (
     <StageDocket stage={stage} state="PRESS STOPPED" tone="failed">
-        <p className="mt-5 font-body text-[0.86rem] font-semibold leading-6 text-ink-muted">
-          {t("This stage didn't complete. Try running it again.")}
-        </p>
-        <div className="mt-5 flex">
-          <Button
-            size="md"
-            disabled={isPending}
-            onClick={() => handleRun(project, stage, { rerun })}
-          >
-            {isPending ? t("Starting…") : t("Retry stage")}
-          </Button>
-        </div>
+      <p className="mt-5 font-body text-[0.86rem] font-semibold leading-6 text-ink-muted">
+        {error || t("This stage didn't complete. Try running it again.")}
+      </p>
+      {errorDetail && (
+        <details className="mt-4 border-[2px] border-ink-black/15 bg-surface-container p-3">
+          <summary className="cursor-pointer font-meta text-[0.62rem] font-bold tracking-[0.08em]">
+            {t("TECHNICAL DETAILS")}
+          </summary>
+          <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap font-mono text-[0.7rem] leading-5 text-ink-black/80">
+            {errorDetail}
+          </pre>
+        </details>
+      )}
+      <div className="mt-5 flex">
+        <Button
+          size="md"
+          disabled={isPending}
+          onClick={() => handleRun(project, stage, { rerun })}
+        >
+          {isPending ? t("Starting…") : t("Retry stage")}
+        </Button>
+      </div>
+    </StageDocket>
+  );
+}
+
+function StageLoadError({ stage, message }: { stage: StageName; message: string }) {
+  const { t } = useI18n();
+  return (
+    <StageDocket stage={stage} state="COULD NOT LOAD" tone="failed">
+      <p className="mt-5 font-body text-[0.86rem] font-semibold leading-6 text-ink-muted">
+        {t("The development server returned an error while loading this stage.")}
+      </p>
+      <details open className="mt-4 border-[2px] border-ink-black/15 bg-surface-container p-3">
+        <summary className="cursor-pointer font-meta text-[0.62rem] font-bold tracking-[0.08em]">
+          {t("ERROR DETAILS")}
+        </summary>
+        <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap font-mono text-[0.7rem] leading-5 text-ink-black/80">
+          {message}
+        </pre>
+      </details>
     </StageDocket>
   );
 }
@@ -306,6 +337,9 @@ interface StagePlaceholderProps {
   itemsTotal?: number;
   retryAsRerun?: boolean;
   allowPendingStart?: boolean;
+  error?: string | null;
+  errorDetail?: string | null;
+  loadError?: string | null;
 }
 
 export function StagePlaceholder({
@@ -317,12 +351,11 @@ export function StagePlaceholder({
   itemsTotal,
   retryAsRerun = false,
   allowPendingStart = false,
+  error,
+  errorDetail,
+  loadError,
 }: StagePlaceholderProps) {
   const { t } = useI18n();
-  // Credit gate takes priority over every other placeholder state — a user
-  // blocked on credits should never see "WAITING FOR PIPELINE" or a fake
-  // running flash. Covers both the persisted credit-failure case (survives
-  // reload) and the heuristic 0-credit-new-user case.
   const needsCredits = useNeedsCredits(project, stage);
   if (needsCredits.blocked) {
     return (
@@ -337,7 +370,20 @@ export function StagePlaceholder({
       />
     );
   }
-
+  if (status === "failed" || stale) {
+    return (
+      <StageFailed
+        project={project}
+        stage={stage}
+        rerun={retryAsRerun}
+        error={error}
+        errorDetail={errorDetail}
+      />
+    );
+  }
+  if (loadError) {
+    return <StageLoadError stage={stage} message={loadError} />;
+  }
   if (status === "running" && !stale) {
     return <StageRunning stage={stage} itemsDone={itemsDone} itemsTotal={itemsTotal} />;
   }
@@ -350,16 +396,20 @@ export function StagePlaceholder({
       />
     );
   }
-  if (status === "failed" || stale) {
-    return <StageFailed project={project} stage={stage} rerun={retryAsRerun} />;
+  if (status === "awaiting_review") {
+    return (
+      <StageDocket stage={stage} state="AWAITING REVIEW" tone="muted">
+        <p className="mt-5 font-body text-[0.86rem] font-semibold leading-6 text-ink-muted">
+          {t("This stage completed and is waiting for the next review step.")}
+        </p>
+      </StageDocket>
+    );
   }
-  // Stage completed but no data — shouldn't normally happen; show a minimal
-  // state while the data loads.
   return (
     <StageDocket stage={stage} state="PROOF UNAVAILABLE" tone="muted">
-        <p className="mt-5 font-body text-[0.86rem] font-semibold leading-6 text-ink-muted">
-          {t("Data for this stage could not be loaded.")}
-        </p>
+      <p className="mt-5 font-body text-[0.86rem] font-semibold leading-6 text-ink-muted">
+        {t("Data for this stage could not be loaded.")}
+      </p>
     </StageDocket>
   );
 }

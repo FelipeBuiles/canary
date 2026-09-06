@@ -397,7 +397,11 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         ok, checks = _readiness_result()
         return JSONResponse(
             status_code=200 if ok else 503,
-            content={"status": "ok" if ok else "error", "checks": checks},
+            content={
+                "status": "ok" if ok else "error",
+                "pipeline_contract": "eight-stage-v2",
+                "checks": checks,
+            },
         )
 
     @app.get("/metrics", include_in_schema=False)

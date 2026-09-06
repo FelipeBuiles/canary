@@ -355,9 +355,8 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
         ctx.record_item_done(usage=extract_result.usage)
         ctx.progress(4, 4)
 
-        console.print("[yellow]Extract stage complete — awaiting review.[/yellow]")
-        console.print(f"Review the Story Bible at: {artifacts.story_bible_path(project_dir)}")
-        console.print("Run [bold]pipeline approve --project . --stage extract[/bold] to continue.")
+        console.print("[green]Extract stage complete — starting Brief next.[/green]")
+        ctx.log("Extract stage complete; Brief will start automatically.")
 
     return story_bible
 

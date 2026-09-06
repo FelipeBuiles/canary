@@ -60,12 +60,29 @@ export function StoryRoom() {
   }
 
   if (!id || error || !data || !draft) {
+    const stage = extract?.status === "complete" ? "brief" : "extract";
+    const status = extract?.status === "complete" ? stageStatus : (extract?.status ?? "pending");
+    const errorMessage = !id
+      ? t("Project id is missing from the route.")
+      : error instanceof Error
+        ? error.message
+        : error
+          ? t("The development server returned an error while loading this stage.")
+          : status === "complete" || status === "awaiting_review"
+            ? t("The development server reported this stage ready, but its data was missing from the response.")
+            : null;
+    const stageInfo = status === "failed"
+      ? (stage === "extract" ? extract : briefStage)
+      : undefined;
     return (
       <RoomShell project={id ?? ""}>
         <StagePlaceholder
           project={id ?? ""}
-          stage={extract?.status === "complete" ? "brief" : "extract"}
-          status={extract?.status === "complete" ? stageStatus : (extract?.status ?? "pending")}
+          stage={stage}
+          status={status}
+          error={stageInfo?.error}
+          errorDetail={stageInfo?.error_detail}
+          loadError={errorMessage}
         />
       </RoomShell>
     );

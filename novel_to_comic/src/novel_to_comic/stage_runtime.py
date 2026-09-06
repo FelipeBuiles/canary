@@ -25,10 +25,11 @@ clean exit; on exception it calls ``fail`` and re-raises.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-import datetime
+from contextlib import contextmanager, nullcontext
+from datetime import UTC, datetime
 import logging
 import time
+import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING, Generator
 
@@ -134,8 +135,25 @@ class StageRuntime:
         })
         save_state(self._state, self._project_dir)
 
-    def fail(self, error: str) -> None:
-        fail_stage(self._state, self.name, error)
+    def fail(self, error: str, *, error_detail: str | None = None) -> None:
+        fail_stage(
+            self._state,
+            self.name,
+            error,
+            error_detail=error_detail,
+        )
+        try:
+            from novel_to_comic.server.diagnostics import record_diagnostic
+
+            record_diagnostic(
+                self._project_dir,
+                "stage_failed",
+                stage=self.name,
+                message=error,
+                error_detail=error_detail,
+            )
+        except Exception:
+            pass
         self._emit({"type": "stage_fail", "stage": self.name, "message": error})
         save_state(self._state, self._project_dir)
 
@@ -143,15 +161,38 @@ class StageRuntime:
     def execute(
         self, total: int = 0, estimated_cost_usd: float = 0.0
     ) -> Generator[StageRuntime, None, None]:
-        """Context manager: begin on entry, complete on success, fail+reraise on error."""
-        self.begin(total, estimated_cost_usd)
+        """Run one stage and optionally emit one local OTel span."""
+        span_context = nullcontext()
         try:
-            yield self
-            self.complete()
-        except Exception as exc:
-            from novel_to_comic.text_utils import clean_exception_message
-            self.fail(clean_exception_message(exc))
-            raise
+            from opentelemetry import trace
+
+            span_context = trace.get_tracer("canary.stage").start_as_current_span(
+                f"stage.{self.name}",
+                attributes={"canary.stage": self.name},
+            )
+        except Exception:
+            pass
+        with span_context as span:
+            self.begin(total, estimated_cost_usd)
+            try:
+                yield self
+                self.complete()
+            except Exception as exc:
+                if span is not None:
+                    try:
+                        span.record_exception(exc)
+                    except Exception:
+                        pass
+                from novel_to_comic.text_utils import clean_exception_message
+                from novel_to_comic.server.diagnostics import local_diagnostics_enabled
+
+                self.fail(
+                    clean_exception_message(exc),
+                    error_detail=traceback.format_exc()
+                    if local_diagnostics_enabled()
+                    else None,
+                )
+                raise
 
     # ------------------------------------------------------------------
     # Progress / logging helpers
@@ -211,7 +252,7 @@ class StageRuntime:
             "stage": self.name,
             "fraction": fraction,
             "detail": detail,
-            "at": datetime.datetime.now(datetime.UTC).isoformat(),
+            "at": datetime.now(UTC).isoformat(),
         })
 
     def log(self, message: str, level: str = "info") -> None:
