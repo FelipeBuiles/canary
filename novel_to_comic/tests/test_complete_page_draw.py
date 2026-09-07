@@ -42,7 +42,7 @@ from novel_to_comic.page_drawing import (
     production_page_capability_profile,
     select_book_edition,
 )
-from novel_to_comic.server.routers.pages import _correction_retry, _generation_retry
+from novel_to_comic.server.routers.pages import _aggregated_correction_retry, _generation_retry
 from novel_to_comic.server.credited_job import enqueue_reserved_generation_job
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import ApiResult, UsageRecord
@@ -1192,10 +1192,10 @@ def test_failed_page_correction_gets_new_retry_lineage(tmp_path: Path) -> None:
     ).request
     artifacts.write_request(failed_request, request_revision=2)
 
-    retry = _correction_retry(
+    retry = _aggregated_correction_retry(
         artifacts,
         page_number=page.page_number,
-        issue_id=correction.issue_id,
+        issue_ids=correction.issue_ids,
     )
 
     assert retry == RetryProvenance(

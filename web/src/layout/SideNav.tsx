@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Select } from "../components/ui/Select";
 import { useProjectStatus, useProjects } from "../api/queries";
-import { InspectDrawer } from "../components/InspectDrawer";
 import { useI18n } from "../i18n";
 import { cn } from "../lib/cn";
 import { Icon } from "../components/ui/Icon";
@@ -78,8 +77,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   const { t } = useI18n();
   const { data: status } = useProjectStatus(projectId);
   const { data: projects } = useProjects();
-  const [drawer, setDrawer] = useState<DrawerKind | null>(null);
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const readingParam = new URLSearchParams(location.search).get("reading");
 
   const current = projects?.find((p) => p.id === projectId);
   const projectTitle = current?.project_name ?? projectId ?? t("PROJECT INDEX");
@@ -94,11 +92,22 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     navigate(`/project/${encodeURIComponent(projectId)}/${route}`);
   }
 
+  /** Auto substeps open the read-only inspect drawer in the Pages room. The
+  Pages room owns the `reading` search param, so the same link works both
+  from inside the room (search-only change) and from any other room. */
+  function goToReading(kind: DrawerKind) {
+    if (!projectId) return;
+    navigate({
+      pathname: `/project/${encodeURIComponent(projectId)}/pages`,
+      search: `?reading=${kind}`,
+    });
+  }
+
   function renderStationRow(station: Station) {
     const state = getStationState(station, status);
     const tag = STATE_TAG[state];
     const isActive = activeStation?.key === station.key;
-    const inspectItems = station.substeps.filter(
+    const readingItems = station.substeps.filter(
       (substep): substep is typeof substep & { drawer: DrawerKind } =>
         substep.kind === "auto" && Boolean(substep.drawer),
     );
@@ -175,34 +184,31 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           </ul>
         )}
 
-        {isActive && inspectItems.length > 0 && (
-          <div className="px-3 pb-3">
-            <button
-              type="button"
-              aria-expanded={detailsOpen}
-              onClick={() => setDetailsOpen((open) => !open)}
-              className="flex min-h-11 w-full items-center justify-between px-3 font-body text-[0.72rem] font-bold text-bristol/68 transition-colors hover:text-bristol"
-            >
-              <span>{t("How this was made")}</span>
-              <span aria-hidden>{detailsOpen ? "−" : "+"}</span>
-            </button>
-            {detailsOpen && (
-              <ul className="space-y-1 pb-1">
-                {inspectItems.map((substep) => (
-                  <li key={substep.key}>
-                    <button
-                      type="button"
-                      onClick={() => setDrawer(substep.drawer)}
-                      className="flex min-h-11 w-full items-center gap-2 bg-bristol/5 px-3 text-left font-body text-[0.72rem] font-bold text-bristol/70 transition-colors hover:bg-bristol/10 hover:text-bristol"
-                    >
-                      <span aria-hidden className="h-1.5 w-1.5 bg-bristol/35" />
-                      {t(substep.label)}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+        {readingItems.length > 0 && (
+          <ul className="space-y-1 px-3 pb-3" aria-label={`${station.label} reading`}>
+            {readingItems.map((substep) => {
+              const isCurrentReading = activeRoute === "pages"
+                && readingParam === substep.drawer;
+              return (
+                <li key={substep.key}>
+                  <button
+                    type="button"
+                    onClick={() => goToReading(substep.drawer)}
+                    aria-current={isCurrentReading ? "page" : undefined}
+                    className={cn(
+                      "flex min-h-11 w-full items-center gap-2 px-3 text-left font-body text-[0.72rem] font-bold transition-colors",
+                      isCurrentReading
+                        ? "bg-bristol text-ink-black"
+                        : "bg-bristol/5 text-bristol/70 hover:bg-bristol/10 hover:text-bristol",
+                    )}
+                  >
+                    <span aria-hidden className="h-1.5 w-1.5 shrink-0 bg-bristol/35" />
+                    <span>{t(substep.label)}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
         )}
       </div>
     );
@@ -323,10 +329,6 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           </Link>
         </div>
       </aside>
-
-      {projectId && (
-        <InspectDrawer project={projectId} kind={drawer} onClose={() => setDrawer(null)} />
-      )}
     </>
   );
 }

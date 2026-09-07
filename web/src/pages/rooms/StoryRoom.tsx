@@ -35,17 +35,24 @@ export function StoryRoom() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { t } = useI18n();
-  const { data, isLoading, error } = useStory(id);
-  const { data: status } = useProjectStatus(id);
+  const { data: status, isLoading: statusLoading, error: statusError } = useProjectStatus(id);
+  const extract = status?.stages.extract;
+  const briefStage = status?.stages.brief;
+  const stageStatus = briefStage?.status ?? "pending";
+  // The story artifact only exists once Extract is complete and Brief is
+  // ready — a 404 before that is the normal pre-stage state, not a failure.
+  const storyReady =
+    extract?.status === "complete" && (stageStatus === "awaiting_review" || stageStatus === "complete");
+  const { data, isLoading: storyLoading, error: storyQueryError } = useStory(id, storyReady);
+  // Ignore a disabled query's stale error while the artifact isn't ready yet,
+  // but never hide a genuine status failure behind the gate.
+  const error = storyReady ? storyQueryError : (statusError ?? null);
+  const isLoading = statusLoading || (storyReady && storyLoading);
   const updateBrief = useUpdateBrief();
   const approveBrief = useApproveStage();
   const brief = data?.brief;
   const [changes, setChanges] = useState<Partial<AdaptationBrief>>({});
   const draft = brief ? { ...brief, ...changes } : null;
-
-  const extract = status?.stages.extract;
-  const briefStage = status?.stages.brief;
-  const stageStatus = briefStage?.status ?? "pending";
 
   if (isLoading) {
     return (
@@ -59,7 +66,9 @@ export function StoryRoom() {
     );
   }
 
-  if (!id || error || !data || !draft) {
+  // !storyReady gates the placeholder so cached data from a previous run never
+  // leaks into the editor while a rerun is in flight.
+  if (!id || error || !storyReady || !data || !draft) {
     const stage = extract?.status === "complete" ? "brief" : "extract";
     const status = extract?.status === "complete" ? stageStatus : (extract?.status ?? "pending");
     const errorMessage = !id

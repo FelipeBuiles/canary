@@ -26,6 +26,7 @@ from novel_to_comic.models.adaptation import (
 )
 from novel_to_comic.models.source import SourceDocument
 from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.editorial import story_instruction_section
 from novel_to_comic.models.validation import (
     EditorialIssue,
     InvariantFailure,
@@ -1242,10 +1243,14 @@ def estimate_book_adaptation_cost(
     *,
     model: str,
     treatment: NarrativeTreatment | None = None,
+    story_instruction: str = "",
 ) -> float:
     """Estimate one clean sharded pass plus a bounded repair allowance."""
 
-    treatment_prompt = build_narrative_treatment_prompt(source, story_bible, brief)
+    instruction_suffix = story_instruction_section(story_instruction, stage="adapt")
+    treatment_prompt = build_narrative_treatment_prompt(
+        source, story_bible, brief
+    ) + instruction_suffix
     if treatment is None:
         treatment = NarrativeTreatment(
             causal_spine=("Pending book-level treatment.",),
@@ -1274,6 +1279,7 @@ def estimate_book_adaptation_cost(
             shard_index=index,
             shard_count=len(shards),
         )
+        + instruction_suffix
         for index, source_ids in enumerate(shards, 1)
     ]
     clean_pass = estimate_text_cost(
@@ -2259,9 +2265,15 @@ async def produce_book_adaptation(
     ctx: StageRuntime,
     model: str,
     generate: StructuredGenerator,
+    story_instruction: str = "",
 ) -> BookAdaptation:
     """Generate, validate, cost, and persist Adapt's one canonical artifact."""
 
+    # An explicitly applied story change travels inside every Adapt prompt so
+    # the owning stage regenerates from the approved revision. The suffix is
+    # part of each prompt string before any checkpoint key is derived, so a
+    # changed instruction never reuses a stale paid response.
+    instruction_suffix = story_instruction_section(story_instruction, stage="adapt")
     require_approved_brief(brief)
     if artifacts.failed_adaptation_candidate_path.exists():
         recovered_candidate = _canonicalize_candidate_requirements(
@@ -2299,12 +2311,13 @@ async def produce_book_adaptation(
         source,
         story_bible,
         brief,
-    )
+    ) + instruction_suffix
     initial_estimate = estimate_book_adaptation_cost(
         source,
         story_bible,
         brief,
         model=model,
+        story_instruction=story_instruction,
     )
     shards = _adaptation_shards(source, model=model)
     total_steps = 1 + (2 * len(shards))
@@ -2382,6 +2395,7 @@ async def produce_book_adaptation(
                 shard_index=shard_index,
                 shard_count=len(shards),
             )
+            + instruction_suffix
             for shard_index, source_unit_ids in enumerate(shards, 1)
         ]
         ctx.set_estimated_cost(
@@ -2391,6 +2405,7 @@ async def produce_book_adaptation(
                 brief,
                 model=model,
                 treatment=treatment,
+                story_instruction=story_instruction,
             )
         )
         candidate: BookAdaptation | None = None
@@ -2436,6 +2451,7 @@ async def produce_book_adaptation(
                 shard_index=index,
                 shard_count=len(shards),
             )
+            + instruction_suffix
             for index, (blueprint, source_ids) in enumerate(
                 zip(blueprints, shards, strict=True),
                 1,
@@ -2537,7 +2553,8 @@ async def produce_book_adaptation(
                         owned_requirement_ids=shard_requirements[shard_index],
                         shard_index=shard_index + 1,
                         shard_count=len(shards),
-                    ),
+                    )
+                    + instruction_suffix,
                     _subset_draft(drafts[shard_index], scope),
                     validation,
                     shard_index=shard_index,

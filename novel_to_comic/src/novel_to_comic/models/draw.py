@@ -369,12 +369,98 @@ class RenderAnalysis(BaseModel):
         return not self.invariant_failures
 
 
+class AnnotationPoint(BaseModel):
+    """One normalized page-fraction coordinate, origin top-left, 0..1."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+
+
+class CorrectionAnnotation(BaseModel):
+    """One normalized author mark on the page image plus its instruction.
+
+    Points are normalized page fractions (origin top-left, 0..1), independent
+    of render pixel size so marks survive across revisions. The note is always
+    rendered into the provider prompt as a "Mark N" line; annotations are
+    never stored without reaching the generation request.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(default="", max_length=120)
+    kind: Literal["pin", "rectangle", "highlight", "freehand", "arrow", "ellipse", "text"]
+    points: tuple[AnnotationPoint, ...] = Field(min_length=1, max_length=64)
+    note: str = Field(min_length=1, max_length=500)
+    label: str | None = Field(default=None, max_length=120)
+
+    @model_validator(mode="after")
+    def _validate_mark(self) -> "CorrectionAnnotation":
+        if self.kind in {"pin", "text"} and len(self.points) != 1:
+            raise ValueError(f"{self.kind} annotation requires exactly one point")
+        if self.kind in {"rectangle", "highlight", "ellipse", "arrow", "freehand"}:
+            if len(self.points) < 2:
+                raise ValueError(f"{self.kind} annotation requires at least two points")
+            xs = [point.x for point in self.points]
+            ys = [point.y for point in self.points]
+            if max(xs) - min(xs) <= 1e-6 and max(ys) - min(ys) <= 1e-6:
+                raise ValueError(f"{self.kind} annotation covers no page area")
+        if not self.note.strip():
+            raise ValueError("annotation note must not be blank")
+        return self
+
+    @property
+    def bounds(self) -> tuple[float, float, float, float]:
+        """Bounding (x, y, width, height) page fractions covering every point."""
+        xs = [point.x for point in self.points]
+        ys = [point.y for point in self.points]
+        x, y = min(xs), min(ys)
+        return (x, y, max(xs) - x, max(ys) - y)
+
+    def provider_guidance(self, index: int) -> str:
+        """One provider-readable line grounding the note in page fractions."""
+        tag = f" ({self.label})" if self.label else ""
+        if self.kind == "pin":
+            point = self.points[0]
+            location = f"at x={point.x:.4f} y={point.y:.4f} of the page, origin top-left"
+        else:
+            x, y, width, height = self.bounds
+            location = (
+                f"x={x:.4f} y={y:.4f} w={width:.4f} h={height:.4f} "
+                "of the page, origin top-left"
+            )
+        return f"Mark {index} [{self.kind}{tag} {location}]: {self.note.strip()}"
+
+
+class CorrectionChange(BaseModel):
+    """One author-editable change inside an explicit correction request.
+
+    A change either edits the directive of an existing tracked issue
+    (``issue_id``) or carries a manual instruction that becomes a real
+    PageIssue on submission. The instruction is what reaches the provider;
+    annotations ground it in normalized page geometry.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(min_length=1, max_length=120)
+    issue_id: str | None = Field(default=None, min_length=1)
+    instruction: str = Field(min_length=1, max_length=1000)
+    annotations: tuple[CorrectionAnnotation, ...] = Field(default=(), max_length=24)
+
+    @model_validator(mode="after")
+    def _validate_change(self) -> "CorrectionChange":
+        if not self.instruction.strip():
+            raise ValueError("change instruction must not be blank")
+        return self
+
 class PageRenderCorrection(BaseModel):
     """One Draw-owned instruction whose output is still a complete page."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    issue_ids: tuple[str, ...] = Field(min_length=1)
+    issue_ids: tuple[str, ...] = Field(default=())
     page_number: int = Field(ge=1)
     comic_page_revision: int = Field(ge=1)
     comic_page_sha256: str = Field(min_length=64, max_length=64)
@@ -383,6 +469,15 @@ class PageRenderCorrection(BaseModel):
     mode: Literal["instructed", "region_targeted"]
     instruction: str = Field(min_length=1)
     detected_region_ids: tuple[str, ...] = ()
+    changes: tuple[CorrectionChange, ...] = Field(default=(), max_length=24)
+    note: str = Field(default="", max_length=1000)
+    context_beat_ids: tuple[str, ...] = ()
+    context_source_unit_ids: tuple[str, ...] = ()
+    context_selected_source_unit_ids: tuple[str, ...] = ()
+    context_adaptation_revision: int | None = Field(default=None, ge=1)
+    context_adaptation_sha256: str | None = Field(default=None, min_length=64, max_length=64)
+    context_digest: str = ""
+    context_truncated: bool = False
     artifact_kind: Literal["complete_page"] = "complete_page"
 
     @property
@@ -391,8 +486,31 @@ class PageRenderCorrection(BaseModel):
 
     @model_validator(mode="after")
     def _validate_mode(self) -> "PageRenderCorrection":
+        if not self.issue_ids and not self.changes and not self.note.strip():
+            raise ValueError("correction requires selected issues, changes, or an author note")
         if len(set(self.issue_ids)) != len(self.issue_ids):
             raise ValueError("correction issue IDs must be unique")
+        change_ids = [change.id for change in self.changes]
+        if len(set(change_ids)) != len(change_ids):
+            raise ValueError("correction change IDs must be unique")
+        linked = [change.issue_id for change in self.changes if change.issue_id is not None]
+        if len(set(linked)) != len(linked):
+            raise ValueError("correction changes must link distinct issues")
+        if set(linked) - set(self.issue_ids):
+            raise ValueError("correction change links an issue outside the correction")
+        if self.note and (not self.note.strip() or len(self.note) > 1000):
+            raise ValueError("correction note must be blank or 1..1000 non-blank characters")
+        total_annotations = sum(len(change.annotations) for change in self.changes)
+        if total_annotations > 24:
+            raise ValueError("correction carries at most 24 annotations")
+        if len(set(self.context_beat_ids)) != len(self.context_beat_ids):
+            raise ValueError("correction context beat IDs must be unique")
+        if len(set(self.context_source_unit_ids)) != len(self.context_source_unit_ids):
+            raise ValueError("correction context source unit IDs must be unique")
+        if len(set(self.context_selected_source_unit_ids)) != len(self.context_selected_source_unit_ids):
+            raise ValueError("correction selected source passages must be unique")
+        if (self.context_adaptation_revision is None) != (self.context_adaptation_sha256 is None):
+            raise ValueError("correction context lineage must be complete or absent")
         if self.mode == "region_targeted" and not self.detected_region_ids:
             raise ValueError("region-targeted correction requires a detected region")
         if self.mode == "instructed" and self.detected_region_ids:

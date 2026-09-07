@@ -33,6 +33,7 @@ from novel_to_comic.config import (
 from novel_to_comic.models.draw import (
     BookEdition,
     CompletePageProviderResult,
+    CorrectionChange,
     FrozenPageGenerationRequest,
     PageCapabilityProfile,
     PageGenerationProvenance,
@@ -55,8 +56,7 @@ from novel_to_comic.usage import ApiResult, UsageRecord, calculate_cost
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
-
-    from novel_to_comic.page_review import OCRAdapter
+    from novel_to_comic.page_review import OCRAdapter, PageCorrectionContext
     from novel_to_comic.server.generation_jobs import GenerationJob
 
 
@@ -218,6 +218,7 @@ def _compile_prompt(
     correction: PageRenderCorrection | None = None,
     depiction: Literal["canonical", "less_graphic"] = "canonical",
     style_template: str = "",
+    correction_context: "PageCorrectionContext | None" = None,
 ) -> str:
     authorities = references
     labels = {ref.entity_id: (ref.label or f"Subject {index}") for index, ref in enumerate(authorities, 1)}
@@ -283,6 +284,68 @@ def _compile_prompt(
     }
     project_style = page_style_template(style_template) if style_template.strip() else None
     has_lettering = any(content.lettering for content in page.content)
+    complete_page_correction: dict[str, object] | None = None
+    if correction is not None:
+        complete_page_correction = {
+            "mode": correction.mode,
+            "instruction": provider_safe_direction(correction.instruction),
+            "selected_issue_ids": list(correction.issue_ids),
+            "author_note": correction.note,
+            "author_changes": [
+                {
+                    "id": change.id,
+                    "issue_id": change.issue_id,
+                    "instruction": provider_safe_direction(change.instruction),
+                    "annotations": [
+                        {
+                            "id": annotation.id,
+                            "kind": annotation.kind,
+                            "points": [
+                                {"x": point.x, "y": point.y} for point in annotation.points
+                            ],
+                            "bounds": {
+                                "x": annotation.bounds[0],
+                                "y": annotation.bounds[1],
+                                "width": annotation.bounds[2],
+                                "height": annotation.bounds[3],
+                            },
+                            "label": annotation.label,
+                            "note": annotation.note,
+                        }
+                        for annotation in change.annotations
+                    ],
+                }
+                for change in correction.changes
+            ],
+        }
+        if correction_context is not None:
+            complete_page_correction["story_context"] = {
+                "adaptation_revision": correction_context.adaptation_revision,
+                "adaptation_sha256": correction_context.adaptation_sha256,
+                "context_digest": correction_context.digest,
+                "truncated": correction_context.truncated,
+                "treatment_spine": list(correction_context.treatment_spine),
+                "beats": [
+                    {"id": beat_id, "summary": summary}
+                    for beat_id, summary in zip(
+                        correction_context.beat_ids,
+                        correction_context.beat_summaries,
+                        strict=True,
+                    )
+                ],
+                "appearance_chronology": list(correction_context.appearance_chronology),
+                "continuity": list(correction_context.beat_transitions),
+                "sources": [
+                    {"id": unit_id, "text": text}
+                    for unit_id, text in zip(
+                        correction_context.source_unit_ids,
+                        correction_context.source_texts,
+                        strict=True,
+                    )
+                ],
+                "omitted_source_unit_ids": list(correction_context.omitted_source_unit_ids),
+                "selected_source_unit_ids": list(correction_context.selected_source_unit_ids),
+            }
     payload = {
         "canonical_comic_page": provider_page,
         "project_style_direction": project_style,
@@ -294,14 +357,7 @@ def _compile_prompt(
             }
             for reference in references
         ],
-        "complete_page_correction": (
-            {
-                "mode": correction.mode,
-                "instruction": provider_safe_direction(correction.instruction),
-            }
-            if correction is not None
-            else None
-        ),
+        "complete_page_correction": complete_page_correction,
     }
     depiction_direction = (
         "Use framing, shadow, reaction, or aftermath for graphic details. Preserve "
@@ -358,6 +414,7 @@ def compile_page_generation_request(
     *,
     retry: RetryProvenance,
     correction: PageRenderCorrection | None = None,
+    correction_context: "PageCorrectionContext | None" = None,
     edit_source_bytes: bytes | None = None,
     depiction: Literal["canonical", "less_graphic"] = "canonical",
     style_template: str = "",
@@ -434,6 +491,7 @@ def compile_page_generation_request(
         correction,
         depiction,
         style_template,
+        correction_context,
     )
     request = FrozenPageGenerationRequest.compile(
         page=page,
@@ -447,6 +505,82 @@ def compile_page_generation_request(
         request=request,
         reference_bytes=tuple(loaded),
         edit_source_bytes=edit_source_bytes,
+    )
+
+@dataclass(frozen=True, slots=True)
+class PreparedPageCorrection:
+    """One validated correction with its compiled request and story context."""
+
+    correction: PageRenderCorrection
+    compiled: CompiledPageGeneration
+    context: "PageCorrectionContext"
+
+
+def prepare_page_correction(
+    *,
+    page: ComicPage,
+    edition: BookEdition,
+    inventory: ApprovedVisualReferenceInventory,
+    reference_files: Mapping[str, ApprovedReferenceFile],
+    retry: RetryProvenance,
+    parent: PageRenderRevision,
+    changes: tuple[CorrectionChange, ...],
+    note: str = "",
+    context_source_unit_ids: tuple[str, ...] = (),
+    artifacts: TargetArtifacts,
+    style_template: str = "",
+) -> PreparedPageCorrection:
+    """Validate and compile one explicit correction set, without spending.
+
+    Preview and submission share this exact path, so the estimate the author
+    approves always describes the request that will be enqueued. Manual
+    changes carry deterministic issue identities here without any writes;
+    the real issues are created inside the reserved job. Every failure here
+    raises before any credit hold or provider call.
+    """
+    from novel_to_comic.page_review import (
+        build_aggregated_correction_request,
+        build_correction_context,
+    )
+
+    profile = edition.capability_profile
+    correction = build_aggregated_correction_request(
+        changes=changes,
+        note=note,
+        context_source_unit_ids=context_source_unit_ids,
+        page=page,
+        parent=parent,
+        profile=profile,
+        artifacts=artifacts,
+    )
+    context = build_correction_context(
+        page=page, artifacts=artifacts, extra_source_unit_ids=tuple(context_source_unit_ids),
+    )
+    if context.digest != correction.context_digest:
+        raise ValueError("correction story context does not match canonical artifacts")
+    compiled = compile_page_generation_request(
+        page,
+        edition,
+        inventory,
+        reference_files,
+        retry=retry,
+        correction=correction,
+        correction_context=context,
+        edit_source_bytes=artifacts.read_render(page.page_number, parent.revision),
+        style_template=style_template,
+    )
+    return PreparedPageCorrection(correction=correction, compiled=compiled, context=context)
+
+
+def correction_credit_estimate(compiled: CompiledPageGeneration, *, reserve: bool):
+    """Credit estimate for one compiled correction, including its text check."""
+    from novel_to_comic.server.credits import credit_estimate_for_provider_cost
+
+    return credit_estimate_for_provider_cost(
+        float(compiled.request.estimated_cost_usd) + float(PAGE_OCR_ESTIMATED_COST_USD),
+        "draw",
+        reserve=reserve,
+        zero_cost_estimate=0,
     )
 
 
@@ -890,7 +1024,7 @@ async def analyze_complete_page(
 async def correct_complete_page(
     compiled: CompiledPageGeneration,
     *,
-    issue: PageIssue,
+    issue: PageIssue | None,
     adapter: VertexCompletePageAdapter,
     artifacts: TargetArtifacts,
     page: ComicPage,
@@ -898,13 +1032,27 @@ async def correct_complete_page(
     request_revision: int | None = None,
     render_revision: int | None = None,
 ) -> PageGenerationProvenance:
-    """Produce and link one complete revised page for a Draw-owned issue."""
+    """Produce one complete revised page for an explicit correction set.
 
+    Manual issues are created here, inside the reserved job, after the credit
+    hold is accepted — never during preview or before deduplication.
+    Selected Draw issues move to resolved only when lettering validity proves
+    the fix; every other selected issue (including all visual findings) moves
+    to revised and stays there until a person confirms it. Unselected issues
+    are never touched. A note-only correction carries no issue at all.
+    """
     correction = compiled.request.correction
-    if correction is None or issue.id not in correction.issue_ids:
-        raise ValueError("compiled request does not correct the supplied page issue")
-    if issue.correction_owner != "draw":
-        raise ValueError("copy changes must return to Adapt and Plan")
+    if correction is None:
+        raise ValueError("compiled request carries no correction")
+    if issue is not None:
+        if issue.id not in correction.issue_ids:
+            raise ValueError("compiled request does not correct the supplied page issue")
+        if issue.correction_owner != "draw":
+            raise ValueError("copy changes must return to Adapt and Plan")
+    from novel_to_comic.page_review import ensure_correction_issues
+
+    ensure_correction_issues(artifacts, correction=correction)
+
     provenance = await draw_complete_page(
         compiled,
         adapter=adapter,
@@ -970,7 +1118,7 @@ def enqueue_complete_page_draw(
 
     async def _work() -> ApiResult[PageGenerationProvenance]:
         try:
-            if issue is None:
+            if compiled.request.correction is None:
                 provenance = await draw_complete_page(
                     compiled,
                     adapter=adapter,

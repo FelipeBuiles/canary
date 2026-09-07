@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from novel_to_comic.editorial import story_instruction_section
 from novel_to_comic.models.adaptation import BookAdaptation, LetteringItem
 from novel_to_comic.models.page import (
     ApprovedPageRange,
@@ -638,17 +639,20 @@ def estimate_book_plan_cost(
     target_range: ApprovedPageRange,
     *,
     model: str,
+    story_instruction: str = "",
 ) -> float:
     """Estimate the selected internal workflow, including bounded detail calls."""
 
+    instruction_suffix = story_instruction_section(story_instruction, stage="plan")
     if len(adaptation.beats) < _TWO_PASS_PLAN_MIN_BEATS:
-        prompt = build_book_plan_prompt(adaptation, references, target_range)
+        prompt = build_book_plan_prompt(
+            adaptation, references, target_range
+        ) + instruction_suffix
         return estimate_text_cost(
             model,
             prompt,
             output_chars=max(8_000, len(adaptation.beats) * 2_000),
         )
-
     page_count = max(
         target_range.minimum,
         (len(adaptation.beats) + 1) // 2,
@@ -676,7 +680,9 @@ def estimate_book_plan_cost(
         rhythm_summary="Projected cost map.",
         pages=tuple(projected_pages),
     )
-    map_prompt = _build_page_map_prompt(adaptation, target_range)
+    map_prompt = _build_page_map_prompt(
+        adaptation, target_range
+    ) + instruction_suffix
     total = estimate_text_cost(
         model,
         map_prompt,
@@ -692,7 +698,8 @@ def estimate_book_plan_cost(
                 page_map,
                 start=start,
                 stop=stop,
-            ),
+            )
+            + instruction_suffix,
             output_chars=max(4_000, (stop - start) * 1_600),
         )
     return total
@@ -748,11 +755,14 @@ async def _produce_book_plan_one_shot(
     model: str,
     generate: StructuredGenerator,
     author_pins: tuple[AuthorGeometryPin, ...] | list[AuthorGeometryPin] = (),
+    story_instruction: str = "",
 ) -> BookPlan:
     """Generate, validate, and persist one global canonical book plan."""
 
     pin_by_beat = _validate_author_pins(adaptation, author_pins)
-    prompt = build_book_plan_prompt(adaptation, references, target_range)
+    prompt = build_book_plan_prompt(
+        adaptation, references, target_range
+    ) + story_instruction_section(story_instruction, stage="plan")
     estimate = estimate_text_cost(
         model,
         prompt,
@@ -861,8 +871,11 @@ async def _generate_page_map(
     *,
     generate: StructuredGenerator,
     ctx: StageRuntime,
+    story_instruction: str = "",
 ) -> tuple[_BookPageMap, list[ValidationAttempt]]:
-    prompt = _build_page_map_prompt(adaptation, target_range)
+    prompt = _build_page_map_prompt(
+        adaptation, target_range
+    ) + story_instruction_section(story_instruction, stage="plan")
     attempt_prompt = prompt
     history: list[ValidationAttempt] = []
     page_map: _BookPageMap | None = None
@@ -962,6 +975,7 @@ async def _generate_detail_batch(
     generate: StructuredGenerator,
     ctx: StageRuntime,
     concerns: tuple[InvariantFailure | EditorialIssue, ...] = (),
+    story_instruction: str = "",
 ) -> _BookPlanDraft:
     base_prompt = _detail_batch_prompt(
         adaptation,
@@ -970,7 +984,7 @@ async def _generate_detail_batch(
         start=start,
         stop=stop,
         concerns=concerns,
-    )
+    ) + story_instruction_section(story_instruction, stage="plan")
     attempt_prompt = base_prompt
     for attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
         result = await generate(
@@ -1094,6 +1108,7 @@ async def _produce_book_plan_two_pass(
     model: str,
     generate: StructuredGenerator,
     author_pins: tuple[AuthorGeometryPin, ...] | list[AuthorGeometryPin],
+    story_instruction: str = "",
 ) -> BookPlan:
     pin_by_beat = _validate_author_pins(adaptation, author_pins)
     estimate = estimate_book_plan_cost(
@@ -1101,6 +1116,7 @@ async def _produce_book_plan_two_pass(
         references,
         target_range,
         model=model,
+        story_instruction=story_instruction,
     )
     with ctx.execute(total=0, estimated_cost_usd=estimate):
         try:
@@ -1109,6 +1125,7 @@ async def _produce_book_plan_two_pass(
                 target_range,
                 generate=generate,
                 ctx=ctx,
+                story_instruction=story_instruction,
             )
         except PlanInvariantError as error:
             _persist_validation(
@@ -1130,7 +1147,10 @@ async def _produce_book_plan_two_pass(
         ctx.progress(1, total_steps)
         ctx.set_estimated_cost(
             estimate_text_cost(
-                model, _build_page_map_prompt(adaptation, target_range),
+                model,
+                _build_page_map_prompt(
+                    adaptation, target_range
+                ) + story_instruction_section(story_instruction, stage="plan"),
                 output_chars=max(4_000, len(page_map.pages) * 350),
             )
             + sum(
@@ -1142,7 +1162,8 @@ async def _produce_book_plan_two_pass(
                         page_map,
                         start=start,
                         stop=stop,
-                    ),
+                    )
+                    + story_instruction_section(story_instruction, stage="plan"),
                     output_chars=max(4_000, (stop - start) * 1_600),
                 )
                 for start, stop in ranges
@@ -1162,6 +1183,7 @@ async def _produce_book_plan_two_pass(
                     stop=stop,
                     generate=generate,
                     ctx=ctx,
+                    story_instruction=story_instruction,
                 )
             ctx.record_item_done()
             return start, stop, draft
@@ -1222,6 +1244,7 @@ async def _produce_book_plan_two_pass(
                     generate=generate,
                     ctx=ctx,
                     concerns=tuple(concerns),
+                    story_instruction=story_instruction,
                 )
                 ctx.record_item_done()
                 ctx.progress(ctx.stage_state.items_done, total_steps)
@@ -1262,6 +1285,7 @@ async def produce_book_plan(
     model: str,
     generate: StructuredGenerator,
     author_pins: tuple[AuthorGeometryPin, ...] | list[AuthorGeometryPin] = (),
+    story_instruction: str = "",
 ) -> BookPlan:
     """Produce one canonical plan through the cheapest quality-safe workflow."""
 
@@ -1278,6 +1302,7 @@ async def produce_book_plan(
             model=model,
             generate=generate,
             author_pins=author_pins,
+            story_instruction=story_instruction,
         )
     return await _produce_book_plan_two_pass(
         adaptation,
@@ -1288,6 +1313,7 @@ async def produce_book_plan(
         model=model,
         generate=generate,
         author_pins=author_pins,
+        story_instruction=story_instruction,
     )
 
 

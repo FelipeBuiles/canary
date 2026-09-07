@@ -1,9 +1,10 @@
+import { useEffect, useRef } from "react";
 import { useAdaptation, useBookPlan, useCompletePages } from "../api/queries";
 import { useI18n } from "../i18n";
 import type { DrawerKind } from "../lib/stations";
+import type { BookAdaptation, BookPlan, CompletePageSummary } from "../types/api";
 import { Button } from "./ui/Button";
 import { Surface } from "./ui/Surface";
-import type { BookAdaptation, CompletePageSummary } from "../types/api";
 
 interface InspectDrawerProps {
   project: string;
@@ -11,207 +12,187 @@ interface InspectDrawerProps {
   onClose: () => void;
 }
 
-function countLabel(value: number, singular: string, plural: string) {
-  return `${value} ${value === 1 ? singular : plural}`;
-}
-
 function AdaptationDetails({ adaptation }: { adaptation: BookAdaptation }) {
   const { t } = useI18n();
   const beats = adaptation.beats ?? [];
-  const ledger = adaptation.ledger ?? [];
-  const treatment = adaptation.treatment;
-  const letteringCount = beats.reduce((total, beat) => total + (beat.lettering?.length ?? 0), 0);
-  const transitionCount = beats.reduce((total, beat) => total + (beat.transitions?.length ?? 0), 0);
-  const appearanceChangeCount = beats.reduce((total, beat) => total + (beat.appearance_changes?.length ?? 0), 0);
-  const compressedCount = ledger.filter((entry) => entry.disposition === "compressed_into").length;
-  const omittedCount = ledger.filter((entry) => entry.disposition === "intentionally_omitted").length;
-  const treatmentSignals = [
-    ["REVEALS", treatment?.reveals],
-    ["CONSEQUENCES", treatment?.consequences],
-    ["AFTERMATH", treatment?.aftermath],
-    ["CHARACTER ARCS", treatment?.character_arcs],
-    ["RELATIVE EMPHASIS", treatment?.relative_emphasis],
-  ] as const;
+  const spine = adaptation.treatment?.causal_spine ?? [];
 
   return (
     <>
-      <Surface tone="container" border="soft" shadow="none" padding="md">
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-5">
-          <div>
-            <dt className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("ORDERED BEATS")}</dt>
-            <dd className="mt-1 font-display text-xl font-black">{beats.length}</dd>
-            <p className="mt-1 font-body text-xs text-ink-muted">{t("kept in story order")}</p>
-          </div>
-          <div>
-            <dt className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("SOURCE ACCOUNTING")}</dt>
-            <dd className="mt-1 font-display text-xl font-black">{ledger.length}</dd>
-            <p className="mt-1 font-body text-xs text-ink-muted">{t("source units accounted")}</p>
-          </div>
-          <div>
-            <dt className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("LETTERING ITEMS")}</dt>
-            <dd className="mt-1 font-display text-xl font-black">{letteringCount}</dd>
-            <p className="mt-1 font-body text-xs text-ink-muted">{t("dialogue, captions, and SFX")}</p>
-          </div>
-          <div>
-            <dt className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("STORY CONTINUITY")}</dt>
-            <dd className="mt-1 font-display text-xl font-black">{transitionCount + appearanceChangeCount}</dd>
-            <p className="mt-1 font-body text-xs text-ink-muted">
-              {transitionCount} {t("transitions")} · {appearanceChangeCount} {t("appearance changes")}
-            </p>
-          </div>
-        </dl>
-        <dl className="mt-5 border-t border-ink-black/12 pt-3">
-          <dt className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("SOURCE DISPOSITION")}</dt>
-          <dd className="mt-1 font-body text-sm font-semibold">
-            {ledger.length - compressedCount - omittedCount} {t("retained or depicted")} · {compressedCount} {t("compressed")} · {omittedCount} {t("omitted")}
-          </dd>
-        </dl>
+      <Surface padding="md" border="soft" shadow="none">
+        <h3 className="font-display text-lg font-black uppercase">{t("Narrative treatment")}</h3>
+        {spine.length > 0 ? (
+          <ul className="mt-3 space-y-2 font-body text-sm leading-6">
+            {spine.map((line, index) => (
+              <li key={`spine-${index}`} className="bg-surface-container px-3 py-2">{line}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-2 font-body text-sm leading-6">
+            {t("The book-wide treatment is ready.")}
+          </p>
+        )}
       </Surface>
 
       <Surface padding="md" border="soft" shadow="none">
-        <h3 className="font-display text-lg font-black uppercase">{t("NARRATIVE TREATMENT")}</h3>
-        <h4 className="mt-4 font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-hero-red">{t("CAUSAL SPINE")}</h4>
-        <ul className="mt-3 space-y-2 font-body text-sm leading-6">
-          {(treatment?.causal_spine ?? []).map((line, index) => (
-            <li key={`spine-${index}`} className="bg-surface-container px-3 py-2">{line}</li>
-          ))}
-        </ul>
-        <div className="mt-5 grid gap-4 sm:grid-cols-2">
-          {treatmentSignals.map(([label, values]) => values && values.length > 0 && (
-            <div key={label}>
-              <h4 className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-hero-red">{t(label)}</h4>
-              <ul className="mt-2 space-y-1 font-body text-xs leading-5 text-ink-muted">
-                {values.map((value) => <li key={value}>· {value}</li>)}
-              </ul>
-            </div>
-          ))}
-        </div>
+        <h3 className="font-display text-lg font-black uppercase">{t("Adapted beats")}</h3>
+        <p className="mt-2 font-body text-sm">
+          {beats.length} {t("ordered story beats")}
+        </p>
+        {beats.length > 0 && (
+          <details className="mt-3">
+            <summary className="cursor-pointer font-meta text-[0.62rem] font-bold uppercase tracking-[0.12em] text-hero-red">
+              {t("View story beats")}
+            </summary>
+            <ol className="mt-2 space-y-1">
+              {beats.map((beat) => (
+                <li
+                  key={beat.id}
+                  className="grid grid-cols-[2.25rem_minmax(0,1fr)] items-start gap-3 bg-surface-container px-3 py-3"
+                >
+                  <span className="font-display text-lg font-black leading-none">{beat.order}</span>
+                  <p className="min-w-0 font-body text-sm font-semibold leading-5">{beat.summary}</p>
+                </li>
+              ))}
+            </ol>
+          </details>
+        )}
       </Surface>
-
-      <section aria-label={t("BEAT REGISTER")}>
-        <div className="mb-3 flex items-baseline justify-between gap-3 border-b-[2px] border-ink-black pb-2">
-          <h3 className="font-display text-lg font-black uppercase">{t("BEAT REGISTER")}</h3>
-          <span className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">
-            {countLabel(beats.length, t("beat"), t("beats"))}
-          </span>
-        </div>
-        <ol className="space-y-1">
-          {beats.map((beat) => (
-            <li key={beat.id} className="grid grid-cols-[2.25rem_minmax(0,1fr)] items-start gap-3 bg-surface-container px-3 py-3">
-              <span className="font-display text-lg font-black leading-none">{beat.order}</span>
-              <div className="min-w-0">
-                <p className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.1em] text-hero-red">
-                  {t(beat.narrative_function ?? "beat")} · {beat.source_unit_ids?.length ?? 0} {t("source units")}
-                  {beat.lettering?.length ? ` · ${beat.lettering.length} ${t("lettering")}` : ""}
-                </p>
-                <p className="mt-1 font-body text-sm font-semibold leading-5">{beat.summary}</p>
-                {beat.story_functions && beat.story_functions.length > 0 && (
-                  <p className="mt-1 font-body text-xs leading-5 text-ink-muted">
-                    {beat.story_functions.map((value) => t(value)).join(" · ")}
-                  </p>
-                )}
-              </div>
-            </li>
-          ))}
-        </ol>
-      </section>
     </>
   );
 }
 
 function PagePlanDetails({
+  plan,
   pages,
-  targetPageMin,
-  targetPageMax,
+  detailsLoading,
+  detailsError,
 }: {
-  pages: CompletePageSummary[];
-  targetPageMin: number;
-  targetPageMax: number;
+  plan: BookPlan;
+  pages: CompletePageSummary[] | undefined;
+  detailsLoading: boolean;
+  detailsError: unknown;
 }) {
   const { t } = useI18n();
-  const pageCount = pages.length;
-  const beatCount = new Set(
-    pages.flatMap((item) => item.page.content.flatMap((content) => content.beat_ids)),
-  ).size;
-  const letteringCount = pages.reduce(
-    (total, item) => total + item.page.content.reduce((count, content) => count + content.lettering.length, 0),
-    0,
-  );
-  const spreadPageCount = pages.filter((item) => item.page.spread_role !== "single").length;
-  const densityCounts = pages.reduce<Record<string, number>>((counts, item) => {
-    counts[item.page.density_intent] = (counts[item.page.density_intent] ?? 0) + 1;
-    return counts;
-  }, {});
-  const densitySummary = ["sparse", "standard", "dense"]
-    .filter((density) => densityCounts[density])
-    .map((density) => `${densityCounts[density]} ${t(density)}`)
-    .join(" · ");
+  const planCount = plan.pages?.length ?? 0;
 
   return (
     <>
-      <Surface tone="container" border="soft" shadow="none" padding="md">
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-5">
-          <div>
-            <dt className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("PLANNED PAGES")}</dt>
-            <dd className="mt-1 font-display text-xl font-black">{pageCount}</dd>
-            <p className="mt-1 font-body text-xs text-ink-muted">{t("Target range")} {targetPageMin}–{targetPageMax}</p>
-          </div>
-          <div>
-            <dt className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("STORY BEATS")}</dt>
-            <dd className="mt-1 font-display text-xl font-black">{beatCount}</dd>
-            <p className="mt-1 font-body text-xs text-ink-muted">{t("allocated across pages")}</p>
-          </div>
-          <div>
-            <dt className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("LETTERING")}</dt>
-            <dd className="mt-1 font-display text-xl font-black">{letteringCount}</dd>
-            <p className="mt-1 font-body text-xs text-ink-muted">{t("dialogue, captions, and SFX")}</p>
-          </div>
-          <div>
-            <dt className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("SPREAD PAGES")}</dt>
-            <dd className="mt-1 font-display text-xl font-black">{spreadPageCount}</dd>
-            <p className="mt-1 font-body text-xs text-ink-muted">{t("linked to a facing page")}</p>
-          </div>
-        </dl>
-        <div className="mt-5 border-t border-ink-black/12 pt-3">
-          <dt className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("DENSITY MIX")}</dt>
-          <dd className="mt-1 font-body text-sm font-semibold">{densitySummary || t("Page density is not available yet.")}</dd>
-        </div>
+      <Surface padding="md" border="soft" shadow="none">
+        <h3 className="font-display text-lg font-black uppercase">{t("Book rhythm")}</h3>
+        <p className="mt-2 font-body text-sm leading-6">
+          {plan.rhythm_summary || t("The page and spread rhythm is ready.")}
+        </p>
       </Surface>
 
-      <section aria-label={t("PAGE REGISTER")}>
-        <div className="mb-3 flex items-baseline justify-between gap-3 border-b-[2px] border-ink-black pb-2">
-          <h3 className="font-display text-lg font-black uppercase">{t("PAGE REGISTER")}</h3>
-          <span className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.12em] text-ink-muted">
-            {countLabel(pageCount, t("page"), t("pages"))}
-          </span>
-        </div>
-        <ol className="space-y-1">
-          {pages.map((item) => (
-            <li key={item.page.page_number} className="grid grid-cols-[2.25rem_minmax(0,1fr)_auto] items-start gap-3 bg-surface-container px-3 py-3">
-              <span className="font-display text-lg font-black leading-none">{item.page.page_number}</span>
-              <div className="min-w-0">
-                <p className="font-meta text-[0.56rem] font-bold uppercase tracking-[0.1em] text-hero-red">
-                  {t(item.page.page_turn_role)} · {t(item.page.emphasis)} · {t(item.page.spread_role)}
-                </p>
-                <p className="mt-1 font-body text-sm font-semibold leading-5">{item.page.layout_intent}</p>
-                <p className="mt-1 font-body text-xs leading-5 text-ink-muted">{item.page.rhythm_intent}</p>
-              </div>
-              <span className="font-meta text-[0.54rem] font-bold uppercase tracking-[0.1em] text-ink-muted">
-                {t(item.page.density_intent)}
-              </span>
-            </li>
-          ))}
-        </ol>
-      </section>
+      <Surface padding="md" border="soft" shadow="none">
+        <h3 className="font-display text-lg font-black uppercase">{t("Planned pages")}</h3>
+        <p className="mt-2 font-body text-sm">
+          {planCount} {t("complete pages")}
+        </p>
+        {pages && pages.length > 0 && (
+          <details className="mt-3">
+            <summary className="cursor-pointer font-meta text-[0.62rem] font-bold uppercase tracking-[0.12em] text-hero-red">
+              {t("View planned pages")}
+            </summary>
+            <ol className="mt-2 space-y-1">
+              {pages.map((item) => (
+                <li
+                  key={item.page.page_number}
+                  className="grid grid-cols-[2.25rem_minmax(0,1fr)] items-start gap-3 bg-surface-container px-3 py-3"
+                >
+                  <span className="font-display text-lg font-black leading-none">
+                    {item.page.page_number}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="font-body text-sm font-semibold leading-5">
+                      {item.page.layout_intent}
+                    </p>
+                    <p className="mt-1 font-body text-xs leading-5 text-ink-muted">
+                      {item.page.rhythm_intent}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </details>
+        )}
+        {!pages && detailsLoading && (
+          <p className="mt-2 font-body text-sm">{t("Loading page details…")}</p>
+        )}
+        {!pages && !detailsLoading && (
+          <p className="mt-2 font-body text-sm text-ink-muted">
+            {detailsError
+              ? t("Page details are not available right now.")
+              : t("The page plan is not ready yet.")}
+          </p>
+        )}
+      </Surface>
     </>
   );
 }
 
 export function InspectDrawer({ project, kind, onClose }: InspectDrawerProps) {
   const { t } = useI18n();
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const adaptation = useAdaptation(kind === "adaptation" ? project : undefined);
   const plan = useBookPlan(kind === "page-plan" ? project : undefined);
   const completePages = useCompletePages(kind === "page-plan" ? project : undefined);
+
+  // The parent re-renders on every queue/query tick with a fresh inline
+  // onClose; calling through a ref keeps this effect (and drawer focus)
+  // stable instead of resetting focus mid-read.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!kind) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const panel = panelRef.current;
+    panel?.focus();
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        onCloseRef.current();
+        return;
+      }
+      // Keep keyboard focus inside the drawer while it is open.
+      if (event.key === "Tab" && panel) {
+        const focusables = panel.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        );
+        const enabled = Array.from(focusables).filter(
+          (el) => !el.hasAttribute("disabled")
+            && !el.closest("[hidden]")
+            && el.getClientRects().length > 0,
+        );
+        const active = document.activeElement as HTMLElement | null;
+        if (enabled.length === 0) {
+          event.preventDefault();
+          return;
+        }
+        const first = enabled[0];
+        const last = enabled[enabled.length - 1];
+        if (event.shiftKey && (active === first || active === panel || !panel.contains(active))) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && (active === last || active === panel || !panel.contains(active))) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = originalOverflow;
+      previouslyFocused?.focus?.();
+    };
+  }, [kind]);
 
   if (!kind) return null;
   const title = kind === "adaptation" ? t("BOOK ADAPTATION") : t("PAGE PLAN");
@@ -224,57 +205,59 @@ export function InspectDrawer({ project, kind, onClose }: InspectDrawerProps) {
       aria-modal="true"
       aria-label={title}
       className="fixed inset-0 z-[120] flex justify-end bg-ink-black/60"
-      onClick={onClose}
+      onClick={() => onCloseRef.current()}
     >
       <div
-        className="h-full w-full max-w-2xl overflow-y-auto border-l-[3px] border-ink-black bg-pulp-paper shadow-ink"
+        ref={panelRef}
+        tabIndex={-1}
+        className="flex h-full w-full flex-col border-l-[3px] border-ink-black bg-pulp-paper shadow-ink focus-visible:outline-none sm:max-w-2xl"
         onClick={(event) => event.stopPropagation()}
       >
-        <header className="relative sticky top-0 z-10 flex min-h-14 items-center justify-between gap-4 border-b-[3px] border-ink-black bg-bristol px-5 py-3 md:h-shell-top md:py-4">
-          <div className="min-w-0">
-            <p className="font-meta text-[0.54rem] font-bold uppercase tracking-[0.14em] text-hero-red">{t("AUTOMATIC WORK")}</p>
-            <h2 className="truncate font-display text-[1.55rem] font-black uppercase leading-[0.9] tracking-[-0.03em]">{title}</h2>
-          </div>
-          <Button variant="outline" size="xs" onClick={onClose}>{t("CLOSE")}</Button>
-          <span aria-hidden="true" className="absolute inset-x-0 bottom-0 h-[4px] bg-hero-red" />
+        <header className="flex min-h-14 shrink-0 items-center justify-between gap-4 border-b-[3px] border-ink-black bg-bristol px-5 py-3 md:py-4">
+          <h2 className="min-w-0 truncate font-display text-[1.55rem] font-black uppercase leading-[0.9] tracking-[-0.03em]">
+            {title}
+          </h2>
+          <Button variant="outline" size="xs" onClick={onClose} aria-label={t("Close reading panel")}>
+            {t("CLOSE")}
+          </Button>
         </header>
 
-        <div className="space-y-5 p-5">
-          {loading && <p className="font-meta text-sm font-bold">{t("LOADING…")}</p>}
-          {error && (
-            <Surface tone="gold" border="hard" shadow="none" padding="md">
-              <p className="font-body text-sm font-bold">{t("This automatic work is not available yet.")}</p>
-            </Surface>
-          )}
-
-          {kind === "adaptation" && adaptation.data && (
-            <>
-              <AdaptationDetails adaptation={adaptation.data} />
-            </>
-          )}
-
-          {kind === "page-plan" && plan.data && (
-            <>
-              <Surface padding="md" border="soft" shadow="none">
-                <h3 className="font-display text-lg font-black uppercase">{t("Book rhythm")}</h3>
-                <p className="mt-2 font-body text-sm leading-6">
-                  {plan.data.rhythm_summary || t("The page and spread rhythm is ready.")}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="space-y-5 p-5">
+            {loading && <p className="font-meta text-sm font-bold">{t("LOADING…")}</p>}
+            {error && (
+              <Surface tone="gold" border="hard" shadow="none" padding="md">
+                <p className="font-body text-sm font-bold">
+                  {t("This automatic work is not available yet.")}
                 </p>
               </Surface>
-              {completePages.data?.pages ? (
-                <PagePlanDetails
-                  pages={completePages.data.pages}
-                  targetPageMin={plan.data.target_page_min}
-                  targetPageMax={plan.data.target_page_max}
-                />
-              ) : (
-                <Surface tone="container" border="soft" shadow="none" padding="md">
-                  <h3 className="font-display text-lg font-black uppercase">{t("Planned pages")}</h3>
-                  <p className="mt-2 font-body text-sm">{t("Loading page details…")}</p>
-                </Surface>
-              )}
-            </>
-          )}
+            )}
+
+            {!loading && !error && kind === "adaptation" && !adaptation.data && (
+              <Surface tone="container" border="soft" shadow="none" padding="md">
+                <p className="font-body text-sm">{t("The book adaptation is not ready yet.")}</p>
+              </Surface>
+            )}
+
+            {kind === "adaptation" && adaptation.data && (
+              <AdaptationDetails adaptation={adaptation.data} />
+            )}
+
+            {!loading && !error && kind === "page-plan" && !plan.data && (
+              <Surface tone="container" border="soft" shadow="none" padding="md">
+                <p className="font-body text-sm">{t("The page plan is not ready yet.")}</p>
+              </Surface>
+            )}
+
+            {kind === "page-plan" && plan.data && (
+              <PagePlanDetails
+                plan={plan.data}
+                pages={completePages.data?.pages}
+                detailsLoading={completePages.isLoading}
+                detailsError={completePages.error}
+              />
+            )}
+          </div>
         </div>
       </div>
     </aside>

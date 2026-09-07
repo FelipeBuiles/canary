@@ -138,8 +138,20 @@ def approved_reference_files(
 
 
 async def run(config: Config, project_dir: Path, ctx: StageRuntime):
+    from novel_to_comic.editorial import (
+        load_story_directive,
+        mark_story_change_applied,
+    )
+
     target = TargetArtifacts(project_dir)
     brief = target.read_brief()
+    # One-shot layout/pacing input from an explicitly applied story change.
+    # The instruction travels inside Plan's prompts under a hard constraint:
+    # Plan reallocates pages but never rewrites Adapt's lettering. It is
+    # retained across a failed run for explicit retry and cleared only after
+    # the regenerated plan is persisted.
+    directive = load_story_directive(target, "plan")
+    instruction = directive.instruction if directive is not None else ""
     model = config.effective_plan_model()
 
     async def generate(**kwargs):
@@ -150,7 +162,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
             **kwargs,
         )
 
-    return await produce_book_plan(
+    result = await produce_book_plan(
         target.read_adaptation(),
         approved_visual_inventory(project_dir),
         ApprovedPageRange(
@@ -162,7 +174,12 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
         ctx=ctx,
         model=model,
         generate=generate,
+        story_instruction=instruction,
     )
+    if directive is not None:
+        target.clear_story_directive("plan")
+        mark_story_change_applied(target, directive.proposal_id)
+    return result
 
 
 def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
@@ -170,6 +187,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     if not target.adaptation_path.exists() or not target.brief_path.exists():
         return 0.0
     brief = target.read_brief()
+    directive = target.peek_story_directive("plan")
     return estimate_book_plan_cost(
         target.read_adaptation(),
         approved_visual_inventory(project_dir),
@@ -179,6 +197,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
             allow_expansion=brief.transformation_level == "faithful",
         ),
         model=config.effective_plan_model(),
+        story_instruction=directive.instruction if directive is not None else "",
     )
 
 

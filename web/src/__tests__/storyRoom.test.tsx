@@ -188,19 +188,6 @@ describe("StoryRoom stage fallback precedence", () => {
     expect(screen.queryByText("PROOF UNAVAILABLE")).toBeNull();
   });
 
-  it("keeps a real fetch error actionable while the stage is still running", () => {
-    storyState = { data: null, isLoading: false, error: new Error("Backend 404: story not found") };
-    projectStages = {
-      extract: { status: "complete" },
-      brief: { status: "running" },
-    };
-    renderStoryAt("/project/demo/story");
-
-    expect(screen.getByText("COULD NOT LOAD")).toBeTruthy();
-    expect(screen.getByText("ERROR DETAILS")).toBeTruthy();
-    expect(screen.getByText("Backend 404: story not found")).toBeTruthy();
-    expect(screen.queryByText("PROOF UNAVAILABLE")).toBeNull();
-  });
   it("shows an actionable load error when a ready stage has no artifact", () => {
     projectStages = {
       extract: { status: "complete" },

@@ -7,16 +7,22 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from novel_to_comic.models.draw import PageIssue, RetryProvenance
+from novel_to_comic.models.draw import (
+    CorrectionChange,
+    PageIssue,
+    RetryProvenance,
+)
 from novel_to_comic.page_drawing import (
     GoogleVertexCompletePageTransport,
     VertexCompletePageAdapter,
     analyze_complete_page,
     compile_page_generation_request,
+    correction_credit_estimate,
     ensure_current_page_edition,
     enqueue_complete_page_draw,
+    prepare_page_correction,
 )
 from novel_to_comic.page_previews import ensure_page_render_preview
 from novel_to_comic.page_ocr import GatewayPageOCRAdapter
@@ -31,7 +37,7 @@ from novel_to_comic.stages.s5_plan import (
     approved_visual_inventory,
 )
 from novel_to_comic.state import StageStatus, complete_stage, load_state, save_state
-from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
+from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
 
 from ..auth import get_current_user
 from ..deps import get_project, get_project_dir, project_key
@@ -95,31 +101,6 @@ def _page_failure(target: TargetArtifacts, page_number: int):
     return failure
 
 
-def _correction_retry(
-    target: TargetArtifacts,
-    *,
-    page_number: int,
-    issue_id: str,
-) -> RetryProvenance:
-    prior_requests = [
-        target.read_request(page_number, revision)
-        for revision in target.request_revisions(page_number)
-    ]
-    prior_attempts = [
-        request
-        for request in prior_requests
-        if request.correction is not None
-        and issue_id in request.correction.issue_ids
-    ]
-    if not prior_attempts:
-        return RetryProvenance(attempt=1)
-    prior = max(prior_attempts, key=lambda request: request.retry.attempt)
-    return RetryProvenance(
-        attempt=prior.retry.attempt + 1,
-        retries_request_sha256=prior.request_sha256,
-    )
-
-
 def _generation_retry(target: TargetArtifacts, page_number: int) -> RetryProvenance:
     """Advance the frozen request identity after an incomplete generation."""
 
@@ -137,18 +118,56 @@ def _generation_retry(target: TargetArtifacts, page_number: int) -> RetryProvena
     )
 
 
-def _active_correction_job(request: Request, *, pkey: str, issue_id: str):
-    return next(
-        (
-            job
-            for job in request.app.state.generation_jobs.values()
-            if job.project_name == pkey
-            and job.kind == "complete_page_draw"
-            and (job.payload.get("issue_id") == issue_id or issue_id in job.payload.get("issue_ids", []))
-            and job.status in {"queued", "running"}
-        ),
-        None,
+def _aggregated_correction_retry(
+    target: TargetArtifacts,
+    *,
+    page_number: int,
+    issue_ids: tuple[str, ...],
+) -> RetryProvenance:
+    """Advance retry identity for one exact selected-issue set."""
+    selected = frozenset(issue_ids)
+    prior_attempts = [
+        target.read_request(page_number, revision)
+        for revision in target.request_revisions(page_number)
+    ]
+    matching = [
+        request
+        for request in prior_attempts
+        if request.correction is not None
+        and frozenset(request.correction.issue_ids) == selected
+    ]
+    if not matching:
+        return RetryProvenance(attempt=1)
+    prior = max(matching, key=lambda request: request.retry.attempt)
+    return RetryProvenance(
+        attempt=prior.retry.attempt + 1,
+        retries_request_sha256=prior.request_sha256,
     )
+
+
+def _select_active_correction_job(jobs, *, pkey: str, page_number: int, request_sha256: str):
+    """Share one identical in-flight request; reject anything else on the page.
+
+    An identical frozen request already queued or running is shared, so submit
+    retries never double-enqueue. Any other active draw job for the same page
+    means changed instructions: reject as busy instead of absorbing or
+    dropping the edited request into the running one.
+    """
+    busy = None
+    for job in jobs:
+        if job.project_name != pkey or job.kind != "complete_page_draw":
+            continue
+        if job.status not in {"queued", "running"}:
+            continue
+        if job.payload.get("page_number") != page_number:
+            continue
+        if job.payload.get("request_sha256") == request_sha256:
+            return ("share", job)
+        if busy is None:
+            busy = job
+    if busy is not None:
+        return ("busy", busy)
+    return ("free", None)
 
 
 def _sync_draw_progress(project_dir) -> None:
@@ -340,6 +359,77 @@ def get_page_render(
         # are per-user and must not land in a shared proxy cache.
         headers={"Cache-Control": "private, max-age=31536000, immutable"},
     )
+
+
+def _render_correction_summary(
+    target: TargetArtifacts, page_number: int, revision: int,
+) -> dict:
+    """Exact submitted correction behind one render, without prompt bulk.
+
+    Resolves the frozen request that produced the render and projects only
+    its correction block (edited instructions, annotation notes, manual
+    note). Initial draws carry no correction and return null. Raises
+    ArtifactMissing when the render or its frozen request record is absent.
+    """
+    provenance = target.read_provenance(page_number, revision)
+    render = provenance.render
+    frozen = None
+    for request_revision in target.request_revisions(page_number):
+        candidate = target.read_request(page_number, request_revision)
+        if candidate.request_sha256 == render.request_sha256:
+            frozen = candidate
+            break
+    if frozen is None:
+        raise ArtifactMissing("page_request", target.request_path(page_number, revision))
+    correction = frozen.correction
+    return {
+        "page_number": page_number,
+        "render_revision": render.revision,
+        "parent_render_revision": render.parent_revision,
+        "request_sha256": render.request_sha256,
+        "correction": (
+            None
+            if correction is None
+            else {
+                "mode": correction.mode,
+                "changes": [
+                    {
+                        "id": change.id,
+                        "issue_id": change.issue_id,
+                        "instruction": change.instruction,
+                        "annotations": [
+                            annotation.model_dump(exclude_none=True)
+                            for annotation in change.annotations
+                        ],
+                    }
+                    for change in correction.changes
+                ],
+                "note": correction.note,
+            }
+        ),
+    }
+
+
+@router.get("/pages/{page_number}/renders/{revision}/correction")
+def read_render_correction(
+    page_number: int,
+    revision: int,
+    project=Depends(get_project),
+):
+    """Serve the exact submitted correction behind one render revision."""
+    from novel_to_comic.target_artifacts import ArtifactInvalid
+
+    target = TargetArtifacts(project[0])
+    try:
+        return _render_correction_summary(target, page_number, revision)
+    except ArtifactMissing as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ArtifactInvalid as exc:
+        raise HTTPException(
+            409,
+            f"Saved page artifacts failed validation and the correction history cannot be trusted: {exc}. "
+            "Re-run the owning stage and retry.",
+        ) from exc
 
 
 @router.get("/pages/{page_number}/renders/{revision}/preview/{rendition}")
@@ -542,64 +632,297 @@ def dismiss_automated_page_issue(
         raise HTTPException(409, str(exc)) from exc
 
 
-@router.post("/pages/{page_number}/issues/{issue_id}/correct")
-def correct_page_issue(
+class PageCorrectionCreate(BaseModel):
+    """One explicit author-edited correction set for a single full-page job."""
+
+    changes: tuple[CorrectionChange, ...] = Field(default=(), max_length=24)
+    note: str = Field(default="", max_length=1000)
+    context_source_unit_ids: tuple[str, ...] = ()
+    parent_render_revision: int = Field(ge=1)
+    comic_page_revision: int = Field(ge=1)
+
+
+def _reference_entries(project_dir, references) -> list[dict]:
+    """Reference display metadata with servable image paths, without spending.
+
+    ``image_path`` is project-relative for the existing generic files route
+    (``/api/projects/{project}/files/{image_path}``); it is null when the
+    approved bytes are missing so the UI never renders a dead thumbnail.
+    Accepts frozen-request dicts and compiled-request models alike.
+    """
+    from pathlib import Path as _Path
+
+    def _field(reference, name):
+        if isinstance(reference, dict):
+            return reference.get(name)
+        return getattr(reference, name, None)
+
+    try:
+        files = approved_reference_files(project_dir)
+    except Exception:
+        files = {}
+    root = _Path(project_dir).resolve()
+    images: dict[str, str | None] = {}
+    for reference_id, source in files.items():
+        try:
+            candidate = _Path(source.path).resolve()
+        except Exception:
+            images[reference_id] = None
+            continue
+        images[reference_id] = (
+            candidate.relative_to(root).as_posix()
+            if candidate.is_relative_to(root) and candidate.is_file()
+            else None
+        )
+    entries = []
+    for reference in references:
+        reference_id = _field(reference, "id")
+        label = _field(reference, "label") or ""
+        entity = _field(reference, "entity_id") or ""
+        entries.append(
+            {
+                "order": _field(reference, "order"),
+                "id": reference_id,
+                "entity_id": entity,
+                "appearance_state_id": _field(reference, "appearance_state_id"),
+                "label": label,
+                "display_label": label or entity or reference_id,
+                "visual_anchor": _field(reference, "visual_anchor"),
+                "media_type": _field(reference, "media_type"),
+                "image_path": images.get(reference_id) if reference_id else None,
+            }
+        )
+    return entries
+def _prepare_explicit_correction(
+    *, target: TargetArtifacts, page_number: int, body: PageCorrectionCreate, config,
+):
+    """Run the shared no-spend validation+compile; maps failures to HTTP."""
+    from novel_to_comic.page_review import (
+        InvalidCorrectionError,
+        StaleCorrectionError,
+        deterministic_manual_issue_id,
+    )
+    from novel_to_comic.target_artifacts import ArtifactInvalid
+
+    try:
+        page = target.read_page(page_number)
+        edition = ensure_current_page_edition(target, target.read_book_edition())
+        provenance = _latest_provenance(target, page_number)
+        if provenance is None:
+            raise StaleCorrectionError("a rendered page is required before correcting findings")
+        if body.parent_render_revision != provenance.render.revision:
+            raise StaleCorrectionError(
+                f"correction targets render {body.parent_render_revision}, "
+                f"but current render is {provenance.render.revision}"
+            )
+        # The requested canonical revision plus the exact active parent
+        # revision gate staleness here; the builder additionally verifies the
+        # authoritative page SHA and the exact parent render bytes.
+        if body.comic_page_revision != page.revision:
+            raise StaleCorrectionError("correction targets a superseded ComicPage revision")
+        # Retry lineage covers the full deterministic id set (linked issues
+        # plus manual changes), so preview, submit, and retries share one
+        # identity for one author selection.
+        full_issue_ids = tuple(dict.fromkeys(
+            change.issue_id
+            if change.issue_id is not None
+            else deterministic_manual_issue_id(
+                page_number=page_number,
+                parent_revision=provenance.render.revision,
+                change_id=change.id,
+            )
+            for change in body.changes
+        ))
+        return prepare_page_correction(
+            page=page,
+            edition=edition,
+            inventory=approved_visual_inventory(target.project_dir),
+            reference_files=approved_reference_files(target.project_dir),
+            retry=_aggregated_correction_retry(
+                target, page_number=page_number, issue_ids=full_issue_ids,
+            ),
+            parent=provenance.render,
+            changes=tuple(body.changes),
+            note=body.note,
+            context_source_unit_ids=tuple(body.context_source_unit_ids),
+            artifacts=target,
+            style_template=config.style_template,
+        )
+    except StaleCorrectionError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except InvalidCorrectionError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except ArtifactInvalid as exc:
+        raise HTTPException(
+            409,
+            f"Saved page artifacts failed validation and the correction cannot proceed: {exc}. "
+            "Re-run the owning stage and retry.",
+        ) from exc
+    except ArtifactMissing as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        message = str(exc)
+        # Prompt/reference overflow is fixable client-side (select less);
+        # missing bytes or edition conflicts behave like other 409s here.
+        status = 422 if "exceed" in message else 409
+        raise HTTPException(status, message) from exc
+
+
+def _correction_preview_payload(*, target: TargetArtifacts, page_number: int, prepared) -> dict:
+    correction = prepared.correction
+    compiled = prepared.compiled
+    context = prepared.context
+    try:
+        stored = target.read_issues(page_number)
+    except ArtifactMissing:
+        stored = ()
+    stored_ids = {issue.id for issue in stored}
+    selected = set(correction.issue_ids)
+    unselected = sorted(
+        issue.id for issue in stored
+        if issue.status in {"open", "revised"} and issue.id not in selected
+    )
+    warnings = [
+        "Canonical lettering is fixed to the approved script; wording changes need story edits, not image correction.",
+    ]
+    if unselected:
+        warnings.append(
+            f"{len(unselected)} open issue(s) were not selected and will remain after this revision."
+        )
+    if context.truncated:
+        omitted = ", ".join(context.omitted_source_unit_ids) or "some passages"
+        warnings.append(
+            "Novel source passages were truncated to the correction context budget "
+            f"(omitted: {omitted}). Selected changes, notes, annotations, and "
+            "explicitly selected passages are never truncated."
+        )
+    if correction.mode == "region_targeted":
+        warnings.append(
+            "Region-targeted edit anchored to detected render geometry; unaffected areas stay fixed."
+        )
+    pending_manual = [
+        change.id for change in correction.changes
+        if change.issue_id is not None and change.issue_id not in stored_ids
+    ]
+    if pending_manual:
+        warnings.append(
+            "Manual changes are recorded as tracked issues only when the correction is submitted; "
+            "previewing never alters the issue history."
+        )
+    if not correction.issue_ids and not pending_manual:
+        warnings.append(
+            "Note-only correction: no tracked issue will be resolved by this revision."
+        )
+    return {
+        "page_number": page_number,
+        "parent_render_revision": correction.parent_render_revision,
+        "comic_page_revision": correction.comic_page_revision,
+        "selected_issue_ids": list(correction.issue_ids),
+        "unselected_open_issue_ids": unselected,
+        "changes": [
+            {
+                "id": change.id,
+                "issue_id": change.issue_id,
+                "instruction": change.instruction,
+                "annotations": [
+                    annotation.model_dump(exclude_none=True)
+                    for annotation in change.annotations
+                ],
+            }
+            for change in correction.changes
+        ],
+        "pending_manual_change_ids": pending_manual,
+        "note": correction.note,
+        "mode": correction.mode,
+        "instruction": correction.instruction,
+        "context": {
+            "adaptation_revision": context.adaptation_revision,
+            "adaptation_sha256": context.adaptation_sha256,
+            "treatment_spine": list(context.treatment_spine),
+            "beat_ids": list(context.beat_ids),
+            "beat_count": len(context.beat_ids),
+            "appearance_chronology": list(context.appearance_chronology),
+            "continuity": list(context.beat_transitions),
+            "source_unit_ids": list(context.source_unit_ids),
+            "selected_source_unit_ids": list(context.selected_source_unit_ids),
+            "omitted_source_unit_ids": list(context.omitted_source_unit_ids),
+            "context_digest": context.digest,
+            "truncated": context.truncated,
+        },
+        "references": _reference_entries(target.project_dir, compiled.request.references),
+        "profile": {
+            "id": compiled.request.profile_id,
+            "provider": compiled.request.provider,
+            "model": compiled.request.model,
+        },
+        "lettering_count": len(compiled.request.lettering),
+        "prompt_characters": len(compiled.request.prompt),
+        "request_sha256": compiled.request.request_sha256,
+        "warnings": warnings,
+        "estimate": dict(correction_credit_estimate(compiled, reserve=True)),
+    }
+@router.post("/pages/{page_number}/corrections/preview")
+def preview_page_correction(
     page_number: int,
-    issue_id: str,
+    body: PageCorrectionCreate,
+    project=Depends(get_project),
+):
+    """Validate, compile, and estimate one correction set without spending."""
+    project_dir, config, _state = project
+    target = TargetArtifacts(project_dir)
+    prepared = _prepare_explicit_correction(
+        target=target, page_number=page_number, body=body, config=config,
+    )
+    return _correction_preview_payload(target=target, page_number=page_number, prepared=prepared)
+
+
+@router.post("/pages/{page_number}/corrections")
+def submit_page_correction(
+    page_number: int,
+    body: PageCorrectionCreate,
     request: Request,
     project_id: str,
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
+    """Enqueue one full-page job for the edited changes and author note."""
     project_dir, config, _state = project
     target = TargetArtifacts(project_dir)
-    issue = _find_issue(target, page_number, issue_id)
+    prepared = _prepare_explicit_correction(
+        target=target, page_number=page_number, body=body, config=config,
+    )
+    correction = prepared.correction
+    compiled = prepared.compiled
     pkey = project_key(user_id, project_id)
-    active_job = _active_correction_job(request, pkey=pkey, issue_id=issue_id)
-    if active_job is not None:
+    decision, active_job = _select_active_correction_job(
+        request.app.state.generation_jobs.values(),
+        pkey=pkey,
+        page_number=page_number,
+        request_sha256=compiled.request.request_sha256,
+    )
+    if decision == "share":
         return {
             "status": "queued",
             "job": generation_job_payload(request.app, active_job),
+            "selected_issue_ids": list(correction.issue_ids),
         }
-    try:
-        page = target.read_page(page_number)
-        edition = target.read_book_edition()
-        edition = ensure_current_page_edition(target, edition)
-        provenance = _latest_provenance(target, page_number)
-        if provenance is None:
-            raise ValueError("a rendered page is required before correcting findings")
-        parent = provenance.render
-        pending = tuple(item for item in target.read_issues(page_number)
-                        if item.status in {"open", "revised"} and item.correction_owner == "draw")
-        if issue.id not in {item.id for item in pending}:
-            raise ValueError("only an unresolved Draw issue can be corrected")
-        from novel_to_comic.models.draw import PageRenderCorrection
-        correction = PageRenderCorrection(
-            issue_ids=tuple(item.id for item in pending), page_number=page_number,
-            comic_page_revision=page.revision, comic_page_sha256=page.content_sha256,
-            parent_render_revision=parent.revision, parent_render_image_sha256=parent.image_sha256,
-            mode="instructed", instruction="Correct all of these findings in one complete page revision:\n" +
-                "\n".join(f"- {item.requested_correction}" for item in pending),
+    if decision == "busy":
+        raise HTTPException(
+            409,
+            f"Page {page_number} has an active draw job; wait for it to finish "
+            "before submitting changed instructions.",
         )
-        compiled = compile_page_generation_request(
-            page,
-            edition,
-            approved_visual_inventory(project_dir),
-            approved_reference_files(project_dir),
-            retry=_correction_retry(
-                target,
-                page_number=page_number,
-                issue_id=issue_id,
-            ),
-            correction=correction,
-            edit_source_bytes=target.read_render(
-                page_number,
-                parent.revision,
-            ),
-            style_template=config.style_template,
-        )
-    except (ArtifactMissing, ValueError) as exc:
-        raise HTTPException(409, str(exc)) from exc
+    # Manual issues do not exist until the reserved job creates them; linked
+    # issues were validated above, so only a missing (manual) first issue is
+    # tolerated here.
+    primary_issue: PageIssue | None = None
+    if correction.issue_ids:
+        try:
+            primary_issue = _find_issue(target, page_number, correction.issue_ids[0])
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            primary_issue = None
     adapter = VertexCompletePageAdapter(GoogleVertexCompletePageTransport(config))
     queue = request.app.state.event_queues.get(pkey)
     if queue is not None:
@@ -615,17 +938,21 @@ def correct_page_issue(
         compiled=compiled,
         adapter=adapter,
         artifacts=target,
-        page=page,
+        page=target.read_page(page_number),
         ocr=GatewayPageOCRAdapter(config, page_number=page_number),
-        parent_render_revision=parent.revision,
-        issue=issue,
+        parent_render_revision=correction.parent_render_revision,
+        issue=primary_issue,
         on_success=_draw_success_callback(
             request,
             pkey=pkey,
             project_dir=project_dir,
         ),
     )
-    return {"status": "queued", "job": generation_job_payload(request.app, job)}
+    return {
+        "status": "queued",
+        "job": generation_job_payload(request.app, job),
+        "selected_issue_ids": list(correction.issue_ids),
+    }
 
 
 @router.get("/provider-usage")
@@ -667,6 +994,13 @@ def project_provider_usage(
         report["complete"] = False
     return report
 
+@router.get("/pages/{page_number}/visual-review/estimate")
+def visual_review_estimate(page_number: int, project=Depends(get_project)):
+    from novel_to_comic.config import PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD
+    from ..credits import credit_estimate_for_provider_cost
+    if _latest_provenance(TargetArtifacts(project[0]), page_number) is None:
+        raise HTTPException(409, "Page has no render to review")
+    return credit_estimate_for_provider_cost(float(PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD), 'draw', reserve=False)
 
 @router.post("/pages/{page_number}/visual-review")
 async def visual_review_page(page_number: int, project_id: str,
@@ -674,6 +1008,7 @@ async def visual_review_page(page_number: int, project_id: str,
     from ..credited_job import run_credited_page_check
     from novel_to_comic.page_visual_review import review_page_visuals
     from novel_to_comic.config import PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD
+    from novel_to_comic.target_artifacts import ArtifactInvalid
 
     project_dir, config, _state = project
     target = TargetArtifacts(project_dir)
@@ -693,15 +1028,77 @@ async def visual_review_page(page_number: int, project_id: str,
                 image=target.read_render(page_number, active.render.revision), compiled=compiled, artifacts=target),
         )
         return result.value
+    except ArtifactInvalid as exc:
+        raise HTTPException(
+            409,
+            f"Saved page artifacts failed validation and the visual review cannot proceed: {exc}. "
+            "Re-run the owning stage and retry.",
+        ) from exc
     except (ArtifactMissing, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
 
+@router.get("/pages/{page_number}/visual-review")
+def read_saved_visual_review(page_number: int, project=Depends(get_project)):
+    """Return the saved visual report only when it matches the current inputs.
 
-@router.get("/pages/{page_number}/visual-review/estimate")
-def visual_review_estimate(page_number: int, project=Depends(get_project)):
-    from novel_to_comic.config import PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD
-    from ..credits import credit_estimate_for_provider_cost
+    Generation stays behind the explicit POST route; this read never places a
+    credit hold or calls a provider. The digest is recomputed from the live
+    canonical page, exact render bytes, approved references, and review model,
+    so a stale file is never served as current: the report is null until a
+    matching paid review lands. References (with servable image paths) are
+    returned regardless so the panel can render thumbnails immediately. Each
+    finding links to its persisted issue; unavailable links must not seed a
+    draft.
+    """
+    from novel_to_comic.page_visual_review import (
+        finding_issue_links,
+        reference_display_for_render,
+        validated_saved_visual_review,
+    )
 
-    if _latest_provenance(TargetArtifacts(project[0]), page_number) is None:
-        raise HTTPException(409, "Page has no render to review")
-    return credit_estimate_for_provider_cost(float(PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD), 'draw', reserve=False)
+    project_dir, config, _state = project
+    target = TargetArtifacts(project_dir)
+    try:
+        active = _latest_provenance(target, page_number)
+        if active is None:
+            raise HTTPException(409, "Page has no render to review")
+        page = target.read_page(page_number)
+        image = target.read_render(page_number, active.render.revision)
+        compiled = compile_page_generation_request(
+            page, target.read_book_edition(), approved_visual_inventory(project_dir),
+            approved_reference_files(project_dir), retry=RetryProvenance(attempt=1),
+            style_template=config.style_template,
+        )
+        try:
+            report = validated_saved_visual_review(
+                page=page, render=active.render, image=image, compiled=compiled,
+                config=config, artifacts=target,
+            )
+        except ValueError:
+            # Inputs no longer reproduce any saved digest: nothing is current.
+            report = None
+    except HTTPException:
+        raise
+    except ArtifactInvalid as exc:
+        raise HTTPException(
+            409,
+            f"Saved page artifacts failed validation and the saved review cannot be trusted: {exc}. "
+            "Re-run the owning stage and retry.",
+        ) from exc
+    except (ArtifactMissing, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    try:
+        stored = target.read_issues(page_number)
+    except (ArtifactMissing, ArtifactInvalid):
+        stored = ()
+    return {
+        "cached": True,
+        "page_number": page_number,
+        "render_revision": active.render.revision,
+        "render_image_sha256": active.render.image_sha256,
+        "report": report,
+        "finding_issues": list(finding_issue_links(report, stored)) if report is not None else [],
+        "references": _reference_entries(
+            project_dir, reference_display_for_render(target, page_number, active.render),
+        ),
+    }
