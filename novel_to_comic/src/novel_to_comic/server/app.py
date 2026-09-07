@@ -29,6 +29,7 @@ from .routers import (
     cast_assets,
     config,
     credits,
+    editorial,
     export,
     events,
     files,
@@ -456,6 +457,11 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     )
     app.include_router(
         stages.router,
+        prefix="/api/projects/{project_id}",
+        tags=["stages"],
+    )
+    app.include_router(
+        editorial.router,
         prefix="/api/projects/{project_id}",
         tags=["stages"],
     )

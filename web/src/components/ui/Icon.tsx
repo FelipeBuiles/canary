@@ -8,6 +8,7 @@ import {
   LifeBuoy,
   Plus,
   ArrowRight,
+  ArrowLeft,
   X,
   ChevronDown,
   ChevronLeft,
@@ -31,6 +32,12 @@ import {
   Sparkles,
   Search,
   Eye,
+  MousePointer2,
+  MapPin,
+  Square,
+  Highlighter,
+  PenLine,
+  ArrowUpRight,
 } from "lucide-react";
 import { cn } from "../../lib/cn";
 
@@ -66,7 +73,15 @@ export type IconName =
   | "archive"
   | "sparkles"
   | "search"
-  | "eye";
+  | "eye"
+  | "select"
+  | "pin"
+  | "rectangle"
+  | "highlight"
+  | "freehand"
+  | "arrow"
+  | "arrow-left"
+  | "arrow-right";
 
 interface IconProps {
   name: IconName;
@@ -107,6 +122,13 @@ const ICON_MAP = {
   sparkles: Sparkles,
   search: Search,
   eye: Eye,
+  select: MousePointer2,
+  pin: MapPin,
+  rectangle: Square,
+  highlight: Highlighter,
+  freehand: PenLine,
+  arrow: ArrowUpRight,
+  "arrow-left": ArrowLeft,
 };
 
 export function Icon({ name, size = 14, className }: IconProps) {

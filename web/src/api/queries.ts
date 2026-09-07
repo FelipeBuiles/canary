@@ -18,11 +18,7 @@ import {
 import {
   acceptPageIssue,
   analyzeCompletePage,
-  reviewPageVisuals,
   getProviderUsage,
-  getVisualReviewEstimate,
-  correctPageIssue,
-  createPageIssue,
   dismissPageIssue,
   generateCompletePage,
   getAdaptation,
@@ -407,11 +403,11 @@ export function useGenerationJobs(
 
 // ── Story Bible (EXTRACT) ─────────────────────────────────────────────────────
 
-export function useStory(project: string | undefined) {
+export function useStory(project: string | undefined, enabled = true) {
   return useQuery({
     queryKey: ["project", project, "story"],
     queryFn: () => getStory(project!),
-    enabled: !!project,
+    enabled: !!project && enabled,
   });
 }
 
@@ -602,22 +598,6 @@ export function useAnalyzeCompletePage() {
   });
 }
 
-export function useCreatePageIssue() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      project,
-      pageNumber,
-      requestedCorrection,
-    }: {
-      project: string;
-      pageNumber: number;
-      requestedCorrection: string;
-    }) => createPageIssue(project, pageNumber, requestedCorrection),
-    onSuccess: (_data, { project, pageNumber }) =>
-      invalidatePageReview(qc, project, pageNumber),
-  });
-}
 
 export function useAcceptPageIssue() {
   const qc = useQueryClient();
@@ -639,15 +619,6 @@ export function useDismissPageIssue() {
   });
 }
 
-export function useCorrectPageIssue() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ project, pageNumber, issueId }: { project: string; pageNumber: number; issueId: string }) =>
-      correctPageIssue(project, pageNumber, issueId),
-    onSettled: (_data, _error, { project, pageNumber }) =>
-      invalidatePageReview(qc, project, pageNumber),
-  });
-}
 
 export function useFinishPreflight(project: string | undefined, enabled = true) {
   const qc = useQueryClient();
@@ -910,13 +881,6 @@ export function useLabsRun(runId: string | undefined) {
   });
 }
 
-export function useReviewPageVisuals() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ project, pageNumber }: { project: string; pageNumber: number }) => reviewPageVisuals(project, pageNumber),
-    onSettled: (_data, _error, { project, pageNumber }) => invalidatePageReview(qc, project, pageNumber),
-  });
-}
 
 export function useProviderUsage(project: string | undefined, enabled = true) {
   return useQuery({
@@ -927,11 +891,3 @@ export function useProviderUsage(project: string | undefined, enabled = true) {
   });
 }
 
-export function useVisualReviewEstimate(project: string, pageNumber: number, enabled: boolean) {
-  return useQuery({
-    queryKey: ["visual-review-estimate", project, pageNumber],
-    queryFn: () => getVisualReviewEstimate(project, pageNumber),
-    enabled,
-    staleTime: 60_000,
-  });
-}

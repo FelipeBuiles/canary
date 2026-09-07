@@ -6,8 +6,8 @@ import { STAGE_ORDER, type ProjectStatus, type StageName, type StageStatus } fro
  * place that knows how they roll up into stations.
  *
  * Gated substeps are user decisions and navigate to a room. Auto substeps
- * run without approval and open a read-only inspect drawer instead — they
- * never block progression.
+ * run without approval — their full views live in the Pages room narrative
+ * workbench, linked from "How this was made". They never block progression.
  */
 
 export type StationKey = "story" | "look" | "pages" | "book";
@@ -20,7 +20,7 @@ export interface StationSubstep {
   backendStages: StageName[];
   /** Gated substeps navigate to this project-relative route. */
   route?: string;
-  /** Auto substeps open this inspect drawer. */
+  /** Auto substeps open this read-only inspect drawer. */
   drawer?: DrawerKind;
 }
 
@@ -163,21 +163,6 @@ export function stationDestination(
     substep.backendStages.some((stage) => stageStatusOf(status, stage) !== "complete"),
   );
   return next?.route ?? station.primaryRoute;
-}
-
-/**
- * The backend stage a drawer's "Rerun from here" action targets: the first
- * backend stage of the auto substep that owns the drawer. Rerunning it clears
- * and regenerates that substep plus everything downstream (see RERUN_IMPACT /
- * clean_cascade), which is how the four-station UI re-exposes "re-run from a
- * determinate stage" for the auto chain.
- */
-export function rerunStageForDrawer(kind: DrawerKind): StageName {
-  for (const station of STATIONS) {
-    const substep = station.substeps.find((s) => s.drawer === kind);
-    if (substep) return substep.backendStages[0];
-  }
-  throw new Error(`No substep owns drawer kind: ${kind}`);
 }
 
 /**

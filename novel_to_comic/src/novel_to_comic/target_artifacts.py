@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 from pathlib import Path
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
@@ -22,6 +22,13 @@ from novel_to_comic.models.finish import FinishPreflight
 from novel_to_comic.models.page import BookPlan, ComicPage
 from novel_to_comic.models.source import SourceDocument
 from novel_to_comic.models.validation import StageValidation
+
+if TYPE_CHECKING:
+    from novel_to_comic.editorial import (
+        StoredEditorialDecision,
+        StoryChangeDirective,
+        StoryChangeProposal,
+    )
 
 
 ArtifactModel = TypeVar("ArtifactModel", bound=BaseModel)
@@ -526,6 +533,121 @@ class TargetArtifacts:
 
     def clear_page_failure(self, page_number: int) -> None:
         self.page_failure_path(page_number).unlink(missing_ok=True)
+
+    @property
+    def editorial_dir(self) -> Path:
+        return self.project_dir / "editorial"
+
+    @property
+    def editorial_decisions_path(self) -> Path:
+        return self.editorial_dir / "decisions.json"
+
+    @property
+    def story_changes_dir(self) -> Path:
+        return self.project_dir / "story_changes"
+
+    def story_change_path(self, proposal_id: str) -> Path:
+        if (
+            not proposal_id
+            or proposal_id.strip() != proposal_id
+            or any(
+                part in {"", ".", ".."}
+                for part in Path(proposal_id).parts
+            )
+            or Path(proposal_id).is_absolute()
+            or not all(
+                character.isalnum() or character in {"_", "-"}
+                for character in proposal_id
+            )
+        ):
+            raise ValueError("story-change proposal id must be a safe relative name")
+        return self.story_changes_dir / f"proposal_{proposal_id}.json"
+
+    def story_directive_path(self, stage: str) -> Path:
+        if stage not in {"adapt", "plan"}:
+            raise ValueError("story-change directive stage must be 'adapt' or 'plan'")
+        return self.story_changes_dir / f"directive_{stage}.json"
+
+    def read_editorial_decisions(self) -> tuple[StoredEditorialDecision, ...]:
+        """Return revision-scoped keep/reopen records; absent means none."""
+
+        from novel_to_comic.editorial import StoredEditorialDecision
+
+        path = self.editorial_decisions_path
+        if not path.exists():
+            return ()
+        try:
+            return TypeAdapter(tuple[StoredEditorialDecision, ...]).validate_json(
+                path.read_text()
+            )
+        except ValidationError as exc:
+            raise ArtifactInvalid("editorial_decisions", path, exc) from exc
+    def write_editorial_decisions(
+        self, decisions: tuple[StoredEditorialDecision, ...] | list[StoredEditorialDecision]
+    ) -> None:
+        from novel_to_comic.editorial import StoredEditorialDecision
+
+        path = self.editorial_decisions_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = TypeAdapter(
+            tuple[StoredEditorialDecision, ...]
+        ).dump_json(tuple(decisions), indent=2)
+        temporary = path.with_name(f".{path.name}.tmp")
+        temporary.write_bytes(payload)
+        os.replace(temporary, path)
+
+    def write_story_change(self, proposal: StoryChangeProposal) -> None:
+        from novel_to_comic.editorial import StoryChangeProposal
+
+        self._write_model(self.story_change_path(proposal.id), proposal)
+
+    def read_story_change(self, proposal_id: str) -> StoryChangeProposal:
+        from novel_to_comic.editorial import StoryChangeProposal
+
+        return self._read_model(
+            "story_change", self.story_change_path(proposal_id), StoryChangeProposal
+        )
+
+    def list_story_changes(self) -> tuple[StoryChangeProposal, ...]:
+        from novel_to_comic.editorial import StoryChangeProposal
+
+        proposals: list[StoryChangeProposal] = []
+        directory = self.story_changes_dir
+        if directory.is_dir():
+            for path in sorted(directory.glob("proposal_*.json")):
+                proposals.append(
+                    self._read_model("story_change", path, StoryChangeProposal)
+                )
+        proposals.sort(key=lambda proposal: (proposal.created_at, proposal.id))
+        return tuple(proposals)
+
+    def write_story_directive(self, directive: StoryChangeDirective) -> None:
+        self._write_model(self.story_directive_path(directive.stage), directive)
+
+    def peek_story_directive(self, stage: str) -> StoryChangeDirective | None:
+        """Return the pending directive without consuming it.
+
+        A file that exists but no longer parses raises instead of passing
+        ``None`` back: callers would otherwise run a billed generation that
+        silently ignores its approved instruction.
+        """
+
+        from novel_to_comic.editorial import StoryChangeDirective, StoryDirectiveError
+
+        path = self.story_directive_path(stage)
+        if not path.exists():
+            return None
+        try:
+            return StoryChangeDirective.model_validate_json(path.read_text())
+        except ValidationError as exc:
+            raise StoryDirectiveError(
+                f"stored {stage} story-change directive {path.name} is "
+                "unreadable; apply the story change again to rewrite it "
+                "before any generation runs"
+            ) from exc
+
+    def clear_story_directive(self, stage: str) -> None:
+        self.story_directive_path(stage).unlink(missing_ok=True)
 
     def write_preflight(self, preflight: FinishPreflight) -> None:
         self._write_model(self.preflight_path, preflight)

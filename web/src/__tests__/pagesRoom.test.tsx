@@ -5,8 +5,9 @@ import { I18nProvider } from "../i18n";
 import { SHOW_DEV_CONTENT_KEY } from "../lib/devContent";
 import type { EditorialIssue, StageStatus } from "../types/api";
 
-const createIssue = vi.fn();
-const correctIssue = vi.fn();
+const previewCorrections = vi.fn();
+const submitCorrections = vi.fn();
+const reviewVisuals = vi.fn();
 const dismissIssue = vi.fn();
 const analyzePage = vi.fn();
 const continueToBook = vi.fn();
@@ -17,7 +18,6 @@ const trackGenerationJobs = vi.fn((project?: string, ids: string[] = []) => {
   void ids;
   return { data: { jobs: [] } };
 });
-let includeUndrawnPage = false;
 type TestStageInfo = {
   status: StageStatus;
   stale: boolean;
@@ -29,6 +29,7 @@ let stageStatuses: Record<"adapt" | "plan" | "draw", TestStageInfo> = {
   plan: { status: "complete", stale: false },
   draw: { status: "awaiting_review", stale: false },
 };
+let includeUndrawnPage = false;
 let completePagesUnavailable = false;
 let pageIssues: Array<Record<string, unknown>> | undefined;
 let persistedPageFailure: Record<string, unknown> | null = null;
@@ -53,6 +54,7 @@ let generationJobResults: Array<{
   recoverable?: boolean;
   error?: string | null;
 }> = [];
+let previewResult: Record<string, unknown> | undefined;
 
 vi.mock("../api/queries", () => ({
   useProjectStatus: () => ({
@@ -62,10 +64,24 @@ vi.mock("../api/queries", () => ({
   }),
   useAdaptation: () => ({
     data: {
+      treatment: { causal_spine: ["A quarrel seeds the voyage"] },
+      beats: [{
+        id: "beat-1",
+        order: 1,
+        summary: "Mara argues at the market",
+        narrative_function: "confrontation",
+      }],
       editorial_issues: adaptationIssues,
     },
   }),
-  useBookPlan: () => ({ data: { editorial_issues: planIssues } }),
+  useBookPlan: () => ({
+    data: {
+      rhythm_summary: "A slow-burn rhythm",
+      target_page_min: 1,
+      target_page_max: 4,
+      editorial_issues: planIssues,
+    },
+  }),
   useStageValidation: (_project: string | undefined, stage: string) => ({
     data: stage === "plan" ? planValidation : undefined,
   }),
@@ -136,11 +152,7 @@ vi.mock("../api/queries", () => ({
     refetch: vi.fn().mockResolvedValue(undefined),
   }),
   useGenerateCompletePage: () => ({ mutate: generatePage, isPending: false }),
-  useVisualReviewEstimate: () => ({ data: { estimate_credits: 2 } }),
-  useReviewPageVisuals: () => ({ mutate: vi.fn(), isPending: false }),
   useAnalyzeCompletePage: () => ({ mutate: analyzePage, isPending: false }),
-  useCreatePageIssue: () => ({ mutate: createIssue, isPending: false }),
-  useCorrectPageIssue: () => ({ mutate: correctIssue, isPending: false }),
   useAcceptPageIssue: () => ({ mutate: vi.fn(), isPending: false }),
   useDismissPageIssue: () => ({ mutate: dismissIssue, isPending: false }),
   useApproveStage: () => ({ mutate: continueToBook, isPending: false }),
@@ -156,6 +168,31 @@ vi.mock("../api/queries", () => ({
   useCreditBalance: () => ({ data: undefined }),
   useStageEstimate: () => ({ data: undefined }),
 }));
+
+vi.mock("../api/pageRevisions", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/pageRevisions")>();
+  return {
+    ...actual,
+    useCorrectionPreview: () => ({ mutate: previewCorrections, isPending: false, data: previewResult, error: null }),
+    useSubmitCorrections: () => ({ mutate: submitCorrections, isPending: false, error: null, isSuccess: false }),
+    useRenderCorrection: () => ({ data: null, isLoading: false, error: null }),
+    useCachedVisualReview: () => ({
+      data: {
+        cached: true,
+        page_number: 1,
+        render_revision: 2,
+        render_image_sha256: "0".repeat(64),
+        report: null,
+        finding_issues: [],
+        references: [],
+      },
+      isLoading: false,
+      error: null,
+    }),
+    useVisualReviewEstimate: () => ({ data: { estimate_credits: 2 } }),
+    useReviewPageVisuals: () => ({ mutate: reviewVisuals, isPending: false, data: undefined, error: null }),
+  };
+});
 
 import { PagesRoom } from "../pages/rooms/PagesRoom";
 
@@ -174,9 +211,12 @@ function renderRoom() {
 describe("PagesRoom", () => {
   beforeEach(() => {
     window.localStorage.removeItem(SHOW_DEV_CONTENT_KEY);
-    createIssue.mockReset();
-    correctIssue.mockReset();
+    window.localStorage.clear();
+    previewCorrections.mockReset();
+    submitCorrections.mockReset();
+    reviewVisuals.mockReset();
     dismissIssue.mockReset();
+    previewResult = undefined;
     analyzePage.mockReset();
     continueToBook.mockReset();
     generatePage.mockReset();
@@ -204,101 +244,6 @@ describe("PagesRoom", () => {
     };
   });
 
-  it("shows editorial suggestions while keeping machine evidence hidden", () => {
-    adaptationIssues = [
-      {
-        id: "adapt-issue-1",
-        owner_stage: "adapt",
-        code: "rushed_reaction_or_aftermath",
-        message: "The aftermath is compressed.",
-        evidence: ["Beat 1 reaches a transition without an aftermath."],
-      },
-      {
-        id: "shared-continuity-issue",
-        owner_stage: "adapt",
-        code: "continuity_state_mismatch",
-        message: "A location transition may skip an intermediate place.",
-        evidence: ["Expected the studio; found Providence."],
-      },
-      {
-        id: "adapt-issue-2",
-        owner_stage: "adapt",
-        code: "rushed_reaction_or_aftermath",
-        message: "The aftermath is compressed.",
-        evidence: ["Beat 2 reaches a transition without an aftermath."],
-      },
-    ];
-    planIssues = [
-      {
-        id: "plan-issue-1",
-        owner_stage: "plan",
-        code: "weak_page_turn",
-        message: "The reveal lacks a page-turn setup.",
-        evidence: ["Page 1 is none; page 2 is none."],
-      },
-      {
-        id: "shared-continuity-issue",
-        owner_stage: "plan",
-        code: "continuity_state_mismatch",
-        message: "A location transition may skip an intermediate place.",
-        evidence: ["Expected the studio; found Providence."],
-      },
-    ];
-
-    renderRoom();
-
-    expect(screen.getByText("4 diagnostics")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "SHOW DIAGNOSTICS" }));
-    expect(screen.getByText("The aftermath is compressed.")).toBeTruthy();
-    expect(screen.getByText("The reveal lacks a page-turn setup.")).toBeTruthy();
-    expect(screen.queryByText("Expected the studio; found Providence.")).toBeNull();
-    expect(screen.getByText("PAGE GALLERY")).toBeTruthy();
-  });
-
-  it("shows diagnostic evidence with Dev Content enabled", () => {
-    window.localStorage.setItem(SHOW_DEV_CONTENT_KEY, "1");
-    adaptationIssues = [
-      {
-        id: "adapt-issue-1",
-        owner_stage: "adapt",
-        code: "rushed_reaction_or_aftermath",
-        message: "The aftermath is compressed.",
-        evidence: ["Beat 1 reaches a transition without an aftermath."],
-      },
-      {
-        id: "adapt-issue-2",
-        owner_stage: "adapt",
-        code: "rushed_reaction_or_aftermath",
-        message: "The aftermath is compressed.",
-        evidence: ["Beat 2 reaches a transition without an aftermath."],
-      },
-    ];
-    planIssues = [{
-      id: "plan-issue-1",
-      owner_stage: "plan",
-      code: "weak_page_turn",
-      message: "The reveal lacks a page-turn setup.",
-      evidence: ["Page 1 is none; page 2 is none."],
-    }];
-
-    renderRoom();
-
-    expect(screen.getByText("3 diagnostics")).toBeTruthy();
-    expect(screen.getByText("EDITORIAL REVIEW")).toBeTruthy();
-    expect(
-      screen.getByText(
-        "Review these story and pacing suggestions before drawing. They do not block the book.",
-      ),
-    ).toBeTruthy();
-    expect(screen.queryByText("The aftermath is compressed.")).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "SHOW DIAGNOSTICS" }));
-
-    expect(screen.getAllByText("The aftermath is compressed.")).toHaveLength(1);
-    expect(screen.getByText("×2")).toBeTruthy();
-    expect(screen.getByText("The reveal lacks a page-turn setup.")).toBeTruthy();
-    expect(screen.getByText("Beat 1 reaches a transition without an aftermath.")).toBeTruthy();
-  });
 
   it("offers to retry Adapt when Adapt failed before Plan started", () => {
     stageStatuses = {
@@ -405,13 +350,13 @@ describe("PagesRoom", () => {
     expect(screen.getByText("1 / 2")).toBeTruthy();
   });
 
-  it("shows complete-page thumbnails and revision history", () => {
+  it("shows the render canvas and revision history", () => {
     renderRoom();
 
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
 
-    expect(screen.getByAltText("Complete page 1, revision 2")).toBeTruthy();
-    expect(screen.getByText("Revision 1 → Revision 2")).toBeTruthy();
+    expect(screen.getByAltText("Complete page 1, render revision 2")).toBeTruthy();
+    expect(screen.getByText("COMPARE WITH PREVIOUS RENDER", { exact: false })).toBeTruthy();
     expect(screen.queryByText("page-issue-1")).toBeNull();
     expect(screen.queryByText("rushed_aftermath")).toBeNull();
   });
@@ -433,57 +378,115 @@ describe("PagesRoom", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
     const dialog = screen.getByRole("dialog", { name: "Page 1 review" });
-    fireEvent.click(screen.getByText("CANONICAL PAGE INTENT"));
+    fireEvent.click(screen.getByRole("tab", { name: "Page" }));
     expect(screen.getByRole("dialog", { name: "Page 1 review" })).toBe(dialog);
 
     fireEvent.click(dialog);
     expect(screen.queryByRole("dialog", { name: "Page 1 review" })).toBeNull();
   });
 
-  it("creates a page issue and requests a complete-page correction", () => {
-    correctIssue.mockImplementation((_variables, options) => {
-      options?.onSuccess?.({ job: { id: "job-correction-1" } });
+  function stubPreviewResult(): Record<string, unknown> {
+    return {
+      selected_issue_ids: ["page-issue-1"],
+      unselected_open_issue_ids: [],
+      pending_manual_change_ids: [],
+      changes: [],
+      note: null,
+      mode: "redraw",
+      instruction: "compiled",
+      context: {
+        adaptation_revision: 1,
+        adaptation_sha256: "0".repeat(64),
+        treatment_spine: [],
+        beat_ids: [],
+        beat_count: 0,
+        appearance_chronology: [],
+        continuity: [],
+        source_unit_ids: [],
+        selected_source_unit_ids: [],
+        omitted_source_unit_ids: [],
+        context_digest: "d",
+        truncated: false,
+      },
+      references: [],
+      profile: { id: "p", provider: "v", model: "m" },
+      lettering_count: 0,
+      prompt_characters: 8,
+      request_sha256: "r",
+      warnings: [],
+      estimate: {
+        estimate_credits: 3,
+        reserved_credits: 3,
+        reservation_multiplier: 1,
+        confidence: "high",
+      },
+    };
+  }
+
+  it("submits selected suggestions and manual requests as one correction after preview", () => {
+    previewCorrections.mockImplementation((_variables, options) => {
+      previewResult = stubPreviewResult();
+      options?.onSuccess?.(previewResult);
+    });
+    submitCorrections.mockImplementation((_variables, options) => {
+      options?.onSuccess?.({ status: "queued", job: { id: "job-correction-1" }, selected_issue_ids: ["page-issue-1"] });
     });
     renderRoom();
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
 
-    fireEvent.change(screen.getByLabelText("What needs correction?"), {
+    // Editing stays closed until requested: the artwork leads.
+    expect(screen.queryByLabelText(/Manual request/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "MAKE CHANGES" }));
+
+    // The open Draw suggestion arrives pre-selected in the draft.
+    expect(screen.getByRole("checkbox", { name: /Restore the approved face/ })).toHaveProperty("checked", true);
+    fireEvent.change(screen.getByLabelText(/Manual request/), {
       target: { value: "Keep the reveal, but restore the approved face." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "ADD PAGE ISSUE" }));
-    expect(createIssue).toHaveBeenCalledWith(expect.objectContaining({
-      project: "demo",
-      pageNumber: 1,
-      requestedCorrection: "Keep the reveal, but restore the approved face.",
-    }));
+    fireEvent.click(screen.getByRole("button", { name: "ADD MANUAL REQUEST" }));
 
-    expect(screen.getByText(
-      "This creates one page revision addressing all unresolved Draw findings. Review the result to confirm visual fixes.",
-    )).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "CORRECT PAGE FINDINGS" }));
-    expect(correctIssue).toHaveBeenCalledWith(
-      {
-        project: "demo",
-        pageNumber: 1,
-        issueId: "page-issue-1",
-      },
+    // Submission is blocked until an explicit preview runs.
+    fireEvent.click(screen.getByRole("button", { name: "SUBMIT ONE CORRECTION" }));
+    expect(submitCorrections).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "PREVIEW COST & CONTEXT" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "PREVIEW COST & CONTEXT" }));
+    expect(previewCorrections).toHaveBeenCalledWith(
+      expect.objectContaining({ project: "demo", pageNumber: 1 }),
+      expect.any(Object),
+    );
+    const previewBody = previewCorrections.mock.calls[0][0].body;
+    expect(previewBody.comic_page_revision).toBe(2);
+    expect(previewBody.parent_render_revision).toBe(2);
+    expect(previewBody.comic_page_sha256).toBe("a".repeat(64));
+    expect(previewBody.changes.length).toBe(2);
+    expect(previewBody.changes[0].issue_id).toBe("page-issue-1");
+    expect(previewBody.changes[1].instruction).toContain("Keep the reveal");
+
+    fireEvent.click(screen.getByRole("button", { name: "SUBMIT ONE CORRECTION" }));
+    expect(submitCorrections).toHaveBeenCalledWith(
+      expect.objectContaining({ project: "demo", pageNumber: 1 }),
       expect.any(Object),
     );
     expect(trackGenerationJobs).toHaveBeenLastCalledWith("demo", ["job-correction-1"]);
   });
 
-  it("shows the reason when a corrected revision cannot be created", () => {
-    correctIssue.mockImplementation((_variables, options) => {
+  it("shows the reason when a correction cannot be queued", () => {
+    previewCorrections.mockImplementation((_variables, options) => {
+      previewResult = stubPreviewResult();
+      options?.onSuccess?.(previewResult);
+    });
+    submitCorrections.mockImplementation((_variables, options) => {
       options?.onError?.(new Error("Saved edition conflict"));
     });
     renderRoom();
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "MAKE CHANGES" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "CORRECT PAGE FINDINGS" }));
+    fireEvent.click(screen.getByRole("button", { name: "PREVIEW COST & CONTEXT" }));
+    fireEvent.click(screen.getByRole("button", { name: "SUBMIT ONE CORRECTION" }));
 
-    expect(screen.getByRole("alert").textContent).toContain(
-      "Could not create corrected revision. Saved edition conflict",
-    );
+    expect(screen.getByRole("alert").textContent).toContain("Saved edition conflict");
   });
 
   it("offers queue-all or one-by-one when Draw starts", () => {
@@ -512,7 +515,7 @@ describe("PagesRoom", () => {
     })).toBeTruthy();
   });
 
-  it("explains the exact OCR mismatch before offering a redraw", () => {
+  it("explains OCR mismatches with full evidence and routes redraws through the draft", () => {
     pageIssues = [{
       id: "page-issue-draw-page-001-render-002-misspelled_lettering",
       issue_type: "misspelled_lettering",
@@ -532,32 +535,38 @@ describe("PagesRoom", () => {
     renderRoom();
 
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Checks" }));
 
     expect(screen.getByText("Some lettering does not match")).toBeTruthy();
     expect(screen.getByText("Open the door. · Run!")).toBeTruthy();
     expect(screen.getByText("Open the dor. · Run!")).toBeTruthy();
-    expect(screen.getByText("EXACT DIFFERENCE")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "CORRECT PAGE FINDINGS" })).toBeTruthy();
+    expect(screen.getByText("EXACT DIFFERENCES", { exact: false })).toBeTruthy();
+    // No implicit per-issue redraw: fixes wait in the draft until previewed and submitted.
+    expect(screen.queryByRole("button", { name: "CORRECT PAGE FINDINGS" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "DISMISS FALSE POSITIVE" }));
     expect(dismissIssue).toHaveBeenCalledWith({
       project: "demo",
       pageNumber: 1,
       issueId: "page-issue-draw-page-001-render-002-misspelled_lettering",
     });
+    // Redraws route through the draft: on the Page tab the finding waits selected once editing is opened.
+    fireEvent.click(screen.getByRole("tab", { name: "Page" }));
+    fireEvent.click(screen.getByRole("button", { name: "MAKE CHANGES" }));
+    expect(screen.getByRole("checkbox", { name: /OCR lettering does not exactly match/ })).toHaveProperty("checked", true);
   });
 
-  it("keeps OCR issue actions below the explanation instead of squeezing it", () => {
+  it("summarizes insertions, deletions and reorders across every differing segment", () => {
     pageIssues = [{
-      id: "page-issue-draw-page-001-render-002-misspelled_lettering",
-      issue_type: "misspelled_lettering",
+      id: "page-issue-draw-page-001-render-002-missing_lettering",
+      issue_type: "missing_lettering",
       classification: "invariant_failure",
       correction_kind: "render_fidelity",
       correction_owner: "draw",
       page_number: 1,
       render_revision: 2,
       evidence: [
-        'expected_text=["Open the door.", "Run!"]',
-        'recognized_text=["Open the dor.", "Run!"]',
+        'expected_text=["First.", "Second.", "Third."]',
+        'recognized_text=["Third.", "First.", "Extra!"]',
       ],
       requested_correction: "OCR lettering does not exactly match canonical wording.",
       status: "open",
@@ -566,11 +575,12 @@ describe("PagesRoom", () => {
     renderRoom();
 
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Checks" }));
 
-    const actionGroup = screen.getByRole("button", { name: "CORRECT PAGE FINDINGS" }).parentElement;
-    const issueLayout = actionGroup?.parentElement;
-    expect(issueLayout?.className).toContain("space-y-3");
-    expect(issueLayout?.className).not.toContain("flex-wrap");
+    expect(screen.getByText("EXACT DIFFERENCES · 3")).toBeTruthy();
+    expect(screen.getByText(/Moved:/)).toBeTruthy();
+    expect(screen.getByText(/Missing:/)).toBeTruthy();
+    expect(screen.getByText(/Extra:/)).toBeTruthy();
   });
 
   it("generates one complete page from an undrawn page card", () => {
@@ -695,5 +705,156 @@ describe("PagesRoom", () => {
       { project: "demo", stage: "draw" },
       expect.any(Object),
     );
+  });
+
+  it("opens gallery-first with the page image immediately visible", () => {
+    renderRoom();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
+
+    const reviseTab = screen.getByRole("tab", { name: "Page" });
+    expect(reviseTab.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "Visual review" }).getAttribute("aria-selected")).toBe("false");
+    expect(screen.getByRole("tab", { name: "Checks" }).getAttribute("aria-selected")).toBe("false");
+    // Artwork and the opt-in editing entry render in the first viewport, not behind reading overlays.
+    expect(screen.getByAltText("Complete page 1, render revision 2")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "MAKE CHANGES" })).toBeTruthy();
+    // Editing stays closed until requested.
+    expect(screen.queryByLabelText(/Manual request/)).toBeNull();
+    // Visual and checks views stay out of the default viewport.
+    expect(screen.queryByText("VISUAL REVIEW")).toBeNull();
+    expect(screen.queryByText("ISSUE HISTORY")).toBeNull();
+  });
+
+  it("switches between visual and checks views and keeps the draft mounted", () => {
+    renderRoom();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "MAKE CHANGES" }));
+    fireEvent.change(screen.getByLabelText(/Manual request/), {
+      target: { value: "Keep the reveal, but restore the approved face." },
+    });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Visual review" }));
+    expect(screen.getByRole("tab", { name: "Visual review" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByText("VISUAL REVIEW")).toBeTruthy();
+    expect(screen.queryByText("ISSUE HISTORY")).toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Checks" }));
+    expect(screen.getByText("ISSUE HISTORY")).toBeTruthy();
+
+    // Unsaved draft state survives tab switches: the draft stays mounted hidden.
+    fireEvent.click(screen.getByRole("tab", { name: "Page" }));
+    expect(screen.getByLabelText(/Manual request/)).toHaveProperty(
+      "value",
+      "Keep the reveal, but restore the approved face.",
+    );
+  });
+
+  it("never shows blanket Confirmed while revised visual concerns remain", () => {
+    pageIssues = [
+      {
+        id: "page-issue-draw-page-001-render-002-misspelled_lettering",
+        issue_type: "misspelled_lettering",
+        classification: "invariant_failure",
+        correction_kind: "render_fidelity",
+        correction_owner: "draw",
+        page_number: 1,
+        render_revision: 2,
+        evidence: [
+          'expected_text=["Open the door."]',
+          'recognized_text=["Open the door."]',
+        ],
+        requested_correction: "OCR lettering does not exactly match canonical wording.",
+        status: "resolved",
+        resolution_revision: 2,
+      },
+      ...[1, 2, 3, 4].map((index) => ({
+        id: `page-issue-visual-${index}`,
+        issue_type: "identity",
+        classification: "editorial_issue",
+        correction_kind: "render_fidelity",
+        correction_owner: "draw",
+        page_number: 1,
+        render_revision: 1,
+        evidence: [`Face differs from approved reference ${index}`],
+        requested_correction: "Restore the approved face",
+        status: "revised",
+        resolution_revision: null,
+      })),
+    ];
+    renderRoom();
+
+    const card = screen.getByRole("button", { name: "Open page 1, revision 2" });
+    expect(card.textContent).toContain("Needs visual review");
+    expect(card.textContent).not.toContain("Confirmed");
+  });
+
+  it("does not infer page acceptance from resolved findings", () => {
+    pageIssues = [{
+      id: "page-issue-1",
+      issue_type: "identity",
+      classification: "editorial_issue",
+      correction_kind: "render_fidelity",
+      correction_owner: "draw",
+      page_number: 1,
+      render_revision: 1,
+      evidence: ["Face differs from approved reference"],
+      requested_correction: "Restore the approved face",
+      status: "resolved",
+      resolution_revision: 2,
+    }];
+    renderRoom();
+
+    const card = screen.getByRole("button", { name: "Open page 1, revision 2" });
+    expect(card.textContent).not.toContain("Confirmed");
+    expect(card.textContent).not.toContain("Needs visual review");
+  });
+
+  it("opens the book adaptation reading drawer from the gallery heading", () => {
+    renderRoom();
+
+    fireEvent.click(screen.getByRole("button", { name: "BOOK ADAPTATION" }));
+
+    const drawer = screen.getByRole("dialog", { name: "BOOK ADAPTATION" });
+    expect(drawer).toBeTruthy();
+    expect(screen.getByText("Narrative treatment")).toBeTruthy();
+    expect(screen.getByText("A quarrel seeds the voyage")).toBeTruthy();
+    expect(screen.getByText("Adapted beats")).toBeTruthy();
+    expect(screen.getByText("Mara argues at the market")).toBeTruthy();
+    // No storyboard editing or omission UI lives in the gallery.
+    expect(screen.queryByText("EDITORIAL FINDINGS")).toBeNull();
+    expect(screen.queryByText("SAVED CHANGES")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close reading panel" }));
+    expect(screen.queryByRole("dialog", { name: "BOOK ADAPTATION" })).toBeNull();
+  });
+
+  it("opens the page plan reading drawer from the gallery heading", () => {
+    renderRoom();
+
+    fireEvent.click(screen.getByRole("button", { name: "PAGE PLAN" }));
+
+    const drawer = screen.getByRole("dialog", { name: "PAGE PLAN" });
+    expect(drawer).toBeTruthy();
+    expect(screen.getByText("Book rhythm")).toBeTruthy();
+    expect(screen.getByText("A slow-burn rhythm")).toBeTruthy();
+    expect(screen.getByText("Planned pages")).toBeTruthy();
+    expect(screen.getByText("One dominant reveal")).toBeTruthy();
+    expect(screen.getByText("Hold, then reveal")).toBeTruthy();
+  });
+
+  it("opens the reading drawer from a deep link", () => {
+    render(
+      <MemoryRouter initialEntries={["/project/demo/pages?reading=page-plan"]}>
+        <I18nProvider>
+          <Routes>
+            <Route path="/project/:id/pages" element={<PagesRoom />} />
+          </Routes>
+        </I18nProvider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("dialog", { name: "PAGE PLAN" })).toBeTruthy();
   });
 });

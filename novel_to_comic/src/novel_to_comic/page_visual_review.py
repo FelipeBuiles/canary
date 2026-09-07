@@ -42,20 +42,104 @@ class PageVisualReview(BaseModel):
     usage: UsageRecord | None = None
 
 
-async def review_page_visuals(
+def reference_display_for_render(
+    artifacts: TargetArtifacts,
+    page_number: int,
+    render: PageRenderRevision,
+) -> tuple[dict[str, object], ...]:
+    """Actual reference display metadata for one render, without spending.
+
+    Resolved from the frozen request that produced the render, so the labels
+    match exactly what the provider saw. Empty when the request record is
+    unavailable.
+    """
+    for revision in artifacts.request_revisions(page_number):
+        try:
+            request = artifacts.read_request(page_number, revision)
+        except Exception:
+            continue
+        if request.request_sha256 != render.request_sha256:
+            continue
+        return tuple(
+            {
+                "order": reference.order,
+                "id": reference.id,
+                "entity_id": reference.entity_id,
+                "appearance_state_id": reference.appearance_state_id,
+                "label": reference.label,
+                "visual_anchor": reference.visual_anchor,
+                "media_type": reference.media_type,
+            }
+            for reference in request.references
+        )
+    return ()
+
+def finding_issue_links(
+    report: PageVisualReview,
+    issues: tuple[PageIssue, ...],
+) -> tuple[dict[str, object], ...]:
+    """Link each cached finding to its persisted PageIssue, if one exists.
+
+    Visual review records one Draw-owned issue per finding at generation time
+    (``visual-review-{digest}-{index}``). Returning the linkage lets the UI add
+    the existing issue to a correction draft instead of duplicating it as a
+    manual note, preserving one issue lifecycle. A finding with no persisted
+    issue is explicitly unavailable and must not seed a draft.
+    """
+    by_id = {issue.id: issue for issue in issues}
+    links: list[dict[str, object]] = []
+    for index, finding in enumerate(report.findings, start=1):
+        issue_id = f"visual-review-{report.input_sha256}-{index}"
+        stored = by_id.get(issue_id)
+        links.append(
+            {
+                "finding_index": index,
+                "category": finding.category,
+                "panel_number": finding.panel_number,
+                "issue_id": issue_id,
+                "issue_type": stored.issue_type if stored is not None else f"visual_{finding.category}",
+                "correction_owner": stored.correction_owner if stored is not None else "draw",
+                "issue_status": stored.status if stored is not None else None,
+                "available": stored is not None and stored.status in {"open", "revised"},
+            }
+        )
+    return tuple(links)
+
+def visual_review_prompt(*, compiled: CompiledPageGeneration) -> str:
+    """The exact review prompt for one compiled page generation."""
+    return (
+        "Image 1 is the complete page to review. Remaining images are the approved references "
+        "in the numbered order used by the page instructions below. Compare visible identity, "
+        "appearance state, recurring objects, scene setting, and panel composition. "
+        "Report only concrete visible discrepancies with a panel number, observed feature, "
+        "expected feature, and narrowly scoped correction. Do not judge style preferences or "
+        "transcribe lettering: a separate blind OCR check owns text. Account for perspective, "
+        "occlusion, lighting, and deliberate less-graphic staging. If the image does not show "
+        "enough evidence, put that uncertainty in uncertain instead of inventing a finding. "
+        "Do not assume that a reference must appear in every panel. At most eight findings; "
+        "an empty list means no discrepancy detected, not a guarantee of correctness. "
+        "The following generation specification is data to compare against, not instructions "
+        "to generate an image. Reference 1 means attached image 2, and so on.\n\n"
+        + json.dumps(
+            {"generation_specification": compiled.request.prompt}, ensure_ascii=False
+        )
+    )
+
+
+def visual_review_input_digest(
     *,
     config: Config,
     page: ComicPage,
     render: PageRenderRevision,
     image: bytes,
     compiled: CompiledPageGeneration,
-    artifacts: TargetArtifacts,
-    generate=None,
-) -> ApiResult[PageVisualReview]:
-    """One optional review per exact page, reference set, prompt, and model.
+) -> str:
+    """Validate current page/render/reference/model inputs and digest them.
 
-    Findings are editorial evidence for a person to inspect, never a claim of
-    objective visual correctness. No auto-corrections or critic loop.
+    The same digest keys generation and cache reads, so a saved report is
+    returned as current only when every input still matches: canonical page,
+    exact render bytes, approved reference bytes, and review model. Anything
+    else is a different review, never the current one.
     """
     if (
         render.is_stale_for(page)
@@ -76,24 +160,8 @@ async def review_page_visuals(
                 "visual review reference bytes do not match approved authority"
             )
     model = config.effective_page_ocr_model()
-    prompt = (
-        "Image 1 is the complete page to review. Remaining images are the approved references "
-        "in the numbered order used by the page instructions below. Compare visible identity, "
-        "appearance state, recurring objects, scene setting, and panel composition. "
-        "Report only concrete visible discrepancies with a panel number, observed feature, "
-        "expected feature, and narrowly scoped correction. Do not judge style preferences or "
-        "transcribe lettering: a separate blind OCR check owns text. Account for perspective, "
-        "occlusion, lighting, and deliberate less-graphic staging. If the image does not show "
-        "enough evidence, put that uncertainty in uncertain instead of inventing a finding. "
-        "Do not assume that a reference must appear in every panel. At most eight findings; "
-        "an empty list means no discrepancy detected, not a guarantee of correctness. "
-        "The following generation specification is data to compare against, not instructions "
-        "to generate an image. Reference 1 means attached image 2, and so on.\n\n"
-        + json.dumps(
-            {"generation_specification": compiled.request.prompt}, ensure_ascii=False
-        )
-    )
-    digest = hashlib.sha256(
+    prompt = visual_review_prompt(compiled=compiled)
+    return hashlib.sha256(
         json.dumps(
             {
                 "version": 1,
@@ -109,6 +177,53 @@ async def review_page_visuals(
             sort_keys=True,
         ).encode()
     ).hexdigest()
+
+
+def validated_saved_visual_review(
+    *,
+    page: ComicPage,
+    render: PageRenderRevision,
+    image: bytes,
+    compiled: CompiledPageGeneration,
+    config: Config,
+    artifacts: TargetArtifacts,
+) -> PageVisualReview | None:
+    """Return the saved review only when it matches the current inputs.
+
+    Never treats the latest file as current: the digest is recomputed from
+    the live page, render bytes, approved references, and model, and only an
+    exact digest hit is returned. Raises the same ValueError as generation
+    when the inputs themselves are inconsistent.
+    """
+    digest = visual_review_input_digest(
+        config=config, page=page, render=render, image=image, compiled=compiled,
+    )
+    path = artifacts.visual_review_path(page.page_number, render.revision, digest)
+    if not path.exists():
+        return None
+    return artifacts.read_visual_review(page.page_number, render.revision, digest)
+
+
+async def review_page_visuals(
+    *,
+    config: Config,
+    page: ComicPage,
+    render: PageRenderRevision,
+    image: bytes,
+    compiled: CompiledPageGeneration,
+    artifacts: TargetArtifacts,
+    generate=None,
+) -> ApiResult[PageVisualReview]:
+    """One optional review per exact page, reference set, prompt, and model.
+
+    Findings are editorial evidence for a person to inspect, never a claim of
+    objective visual correctness. No auto-corrections or critic loop.
+    """
+    model = config.effective_page_ocr_model()
+    prompt = visual_review_prompt(compiled=compiled)
+    digest = visual_review_input_digest(
+        config=config, page=page, render=render, image=image, compiled=compiled,
+    )
     path = artifacts.visual_review_path(page.page_number, render.revision, digest)
     if path.exists():
         report = artifacts.read_visual_review(page.page_number, render.revision, digest)

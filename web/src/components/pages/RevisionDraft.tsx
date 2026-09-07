@@ -1,0 +1,885 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useI18n } from "../../i18n";
+import type { PageIssue } from "../../types/api";
+import {
+  clearRevisionDraft,
+  findStaleRevisionDraft,
+  loadRevisionDraft,
+  newChangeId,
+  saveRevisionDraft,
+  useCorrectionPreview,
+  useRenderCorrection,
+  useSubmitCorrections,
+  type DraftTarget,
+  type PersistedRevisionDraft,
+} from "../../api/pageRevisions";
+import {
+  pageRenderPreviewUrl,
+  referenceFileUrl,
+  type PageAnnotationKind,
+  type PageCorrectionAnnotation,
+  type PageCorrectionBody,
+  type PageCorrectionChange,
+} from "../../api/pages";
+import { Button } from "../ui/Button";
+import { FieldLabel, TextAreaField } from "../ui/Field";
+import { Surface } from "../ui/Surface";
+import { AnnotationEditor, type EditorAnnotation } from "./AnnotationEditor";
+import { roundPoint } from "./annotationGeometry";
+import type { VisualReviewDraftSeed } from "./VisualReviewPanel";
+
+interface DraftChange {
+  id: string;
+  issueId?: string;
+  instruction: string;
+  selected: boolean;
+  annotations: EditorAnnotation[];
+}
+/**
+ * Exact submitted correction frozen into a render: edited instructions, mark
+ * notes and the overall note as submitted — never issue-text approximations.
+ */
+function SubmittedCorrection({
+  project,
+  pageNumber,
+  renderRevision,
+}: {
+  project: string;
+  pageNumber: number;
+  renderRevision: number;
+}) {
+  const { t } = useI18n();
+  const submitted = useRenderCorrection(project, pageNumber, renderRevision);
+  const correction = submitted.data?.correction ?? null;
+  return (
+    <div>
+      <p className="font-meta text-xs font-bold text-ink-muted">
+        {t("SUBMITTED FOR THIS RENDER")}
+      </p>
+      {submitted.isLoading && (
+        <p className="mt-1 font-body text-xs text-ink-muted">{t("Loading submitted correction…")}</p>
+      )}
+      {submitted.error && (
+        <p role="alert" className="mt-1 font-body text-xs text-hero-red">{(submitted.error as Error).message}</p>
+      )}
+      {!submitted.isLoading && !submitted.error && !correction && (
+        <p className="mt-1 font-body text-xs leading-5 text-ink-muted">
+          {t("This render was an initial draw: no submitted correction exists.")}
+        </p>
+      )}
+      {correction && (
+        <ol className="mt-1 space-y-2">
+          {correction.changes.map((change) => (
+            <li key={change.id} className="border-l-[3px] border-narrator-gold pl-2">
+              <p className="font-body text-xs font-bold leading-5">{change.instruction}</p>
+              {change.annotations.length > 0 && (
+                <ul className="mt-1 space-y-1">
+                  {change.annotations.map((mark) => (
+                    <li key={mark.id} className="font-body text-xs leading-5 text-ink-black/75">
+                      <span className="font-meta font-bold text-ink-muted">{mark.kind}: </span>
+                      {mark.note}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          ))}
+          {correction.note && (
+            <li className="font-body text-xs italic leading-5">{correction.note}</li>
+          )}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+interface RevisionDraftProps {
+  project: string;
+  pageNumber: number;
+  /** Canonical page revision being corrected. */
+  comicPageRevision: number;
+  /** Render revision the redraw starts from. */
+  parentRenderRevision: number;
+  comicPageSha256: string;
+  /** Older render used only for before/after comparison. */
+  compareRevision: number | null;
+  issues: PageIssue[];
+  /** Seeds pushed from the visual review panel; consumed once merged. */
+  seeds: VisualReviewDraftSeed[];
+  onSeedsConsumed: () => void;
+  onDraftKeysChange: (keys: string[]) => void;
+  onJobQueued: (jobId: string) => void;
+  disabled?: boolean;
+}
+
+function suggestibleIssues(issues: PageIssue[]): PageIssue[] {
+  return issues.filter(
+    (issue) =>
+      (issue.status === "open" || issue.status === "revised")
+      && issue.correction_owner === "draw",
+  );
+}
+
+function changeFromIssue(issue: PageIssue): DraftChange {
+  return {
+    id: `issue:${issue.id}`,
+    issueId: issue.id,
+    instruction: issue.requested_correction,
+    selected: true,
+    annotations: [],
+  };
+}
+
+function mergeSeeds(current: DraftChange[], seeds: VisualReviewDraftSeed[]): DraftChange[] {
+  const byKey = new Map(current.map((change) => [change.id, change]));
+  const byIssue = new Map(
+    current.filter((change) => change.issueId).map((change) => [change.issueId!, change]),
+  );
+  const next = [...current];
+  for (const seed of seeds) {
+    if (seed.issueId && byIssue.has(seed.issueId)) {
+      const existing = byIssue.get(seed.issueId)!;
+      if (!existing.selected) {
+        next.splice(next.indexOf(existing), 1, { ...existing, selected: true });
+      }
+      continue;
+    }
+    if (byKey.has(seed.key)) continue;
+    next.push({
+      id: seed.key,
+      issueId: seed.issueId,
+      instruction: seed.instruction,
+      selected: true,
+      annotations: [],
+    });
+  }
+  return next;
+}
+
+
+
+/**
+ * Scroll a newly revealed panel into view inside the nearest scrollable
+ * ancestor (the modal body), never the page: entering editing/marking must
+ * not leave the fresh controls clipped above the fold.
+ */
+function scrollLocalIntoView(node: HTMLElement | null) {
+  if (!node || typeof window === "undefined") return;
+  let container: HTMLElement | null = node.parentElement;
+  while (container) {
+    const overflowY = window.getComputedStyle(container).overflowY;
+    if ((overflowY === "auto" || overflowY === "scroll") && container.scrollHeight > container.clientHeight) break;
+    container = container.parentElement;
+  }
+  if (container) {
+    const delta = node.getBoundingClientRect().top - container.getBoundingClientRect().top - 8;
+    if (delta !== 0) container.scrollTop += delta;
+  } else if (typeof node.scrollIntoView === "function") {
+    node.scrollIntoView({ block: "start" });
+  }
+}
+
+/**
+ * Image-first correction draft. The artwork leads; editable requests with
+ * marks and an optional overall note submit as one correction after an
+ * explicit preview. Persisted per
+ * project/page/canonical-revision/edit-source-render; queued drafts lock
+ * until the target changes.
+ */
+export function RevisionDraft({
+  project,
+  pageNumber,
+  comicPageRevision,
+  parentRenderRevision,
+  comicPageSha256,
+  compareRevision,
+  issues,
+  seeds,
+  onSeedsConsumed,
+  onDraftKeysChange,
+  onJobQueued,
+  disabled,
+}: RevisionDraftProps) {
+  const { t } = useI18n();
+  const preview = useCorrectionPreview();
+  const submit = useSubmitCorrections();
+  const target: DraftTarget = { comicPageRevision, parentRenderRevision };
+
+  const suggestions = useMemo(() => suggestibleIssues(issues), [issues]);
+  const suggestionIds = useMemo(() => new Set(suggestions.map((issue) => issue.id)), [suggestions]);
+
+  const [changes, setChanges] = useState<DraftChange[]>(() => {
+    const persisted = loadRevisionDraft(project, pageNumber, target);
+    if (persisted && persisted.changes.length > 0) {
+      return persisted.changes.map((change) => ({
+        id: change.id,
+        issueId: change.issue_id,
+        instruction: change.instruction,
+        selected: change.selected,
+        annotations: (change.annotations ?? []).map((mark) => ({ ...mark })),
+      }));
+    }
+    return suggestions.map(changeFromIssue);
+  });
+  const [note, setNote] = useState(
+    () => loadRevisionDraft(project, pageNumber, target)?.note ?? "",
+  );
+  const [manualInput, setManualInput] = useState("");
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const [previewHash, setPreviewHash] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submittedJobId, setSubmittedJobId] = useState<string | null>(null);
+  const [staleDraft, setStaleDraft] = useState<PersistedRevisionDraft | null>(() =>
+    loadRevisionDraft(project, pageNumber, target) ? null : findStaleRevisionDraft(project, pageNumber, target),
+  );
+
+  const locked = disabled || submit.isPending || submittedJobId != null;
+  const focused = changes.find((change) => change.id === focusId)
+    ?? changes.find((change) => change.selected)
+    ?? changes[0]
+    ?? null;
+
+  // Editing stays closed until asked for or a visual-review seed arrives;
+  // stored drafts are preserved but never force the rail open.
+  const [editing, setEditing] = useState(() => seeds.length > 0);
+  // Whether the page annotator is shown for the focused request; false keeps
+  // the artwork a plain fitted image so controls never crowd it.
+  const [marking, setMarking] = useState(false);
+  // Scroll only on explicit mode transitions (start editing, start marking,
+  // hide editing). Mark updates and note edits never scroll: the intent flag
+  // is consumed once by the effect below, so later renders stay put.
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const artRef = useRef<HTMLElement | null>(null);
+  const railRef = useRef<HTMLDivElement | null>(null);
+  const markTopRef = useRef<HTMLDivElement | null>(null);
+  const makeChangesWrapRef = useRef<HTMLDivElement | null>(null);
+  const scrollIntentRef = useRef<"edit" | "mark" | "hide" | null>(null);
+  useEffect(() => {
+    const intent = scrollIntentRef.current;
+    if (!intent) return;
+    scrollIntentRef.current = null;
+    if (intent === "edit") {
+      scrollLocalIntoView(railRef.current);
+      railRef.current?.querySelector<HTMLButtonElement>("button:not([disabled])")?.focus({ preventScroll: true });
+    } else if (intent === "mark") {
+      scrollLocalIntoView(markTopRef.current);
+      markTopRef.current?.querySelector<HTMLButtonElement>('[role="toolbar"] button:not([disabled])')?.focus({ preventScroll: true });
+    } else {
+      scrollLocalIntoView(artRef.current ?? sectionRef.current);
+      makeChangesWrapRef.current?.querySelector<HTMLButtonElement>("button:not([disabled])")?.focus({ preventScroll: true });
+    }
+  }, [editing, marking]);
+
+  // Merge visual-review seeds once: known issues become selections, the rest new changes.
+  // Own-state merge happens during render (the supported derived-state pattern);
+  // parent notification stays in an effect since it sets parent state.
+  const [lastSeeds, setLastSeeds] = useState<VisualReviewDraftSeed[]>([]);
+  if (seeds !== lastSeeds && seeds.length > 0) {
+    setLastSeeds(seeds);
+    setChanges((current) => mergeSeeds(current, seeds));
+    setEditing(true);
+  }
+  useEffect(() => {
+    if (seeds.length > 0) onSeedsConsumed();
+  }, [seeds, onSeedsConsumed]);
+
+  // Persist every edit under the exact target key.
+  useEffect(() => {
+    saveRevisionDraft({
+      project,
+      pageNumber,
+      comicPageRevision,
+      parentRenderRevision,
+      comicPageSha256,
+      changes: changes.map((change) => ({
+        id: change.id,
+        ...(change.issueId ? { issue_id: change.issueId } : {}),
+        instruction: change.instruction,
+        selected: change.selected,
+        annotations: change.annotations,
+      })),
+      note,
+      // No manual story-context selection: the backend assembles whole-book
+      // context automatically. Stored passage ids from older drafts are
+      // never re-submitted silently.
+      contextSourceUnitIds: [],
+      updatedAt: new Date().toISOString(),
+    });
+  }, [project, pageNumber, comicPageRevision, parentRenderRevision, comicPageSha256, changes, note]);
+
+  useEffect(() => {
+    onDraftKeysChange([
+      ...changes.filter((change) => change.selected && change.issueId).map((change) => change.issueId!),
+      ...changes.filter((change) => change.selected).map((change) => change.id),
+    ]);
+  }, [changes, onDraftKeysChange]);
+
+  const selectedChanges = useMemo(() => changes.filter((change) => change.selected), [changes]);
+
+  function buildBody(): { body: PageCorrectionBody; problems: string[] } {
+    const problems: string[] = [];
+    const bodyChanges: PageCorrectionChange[] = [];
+    for (const change of selectedChanges) {
+      const instruction = change.instruction.trim();
+      if (!instruction) {
+        problems.push(t("One selected fix has no instruction yet."));
+        continue;
+      }
+      const submitted = change.annotations
+        .filter((mark) => mark.points.length >= (mark.kind === "pin" ? 1 : 2) && (mark.note ?? "").trim().length > 0)
+        .map((mark): PageCorrectionAnnotation => ({
+          id: mark.id,
+          kind: mark.kind as PageAnnotationKind,
+          points: mark.points.map(roundPoint),
+          note: (mark.note ?? "").trim(),
+        }));
+      if (submitted.length !== change.annotations.length) {
+        problems.push(t("Every mark needs a finished shape and a note so nothing is silently dropped."));
+      }
+      bodyChanges.push({
+        id: change.id,
+        ...(change.issueId ? { issue_id: change.issueId } : {}),
+        instruction,
+        annotations: submitted,
+      });
+    }
+    const trimmedNote = note.trim();
+    if (bodyChanges.length === 0 && trimmedNote.length === 0 && problems.length === 0) {
+      problems.push(t("Select at least one fix or write an overall note."));
+    }
+    return {
+      body: {
+        changes: bodyChanges,
+        ...(trimmedNote ? { note: trimmedNote } : {}),
+        parent_render_revision: parentRenderRevision,
+        comic_page_revision: comicPageRevision,
+        comic_page_sha256: comicPageSha256,
+      },
+      problems,
+    };
+  }
+
+  // Recomputed every render so the preview-fresh gate can never go stale.
+  const bodyHash = JSON.stringify(buildBody().body);
+
+  const previewFresh = preview.data != null && previewHash === bodyHash;
+  const previewResult = previewFresh ? preview.data : undefined;
+
+  function runPreview() {
+    if (locked) return;
+    setSubmitError(null);
+    const { body, problems } = buildBody();
+    if (problems.length > 0) {
+      setSubmitError(problems[0] ?? t("The draft is not ready to preview."));
+      return;
+    }
+    setPreviewHash(null);
+    preview.mutate(
+      { project, pageNumber, body },
+      { onSuccess: () => setPreviewHash(JSON.stringify(body)) },
+    );
+  }
+
+  function runSubmit() {
+    if (locked) return;
+    setSubmitError(null);
+    const { body, problems } = buildBody();
+    if (problems.length > 0) {
+      setSubmitError(problems[0] ?? t("The draft is not ready to submit."));
+      return;
+    }
+    if (JSON.stringify(body) !== previewHash || !preview.data) {
+      setSubmitError(t("Preview the exact draft first; the draft changed since the last preview."));
+      return;
+    }
+    submit.mutate(
+      { project, pageNumber, body },
+      {
+        onSuccess: ({ job }) => {
+          clearRevisionDraft(project, pageNumber, target);
+          setPreviewHash(null);
+          setSubmittedJobId(job.id);
+          onJobQueued(job.id);
+        },
+        onError: (error) => setSubmitError(error instanceof Error ? error.message : String(error)),
+      },
+    );
+  }
+
+  function addManual() {
+    const instruction = manualInput.trim();
+    if (!instruction || locked) return;
+    const change: DraftChange = {
+      id: newChangeId(),
+      instruction,
+      selected: true,
+      annotations: [],
+    };
+    setChanges((current) => [...current, change]);
+    setFocusId(change.id);
+    setManualInput("");
+  }
+
+  function rebaseStale(copy: boolean) {
+    if (!staleDraft) return;
+    if (copy) {
+      setChanges((current) => {
+        const known = new Set(current.map((change) => change.id));
+        const rebased: DraftChange[] = staleDraft.changes
+          .filter((change) => !known.has(`rebased:${change.id}`))
+          .map((change) => ({
+            id: `rebased:${change.id}`,
+            instruction: change.instruction,
+            selected: false,
+            // Marks never migrate across renders: geometry belongs to the old image.
+            annotations: [],
+          }));
+        const next = [...current, ...rebased];
+        const knownIssues = new Set(next.filter((change) => change.issueId).map((change) => change.issueId!));
+        for (const change of staleDraft.changes) {
+          if (change.issue_id && suggestionIds.has(change.issue_id) && !knownIssues.has(change.issue_id)) {
+            next.push({ ...changeFromIssue(suggestions.find((issue) => issue.id === change.issue_id)!), selected: false });
+            knownIssues.add(change.issue_id);
+          }
+        }
+        return next;
+      });
+      if (staleDraft.note && !note) setNote(staleDraft.note);
+    }
+    setStaleDraft(null);
+  }
+
+  const previewManualCount = previewResult?.pending_manual_change_ids.length ?? 0;
+  const canvasSrc = pageRenderPreviewUrl(project, pageNumber, parentRenderRevision, "reader");
+  const canvasAlt = `${t("Complete page")} ${pageNumber}, ${t("render revision")} ${parentRenderRevision}`;
+  function startEditing() {
+    if (locked) return;
+    scrollIntentRef.current = "edit";
+    setEditing(true);
+    setMarking(false);
+  }
+  function hideEditing() {
+    scrollIntentRef.current = "hide";
+    setEditing(false);
+    setMarking(false);
+  }
+  function toggleMarking(changeId: string) {
+    setFocusId(changeId);
+    if (!marking) scrollIntentRef.current = "mark";
+    setMarking(!marking);
+  }
+
+  return (
+    <section ref={sectionRef} aria-label={t("Page corrections")} className="space-y-4">
+      {staleDraft && (
+        <Surface tone="pulp" border="soft" shadow="none" padding="md" role="alert">
+          <p className="font-body text-sm font-bold">
+            {t("An older draft exists for page revision")} {staleDraft.comicPageRevision}
+            {t(", render")} {staleDraft.parentRenderRevision}.
+          </p>
+          <p className="mt-1 font-body text-xs leading-5">
+            {t("Marks stay with the old render and are never moved. You may copy the selections and wording only, or discard it.")}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button size="xs" onClick={() => rebaseStale(true)}>{t("COPY WORDING ONLY")}</Button>
+            <Button size="xs" variant="outline" onClick={() => rebaseStale(false)}>{t("DISCARD OLD DRAFT")}</Button>
+          </div>
+        </Surface>
+      )}
+
+      {submittedJobId && (
+        <Surface tone="container" border="soft" shadow="none" padding="md" role="status">
+          <p className="font-body text-sm font-bold">{t("Correction queued. The draft is locked.")}</p>
+          <p className="mt-1 font-body text-xs leading-5 text-ink-muted">
+            {t("Job")} {submittedJobId}. {t("The new revision will appear in the gallery; reopening then starts a fresh draft.")}
+          </p>
+        </Surface>
+      )}
+
+      <div className={editing ? "grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.65fr)]" : "space-y-4"}>
+        <div className="min-w-0 space-y-4">
+          {!editing && !submittedJobId && (
+            <div ref={makeChangesWrapRef} className="flex justify-end">
+              <Button size="sm" variant="outline" onClick={startEditing} disabled={locked}>
+                {t("MAKE CHANGES")}
+              </Button>
+            </div>
+          )}
+          {editing && marking && focused ? (
+            <div ref={markTopRef}>
+              <AnnotationEditor
+                key={`${comicPageRevision}:${parentRenderRevision}:${focused.id}`}
+                imageSrc={canvasSrc}
+                alt={canvasAlt}
+                value={focused.annotations}
+                onChange={(annotations) => setChanges((current) => current.map((candidate) => candidate.id === focused.id
+                  ? { ...candidate, annotations }
+                  : candidate))}
+                disabled={locked}
+              />
+            </div>
+          ) : (
+            <figure ref={artRef} className="flex h-[max(12rem,calc(100dvh-20rem))] justify-center">
+              <img
+                src={canvasSrc}
+                alt={canvasAlt}
+                loading="eager"
+                fetchPriority="high"
+                decoding="async"
+                className="h-full w-auto max-w-full border-[2px] border-ink-black object-contain"
+              />
+            </figure>
+          )}
+          {compareRevision != null && (
+            <details className="border border-ink-black/20 px-3 py-2">
+              <summary className="cursor-pointer font-meta text-xs font-bold text-ink-muted">
+                {t("COMPARE WITH PREVIOUS RENDER")} ({t("Revision")} {compareRevision} → {t("Revision")} {parentRenderRevision})
+              </summary>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <figure>
+                  <img
+                    src={pageRenderPreviewUrl(project, pageNumber, compareRevision, "reader")}
+                    alt={`${t("Complete page")} ${pageNumber}, ${t("previous revision")} ${compareRevision}`}
+                    loading="lazy"
+                    decoding="async"
+                    className="w-full border-[2px] border-ink-black object-contain"
+                  />
+                  <figcaption className="mt-1 font-meta text-xs font-bold text-ink-muted">
+                    {t("BEFORE")} · {t("Revision")} {compareRevision}
+                  </figcaption>
+                </figure>
+                <figure>
+                  <img
+                    src={canvasSrc}
+                    alt={`${t("Complete page")} ${pageNumber}, ${t("current revision")} ${parentRenderRevision}`}
+                    loading="lazy"
+                    decoding="async"
+                    className="w-full border-[2px] border-ink-black object-contain"
+                  />
+                  <figcaption className="mt-1 font-meta text-xs font-bold text-ink-muted">
+                    {t("AFTER")} · {t("Revision")} {parentRenderRevision} · {t("Selected fixes apply to this image.")}
+                  </figcaption>
+                </figure>
+              </div>
+              <div className="mt-3 space-y-2">
+                <SubmittedCorrection
+                  project={project}
+                  pageNumber={pageNumber}
+                  renderRevision={parentRenderRevision}
+                />
+                {issues.filter((issue) => issue.render_revision === compareRevision && (issue.status === "open" || issue.status === "revised")).length > 0 && (
+                  <div>
+                    <p className="font-meta text-xs font-bold text-ink-muted">
+                      {t("STILL OPEN FROM THE PREVIOUS RENDER")}
+                    </p>
+                    <ul className="mt-1 space-y-1">
+                      {issues
+                        .filter((issue) => issue.render_revision === compareRevision && (issue.status === "open" || issue.status === "revised"))
+                        .map((issue) => (
+                          <li key={issue.id} className="font-body text-xs leading-5">
+                            {issue.requested_correction}
+                          </li>
+                        ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </details>
+          )}
+        </div>
+
+        {editing && (
+        <div ref={railRef} className="min-w-0 space-y-4">
+          <div>
+            <Button size="xs" variant="outline" onClick={hideEditing}>
+              {t("HIDE EDITING")}
+            </Button>
+          </div>
+          {suggestions.filter((issue) => !changes.some((change) => change.issueId === issue.id)).map((issue) => (
+            <div key={issue.id} className="flex flex-wrap items-center justify-between gap-2 border border-dashed border-ink-black/30 px-3 py-2">
+              <span className="font-body text-xs">{issue.requested_correction}</span>
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={locked}
+                onClick={() => setChanges((current) => [...current, changeFromIssue(issue)])}
+              >
+                {t("ADD TO DRAFT")}
+              </Button>
+            </div>
+          ))}
+
+          {changes.length === 0 ? (
+            <p className="font-body text-sm text-ink-muted">
+              {t("No fixes in this draft yet. Add a suggestion above or write a manual request below.")}
+            </p>
+          ) : (
+            <ol className="space-y-2">
+              {changes.map((change) => {
+                const summary = change.instruction.trim().slice(0, 90) || t("Empty request");
+                if (focused?.id !== change.id) {
+                  return (
+                    <li key={change.id} className="flex items-center gap-2 border border-ink-black/20 px-2 py-1.5">
+                      <input
+                        type="checkbox"
+                        checked={change.selected}
+                        disabled={locked}
+                        onChange={(event) => setChanges((current) => current.map((candidate) => candidate.id === change.id
+                          ? { ...candidate, selected: event.target.checked }
+                          : candidate))}
+                        aria-label={`${t("Include fix")}: ${change.instruction.slice(0, 80)}`}
+                        className="h-4 w-4 shrink-0 accent-hero-red"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setFocusId(change.id)}
+                        aria-label={`${t("Edit request")}: ${change.instruction.slice(0, 80)}`}
+                        className="min-w-0 flex-1 truncate text-left font-body text-xs leading-5 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-hero-red"
+                      >
+                        {summary}
+                      </button>
+                      {change.annotations.length > 0 && (
+                        <span className="shrink-0 font-meta text-xs font-bold text-ink-muted">
+                          {change.annotations.length} {t(change.annotations.length === 1 ? "mark" : "marks")}
+                        </span>
+                      )}
+                    </li>
+                  );
+                }
+                return (
+                <li key={change.id}>
+                  <Surface tone={change.selected ? "bristol" : "container"} border="soft" shadow="none" padding="md">
+                    <div className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={change.selected}
+                        disabled={locked}
+                        onChange={(event) => setChanges((current) => current.map((candidate) => candidate.id === change.id
+                          ? { ...candidate, selected: event.target.checked }
+                          : candidate))}
+                        aria-label={`${t("Include fix")}: ${change.instruction.slice(0, 80)}`}
+                        className="mt-1 h-4 w-4 shrink-0 accent-hero-red"
+                      />
+                      <div className="min-w-0 flex-1 space-y-2">
+                        {change.annotations.length > 0 && (
+                          <p className="font-meta text-xs font-bold text-ink-muted">
+                            {change.annotations.length} {t(change.annotations.length === 1 ? "mark" : "marks")}
+                          </p>
+                        )}
+                        <FieldLabel htmlFor={`draft-instruction-${change.id}`} className="sr-only">
+                          {t("Fix instruction")}
+                        </FieldLabel>
+                        <TextAreaField
+                          id={`draft-instruction-${change.id}`}
+                          value={change.instruction}
+                          disabled={locked || !change.selected}
+                          rows={2}
+                          onChange={(event) => setChanges((current) => current.map((candidate) => candidate.id === change.id
+                            ? { ...candidate, instruction: event.target.value }
+                            : candidate))}
+                        />
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            size="xs"
+                            variant={marking ? undefined : "outline"}
+                            disabled={locked}
+                            aria-pressed={marking}
+                            onClick={() => toggleMarking(change.id)}
+                          >
+                            {t(marking ? "DONE MARKING" : "MARK ON PAGE")}
+                          </Button>
+                          {!change.issueId && (
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              disabled={locked}
+                              onClick={() => setChanges((current) => current.filter((candidate) => candidate.id !== change.id))}
+                            >
+                              {t("REMOVE")}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </Surface>
+                </li>
+                );
+              })}
+            </ol>
+          )}
+
+          <div>
+            <FieldLabel htmlFor="draft-manual">{t("Manual request")}</FieldLabel>
+            <div className="flex flex-col gap-2">
+              <TextAreaField
+                id="draft-manual"
+                value={manualInput}
+                disabled={locked}
+                placeholder={t("Describe a fix in your own words, e.g. which face, object or panel must change.")}
+                onChange={(event) => setManualInput(event.target.value)}
+              />
+              <Button size="xs" variant="outline" onClick={addManual} disabled={locked || !manualInput.trim()}>
+                {t("ADD MANUAL REQUEST")}
+              </Button>
+            </div>
+          </div>
+
+          <details>
+            <summary className="cursor-pointer font-meta text-xs font-bold text-ink-muted">
+              {t("Overall note (optional)")}
+            </summary>
+            <div className="mt-2">
+              <FieldLabel htmlFor="draft-note" className="sr-only">{t("Overall note (optional)")}</FieldLabel>
+              <TextAreaField
+                id="draft-note"
+                value={note}
+                disabled={locked}
+                placeholder={t("Guidance the individual fixes do not cover.")}
+                onChange={(event) => setNote(event.target.value)}
+              />
+            </div>
+          </details>
+
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="xs" variant="outline" onClick={runPreview} disabled={locked || preview.isPending}>
+              {t(preview.isPending ? "PREVIEWING…" : "PREVIEW COST & CONTEXT")}
+            </Button>
+            <Button
+              size="xs"
+              onClick={runSubmit}
+              disabled={locked || submit.isPending || !previewFresh || submittedJobId != null}
+            >
+              {t(submittedJobId != null ? "CORRECTION QUEUED" : submit.isPending ? "SUBMITTING…" : "SUBMIT ONE CORRECTION")}
+            </Button>
+          </div>
+          {preview.data && !previewFresh && !submittedJobId && (
+            <p role="status" className="font-body text-xs font-bold text-hero-red">
+              {t("The draft changed after preview. Preview again before submitting.")}
+            </p>
+          )}
+          {!preview.data && !submittedJobId && (
+            <p className="font-body text-xs text-ink-muted">
+              {t("Submission needs an explicit preview first: cost, assembled context and warnings.")}
+            </p>
+          )}
+
+          {previewResult && (
+            <Surface tone="container" border="soft" shadow="none" padding="md" aria-live="polite">
+              <p className="font-meta text-xs font-bold text-ink-muted">{t("PREVIEW")}</p>
+              <p className="mt-1 font-body text-sm">
+                {t("Estimated cost:")} ~{previewResult.estimate.estimate_credits} {t("credits")}
+                {` · ${t("reserved")} ${previewResult.estimate.reserved_credits} · ${previewResult.estimate.confidence}`}
+              </p>
+              <p className="mt-1 font-body text-xs text-ink-muted">
+                {previewResult.changes.length} {t(previewResult.changes.length === 1 ? "selected fix" : "selected fixes")}
+                {` · ${previewManualCount} ${t(previewManualCount === 1 ? "manual request" : "manual requests")}`}
+              </p>
+              {previewResult.unselected_open_issue_ids.length > 0 && (
+                <div className="mt-2">
+                  <p className="font-body text-xs leading-5">
+                    <span className="font-bold">{t("Left out:")} </span>
+                    {previewResult.unselected_open_issue_ids.length} {t(previewResult.unselected_open_issue_ids.length === 1
+                      ? "open finding stays open after this revision."
+                      : "open findings stay open after this revision.")}
+                    <Button
+                      className="ml-2"
+                      size="xs"
+                      variant="outline"
+                      disabled={locked}
+                      onClick={() => setChanges((current) => {
+                        const leftOut = new Set(previewResult.unselected_open_issue_ids);
+                        const known = new Set(current.filter((change) => change.issueId).map((change) => change.issueId!));
+                        const additions = suggestions
+                          .filter((issue) => leftOut.has(issue.id) && !known.has(issue.id))
+                          .map(changeFromIssue);
+                        return [
+                          ...current.map((change) => change.issueId && leftOut.has(change.issueId) && !change.selected
+                            ? { ...change, selected: true }
+                            : change),
+                          ...additions,
+                        ];
+                      })}
+                    >
+                      {t("SELECT ALL OPEN")}
+                    </Button>
+                  </p>
+                  <ul className="mt-1 space-y-1">
+                    {previewResult.unselected_open_issue_ids.map((issueId) => {
+                      const issue = issues.find((candidate) => candidate.id === issueId);
+                      return (
+                        <li key={issueId} className="font-body text-xs leading-5 text-ink-muted">
+                          {issue ? issue.requested_correction : t("An open finding with no cached summary.")}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+              {previewResult.context.truncated && (
+                <p className="mt-2 font-body text-xs font-bold">{t("Context truncated to fit.")}</p>
+              )}
+              {previewResult.references.length > 0 && (
+                <div className="mt-2">
+                  <p className="font-meta text-xs font-bold text-ink-muted">{t("REFERENCES COMPARED")}</p>
+                  <ul className="mt-1 space-y-2">
+                    {previewResult.references.map((reference) => (
+                      <li key={reference.id} className="flex items-center gap-2 font-body text-xs leading-5">
+                        {reference.image_path && (
+                          <img
+                            src={referenceFileUrl(project, reference.image_path)}
+                            alt={reference.display_label ?? reference.label}
+                            loading="lazy"
+                            decoding="async"
+                            className="h-12 w-12 shrink-0 border border-ink-black/30 object-cover"
+                          />
+                        )}
+                        <span>{reference.display_label ?? reference.label}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <details className="mt-2">
+                <summary className="cursor-pointer font-meta text-xs font-bold text-ink-muted">
+                  {t("COMPILED INSTRUCTION")} ({previewResult.prompt_characters} {t("characters")}, {previewResult.lettering_count} {t("lettering")})
+                </summary>
+                <p className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap font-body text-xs leading-5">
+                  {previewResult.instruction}
+                </p>
+                <details className="mt-2">
+                  <summary className="cursor-pointer font-meta text-xs font-bold text-ink-muted">
+                    {t("Technical details")}
+                  </summary>
+                  <ul className="mt-1 space-y-1 font-mono text-[0.65rem] leading-4 text-ink-muted">
+                    <li>Mode: {previewResult.mode}</li>
+                    <li>Selected issues: {previewResult.selected_issue_ids.join(", ") || "—"}</li>
+                    <li>Manual change ids: {previewResult.pending_manual_change_ids.join(", ") || "—"}</li>
+                    <li>Left-out issues: {previewResult.unselected_open_issue_ids.join(", ") || "—"}</li>
+                  </ul>
+                </details>
+              </details>
+              {previewResult.warnings.length > 0 && (
+                <div className="mt-2">
+                  <p className="font-meta text-xs font-bold text-hero-red">{t("WARNINGS")}</p>
+                  <ul className="mt-1 space-y-1 font-body text-xs leading-5">
+                    {previewResult.warnings.map((warning, index) => (
+                      <li key={`warning:${index}`}>{warning}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </Surface>
+          )}
+
+          {(submitError || preview.error) && !submittedJobId && (
+            <p role="alert" className="border-l-[3px] border-hero-red pl-3 font-body text-xs font-bold leading-5 text-hero-red">
+              {submitError ?? (preview.error as Error).message}
+            </p>
+          )}
+        </div>
+        )}
+      </div>
+    </section>
+  );
+}

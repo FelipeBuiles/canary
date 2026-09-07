@@ -7,10 +7,11 @@ import json
 from collections import Counter
 from typing import Protocol
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from novel_to_comic.models.draw import (
     AdaptCopyCorrectionRequest,
+    CorrectionChange,
     LetteringMatch,
     OCRExtraction,
     PageCapabilityProfile,
@@ -27,6 +28,56 @@ from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 from novel_to_comic.text_utils import normalize_display_text
 from novel_to_comic.usage import ApiResult, UsageRecord
 
+MAX_CORRECTION_CHANGES = 24
+MAX_CORRECTION_NOTE_CHARACTERS = 1000
+MAX_CORRECTION_ANNOTATIONS = 24
+MAX_CORRECTION_CONTEXT_SOURCE_CHARACTERS = 6000
+MAX_CORRECTION_CONTEXT_SELECTED_UNITS = 32
+
+
+class StaleCorrectionError(ValueError):
+    """The correction cites a superseded page or render revision."""
+
+
+class InvalidCorrectionError(ValueError):
+    """The correction selection, notes, or geometry cannot be executed."""
+
+
+class PageCorrectionContext(BaseModel):
+    """Grounded bookwide context compiled for one correction, with provenance."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    beat_ids: tuple[str, ...] = ()
+    beat_summaries: tuple[str, ...] = ()
+    treatment_spine: tuple[str, ...] = ()
+    appearance_chronology: tuple[str, ...] = ()
+    beat_transitions: tuple[str, ...] = ()
+    source_unit_ids: tuple[str, ...] = ()
+    source_texts: tuple[str, ...] = ()
+    selected_source_unit_ids: tuple[str, ...] = ()
+    omitted_source_unit_ids: tuple[str, ...] = ()
+    adaptation_revision: int = Field(ge=1)
+    adaptation_sha256: str = Field(min_length=64, max_length=64)
+    digest: str = Field(min_length=1)
+    truncated: bool = False
+
+    def prompt_section(self) -> str:
+        lines = [
+            "Bookwide story context (read-only grounding; canonical lettering above stays exact):",
+        ]
+        for spine in self.treatment_spine:
+            lines.append(f"- Spine: {spine}")
+        for beat_id, summary in zip(self.beat_ids, self.beat_summaries, strict=True):
+            lines.append(f"- Beat {beat_id}: {summary}")
+        for change in self.appearance_chronology:
+            lines.append(f"- Appearance: {change}")
+        for transition in self.beat_transitions:
+            lines.append(f"- Continuity: {transition}")
+        for unit_id, text in zip(self.source_unit_ids, self.source_texts, strict=True):
+            lines.append(f"- Source {unit_id}: {text}")
+        if self.truncated:
+            lines.append("- (source passages truncated to the correction context budget)")
+        return "\n".join(lines)
 
 PUNCTUATION_POLICY = "typographic_lettering_v2"
 """NFC, typographic quote/dash/ellipsis equivalence, and whitespace collapse.
@@ -472,6 +523,380 @@ def build_correction_request(
         mode=intent.mode,
         instruction=intent.instruction,
         detected_region_ids=intent.detected_region_ids,
+    )
+
+def build_correction_context(
+    *,
+    page: ComicPage,
+    artifacts: TargetArtifacts,
+    extra_source_unit_ids: tuple[str, ...] = (),
+) -> PageCorrectionContext:
+    """Compile grounded bookwide context for one page correction.
+
+    Every adapted beat summary travels with the request so the redraw stays
+    consistent with the whole novel, while full source prose is limited to the
+    units this page adapts plus the remote passages the author explicitly
+    selected. Author-selected passages always arrive in full; only the
+    automatically gathered page units are subject to the context budget.
+    Provenance (adaptation revision/sha, beat and unit IDs, content digest)
+    is persisted on the correction itself.
+    """
+    from novel_to_comic.target_artifacts import ArtifactMissing as _Missing
+
+    try:
+        adaptation = artifacts.read_adaptation()
+    except _Missing as exc:
+        raise InvalidCorrectionError("book adaptation is unavailable for correction context") from exc
+    try:
+        source = artifacts.read_source()
+    except _Missing as exc:
+        raise InvalidCorrectionError("source text is unavailable for correction context") from exc
+    if len(extra_source_unit_ids) != len(set(extra_source_unit_ids)):
+        raise InvalidCorrectionError("selected source passages must be unique")
+    if len(extra_source_unit_ids) > MAX_CORRECTION_CONTEXT_SELECTED_UNITS:
+        raise InvalidCorrectionError(
+            f"correction selects {len(extra_source_unit_ids)} source passages; "
+            f"at most {MAX_CORRECTION_CONTEXT_SELECTED_UNITS} per request"
+        )
+    page_beat_ids = tuple(dict.fromkeys(beat for content in page.content for beat in content.beat_ids))
+    beats_by_id = {beat.id: beat for beat in adaptation.beats}
+    units_by_id = {unit.id: unit for unit in source.units}
+    unknown = [unit_id for unit_id in extra_source_unit_ids if unit_id not in units_by_id]
+    if unknown:
+        raise InvalidCorrectionError(
+            "correction selects unknown source passages: " + ", ".join(sorted(unknown))
+        )
+    wanted_unit_ids: list[str] = []
+    for beat_id in page_beat_ids:
+        beat = beats_by_id.get(beat_id)
+        if beat is None:
+            continue
+        for unit_id in (
+            *beat.source_unit_ids,
+            *(source_id for item in beat.lettering for source_id in item.source_unit_ids),
+        ):
+            if unit_id not in wanted_unit_ids:
+                wanted_unit_ids.append(unit_id)
+    for content in page.content:
+        for lettering in content.lettering:
+            for unit_id in lettering.source_unit_ids:
+                if unit_id not in wanted_unit_ids:
+                    wanted_unit_ids.append(unit_id)
+    ordered_unit_ids = [unit.id for unit in sorted(
+        (units_by_id[unit_id] for unit_id in wanted_unit_ids if unit_id in units_by_id),
+        key=lambda unit: unit.ordinal,
+    )]
+    # Author-selected passages always arrive in full; the automatic page units
+    # fill whatever budget remains. User-requested content is never truncated.
+    source_texts: list[str] = []
+    kept_unit_ids: list[str] = []
+    for unit_id in extra_source_unit_ids:
+        source_texts.append(units_by_id[unit_id].text)
+        kept_unit_ids.append(unit_id)
+    budget = MAX_CORRECTION_CONTEXT_SOURCE_CHARACTERS - sum(len(text) for text in source_texts)
+    truncated = False
+    for unit_id in ordered_unit_ids:
+        if unit_id in kept_unit_ids:
+            continue
+        text = units_by_id[unit_id].text
+        if len(text) > budget and kept_unit_ids:
+            truncated = True
+            break
+        kept_text = text[:budget] if not kept_unit_ids and len(text) > budget else text
+        source_texts.append(kept_text)
+        kept_unit_ids.append(unit_id)
+        budget -= len(kept_text)
+        if budget <= 0:
+            break
+    kept_set = set(kept_unit_ids)
+    omitted_unit_ids = tuple(unit_id for unit_id in ordered_unit_ids if unit_id not in kept_set)
+    if omitted_unit_ids:
+        truncated = True
+    beat_ids = tuple(beat.id for beat in adaptation.beats)
+    summaries = tuple(f"[{beat.order}] {beat.summary}" for beat in adaptation.beats)
+    # Bookwide treatment spine: the causal backbone every redraw must respect.
+    treatment_spine = tuple(adaptation.treatment.causal_spine) + tuple(
+        f"Essential: {event}" for event in adaptation.treatment.essential_events
+    )
+    # Appearance chronology in beat order: who changed into what, and when.
+    appearance_chronology = tuple(
+        f"Beat {beat.id} [{beat.order}]: {change.entity_id} "
+        f"{change.from_state_id or 'base'} -> {change.to_state_id}: {change.description}"
+        for beat in adaptation.beats
+        for change in beat.appearance_changes
+    )
+    # Remote continuity facts (time/place/knowledge/emotion) in beat order.
+    beat_transitions = tuple(
+        f"Beat {beat.id} [{beat.order}]: {transition.dimension} "
+        f"{transition.scope_id}: {transition.from_state} -> {transition.to_state}: {transition.description}"
+        for beat in adaptation.beats
+        for transition in beat.transitions
+    )
+    digest = hashlib.sha256(
+        json.dumps(
+            {
+                "adaptation_revision": adaptation.revision,
+                "adaptation_sha256": adaptation.content_sha256,
+                "beats": list(beat_ids),
+                "summaries": list(summaries),
+                "treatment": list(treatment_spine),
+                "appearances": list(appearance_chronology),
+                "sources": kept_unit_ids,
+                "texts": source_texts,
+                "selected": list(extra_source_unit_ids),
+                "omitted": list(omitted_unit_ids),
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    return PageCorrectionContext(
+        beat_ids=beat_ids,
+        beat_summaries=summaries,
+        treatment_spine=treatment_spine,
+        appearance_chronology=appearance_chronology,
+        beat_transitions=beat_transitions,
+        source_unit_ids=tuple(kept_unit_ids),
+        source_texts=tuple(source_texts),
+        omitted_source_unit_ids=omitted_unit_ids,
+        selected_source_unit_ids=tuple(extra_source_unit_ids),
+        adaptation_revision=adaptation.revision,
+        adaptation_sha256=adaptation.content_sha256,
+        digest=digest,
+        truncated=truncated,
+    )
+
+
+def deterministic_manual_issue_id(*, page_number: int, parent_revision: int, change_id: str) -> str:
+    """The stable issue identity for one manual change, computed without writes.
+
+    Preview and submission derive the same IDs, so both compile the identical
+    frozen request. The issue itself is created later, inside the reserved job.
+    """
+    return f"page-issue-manual-{page_number}-{parent_revision}-{change_id}"
+
+
+def ensure_correction_issues(
+    artifacts: TargetArtifacts,
+    *,
+    correction: PageRenderCorrection,
+) -> tuple[PageIssue, ...]:
+    """Create missing manual issues inside the reserved job lifecycle.
+
+    Called at the top of the correction job, after credit reservation, so a
+    rejected preview or a lost submit race never leaves orphan issues behind.
+    Creation is idempotent: a submit retry reuses the deterministic issue.
+    """
+    try:
+        stored = artifacts.read_issues(correction.page_number)
+    except ArtifactMissing:
+        stored = ()
+    by_id = {issue.id: issue for issue in stored}
+    ensured: list[PageIssue] = []
+    for change in correction.changes:
+        if change.issue_id is None:
+            raise ValueError(f"change {change.id!r} carries no issue identity")
+        existing = by_id.get(change.issue_id)
+        if existing is not None:
+            ensured.append(existing)
+            continue
+        expected = deterministic_manual_issue_id(
+            page_number=correction.page_number,
+            parent_revision=correction.parent_render_revision,
+            change_id=change.id,
+        )
+        if change.issue_id != expected:
+            raise ValueError(f"linked page issue {change.issue_id!r} is missing")
+        created = PageIssue(
+            id=expected,
+            issue_type="manual_change",
+            classification="editorial_issue",
+            correction_kind="render_fidelity",
+            correction_owner="draw",
+            page_number=correction.page_number,
+            render_revision=correction.parent_render_revision,
+            evidence=(
+                change.instruction,
+                *(annotation.note for annotation in change.annotations),
+            ),
+            requested_correction=change.instruction,
+            status="open",
+        )
+        try:
+            ensured.append(record_page_issue(artifacts, created))
+        except ValueError:
+            # A concurrent job won the race; reuse the winner.
+            reread = {issue.id: issue for issue in artifacts.read_issues(correction.page_number)}
+            ensured.append(reread[change.issue_id])
+        by_id[change.issue_id] = ensured[-1]
+    return tuple(ensured)
+
+
+def _check_effective_issue_lineage(issue: PageIssue, parent: PageRenderRevision) -> None:
+    """Accept the lineage a revised issue actually carries.
+
+    A revised issue retains its original render_revision and gains the
+    resolution_revision that addressed it. Re-fixing it targets the current
+    render only when that resolution revision is current; otherwise the
+    request is stale. Open issues must cite the current render directly.
+    """
+    if issue.status == "revised":
+        if issue.resolution_revision != parent.revision:
+            raise StaleCorrectionError(
+                f"page issue {issue.id!r} was revised by render {issue.resolution_revision}, "
+                f"not current render {parent.revision}"
+            )
+    elif issue.render_revision != parent.revision:
+        raise StaleCorrectionError(
+            f"page issue {issue.id!r} targets render {issue.render_revision}, "
+            f"not current render {parent.revision}"
+        )
+
+
+def build_aggregated_correction_request(
+    *,
+    changes: tuple[CorrectionChange, ...],
+    note: str = "",
+    context_source_unit_ids: tuple[str, ...] = (),
+    page: ComicPage,
+    parent: PageRenderRevision,
+    profile: PageCapabilityProfile,
+    artifacts: TargetArtifacts,
+) -> PageRenderCorrection:
+    """Aggregate one explicit editable correction set into a full-page request.
+
+    Each change either edits the directive of a linked tracked issue or carries
+    a manual instruction. Manual changes receive their deterministic issue
+    identity here, purely computed, so preview and submission compile the
+    identical frozen request; the real PageIssue is created later, inside the
+    reserved job. Unselected issues remain untouched. Manual text is accepted
+    verbatim: no keyword classification is attempted, so a note asking to
+    change canonical wording cannot be detected here. That case stays safe
+    because compilation pins exact lettering and the preview warns that
+    wording changes need the story workflow instead.
+    """
+    cleaned_note = note.strip()
+    if len(changes) != len({change.id for change in changes}):
+        raise InvalidCorrectionError("correction change IDs must be unique")
+    if len(changes) > MAX_CORRECTION_CHANGES:
+        raise InvalidCorrectionError(
+            f"correction has {len(changes)} changes; at most {MAX_CORRECTION_CHANGES} per request"
+        )
+    linked_ids = [change.issue_id for change in changes if change.issue_id is not None]
+    if len(linked_ids) != len(set(linked_ids)):
+        raise InvalidCorrectionError("correction changes must link distinct issues")
+    for change in changes:
+        if not change.instruction.strip():
+            raise InvalidCorrectionError(f"change {change.id!r} instruction must not be blank")
+        if len(change.instruction) > MAX_CORRECTION_NOTE_CHARACTERS:
+            raise InvalidCorrectionError(f"change {change.id!r} instruction exceeds 1000 characters")
+    if len(cleaned_note) > MAX_CORRECTION_NOTE_CHARACTERS:
+        raise InvalidCorrectionError("correction note exceeds 1000 characters")
+    total_annotations = sum(len(change.annotations) for change in changes)
+    if total_annotations > MAX_CORRECTION_ANNOTATIONS:
+        raise InvalidCorrectionError(
+            f"correction has {total_annotations} annotations; at most {MAX_CORRECTION_ANNOTATIONS} per request"
+        )
+    if not changes and not cleaned_note:
+        raise InvalidCorrectionError("correction requires changes or an author note")
+    if parent.page_number != page.page_number:
+        raise StaleCorrectionError("correction parent belongs to a different page")
+    if parent.is_stale_for(page):
+        raise StaleCorrectionError("correction parent is stale for the canonical ComicPage")
+    try:
+        parent_bytes = artifacts.read_render(parent.page_number, parent.revision)
+    except ArtifactMissing as exc:
+        raise StaleCorrectionError("correction parent render bytes are unavailable") from exc
+    if hashlib.sha256(parent_bytes).hexdigest() != parent.image_sha256:
+        raise StaleCorrectionError("correction parent bytes do not match render lineage")
+    try:
+        stored = artifacts.read_issues(page.page_number)
+    except ArtifactMissing:
+        stored = ()
+    by_id = {issue.id: issue for issue in stored}
+    selected: list[PageIssue] = []
+    records: list[CorrectionChange] = []
+    for change in changes:
+        if change.issue_id is not None:
+            issue = by_id.get(change.issue_id)
+            if issue is None:
+                raise InvalidCorrectionError(f"page issue {change.issue_id!r} was not found")
+            if issue.page_number != page.page_number:
+                raise InvalidCorrectionError(f"page issue {change.issue_id!r} belongs to a different page")
+            if issue.status not in {"open", "revised"}:
+                raise InvalidCorrectionError(f"page issue {change.issue_id!r} is already {issue.status}")
+            if issue.correction_owner != "draw" or issue.correction_kind != "render_fidelity":
+                raise InvalidCorrectionError(
+                    f"page issue {change.issue_id!r} changes canonical copy and requires a story change, not image correction"
+                )
+            _check_effective_issue_lineage(issue, parent)
+            selected.append(issue)
+            records.append(change.model_copy(update={"issue_id": issue.id}))
+        else:
+            manual_id = deterministic_manual_issue_id(
+                page_number=page.page_number, parent_revision=parent.revision, change_id=change.id,
+            )
+            if manual_id in by_id:
+                raise InvalidCorrectionError(
+                    f"change {change.id!r} was already submitted; reuse its tracked issue instead"
+                )
+            records.append(change.model_copy(update={"issue_id": manual_id}))
+    region_ids = tuple(dict.fromkeys(
+        region_id for issue in selected for region_id in issue.detected_region_ids
+    ))
+    mode = "region_targeted" if region_ids else "instructed"
+    if region_ids:
+        try:
+            analysis = artifacts.read_analysis(parent.page_number, parent.revision)
+        except ArtifactMissing as exc:
+            raise InvalidCorrectionError("detected regions are unavailable for this render") from exc
+        known_regions = {region.id for region in analysis.observed_regions}
+        unknown = [region_id for region_id in region_ids if region_id not in known_regions]
+        if unknown:
+            raise InvalidCorrectionError(
+                "page issue cites an unknown detected region: " + ", ".join(sorted(unknown))
+            )
+    if mode not in profile.editing_modes:
+        label = "region-targeted" if mode == "region_targeted" else "instructed"
+        raise InvalidCorrectionError(f"selected profile does not support {label} correction")
+    context = build_correction_context(
+        page=page, artifacts=artifacts, extra_source_unit_ids=tuple(context_source_unit_ids),
+    )
+    directives = ["Correct these findings in one complete page revision:"]
+    for record in records:
+        directives.append(
+            f"- [change {record.id} tracks {record.issue_id}] {record.instruction.strip()}"
+        )
+    if cleaned_note:
+        directives.append("Author note (image-only; canonical lettering stays exact):")
+        directives.append(f"- {cleaned_note}")
+    ordered_annotations = [annotation for record in records for annotation in record.annotations]
+    if ordered_annotations:
+        directives.append("Annotations (normalized page fractions, origin top-left):")
+        directives.extend(
+            annotation.provider_guidance(index)
+            for index, annotation in enumerate(ordered_annotations, 1)
+        )
+    return PageRenderCorrection(
+        issue_ids=tuple(record.issue_id for record in records if record.issue_id is not None),
+        page_number=page.page_number,
+        comic_page_revision=page.revision,
+        comic_page_sha256=page.content_sha256,
+        parent_render_revision=parent.revision,
+        parent_render_image_sha256=parent.image_sha256,
+        mode=mode,
+        instruction="\n".join(directives),
+        detected_region_ids=region_ids,
+        changes=tuple(records),
+        note=cleaned_note,
+        context_beat_ids=context.beat_ids,
+        context_source_unit_ids=context.source_unit_ids,
+        context_selected_source_unit_ids=context.selected_source_unit_ids,
+        context_adaptation_revision=context.adaptation_revision,
+        context_adaptation_sha256=context.adaptation_sha256,
+        context_digest=context.digest,
+        context_truncated=context.truncated,
     )
 
 
