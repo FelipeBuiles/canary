@@ -8,6 +8,12 @@
 # `docker build --build-arg VITE_...=...`
 # or Fly's `fly deploy --build-arg`.
 FROM node:22-slim AS frontend
+# jsdom's real canvas peer needs these when no prebuilt exists (Linux ARM64).
+# They stay in the frontend builder; the final Python image copies only dist.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 make g++ pkg-config libcairo2-dev libpango1.0-dev \
+    libjpeg-dev libgif-dev librsvg2-dev \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 ARG CANARY_VERSION=unknown
 ARG CANARY_BUILD_TIMESTAMP=unknown

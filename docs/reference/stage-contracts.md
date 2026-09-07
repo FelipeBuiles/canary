@@ -1,6 +1,6 @@
 # Stage contracts
 
-**Status: Current, September 5, 2026.** Implementation and tests are authoritative.
+**Status: Current, September 7, 2026.** Implementation and tests are authoritative.
 Each stage owns its file boundary. Server orchestration runs the explicit chain;
 stages do not call one another. The CLI has only `init` and `serve`.
 
@@ -25,6 +25,29 @@ story changes live in `server/routers/editorial.py`.
 Finish paths. `artifacts.py` owns Story Bible and Cast reference paths. Never
 introduce alternate readers for legacy output shapes: incompatible hashes or
 schemas require rerunning the owning stage.
+
+## User gates
+
+The four stations are Story, Look, Pages, and Book; they group, not replace,
+the eight backend stages. Story includes Extract/Brief; Look includes Style/Cast.
+`POST /api/projects/` and `/api/projects/import-story` validate and save the
+source, configuration, and initial state only. They return `status: created`;
+they do not start generation or reserve credits. Story analysis starts only
+after an explicit estimated action through `/run?stage=extract`. A failed
+estimate can be retried without starting work.
+
+Story approval saves the visible Brief draft before approving; a failed save,
+invalid page range, or revision conflict must not approve an older saved value.
+Local unsaved drafts are keyed by Brief revision and content SHA. Matching
+drafts can restore locally; older drafts remain separately inspectable in a
+labelled read-only text field, with copy/manual-copy recovery and confirmed
+discard. They are never silently applied to a newer Brief.
+
+Entering Cast does not spend. Starting or resuming missing references is an
+explicit estimated action; Style's explicit Continue action may start Cast
+and a needed cover before navigating there. Approving Cast accepts the
+estimated Adapt → Plan chain. Pages retains one Continue to Book decision,
+not per-page acceptance.
 
 ## Authority through generation
 
@@ -88,6 +111,20 @@ instruction, never bound regeneration; Draw is never auto-queued and stays
 separately estimated. Stale previews (client echo or canonical drift) are
 rejected; applied proposals go read-only.
 
+### Pages review context
+
+`/project/{project_id}/pages` carries `page=N`, `review=page|visual|checks`,
+`filter=all|needs-review|drawing|failed`, and optional
+`reading=adaptation|page-plan`. The URL is authoritative; project-scoped
+session storage restores review context only on an entry without query
+parameters, and does not persist the reading drawer. Book findings link to
+the affected page and review view.
+
+The exception queue contains pages with `open` or `revised` issues; a new
+render alone does not clear it. Filters are pressed-state buttons, not tabs.
+Drawing and failed filters reflect page/job state; next-unresolved navigation
+wraps through remaining flagged pages. Reading Adaptation/Plan stays read-only.
+
 ## Recovery and costs
 
 Adapt and Plan retain input-keyed paid responses outside stage cleanup. Keys
@@ -97,8 +134,52 @@ Stage estimates include page references and OCR; Cast estimates include state
 references. Provider usage and credit settlement remain distinct from estimates
 and stage-progress totals. Missing usage is not evidence of zero provider cost.
 
+Read-only immediate quotes are distinct from the full-stage rerun estimate:
+
+| GET route | Quoted work |
+|---|---|
+| `/pages/{page_number}/generate/estimate?depiction=canonical` | One undrawn page, compiled references and OCR; `less_graphic` is also supported |
+| `/pages/{page_number}/analyze/estimate` | Text analysis of an existing render, without redrawing |
+| `/pages/generate/estimate` | Only pages without saved render provenance, including references and OCR |
+
+These routes validate prerequisites but neither submit jobs, reserve credits,
+nor mutate generation artifacts. `estimate_credits` is the projected charge;
+`reserved_credits` is the temporary hold, not an extra charge. The remaining-page
+quote sums independently rounded per-job estimates and buffered holds; rounding
+one aggregate can understate the required credits. `/estimate?stage=draw`
+still estimates every planned page for a full-stage rerun, even when some
+already have renders. Show estimates as `~N credits`, not guaranteed prices
+or completion times.
+
+After a top-up, the insufficient-credits dialog refreshes the balance but
+does not replay the action automatically. A retained action requires explicit
+Resume once the balance covers its hold; without a retained action, return
+to the original control. Do not turn an ambiguous paid submission into an
+automatic retry.
+
 `GET /api/projects/{project_id}/provider-usage` reconciles provider events and
 artifact call IDs, including failures and unknown costs. Book's Dev Content
 view shows recorded cost sources separately from user credit charges. Optional
 visual review uses `/pages/{page_number}/visual-review` and its `/estimate`
 endpoint. Restart the gateway after changing its retry configuration.
+
+## Book readiness and package recovery
+
+`GET /export/preflight` reads persisted Finish evidence. Its package readiness
+requires a current validator version and saved package files whose resolved
+paths remain inside the project, byte sizes match, and SHA-256 digests match.
+Missing, unsafe, or damaged packages require a preflight refresh; an old
+download URL is not readiness evidence. Package reuse also requires matching
+edition, production settings, canonical page, and render identities.
+
+`POST /export/preflight` retries provider-free checks without creating packages,
+retaining valid packages when their inputs still match. Explicit export/rebuild
+uses `/export/?format=pdf|cbz` (`force=true` for rebuild), reruns Finish, and
+packages saved pages without generating artwork or spending credits. Book
+distinguishes technical blockers, unresolved review issues, and accepted
+editorial decisions, with links back to Pages.
+
+Book's persisted package list supports “ready to download” across refreshes;
+the edition-ready cue reports package creation, never browser download
+completion. Neither successful preflight nor packaging guarantees model
+output quality.

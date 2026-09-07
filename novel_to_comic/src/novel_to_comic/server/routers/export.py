@@ -11,6 +11,7 @@ from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.stages import REGISTRY
 from novel_to_comic.storage import r2_configured, upload_export
 from novel_to_comic.models.finish import FINISH_PREFLIGHT_VALIDATOR_VERSION
+from novel_to_comic.page_finishing import package_is_current
 from novel_to_comic.target_artifacts import (
     ArtifactInvalid,
     ArtifactMissing,
@@ -44,11 +45,14 @@ def get_preflight(
 
     project_dir, _config, _state = project
     try:
-        preflight = TargetArtifacts(project_dir).read_preflight()
+        target = TargetArtifacts(project_dir)
+        preflight = target.read_preflight()
     except (ArtifactMissing, ArtifactInvalid) as exc:
         raise HTTPException(404, "No current Finish preflight is available") from exc
     if preflight.validator_version != FINISH_PREFLIGHT_VALIDATOR_VERSION:
         raise HTTPException(404, "Finish preflight must be refreshed")
+    if any(not package_is_current(target, package) for package in preflight.packages):
+        raise HTTPException(404, "An export package is unavailable; refresh Finish preflight")
     return preflight
 
 

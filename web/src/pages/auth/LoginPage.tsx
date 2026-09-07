@@ -18,12 +18,12 @@ function Field({
 }: { label: string } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className="block">
-      <span className="font-meta text-[0.6rem] font-bold uppercase tracking-[0.2em] text-ink-black/55">
+      <span className="font-meta text-xs font-bold uppercase tracking-[0.1em] text-ink-muted">
         {label}
       </span>
       <input
         {...inputProps}
-        className="mt-2 h-12 w-full border-b-[2px] border-ink-black/30 bg-surface-container px-4 font-body text-[0.95rem] text-ink-black outline-none transition-colors placeholder:text-ink-black/38 focus:border-hero-red"
+        className="mt-2 h-12 w-full border-b-[2px] border-ink-black/30 bg-surface-container px-4 font-body text-base text-ink-black outline-none transition-colors placeholder:text-ink-soft focus:border-hero-red"
       />
     </label>
   );
@@ -107,29 +107,29 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
 
       <main className="grid flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_520px]">
         {/* The pressroom stage */}
-        <section className="relative flex flex-col justify-between overflow-hidden px-8 py-10 sm:px-14 lg:px-[4.8vw]">
+        <section className="relative order-2 flex flex-col justify-between overflow-hidden px-6 py-8 sm:px-14 lg:order-1 lg:px-[4.8vw] lg:py-10">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_1px_1px,rgba(252,250,237,0.09)_1px,transparent_0)] [background-size:28px_28px]" />
           <div className="relative">
-            <div className="flex items-center gap-4 text-pulp-paper">
+            <div className="hidden items-center gap-4 text-pulp-paper lg:flex">
               <BrandMark className="h-12 w-12 shrink-0" variant="reversed" />
-              <div className="font-meta text-[0.7rem] font-bold uppercase tracking-[0.48em] text-hero-red">
+              <div className="font-meta text-sm font-bold uppercase tracking-[0.24em] text-narrator-gold">
                 Scenewright
               </div>
             </div>
-            <h1 className="mt-[6vh] max-w-[10ch] font-display text-[clamp(3.4rem,6.8vw,7rem)] font-black uppercase leading-[0.84] tracking-[-0.04em] text-pulp-paper">
+            <h1 className="max-w-[15ch] font-display text-3xl font-black uppercase leading-[0.95] tracking-[-0.04em] text-pulp-paper lg:mt-[6vh] lg:max-w-[10ch] lg:text-[clamp(3.4rem,6.8vw,6rem)]">
               Your novel, scene by scene.
             </h1>
-            <p className="mt-8 max-w-[32rem] bg-bristol/8 px-5 py-4 text-[1.05rem] font-semibold leading-8 text-pulp-paper/70">
+            <p className="mt-5 max-w-[32rem] text-base font-semibold leading-7 text-pulp-paper/80 lg:mt-8 lg:bg-bristol/8 lg:px-5 lg:py-4">
               Upload your manuscript. Scenewright shapes the adaptation, plans the book, and draws complete comic pages — you review every page, and we claim no ownership over what you make.
             </p>
           </div>
-          <div className="relative mt-12 font-meta text-[0.62rem] uppercase tracking-[0.22em] text-pulp-paper/40">
+          <div className="relative mt-8 font-meta text-xs uppercase tracking-[0.1em] text-pulp-paper/70">
             © 2026 Scenewright
           </div>
         </section>
 
         {/* The printed sheet */}
-        <section className="relative flex items-center justify-center px-6 pb-14 pt-4 lg:px-12 lg:py-12">
+        <section className="relative order-1 flex items-center justify-center px-6 pb-6 pt-8 lg:order-2 lg:px-12 lg:py-12">
           <div className="relative w-full max-w-[400px]">
             <div aria-hidden className="absolute inset-0 translate-x-2 translate-y-2 bg-hero-red" />
             <div className="relative border-[3px] border-ink-black bg-bristol text-ink-black">
@@ -141,13 +141,14 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
                   <button
                     key={value}
                     type="button"
+                    aria-pressed={mode === value}
                     onClick={() => {
                       setMode(value);
                       setError(null);
                       setMessage(null);
                     }}
                     className={cn(
-                      "min-h-12 font-meta text-[0.64rem] font-bold uppercase tracking-[0.18em] transition-colors",
+                      "min-h-12 px-2 font-meta text-xs font-bold uppercase tracking-[0.1em] transition-colors",
                       mode === value
                         ? "bg-hero-red text-bristol"
                         : "bg-bristol text-ink-black/55 hover:text-ink-black",
@@ -191,12 +192,12 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
                 />
 
                 {error && (
-                  <p className="border-[2px] border-hero-red bg-chip-red/50 px-3 py-2 font-body text-sm font-semibold text-hero-red">
+                  <p role="alert" className="border-[2px] border-hero-red bg-chip-red/50 px-3 py-2 font-body text-sm font-semibold text-hero-red">
                     {error}
                   </p>
                 )}
                 {message && (
-                  <p className="border-[2px] border-ink-black bg-chip-gold px-3 py-2 font-body text-sm font-semibold text-ink-black">
+                  <p role="status" className="border-[2px] border-ink-black bg-chip-gold px-3 py-2 font-body text-sm font-semibold text-ink-black">
                     {message}
                   </p>
                 )}
@@ -210,7 +211,7 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
                     type="button"
                     onClick={handleForgotPassword}
                     disabled={submitting}
-                    className="mx-auto block pt-1 font-body text-[0.8rem] font-semibold text-ink-black/55 transition-colors hover:text-ink-black disabled:opacity-50"
+                    className="mx-auto block min-h-11 px-3 pt-1 font-body text-sm font-semibold text-ink-muted transition-colors hover:text-ink-black disabled:opacity-50"
                   >
                     Forgot password?
                   </button>

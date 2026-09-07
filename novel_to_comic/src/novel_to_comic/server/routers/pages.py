@@ -461,6 +461,100 @@ def get_page_render_preview(
     )
 
 
+@router.get("/pages/generate/estimate")
+def estimate_remaining_page_generation(project=Depends(get_project)):
+    """Quote only undrawn pages, rounding each independent credit hold."""
+    from novel_to_comic.config import PAGE_OCR_ESTIMATED_COST_USD
+    from novel_to_comic.page_drawing import _selected_authorities, production_page_capability_profile
+    from ..credits import credit_estimate_for_provider_cost
+
+    project_dir, _config, _state = project
+    target = TargetArtifacts(project_dir)
+    estimate = credit_estimate_for_provider_cost(0, "draw", reserve=True)
+    try:
+        profile = (
+            ensure_current_page_edition(target, target.read_book_edition()).capability_profile
+            if target.book_edition_path.exists()
+            else production_page_capability_profile()
+        )
+        inventory = approved_visual_inventory(project_dir)
+        for selected in target.read_plan().pages:
+            if target.provenance_revisions(selected.page_number):
+                continue
+            references = _selected_authorities(target.read_page(selected.page_number), inventory)
+            if len(references) > profile.max_image_references:
+                raise ValueError(
+                    f"Page {selected.page_number} requires too many identity references. Replan it before drawing."
+                )
+            page_cost = float(profile.price_per_page_usd + profile.price_per_reference_usd * len(references))
+            part = credit_estimate_for_provider_cost(
+                page_cost + float(PAGE_OCR_ESTIMATED_COST_USD), "draw", reserve=True,
+            )
+            estimate["estimate_credits"] += part["estimate_credits"]
+            estimate["reserved_credits"] += part["reserved_credits"]
+    except (ArtifactMissing, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return dict(estimate)
+
+
+def _prepare_initial_generation(
+    project, page_number: int, depiction: Literal["canonical", "less_graphic"],
+):
+    project_dir, config, _state = project
+    target = TargetArtifacts(project_dir)
+    if target.provenance_revisions(page_number):
+        raise HTTPException(
+            409,
+            "Page already has a render; create an issue and request a correction.",
+        )
+    try:
+        page = target.read_page(page_number)
+        edition = ensure_current_page_edition(target, target.read_book_edition())
+        compiled = compile_page_generation_request(
+            page,
+            edition,
+            approved_visual_inventory(project_dir),
+            approved_reference_files(project_dir),
+            retry=_generation_retry(target, page_number),
+            depiction=depiction,
+            style_template=config.style_template,
+        )
+    except (ArtifactMissing, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return target, page, compiled
+
+
+@router.get("/pages/{page_number}/generate/estimate")
+def estimate_page_generation(
+    page_number: int,
+    depiction: Literal["canonical", "less_graphic"] = "canonical",
+    project=Depends(get_project),
+):
+    """Compile the same request as Draw without submitting or reserving credits."""
+    _target, _page, compiled = _prepare_initial_generation(project, page_number, depiction)
+    return dict(correction_credit_estimate(compiled, reserve=True))
+
+
+@router.get("/pages/{page_number}/analyze/estimate")
+def estimate_page_analysis(page_number: int, project=Depends(get_project)):
+    from novel_to_comic.config import PAGE_OCR_ESTIMATED_COST_USD
+    from ..credits import credit_estimate_for_provider_cost
+
+    target = TargetArtifacts(project[0])
+    active = _latest_provenance(target, page_number)
+    if active is None:
+        raise HTTPException(409, "Page has no render to analyze")
+    try:
+        target.read_page(page_number)
+        if not target.render_path(page_number, active.render.revision).is_file():
+            raise HTTPException(409, "Page render is unavailable")
+    except ArtifactMissing as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return dict(credit_estimate_for_provider_cost(
+        float(PAGE_OCR_ESTIMATED_COST_USD), "draw", reserve=True,
+    ))
+
+
 @router.post("/pages/{page_number}/generate")
 def generate_page(
     page_number: int,
@@ -471,28 +565,11 @@ def generate_page(
     user_id: str = Depends(get_current_user),
 ):
     project_dir, config, _state = project
-    target = TargetArtifacts(project_dir)
-    revisions = target.provenance_revisions(page_number)
-    if revisions:
-        raise HTTPException(
-            409,
-            "Page already has a render; create an issue and request a correction.",
-        )
-    try:
-        page = target.read_page(page_number)
-        edition = target.read_book_edition()
-        edition = ensure_current_page_edition(target, edition)
-        compiled = compile_page_generation_request(
-            page,
-            edition,
-            approved_visual_inventory(project_dir),
-            approved_reference_files(project_dir),
-            retry=_generation_retry(target, page_number),
-            depiction=generation.depiction if generation is not None else "canonical",
-            style_template=config.style_template,
-        )
-    except (ArtifactMissing, ValueError) as exc:
-        raise HTTPException(409, str(exc)) from exc
+    target, page, compiled = _prepare_initial_generation(
+        project,
+        page_number,
+        generation.depiction if generation is not None else "canonical",
+    )
     adapter = VertexCompletePageAdapter(GoogleVertexCompletePageTransport(config))
     pkey = project_key(user_id, project_id)
     queue = request.app.state.event_queues.get(pkey)
@@ -1000,7 +1077,7 @@ def visual_review_estimate(page_number: int, project=Depends(get_project)):
     from ..credits import credit_estimate_for_provider_cost
     if _latest_provenance(TargetArtifacts(project[0]), page_number) is None:
         raise HTTPException(409, "Page has no render to review")
-    return credit_estimate_for_provider_cost(float(PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD), 'draw', reserve=False)
+    return credit_estimate_for_provider_cost(float(PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD), 'draw', reserve=True)
 
 @router.post("/pages/{page_number}/visual-review")
 async def visual_review_page(page_number: int, project_id: str,

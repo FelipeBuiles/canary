@@ -4,6 +4,7 @@ import type {
   BookPlan,
   CompletePageDetail,
   CompletePagesResponse,
+  CostEstimate,
   FinishPreflight,
   GenerationJob,
   PageIssue,
@@ -58,6 +59,22 @@ export function analyzeCompletePage(
   return apiFetch(`${projectPath(project)}/pages/${pageNumber}/analyze`, {
     method: "POST",
   });
+}
+
+export function getCompletePageBatchEstimate(project: string): Promise<CostEstimate> {
+  return apiFetch(`${projectPath(project)}/pages/generate/estimate`);
+}
+
+export function getCompletePageEstimate(
+  project: string,
+  pageNumber: number,
+  depiction: "canonical" | "less_graphic" = "canonical",
+): Promise<CostEstimate> {
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/generate/estimate?depiction=${depiction}`);
+}
+
+export function getPageAnalysisEstimate(project: string, pageNumber: number): Promise<CostEstimate> {
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/analyze/estimate`);
 }
 
 export function generateCompletePage(
@@ -371,6 +388,6 @@ export function getProviderUsage(project: string): Promise<ProviderUsageSummary>
   return apiFetch(`${projectPath(project)}/provider-usage`);
 }
 
-export function getVisualReviewEstimate(project: string, pageNumber: number): Promise<{ estimate_credits: number }> {
+export function getVisualReviewEstimate(project: string, pageNumber: number): Promise<CostEstimate> {
   return apiFetch(`${projectPath(project)}/pages/${pageNumber}/visual-review/estimate`);
 }

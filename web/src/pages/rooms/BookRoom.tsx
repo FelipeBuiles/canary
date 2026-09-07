@@ -1,15 +1,17 @@
 import { useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import {
   useCompletePages,
   useExport,
   useFinishPreflight,
   useProjectStatus,
   useProviderUsage,
+  useRunFinishPreflight,
 } from "../../api/queries";
 import { downloadExportUrl, pageRenderPreviewUrl } from "../../api/pages";
 import { BookReader } from "../../components/BookReader";
 import {
+  ConfirmDrawer,
   RoomHeader,
   RoomShell,
   SectionHeader,
@@ -93,15 +95,18 @@ export function BookRoom() {
   const drawComplete = status?.stages.draw?.status === "complete";
   const shouldRunPreflight =
     drawComplete || finishStatus === "complete" || status?.finish_ready === true;
-  const { data: preflight, isLoading } = useFinishPreflight(
+  const { data: preflight, isLoading, isFetching, error: preflightError, refetch } = useFinishPreflight(
     id,
     shouldRunPreflight,
   );
   const exportBook = useExport();
+  const retryPreflight = useRunFinishPreflight();
   const { data: completePages } = useCompletePages(id);
   const bookPages = useMemo(() => readerPages(completePages), [completePages]);
   const [readerOpen, setReaderOpen] = useState(false);
   const [exportUrls, setExportUrls] = useState<Partial<Record<"pdf" | "cbz", string>>>({});
+  const [newPackage, setNewPackage] = useState<string | null>(null);
+  const [rebuildFormat, setRebuildFormat] = useState<"pdf" | "cbz" | null>(null);
 
   if (!id) return null;
   if (finishStatus === "pending" && status?.stages.draw?.status !== "complete") {
@@ -130,28 +135,31 @@ export function BookRoom() {
   const technicalFindingCount = (preflight?.packaging_failures.length ?? 0)
     + (preflight?.pages.reduce((total, page) => total + page.invariant_failures.length, 0) ?? 0);
   const exportBlockers = technicalFindingCount + unresolvedIssues;
-  const canExport = !!preflight && !isLoading && exportBlockers === 0;
+  const canExport = !!preflight && !isLoading && !isFetching && !preflightError && !retryPreflight.isPending && exportBlockers === 0;
   const finishFindings = groupFinishFindings(preflight);
   const finishDiagnostics = showDevContent ? groupFinishDiagnostics(preflight) : [];
-  const editorialTone = unresolvedIssues > 0
-    ? "red"
-    : acceptedIssues > 0
-      ? "gold"
-      : "sage";
   const editorialSummary = unresolvedIssues > 0
     ? `${unresolvedIssues} ${unresolvedIssues === 1 ? t("unresolved editorial issue") : t("unresolved editorial issues")}`
     : acceptedIssues > 0
       ? `${acceptedIssues} ${acceptedIssues === 1 ? t("accepted editorial issue") : t("accepted editorial issues")}`
       : t("No editorial issues");
+  const title = status?.project_name ?? t("Your book");
+  const packages = preflight?.packages ?? [];
+  const reviewUrl = (pageNumber: number, review: "checks" | "visual") =>
+    `/project/${encodeURIComponent(id)}/pages?page=${pageNumber}&review=${review}`;
+  const pageIssues = new Map(completePages?.pages.flatMap((page) => (page.issues ?? []).map((issue) => [issue.id, issue] as const)));
 
-  function createExport(format: "pdf" | "cbz") {
+  function createExport(format: "pdf" | "cbz", force = false) {
     if (!id) return;
     exportBook.mutate(
-      { project: id, format },
+      { project: id, format, force },
       {
         onSuccess: (result) => {
           if (!result.url) return;
           setExportUrls((current) => ({ ...current, [format]: result.url }));
+          if (result.preflight?.packages.some((item) => item.format === format)) {
+            setNewPackage(`${result.preflight.edition_revision}:${format}`);
+          }
         },
       },
     );
@@ -161,64 +169,76 @@ export function BookRoom() {
     <RoomShell project={id}>
       <RoomHeader
         kicker={t("BOOK")}
-        title={t("FINISH & EXPORT")}
-        lead={t("Finish checks page files, lettering results, production dimensions, issue decisions, and package order.")}
+        title={t("YOUR EDITION")}
+        lead={t("Read your pages, settle any remaining decisions, and prepare your book to keep.")}
       />
 
-      {showDevContent && (
-        <Surface padding="md" border="soft" shadow="none">
-          <h2 className="font-meta font-bold">{t("PROVIDER COSTS")}</h2>
-          {providerUsage.error && <p role="alert">{t("Provider usage is unavailable.")}</p>}
-          {providerUsage.data && <>
-            <p>${providerUsage.data.known_cost_usd.toFixed(4)} {t("recorded provider cost; separate from charged credits")}</p>
-            {providerUsage.data.artifact_link_error && <p role="status">{providerUsage.data.artifact_link_error}</p>}
-            {!providerUsage.data.complete && <p>{t("Incomplete cost evidence")}: {providerUsage.data.unknown_cost_count} {t("unpriced calls")}, {providerUsage.data.artifact_calls_missing_from_events} {t("missing events")}</p>}
-            <p className="font-body text-xs">{Object.entries(providerUsage.data.cost_sources).map(([source, count]) => `${source}: ${count}`).join(" · ")}</p>
-            <table className="mt-3 w-full text-left font-body text-sm">
-              <thead><tr><th>{t("Page")}</th><th>{t("Operation")}</th><th>{t("Calls")}</th><th>USD</th></tr></thead>
-              <tbody>{providerUsage.data.groups.map((group) => <tr key={`${group.page_number}:${group.category}`}>
-                <td>{group.page_number ?? "—"}</td><td>{group.category}</td><td>{group.call_count}</td><td>{group.known_cost_usd.toFixed(4)}{group.unknown_cost_count ? " + ?" : ""}</td>
-              </tr>)}</tbody>
-            </table>
-          </>}
-        </Surface>
-      )}
 
       {bookPages.length > 0 && (
-        <section>
-          <SectionHeader
-            variant="underline"
-            title={t("READ THE BOOK")}
-            description={t("Read the drawn pages exactly as they will print. Reading never re-generates a page and never downloads the book again.")}
-          />
-          <Surface padding="md" border="hard" shadow="paper">
-            <div className="flex flex-wrap items-center gap-5">
+        <section aria-label={t("Read your book")}>
+          <Surface padding="lg" border="hard" shadow="paper">
+            <div className="grid items-center gap-6 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-10">
               <button
                 type="button"
                 onClick={() => setReaderOpen(true)}
                 aria-label={t("Open the book reader")}
-                className="w-28 shrink-0 border-[2px] border-ink-black bg-bristol focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red"
+                className="mx-auto block w-full max-w-sm bg-pulp-paper focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
               >
                 <img
-                  src={pageRenderPreviewUrl(id, bookPages[0].pageNumber, bookPages[0].revision, "thumbnail")}
+                  src={pageRenderPreviewUrl(id, bookPages[0].pageNumber, bookPages[0].revision, "reader")}
                   alt={t("First page of the book")}
-                  className="block aspect-[2/3] w-full object-contain"
+                  className="block max-h-[60vh] w-full object-contain"
                 />
               </button>
-              <div className="min-w-0 flex-1">
-                <p className="font-display text-2xl font-black uppercase">
+              <div className="min-w-0">
+                <h2 className="break-words font-display text-3xl font-black leading-tight sm:text-4xl">{title}</h2>
+                <p className="mt-3 font-meta text-sm font-bold">
                   {bookPages.length} {bookPages.length === 1 ? t("page drawn") : t("pages drawn")}
                 </p>
-                <p className="mt-1 max-w-[52ch] font-body text-sm font-semibold leading-6 text-ink-muted">
-                  {t("Turn pages with the arrow keys, read facing pages as spreads, and switch to fit-width for a closer look.")}
+                <p className="mt-4 max-w-[52ch] font-body text-sm font-semibold leading-6 text-ink-muted">
+                  {t("Your artwork, uninterrupted. Read single pages or facing spreads, and look closer with fit-width.")}
                 </p>
-                <Button className="mt-4" onClick={() => setReaderOpen(true)}>
-                  {t("START READING")}
+                <Button className="mt-5" onClick={() => setReaderOpen(true)}>
+                  {t("Read your book")}
                 </Button>
+                <p className="mt-3 font-body text-xs leading-5 text-ink-muted">{t("Reading does not generate artwork or use credits.")}</p>
               </div>
             </div>
           </Surface>
         </section>
+      )}
+
+      {packages.length > 0 && !isFetching && !preflightError && !exportBook.isPending && !retryPreflight.isPending && (
+        <Surface padding="md" border="hard" shadow="paper-sm">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h2 className="font-display text-2xl font-black uppercase">{t("Edition ready")}</h2>
+              <p className="mt-2 break-words font-body text-sm font-bold">{title}</p>
+              <p className="mt-1 font-meta text-sm">
+                {preflight!.pages.length} {preflight!.pages.length === 1 ? t("page") : t("pages")}
+                {" · "}{packages.map((item) => item.format.toUpperCase()).join(" / ")}
+              </p>
+              <p className="mt-2 font-body text-sm text-ink-muted">{t("Your packages are saved and ready to download.")}</p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              {packages.map((item) => (
+                <a
+                  key={item.format}
+                  href={exportUrls[item.format] ?? downloadExportUrl(id, item.format)}
+                  className="inline-flex min-h-11 items-center border-[2px] border-ink-black bg-bristol px-4 font-meta text-xs font-bold text-ink-black"
+                >
+                  {t("DOWNLOAD")} {item.format.toUpperCase()}
+                </a>
+              ))}
+              {bookPages.length > 0 && <Button variant="outline" onClick={() => setReaderOpen(true)}>{t("Read")}</Button>}
+            </div>
+          </div>
+          {newPackage && (
+            <p key={newPackage} role="status" onAnimationEnd={() => setNewPackage(null)} className="animate-register-stamp mt-4 inline-block bg-narrator-gold px-3 py-2 font-meta text-sm font-bold">
+              {t("Edition ready")} · {newPackage.split(":")[1].toUpperCase()}
+            </p>
+          )}
+        </Surface>
       )}
 
       {readerOpen && (
@@ -232,62 +252,76 @@ export function BookRoom() {
       <section>
         <SectionHeader
           variant="underline"
-          title={t("FINISH PREFLIGHT")}
-          description={t("Finish checks the book before export. Creative corrections return to Draw; Finish never changes page artwork.")}
+          title={t("EDITION CHECKS")}
+          description={t("File and lettering checks do not verify visual quality. Review artwork in Pages; nothing here changes it.")}
         />
 
-        {isLoading ? (
+        {isLoading || (isFetching && !preflight) ? (
           <Surface padding="lg" border="soft" shadow="none" role="status" aria-live="polite">
             <p className="font-meta text-sm font-bold">{t("PREPARING PREFLIGHT…")}</p>
             <p className="mt-2 max-w-[60ch] font-body text-sm font-semibold leading-6 text-ink-muted">
               {t("Finish is loading the last check and will run again only if this edition changed.")}
             </p>
           </Surface>
-        ) : preflight ? (
-          <div className="grid gap-4 md:grid-cols-3">
-            <Surface padding="md" border="hard" shadow="paper">
-              <StatusPill tone={readyPages === preflight.pages.length ? "sage" : "gold"}>
-                {t("PAGES")}
+        ) : preflight && !preflightError ? (
+          <Surface padding="md" border="soft" shadow="none">
+            <div className="flex flex-wrap items-center gap-3">
+              <StatusPill tone={exportBlockers === 0 ? "sage" : "red"}>
+                {exportBlockers === 0 ? t("Ready to package") : t("Review needed")}
               </StatusPill>
-              <p className="mt-4 font-display text-2xl font-black uppercase">
-                {readyPages} {readyPages === 1 ? t("page ready") : t("pages ready")}
-              </p>
-            </Surface>
-            <Surface padding="md" border="hard" shadow="paper">
-              <StatusPill tone={technicalFindingCount === 0 ? "sage" : "red"}>
-                {t("PREFLIGHT")}
-              </StatusPill>
-              <p className="mt-4 font-display text-2xl font-black uppercase">
-                {technicalFindingCount === 0
-                  ? t("No technical blockers")
-                  : `${technicalFindingCount} ${t("technical findings")}`}
-              </p>
-            </Surface>
-            <Surface padding="md" border="hard" shadow="paper">
-              <StatusPill tone={editorialTone}>
-                {acceptedIssues > 0 || unresolvedIssues > 0 ? t("ISSUES") : t("NO EDITORIAL ISSUES")}
-              </StatusPill>
-              <p className="mt-4 font-display text-2xl font-black uppercase">
-                {editorialSummary}
-              </p>
-              {unresolvedIssues > 0 && (
-                <p className="mt-2 font-body text-sm font-bold text-hero-red">
-                  {t("These decisions must be resolved before export.")}
-                </p>
-              )}
-            </Surface>
-          </div>
+              <span className="font-body text-sm font-bold">{readyPages} {readyPages === 1 ? t("page ready") : t("pages ready")}</span>
+              <span className="font-body text-sm">{technicalFindingCount === 0 ? t("No technical blockers") : `${technicalFindingCount} ${t("technical findings")}`}</span>
+              <span className="font-body text-sm">{editorialSummary}</span>
+            </div>
+            {acceptedIssues > 0 && (
+              <details className="mt-3">
+                <summary className="min-h-11 cursor-pointer py-3 font-meta text-xs font-bold">{t("Accepted decisions")}</summary>
+                <ul className="space-y-2">
+                  {preflight.pages.filter((page) => page.accepted_editorial_issue_ids.length > 0).map((page) => (
+                    <li key={page.page_number}>
+                      <Link className="inline-flex min-h-11 items-center font-body text-sm font-bold underline underline-offset-4" to={reviewUrl(page.page_number, "visual")}>
+                        {t("Page")} {page.page_number} · {page.accepted_editorial_issue_ids.length} {t("accepted")}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </Surface>
         ) : (
           <Surface padding="md" tone="red" border="hard" shadow="paper" role="alert">
             <p className="font-body text-sm font-bold leading-6">
               {t("The book could not be checked.")}
             </p>
-            <p className="mt-2 font-body text-sm font-semibold leading-6">
-              {t("Refresh the page and try again.")}
-            </p>
+            <Button className="mt-3" variant="outline" disabled={isFetching} onClick={() => void refetch()}>
+              {isFetching ? t("Checking edition…") : t("Retry edition checks")}
+            </Button>
           </Surface>
         )}
+        {retryPreflight.error && <p role="alert" className="mt-3 font-body text-sm text-hero-red">{retryPreflight.error.message}</p>}
       </section>
+
+      {unresolvedIssues > 0 && (
+        <section aria-label={t("Editorial decisions")}>
+          <SectionHeader variant="underline" title={t("Editorial decisions")} description={t("Review these concerns before packaging. Revised artwork still needs a decision.")} />
+          <ul className="space-y-3">
+            {preflight?.pages.flatMap((page) => page.unresolved_editorial_issue_ids.map((issueId) => {
+              const issue = pageIssues.get(issueId);
+              return (
+                <li key={issueId}>
+                  <Surface padding="md" tone="gold" border="soft" shadow="none">
+                    <p className="font-body text-sm font-bold">{t("Page")} {page.page_number}: {issue?.requested_correction || t("An editorial concern needs your review.")}</p>
+                    {issue?.status === "revised" && <p className="mt-2 font-body text-sm">{t("Revised — not yet confirmed fixed")}</p>}
+                    <Link className="mt-2 inline-flex min-h-11 items-center font-meta text-xs font-bold underline underline-offset-4" to={reviewUrl(page.page_number, "visual")}>
+                      {t("Review page")} {page.page_number}
+                    </Link>
+                  </Surface>
+                </li>
+              );
+            }))}
+          </ul>
+        </section>
+      )}
 
       {finishFindings.length ? (
         <section aria-label={t("VALIDATION FINDINGS")}>
@@ -316,6 +350,15 @@ export function BookRoom() {
                   <p className="mt-2 font-body text-xs leading-5 text-ink-black/70">
                     {finding.evidence.join(" · ")}
                   </p>
+                )}
+                {finding.pageNumber !== null ? (
+                  <Link className="mt-2 inline-flex min-h-11 items-center font-meta text-xs font-bold underline underline-offset-4" to={reviewUrl(finding.pageNumber, "checks")}>
+                    {t("Open page checks")} · {t("Page")} {finding.pageNumber}
+                  </Link>
+                ) : (
+                  <Button className="mt-3" variant="outline" disabled={isFetching || retryPreflight.isPending} onClick={() => retryPreflight.mutate({ project: id })}>
+                    {retryPreflight.isPending ? t("Checking edition…") : t("Retry edition checks")}
+                  </Button>
                 )}
               </Surface>
             ))}
@@ -359,13 +402,16 @@ export function BookRoom() {
 
       {preflight?.correction_requests.length ? (
         <section>
-          <SectionHeader variant="underline" title={t("CORRECTIONS RETURNED TO DRAW")} />
+          <SectionHeader variant="underline" title={t("PAGE CORRECTIONS")} />
           <div className="space-y-3">
             {preflight.correction_requests.map((request) => (
               <Surface key={request.id} padding="md" border="soft" shadow="none">
                 <p className="font-body text-sm font-bold">
                   {t("Page")} {request.page_number}: {request.requested_correction}
                 </p>
+                <Link className="mt-2 inline-flex min-h-11 items-center font-meta text-xs font-bold underline underline-offset-4" to={reviewUrl(request.page_number, "checks")}>
+                  {t("Open page checks")} · {t("Page")} {request.page_number}
+                </Link>
               </Surface>
             ))}
           </div>
@@ -375,39 +421,75 @@ export function BookRoom() {
       <section>
         <SectionHeader
           variant="underline"
-          title={t("EXPORT")}
-          description={t("Create a verified reading copy or archive package.")}
+          title={t("PREPARE A PACKAGE")}
+          description={t("PDF is for reading and printing. CBZ is an image archive for comic-reader apps.")}
         />
         {exportBook.error && (
-          <Surface tone="gold" padding="md" border="hard" shadow="none" className="mb-4">
+          <Surface role="alert" tone="gold" padding="md" border="hard" shadow="none" className="mb-4">
             <p className="font-body text-sm font-bold">{exportBook.error.message}</p>
           </Surface>
         )}
         <div className="flex flex-wrap gap-3">
-          <Button
-            onClick={() => createExport("pdf")}
-            disabled={exportBook.isPending || isLoading || !canExport}
-          >
-            {t("EXPORT PDF")}
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => createExport("cbz")}
-            disabled={exportBook.isPending || isLoading || !canExport}
-          >
-            {t("EXPORT CBZ")}
-          </Button>
-          {preflight?.packages.map((item) => (
-            <a
-              key={item.format}
-              href={exportUrls[item.format] ?? downloadExportUrl(id, item.format)}
-              className="inline-flex min-h-11 items-center border-[2px] border-ink-black bg-bristol px-4 font-meta text-xs font-bold tracking-[0.1em] text-ink-black"
+          {(["pdf", "cbz"] as const).filter((format) => !packages.some((item) => item.format === format)).map((format) => (
+            <Button
+              key={format}
+              variant={format === "pdf" ? "primary" : "outline"}
+              onClick={() => createExport(format)}
+              disabled={exportBook.isPending || !canExport}
             >
-              {t("DOWNLOAD")} {item.format.toUpperCase()}
-            </a>
+              {exportBook.isPending && exportBook.variables?.format === format
+                ? (format === "pdf" ? t("Creating PDF…") : t("Creating CBZ…"))
+                : (format === "pdf" ? t("Create PDF") : t("Create CBZ"))}
+            </Button>
           ))}
         </div>
+        <details className="mt-4">
+          <summary className="min-h-11 cursor-pointer py-3 font-meta text-xs font-bold">{t("Rebuild package")}</summary>
+          <p className="max-w-[65ch] font-body text-sm leading-6 text-ink-muted">
+            {t("Missing or damaged download? Rebuild it from your saved pages. This replaces package files, not artwork, and uses no credits.")}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-3">
+            {(["pdf", "cbz"] as const).map((format) => (
+              <Button key={format} variant="outline" disabled={exportBook.isPending || !canExport} onClick={() => setRebuildFormat(format)}>
+                {exportBook.isPending && exportBook.variables?.format === format && exportBook.variables.force
+                  ? (format === "pdf" ? t("Rebuilding PDF…") : t("Rebuilding CBZ…"))
+                  : (format === "pdf" ? t("Rebuild PDF") : t("Rebuild CBZ"))}
+              </Button>
+            ))}
+          </div>
+        </details>
+        <ConfirmDrawer
+          open={rebuildFormat !== null}
+          title={rebuildFormat === "pdf" ? t("Rebuild PDF") : t("Rebuild CBZ")}
+          body={t("Rebuilding replaces existing package files with a fresh copy from your saved pages. Your page artwork and review decisions stay unchanged. No credits are used.")}
+          confirmLabel={rebuildFormat === "pdf" ? t("Rebuild PDF") : t("Rebuild CBZ")}
+          busy={exportBook.isPending || !canExport}
+          onClose={() => setRebuildFormat(null)}
+          onConfirm={() => {
+            if (!rebuildFormat || exportBook.isPending || !canExport) return;
+            createExport(rebuildFormat, true);
+            setRebuildFormat(null);
+          }}
+        />
       </section>
+      {showDevContent && (
+        <Surface padding="md" border="soft" shadow="none">
+          <h2 className="font-meta font-bold">{t("PROVIDER COSTS")}</h2>
+          {providerUsage.error && <p role="alert">{t("Provider usage is unavailable.")}</p>}
+          {providerUsage.data && <>
+            <p>${providerUsage.data.known_cost_usd.toFixed(4)} {t("recorded provider cost; separate from charged credits")}</p>
+            {providerUsage.data.artifact_link_error && <p role="status">{providerUsage.data.artifact_link_error}</p>}
+            {!providerUsage.data.complete && <p>{t("Incomplete cost evidence")}: {providerUsage.data.unknown_cost_count} {t("unpriced calls")}, {providerUsage.data.artifact_calls_missing_from_events} {t("missing events")}</p>}
+            <p className="font-body text-xs">{Object.entries(providerUsage.data.cost_sources).map(([source, count]) => `${source}: ${count}`).join(" · ")}</p>
+            <table className="mt-3 w-full text-left font-body text-sm">
+              <thead><tr><th>{t("Page")}</th><th>{t("Operation")}</th><th>{t("Calls")}</th><th>USD</th></tr></thead>
+              <tbody>{providerUsage.data.groups.map((group) => <tr key={`${group.page_number}:${group.category}`}>
+                <td>{group.page_number ?? "—"}</td><td>{group.category}</td><td>{group.call_count}</td><td>{group.known_cost_usd.toFixed(4)}{group.unknown_cost_count ? " + ?" : ""}</td>
+              </tr>)}</tbody>
+            </table>
+          </>}
+        </Surface>
+      )}
     </RoomShell>
   );
 }

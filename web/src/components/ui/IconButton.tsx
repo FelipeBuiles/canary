@@ -24,7 +24,7 @@ export function IconButton({
       size={size}
       aria-label={label}
       title={label}
-      className={cn("aspect-square px-0", className)}
+      className={cn("min-w-11 aspect-square px-0", className)}
       {...props}
     >
       <Icon name={icon} size={14} />

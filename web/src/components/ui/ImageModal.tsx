@@ -1,4 +1,5 @@
-import { useEffect, useEffectEvent, useRef } from "react";
+import { useRef } from "react";
+import { useDialogFocus } from "../../hooks/useDialogFocus";
 import type { ReactNode } from "react";
 import { Icon } from "./Icon";
 import { LazyImage } from "./LazyImage";
@@ -20,46 +21,10 @@ interface ImageModalProps {
 
 export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar, imageAvailable = true, emptyLabel = "No image generated" }: ImageModalProps) {
   const { t } = useI18n();
-  const closeModal = useEffectEvent(onClose);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const prev = document.body.style.overflow;
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    document.body.style.overflow = "hidden";
-
-    const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
-
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !document.querySelector('[role="alertdialog"]')) {
-        closeModal();
-        return;
-      }
-      if (e.key !== "Tab" || !dialogRef.current) return;
-      const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ));
-      if (!focusable.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.cancelAnimationFrame(focusFrame);
-      document.body.style.overflow = prev;
-      opener?.focus();
-    };
-  }, [isOpen]);
+  useDialogFocus(dialogRef, { enabled: isOpen, onClose, initialFocusRef: closeButtonRef });
 
   if (!isOpen) return null;
 
@@ -84,7 +49,7 @@ export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar,
                 {title}
               </div>
             )}
-            <div className="mt-0.5 font-meta text-[0.48rem] tracking-[0.18em] text-ink-black/45">
+            <div className="mt-0.5 font-meta text-xs tracking-[0.08em] text-ink-muted">
               {title ? alt : ""}
             </div>
           </div>
@@ -116,7 +81,7 @@ export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar,
                 preserveAspectBox
               />
             ) : (
-              <p className="px-6 text-center font-meta text-[0.68rem] tracking-[0.14em] text-bristol/60">
+              <p className="px-6 text-center font-meta text-xs tracking-[0.08em] text-bristol/80">
                 {emptyLabel}
               </p>
             )}

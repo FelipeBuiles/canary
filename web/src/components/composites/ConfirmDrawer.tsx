@@ -1,4 +1,5 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
+import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/Button";
 import { CostBreakdown } from "../cost/CostBreakdown";
@@ -31,38 +32,7 @@ export function ConfirmDrawer({
 }: ConfirmDrawerProps) {
   const drawerRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-        return;
-      }
-      if (e.key !== "Tab" || !drawerRef.current) return;
-      const focusable = drawerRef.current.querySelectorAll<HTMLElement>(
-        'button, [href], input, [tabindex]:not([tabindex="-1"])',
-      );
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [open, onClose]);
+  useDialogFocus(drawerRef, { enabled: open, onClose });
 
   if (!open) return null;
 
@@ -80,8 +50,8 @@ export function ConfirmDrawer({
         aria-describedby="confirm-drawer-body"
         onClick={(e) => e.stopPropagation()}
         className={cn(
-          "relative w-full max-w-[700px] border-x-[2px] border-t-[2px] border-ink-black bg-pulp-paper text-ink-black",
-          "animate-[slide-up-drawer_320ms_cubic-bezier(0.2,0.8,0.2,1)]",
+          "relative max-h-[calc(100dvh-1rem)] overflow-y-auto w-full max-w-[700px] border-x-[2px] border-t-[2px] border-ink-black bg-pulp-paper text-ink-black",
+          "animate-[slide-up-drawer_var(--motion-settle)_cubic-bezier(0.2,0.8,0.2,1)]",
         )}
       >
         <style>{`
@@ -103,7 +73,7 @@ export function ConfirmDrawer({
               type="button"
               onClick={onClose}
               aria-label="Cancel"
-              className="inline-flex min-h-11 shrink-0 items-center gap-2 border-[2px] border-ink-black/20 px-3 font-meta text-[0.62rem] tracking-[0.12em] uppercase text-ink-black/60 hover:border-ink-black hover:text-ink-black"
+              className="inline-flex min-h-11 shrink-0 items-center gap-2 border-[2px] border-ink-black/20 px-3 font-meta text-xs tracking-[0.08em] uppercase text-ink-muted hover:border-ink-black hover:text-ink-black"
             >
               Close <ShortcutHint>Esc</ShortcutHint>
             </button>

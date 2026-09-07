@@ -17,11 +17,11 @@ export type NeedsCredits =
  *
  * 1. Persisted (authoritative): the stage is `failed` with
  *    `error_code === "insufficient_credits"` — survives a page reload. Uses
- *    the persisted `required_credits`; the Balance column always shows the
- *    LIVE balance (polled, so it's at least as fresh as the persisted
- *    snapshot and updates after a purchase).
+ *    the current estimate's hold when available, or the persisted requirement
+ *    while it loads. The gate remains after funding for explicit recovery.
+ *    The Balance column always uses the live available balance.
  * 2. Heuristic: the stage is `pending` or non-credit `failed`, and the live
- *    balance is below the stage's live estimate (from the /estimate endpoint,
+ *    balance is below the stage's live hold (from the /estimate endpoint,
  *    which calls the stage's estimate_cost hook — NOT the
  *    `estimated_cost_credits` field on StageInfo, which is 0 until a stage
  *    has actually run). This catches the brand-new 0-credit user before they
@@ -39,12 +39,9 @@ export function useNeedsCredits(
   const stageInfo = status?.stages?.[stage];
   const liveBalance = balanceData?.balance_credits ?? 0;
 
-  // Only fetch the estimate for stages that could heuristically block
-  // (pending or non-credit failed) — but the hook itself MUST be called
-  // unconditionally (Rules of Hooks). The `enabled` flag gates the fetch.
+  // Persisted failures also need a current estimate before explicit recovery.
   const isRunnableState =
-    stageInfo?.status === "pending" ||
-    (stageInfo?.status === "failed" && stageInfo.error_code !== "insufficient_credits");
+    stageInfo?.status === "pending" || stageInfo?.status === "failed";
   const { data: estimateData } = useStageEstimate(project, stage, isRunnableState);
 
   // All hooks above this point. Early returns are safe below.
@@ -55,7 +52,7 @@ export function useNeedsCredits(
     stageInfo.status === "failed" &&
     stageInfo.error_code === "insufficient_credits"
   ) {
-    const required = stageInfo.required_credits ?? 0;
+    const required = estimateData?.reserved_credits ?? estimateData?.estimate_credits ?? stageInfo.required_credits ?? 0;
     return {
       blocked: true,
       balance: liveBalance,
@@ -67,7 +64,7 @@ export function useNeedsCredits(
 
   // 2. Heuristic: not yet run (or non-credit failed), but can't afford it.
   if (isRunnableState) {
-    const estimate = estimateData?.estimate_credits ?? 0;
+    const estimate = estimateData?.reserved_credits ?? estimateData?.estimate_credits ?? 0;
     if (estimate > 0 && liveBalance < estimate) {
       return {
         blocked: true,

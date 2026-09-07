@@ -21,6 +21,30 @@ pipeline serve --projects-dir . --dev
 npm run build   # outputs to dist/
 ```
 
+## Tests and native prerequisites
+
+```bash
+npm ci
+npm test
+npm run lint
+```
+
+The jsdom environment uses the real `canvas` 2D implementation, with media-query
+and resize-observer implementations in `src/test/setup.ts`. Canvas drawing is
+not replaced by a no-op stub.
+
+On platforms without a prebuilt canvas binary, including Linux ARM64, installation
+requires Python 3, a C++ compiler, `make`, `pkg-config`, and Cairo/Pango development
+libraries. For Debian/Ubuntu:
+
+```bash
+sudo apt-get install python3 make g++ pkg-config libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev
+```
+
+The root Dockerfile installs these in its frontend build stage, not the final
+runtime image. Canvas currently depends on the upstream-deprecated
+`prebuild-install` installer; npm may report that separate install-time notice.
+
 ## Architecture
 
 - `src/App.tsx` — main router and app shell

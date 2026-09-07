@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -8,6 +9,7 @@ from fastapi.testclient import TestClient
 from novel_to_comic.config import Config
 from novel_to_comic.models.finish import (
     FINISH_PREFLIGHT_VALIDATOR_VERSION,
+    ExportPackage,
     FinishPreflight,
     FinishProductionSpec,
     FinishResult,
@@ -96,6 +98,40 @@ def test_get_preflight_reuses_only_the_current_validator_version(tmp_path: Path)
 
     assert current.status_code == 200
     assert current.json()["validator_version"] == FINISH_PREFLIGHT_VALIDATOR_VERSION
+
+
+def test_preflight_requires_available_matching_packages_without_removing_them(tmp_path: Path):
+    client = _client(tmp_path)
+    target = TargetArtifacts(tmp_path / "demo")
+    export = target.export_path("pdf")
+    export.parent.mkdir(parents=True)
+    data = b"current PDF bytes"
+    export.write_bytes(data)
+    preflight = FinishPreflight(
+        edition_revision=1,
+        edition_sha256="a" * 64,
+        validator_version=FINISH_PREFLIGHT_VALIDATOR_VERSION,
+        production=FinishProductionSpec(canvas_width=100, canvas_height=160),
+        pages=(PreflightPage(
+            page_number=1, comic_page_revision=1, comic_page_sha256="b" * 64,
+            render_revision=1, render_image_sha256="c" * 64,
+        ),),
+        packages=(ExportPackage(
+            format="pdf", relative_path="exports/comic.pdf",
+            content_sha256=hashlib.sha256(data).hexdigest(),
+            byte_size=len(data), page_numbers=(1,),
+        ),),
+    )
+    target.write_preflight(preflight)
+    assert client.get("/api/projects/demo/export/preflight").status_code == 200
+
+    export.write_bytes(b"x" * len(data))
+    assert client.get("/api/projects/demo/export/preflight").status_code == 404
+    assert export.read_bytes() == b"x" * len(data)
+    assert target.read_preflight() == preflight
+
+    export.unlink()
+    assert client.get("/api/projects/demo/export/preflight").status_code == 404
 
 
 def test_export_download_uploads_the_current_bytes_to_r2_when_configured(

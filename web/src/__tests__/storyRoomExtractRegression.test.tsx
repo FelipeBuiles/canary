@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, apiFetch } from "../api/client";
@@ -11,7 +11,7 @@ import type { ProjectStatus, StageInfo, StageStatus, StoryDecision } from "../ty
 // StoryRoom) run against controlled apiFetch responses. Nothing here echoes a
 // mocked hook — a 404 below is the genuine pre-stage artifact state.
 vi.mock("../api/client", async (importOriginal) => {
-  const actual = await importOriginal<ApiClient>();
+  const actual = await importOriginal<typeof ApiClient>();
   return { ...actual, apiFetch: vi.fn() };
 });
 
@@ -72,9 +72,38 @@ const storyFixture: StoryDecision = {
     title: "The Last Incantation",
     author: "H. P. Lovecraft",
     total_scenes: 1,
-    characters: [{ id: "char_1", name: "Elena", visual_anchor: "Silver-streaked dark hair" }],
-    locations: [{ id: "loc_1", name: "The Archive", visual_anchor: "Salt-stained stone stacks" }],
-    scenes: [{ id: "scene_1", chapter: 1, title: "The Locked Shelf", summary: "Elena finds the forbidden ledger." }],
+    characters: [{
+      id: "char_1",
+      name: "Elena",
+      visual_anchor: "Silver-streaked dark hair",
+      age_range: "40–50",
+      gender: "female",
+      distinguishing_features: ["Silver streak in dark hair"],
+      baseline_affect: "Resolute",
+      default_outfit: "Dark wool coat",
+      relationships: [],
+      first_appearance_scene: "scene_1",
+      appearance_states: [],
+    }],
+    locations: [{
+      id: "loc_1",
+      name: "The Archive",
+      visual_anchor: "Salt-stained stone stacks",
+      time_of_day: "Night",
+      mood: "Foreboding",
+      appearance_states: [],
+    }],
+    scenes: [{
+      id: "scene_1",
+      chapter: 1,
+      title: "The Locked Shelf",
+      location_id: "loc_1",
+      character_ids: ["char_1"],
+      summary: "Elena finds the forbidden ledger.",
+      scene_type: "discovery",
+      narrative_beat: "The forbidden ledger reveals the investigation's next lead.",
+      source_start_quote: "Elena opened the locked shelf.",
+    }],
     narrative_arcs: [],
     style_notes: null,
     props: [],
@@ -102,10 +131,13 @@ const storyFixture: StoryDecision = {
 
 let storyResult: { data: StoryDecision } | { error: unknown };
 let statusResult: ProjectStatus;
+let statusError: ApiError | null;
 
 function renderRoom() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
+    // Keep retryOnMount enabled: nested observers must not remount endlessly
+    // between the room's loading and error states.
   });
   render(
     <QueryClientProvider client={client}>
@@ -123,6 +155,7 @@ function renderRoom() {
 
 describe("StoryRoom Extract background loading (regression)", () => {
   beforeEach(() => {
+    statusError = null;
     mockedApiFetch.mockReset();
     mockedApiFetch.mockImplementation(
       (async (path: string) => {
@@ -130,7 +163,10 @@ describe("StoryRoom Extract background loading (regression)", () => {
           if ("error" in storyResult) throw storyResult.error;
           return storyResult.data;
         }
-        if (path === "/projects/demo/status") return statusResult;
+        if (path === "/projects/demo/status") {
+          if (statusError) throw statusError;
+          return statusResult;
+        }
         if (path === "/credits/balance") return { balance_credits: 1000 };
         if (path.startsWith("/projects/demo/estimate")) {
           return {
@@ -154,8 +190,8 @@ describe("StoryRoom Extract background loading (regression)", () => {
 
     // Nothing has run yet — pending docket, not a load error.
     await waitFor(() => {
-      expect(screen.getByText("WAITING IN THE PRODUCTION LINE")).toBeTruthy();
-      expect(screen.queryByText("COULD NOT LOAD")).toBeNull();
+      expect(screen.getByRole("button", { name: "Start Story analysis" })).toBeTruthy();
+      expect(screen.queryByText("API 404: story not found")).toBeNull();
     });
 
     // Extract running: artifact still 404 — still progress, not a load error.
@@ -165,8 +201,8 @@ describe("StoryRoom Extract background loading (regression)", () => {
     await client.invalidateQueries({ queryKey: ["project", "demo", "status"] });
 
     await waitFor(() => {
-      expect(screen.getByText("RUNNING")).toBeTruthy();
-      expect(screen.queryByText("COULD NOT LOAD")).toBeNull();
+      expect(screen.getByRole("progressbar")).toBeTruthy();
+      expect(screen.queryByText("API 404: story not found")).toBeNull();
     });
 
     // Extract done, Brief running: artifact still 404 — still progress.
@@ -174,8 +210,8 @@ describe("StoryRoom Extract background loading (regression)", () => {
     await client.invalidateQueries({ queryKey: ["project", "demo", "status"] });
 
     await waitFor(() => {
-      expect(screen.getByText("RUNNING")).toBeTruthy();
-      expect(screen.queryByText("COULD NOT LOAD")).toBeNull();
+      expect(screen.getByRole("progressbar")).toBeTruthy();
+      expect(screen.queryByText("API 404: story not found")).toBeNull();
     });
 
     // Brief ready and the artifact written: the editor appears on the same mount.
@@ -183,10 +219,8 @@ describe("StoryRoom Extract background loading (regression)", () => {
     statusResult = { ...projectStatus("complete", "awaiting_review"), is_running: false };
     await client.invalidateQueries({ queryKey: ["project", "demo", "status"] });
 
-    expect(await screen.findByText("CONFIRM THE STORY & BRIEF")).toBeTruthy();
-    expect(screen.getByText("The Last Incantation")).toBeTruthy();
+    expect(await screen.findByText("The Last Incantation")).toBeTruthy();
     expect(screen.getByText("The investigation closes its causal loop")).toBeTruthy();
-    expect(screen.queryByText("COULD NOT LOAD")).toBeNull();
   });
 
   it("keeps a genuine ready-stage 404 visible as COULD NOT LOAD", async () => {
@@ -194,43 +228,34 @@ describe("StoryRoom Extract background loading (regression)", () => {
     statusResult = { ...projectStatus("complete", "complete"), is_running: false };
     renderRoom();
 
-    expect(await screen.findByText("COULD NOT LOAD")).toBeTruthy();
-    expect(screen.getByText("ERROR DETAILS")).toBeTruthy();
-    expect(screen.getByText("API 404: story not found")).toBeTruthy();
+    const error = await screen.findByText("API 404: story not found");
+    const details = error.closest("details")!;
+    fireEvent.click(details.querySelector("summary")!);
+    expect(details.open).toBe(true);
   });
 
-  it("surfaces a genuine status failure instead of hiding it behind the gate", async () => {
+  it("exposes a status failure and recovers through the real status query without remounting", async () => {
     storyResult = { error: new ApiError(404, "story not found") };
-    mockedApiFetch.mockImplementation(
-      (async (path: string) => {
-        if (path === "/projects/demo/status") throw new ApiError(500, "status boom");
-        if (path === "/credits/balance") return { balance_credits: 1000 };
-        throw new Error(`unexpected apiFetch path in test: ${path}`);
-      }) as unknown as typeof apiFetch,
-    );
+    statusError = new ApiError(500, "status boom");
     const client = renderRoom();
-    await waitFor(() => {
-      const s = client.getQueryState(["project", "demo", "status"]);
-      console.log(
-        "PROBE status=",
-        s?.status,
-        "fetch=",
-        s?.fetchStatus,
-        "failures=",
-        s?.failureCount,
-        "fetchFailures=",
-        s?.fetchFailureCount,
-        "err=",
-        s?.error ? String(s.error) : null,
-        "ncalls=",
-        mockedApiFetch.mock.calls.length,
-      );
-      expect(s?.status).not.toBe("pending");
-    });
 
-    expect(await screen.findByText("COULD NOT LOAD")).toBeTruthy();
-    expect(screen.getByText("ERROR DETAILS")).toBeTruthy();
-    expect(screen.getByText("API 500: status boom")).toBeTruthy();
+    const error = await screen.findByText("API 500: status boom");
+    const details = error.closest("details")!;
+    fireEvent.click(details.querySelector("summary")!);
+    expect(details.open).toBe(true);
+    expect(screen.queryByRole("button", { name: "Start Story analysis" })).toBeNull();
+    expect(screen.queryByText("API 404: story not found")).toBeNull();
+
+    // A successful status refresh unlocks the artifact query on the same
+    // mount, without a hook mock or manual story invalidation.
+    statusError = null;
+    statusResult = { ...projectStatus("complete", "awaiting_review"), is_running: false };
+    storyResult = { data: storyFixture };
+    await client.invalidateQueries({ queryKey: ["project", "demo", "status"] });
+
+    expect(await screen.findByText("The Last Incantation")).toBeTruthy();
+    expect(screen.getByText("The investigation closes its causal loop")).toBeTruthy();
+    expect(screen.queryByText("API 500: status boom")).toBeNull();
   });
 
   it("surfaces the failed Brief error instead of a missing-artifact error", async () => {
@@ -241,12 +266,12 @@ describe("StoryRoom Extract background loading (regression)", () => {
     });
     renderRoom();
 
-    expect(await screen.findByText("PRESS STOPPED")).toBeTruthy();
-    expect(screen.getByText("Brief run failed")).toBeTruthy();
-    expect(screen.getByText("TECHNICAL DETAILS")).toBeTruthy();
-    expect(screen.getByText("traceback: boom")).toBeTruthy();
+    expect(await screen.findByText("Brief run failed")).toBeTruthy();
+    const details = screen.getByText("traceback: boom").closest("details")!;
+    fireEvent.click(details.querySelector("summary")!);
+    expect(details.open).toBe(true);
     expect(screen.getByRole("button", { name: "Retry stage" })).toBeTruthy();
-    expect(screen.queryByText("COULD NOT LOAD")).toBeNull();
+    expect(screen.queryByText("API 404: story not found")).toBeNull();
   });
 
   it("keeps a real API failure actionable once the stage is ready", async () => {
@@ -256,8 +281,9 @@ describe("StoryRoom Extract background loading (regression)", () => {
     statusResult = { ...projectStatus("complete", "awaiting_review"), is_running: false };
     renderRoom();
 
-    expect(await screen.findByText("COULD NOT LOAD")).toBeTruthy();
-    expect(screen.getByText("ERROR DETAILS")).toBeTruthy();
-    expect(screen.getByText("API 500: boom")).toBeTruthy();
+    const error = await screen.findByText("API 500: boom");
+    const details = error.closest("details")!;
+    fireEvent.click(details.querySelector("summary")!);
+    expect(details.open).toBe(true);
   });
 });

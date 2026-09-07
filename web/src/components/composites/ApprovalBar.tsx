@@ -53,23 +53,23 @@ export function ApprovalBar({
   return (
     <BottomBarPortal>
       <footer className="relative flex min-h-shell-footer flex-wrap items-center gap-x-4 gap-y-2 border-t-[3px] border-ink-black bg-bristol px-4 py-3 shadow-[0_-4px_0_0_var(--color-ghost-shadow)] md:py-0 md:pl-0 md:pr-6">
-        <div className="hidden self-stretch bg-narrator-gold px-5 font-meta text-[0.54rem] font-bold uppercase tracking-[0.14em] text-ink-black md:flex md:items-center">
+        <div className="hidden self-stretch bg-narrator-gold px-5 font-meta text-xs font-bold uppercase tracking-[0.1em] text-ink-black md:flex md:items-center">
           {t("Next:")}
         </div>
         <div className="w-full min-w-0 md:w-auto md:flex-1">
-          <div className="font-body text-[0.88rem] font-bold leading-snug text-ink-black md:truncate md:text-[0.92rem]">
-            <span className="mr-2 font-meta text-[0.55rem] font-bold uppercase tracking-[0.12em] text-hero-red md:hidden">
+          <div className="font-body text-sm font-bold leading-snug text-ink-black">
+            <span className="mr-2 font-meta text-xs font-bold uppercase tracking-[0.1em] text-hero-red md:hidden">
               {t("Next:")}
             </span>
             {next}
           </div>
           {costLine && (
-            <div className="mt-1 font-meta text-[0.6rem] font-semibold tracking-[0.08em] text-ink-black/65">
+            <div className="mt-1 font-meta text-xs font-semibold tracking-[0.04em] text-ink-muted">
               {costLine}
             </div>
           )}
         </div>
-        <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2 md:gap-3">
+        <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2 md:gap-3">
           {secondary}
           <Button size="md" onClick={onPrimary} disabled={primaryDisabled || busy}>
             {busy ? t("WORKING…") : primaryLabel}

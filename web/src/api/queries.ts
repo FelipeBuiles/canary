@@ -25,6 +25,9 @@ import {
   getBookPlan,
   getStageValidation,
   getCompletePage,
+  getCompletePageEstimate,
+  getPageAnalysisEstimate,
+  getCompletePageBatchEstimate,
   listCompletePages,
   getFinishPreflight,
   runFinishPreflight,
@@ -562,6 +565,45 @@ export function useCompletePage(project: string | undefined, pageNumber: number 
   });
 }
 
+export function useCompletePageBatchEstimate(project: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ["project", project, "page-batch-estimate"],
+    queryFn: () => getCompletePageBatchEstimate(project!),
+    enabled: !!project && enabled,
+    staleTime: 0,
+    retry: false,
+  });
+}
+
+export function useCompletePageEstimate(
+  project: string | undefined,
+  pageNumber: number | undefined,
+  depiction: "canonical" | "less_graphic" = "canonical",
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["project", project, "page-estimate", pageNumber, depiction],
+    queryFn: () => getCompletePageEstimate(project!, pageNumber!, depiction),
+    enabled: !!project && pageNumber != null && enabled,
+    staleTime: 0,
+    retry: false,
+  });
+}
+
+export function usePageAnalysisEstimate(
+  project: string | undefined,
+  pageNumber: number | undefined,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["project", project, "page-analysis-estimate", pageNumber],
+    queryFn: () => getPageAnalysisEstimate(project!, pageNumber!),
+    enabled: !!project && pageNumber != null && enabled,
+    staleTime: 0,
+    retry: false,
+  });
+}
+
 function invalidatePageReview(qc: ReturnType<typeof useQueryClient>, project: string, pageNumber?: number) {
   qc.invalidateQueries({ queryKey: ["project", project, "complete-pages"] });
   if (pageNumber != null) {
@@ -643,6 +685,17 @@ export function useFinishPreflight(project: string | undefined, enabled = true) 
   });
 }
 
+export function useRunFinishPreflight() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project }: { project: string }) => runFinishPreflight(project),
+    onSuccess: (result, { project }) => {
+      qc.setQueryData(["project", project, "finish-preflight"], result.preflight);
+      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+    },
+  });
+}
+
 export function useExport() {
   const qc = useQueryClient();
   return useMutation({
@@ -652,6 +705,11 @@ export function useExport() {
       if (result.preflight) {
         qc.setQueryData(["project", project, "finish-preflight"], result.preflight);
       }
+      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+    },
+    onError: (_error, { project }) => {
+      // Packaging can invalidate old files before a later format fails.
+      qc.invalidateQueries({ queryKey: ["project", project, "finish-preflight"] });
       qc.invalidateQueries({ queryKey: ["project", project, "status"] });
     },
   });

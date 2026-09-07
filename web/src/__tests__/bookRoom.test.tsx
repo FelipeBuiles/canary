@@ -1,262 +1,254 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
+import type { FinishPreflight } from "../types/api";
 
 const exportBook = vi.fn();
-const finishPreflight = vi.fn();
-let unresolvedIssueIds: string[] = [];
-let acceptedIssueIds: string[] = ["page-issue-1"];
-let invariantFailures: Array<{
-  id: string;
-  owner_stage: "draw";
-  code: string;
-  message: string;
-  evidence: string[];
-  blocking?: true;
-}> = [];
-let diagnostics: Array<{
-  id: string;
-  owner_stage: "plan";
-  code: string;
-  message: string;
-  evidence: string[];
-}> = [];
+const rerunPreflight = vi.fn();
+const retryPreflight = vi.fn();
+let preflight: FinishPreflight;
 let preflightLoading = false;
-let finishStatus = "pending";
-let drawStatus = "complete";
+let preflightRefreshing = false;
+let preflightError: Error | null = null;
+let exportError: Error | null = null;
+let pendingFormat: "pdf" | "cbz" | null = null;
+let devDiagnostics = false;
 
-function drawnPage(
-  pageNumber: number,
-  spreadRole: "single" | "left" | "right" | "spread" = "single",
-  revision: number | null = 1,
-) {
+function drawnPage(pageNumber: number, spreadRole: "single" | "left" | "right" = "single", revision: number | null = 1) {
   return {
     page: { page_number: pageNumber, spread_role: spreadRole },
     active_render: revision === null ? null : { render: { revision } },
+    issues: [],
   };
 }
-
-let drawnPages: ReturnType<typeof drawnPage>[] = [drawnPage(1)];
+let drawnPages = [drawnPage(1)];
 
 vi.mock("../api/queries", () => ({
   useProviderUsage: () => ({ data: undefined }),
-  useProjectStatus: () => ({
-    data: {
-      finish_ready: finishStatus === "complete",
-      stages: {
-        finish: { status: finishStatus },
-        draw: { status: drawStatus },
-      },
+  useProjectStatus: () => ({ data: {
+    project_name: "The Lantern Keeper",
+    finish_ready: true,
+    stages: { finish: { status: "complete" }, draw: { status: "complete" } },
+  } }),
+  useFinishPreflight: () => ({
+    data: preflightLoading || preflightError ? undefined : {
+      ...preflight,
+      pages: preflight.pages.map((page) => ({ ...page, diagnostics: devDiagnostics ? [{
+        id: "continuity", owner_stage: "plan", code: "continuity",
+        message: "Internal continuity evidence", evidence: [],
+      }] : [] })),
     },
+    isLoading: preflightLoading,
+    isFetching: preflightLoading || preflightRefreshing,
+    error: preflightError,
+    refetch: retryPreflight,
   }),
-  useFinishPreflight: (...args: [string | undefined, boolean]) => {
-    finishPreflight(...args);
-    return {
-      data: preflightLoading ? undefined : {
-        edition_revision: 1,
-        pages: [
-          {
-            page_number: 1,
-            comic_page_revision: 2,
-            render_revision: 3,
-            invariant_failures: invariantFailures,
-            diagnostics,
-            unresolved_editorial_issue_ids: unresolvedIssueIds,
-            accepted_editorial_issue_ids: acceptedIssueIds,
-          },
-        ],
-        correction_requests: [],
-        packages: [{ format: "pdf", relative_path: "exports/comic.pdf", byte_size: 2048 }],
-        packaging_failures: [],
-      },
-      isLoading: preflightLoading,
-      error: null,
-    };
-  },
-  useExport: () => ({ mutate: exportBook, isPending: false, data: null, error: null }),
+  useExport: () => ({ mutate: exportBook, isPending: pendingFormat !== null, variables: pendingFormat ? { format: pendingFormat } : undefined, error: exportError }),
   useCreditBalance: () => ({ data: undefined }),
   useCompletePages: () => ({ data: { pages: drawnPages } }),
+  useRunFinishPreflight: () => ({ mutate: rerunPreflight, isPending: false, error: null }),
 }));
 
 import { BookRoom } from "../pages/rooms/BookRoom";
 
 function renderRoom() {
-  render(
+  return render(
     <MemoryRouter initialEntries={["/project/demo/book"]}>
-      <I18nProvider>
-        <Routes>
-          <Route path="/project/:id/book" element={<BookRoom />} />
-        </Routes>
-      </I18nProvider>
+      <I18nProvider><Routes><Route path="/project/:id/book" element={<BookRoom />} /></Routes></I18nProvider>
     </MemoryRouter>,
   );
 }
 
-describe("BookRoom", () => {
-  beforeEach(() => {
-    exportBook.mockReset();
-    finishPreflight.mockReset();
-    unresolvedIssueIds = [];
-    acceptedIssueIds = ["page-issue-1"];
-    invariantFailures = [];
-    diagnostics = [];
-    window.localStorage.removeItem("canary.showDevContent");
-    preflightLoading = false;
-    finishStatus = "pending";
-    drawStatus = "complete";
-    drawnPages = [drawnPage(1)];
-  });
+beforeEach(() => {
+  exportBook.mockReset();
+  retryPreflight.mockReset();
+  preflightLoading = false;
+  preflightRefreshing = false;
+  preflightError = null;
+  exportError = null;
+  pendingFormat = null;
+  devDiagnostics = false;
+  rerunPreflight.mockReset();
+  window.localStorage.removeItem("canary.showDevContent");
+  drawnPages = [drawnPage(1)];
+  preflight = {
+    edition_revision: 1,
+    pages: [{ page_number: 1, comic_page_revision: 2, render_revision: 3,
+      invariant_failures: [], unresolved_editorial_issue_ids: [], accepted_editorial_issue_ids: [] }],
+    correction_requests: [], packages: [], packaging_failures: [],
+  };
+});
 
-  it("runs Finish preflight automatically after Draw completes", () => {
+describe("BookRoom edition decisions", () => {
+  it("keeps accepted editorial decisions inspectable without blocking packaging", () => {
+    preflight.pages[0].accepted_editorial_issue_ids = ["accepted-concern"];
     renderRoom();
-
-    expect(finishPreflight).toHaveBeenCalledWith("demo", true);
+    fireEvent.click(screen.getByText("Accepted decisions"));
+    expect(screen.getByRole("link", { name: "Page 1 · 1 accepted" }).getAttribute("href")).toBe("/project/demo/pages?page=1&review=visual");
+    expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", false);
   });
 
-  it("shows Finish preflight and accepted issue evidence", () => {
+  it("routes technical and editorial blockers to their distinct page reviews", () => {
+    preflight.pages[0].invariant_failures = [{ id: "file", owner_stage: "draw", code: "missing", message: "Page file missing", evidence: [] }];
+    preflight.pages[0].unresolved_editorial_issue_ids = ["visual-concern"];
     renderRoom();
-
-    expect(screen.getByRole("heading", { name: "FINISH PREFLIGHT" })).toBeTruthy();
-    expect(screen.getByText("1 page ready")).toBeTruthy();
-    expect(screen.getByText("1 accepted editorial issue")).toBeTruthy();
-    expect(screen.queryByText(/compose/i)).toBeNull();
-    expect(screen.queryByText("page-issue-1")).toBeNull();
+    expect(screen.getByRole("link", { name: "Open page checks · Page 1" }).getAttribute("href")).toBe("/project/demo/pages?page=1&review=checks");
+    expect(screen.getByRole("link", { name: "Review page 1" }).getAttribute("href")).toBe("/project/demo/pages?page=1&review=visual");
+    expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
   });
 
-  it("shows a clean result as success instead of a warning", () => {
-    acceptedIssueIds = [];
+  it("links correction requests to the exact page checks", () => {
+    preflight.correction_requests = [{ id: "correction", page_number: 7, failure_codes: ["lettering"], requested_correction: "Restore missing caption" }];
     renderRoom();
-
-    expect(screen.getByText("NO EDITORIAL ISSUES")).toBeTruthy();
-    expect(screen.getByText("No editorial issues")).toBeTruthy();
-    expect(screen.queryByText("Finish preflight runs before the first export. It does not call an image model.")).toBeNull();
+    expect(screen.getByRole("link", { name: "Open page checks · Page 7" }).getAttribute("href")).toBe("/project/demo/pages?page=7&review=checks");
   });
 
-  it("separates technical findings from editorial issue decisions", () => {
-    acceptedIssueIds = [];
-    invariantFailures = [{
-      id: "finish-page-001-exact_ocr_status",
-      owner_stage: "draw",
-      code: "exact_ocr_status",
-      message: "Active page render lacks exact canonical OCR status.",
-      evidence: ["The detector result needs visual review."],
-      blocking: true,
-    }];
+  it("recovers an unavailable preflight inline without enabling export", () => {
+    preflightError = new Error("Unavailable");
     renderRoom();
-
-    expect(screen.getByText("1 technical findings")).toBeTruthy();
-    expect(screen.getByText("NO EDITORIAL ISSUES")).toBeTruthy();
-    expect(screen.getByText("No editorial issues")).toBeTruthy();
-    expect(screen.getByText("Active page render lacks exact canonical OCR status.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "EXPORT PDF" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("button", { name: "Retry edition checks" }));
+    expect(retryPreflight).toHaveBeenCalledOnce();
   });
 
-  it("keeps non-blocking continuity diagnostics out of the author view", () => {
-    diagnostics = [{
-      id: "finish-page-001-cross_page_appearance_state",
-      owner_stage: "plan",
-      code: "cross_page_appearance_state",
-      message: "Page-scoped appearance state is stale across pages.",
-      evidence: ["Internal state evidence."],
-    }];
-
-    renderRoom();
-
-    expect(screen.queryByText("Page-scoped appearance state is stale across pages.")).toBeNull();
-    expect(screen.getByRole("button", { name: "EXPORT PDF" })).not.toHaveProperty("disabled", true);
-  });
-
-  it("shows continuity diagnostics only with Dev Content enabled", () => {
-    window.localStorage.setItem("canary.showDevContent", "1");
-    diagnostics = [{
-      id: "finish-page-001-cross_page_appearance_state",
-      owner_stage: "plan",
-      code: "cross_page_appearance_state",
-      message: "Page-scoped appearance state is stale across pages.",
-      evidence: ["Internal state evidence."],
-    }];
-
-    renderRoom();
-
-    expect(screen.getByRole("heading", { name: "TECHNICAL DIAGNOSTICS" })).toBeTruthy();
-    expect(screen.getByText("Page-scoped appearance state is stale across pages.")).toBeTruthy();
-  });
-
-  it("keeps export disabled while the automatic preflight is running", () => {
+  it("blocks both formats while a preflight is loading", () => {
     preflightLoading = true;
     renderRoom();
-
-    expect(screen.getByText("PREPARING PREFLIGHT…")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "EXPORT PDF" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Create CBZ" })).toHaveProperty("disabled", true);
   });
 
-  it("exports the verified book", () => {
+  it("keeps internal diagnostics out of author decisions and does not block export", () => {
+    devDiagnostics = true;
     renderRoom();
+    expect(screen.queryByText("Internal continuity evidence")).toBeNull();
+    expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", false);
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "EXPORT PDF" }));
+  it("makes internal diagnostics inspectable with Dev Content enabled", () => {
+    devDiagnostics = true;
+    window.localStorage.setItem("canary.showDevContent", "1");
+    renderRoom();
+    expect(screen.getByText("Internal continuity evidence")).toBeTruthy();
+  });
+
+  it("restores a server-confirmed package receipt and download without requiring another export", () => {
+    preflight.packages = [{ format: "pdf", relative_path: "exports/comic.pdf", byte_size: 2048 }];
+    renderRoom();
+    expect(screen.getByRole("heading", { name: "Edition ready" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "DOWNLOAD PDF" }).getAttribute("href")).toBe("/api/projects/demo/export/pdf");
+    expect(screen.queryByRole("button", { name: "Create PDF" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Create CBZ" })).toBeTruthy();
+    expect(exportBook).not.toHaveBeenCalled();
+  });
+
+  it("does not promise cached downloads while package availability is being rechecked", () => {
+    preflight.packages = [{ format: "pdf", relative_path: "exports/comic.pdf", byte_size: 2048 }];
+    preflightRefreshing = true;
+    renderRoom();
+    expect(screen.queryByRole("heading", { name: "Edition ready" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "DOWNLOAD PDF" })).toBeNull();
+    fireEvent.click(screen.getByText("Rebuild package"));
+    expect(screen.getByRole("button", { name: "Rebuild PDF" })).toHaveProperty("disabled", true);
+  });
+
+  it("names the busy format and prevents competing package requests", () => {
+    pendingFormat = "cbz";
+    renderRoom();
+    expect(screen.getByRole("button", { name: "Creating CBZ…" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
+  });
+
+  it("does not announce an edition ready when export returns no confirmed package", () => {
+    exportBook.mockImplementation((_variables, callbacks) => callbacks.onSuccess({ url: null, preflight }));
+    renderRoom();
+    fireEvent.click(screen.getByRole("button", { name: "Create PDF" }));
+    expect(screen.queryByRole("heading", { name: "Edition ready" })).toBeNull();
+  });
+
+  it("reruns persisted packaging failures rather than only rereading the same report", () => {
+    preflight.packaging_failures = [{ id: "package", owner_stage: "finish", code: "package", message: "Could not normalize files", evidence: [] }];
+    renderRoom();
+    fireEvent.click(screen.getByRole("button", { name: "Retry edition checks" }));
+    expect(rerunPreflight).toHaveBeenCalledWith({ project: "demo" });
+    expect(retryPreflight).not.toHaveBeenCalled();
+  });
+
+  it("shows a persistent receipt only after the server confirms the created package", () => {
+    exportBook.mockImplementation((_variables, callbacks) => {
+      preflight = { ...preflight, packages: [{ format: "pdf", relative_path: "exports/comic.pdf", byte_size: 2048 }] };
+      callbacks.onSuccess({ url: "/saved-edition.pdf", preflight });
+    });
+    const room = renderRoom();
+    fireEvent.click(screen.getByRole("button", { name: "Create PDF" }));
+    expect(screen.getByRole("heading", { name: "Edition ready" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "DOWNLOAD PDF" }).getAttribute("href")).toBe("/saved-edition.pdf");
+    room.unmount();
+    renderRoom();
+    expect(screen.getByRole("heading", { name: "Edition ready" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "DOWNLOAD PDF" }).getAttribute("href")).toBe("/api/projects/demo/export/pdf");
+  });
+
+  it("can rebuild a previously packaged PDF after a second format export fails", () => {
+    preflight.packages = [{ format: "pdf", relative_path: "exports/comic.pdf", byte_size: 2048 }];
+    exportError = new Error("CBZ packaging failed");
+    exportBook.mockImplementation((_variables, callbacks) => {
+      exportError = null;
+      callbacks.onSuccess({ url: "/rebuilt-edition.pdf", preflight });
+    });
+    renderRoom();
+    expect(screen.getByRole("alert").textContent).toContain("CBZ packaging failed");
+    fireEvent.click(screen.getByText("Rebuild package"));
+    fireEvent.click(screen.getByRole("button", { name: "Rebuild PDF" }));
+    expect(exportBook).not.toHaveBeenCalled();
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Rebuild PDF" }));
     expect(exportBook).toHaveBeenCalledWith(
-      { project: "demo", format: "pdf" },
+      { project: "demo", format: "pdf", force: true },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
+    expect(screen.getByRole("link", { name: "DOWNLOAD PDF" }).getAttribute("href")).toBe("/rebuilt-edition.pdf");
   });
+});
 
-  it("blocks export while preflight still has an unresolved page issue", () => {
-    unresolvedIssueIds = ["page-issue-2"];
-    renderRoom();
-
-    expect(screen.getByRole("button", { name: "EXPORT PDF" })).toHaveProperty("disabled", true);
-  });
-
-  it("offers the reader once pages are drawn", () => {
-    drawnPages = [drawnPage(1), drawnPage(2)];
-    renderRoom();
-
-    expect(screen.getByRole("heading", { name: "READ THE BOOK" })).toBeTruthy();
-    expect(screen.getByText("2 pages drawn")).toBeTruthy();
-  });
-
-  it("hides the reader when no page has been drawn", () => {
+describe("Book reader", () => {
+  it("does not offer reading before a page has artwork", () => {
     drawnPages = [drawnPage(1, "single", null)];
     renderRoom();
-
-    expect(screen.queryByRole("heading", { name: "READ THE BOOK" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "START READING" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Read your book" })).toBeNull();
   });
 
-  it("reads pages from the screen rendition tied to each render revision", () => {
+  it("reads the saved rendition, reaches an intentional ending and returns to the edition", () => {
     drawnPages = [drawnPage(1), drawnPage(2)];
     renderRoom();
-
-    fireEvent.click(screen.getByRole("button", { name: "START READING" }));
-
+    fireEvent.click(screen.getByRole("button", { name: "Read your book" }));
     const reader = screen.getByRole("dialog", { name: "Book reader" });
-    expect(reader).toBeTruthy();
-    const sources = Array.from(reader.querySelectorAll("img")).map((img) => img.getAttribute("src"));
-    expect(sources).toContain("/api/projects/demo/pages/1/renders/1/preview/reader");
-  });
-
-  it("turns pages with the arrow keys and closes on Escape", () => {
-    drawnPages = [drawnPage(1), drawnPage(2)];
-    renderRoom();
-
-    fireEvent.click(screen.getByRole("button", { name: "START READING" }));
-    expect(screen.getByText("Page 1")).toBeTruthy();
-
+    expect(within(reader).getByAltText("Page 1 — Page 1").getAttribute("src")).toBe("/api/projects/demo/pages/1/renders/1/preview/reader");
     fireEvent.keyDown(window, { key: "ArrowRight" });
-    expect(screen.getByText("Page 2")).toBeTruthy();
-
-    fireEvent.keyDown(window, { key: "Escape" });
+    expect(within(reader).getByText("End of book")).toBeTruthy();
+    fireEvent.click(within(reader).getByRole("button", { name: "Back to edition" }));
     expect(screen.queryByRole("dialog", { name: "Book reader" })).toBeNull();
   });
 
-  it("reads a facing pair as one spread", () => {
+  it("keeps a facing pair together and preserves its page when switching layouts", () => {
     drawnPages = [drawnPage(1), drawnPage(2, "left"), drawnPage(3, "right")];
     renderRoom();
-
-    fireEvent.click(screen.getByRole("button", { name: "START READING" }));
+    fireEvent.click(screen.getByRole("button", { name: "Read your book" }));
     fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(screen.getByRole("slider", { name: "Jump to page" }).getAttribute("aria-valuetext")).toBe("Pages 2–3");
+    fireEvent.click(screen.getByRole("button", { name: "SPREADS" }));
+    expect(screen.getByRole("slider", { name: "Jump to page" }).getAttribute("aria-valuetext")).toBe("Page 2");
+  });
 
-    expect(screen.getByText("Pages 2–3")).toBeTruthy();
+  it("does not hijack keyboard input intended for the page slider", () => {
+    drawnPages = [drawnPage(1), drawnPage(2), drawnPage(3)];
+    renderRoom();
+    fireEvent.click(screen.getByRole("button", { name: "Read your book" }));
+    const slider = screen.getByRole("slider", { name: "Jump to page" });
+    act(() => slider.focus());
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+    expect(slider.getAttribute("aria-valuetext")).toBe("Page 1");
+    fireEvent.change(slider, { target: { value: "1" } });
+    expect(slider.getAttribute("aria-valuetext")).toBe("Page 2");
   });
 });

@@ -73,9 +73,11 @@ export function ProjectSettingsPage() {
           <Card>
             <SettingsRow label={t("UI LANGUAGE")} hint={t("Controls the studio interface language. Stored locally.")}>
               <SelectField
+                aria-label={t("UI LANGUAGE")}
+                name="ui_language"
                 value={language}
                 onChange={(e) => setLanguage(e.target.value as LanguageCode)}
-                className="max-w-sm bg-bristol font-meta text-[0.72rem] tracking-[0.1em]"
+                className="max-w-sm bg-bristol font-body text-base"
               >
                 {LANGUAGES.map((l) => (
                   <option key={l.code} value={l.code}>{l.label}</option>
@@ -88,10 +90,12 @@ export function ProjectSettingsPage() {
               hint={t("Controls generated dialogue, narration, style suggestions, and prompt artifacts for this project.")}
             >
               <SelectField
+                aria-label={t("OUTPUT LANGUAGE")}
+                name="target_language"
                 value={config?.target_language ?? "en"}
                 onChange={(e) => patch({ target_language: e.target.value as LanguageCode })}
                 disabled={!config || updating}
-                className="max-w-sm bg-bristol font-meta text-[0.72rem] tracking-[0.1em]"
+                className="max-w-sm bg-bristol font-body text-base"
               >
                 {LANGUAGES.map((l) => (
                   <option key={l.code} value={l.code}>{l.label}</option>
@@ -135,12 +139,14 @@ export function ProjectSettingsPage() {
               hint={t("Controls speed, fidelity, and cost across the whole pipeline. DEV mode forces Fast.")}
             >
               <SelectField
+                aria-label={t("GENERATION QUALITY")}
+                name="quality_preset"
                 value={config?.quality_preset ?? "balanced"}
                 onChange={(e) => {
                   patch({ quality_preset: e.target.value as QualityPreset });
                 }}
                 disabled={!config || updating || !!config?.dev_mode}
-                className="max-w-sm bg-bristol font-meta text-[0.72rem] tracking-[0.1em]"
+                className="max-w-sm bg-bristol font-body text-base"
               >
                 {QUALITY_PRESET_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>{option.label} — {option.desc}</option>
@@ -158,7 +164,7 @@ export function ProjectSettingsPage() {
               </div>
               <p className="mt-3 text-[0.88rem] leading-6 text-ink-black/65">
                 This will permanently delete the project{" "}
-                <span className="font-bold font-meta text-[0.72rem] tracking-[0.08em]">{projectTitle}</span>{" "}
+                <span className="font-bold font-meta text-sm tracking-[0.04em]">{projectTitle}</span>{" "}
                 and all associated pipeline data, assets, and generated files. This action cannot be undone.
               </p>
               <div className="mt-5">
