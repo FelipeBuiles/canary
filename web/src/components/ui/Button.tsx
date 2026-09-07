@@ -16,10 +16,10 @@ const VARIANT_STYLES: Record<Variant, string> = {
 };
 
 const SIZE_STYLES: Record<Size, string> = {
-  xs: "min-h-9 px-2.5 py-1.5 font-meta text-[0.62rem] tracking-[0.12em]",
-  sm: "min-h-11 px-3.5 py-2 font-meta text-[0.72rem] tracking-[0.14em]",
-  md: "min-h-11 px-4.5 py-2.5 font-meta text-[0.82rem] tracking-[0.14em]",
-  lg: "min-h-12 px-7 py-3 font-meta text-[0.8rem] font-bold tracking-[0.08em]",
+  xs: "min-h-11 px-2.5 py-1.5 font-meta text-xs tracking-[0.08em]",
+  sm: "min-h-11 px-3.5 py-2 font-meta text-xs tracking-[0.1em]",
+  md: "min-h-11 px-4.5 py-2.5 font-meta text-sm tracking-[0.1em]",
+  lg: "min-h-12 px-7 py-3 font-meta text-sm font-bold tracking-[0.08em]",
 };
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -40,7 +40,7 @@ export function Button({
     <button
       type={type}
       className={cn(
-        "inline-flex min-w-0 cursor-pointer items-center justify-center gap-2 text-center leading-tight transition-[background-color,box-shadow,color,opacity,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] disabled:cursor-not-allowed",
+        "inline-flex min-w-0 cursor-pointer items-center justify-center gap-2 text-center leading-tight transition-[background-color,box-shadow,color,opacity,transform] duration-[var(--motion-press)] ease-[cubic-bezier(0.22,1,0.36,1)] disabled:cursor-not-allowed",
         VARIANT_STYLES[variant],
         SIZE_STYLES[size],
         fullWidth && "w-full",

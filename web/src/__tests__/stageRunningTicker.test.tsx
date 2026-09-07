@@ -14,10 +14,10 @@ afterEach(() => {
 });
 
 describe("StageRunning log ticker", () => {
-  it("renders fine with zero events", () => {
-    renderStage(<StageRunning stage="cast" itemsDone={1} itemsTotal={4} />);
-    expect(screen.getByText("RUNNING")).toBeTruthy();
-    expect(screen.getByText("1 / 4")).toBeTruthy();
+  it("does not invent a progress percentage before counts arrive", () => {
+    renderStage(<StageRunning stage="cast" />);
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBeNull();
+    expect(screen.queryByText(/\d+%/)).toBeNull();
   });
 
   it("clamps stale over-complete totals to a valid percentage", () => {
@@ -68,5 +68,13 @@ describe("StageRunning log ticker", () => {
     expect(screen.getByText("Step 3")).toBeTruthy();
     expect(screen.getByText("Step 4")).toBeTruthy();
     expect(screen.getByText("Step 5")).toBeTruthy();
+  });
+
+  it("keeps all Pages operations in Station 03 rather than exposing backend ordinals", () => {
+    const { rerender } = renderStage(<StageRunning stage="adapt" />);
+    expect(screen.getByText("03")).toBeTruthy();
+    rerender(<I18nProvider><StageRunning stage="draw" /></I18nProvider>);
+    expect(screen.getByText("03")).toBeTruthy();
+    expect(screen.queryByText("07")).toBeNull();
   });
 });

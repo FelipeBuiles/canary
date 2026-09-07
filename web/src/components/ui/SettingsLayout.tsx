@@ -30,7 +30,7 @@ export function SettingsRow({
   return (
     <section className="grid gap-4 border-b-[2px] border-ink-black/10 px-5 py-5 last:border-b-0 md:grid-cols-[210px_1fr] md:items-start md:gap-7 md:px-6">
       <div>
-        <h3 className="font-meta text-[0.62rem] font-bold uppercase tracking-[0.1em] text-ink-black">
+        <h3 className="font-meta text-xs font-bold uppercase tracking-[0.1em] text-ink-black">
           {label}
         </h3>
         {hint && (
@@ -104,7 +104,7 @@ export function SettingsLayout({
                 type="button"
                 onClick={() => onTabChange(tab.id)}
                 className={cn(
-                  "shrink-0 border-b-[3px] px-4 py-2.5 font-meta text-[0.68rem] tracking-[0.14em] transition-colors",
+                  "min-h-11 shrink-0 border-b-[3px] px-4 py-2.5 font-meta text-xs tracking-[0.1em] transition-colors",
                   activeTab === tab.id
                     ? "border-b-hero-red text-ink-black font-bold"
                     : "border-transparent text-ink-black/55 hover:text-ink-black/80",

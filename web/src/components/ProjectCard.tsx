@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { ProjectSummary, StageName } from "../types/api";
 import { LazyImage } from "./ui/LazyImage";
@@ -68,7 +69,15 @@ export function ProjectCard({
   const { t } = useI18n();
   const card = statusLine(project, t);
   const coverUrl = `/api/projects/${encodeURIComponent(project.id)}/files/cover/cover.png`;
-  const coverRevealed = project.has_cover && project.cover_job?.status === "complete";
+  const coverComplete = project.has_cover && project.cover_job?.status === "complete";
+  const [coverTransition, setCoverTransition] = useState({ project: project.id, complete: coverComplete, reveal: false });
+  if (coverTransition.project !== project.id || coverTransition.complete !== coverComplete) {
+    setCoverTransition({
+      project: project.id,
+      complete: coverComplete,
+      reveal: coverTransition.project === project.id && !coverTransition.complete && coverComplete,
+    });
+  }
 
   const stageKey = project.furthest_stage as StageName | null;
   const coverStyle = stageKey ? STAGE_COVER_STYLE[stageKey] : undefined;
@@ -78,7 +87,7 @@ export function ProjectCard({
   const station = stationRoute ? stationForRoute(stationRoute) : null;
 
   const cardContent = (
-    <article className={`h-full overflow-hidden border-[3px] border-ink-black/12 bg-bristol shadow-paper-sm transition-[border-color,box-shadow,transform] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:border-ink-black group-hover:-translate-x-[2px] group-hover:-translate-y-[2px] group-hover:shadow-ink group-focus-visible:border-ink-black group-focus-visible:-translate-x-[2px] group-focus-visible:-translate-y-[2px] group-focus-visible:shadow-ink${coverRevealed ? " animate-comic-pop" : ""}`}>
+    <article className="h-full overflow-hidden border-[3px] border-ink-black/12 bg-bristol shadow-paper-sm transition-[border-color,box-shadow,transform] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:border-ink-black group-hover:-translate-x-[2px] group-hover:-translate-y-[2px] group-hover:shadow-ink group-focus-visible:border-ink-black group-focus-visible:-translate-x-[2px] group-focus-visible:-translate-y-[2px] group-focus-visible:shadow-ink">
       <div className="relative border-b-[2px] border-ink-black/12 transition-colors duration-200 group-hover:border-ink-black group-focus-visible:border-ink-black">
       {project.has_cover ? (
         <LazyImage
@@ -86,13 +95,13 @@ export function ProjectCard({
           alt={`${project.project_name} cover`}
           aspect="6 / 5"
           loading="lazy"
-          containerClassName="w-full"
+          containerClassName={`w-full${coverTransition.reveal ? " animate-proof-reveal" : ""}`}
           className="transition-transform duration-300 group-hover:scale-[1.02]"
         />
       ) : coverPending ? (
         <div className="relative aspect-[6/5]">
           <Skeleton className="absolute inset-0" />
-          <div className="absolute bottom-0 left-0 z-10 bg-narrator-gold px-4 py-2.5 font-meta text-[0.68rem] font-bold tracking-[0.12em] text-ink-black">
+          <div className="absolute bottom-0 left-0 z-10 bg-narrator-gold px-4 py-2.5 font-meta text-xs font-bold tracking-[0.08em] text-ink-black">
             <span className="animate-press-blink mr-2 inline-block h-2 w-2 bg-hero-red" />
             {t("DRAWING COVER…")}
           </div>
@@ -119,9 +128,9 @@ export function ProjectCard({
       )}
 
       {project.is_running && !coverPending && (
-        <div className="absolute bottom-0 left-0 z-10 bg-narrator-gold px-4 py-2.5 font-meta text-[0.68rem] font-bold tracking-[0.12em] text-ink-black">
+        <div className="absolute bottom-0 left-0 z-10 bg-narrator-gold px-4 py-2.5 font-meta text-xs font-bold tracking-[0.08em] text-ink-black">
           <span className="animate-press-blink mr-2 inline-block h-2 w-2 bg-hero-red" />
-          {t("DRAWING…")}
+          {station ? `${t(station.label)} · ${t("In progress")}` : t("In progress")}
         </div>
       )}
       </div>
@@ -139,12 +148,12 @@ export function ProjectCard({
 
       <div className="mt-3">
         <span
-          className={`inline-flex min-h-7 items-center px-3.5 font-meta text-[0.62rem] font-bold leading-none tracking-[0.16em] uppercase ${card.className}`}
+          className={`inline-flex min-h-8 items-center px-3.5 font-meta text-xs font-bold leading-none tracking-[0.08em] uppercase ${card.className}`}
         >
           {card.label}
         </span>
       </div>
-      <div className="mt-4 flex items-center justify-between border-t-[2px] border-ink-black/10 pt-3 font-meta text-[0.58rem] font-bold tracking-[0.1em] text-ink-muted transition-colors group-hover:text-ink-black">
+      <div className="mt-4 flex min-h-11 items-center justify-between border-t-[2px] border-ink-black/10 pt-3 font-meta text-xs font-bold tracking-[0.08em] text-ink-muted transition-colors group-hover:text-ink-black">
         <span>{project.incompatible ? t("PROJECT CANNOT OPEN") : t("OPEN FILE")}</span>
         <span aria-hidden="true" className="text-hero-red transition-transform duration-150 group-hover:translate-x-1">{project.incompatible ? "×" : "→"}</span>
       </div>

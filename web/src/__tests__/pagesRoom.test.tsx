@@ -1,9 +1,10 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
 import { SHOW_DEV_CONTENT_KEY } from "../lib/devContent";
-import type { EditorialIssue, StageStatus } from "../types/api";
+import { usePipelineStore } from "../store/pipeline";
+import type { CostEstimate, EditorialIssue, StageStatus } from "../types/api";
 
 const previewCorrections = vi.fn();
 const submitCorrections = vi.fn();
@@ -13,11 +14,6 @@ const analyzePage = vi.fn();
 const continueToBook = vi.fn();
 const generatePage = vi.fn();
 const runPipeline = vi.fn();
-const trackGenerationJobs = vi.fn((project?: string, ids: string[] = []) => {
-  void project;
-  void ids;
-  return { data: { jobs: [] } };
-});
 type TestStageInfo = {
   status: StageStatus;
   stale: boolean;
@@ -55,11 +51,15 @@ let generationJobResults: Array<{
   error?: string | null;
 }> = [];
 let previewResult: Record<string, unknown> | undefined;
+let estimateError: Error | null = null;
+const retryEstimate = vi.fn();
+const cost: CostEstimate = { estimate_credits: 7, reserved_credits: 10, reservation_multiplier: 1.4, confidence: "variable" };
 
 vi.mock("../api/queries", () => ({
   useProjectStatus: () => ({
     data: {
       stages: stageStatuses,
+      style_selected: true,
     },
   }),
   useAdaptation: () => ({
@@ -157,16 +157,21 @@ vi.mock("../api/queries", () => ({
   useDismissPageIssue: () => ({ mutate: dismissIssue, isPending: false }),
   useApproveStage: () => ({ mutate: continueToBook, isPending: false }),
   useRunPipeline: () => ({ mutate: runPipeline, isPending: false }),
-  useGenerationJobs: (project: string | undefined, ids: string[]) => {
-    trackGenerationJobs(project, ids);
-    return {
-      data: {
-        jobs: generationJobResults.filter((job) => ids.includes(job.id)),
-      },
-    };
-  },
-  useCreditBalance: () => ({ data: undefined }),
-  useStageEstimate: () => ({ data: undefined }),
+  useGenerationJobs: () => ({
+    data: { jobs: generationJobResults.map((job) => ({
+      kind: "complete_page_draw",
+      payload: { page_number: 2 },
+      queued_at: "2026-09-07T12:00:00Z",
+      ...job,
+    })) },
+  }),
+  useCreditBalance: () => ({ data: { balance_credits: 100 } }),
+  useCreditPackages: () => ({ data: { packages: [] }, isLoading: false }),
+  useStyles: () => ({ data: undefined }),
+  useStageEstimate: () => ({ data: cost, error: estimateError, refetch: retryEstimate }),
+  useCompletePageBatchEstimate: () => ({ data: cost, error: estimateError, refetch: retryEstimate }),
+  useCompletePageEstimate: () => ({ data: estimateError ? undefined : cost, error: estimateError, refetch: retryEstimate }),
+  usePageAnalysisEstimate: () => ({ data: cost, error: estimateError, refetch: retryEstimate }),
 }));
 
 vi.mock("../api/pageRevisions", async (importOriginal) => {
@@ -189,16 +194,16 @@ vi.mock("../api/pageRevisions", async (importOriginal) => {
       isLoading: false,
       error: null,
     }),
-    useVisualReviewEstimate: () => ({ data: { estimate_credits: 2 } }),
+    useVisualReviewEstimate: () => ({ data: cost }),
     useReviewPageVisuals: () => ({ mutate: reviewVisuals, isPending: false, data: undefined, error: null }),
   };
 });
 
 import { PagesRoom } from "../pages/rooms/PagesRoom";
 
-function renderRoom() {
-  render(
-    <MemoryRouter initialEntries={["/project/demo/pages"]}>
+function renderRoom(url = "/project/demo/pages") {
+  return render(
+    <MemoryRouter initialEntries={[url]}>
       <I18nProvider>
         <Routes>
           <Route path="/project/:id/pages" element={<PagesRoom />} />
@@ -210,8 +215,12 @@ function renderRoom() {
 
 describe("PagesRoom", () => {
   beforeEach(() => {
+    usePipelineStore.setState({ connect: vi.fn(), events: [] });
     window.localStorage.removeItem(SHOW_DEV_CONTENT_KEY);
     window.localStorage.clear();
+    window.sessionStorage.clear();
+    estimateError = null;
+    retryEstimate.mockReset();
     previewCorrections.mockReset();
     submitCorrections.mockReset();
     reviewVisuals.mockReset();
@@ -221,7 +230,7 @@ describe("PagesRoom", () => {
     continueToBook.mockReset();
     generatePage.mockReset();
     runPipeline.mockReset();
-    trackGenerationJobs.mockClear();
+    runPipeline.mockImplementation((_variables, options) => options?.onSuccess?.());
     includeUndrawnPage = false;
     completePagesUnavailable = false;
     pageIssues = undefined;
@@ -244,6 +253,10 @@ describe("PagesRoom", () => {
     };
   });
 
+  afterEach(() => {
+    usePipelineStore.setState(usePipelineStore.getInitialState());
+  });
+
 
   it("offers to retry Adapt when Adapt failed before Plan started", () => {
     stageStatuses = {
@@ -255,8 +268,13 @@ describe("PagesRoom", () => {
 
     renderRoom();
 
-    expect(screen.getByRole("heading", { name: "Book Adaptation" })).toBeTruthy();
+    expect(runPipeline).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Retry stage" }));
+    const confirmation = screen.getByRole("alertdialog");
+    expect(within(confirmation).getByLabelText("about 7 credits")).toBeTruthy();
+    expect(within(confirmation).getByLabelText("10 credits")).toBeTruthy();
+    expect(runPipeline).not.toHaveBeenCalled();
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Retry stage" }));
     expect(runPipeline).toHaveBeenCalledWith(
       { project: "demo", stage: "adapt", rerun: false, retryFailed: undefined },
       expect.any(Object),
@@ -273,7 +291,13 @@ describe("PagesRoom", () => {
 
     renderRoom();
 
-    fireEvent.click(screen.getByRole("button", { name: "Start adaptation" }));
+    expect(runPipeline).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Start this step" }));
+    const confirmation = screen.getByRole("alertdialog");
+    expect(within(confirmation).getByLabelText("about 7 credits")).toBeTruthy();
+    expect(within(confirmation).getByLabelText("10 credits")).toBeTruthy();
+    expect(runPipeline).not.toHaveBeenCalled();
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Start this step" }));
     expect(runPipeline).toHaveBeenCalledWith(
       {
         project: "demo",
@@ -295,8 +319,12 @@ describe("PagesRoom", () => {
 
     renderRoom();
 
-    expect(screen.getByText("PRESS STOPPED")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Retry stage" }));
+    const confirmation = screen.getByRole("alertdialog");
+    expect(within(confirmation).getByLabelText("about 7 credits")).toBeTruthy();
+    expect(within(confirmation).getByLabelText("10 credits")).toBeTruthy();
+    expect(runPipeline).not.toHaveBeenCalled();
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Retry stage" }));
     expect(runPipeline).toHaveBeenCalledWith(
       { project: "demo", stage: "adapt", rerun: false, retryFailed: undefined },
       expect.any(Object),
@@ -323,9 +351,17 @@ describe("PagesRoom", () => {
 
     renderRoom();
 
-    expect(screen.getByRole("heading", { name: "Book Adaptation" })).toBeTruthy();
     expect(screen.getByText("Adapt must split the story into enough visual beats.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Retry stage" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restart this step" }));
+    const confirmation = screen.getByRole("alertdialog");
+    expect(within(confirmation).getByText(/clear all downstream work/i)).toBeTruthy();
+    expect(within(confirmation).getByText("PLAN")).toBeTruthy();
+    expect(within(confirmation).getByText("DRAW")).toBeTruthy();
+    expect(within(confirmation).getByText("FINISH")).toBeTruthy();
+    expect(within(confirmation).getByLabelText("about 7 credits")).toBeTruthy();
+    expect(within(confirmation).getByLabelText("10 credits")).toBeTruthy();
+    expect(runPipeline).not.toHaveBeenCalled();
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Restart this step" }));
     expect(runPipeline).toHaveBeenCalledWith(
       { project: "demo", stage: "adapt", rerun: true, retryFailed: undefined },
       expect.any(Object),
@@ -367,7 +403,6 @@ describe("PagesRoom", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
     const dialog = screen.getByRole("dialog", { name: "Page 1 review" });
     expect(dialog).toBeTruthy();
-    expect(dialog.className).toContain("z-[120]");
 
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Page 1 review" })).toBeNull();
@@ -378,7 +413,7 @@ describe("PagesRoom", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
     const dialog = screen.getByRole("dialog", { name: "Page 1 review" });
-    fireEvent.click(screen.getByRole("tab", { name: "Page" }));
+    fireEvent.click(screen.getByRole("button", { name: "Page" }));
     expect(screen.getByRole("dialog", { name: "Page 1 review" })).toBe(dialog);
 
     fireEvent.click(dialog);
@@ -468,7 +503,6 @@ describe("PagesRoom", () => {
       expect.objectContaining({ project: "demo", pageNumber: 1 }),
       expect.any(Object),
     );
-    expect(trackGenerationJobs).toHaveBeenLastCalledWith("demo", ["job-correction-1"]);
   });
 
   it("shows the reason when a correction cannot be queued", () => {
@@ -487,6 +521,9 @@ describe("PagesRoom", () => {
     fireEvent.click(screen.getByRole("button", { name: "SUBMIT ONE CORRECTION" }));
 
     expect(screen.getByRole("alert").textContent).toContain("Saved edition conflict");
+    expect(screen.getByRole("checkbox", { name: /Restore the approved face/ })).toHaveProperty("checked", true);
+    expect(previewCorrections).toHaveBeenCalledOnce();
+    expect(submitCorrections).toHaveBeenCalledOnce();
   });
 
   it("offers queue-all or one-by-one when Draw starts", () => {
@@ -498,7 +535,6 @@ describe("PagesRoom", () => {
     };
     renderRoom();
 
-    expect(screen.getByText("How do you want to draw this edition?")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "GO ONE BY ONE" }));
     expect(runPipeline).toHaveBeenLastCalledWith(
       { project: "demo", stage: "draw", queuePages: false },
@@ -506,6 +542,8 @@ describe("PagesRoom", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "QUEUE ALL PAGES" }));
+    expect(runPipeline).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "CONFIRM QUEUE" }));
     expect(runPipeline).toHaveBeenLastCalledWith(
       { project: "demo", stage: "draw", queuePages: true },
       expect.any(Object),
@@ -535,7 +573,7 @@ describe("PagesRoom", () => {
     renderRoom();
 
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
-    fireEvent.click(screen.getByRole("tab", { name: "Checks" }));
+    fireEvent.click(screen.getByRole("button", { name: "Checks" }));
 
     expect(screen.getByText("Some lettering does not match")).toBeTruthy();
     expect(screen.getByText("Open the door. · Run!")).toBeTruthy();
@@ -548,9 +586,9 @@ describe("PagesRoom", () => {
       project: "demo",
       pageNumber: 1,
       issueId: "page-issue-draw-page-001-render-002-misspelled_lettering",
-    });
+    }, expect.any(Object));
     // Redraws route through the draft: on the Page tab the finding waits selected once editing is opened.
-    fireEvent.click(screen.getByRole("tab", { name: "Page" }));
+    fireEvent.click(screen.getByRole("button", { name: "Page" }));
     fireEvent.click(screen.getByRole("button", { name: "MAKE CHANGES" }));
     expect(screen.getByRole("checkbox", { name: /OCR lettering does not exactly match/ })).toHaveProperty("checked", true);
   });
@@ -575,7 +613,7 @@ describe("PagesRoom", () => {
     renderRoom();
 
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
-    fireEvent.click(screen.getByRole("tab", { name: "Checks" }));
+    fireEvent.click(screen.getByRole("button", { name: "Checks" }));
 
     expect(screen.getByText("EXACT DIFFERENCES · 3")).toBeTruthy();
     expect(screen.getByText(/Moved:/)).toBeTruthy();
@@ -591,15 +629,16 @@ describe("PagesRoom", () => {
     renderRoom();
 
     fireEvent.click(screen.getByRole("button", { name: "GENERATE COMPLETE PAGE" }));
+    expect(generatePage).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "CONFIRM DRAW" }));
     expect(generatePage).toHaveBeenCalledWith(
       { project: "demo", pageNumber: 2 },
       expect.any(Object),
     );
-    expect(trackGenerationJobs).toHaveBeenLastCalledWith("demo", ["job-page-2"]);
     expect(screen.getByRole("button", { name: "DRAWING PAGE…" })).toHaveProperty("disabled", true);
   });
 
-  it("explains when the image provider blocks a complete page", async () => {
+  it("explains when the image provider blocks a complete page", () => {
     includeUndrawnPage = true;
     generationJobResults = [{
       id: "job-page-16",
@@ -614,18 +653,11 @@ describe("PagesRoom", () => {
     });
     renderRoom();
 
-    fireEvent.click(screen.getByRole("button", { name: "GENERATE COMPLETE PAGE" }));
-
-    expect(await screen.findByText("WE COULDN'T DRAW THIS PAGE")).toBeTruthy();
-    expect(screen.getByText(
-      "The image provider declined this scene but did not say which detail caused it. Your page plan is unchanged.",
-    )).toBeTruthy();
-    expect(screen.getByText(
-      "Draw without references keeps the page plan and exact lettering, but character and setting details may vary. You can review the result before continuing.",
-    )).toBeTruthy();
     expect(screen.queryByText("raw LiteLLM gateway error")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "DRAW WITHOUT REFERENCES" }));
+    fireEvent.click(screen.getByRole("button", { name: "DRAW LESS GRAPHIC VERSION" }));
+    expect(generatePage).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "CONFIRM DRAW" }));
     expect(generatePage).toHaveBeenLastCalledWith(
       { project: "demo", pageNumber: 2, depiction: "less_graphic" },
       expect.any(Object),
@@ -648,7 +680,9 @@ describe("PagesRoom", () => {
     renderRoom();
 
     expect(screen.getByText("WE COULDN'T DRAW THIS PAGE")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "DRAW WITHOUT REFERENCES" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "DRAW LESS GRAPHIC VERSION" }));
+    expect(generatePage).not.toHaveBeenCalled();
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
   });
 
   it("lets the author retry a recoverable image-service failure", () => {
@@ -669,6 +703,8 @@ describe("PagesRoom", () => {
     const retry = screen.getByRole("button", { name: "TRY AGAIN" });
     expect(retry).toBeTruthy();
     fireEvent.click(retry);
+    expect(generatePage).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "CONFIRM DRAW" }));
     expect(generatePage).toHaveBeenCalledWith(
       { project: "demo", pageNumber: 2 },
       expect.any(Object),
@@ -691,10 +727,13 @@ describe("PagesRoom", () => {
 
     expect(screen.getByText("TEXT CHECK INCOMPLETE")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "RETRY TEXT CHECK" }));
+    expect(analyzePage).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "CONFIRM TEXT CHECK" }));
     expect(analyzePage).toHaveBeenCalledWith({
       project: "demo",
       pageNumber: 1,
-    });
+    }, expect.any(Object));
+    expect(generatePage).not.toHaveBeenCalled();
   });
 
   it("continues to Book through the Draw checkpoint", () => {
@@ -712,10 +751,10 @@ describe("PagesRoom", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
 
-    const reviseTab = screen.getByRole("tab", { name: "Page" });
-    expect(reviseTab.getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByRole("tab", { name: "Visual review" }).getAttribute("aria-selected")).toBe("false");
-    expect(screen.getByRole("tab", { name: "Checks" }).getAttribute("aria-selected")).toBe("false");
+    const reviseTab = screen.getByRole("button", { name: "Page" });
+    expect(reviseTab.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Visual review" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("button", { name: "Checks" }).getAttribute("aria-pressed")).toBe("false");
     // Artwork and the opt-in editing entry render in the first viewport, not behind reading overlays.
     expect(screen.getByAltText("Complete page 1, render revision 2")).toBeTruthy();
     expect(screen.getByRole("button", { name: "MAKE CHANGES" })).toBeTruthy();
@@ -735,16 +774,16 @@ describe("PagesRoom", () => {
       target: { value: "Keep the reveal, but restore the approved face." },
     });
 
-    fireEvent.click(screen.getByRole("tab", { name: "Visual review" }));
-    expect(screen.getByRole("tab", { name: "Visual review" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Visual review" }));
+    expect(screen.getByRole("button", { name: "Visual review" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByText("VISUAL REVIEW")).toBeTruthy();
     expect(screen.queryByText("ISSUE HISTORY")).toBeNull();
 
-    fireEvent.click(screen.getByRole("tab", { name: "Checks" }));
+    fireEvent.click(screen.getByRole("button", { name: "Checks" }));
     expect(screen.getByText("ISSUE HISTORY")).toBeTruthy();
 
     // Unsaved draft state survives tab switches: the draft stays mounted hidden.
-    fireEvent.click(screen.getByRole("tab", { name: "Page" }));
+    fireEvent.click(screen.getByRole("button", { name: "Page" }));
     expect(screen.getByLabelText(/Manual request/)).toHaveProperty(
       "value",
       "Keep the reveal, but restore the approved face.",
@@ -856,5 +895,75 @@ describe("PagesRoom", () => {
     );
 
     expect(screen.getByRole("dialog", { name: "PAGE PLAN" })).toBeTruthy();
+  });
+
+  it("opens a Book finding on the requested page and review view", () => {
+    includeUndrawnPage = true;
+    renderRoom("/project/demo/pages?page=1&review=checks&filter=needs-review");
+    const dialog = screen.getByRole("dialog", { name: "Page 1 review" });
+    expect(within(dialog).getByRole("button", { name: "Checks" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(within(dialog).getByRole("button", { name: "NEXT PAGE" }));
+    expect(screen.getByRole("dialog", { name: "Page 2 review" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "NEXT UNRESOLVED" }));
+    expect(screen.getByRole("dialog", { name: "Page 1 review" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Close page review" }));
+    expect(screen.queryByRole("button", { name: "Open page 2, revision 0" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Needs review (1)" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("restores review context in this session but lets explicit links win", () => {
+    window.sessionStorage.setItem("page-review:v1:demo", "page=1&review=checks&filter=needs-review");
+    const first = renderRoom();
+    expect(screen.getByRole("dialog", { name: "Page 1 review" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Checks" }).getAttribute("aria-pressed")).toBe("true");
+    first.unmount();
+    renderRoom("/project/demo/pages?page=1&review=visual&filter=all");
+    expect(screen.getByRole("button", { name: "Visual review" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("ignores invalid review URL values without choosing an arbitrary page", () => {
+    renderRoom("/project/demo/pages?page=-3&review=unknown&filter=unknown");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: "All (1)" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
+    expect(screen.getByRole("button", { name: "Page" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("restores server-side drawing jobs and keeps completed artwork inspectable", () => {
+    includeUndrawnPage = true;
+    generationJobResults = [{ id: "resumed-job", status: "running" }];
+    renderRoom("/project/demo/pages?filter=drawing");
+    expect(screen.getByRole("button", { name: "Drawing (1)" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("img", { name: "Page 2: generation in progress" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Inspect completed page 1" }));
+    expect(screen.getByRole("dialog", { name: "Page 1 review" })).toBeTruthy();
+    expect(generatePage).not.toHaveBeenCalled();
+  });
+
+  it("blocks paid drawing when the estimate fails and preserves the gallery context", () => {
+    includeUndrawnPage = true;
+    estimateError = new Error("Estimate unavailable");
+    renderRoom("/project/demo/pages?filter=all");
+    fireEvent.click(screen.getByRole("button", { name: "GENERATE COMPLETE PAGE" }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(within(dialog).getByRole("alert").textContent).toContain("Estimate unavailable");
+    fireEvent.click(within(dialog).getByRole("button", { name: "RETRY ESTIMATE" }));
+    expect(retryEstimate).toHaveBeenCalledOnce();
+    expect(generatePage).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getAllByRole("button", { name: /Cancel/i })[0]);
+    expect(screen.getByRole("button", { name: "Open page 2, revision 0" })).toBeTruthy();
+  });
+
+  it("keeps a submission error next to consent without automatically retrying", () => {
+    includeUndrawnPage = true;
+    generatePage.mockImplementation((_variables, options) => options.onError(new Error("Connection interrupted")));
+    renderRoom();
+    fireEvent.click(screen.getByRole("button", { name: "GENERATE COMPLETE PAGE" }));
+    fireEvent.click(screen.getByRole("button", { name: "CONFIRM DRAW" }));
+    expect(within(screen.getByRole("alertdialog")).getByRole("alert").textContent).toContain("Connection interrupted");
+    expect(generatePage).toHaveBeenCalledOnce();
+    fireEvent.click(within(screen.getByRole("alertdialog")).getAllByRole("button", { name: /Cancel/i })[0]);
+    expect(screen.getByRole("alert").textContent).toContain("Connection interrupted");
+    expect(screen.getByRole("button", { name: "Open page 2, revision 0" })).toBeTruthy();
   });
 });

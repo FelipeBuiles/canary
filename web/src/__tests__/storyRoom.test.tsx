@@ -1,7 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
+
+afterEach(() => sessionStorage.clear());
 
 const updateBrief = vi.fn();
 const approveBrief = vi.fn();
@@ -80,6 +82,7 @@ function renderRoom() {
 
 describe("StoryRoom", () => {
   beforeEach(() => {
+    sessionStorage.clear();
     updateBrief.mockReset();
     approveBrief.mockReset();
     runPipeline.mockReset();
@@ -96,6 +99,7 @@ describe("StoryRoom", () => {
     expect(screen.getByRole("heading", { name: "CONFIRM THE STORY & BRIEF" })).toBeTruthy();
     expect(screen.getByText("The Last Incantation")).toBeTruthy();
     expect(screen.getByText("The investigation closes its causal loop")).toBeTruthy();
+    fireEvent.click(screen.getByText("Review extracted characters, places & story order"));
     expect(screen.getByRole("heading", { name: "CHARACTERS & PLACES" })).toBeTruthy();
     expect(screen.getByText("Silver-streaked dark hair")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "STORY ORDER" })).toBeTruthy();
@@ -117,7 +121,7 @@ describe("StoryRoom", () => {
         target_page_min: 24,
         target_page_max: 32,
       }),
-    });
+    }, expect.any(Object));
   });
 
   it("approves Brief rather than Extract", () => {
@@ -129,6 +133,55 @@ describe("StoryRoom", () => {
       { project: "demo", stage: "brief" },
       expect.any(Object),
     );
+  });
+
+  it("keeps blank lines while editing and saves the visible draft before approval", () => {
+    renderRoom();
+    const promises = screen.getByLabelText("STORY PROMISES") as HTMLTextAreaElement;
+    fireEvent.change(promises, { target: { value: "A promise\n\nA second promise\n" } });
+    expect(promises.value).toBe("A promise\n\nA second promise\n");
+    fireEvent.click(screen.getByRole("button", { name: "SAVE & APPROVE BRIEF — CONTINUE" }));
+    expect(approveBrief).not.toHaveBeenCalled();
+    expect(updateBrief.mock.calls[0][0].changes.story_promises).toEqual(["A promise", "A second promise"]);
+    act(() => updateBrief.mock.calls[0][1].onSuccess({
+      ...storyDecision.brief, revision: 4, story_promises: ["A promise", "A second promise"],
+    }));
+    expect(approveBrief).toHaveBeenCalledWith({ project: "demo", stage: "brief" }, expect.any(Object));
+  });
+
+  it("preserves an edited draft after a failed save and never approves it", () => {
+    renderRoom();
+    fireEvent.change(screen.getByLabelText("STORY PROMISES"), { target: { value: "Do not lose this\n" } });
+    fireEvent.click(screen.getByRole("button", { name: "SAVE & APPROVE BRIEF — CONTINUE" }));
+    act(() => updateBrief.mock.calls[0][1].onError(new Error("Revision conflict")));
+    expect(screen.getByRole("alert").textContent).toContain("Revision conflict");
+    expect((screen.getByLabelText("STORY PROMISES") as HTMLTextAreaElement).value).toBe("Do not lose this\n");
+    expect(approveBrief).not.toHaveBeenCalled();
+    cleanup();
+    renderRoom();
+    expect(screen.getByText("Restored unsaved draft")).toBeTruthy();
+    expect((screen.getByLabelText("STORY PROMISES") as HTMLTextAreaElement).value).toBe("Do not lose this\n");
+  });
+
+  it("keeps a prior revision's raw draft accessible after reload without applying it to the newer brief", () => {
+    renderRoom();
+    fireEvent.change(screen.getByLabelText("STORY PROMISES"), { target: { value: "Old revision draft\n\nKeep this ending\n" } });
+    cleanup();
+    storyState = { ...storyState, data: { ...storyDecision, brief: { ...storyDecision.brief, revision: 4 } } };
+    renderRoom();
+    expect((screen.getByLabelText("STORY PROMISES") as HTMLTextAreaElement).value).toBe(storyDecision.brief.story_promises[0]);
+    expect(screen.queryByText("Restored unsaved draft")).toBeNull();
+    fireEvent.click(screen.getByText("Unsaved draft from revision 3"));
+    const preserved = screen.getByLabelText("Unsaved draft from revision 3") as HTMLTextAreaElement;
+    expect(preserved.value).toContain("Old revision draft\n\nKeep this ending\n");
+    expect(preserved.readOnly).toBe(true);
+    expect(screen.getByRole("button", { name: "Copy draft" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Discard draft" })).toBeTruthy();
+    expect(updateBrief).not.toHaveBeenCalled();
+    cleanup();
+    renderRoom();
+    fireEvent.click(screen.getByText("Unsaved draft from revision 3"));
+    expect((screen.getByLabelText("Unsaved draft from revision 3") as HTMLTextAreaElement).value).toContain("Old revision draft\n\nKeep this ending\n");
   });
 });
 

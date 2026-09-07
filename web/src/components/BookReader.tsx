@@ -2,6 +2,7 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { pageRenderPreviewUrl } from "../api/pages";
 import { useI18n } from "../i18n";
 import { cn } from "../lib/cn";
+import { useDialogFocus } from "../hooks/useDialogFocus";
 import {
   buildReaderViews,
   viewIndexForPage,
@@ -147,7 +148,8 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
   const [fit, setFit] = useState<Fit>("height");
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-  const touchStartX = useRef<number | null>(null);
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+  useDialogFocus(dialogRef, { onClose, initialFocusRef: closeButtonRef });
 
   const views = useMemo(() => buildReaderViews(pages, layout), [pages, layout]);
   const [index, setIndex] = useState(() =>
@@ -185,9 +187,14 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
   }, [project, views, safeIndex]);
 
   const onKey = useEffectEvent((event: KeyboardEvent) => {
+    if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+    const target = event.target;
+    if (target instanceof HTMLElement && (
+      target.matches("input, textarea, select") || target.isContentEditable ||
+      (event.key === " " && target.closest("button, a"))
+    )) return;
     switch (event.key) {
       case "Escape":
-        onClose();
         return;
       case "ArrowRight":
       case "PageDown":
@@ -208,36 +215,12 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
         event.preventDefault();
         goTo(views.length - 1);
         return;
-      case "Tab":
-        break;
       default:
         return;
-    }
-    if (!dialogRef.current) return;
-    const focusable = Array.from(
-      dialogRef.current.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
-      ),
-      // Windowed neighbours are mounted but inert — they must stay out of the
-      // tab cycle or the trap wraps onto pages the reader is not showing.
-    ).filter((element) => !element.closest("[inert]"));
-    if (!focusable.length) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
     }
   });
 
   useEffect(() => {
-    const previousOverflow = document.body.style.overflow;
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    document.body.style.overflow = "hidden";
-    const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
 
     function handler(event: KeyboardEvent) {
       onKey(event);
@@ -246,9 +229,6 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
     window.addEventListener("keydown", handler);
     return () => {
       window.removeEventListener("keydown", handler);
-      window.cancelAnimationFrame(focusFrame);
-      document.body.style.overflow = previousOverflow;
-      opener?.focus();
     };
   }, []);
 
@@ -262,16 +242,22 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
       role="dialog"
       aria-modal="true"
       aria-label={t("Book reader")}
+      tabIndex={-1}
       className="fixed inset-0 z-[130] flex flex-col bg-ink-black"
       onTouchStart={(event) => {
-        touchStartX.current = event.touches[0]?.clientX ?? null;
+        if (event.touches.length !== 1 || (event.target instanceof HTMLElement && event.target.closest("button, input"))) {
+          touchStart.current = null;
+          return;
+        }
+        touchStart.current = { x: event.touches[0].clientX, y: event.touches[0].clientY };
       }}
       onTouchEnd={(event) => {
-        const start = touchStartX.current;
-        touchStartX.current = null;
-        if (start === null) return;
-        const delta = (event.changedTouches[0]?.clientX ?? start) - start;
-        if (Math.abs(delta) < SWIPE_THRESHOLD_PX) return;
+        const start = touchStart.current;
+        touchStart.current = null;
+        const end = event.changedTouches[0];
+        if (!start || !end) return;
+        const delta = end.clientX - start.x;
+        if (Math.abs(delta) < SWIPE_THRESHOLD_PX || Math.abs(delta) <= Math.abs(end.clientY - start.y)) return;
         goTo(safeIndex + (delta < 0 ? 1 : -1));
       }}
     >
@@ -284,7 +270,7 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
             type="button"
             onClick={() => changeLayout(layout === "spreads" ? "single" : "spreads")}
             aria-pressed={layout === "spreads"}
-            className="min-h-9 border-[2px] border-bristol/40 px-3 font-meta text-[0.62rem] font-bold tracking-[0.12em] text-bristol transition-colors hover:border-bristol"
+            className="min-h-11 border-[2px] border-bristol/40 px-3 font-meta text-xs font-bold text-bristol transition-colors hover:border-bristol"
           >
             {layout === "spreads" ? t("SPREADS") : t("SINGLE PAGE")}
           </button>
@@ -292,7 +278,7 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
             type="button"
             onClick={() => setFit(fit === "height" ? "width" : "height")}
             aria-pressed={fit === "width"}
-            className="min-h-9 border-[2px] border-bristol/40 px-3 font-meta text-[0.62rem] font-bold tracking-[0.12em] text-bristol transition-colors hover:border-bristol"
+            className="min-h-11 border-[2px] border-bristol/40 px-3 font-meta text-xs font-bold text-bristol transition-colors hover:border-bristol"
           >
             {fit === "height" ? t("FIT HEIGHT") : t("FIT WIDTH")}
           </button>
@@ -301,7 +287,7 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
             type="button"
             onClick={onClose}
             aria-label={t("Close reader")}
-            className="flex h-9 w-9 items-center justify-center border-[2px] border-bristol/40 text-bristol transition-colors hover:border-bristol"
+            className="flex h-11 w-11 items-center justify-center border-[2px] border-bristol/40 text-bristol transition-colors hover:border-bristol"
           >
             <Icon name="x" size={14} />
           </button>
@@ -330,7 +316,7 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
               aria-label={t("Previous page")}
               className="group absolute inset-y-0 left-0 flex w-[18%] items-center justify-start pl-2 disabled:pointer-events-none md:pl-4"
             >
-              <span className="flex h-11 w-11 items-center justify-center border-[2px] border-bristol/0 bg-ink-black/0 text-bristol/0 transition-all group-hover:border-bristol/50 group-hover:bg-ink-black/70 group-hover:text-bristol group-focus-visible:border-bristol group-focus-visible:bg-ink-black/70 group-focus-visible:text-bristol">
+              <span className="flex h-11 w-11 items-center justify-center border-[2px] border-bristol/0 bg-ink-black/0 text-bristol/0 transition-colors group-hover:border-bristol/50 group-hover:bg-ink-black/70 group-hover:text-bristol group-focus-visible:border-bristol group-focus-visible:bg-ink-black/70 group-focus-visible:text-bristol">
                 <Icon name="chevron-left" size={18} />
               </span>
             </button>
@@ -341,7 +327,7 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
               aria-label={t("Next page")}
               className="group absolute inset-y-0 right-0 flex w-[18%] items-center justify-end pr-2 disabled:pointer-events-none md:pr-4"
             >
-              <span className="flex h-11 w-11 items-center justify-center border-[2px] border-bristol/0 bg-ink-black/0 text-bristol/0 transition-all group-hover:border-bristol/50 group-hover:bg-ink-black/70 group-hover:text-bristol group-focus-visible:border-bristol group-focus-visible:bg-ink-black/70 group-focus-visible:text-bristol">
+              <span className="flex h-11 w-11 items-center justify-center border-[2px] border-bristol/0 bg-ink-black/0 text-bristol/0 transition-colors group-hover:border-bristol/50 group-hover:bg-ink-black/70 group-hover:text-bristol group-focus-visible:border-bristol group-focus-visible:bg-ink-black/70 group-focus-visible:text-bristol">
                 <Icon name="chevron-right" size={18} />
               </span>
             </button>
@@ -356,23 +342,29 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
             onClick={() => goTo(safeIndex - 1)}
             disabled={atStart}
             aria-label={t("Previous page")}
-            className="flex h-9 w-9 items-center justify-center border-[2px] border-bristol/40 text-bristol transition-colors hover:border-bristol disabled:opacity-35"
+            className="flex h-11 w-11 items-center justify-center border-[2px] border-bristol/40 text-bristol transition-colors hover:border-bristol disabled:opacity-35"
           >
             <Icon name="chevron-left" size={14} />
           </button>
-          <button
-            type="button"
-            onClick={() => goTo(safeIndex + 1)}
-            disabled={atEnd}
-            aria-label={t("Next page")}
-            className="flex h-9 w-9 items-center justify-center border-[2px] border-bristol/40 text-bristol transition-colors hover:border-bristol disabled:opacity-35"
-          >
-            <Icon name="chevron-right" size={14} />
-          </button>
+          {atEnd ? (
+            <button type="button" onClick={onClose} className="min-h-11 border-[2px] border-bristol/40 px-3 font-meta text-xs font-bold text-bristol hover:border-bristol">
+              {t("Back to edition")}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => goTo(safeIndex + 1)}
+              aria-label={t("Next page")}
+              className="flex h-11 w-11 items-center justify-center border-[2px] border-bristol/40 text-bristol transition-colors hover:border-bristol"
+            >
+              <Icon name="chevron-right" size={14} />
+            </button>
+          )}
         </div>
 
         <p aria-live="polite" className="font-meta text-xs font-bold tracking-[0.12em] text-bristol">
           {label}
+          {atEnd && <span className="ml-2">{t("End of book")}</span>}
           <span className="text-bristol/55">
             {" · "}
             {pages.length} {pages.length === 1 ? t("page") : t("pages")}
@@ -386,7 +378,8 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
           value={safeIndex}
           onChange={(event) => goTo(Number(event.target.value))}
           aria-label={t("Jump to page")}
-          className="h-9 w-full max-w-xs accent-hero-red md:w-64"
+          aria-valuetext={label}
+          className="h-11 w-full max-w-xs accent-hero-red md:w-64"
         />
       </footer>
     </div>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   useApproveStage,
@@ -246,6 +246,7 @@ function RefVersionHistory({
             <img src={fileUrl(v.image_path)} alt={`v${v.version}`} className="h-full w-full object-cover" />
           </button>
         ))}
+      {restore.error && <p role="alert" className="mt-2 font-body text-sm text-hero-red">{restore.error.message}</p>}
       </div>
     </div>
   );
@@ -338,14 +339,14 @@ function StateRefTile({
           />
         )}
       </div>
-      <div className="mt-1 truncate font-meta text-[0.46rem] tracking-[0.1em] text-ink-black/70" title={state.label}>
+      <div className="mt-1 break-words font-meta text-xs tracking-normal text-ink-muted" title={state.label}>
         {state.label}
       </div>
       <button
         type="button"
         onClick={() => setConfirmRegen(true)}
         disabled={busy || !regenEstimate}
-        className="mt-1 w-full border-[1.5px] border-ink-black/25 bg-bristol px-1.5 py-1 font-meta text-[0.5rem] tracking-[0.12em] text-ink-black/70 transition-colors hover:border-ink-black hover:text-ink-black disabled:opacity-50"
+        className="mt-1 min-h-11 w-full border-[1.5px] border-ink-black/25 bg-bristol px-1 py-2 font-meta text-xs tracking-normal text-ink-muted transition-colors hover:border-ink-black hover:text-ink-black disabled:opacity-50"
       >
         {busy ? queuedLabel(activeJob) : imgFailed ? t("GENERATE") : t("REGENERATE")}
       </button>
@@ -359,7 +360,7 @@ function StateRefTile({
           setImgFailed(false);
         }}
       />
-      {regenError && <div className="mt-1 text-[0.5rem] leading-tight text-hero-red">{regenError}</div>}
+      {regenError && <div role="alert" className="mt-1 break-words text-xs leading-snug text-hero-red">{regenError}</div>}
       <ConfirmDrawer
         open={confirmRegen}
         title={imgFailed ? t("Generate image") : t("Try another version")}
@@ -594,7 +595,7 @@ function CharacterCastCard({
           refreshToken={timestamp.toString()}
         />
         {regenError && (
-          <div className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-[0.72rem] leading-relaxed text-bristol">
+          <div role="alert" className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-sm leading-relaxed text-bristol">
             {regenError}
           </div>
         )}
@@ -773,18 +774,18 @@ function LocationStateTile({
           />
         )}
       </div>
-      <div className="mt-1 truncate font-meta text-[0.46rem] tracking-[0.1em] text-ink-black/70" title={state.label}>
+      <div className="mt-1 break-words font-meta text-xs tracking-normal text-ink-muted" title={state.label}>
         {state.label}
       </div>
       <button
         type="button"
         onClick={() => setConfirmRegen(true)}
         disabled={busy || !regenEstimate}
-        className="mt-1 min-h-11 w-full border-[1.5px] border-ink-black/25 bg-bristol px-2 py-1.5 font-meta text-[0.5rem] tracking-[0.12em] text-ink-black/70 transition-colors hover:border-ink-black hover:text-ink-black disabled:opacity-50"
+        className="mt-1 min-h-11 w-full border-[1.5px] border-ink-black/25 bg-bristol px-2 py-2 font-meta text-xs tracking-normal text-ink-muted transition-colors hover:border-ink-black hover:text-ink-black disabled:opacity-50"
       >
         {busy ? queuedLabel(activeJob) : imgFailed ? t("GENERATE") : t("REGENERATE")}
       </button>
-      {regenError && <div className="mt-1 text-[0.5rem] leading-tight text-hero-red">{regenError}</div>}
+      {regenError && <div role="alert" className="mt-1 break-words text-xs leading-snug text-hero-red">{regenError}</div>}
       <ConfirmDrawer
         open={confirmRegen}
         title={imgFailed ? t("Generate image") : t("Try another version")}
@@ -1020,7 +1021,7 @@ function LocationPlateCard({
           refreshToken={timestamp.toString()}
         />
         {regenError && (
-          <div className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-[0.72rem] leading-relaxed text-bristol">
+          <div role="alert" className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-sm leading-relaxed text-bristol">
             {regenError}
           </div>
         )}
@@ -1263,7 +1264,7 @@ function PropRefCard({
           </div>
         )}
         {regenError && (
-          <div className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-[0.72rem] leading-relaxed text-bristol">
+          <div role="alert" className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-sm leading-relaxed text-bristol">
             {regenError}
           </div>
         )}
@@ -1315,12 +1316,15 @@ function PropRefCard({
 
 
 export function CastRoom() {
+  const { t } = useI18n();
+  const [confirmCast, setConfirmCast] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: bible, isLoading } = useStoryBible(id);
   const { data: status } = useProjectStatus(id);
   const approveStage = useApproveStage();
-  const { mutate: resetStale, isPending: isResetting } = useResetStale();
+  const { mutate: resetStale, isPending: isResetting, error: resetError } = useResetStale();
   const { handleRun, isPending: isPipelineRunning } = useRunAction();
   // The estimate for Adapt covers the automatic Adapt → Plan chain.
   const { data: chainEstimate } = useStageEstimate(id, "adapt");
@@ -1332,26 +1336,23 @@ export function CastRoom() {
   const isStageStuck = !!stageInfo?.stale;
   const lastProgressAt = stageInfo?.last_progress_at ?? null;
   const needsApproval = stageStatus === "awaiting_review";
-  const { data: castResumeEstimate } = useStageEstimate(id, "cast", checkpointAction === "resume");
-  const autoStartedCast = useRef<string | null>(null);
+  const canStartCast = stageStatus === "pending";
+  const { data: castResumeEstimate } = useStageEstimate(id, "cast", canStartCast || checkpointAction === "resume" || isStageStuck);
 
-  // Manual ref generation writes the assets but does not advance the cast
-  // stage lifecycle. Reconcile a pending cast stage on room entry so those
-  // assets can be reviewed and approved (and any missing assets are filled).
-  useEffect(() => {
-    if (!id || !bible || !status?.style_selected || stageStatus !== "pending") return;
-    if (autoStartedCast.current === id) return;
-    autoStartedCast.current = id;
-    handleRun(id, "cast", { actionLabel: "Cast characters & places" });
-  }, [id, bible, status?.style_selected, stageStatus, handleRun]);
+  function startCast() {
+    if (!id || !status?.style_selected || !castResumeEstimate) return;
+    setActionError(null);
+    handleRun(id, "cast", {
+      actionLabel: canStartCast ? t("Start cast characters & places") : t("Resume cast characters & places"),
+      onSuccess: () => setConfirmCast(false),
+      onError: (error) => { setConfirmCast(false); setActionError(error.message); },
+    });
+  }
 
   function handleContinueToPages() {
     if (!id) return;
-    if (checkpointAction === "resume") {
-      // A normal stage run preserves successful cast artifacts. The Cast
-      // stage skips existing files and generates only what the interrupted
-      // run left behind.
-      handleRun(id, "cast", { actionLabel: "Resume cast characters & places" });
+    if (checkpointAction === "resume" || canStartCast) {
+      setConfirmCast(true);
     } else if (checkpointAction === "approve") {
       approveStage.mutate(
         { project: id, stage: "cast" },
@@ -1359,6 +1360,7 @@ export function CastRoom() {
           onSuccess: () => {
             navigate(`/project/${id}/pages`);
           },
+          onError: (error) => setActionError(error.message),
         },
       );
     } else if (checkpointAction === "continue") {
@@ -1373,7 +1375,7 @@ export function CastRoom() {
 
   function handleContinueStale() {
     if (!id) return;
-    handleRun(id, "cast", { actionLabel: "Continue CAST" });
+    setConfirmCast(true);
   }
 
   if (isLoading || (!bible && stageStatus !== "pending")) {
@@ -1480,26 +1482,39 @@ export function CastRoom() {
         )}
       </section>
 
+      {(actionError || resetError || approveStage.error) && <p role="alert" className="font-body text-sm text-hero-red">{actionError ?? resetError?.message ?? approveStage.error?.message}</p>}
+      {!status?.style_selected && <p className="font-body text-sm text-ink-muted">{t("Choose a style before starting cast references.")}</p>}
+      <ConfirmDrawer
+        open={confirmCast}
+        title={canStartCast ? t("Start cast characters & places") : t("Resume cast characters & places")}
+        body={t("Existing references are kept. Only missing cast images will be generated.")}
+        cost={castResumeEstimate}
+        confirmLabel={canStartCast ? t("START CAST") : t("RESUME CAST")}
+        onConfirm={startCast}
+        onClose={() => setConfirmCast(false)}
+        busy={isPipelineRunning || !castResumeEstimate}
+      />
       <ApprovalBar
-        next={checkpointAction === "resume"
+        next={canStartCast ? t("Start the character and place references when you are ready")
+          : checkpointAction === "resume"
           ? "Some cast references did not finish — resume from the missing images"
           : needsApproval
           ? "Scenewright adapts the book and plans complete pages — automatically"
           : stageStatus === "complete"
             ? "Review complete pages at the Pages station"
             : "Scenewright is drawing your cast"}
-        estimateCredits={checkpointAction === "resume"
+        estimateCredits={canStartCast || checkpointAction === "resume"
           ? castResumeEstimate?.estimate_credits
           : needsApproval
             ? chainEstimate?.estimate_credits
             : null}
-        primaryLabel={checkpointAction === "resume"
+        primaryLabel={canStartCast ? t("START CAST") : checkpointAction === "resume"
           ? "↺ RESUME CAST"
           : needsApproval
             ? "LOOKS RIGHT — CONTINUE →"
             : "GO TO PAGES →"}
         onPrimary={handleContinueToPages}
-        primaryDisabled={approveStage.isPending || isPipelineRunning || checkpointAction === "wait"}
+        primaryDisabled={approveStage.isPending || isPipelineRunning || (!canStartCast && checkpointAction === "wait") || ((canStartCast || checkpointAction === "resume") && (!status?.style_selected || !castResumeEstimate))}
         busy={approveStage.isPending || isPipelineRunning}
         secondary={<RerunStageAction project={id} stage="cast" label="cast" disabled={stageRegenerating} />}
       />

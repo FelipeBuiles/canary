@@ -11,12 +11,17 @@ import {
   useProjectStatus,
   useRunPipeline,
   useStageValidation,
+  useCompletePageBatchEstimate,
+  useCompletePageEstimate,
+  usePageAnalysisEstimate,
+  useStyles,
 } from "../../api/queries";
 import { pageRenderPreviewUrl } from "../../api/pages";
 import { InspectDrawer } from "../../components/InspectDrawer";
 import {
   ApprovalBar,
   EntityCard,
+  ConfirmDrawer,
   RoomHeader,
   RoomShell,
   RoomTabs,
@@ -44,6 +49,71 @@ import { isOcrIssue } from "../../components/pages/lettering";
 import { RevisionDraft } from "../../components/pages/RevisionDraft";
 import { VisualReviewPanel, type VisualReviewDraftSeed } from "../../components/pages/VisualReviewPanel";
 import type { DrawerKind } from "../../lib/stations";
+import { useDialogFocus } from "../../hooks/useDialogFocus";
+import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
+
+type ReviewView = "page" | "visual" | "checks";
+type PageFilter = "all" | "needs-review" | "drawing" | "failed";
+type PaidPageIntent =
+  | { kind: "batch" }
+  | { kind: "page"; pageNumber: number; depiction: "canonical" | "less_graphic" }
+  | { kind: "analysis"; pageNumber: number };
+
+function needsReview(item: CompletePageSummary) {
+  return item.issues.some((issue) => issue.status === "open" || issue.status === "revised");
+}
+
+function PageSpendConsent({
+  project, intent, busy, error, onConfirm, onClose,
+}: {
+  project: string;
+  intent: PaidPageIntent;
+  busy: boolean;
+  error: string | null;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const batch = useCompletePageBatchEstimate(project, intent.kind === "batch");
+  const page = useCompletePageEstimate(
+    project, intent.kind === "page" ? intent.pageNumber : undefined,
+    intent.kind === "page" ? intent.depiction : "canonical", intent.kind === "page",
+  );
+  const analysis = usePageAnalysisEstimate(
+    project, intent.kind === "analysis" ? intent.pageNumber : undefined, intent.kind === "analysis",
+  );
+  const estimate = intent.kind === "batch" ? batch : intent.kind === "page" ? page : analysis;
+  return (
+    <ConfirmDrawer
+      open
+      title={intent.kind === "batch" ? t("Queue all undrawn pages?") : `${t("Page")} ${intent.pageNumber}`}
+      body={intent.kind === "batch"
+        ? t("This starts drawing the remaining pages now. Completed artwork stays available to review.")
+        : intent.kind === "analysis"
+          ? t("Run the text check again on this render. This does not redraw the page.")
+          : intent.depiction === "less_graphic"
+            ? t("Draw a less graphic version of this page while keeping required identity references.")
+            : t("Draw one complete page now, including its lettering.")}
+      cost={estimate.data}
+      confirmLabel={intent.kind === "batch" ? t("CONFIRM QUEUE") : intent.kind === "analysis" ? t("CONFIRM TEXT CHECK") : t("CONFIRM DRAW")}
+      busy={busy || estimate.isFetching || !estimate.data || !!estimate.error}
+      onConfirm={() => { if (estimate.data && !estimate.error && !estimate.isFetching && !busy) onConfirm(); }}
+      onClose={onClose}
+      extraBody={(
+        <div className="space-y-3">
+          {!estimate.data && !estimate.error && <p role="status">{t("Loading immediate estimate and hold…")}</p>}
+          {estimate.error && (
+            <div role="alert" className="space-y-2 text-sm text-hero-red">
+              <p>{t("The cost could not be loaded. Nothing has been started.")} {estimate.error.message}</p>
+              <Button variant="outline" size="sm" onClick={() => void estimate.refetch()}>{t("RETRY ESTIMATE")}</Button>
+            </div>
+          )}
+          {error && <p role="alert" className="text-sm text-hero-red">{error}</p>}
+        </div>
+      )}
+    />
+  );
+}
 
 function BlockingFailureList({ validation }: { validation?: StageValidation }) {
   const { t } = useI18n();
@@ -86,6 +156,15 @@ function IssueHistory({
   const { t } = useI18n();
   const accept = useAcceptPageIssue();
   const dismiss = useDismissPageIssue();
+  const [actionError, setActionError] = useState<{ issueId: string; message: string } | null>(null);
+
+  function decide(issue: PageIssue, dismissFalsePositive = false) {
+    setActionError(null);
+    const mutation = dismissFalsePositive ? dismiss : accept;
+    mutation.mutate({ project, pageNumber, issueId: issue.id }, {
+      onError: (error) => setActionError({ issueId: issue.id, message: error.message }),
+    });
+  }
 
   if (issues.length === 0) {
     return <p className="font-body text-sm text-ink-muted">{t("No page issues recorded.")}</p>;
@@ -113,11 +192,7 @@ function IssueHistory({
                     <Button
                       size="xs"
                       variant="outline"
-                      onClick={() => accept.mutate({
-                        project,
-                        pageNumber,
-                        issueId: issue.id,
-                      })}
+                      onClick={() => decide(issue)}
                       disabled={accept.isPending}
                     >
                       {t(issue.status === "revised" ? "CONFIRM FIX" : "ACCEPT AS-IS")}
@@ -128,17 +203,18 @@ function IssueHistory({
                     <Button
                       size="xs"
                       variant="outline"
-                      onClick={() => dismiss.mutate({
-                        project,
-                        pageNumber,
-                        issueId: issue.id,
-                      })}
+                      onClick={() => decide(issue, true)}
                       disabled={dismiss.isPending}
                     >
                       {t("DISMISS FALSE POSITIVE")}
                     </Button>
                   )}
                 </div>
+                {actionError?.issueId === issue.id && (
+                  <p role="alert" className="text-sm leading-6 text-hero-red">
+                    {actionError.message} {t("Your decision was not saved. Review this finding and try again.")}
+                  </p>
+                )}
               </div>
             </Surface>
           </li>
@@ -160,12 +236,24 @@ function PageReview({
   onClose,
   onJobQueued,
   pageIsDrawing,
+  view,
+  onViewChange,
+  previousPage,
+  nextPage,
+  nextUnresolved,
+  onNavigate,
 }: {
   project: string;
   item: CompletePageSummary;
   onClose: () => void;
   onJobQueued: (jobId: string, pageNumber: number) => void;
   pageIsDrawing: boolean;
+  view: ReviewView;
+  onViewChange: (view: ReviewView) => void;
+  previousPage?: number;
+  nextPage?: number;
+  nextUnresolved?: number;
+  onNavigate: (pageNumber: number) => void;
 }) {
   const { t } = useI18n();
   // Canonical page revision being corrected; the redraw starts from the
@@ -175,68 +263,13 @@ function PageReview({
   const compareRevision = item.active_render?.render.parent_revision ?? null;
   const [draftKeys, setDraftKeys] = useState<string[]>([]);
   const [visualSeeds, setVisualSeeds] = useState<VisualReviewDraftSeed[]>([]);
-  const [view, setView] = useState<"page" | "visual" | "checks">("page");
   const panelRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
-  // The gallery re-renders on every job/query tick with a fresh inline
-  // onClose; calling through a ref keeps this effect (and review focus)
-  // stable instead of resetting focus mid-edit.
-  const onCloseRef = useRef(onClose);
-  useEffect(() => {
-    onCloseRef.current = onClose;
-  }, [onClose]);
-
-  useEffect(() => {
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    const panel = panelRef.current;
-    panel?.focus();
-    const originalOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        onCloseRef.current();
-        return;
-      }
-      // Keep keyboard focus inside the modal while it is open. The draft
-      // stays mounted while hidden, so hidden/disabled controls are
-      // excluded alongside offscreen ones.
-      if (event.key === "Tab" && panel) {
-        const focusables = panel.querySelectorAll<HTMLElement>(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-        );
-        const enabled = Array.from(focusables).filter(
-          (el) => !el.hasAttribute("disabled")
-            && !el.closest("[hidden]")
-            && el.getClientRects().length > 0,
-        );
-        const active = document.activeElement as HTMLElement | null;
-        if (enabled.length === 0) {
-          event.preventDefault();
-          return;
-        }
-        const first = enabled[0];
-        const last = enabled[enabled.length - 1];
-        if (event.shiftKey && (active === first || active === panel || !panel.contains(active))) {
-          event.preventDefault();
-          last.focus();
-        } else if (!event.shiftKey && (active === last || active === panel || !panel.contains(active))) {
-          event.preventDefault();
-          first.focus();
-        }
-      }
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = originalOverflow;
-      previouslyFocused?.focus?.();
-    };
-  }, []);
+  useDialogFocus(panelRef, { onClose });
 
   function selectView(next: "page" | "visual" | "checks") {
-    setView(next);
+    onViewChange(next);
     // Each view starts at the top of the modal body; the header stays put.
     const scroller = bodyRef.current;
     if (scroller) {
@@ -279,6 +312,11 @@ function PageReview({
               {t("CLOSE")}
             </Button>
           </header>
+          <nav aria-label={t("Review navigation")} className="flex flex-wrap gap-2 px-4 pb-3">
+            <Button variant="outline" size="sm" disabled={previousPage == null} onClick={() => previousPage != null && onNavigate(previousPage)}>{t("PREVIOUS PAGE")}</Button>
+            <Button variant="outline" size="sm" disabled={nextPage == null} onClick={() => nextPage != null && onNavigate(nextPage)}>{t("NEXT PAGE")}</Button>
+            <Button variant="outline" size="sm" disabled={nextUnresolved == null} onClick={() => nextUnresolved != null && onNavigate(nextUnresolved)}>{t("NEXT UNRESOLVED")}</Button>
+          </nav>
           <RoomTabs
             ariaLabel={`${t("Page")} ${item.page.page_number} ${t("sections")}`}
             className="border-t border-ink-black/15 px-4 pb-3 pt-3"
@@ -307,7 +345,7 @@ function PageReview({
         <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto">
           <div className="space-y-7 p-4 lg:p-6">
             {/* Revision draft stays mounted while hidden so unsaved changes survive tab switches. */}
-            <div hidden={view !== "page"} role="tabpanel" aria-label={t("Page")}>
+            <div hidden={view !== "page"} role="region" aria-label={t("Page")}>
               {editSourceRevision != null ? (
                 <RevisionDraft
                   key={`${project}:${item.page.page_number}:${comicPageRevision}:${editSourceRevision}`}
@@ -332,7 +370,7 @@ function PageReview({
             </div>
 
             {view === "visual" && (
-              <div role="tabpanel" aria-label={t("Visual review")}>
+              <div role="region" aria-label={t("Visual review")}>
                 {editSourceRevision != null ? (
                   <VisualReviewPanel
                     key={`${project}:${item.page.page_number}:${editSourceRevision}`}
@@ -353,7 +391,7 @@ function PageReview({
             )}
 
             {view === "checks" && (
-              <div role="tabpanel" aria-label={t("Checks")}>
+              <div role="region" aria-label={t("Checks")}>
                 <section>
                   <SectionHeader variant="underline" title={t("ISSUE HISTORY")} />
                   <IssueHistory
@@ -388,27 +426,63 @@ export function PagesRoom() {
   const generate = useGenerateCompletePage();
   const analyze = useAnalyzeCompletePage();
   const approve = useApproveStage();
-  const [selected, setSelected] = useState<number | null>(null);
+  const { data: styles } = useStyles(id);
+  const selectedStyle = styles?.suggestions.find((style) => style.is_active);
   const [searchParams, setSearchParams] = useSearchParams();
+  const pageParam = searchParams.get("page") ?? "";
+  const selected = /^[1-9]\d*$/.test(pageParam) && Number.isSafeInteger(Number(pageParam)) ? Number(pageParam) : null;
+  const reviewParam = searchParams.get("review");
+  const review: ReviewView = reviewParam === "visual" || reviewParam === "checks" ? reviewParam : "page";
+  const filterParam = searchParams.get("filter");
+  const filter: PageFilter = filterParam === "needs-review" || filterParam === "drawing" || filterParam === "failed" ? filterParam : "all";
   const readingParam = searchParams.get("reading");
-  const reading: DrawerKind | null = readingParam === "adaptation" || readingParam === "page-plan"
-    ? readingParam
-    : null;
+  const reading: DrawerKind | null = readingParam === "adaptation" || readingParam === "page-plan" ? readingParam : null;
+  const restoredProject = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!id || restoredProject.current === id) return;
+    restoredProject.current = id;
+    if (searchParams.size > 0) return;
+    try {
+      const saved = sessionStorage.getItem(`page-review:v1:${id}`);
+      if (saved) setSearchParams(new URLSearchParams(saved), { replace: true });
+    } catch { /* Storage is optional; the URL remains authoritative. */ }
+  }, [id, searchParams, setSearchParams]);
+
+  function updateContext(changes: Record<string, string | null>) {
+    const next = new URLSearchParams(searchParams);
+    for (const [key, value] of Object.entries(changes)) {
+      if (value == null) next.delete(key);
+      else next.set(key, value);
+    }
+    setSearchParams(next, { replace: true });
+    setRevealedPage(null);
+    try {
+      const saved = new URLSearchParams(next);
+      saved.delete("reading");
+      sessionStorage.setItem(`page-review:v1:${id}`, saved.toString());
+    } catch { /* Private browsing must not block review. */ }
+  }
+
   const [pageJobs, setPageJobs] = useState<Record<string, number>>({});
   const [startingPages, setStartingPages] = useState<number[]>([]);
   const [batchPages, setBatchPages] = useState<number[]>([]);
-  const [batchStartedAt, setBatchStartedAt] = useState<number | null>(null);
   const [pageFailures, setPageFailures] = useState<Partial<Record<number, GenerationJob>>>({});
-  const jobIds = Object.keys(pageJobs);
-  const watchingBatch = batchPages.length > 0
-    && status?.stages.draw?.status !== "failed";
-  const { data: trackedGenerationJobs } = useGenerationJobs(
-    id,
-    watchingBatch ? [] : jobIds,
-    watchingBatch,
-  );
-  const generationJobs = watchingBatch ? undefined : trackedGenerationJobs;
-  const batchGenerationJobs = watchingBatch ? trackedGenerationJobs : undefined;
+  const [paidIntent, setPaidIntent] = useState<PaidPageIntent | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [pageActionErrors, setPageActionErrors] = useState<Partial<Record<number, string>>>({});
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+  const { data: generationJobs } = useGenerationJobs(id, [], true);
+  const observedTerminalJobs = useRef(new Set<string>());
+  const firstArtworkObserved = useRef<boolean | null>(null);
+  const [revealedPage, setRevealedPage] = useState<number | null>(null);
+  const latestPageJobs = new Map<number, GenerationJob>();
+  for (const job of generationJobs?.jobs ?? []) {
+    if (job.kind !== "complete_page_draw" && pageJobs[job.id] == null) continue;
+    const pageNumber = Number(job.payload?.page_number ?? pageJobs[job.id]);
+    if (!Number.isSafeInteger(pageNumber) || pageNumber < 1) continue;
+    const previous = latestPageJobs.get(pageNumber);
+    if (!previous || Date.parse(job.queued_at) >= Date.parse(previous.queued_at)) latestPageJobs.set(pageNumber, job);
+  }
 
   const drawStatus = status?.stages.draw?.status ?? "pending";
   const interruptedStage = status?.stages.adapt?.status !== "complete"
@@ -425,58 +499,45 @@ export function PagesRoom() {
   const selectedItem = data?.pages.find((item) => item.page.page_number === selected);
 
   useEffect(() => {
-    const failedJobs = (generationJobs?.jobs ?? [])
-      .filter((job) => job.status === "failed");
-    const terminalIds = (generationJobs?.jobs ?? [])
-      .filter((job) => job.status === "complete" || job.status === "failed")
-      .map((job) => job.id);
-    if (terminalIds.length === 0) return;
-    void refetch().finally(() => {
-      if (failedJobs.length > 0) {
-        setPageFailures((current) => {
-          const next = { ...current };
-          failedJobs.forEach((job) => {
-            const pageNumber = pageJobs[job.id];
-            if (pageNumber !== undefined) next[pageNumber] = job;
-          });
-          return next;
+    const terminal = (generationJobs?.jobs ?? []).filter((job) =>
+      (job.kind === "complete_page_draw" || pageJobs[job.id] != null)
+      && (job.status === "complete" || job.status === "failed")
+      && !observedTerminalJobs.current.has(job.id),
+    );
+    if (terminal.length === 0) return;
+    terminal.forEach((job) => observedTerminalJobs.current.add(job.id));
+    void refetch().then(() => {
+      const donePages = terminal.map((job) => Number(job.payload?.page_number ?? pageJobs[job.id]));
+      setBatchPages((current) => current.filter((page) => !donePages.includes(page)));
+      setPageFailures((current) => {
+        const next = { ...current };
+        terminal.forEach((job) => {
+          const pageNumber = Number(job.payload?.page_number ?? pageJobs[job.id]);
+          if (job.status === "failed") next[pageNumber] = job;
+          else delete next[pageNumber];
         });
-      }
+        return next;
+      });
       setPageJobs((current) => {
         const next = { ...current };
-        terminalIds.forEach((jobId) => delete next[jobId]);
+        terminal.forEach((job) => delete next[job.id]);
         return next;
       });
     });
   }, [generationJobs?.jobs, pageJobs, refetch]);
 
   useEffect(() => {
-    if (batchPages.length === 0) return;
-    const relevant = (batchGenerationJobs?.jobs ?? []).filter(
-      (job) =>
-        job.kind === "complete_page_draw"
-        && job.payload.issue_id == null
-        && (batchStartedAt == null || Date.parse(job.queued_at) >= batchStartedAt)
-        && batchPages.includes(Number(job.payload.page_number)),
-    );
-    const terminalPages = relevant
-      .filter((job) => job.status === "complete" || job.status === "failed")
-      .map((job) => Number(job.payload.page_number));
-    if (terminalPages.length === 0) return;
-    const failed = relevant.filter((job) => job.status === "failed");
-    void refetch().finally(() => {
-      if (failed.length > 0) {
-        setPageFailures((current) => {
-          const next = { ...current };
-          failed.forEach((job) => {
-            next[Number(job.payload.page_number)] = job;
-          });
-          return next;
-        });
+    if (!data) return;
+    const artwork = data.pages.find((item) => item.active_render);
+    if (firstArtworkObserved.current === null) {
+      firstArtworkObserved.current = !!artwork;
+    } else if (!firstArtworkObserved.current && artwork) {
+      firstArtworkObserved.current = true;
+      if (filter === "all" || (filter === "needs-review" && needsReview(artwork))) {
+        setRevealedPage(artwork.page.page_number);
       }
-      setBatchPages((current) => current.filter((page) => !terminalPages.includes(page)));
-    });
-  }, [batchGenerationJobs?.jobs, batchPages, batchStartedAt, refetch]);
+    }
+  }, [data, filter]);
 
   if (isLoading && drawStatus !== "pending") {
     return (
@@ -511,12 +572,40 @@ export function PagesRoom() {
   }
   const projectId = id;
   const pages = data.pages;
+  const drawingPages = new Set(startingPages);
+  if (drawStatus !== "failed") batchPages.forEach((page) => drawingPages.add(page));
+  Object.values(pageJobs).forEach((page) => drawingPages.add(page));
+  latestPageJobs.forEach((job, page) => {
+    if (job.status === "queued" || job.status === "running") drawingPages.add(page);
+  });
+  const failedPages = new Set(pages.filter((item) => {
+    if (drawingPages.has(item.page.page_number)) return false;
+    const job = latestPageJobs.get(item.page.page_number);
+    return job?.status === "failed" || !!pageFailures[item.page.page_number] || !!item.failure;
+  }).map((item) => item.page.page_number));
+  const unresolvedPages = pages.filter(needsReview);
+  const visiblePages = pages.filter((item) => filter === "all"
+    || (filter === "needs-review" && needsReview(item))
+    || (filter === "drawing" && drawingPages.has(item.page.page_number))
+    || (filter === "failed" && failedPages.has(item.page.page_number)));
+  const reviewIndex = pages.findIndex((item) => item.page.page_number === selected);
+  const nextUnresolved = [...unresolvedPages.filter((item) => item.page.page_number > (selected ?? 0)),
+    ...unresolvedPages.filter((item) => item.page.page_number < (selected ?? 0))][0]?.page.page_number;
+
+  function requestSpend(intent: PaidPageIntent) {
+    setActionError(null);
+    setPaidIntent(intent);
+  }
 
   function continueToBook() {
     if (!id) return;
+    setApprovalError(null);
     approve.mutate(
       { project: id, stage: "draw" },
-      { onSuccess: () => navigate(`/project/${encodeURIComponent(id)}/book`) },
+      {
+        onSuccess: () => navigate(`/project/${encodeURIComponent(id)}/book`),
+        onError: (error) => setApprovalError(error.message),
+      },
     );
   }
 
@@ -524,6 +613,9 @@ export function PagesRoom() {
     pageNumber: number,
     depiction: "canonical" | "less_graphic" = "canonical",
   ) {
+    if (!status?.style_selected || startingPages.includes(pageNumber)) return;
+    setActionError(null);
+    setPageActionErrors((current) => ({ ...current, [pageNumber]: undefined }));
     setStartingPages((current) => (
       current.includes(pageNumber) ? current : [...current, pageNumber]
     ));
@@ -538,13 +630,20 @@ export function PagesRoom() {
         : { project: projectId, pageNumber, depiction },
       {
         onSuccess: ({ job }) => {
+          setPaidIntent(null);
           setStartingPages((current) => current.filter((page) => page !== pageNumber));
           setPageJobs((current) => ({
             ...current,
             [job.id]: pageNumber,
           }));
         },
-        onError: () => {
+        onError: (error) => {
+          setActionError(error.message);
+          setPageActionErrors((current) => ({ ...current, [pageNumber]: error.message }));
+          maybeShowInsufficientCredits(error, {
+            actionLabel: `${t("Draw page")} ${pageNumber}`,
+            onRetry: () => requestSpend({ kind: "page", pageNumber, depiction }),
+          });
           setStartingPages((current) => current.filter((page) => page !== pageNumber));
         },
       },
@@ -552,21 +651,46 @@ export function PagesRoom() {
   }
 
   function startDraw(queuePages: boolean) {
+    if (!status?.style_selected || run.isPending) return;
+    setActionError(null);
     const undrawnPages = pages
       .filter((item) => !item.active_render)
       .map((item) => item.page.page_number);
-    if (queuePages) {
-      setBatchStartedAt(Date.now());
-      setBatchPages(undrawnPages);
-    }
     run.mutate(
       { project: projectId, stage: "draw", queuePages },
       {
-        onError: () => {
+        onSuccess: () => {
+          if (queuePages) setBatchPages(undrawnPages);
+          setPaidIntent(null);
+        },
+        onError: (error) => {
+          setActionError(error.message);
+          maybeShowInsufficientCredits(error, {
+            actionLabel: t("QUEUE ALL PAGES"),
+            onRetry: () => requestSpend({ kind: "batch" }),
+          });
           if (queuePages) setBatchPages([]);
         },
       },
     );
+  }
+
+  function retryAnalysis(pageNumber: number) {
+    setActionError(null);
+    analyze.mutate({ project: projectId, pageNumber }, {
+      onSuccess: () => {
+        setPaidIntent(null);
+        setPageActionErrors((current) => ({ ...current, [pageNumber]: undefined }));
+      },
+      onError: (error) => {
+        setActionError(error.message);
+        setPageActionErrors((current) => ({ ...current, [pageNumber]: error.message }));
+        maybeShowInsufficientCredits(error, {
+          actionLabel: t("RETRY TEXT CHECK"),
+          onRetry: () => requestSpend({ kind: "analysis", pageNumber }),
+        });
+      },
+    });
   }
 
   return (
@@ -576,6 +700,13 @@ export function PagesRoom() {
         title={t("REVIEW COMPLETE PAGES")}
         lead={t("Each thumbnail is one fully lettered page. Corrections always create a complete new revision.")}
       />
+      {status?.style_selected && selectedStyle && (
+        <div className="mb-5 flex items-center gap-3 text-sm">
+          {selectedStyle.has_sample && <img src={`/api/projects/${encodeURIComponent(id)}/files/samples/style_${selectedStyle.index}.png`} alt="" className="h-14 w-11 object-contain" />}
+          <p><span className="font-bold">{t("Visual direction")}: </span>{selectedStyle.label}</p>
+        </div>
+      )}
+      {!status?.style_selected && <p role="status" className="mb-4 text-sm">{t("Select a visual direction in Look before drawing pages.")}</p>}
 
       <section aria-label={t("Page gallery")}>
         <SectionHeader
@@ -587,14 +718,14 @@ export function PagesRoom() {
               <Button
                 variant="outline"
                 size="xs"
-                onClick={() => setSearchParams({ reading: "adaptation" })}
+                onClick={() => updateContext({ reading: "adaptation" })}
               >
                 {t("BOOK ADAPTATION")}
               </Button>
               <Button
                 variant="outline"
                 size="xs"
-                onClick={() => setSearchParams({ reading: "page-plan" })}
+                onClick={() => updateContext({ reading: "page-plan" })}
               >
                 {t("PAGE PLAN")}
               </Button>
@@ -611,33 +742,61 @@ export function PagesRoom() {
                 <p className="mt-1 text-sm leading-6 text-bristol/80">
                   {t("Queue every page now, or prepare the edition and generate pages one at a time while you review.")}
                 </p>
+                <p className="mt-2 text-sm leading-6 text-bristol/80">{t("One by one prepares the edition without drawing. Each paid draw waits for your cost confirmation.")}</p>
               </div>
               <div className="flex flex-wrap gap-3">
                 <Button
                   variant="outline"
                   onClick={() => startDraw(false)}
-                  disabled={run.isPending}
+                  disabled={run.isPending || !status?.style_selected}
                 >
                   {t("GO ONE BY ONE")}
                 </Button>
                 <Button
                   variant="onInk"
-                  onClick={() => startDraw(true)}
-                  disabled={run.isPending}
+                  onClick={() => requestSpend({ kind: "batch" })}
+                  disabled={run.isPending || !status?.style_selected}
                 >
                   {t("QUEUE ALL PAGES")}
                 </Button>
               </div>
             </div>
+            {actionError && !paidIntent && <p role="alert" className="mt-3 text-sm">{actionError}</p>}
           </Surface>
         )}
+        {drawingPages.size > 0 && (
+          <Surface tone="pulp" border="soft" shadow="none" padding="md" className="mb-5">
+            <p role="status" className="text-sm font-bold">{drawingPages.size} {t("pages drawing or queued")}</p>
+            <p className="mt-1 text-sm text-ink-muted">{t("Completed pages are ready to inspect while the press continues.")}</p>
+            <div className="mt-3 flex gap-3 overflow-x-auto">
+              {pages.filter((item) => item.active_render).map((item) => (
+                <button key={item.page.page_number} type="button" className="w-20 shrink-0 p-1 text-center text-xs font-bold" onClick={() => updateContext({ page: String(item.page.page_number), review: "page" })} aria-label={`${t("Inspect completed page")} ${item.page.page_number}`}>
+                  <img src={pageRenderPreviewUrl(id, item.page.page_number, item.active_render!.render.revision, "thumbnail")} alt="" className="mb-2 aspect-[2/3] w-full object-contain" />
+                  {t("Page")} {item.page.page_number}
+                </button>
+              ))}
+            </div>
+          </Surface>
+        )}
+        <div role="group" aria-label={t("Filter pages")} className="mb-5 flex flex-wrap gap-2">
+          {([
+            ["all", t("All"), pages.length],
+            ["needs-review", t("Needs review"), unresolvedPages.length],
+            ["drawing", t("Drawing"), drawingPages.size],
+            ["failed", t("Failed"), failedPages.size],
+          ] as const).map(([value, label, count]) => (
+            <Button key={value} variant={filter === value ? "secondary" : "outline"} size="sm" aria-pressed={filter === value} onClick={() => updateContext({ filter: value })}>
+              {label} ({count})
+            </Button>
+          ))}
+        </div>
+        {visiblePages.length === 0 && <p role="status" className="mb-6 text-sm text-ink-muted">{t("No pages in this filter.")}</p>}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4">
-          {data.pages.map((item) => {
+          {visiblePages.map((item) => {
             const revision = item.active_render?.render.revision;
-            const pageIsDrawing = startingPages.includes(item.page.page_number)
-              || (drawStatus !== "failed" && batchPages.includes(item.page.page_number))
-              || Object.values(pageJobs).includes(item.page.page_number);
-            const pageFailure = pageFailures[item.page.page_number] ?? item.failure;
+            const pageIsDrawing = drawingPages.has(item.page.page_number);
+            const serverJob = latestPageJobs.get(item.page.page_number);
+            const pageFailure = serverJob?.status === "failed" ? serverJob : pageFailures[item.page.page_number] ?? item.failure;
             const failurePhase = pageFailure && "phase" in pageFailure
               ? pageFailure.phase
               : undefined;
@@ -656,12 +815,12 @@ export function PagesRoom() {
               <EntityCard key={item.page.page_number} padding="cozy">
                 <button
                   type="button"
-                  onClick={() => setSelected(item.page.page_number)}
+                  onClick={() => updateContext({ page: String(item.page.page_number), review: "page" })}
                   aria-label={`${t("Open page")} ${item.page.page_number}, ${t("revision")} ${revision ?? 0}`}
                   className="block w-full text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red"
                 >
                   <div className="aspect-[2/3] overflow-hidden bg-surface-container">
-                    {pageIsDrawing ? (
+                    {pageIsDrawing && !revision ? (
                       <FlowingDotsPlaceholder
                         aspect="2 / 3"
                         label={t("DRAWING PAGE…")}
@@ -675,7 +834,8 @@ export function PagesRoom() {
                         alt={`${t("Complete page thumbnail")} ${item.page.page_number}, ${t("revision")} ${revision}`}
                         loading="lazy"
                         decoding="async"
-                        className="h-full w-full object-contain"
+                        className={`h-full w-full object-contain ${revealedPage === item.page.page_number ? "animate-proof-reveal" : ""}`}
+                        onAnimationEnd={() => setRevealedPage(null)}
                       />
                     ) : (
                       <div className="flex h-full items-center justify-center px-4 text-center font-meta text-xs font-bold text-ink-muted">
@@ -695,6 +855,7 @@ export function PagesRoom() {
                   </div>
                   <p className="mt-1 font-meta text-xs text-ink-muted">
                     {revision ? `${t("Revision")} ${revision}` : t("Not generated")}
+                    {pageIsDrawing && revision ? ` · ${t("New revision drawing")}` : ""}
                     {item.issues.some((issue) => isOcrIssue(issue) && (issue.status === "open" || issue.status === "revised"))
                       ? ` · ${t("Text check differs")}`
                       : ""}
@@ -713,10 +874,10 @@ export function PagesRoom() {
                     border="soft"
                     shadow="none"
                     padding="sm"
-                    className="mt-3 border-l-[4px] border-l-hero-red"
+                    className="mt-3"
                     role="alert"
                   >
-                    <strong className="font-meta text-[0.62rem] tracking-[0.12em] text-hero-red">
+                    <strong className="font-meta text-xs text-hero-red">
                       {failureCopy.title}
                     </strong>
                     <p className="mt-1 text-xs leading-5 text-ink-black/75">
@@ -732,22 +893,24 @@ export function PagesRoom() {
                         <Button
                           size="xs"
                           fullWidth
-                          onClick={() => drawPage(item.page.page_number, "less_graphic")}
+                          onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "less_graphic" })}
                           disabled={
                             generate.isPending
                             || pageIsDrawing
+                            || !status?.style_selected
                           }
                         >
-                          {t("DRAW WITHOUT REFERENCES")}
+                          {t("DRAW LESS GRAPHIC VERSION")}
                         </Button>
                         <Button
                           size="xs"
                           variant="outline"
                           fullWidth
-                          onClick={() => drawPage(item.page.page_number)}
+                          onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "canonical" })}
                           disabled={
                             generate.isPending
                             || pageIsDrawing
+                            || !status?.style_selected
                           }
                         >
                           {t("TRY AGAIN UNCHANGED")}
@@ -759,8 +922,8 @@ export function PagesRoom() {
                         className="mt-3"
                         size="xs"
                         fullWidth
-                        onClick={() => drawPage(item.page.page_number)}
-                        disabled={generate.isPending || pageIsDrawing}
+                        onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "canonical" })}
+                        disabled={generate.isPending || pageIsDrawing || !status?.style_selected}
                       >
                         {pageIsDrawing ? t("DRAWING PAGE…") : t("TRY AGAIN")}
                       </Button>
@@ -770,10 +933,7 @@ export function PagesRoom() {
                         className="mt-3"
                         size="xs"
                         fullWidth
-                        onClick={() => analyze.mutate({
-                          project: projectId,
-                          pageNumber: item.page.page_number,
-                        })}
+                        onClick={() => requestSpend({ kind: "analysis", pageNumber: item.page.page_number })}
                         disabled={analyze.isPending}
                       >
                         {analyze.isPending ? t("CHECKING TEXT…") : t("RETRY TEXT CHECK")}
@@ -786,15 +946,19 @@ export function PagesRoom() {
                     className="mt-3"
                     size="xs"
                     fullWidth
-                    onClick={() => drawPage(item.page.page_number)}
+                    onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "canonical" })}
                     disabled={
                       pageIsDrawing
+                      || !status?.style_selected
                     }
                   >
                     {pageIsDrawing
                       ? t("DRAWING PAGE…")
                       : t("GENERATE COMPLETE PAGE")}
                   </Button>
+                )}
+                {pageActionErrors[item.page.page_number] && !paidIntent && (
+                  <p role="alert" className="mt-3 text-sm text-hero-red">{pageActionErrors[item.page.page_number]}</p>
                 )}
               </EntityCard>
             );
@@ -805,15 +969,22 @@ export function PagesRoom() {
         <InspectDrawer
           project={id}
           kind={reading}
-          onClose={() => setSearchParams({}, { replace: true })}
+          onClose={() => updateContext({ reading: null })}
         />
       )}
 
       {selectedItem && (
         <PageReview
+          key={`${id}:${selectedItem.page.page_number}`}
           project={id}
           item={selectedItem}
-          onClose={() => setSelected(null)}
+          onClose={() => updateContext({ page: null, review: null })}
+          view={review}
+          onViewChange={(view) => updateContext({ review: view })}
+          previousPage={reviewIndex > 0 ? pages[reviewIndex - 1]?.page.page_number : undefined}
+          nextPage={reviewIndex >= 0 ? pages[reviewIndex + 1]?.page.page_number : undefined}
+          nextUnresolved={nextUnresolved}
+          onNavigate={(pageNumber) => updateContext({ page: String(pageNumber) })}
           onJobQueued={(jobId, pageNumber) => {
             setPageFailures((current) => {
               const next = { ...current };
@@ -825,12 +996,32 @@ export function PagesRoom() {
               [jobId]: pageNumber,
             }));
           }}
-          pageIsDrawing={
-            startingPages.includes(selectedItem.page.page_number)
-            || (drawStatus !== "failed" && batchPages.includes(selectedItem.page.page_number))
-            || Object.values(pageJobs).includes(selectedItem.page.page_number)
-          }
+          pageIsDrawing={drawingPages.has(selectedItem.page.page_number)}
         />
+      )}
+      {paidIntent && (
+        <PageSpendConsent
+          key={JSON.stringify(paidIntent)}
+          project={id}
+          intent={paidIntent}
+          busy={generate.isPending || run.isPending || analyze.isPending}
+          error={actionError}
+          onClose={() => setPaidIntent(null)}
+          onConfirm={() => {
+            if (paidIntent.kind === "batch") startDraw(true);
+            else if (paidIntent.kind === "analysis") retryAnalysis(paidIntent.pageNumber);
+            else drawPage(paidIntent.pageNumber, paidIntent.depiction);
+          }}
+        />
+      )}
+      {approvalError && <p role="alert" className="text-sm text-hero-red">{approvalError}</p>}
+      {unresolvedPages.length > 0 && (
+        <Button variant="outline" onClick={() => updateContext({ filter: "needs-review", page: String(unresolvedPages[0].page.page_number), review: "checks" })}>
+          {t("REVIEW FLAGGED PAGES")} ({unresolvedPages.length})
+        </Button>
+      )}
+      {pages.every((item) => item.active_render) && unresolvedPages.length === 0 && (
+        <p role="status" className="text-sm font-bold text-archive-sage">{t("No unresolved page findings. Read through the edition before export.")}</p>
       )}
 
       <ApprovalBar

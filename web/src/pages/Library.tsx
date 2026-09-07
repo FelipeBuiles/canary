@@ -1,10 +1,9 @@
 import { useNavigate } from "react-router-dom";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCreateProject, useDeleteProject, useGenerateProjectCover, useProjects, useImportStory } from "../api/queries";
-import { usePipelineStore } from "../store/pipeline";
-import { useRunAction } from "../hooks/useRunAction";
 import { ProjectCard } from "../components/ProjectCard";
+import { useDialogFocus } from "../hooks/useDialogFocus";
 import { Icon } from "../components/ui/Icon";
 import { Button } from "../components/ui/Button";
 import { LoadingBlock, StateBlock } from "../components/ui/StateBlock";
@@ -17,39 +16,24 @@ import { maybeShowInsufficientCredits } from "../store/insufficientCredits";
 
 function FirstIssueInvitation({ onStart }: { onStart: () => void }) {
   const { t } = useI18n();
-
   return (
-    <div className="border-[3px] border-ink-black bg-bristol p-9 shadow-paper-sm sm:p-12">
-      <div className="inline-flex bg-hero-red px-3.5 py-1.5 font-meta text-[0.6rem] tracking-[0.24em] text-bristol uppercase">
-        {t("ISSUE #0")}
-      </div>
-      <p className="mt-6 max-w-[36rem] font-display text-[1.8rem] font-black uppercase leading-[0.95] tracking-[-0.04em] text-ink-black sm:text-[2.4rem]">
-        {t("Every production starts with a manuscript.")}
-      </p>
-      <div className="mt-10">
-        <div className="font-meta text-[0.56rem] tracking-[0.24em] text-ink-black/45">
-          {t("THE PRODUCTION LINE")}
-        </div>
-        <ol className="mt-4 flex flex-wrap gap-2.5">
-          {STATIONS.map((station) => (
-            <li
-              key={station.key}
-              className="flex items-center gap-2 border-[2px] border-ink-black bg-pulp-paper px-3 py-2"
-            >
-              <span className="font-display text-[0.78rem] font-black leading-none text-ink-black/40">
-                {station.number}
-              </span>
-              <span className="font-meta text-[0.58rem] uppercase leading-none tracking-[0.14em] text-ink-black">
-                {t(station.label)}
-              </span>
-            </li>
-          ))}
+    <section className="grid overflow-hidden border-[3px] border-ink-black bg-bristol shadow-paper lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+      <div className="px-6 py-8 sm:p-10">
+        <h1 className="font-display text-[2.5rem] font-black uppercase leading-[0.95] tracking-[-0.035em] text-ink-black sm:text-[3.25rem]">{t("Your story. Your first issue.")}</h1>
+        <p className="mt-5 max-w-[42ch] font-body text-base leading-7 text-ink-muted">{t("Bring a manuscript or choose a sample story. Shape the brief, choose the look, and review your pages before finishing your book.")}</p>
+        <Button size="lg" className="mt-7" onClick={onStart}>{t("NEW PRODUCTION")}</Button>
+        <p className="mt-3 text-sm text-ink-muted">{t("Prepare your source first. Generation begins only when you choose to start it.")}</p>
+        <ol aria-label={t("THE PRODUCTION LINE")} className="mt-8 flex flex-wrap gap-x-5 gap-y-3">
+          {STATIONS.map((station) => <li key={station.key} className="flex items-center gap-2 font-body text-sm font-bold"><span className="font-meta text-xs text-ink-muted">{station.number}</span>{t(station.label)}</li>)}
         </ol>
       </div>
-      <div className="mt-10">
-        <Button size="lg" onClick={onStart}>{t("START NEW PROJECT")}</Button>
-      </div>
-    </div>
+      <figure className="bg-pulp-paper p-5 sm:p-8">
+        <a href="/marketing/cthulhu-page.webp" target="_blank" rel="noopener noreferrer" aria-label={t("View example comic page at full size")} className="block focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red">
+          <img src="/marketing/cthulhu-page.webp" alt={t("Generated comic page from The Call of Cthulhu, with three illustrated and narrated panels")} width={1100} height={1640} className="mx-auto max-h-[640px] w-full object-contain" />
+        </a>
+        <figcaption className="mt-4 font-body text-sm text-ink-muted"><strong className="text-ink-black">{t("An example generated page")}</strong><br />The Call of Cthulhu · H. P. Lovecraft</figcaption>
+      </figure>
+    </section>
   );
 }
 
@@ -58,8 +42,7 @@ function NewProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   const queryClient = useQueryClient();
   const createProject = useCreateProject();
   const importStory = useImportStory();
-  const { handleRun } = useRunAction();
-  const clearEvents = usePipelineStore((s) => s.clearEvents);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const { t } = useI18n();
 
   const handleCreate = useCallback(
@@ -69,15 +52,13 @@ function NewProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
         {
           onSuccess: (data) => {
             queryClient.removeQueries({ queryKey: ["project", data.id] });
-            clearEvents();
             onClose();
-            navigate(`/project/${encodeURIComponent(data.id)}/extract`);
-            handleRun(data.id, "extract", { actionLabel: "Run EXTRACT" });
+            navigate(`/project/${encodeURIComponent(data.id)}/story`);
           },
         },
       );
     },
-    [createProject, handleRun, queryClient, clearEvents, onClose, navigate],
+    [createProject, queryClient, onClose, navigate],
   );
 
   const handleImport = useCallback(
@@ -87,49 +68,31 @@ function NewProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
         {
           onSuccess: (data) => {
             queryClient.removeQueries({ queryKey: ["project", data.id] });
-            clearEvents();
             onClose();
-            navigate(`/project/${encodeURIComponent(data.id)}/extract`);
-            handleRun(data.id, "extract", { actionLabel: "Run EXTRACT" });
+            navigate(`/project/${encodeURIComponent(data.id)}/story`);
           },
         },
       );
     },
-    [importStory, handleRun, queryClient, clearEvents, onClose, navigate],
+    [importStory, queryClient, onClose, navigate],
   );
 
-  // Close on Escape
-  useEffect(() => {
-    if (!isOpen) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [isOpen, onClose]);
-
-  // Prevent body scroll
-  useEffect(() => {
-    if (!isOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [isOpen]);
+  useDialogFocus(dialogRef, { enabled: isOpen, onClose });
 
   if (!isOpen) return null;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-ink-black/80 p-4 pt-[8vh]"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink-black/80 p-4"
       onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label={t("NEW PRODUCTION")}
     >
       <div
-        className="animate-comic-pop w-full max-w-[640px] pb-8"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("NEW PRODUCTION")}
+        tabIndex={-1}
+        className="w-full max-w-[720px]"
         onClick={(e) => e.stopPropagation()}
       >
         <UploadStep
@@ -171,7 +134,7 @@ export function Library() {
 
   return (
     <div className="mx-auto w-full max-w-[1540px] space-y-12 pb-10 md:space-y-14">
-      <section className="relative grid overflow-hidden border-[3px] border-ink-black bg-ink-black text-bristol shadow-paper lg:grid-cols-[minmax(0,1fr)_360px]">
+      {isEmpty ? <FirstIssueInvitation onStart={() => setNewProjectOpen(true)} /> : <section className="relative grid overflow-hidden border-[3px] border-ink-black bg-ink-black text-bristol shadow-paper lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="relative z-10 px-6 py-9 sm:px-9 sm:py-11 lg:px-12">
           <div className="inline-flex bg-hero-red px-3 py-1.5 font-meta text-[0.58rem] font-bold tracking-[0.14em] text-bristol uppercase">
             {t("STUDIO // ACTIVE PRODUCTIONS")}
@@ -190,7 +153,7 @@ export function Library() {
           </div>
         </div>
 
-        <div className="relative hidden place-items-center overflow-hidden bg-hero-red px-8 py-9 lg:grid">
+        <div className="relative hidden place-items-center overflow-hidden bg-pulp-paper px-8 py-9 lg:grid">
           <div aria-hidden="true" className="absolute inset-y-8 left-8 right-0 bg-[radial-gradient(circle_at_1px_1px,rgba(27,28,21,0.2)_1.5px,transparent_1.7px)] [background-size:16px_16px]" />
           <div className="relative w-full -rotate-1 border-[3px] border-ink-black bg-pulp-paper p-5 text-ink-black shadow-[8px_8px_0_0_rgba(27,28,21,0.35)]">
             <div className="flex items-center justify-between border-b-[2px] border-ink-black pb-3 font-meta text-[0.56rem] font-bold tracking-[0.1em]">
@@ -213,7 +176,7 @@ export function Library() {
             </ol>
           </div>
         </div>
-      </section>
+      </section>}
 
       <section className="relative">
         {!isEmpty && (
@@ -223,9 +186,7 @@ export function Library() {
             description={t("Pick up at the next decision, with every finished stage kept in place.")}
           />
         )}
-        {isEmpty ? (
-          <FirstIssueInvitation onStart={() => setNewProjectOpen(true)} />
-        ) : (
+        {!isEmpty && (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(270px,1fr))] gap-7">
             {projects?.map((project) => (
               <ProjectCard

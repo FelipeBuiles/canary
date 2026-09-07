@@ -74,7 +74,7 @@ export function RegenAction({
 
   return (
     <section aria-label={`${t("REGENERATE IMAGE")} · ${assetLabel}`}>
-      <div className="font-meta text-[0.54rem] tracking-[0.16em] text-ink-black/45">
+      <div className="font-meta text-xs tracking-[0.08em] text-ink-muted">
         {hasImage ? t("MAKE A CHANGE") : t("CREATE IMAGE")}
       </div>
       <p className="mt-1 text-[0.78rem] leading-5 text-ink-black/60">
@@ -85,7 +85,7 @@ export function RegenAction({
 
       {lastInstruction && (
         <details className="mt-3 border-[2px] border-archive-sage/35 bg-archive-sage/8">
-          <summary className="cursor-pointer px-3 py-2 font-meta text-[0.54rem] tracking-[0.12em] text-archive-sage">
+          <summary className="min-h-11 cursor-pointer px-3 py-3 font-meta text-xs tracking-[0.08em] text-ready">
             {t("LAST CHANGE APPLIED")}
           </summary>
           <p className="break-words px-3 pb-3 text-[0.75rem] leading-5 text-ink-black/70">
@@ -96,7 +96,7 @@ export function RegenAction({
 
       {allowInstruction && onRegenerateWithInstruction && (
         <div className="mt-3">
-          <label htmlFor={instructionId} className="mb-1.5 block font-meta text-[0.54rem] tracking-[0.14em] text-ink-black/50">
+          <label htmlFor={instructionId} className="mb-1.5 block font-meta text-xs tracking-[0.08em] text-ink-muted">
             {t("WHAT SHOULD CHANGE?")}
           </label>
           <textarea
@@ -117,7 +117,7 @@ export function RegenAction({
           <div className="mt-1 flex items-start justify-between gap-3">
             <p
               id={instructionErrorId}
-              className={`min-h-5 text-[0.72rem] leading-5 ${instructionError ? "text-hero-red" : "text-ink-black/40"}`}
+              className={`min-h-5 text-xs leading-5 ${instructionError ? "text-hero-red" : "text-ink-muted"}`}
               aria-live="polite"
             >
               {instructionError ?? `${instruction.length}/500`}
@@ -163,7 +163,7 @@ export function RegenAction({
           role="alert"
           className="mt-3 border-[2px] border-hero-red bg-hero-red/8 p-3 text-[0.76rem] leading-5 text-ink-black"
         >
-          <strong className="block font-meta text-[0.54rem] tracking-[0.14em] text-hero-red">
+          <strong className="block font-meta text-xs tracking-[0.08em] text-hero-red">
             {t("REGENERATION FAILED")}
           </strong>
           <span className="mt-1 block break-words">{error}</span>

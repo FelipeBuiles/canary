@@ -12,6 +12,7 @@ import { Button } from "../ui/Button";
 import { SectionHeader } from "../composites";
 import { Surface } from "../ui/Surface";
 import { visualFindingIssueId, visualFindingKey } from "./visualFindings";
+import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 
 
 export interface VisualReviewDraftSeed {
@@ -263,17 +264,27 @@ export function VisualReviewPanel({
       <div className="border-[2px] border-ink-black bg-narrator-gold/20 px-3 py-3">
         <Button
           size="sm"
-          disabled={review.isPending || pageIsDrawing || !estimate.data}
-          onClick={() => review.mutate({ project, pageNumber })}
+          disabled={review.isPending || pageIsDrawing || !estimate.data || !!estimate.error}
+          onClick={() => review.mutate({ project, pageNumber }, {
+            onError: (error) => maybeShowInsufficientCredits(error, { actionLabel: t("CHECK THE ARTWORK") }),
+          })}
         >
           {t(review.isPending ? "CHECKING THE ARTWORK…" : report ? "RE-CHECK THE ARTWORK" : "CHECK THE ARTWORK")}
           {estimate.data ? ` · ~${estimate.data.estimate_credits} ${t("credits")}` : ""}
         </Button>
+        {estimate.data?.reserved_credits != null && (
+          <p className="mt-2 text-sm">{t("Temporary hold")}: {estimate.data.reserved_credits} {t("credits")}</p>
+        )}
         <p className="mt-2 font-body text-xs leading-5 text-ink-black/75">
           {t("An optional paid look at cast, objects and setting against the approved portraits. Reopening a saved result never spends again.")}
         </p>
       </div>
-      {estimate.error && <p role="alert" className="font-body text-xs text-hero-red">{(estimate.error as Error).message}</p>}
+      {estimate.error && (
+        <div role="alert" className="space-y-2 text-sm text-hero-red">
+          <p>{(estimate.error as Error).message}</p>
+          <Button variant="outline" size="sm" onClick={() => void estimate.refetch()}>{t("RETRY ESTIMATE")}</Button>
+        </div>
+      )}
       {review.error && <p role="alert" className="font-body text-xs text-hero-red">{(review.error as Error).message}</p>}
       {cached.error && <p role="alert" className="font-body text-xs text-hero-red">{(cached.error as Error).message}</p>}
     </section>

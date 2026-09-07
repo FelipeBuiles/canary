@@ -412,6 +412,20 @@ def _remove_packages(
             continue
 
 
+def package_is_current(artifacts: TargetArtifacts, package: ExportPackage) -> bool:
+    """Validate a saved package without changing any files or loading it in memory."""
+    path = _safe_package_path(artifacts, package.relative_path)
+    if path is None:
+        return False
+    try:
+        if not path.is_file() or path.stat().st_size != package.byte_size:
+            return False
+        with path.open("rb") as stream:
+            return hashlib.file_digest(stream, "sha256").hexdigest() == package.content_sha256
+    except OSError:
+        return False
+
+
 def _reusable_packages(
     artifacts: TargetArtifacts,
     previous: FinishPreflight | None,
@@ -425,17 +439,7 @@ def _reusable_packages(
 
     reusable: list[ExportPackage] = []
     for package in previous.packages:
-        path = _safe_package_path(artifacts, package.relative_path)
-        if path is None or not path.is_file():
-            continue
-        try:
-            data = path.read_bytes()
-        except OSError:
-            continue
-        if (
-            len(data) == package.byte_size
-            and hashlib.sha256(data).hexdigest() == package.content_sha256
-        ):
+        if package_is_current(artifacts, package):
             reusable.append(package)
     stale = tuple(package for package in previous.packages if package not in reusable)
     _remove_packages(artifacts, stale)

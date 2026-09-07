@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectSummary } from "../types/api";
 import { I18nProvider } from "../i18n";
@@ -23,23 +23,31 @@ const deleteProjectMutation = {
   variables: undefined as { id: string } | undefined,
 };
 
+const runPipeline = vi.fn();
+const createProjectMutation = { mutate: vi.fn(), isPending: false, error: null };
+const importStoryMutation = { mutate: vi.fn(), isPending: false, error: null };
 vi.mock("../api/queries", () => ({
   useProjects: () => projectsResult,
-  useCreateProject: () => ({ mutate: vi.fn(), isPending: false, error: null }),
-  useImportStory: () => ({ mutate: vi.fn(), isPending: false, error: null }),
-  useRunPipeline: () => ({ mutate: vi.fn() }),
+  useCreateProject: () => createProjectMutation,
+  useImportStory: () => importStoryMutation,
+  useRunPipeline: () => ({ mutate: runPipeline }),
+  useShortStories: () => ({ data: [], isLoading: false, isError: false, refetch: vi.fn() }),
   useGenerateProjectCover: () => generateCoverMutation,
   useDeleteProject: () => deleteProjectMutation,
 }));
 
 import { Library } from "../pages/Library";
 
+function LocationProbe() {
+  return <output aria-label="Current route">{useLocation().pathname}</output>;
+}
 function renderLibrary() {
   return render(
     <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter>
         <I18nProvider>
           <Library />
+          <LocationProbe />
         </I18nProvider>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -48,6 +56,9 @@ function renderLibrary() {
 
 describe("Library first-run (Issue #0)", () => {
   beforeEach(() => {
+    runPipeline.mockReset();
+    createProjectMutation.mutate.mockReset();
+    importStoryMutation.mutate.mockReset();
     generateCoverMutation.mutate.mockReset();
     generateCoverMutation.isPending = false;
     generateCoverMutation.variables = undefined;
@@ -56,22 +67,37 @@ describe("Library first-run (Issue #0)", () => {
     deleteProjectMutation.variables = undefined;
   });
 
-  it("shows the first-issue invitation with the 4-station teaching strip", () => {
+  it("offers one creation entry with a public generated page and contains keyboard focus", async () => {
+    const user = userEvent.setup();
     projectsResult.data = [];
     renderLibrary();
+    expect(screen.getByRole("img", { name: /Generated comic page/ }).getAttribute("src")).toBe("/marketing/cthulhu-page.webp");
+    const opener = screen.getByRole("button", { name: "NEW PRODUCTION" });
+    await user.click(opener);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    for (let index = 0; index < 12; index += 1) {
+      await user.tab();
+      expect(dialog.contains(document.activeElement)).toBe(true);
+    }
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
 
-    expect(screen.getByText("ISSUE #0")).toBeTruthy();
-    expect(screen.getByText("Every production starts with a manuscript.")).toBeTruthy();
-    expect(screen.getByText("THE PRODUCTION LINE")).toBeTruthy();
-    // The 4 stations render as a teaching strip.
-    expect(screen.getByText("Story")).toBeTruthy();
-    expect(screen.getByText("Look")).toBeTruthy();
-    expect(screen.getByText("Pages")).toBeTruthy();
-    expect(screen.getByText("Book")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "START NEW PROJECT" })).toBeTruthy();
-    // The Studio Telemetry widget no longer exists anywhere.
-    expect(screen.queryByText("ARCHIVE FILES")).toBeNull();
-    expect(screen.queryByText("Studio telemetry")).toBeNull();
+  it("creates a source-only project and leaves generation for the Story decision", async () => {
+    const user = userEvent.setup();
+    projectsResult.data = [];
+    importStoryMutation.mutate.mockImplementation((_input, options) => options.onSuccess({ id: "prepared-source" }));
+    renderLibrary();
+    await user.click(screen.getByRole("button", { name: "NEW PRODUCTION" }));
+    await user.click(screen.getByText("USE ANOTHER SOURCE"));
+    await user.type(screen.getByLabelText("PASTE URL OR CODE"), "the-open-window");
+    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("button", { name: "CREATE PROJECT" }));
+    expect(importStoryMutation.mutate).toHaveBeenCalledOnce();
+    expect(runPipeline).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Current route").textContent).toBe("/project/prepared-source/story");
   });
 
   it("leaves non-empty libraries untouched", () => {
@@ -90,9 +116,7 @@ describe("Library first-run (Issue #0)", () => {
     ];
     renderLibrary();
 
-    expect(screen.queryByText("ISSUE #0")).toBeNull();
-    // No telemetry widget for non-empty libraries either.
-    expect(screen.queryByText("ARCHIVE FILES")).toBeNull();
+    expect(screen.queryByRole("img", { name: /Generated comic page/ })).toBeNull();
     expect(screen.getByText("Demo")).toBeTruthy();
     expect(generateCoverMutation.mutate).not.toHaveBeenCalled();
   });

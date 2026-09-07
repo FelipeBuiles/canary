@@ -1,15 +1,13 @@
-import { useEffect, useRef } from "react";
+import { useState } from "react";
 import { Button } from "../ui/Button";
-import { Icon } from "../ui/Icon";
-import { cn } from "../../lib/cn";
-import { useCreditBalance } from "../../api/queries";
-import {
-  useRecommendedPackage,
-  useBuyCredits,
-} from "../../lib/creditsPurchase";
+import { useCreditBalance, useStageEstimate } from "../../api/queries";
+import { useRecommendedPackage, useBuyCredits, packageMeetsShortfall } from "../../lib/creditsPurchase";
 import { useRunAction } from "../../hooks/useRunAction";
 import type { StageName } from "../../types/api";
 import { CreditAmount } from "../ui/CreditAmount";
+import { CostBreakdown } from "../cost/CostBreakdown";
+import { ConfirmDrawer } from "./ConfirmDrawer";
+import { useI18n } from "../../i18n";
 
 interface CreditsGateProps {
   project: string;
@@ -21,151 +19,108 @@ interface CreditsGateProps {
   reason: "persisted" | "heuristic";
 }
 
-/**
- * In-room panel shown when a stage is blocked on credits, replacing the
- * misleading "waiting for pipeline" placeholder. Shows the balance/shortfall,
- * a recommended package, and a Buy CTA. Once the live balance clears the
- * requirement, it auto-starts the stage (once).
- */
-export function CreditsGate({
-  project,
-  stage,
-  stageLabel,
-  balance,
-  required,
-  shortfall,
-  reason,
-}: CreditsGateProps) {
-  const { data: liveBalance } = useCreditBalance();
-  const { pkg, packages, isLoading: packagesLoading } = useRecommendedPackage(shortfall);
+/** Funding never authorizes work. Heuristic gates yield to the parent's Start
+ * action; persisted credit failures stay here for deliberate, non-destructive recovery. */
+export function CreditsGate({ project, stage, stageLabel, balance, required, reason }: CreditsGateProps) {
+  const { t, language } = useI18n();
+  const balanceQuery = useCreditBalance();
+  const estimate = useStageEstimate(project, stage);
+  const available = balanceQuery.data?.balance_credits ?? balance;
+  const needed = estimate.data?.reserved_credits ?? estimate.data?.estimate_credits ?? required;
+  const shortfall = Math.max(0, needed - available);
+  const { pkg, isLoading: packagesLoading } = useRecommendedPackage(shortfall);
   const buyCredits = useBuyCredits();
-  const { handleRun } = useRunAction();
-  const ranOnce = useRef(false);
+  const { handleRun, isPending } = useRunAction();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+  const funded = shortfall === 0 && balanceQuery.data != null && !balanceQuery.isError;
+  const unavailable = !funded || !estimate.data || estimate.isError || estimate.isFetching || isPending;
+  const actionLabel = t("Resume {action}").replace("{action}", stageLabel);
 
-  // Auto-start the stage once the user has topped up. The optimistic write is
-  // suppressed on low credits (queries.ts), so the user sees the genuine
-  // running state only once GET /status confirms it — at which point this
-  // panel unmounts.
-  useEffect(() => {
-    if (ranOnce.current) return;
-    const live = liveBalance?.balance_credits;
-    if (typeof live === "number" && live >= required && required > 0) {
-      ranOnce.current = true;
-      handleRun(project, stage);
-    }
-  }, [liveBalance, required, project, stage, handleRun]);
-
-  const subhead =
-    reason === "persisted"
-      ? "You ran out of credits mid-stage. Buy more to resume."
-      : "You don't have enough credits to start this stage yet.";
-
-  const autoRunNote =
-    reason === "persisted"
-      ? "After buying, this stage resumes automatically."
-      : "After buying, this stage starts automatically.";
+  function confirmResume() {
+    if (unavailable) return;
+    setStartError(null);
+    handleRun(project, stage, {
+      rerun: false,
+      actionLabel,
+      onSuccess: () => setConfirmOpen(false),
+      onError: (error) => {
+        setStartError(error.message);
+        setConfirmOpen(false);
+      },
+    });
+  }
 
   return (
-    <div className="flex min-h-[50vh] items-center justify-center px-6">
-      <div className="w-full max-w-[640px] border-x-[2px] border-t-[2px] border-ink-black bg-pulp-paper text-ink-black sm:border-[2px]"
-           style={{ borderTop: "4px solid var(--color-narrator-gold)" }}>
-        <div className="px-6 pt-5 pb-6 sm:px-8">
-          <div className="mb-2 inline-flex items-center gap-2 border-[1.5px] border-narrator-gold px-2 py-0.5 font-meta text-[0.58rem] tracking-[0.2em] uppercase text-narrator-gold">
-            <Icon name="alert" size={11} />
-            Add credits
+    <div className="flex min-h-[50vh] items-center justify-center px-4 py-8 sm:px-6">
+      <div className="w-full max-w-[640px] border-[2px] border-ink-black bg-pulp-paper p-6 text-ink-black sm:p-8">
+        <h2 className="break-words font-display text-[1.6rem] leading-tight tracking-[-0.02em] uppercase sm:text-[1.85rem]">
+          {t("{action} is paused").replace("{action}", stageLabel)}
+        </h2>
+        <p className="mt-4 font-body text-base leading-6 text-ink-muted">
+          {t("Adding credits does not start work. Review the estimate and confirm when you are ready.")}
+        </p>
+        <dl className="mt-5 grid gap-4 bg-surface-container p-4 sm:grid-cols-3">
+          <div>
+            <dt className="font-meta text-xs uppercase text-ink-muted">{t("Balance")}</dt>
+            <dd className="mt-1 font-display text-xl tabular-nums">
+              {balanceQuery.data ? <CreditAmount value={available} /> : t("Loading balance…")}
+            </dd>
           </div>
-          <h2 className="font-display text-[1.6rem] leading-[0.95] tracking-[-0.02em] uppercase sm:text-[1.85rem]">
-            {stageLabel} needs credits
-          </h2>
-          <p className="mt-4 text-[0.92rem] leading-6 text-ink-fade">
-            {subhead}
-          </p>
-
-          {/* Balance / Needed / Shortfall */}
-          <div className="mt-4 grid grid-cols-3 gap-4 border-[2px] border-narrator-gold/35 bg-chip-gold/20 p-4">
-            <div>
-              <div className="font-meta text-[0.54rem] tracking-[0.16em] uppercase text-ink-black/50">
-                Balance
-              </div>
-              <div className="mt-1 font-display text-[1.3rem] font-bold tabular-nums">
-                <CreditAmount value={balance} showMark showLabel={false} />
-              </div>
-            </div>
-            <div>
-              <div className="font-meta text-[0.54rem] tracking-[0.16em] uppercase text-ink-black/50">
-                Needed
-              </div>
-              <div className="mt-1 font-display text-[1.3rem] font-bold tabular-nums">
-                <CreditAmount value={required} approximate showMark showLabel={false} />
-              </div>
-            </div>
-            <div>
-              <div className="font-meta text-[0.54rem] tracking-[0.16em] uppercase text-narrator-gold">
-                Short by
-              </div>
-              <div className="mt-1 font-display text-[1.3rem] font-bold tabular-nums text-narrator-gold">
-                <CreditAmount value={shortfall} showMark showLabel={false} />
-              </div>
-            </div>
+          <div>
+            <dt className="font-meta text-xs uppercase text-ink-muted">{t("Needed")}</dt>
+            <dd className="mt-1 font-display text-xl tabular-nums"><CreditAmount value={needed} /></dd>
           </div>
-
-          {/* Recommended package */}
-          {packagesLoading ? null : pkg ? (
-            <div className="mt-5">
-              <div className="font-meta text-[0.6rem] font-bold tracking-[0.16em] uppercase text-ink-black/45">
-                Recommended
-              </div>
-              <button
-                type="button"
-                disabled={buyCredits.isPending}
-                onClick={() => buyCredits.mutate({ packageId: pkg.id })}
-                className={cn(
-                  "mt-2 flex w-full items-center justify-between gap-3 border-[2px] bg-bristol px-4 py-3 text-left transition-colors hover:bg-pulp-paper disabled:cursor-not-allowed disabled:opacity-50",
-                  "border-hero-red",
-                )}
-              >
-                <div>
-                  <div className="font-display text-[1.1rem] font-black tabular-nums">
-                    <CreditAmount value={pkg.credits} />
-                  </div>
-                  <div className="font-meta text-[0.56rem] tracking-[0.14em] uppercase text-ink-black/50">
-                    ${(pkg.price_cents / 100).toLocaleString()}
-                  </div>
-                </div>
-                {buyCredits.isPending && buyCredits.variables?.packageId === pkg.id ? (
-                  <span aria-hidden="true" className="animate-press-blink h-3 w-3 bg-hero-red" />
-                ) : (
-                  <span className="bg-hero-red px-2 py-1 font-meta text-[0.5rem] font-bold tracking-[0.14em] uppercase text-bristol">
-                    Buy
-                  </span>
-                )}
-              </button>
-              {packages.length > 1 && (
-                <a
-                  href="/credits"
-                  className="mt-3 inline-block font-meta text-[0.62rem] tracking-[0.14em] uppercase text-ink-black/55 hover:text-ink-black"
-                >
-                  See all packages →
-                </a>
-              )}
-            </div>
-          ) : null}
-
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
-            <p className="font-body text-[0.74rem] text-ink-black/45">
-              {autoRunNote}
-            </p>
-            {pkg && (
-              <Button
-                size="md"
-                disabled={buyCredits.isPending}
-                onClick={() => buyCredits.mutate({ packageId: pkg.id })}
-              >
-                Buy credits
-              </Button>
-            )}
+          <div>
+            <dt className="font-meta text-xs uppercase text-ink-muted">{t("Short by")}</dt>
+            <dd className="mt-1 font-display text-xl tabular-nums"><CreditAmount value={shortfall} /></dd>
           </div>
+        </dl>
+        {balanceQuery.isError && (
+          <div role="alert" className="mt-4 font-body text-sm">
+            <p>{t("Your balance could not be loaded. Retry before resuming.")}</p>
+            <Button variant="outline" className="mt-2 min-h-11" disabled={balanceQuery.isFetching} onClick={() => void balanceQuery.refetch()}>{t("Refresh balance")}</Button>
+          </div>
+        )}
+        {estimate.isError ? (
+          <div role="alert" className="mt-4 font-body text-sm">
+            <p>{t("The estimate could not be loaded. No work has started.")}</p>
+            <Button variant="outline" className="mt-2 min-h-11" disabled={estimate.isFetching} onClick={() => void estimate.refetch()}>{t("Retry estimate")}</Button>
+          </div>
+        ) : estimate.data ? <CostBreakdown cost={estimate.data} /> : (
+          <p role="status" className="mt-4 font-body text-sm">{t("Loading estimate…")}</p>
+        )}
+        {!funded && (
+          <div className="mt-5 space-y-3">
+            {packagesLoading ? <p role="status" className="font-body text-sm">{t("Loading credit packages…")}</p> : pkg ? (
+              <>
+                <p className="font-meta text-xs uppercase text-ink-muted">{t("Recommended")}</p>
+                <Button className="min-h-11 h-auto whitespace-normal py-3" disabled={buyCredits.isPending} onClick={() => buyCredits.mutate({ packageId: pkg.id })}>
+                  {t("Buy")} <CreditAmount value={pkg.credits} /> · {new Intl.NumberFormat(language, { style: "currency", currency: "USD" }).format(pkg.price_cents / 100)}
+                </Button>
+                <p className="font-body text-sm text-ink-muted">{packageMeetsShortfall(pkg, shortfall) ? t("Covers shortfall") : t("Partial top-up")}</p>
+                <p className="font-body text-sm text-ink-muted">{t("Stripe Checkout opens in a new tab. Return here after payment to resume your pending action.")}</p>
+              </>
+            ) : <p className="font-body text-sm">{t("Credit packages are unavailable here. Open billing to try again.")}</p>}
+          </div>
+        )}
+        {buyCredits.error && <p role="alert" className="mt-4 font-body text-sm text-hero-red">{t("Checkout could not open. Your action is still paused. Try a package again or open billing.")} {buyCredits.error.message}</p>}
+        {buyCredits.data?.url && <a href={buyCredits.data.url} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex min-h-11 items-center font-body text-sm font-semibold underline underline-offset-4">{t("Open secure checkout")}</a>}
+        <div className="mt-5 flex flex-wrap items-center gap-4">
+          {reason === "persisted" && <Button className="min-h-11" disabled={unavailable} onClick={() => setConfirmOpen(true)}>{isPending ? t("Starting…") : actionLabel}</Button>}
+          <a href="/credits" className="inline-flex min-h-11 items-center font-body text-sm font-semibold underline underline-offset-4">{t("Open billing")}</a>
         </div>
+        {startError && <p role="alert" className="mt-4 font-body text-sm text-hero-red">{startError}</p>}
+        <ConfirmDrawer
+          open={confirmOpen}
+          title={actionLabel}
+          body={t("Resume this stage without discarding completed work. Unused held credits are released when the action finishes.")}
+          cost={estimate.data}
+          confirmLabel={actionLabel}
+          busy={unavailable}
+          onClose={() => setConfirmOpen(false)}
+          onConfirm={confirmResume}
+        />
       </div>
     </div>
   );

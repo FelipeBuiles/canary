@@ -20,7 +20,7 @@ export function StatusPill({ tone = "neutral", className, ...props }: StatusPill
   return (
     <span
       className={cn(
-        "inline-flex min-h-6 items-center border border-ink-black px-2 py-1 font-meta text-[0.44rem] leading-none tracking-[0.14em] uppercase",
+        "inline-flex min-h-7 items-center border border-ink-black px-2 py-1 font-meta text-xs leading-tight tracking-[0.08em] uppercase",
         TONE_STYLES[tone],
         className,
       )}

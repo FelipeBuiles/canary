@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { skipToken, useQuery } from "@tanstack/react-query";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useProjectStatus } from "../../api/queries";
 import { STAGE_ORDER } from "../../types/api";
@@ -18,10 +18,10 @@ export function FloatingIndicator() {
   const navigate = useNavigate();
   const location = useLocation();
   const { data: status } = useProjectStatus(id);
-  // SSE-fed only; `enabled: false` keeps react-query from trying to fetch it.
+  // SSE-fed only; this observer has no network query.
   const { data: activityMap } = useQuery<StageActivityMap>({
     queryKey: activityQueryKey(id ?? ""),
-    enabled: false,
+    queryFn: skipToken,
     initialData: {},
   });
   // Ticks so a stream that goes quiet ages into "still waiting" on its own.
@@ -67,10 +67,10 @@ export function FloatingIndicator() {
     >
       <div className="flex items-center gap-3 border-b-[2px] border-ink-black bg-pulp-paper px-3 py-2">
         <div className="flex h-7 w-7 items-center justify-center border border-ink-black bg-bristol">
-          <span aria-hidden="true" className="animate-press-blink h-2.5 w-2.5 bg-hero-red" />
+          <span aria-hidden="true" className="h-2.5 w-2.5 bg-hero-red" />
         </div>
         <div>
-          <div className="font-meta text-[0.56rem] font-bold tracking-[0.1em] text-ink-muted">
+          <div className="font-meta text-xs font-bold tracking-[0.08em] text-ink-muted">
             RUNNING
           </div>
           <div className="font-display text-[0.82rem] font-bold tracking-[-0.03em]">
@@ -82,20 +82,20 @@ export function FloatingIndicator() {
       <div className="space-y-2 p-3">
         {stageInfo.items_total > 0 && (
           <>
-            <div className="flex items-center justify-between font-meta text-[0.5rem] tracking-[0.14em] text-ink-black/55">
+            <div className="flex items-center justify-between font-meta text-xs tabular-nums text-ink-muted">
               <span>{stageInfo.items_done} / {stageInfo.items_total}</span>
               <span>{Math.round(donePct)}%</span>
             </div>
-            <div className="flex h-2 w-full overflow-hidden border border-ink-black bg-pulp-paper">
+            <div className="relative h-2 w-full overflow-hidden border border-ink-black bg-pulp-paper">
               <div
-                className="h-full bg-narrator-gold transition-all duration-300"
-                style={{ width: `${donePct}%` }}
+                className="absolute inset-0 origin-left bg-narrator-gold transition-transform duration-[var(--motion-settle)]"
+                style={{ transform: `scaleX(${donePct / 100})` }}
               />
               {inFlightPct > 0 && (
                 <div
                   data-testid="in-flight-bar"
-                  className="h-full bg-narrator-gold/40 transition-all duration-300"
-                  style={{ width: `${inFlightPct}%` }}
+                  className="absolute inset-0 origin-left bg-narrator-gold/40 transition-transform duration-[var(--motion-settle)]"
+                  style={{ transform: `translateX(${donePct}%) scaleX(${inFlightPct / 100})` }}
                 />
               )}
             </div>
@@ -103,14 +103,14 @@ export function FloatingIndicator() {
         )}
 
         {activity?.detail && (
-          <div className="font-meta text-[0.5rem] leading-[1.4] tracking-[0.1em] text-ink-black/55">
+          <div className="font-meta text-xs leading-5 text-ink-muted">
             {stalled ? `${activity.detail} — still waiting` : activity.detail}
           </div>
         )}
 
         <button
           onClick={() => navigate(jumpPath)}
-          className="flex w-full items-center justify-center gap-1 border-[2px] border-ink-black bg-pulp-paper px-3 py-1.5 font-meta text-[0.55rem] tracking-[0.16em] hover:bg-ink-black/5 transition-colors"
+          className="flex min-h-11 w-full items-center justify-center gap-1 border-[2px] border-ink-black bg-pulp-paper px-3 py-1.5 font-meta text-xs tracking-[0.08em] hover:bg-ink-black/5 transition-colors"
         >
           JUMP TO {stageLabel}
           <Icon name="arrow-right" size={10} />

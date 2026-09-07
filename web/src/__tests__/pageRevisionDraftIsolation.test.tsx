@@ -99,12 +99,6 @@ function renderDraft(overrides: Partial<ComponentProps<typeof RevisionDraft>> = 
   );
 }
 
-function renderSources(container: HTMLElement): string[] {
-  return [...container.querySelectorAll("img")]
-    .map((img) => img.getAttribute("src") ?? "")
-    .filter((src) => src.includes("/renders/"));
-}
-
 beforeEach(() => {
   previewState.data = undefined;
 });
@@ -248,14 +242,35 @@ describe("RevisionDraft across render targets", () => {
     expect(screen.getByDisplayValue("overall guidance")).toBeTruthy();
   });
 
-  it("renders distinct before and after image sources for comparison", () => {
-    const { container } = renderDraft({ parentRenderRevision: 2, compareRevision: 1 });
+  it("lets the author compare real revisions without changing the correction draft", () => {
+    renderDraft({ parentRenderRevision: 2, compareRevision: 1, issues: [FACE_ISSUE] });
+    fireEvent.click(screen.getByRole("button", { name: /make changes/i }));
+    fireEvent.change(screen.getByDisplayValue("Restore the approved face"), {
+      target: { value: "Restore the approved face without changing the cape" },
+    });
+    fireEvent.click(screen.getByText(/compare with previous render/i));
 
-    // Main canvas plus the comparison pair, read from the real UI output.
-    const sources = renderSources(container);
-    expect(sources).toHaveLength(3);
-    expect(sources.filter((src) => src.includes("/renders/1/"))).toHaveLength(1);
-    expect(sources.filter((src) => src.includes("/renders/2/"))).toHaveLength(2);
+    const after = screen.getByRole("button", { name: /after.*revision 2/i });
+    const before = screen.getByRole("button", { name: /before.*revision 1/i });
+    expect(after.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("img", { name: "Complete page 1, current revision 2" }).getAttribute("src"))
+      .toContain("/renders/2/");
+
+    fireEvent.click(before);
+    expect(before.getAttribute("aria-pressed")).toBe("true");
+    expect(after.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("img", { name: "Complete page 1, previous revision 1" }).getAttribute("src"))
+      .toContain("/renders/1/");
+    expect(screen.getByDisplayValue("Restore the approved face without changing the cape")).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: /include fix/i })).toHaveProperty("checked", true);
+
+    fireEvent.click(after);
+    expect(after.getAttribute("aria-pressed")).toBe("true");
+    expect(before.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("img", { name: "Complete page 1, current revision 2" }).getAttribute("src"))
+      .toContain("/renders/2/");
+    expect(screen.getByDisplayValue("Restore the approved face without changing the cape")).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: /include fix/i })).toHaveProperty("checked", true);
   });
 
   it("select all open reselects kept fixes and adds missing suggestions", () => {

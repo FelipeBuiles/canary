@@ -27,6 +27,7 @@ import { Surface } from "../ui/Surface";
 import { AnnotationEditor, type EditorAnnotation } from "./AnnotationEditor";
 import { roundPoint } from "./annotationGeometry";
 import type { VisualReviewDraftSeed } from "./VisualReviewPanel";
+import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 
 interface DraftChange {
   id: string;
@@ -245,6 +246,7 @@ export function RevisionDraft({
   // Whether the page annotator is shown for the focused request; false keeps
   // the artwork a plain fitted image so controls never crowd it.
   const [marking, setMarking] = useState(false);
+  const [comparison, setComparison] = useState<"before" | "after">("after");
   // Scroll only on explicit mode transitions (start editing, start marking,
   // hide editing). Mark updates and note edits never scroll: the intent flag
   // is consumed once by the effect below, so later renders stay put.
@@ -401,7 +403,13 @@ export function RevisionDraft({
           setSubmittedJobId(job.id);
           onJobQueued(job.id);
         },
-        onError: (error) => setSubmitError(error instanceof Error ? error.message : String(error)),
+        onError: (error) => {
+          setSubmitError(error instanceof Error ? error.message : String(error));
+          maybeShowInsufficientCredits(error, {
+            actionLabel: t("SUBMIT ONE CORRECTION"),
+            onRetry: runSubmit,
+          });
+        },
       },
     );
   }
@@ -535,33 +543,29 @@ export function RevisionDraft({
               <summary className="cursor-pointer font-meta text-xs font-bold text-ink-muted">
                 {t("COMPARE WITH PREVIOUS RENDER")} ({t("Revision")} {compareRevision} → {t("Revision")} {parentRenderRevision})
               </summary>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <figure>
-                  <img
-                    src={pageRenderPreviewUrl(project, pageNumber, compareRevision, "reader")}
-                    alt={`${t("Complete page")} ${pageNumber}, ${t("previous revision")} ${compareRevision}`}
-                    loading="lazy"
-                    decoding="async"
-                    className="w-full border-[2px] border-ink-black object-contain"
-                  />
-                  <figcaption className="mt-1 font-meta text-xs font-bold text-ink-muted">
-                    {t("BEFORE")} · {t("Revision")} {compareRevision}
-                  </figcaption>
-                </figure>
-                <figure>
-                  <img
-                    src={canvasSrc}
-                    alt={`${t("Complete page")} ${pageNumber}, ${t("current revision")} ${parentRenderRevision}`}
-                    loading="lazy"
-                    decoding="async"
-                    className="w-full border-[2px] border-ink-black object-contain"
-                  />
-                  <figcaption className="mt-1 font-meta text-xs font-bold text-ink-muted">
-                    {t("AFTER")} · {t("Revision")} {parentRenderRevision} · {t("Selected fixes apply to this image.")}
-                  </figcaption>
-                </figure>
+              <div role="group" aria-label={t("Revision comparison")} className="mt-3 flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" aria-pressed={comparison === "before"} onClick={() => setComparison("before")}>
+                  {t("BEFORE")} · {t("Revision")} {compareRevision}
+                </Button>
+                <Button size="sm" variant="outline" aria-pressed={comparison === "after"} onClick={() => setComparison("after")}>
+                  {t("AFTER")} · {t("Revision")} {parentRenderRevision}
+                </Button>
               </div>
-              <div className="mt-3 space-y-2">
+              <div className="mt-3 grid items-start gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)]">
+                <figure>
+                  <img
+                    src={comparison === "before" ? pageRenderPreviewUrl(project, pageNumber, compareRevision, "reader") : canvasSrc}
+                    alt={`${t("Complete page")} ${pageNumber}, ${t(comparison === "before" ? "previous revision" : "current revision")} ${comparison === "before" ? compareRevision : parentRenderRevision}`}
+                    loading="lazy"
+                    decoding="async"
+                    className="max-h-[70dvh] w-full object-contain"
+                  />
+                  <figcaption className="mt-2 text-sm font-bold" aria-live="polite">
+                    {t(comparison === "before" ? "BEFORE" : "AFTER")} · {t("Revision")} {comparison === "before" ? compareRevision : parentRenderRevision}
+                  </figcaption>
+                </figure>
+                <div className="space-y-3">
+                  <p className="text-sm leading-6">{t("A new revision is not a confirmed fix. Compare the requested change and check for unintended differences.")}</p>
                 <SubmittedCorrection
                   project={project}
                   pageNumber={pageNumber}
@@ -584,6 +588,7 @@ export function RevisionDraft({
                   </div>
                 )}
               </div>
+                </div>
             </details>
           )}
         </div>

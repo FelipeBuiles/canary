@@ -21,7 +21,7 @@ export function RoomTabs({ tabs, ariaLabel, className }: RoomTabsProps) {
   return (
     <div
       className={cn("flex overflow-x-auto", className)}
-      role="tablist"
+      role="group"
       aria-label={ariaLabel}
     >
       {tabs.map((tab, idx) => {
@@ -30,13 +30,12 @@ export function RoomTabs({ tabs, ariaLabel, className }: RoomTabsProps) {
           <button
             key={tab.key}
             type="button"
-            role="tab"
-            aria-selected={tab.active}
+            aria-pressed={tab.active}
             onClick={tab.onClick}
             disabled={tab.disabled}
             title={tab.title}
             className={cn(
-              "shrink-0 border-[2px] px-5 py-2.5 font-meta text-[0.68rem] tracking-[0.18em] uppercase transition-colors",
+              "min-h-11 shrink-0 border-[2px] px-5 py-2.5 font-meta text-xs tracking-[0.1em] uppercase transition-colors",
               !isLast && "border-r-0",
               tab.active
                 ? "border-ink-black bg-ink-black text-bristol"
@@ -46,7 +45,7 @@ export function RoomTabs({ tabs, ariaLabel, className }: RoomTabsProps) {
           >
             {tab.label}
             {typeof tab.count === "number" && (
-              <span className={cn("ml-2", tab.active ? "text-bristol/60" : "text-ink-black/40")}>
+              <span className={cn("ml-2", tab.active ? "text-bristol/80" : "text-ink-muted")}>
                 {tab.count}
               </span>
             )}

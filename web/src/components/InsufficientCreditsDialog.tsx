@@ -16,9 +16,17 @@ import {
 import { useInsufficientCreditsStore } from "../store/insufficientCredits";
 import { CreditAmount } from "./ui/CreditAmount";
 import { SupportLink } from "./SupportLink";
+import { useDialogFocus } from "../hooks/useDialogFocus";
+import { useI18n } from "../i18n";
 
 export function InsufficientCreditsDialog() {
   const open = useInsufficientCreditsStore((s) => s.open);
+  const hasInfo = useInsufficientCreditsStore((s) => s.info !== null);
+  return open && hasInfo ? <OpenInsufficientCreditsDialog /> : null;
+}
+
+function OpenInsufficientCreditsDialog() {
+  const { t } = useI18n();
   const info = useInsufficientCreditsStore((s) => s.info);
   const actionLabel = useInsufficientCreditsStore((s) => s.actionLabel);
   const onRetry = useInsufficientCreditsStore((s) => s.onRetry);
@@ -29,18 +37,19 @@ export function InsufficientCreditsDialog() {
   const { data: packagesData } = useCreditPackages();
   const qc = useQueryClient();
   const [checkoutPending, setCheckoutPending] = useState<string | null>(null);
-  // Open Stripe Checkout in a new tab so the dialog (and the user's pending
-  // action) stays mounted. We poll the balance on focus and auto-retry once
-  // the webhook lands.
+  // Checkout stays in a separate tab. A funded balance never authorizes spend.
+  const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   const checkout = useMutation({
     mutationFn: ({ packageId }: { packageId: string }) => createCheckout(packageId),
     onMutate: ({ packageId }) => {
       setCheckoutPending(packageId);
+      setCheckoutUrl(null);
     },
     onSettled: () => {
       setCheckoutPending(null);
     },
     onSuccess: ({ url }) => {
+      setCheckoutUrl(url);
       window.open(url, "_blank", "noopener,noreferrer");
     },
   });
@@ -54,28 +63,11 @@ export function InsufficientCreditsDialog() {
     [packages, shortfall, info],
   );
 
-  useEffect(() => {
-    if (!open) return;
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        close();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [open, close]);
+  useDialogFocus(dialogRef, { onClose: close });
 
   // While the dialog is open, refresh the balance whenever the tab regains
   // focus (so we pick up the Stripe webhook landing in the background tab).
   useEffect(() => {
-    if (!open) return;
     qc.invalidateQueries({ queryKey: ["credits", "balance"] });
     function onFocus() {
       qc.invalidateQueries({ queryKey: ["credits", "balance"] });
@@ -88,24 +80,15 @@ export function InsufficientCreditsDialog() {
       document.removeEventListener("visibilitychange", onFocus);
       window.clearInterval(interval);
     };
-  }, [open, qc]);
+  }, [qc]);
 
-  // Auto-close once the user has enough credits (e.g. webhook landed) AND
-  // they have a retry callback waiting.
-  useEffect(() => {
-    if (!open || !info) return;
-    if (balance >= info.required_credits && onRetry) {
-      const retry = onRetry;
-      close();
-      retry();
-    }
-  }, [open, info, balance, onRetry, close]);
+  if (!info) return null;
 
-  if (!open || !info) return null;
-
-  const headline = actionLabel
-    ? `${actionLabel} needs more credits`
-    : "Not enough credits";
+  const headline = balance >= required
+    ? t("Credits ready — your action is paused")
+    : actionLabel
+      ? t("{action} needs more credits").replace("{action}", actionLabel)
+      : t("Not enough credits");
 
   return (
     <div
@@ -120,8 +103,8 @@ export function InsufficientCreditsDialog() {
         aria-labelledby="insufficient-credits-title"
         onClick={(e) => e.stopPropagation()}
         className={cn(
-          "relative w-full max-w-[640px] border-x-[2px] border-t-[2px] border-ink-black bg-pulp-paper text-ink-black sm:border-[2px]",
-          "animate-[insufficient-slide_320ms_cubic-bezier(0.2,0.8,0.2,1)]",
+          "relative max-h-[calc(100dvh-1rem)] overflow-y-auto w-full max-w-[640px] border-x-[2px] border-t-[2px] border-ink-black bg-pulp-paper text-ink-black sm:border-[2px]",
+          "animate-[insufficient-slide_var(--motion-settle)_cubic-bezier(0.2,0.8,0.2,1)]",
         )}
         style={{ borderTop: "4px solid var(--color-narrator-gold)" }}
       >
@@ -135,9 +118,9 @@ export function InsufficientCreditsDialog() {
         <div className="px-6 pt-5 pb-6 sm:px-8">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <div className="mb-2 inline-flex items-center gap-2 border-[1.5px] border-narrator-gold px-2 py-0.5 font-meta text-[0.58rem] tracking-[0.2em] uppercase text-narrator-gold">
-                <Icon name="alert" size={11} />
-                Add credits
+              <div className="mb-2 inline-flex items-center gap-2 border-[1.5px] border-narrator-gold px-2 py-0.5 font-meta text-xs tracking-[0.1em] uppercase text-on-gold">
+                <Icon name="alert" size={14} />
+                {t("Add credits")}
               </div>
               <h2
                 id="insufficient-credits-title"
@@ -149,49 +132,48 @@ export function InsufficientCreditsDialog() {
             <button
               type="button"
               onClick={close}
-              aria-label="Dismiss"
-              className="inline-flex min-h-11 shrink-0 items-center gap-2 border-[2px] border-ink-black/20 px-3 font-meta text-[0.62rem] tracking-[0.12em] uppercase text-ink-black/60 hover:border-ink-black hover:text-ink-black"
+              aria-label={t("Dismiss")}
+              className="inline-flex min-h-11 shrink-0 items-center gap-2 border-[2px] border-ink-black/20 px-3 font-meta text-xs tracking-[0.1em] uppercase text-ink-muted hover:border-ink-black hover:text-ink-black"
             >
-              Close <ShortcutHint>Esc</ShortcutHint>
+              {t("Close")} <ShortcutHint>Esc</ShortcutHint>
             </button>
           </div>
 
           <p className="mt-4 text-[0.92rem] leading-6 text-ink-fade">
-            You're a bit short on credits to start this action. Top up below — we'll
-            release any unused portion of the hold once it finishes.
+            {t("Top up below, then choose Resume when you are ready. Nothing starts automatically. Unused held credits are released after the action finishes.")}
           </p>
 
           <div className="mt-4 grid grid-cols-3 gap-4 border-[2px] border-narrator-gold/35 bg-chip-gold/20 p-4">
             <div>
-              <div className="font-meta text-[0.54rem] tracking-[0.16em] uppercase text-ink-black/50">
-                Balance
+              <div className="font-meta text-xs tracking-[0.08em] uppercase text-ink-muted">
+                {t("Balance")}
               </div>
               <div className="mt-1 font-display text-[1.3rem] font-bold tabular-nums">
                 <CreditAmount value={balance} showMark showLabel={false} />
               </div>
             </div>
             <div>
-              <div className="font-meta text-[0.54rem] tracking-[0.16em] uppercase text-ink-black/50">
-                Needed
+              <div className="font-meta text-xs tracking-[0.08em] uppercase text-ink-muted">
+                {t("Needed")}
               </div>
               <div className="mt-1 font-display text-[1.3rem] font-bold tabular-nums">
                 <CreditAmount value={required} showMark showLabel={false} />
               </div>
             </div>
             <div>
-              <div className="font-meta text-[0.54rem] tracking-[0.16em] uppercase text-narrator-gold">
-                Short by
+              <div className="font-meta text-xs tracking-[0.08em] uppercase text-on-gold">
+                {t("Short by")}
               </div>
-              <div className="mt-1 font-display text-[1.3rem] font-bold tabular-nums text-narrator-gold">
+              <div className="mt-1 font-display text-[1.3rem] font-bold tabular-nums text-on-gold">
                 <CreditAmount value={shortfall} showMark showLabel={false} />
               </div>
             </div>
           </div>
 
-          {packages.length > 0 && (
+          {packages.length > 0 && balance < required && (
             <div className="mt-5">
-              <div className="font-meta text-[0.6rem] font-bold tracking-[0.16em] uppercase text-ink-black/45">
-                Top up
+              <div className="font-meta text-xs font-bold tracking-[0.1em] uppercase text-ink-muted">
+                {t("Top up")}
               </div>
               <div className="mt-2 grid gap-2 sm:grid-cols-3">
                 {packages.map((pkg) => {
@@ -206,7 +188,7 @@ export function InsufficientCreditsDialog() {
                       onClick={() => checkout.mutate({ packageId: pkg.id })}
                       className={cn(
                         "flex flex-col items-start gap-1 border-[2px] bg-bristol px-3 py-3 text-left transition-colors hover:bg-pulp-paper disabled:cursor-not-allowed disabled:opacity-50",
-                        isRecommended ? "border-hero-red" : "border-ink-black/15",
+                        isRecommended ? "border-on-gold" : "border-ink-black/15",
                       )}
                     >
                       <div className="flex w-full items-center justify-between gap-2">
@@ -216,50 +198,66 @@ export function InsufficientCreditsDialog() {
                         {isThisPending ? (
                           <span aria-hidden="true" className="animate-press-blink h-3 w-3 bg-hero-red" />
                         ) : isRecommended ? (
-                          <span className="bg-hero-red px-1.5 py-0.5 font-meta text-[0.48rem] font-bold tracking-[0.14em] uppercase text-bristol">
-                            Pick
+                          <span className="bg-narrator-gold px-1.5 py-0.5 font-meta text-xs font-bold tracking-[0.08em] uppercase text-ink-black">
+                            {t("Pick")}
                           </span>
                         ) : null}
                       </div>
-                      <span className="font-meta text-[0.56rem] tracking-[0.14em] uppercase text-ink-black/50">
-                        Credits · ${(pkg.price_cents / 100).toLocaleString()}
+                      <span className="font-meta text-xs tracking-[0.08em] uppercase text-ink-muted">
+                        {t("Credits")} · ${(pkg.price_cents / 100).toLocaleString()}
                       </span>
                       <span
                         className={cn(
-                          "font-meta text-[0.56rem] tracking-[0.06em]",
-                          covers ? "text-archive-sage" : "text-ink-black/40",
+                          "font-meta text-xs tracking-[0.04em]",
+                          covers ? "text-ready" : "text-ink-muted",
                         )}
                       >
-                        {covers ? "Covers shortfall" : "Partial top-up"}
+                        {covers ? t("Covers shortfall") : t("Partial top-up")}
                       </span>
                     </button>
                   );
                 })}
               </div>
-              <p className="mt-3 font-body text-[0.74rem] text-ink-black/45">
-                Stripe Checkout opens in a new tab. Once payment lands this prompt
-                will close automatically.
+              <p className="mt-3 font-body text-sm text-ink-muted">
+                {t("Stripe Checkout opens in a new tab. Return here after payment to resume your pending action.")}
               </p>
             </div>
+          )}
+          {checkout.error && (
+            <p role="alert" className="mt-4 font-body text-sm text-hero-red">
+              {t("Checkout could not open. Your action is still paused. Try a package again or open billing.")} {checkout.error.message}
+            </p>
+          )}
+          {checkoutUrl && (
+            <a href={checkoutUrl} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex min-h-11 items-center font-body text-sm font-semibold underline underline-offset-4">
+              {t("Open secure checkout")}
+            </a>
+          )}
+          {balance >= required && (
+            <p role="status" className="mt-4 font-body text-sm text-ready">
+              {t("Your balance now covers this action. Resume only when you are ready.")}
+            </p>
           )}
 
           <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
             <a
               href="/credits"
-              className="font-meta text-[0.62rem] tracking-[0.14em] uppercase text-ink-black/55 hover:text-ink-black"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-h-11 items-center font-meta text-xs tracking-[0.08em] uppercase text-ink-muted hover:text-ink-black"
             >
-              View billing →
+              {t("View billing")} →
             </a>
             <SupportLink
               diagnostics={{
                 releaseSha: import.meta.env.VITE_CANARY_VERSION,
                 errorCategory: "insufficient_credits",
               }}
-              className="font-meta text-[0.62rem] tracking-[0.14em] uppercase text-hero-red hover:text-ink-black"
+              className="inline-flex min-h-11 items-center font-meta text-xs tracking-[0.08em] uppercase text-hero-red hover:text-ink-black"
             />
             <div className="flex flex-wrap items-center gap-3">
               <Button variant="outline" size="md" onClick={close} disabled={checkout.isPending}>
-                Not now
+                {t("Not now")}
               </Button>
               {onRetry && (
                 <Button
@@ -271,7 +269,7 @@ export function InsufficientCreditsDialog() {
                     retry();
                   }}
                 >
-                  {balance < required ? "Waiting for credits…" : "Retry"}
+                  {balance < required ? t("Waiting for credits…") : t("Resume {action}").replace("{action}", actionLabel ?? t("pending action"))}
                 </Button>
               )}
             </div>

@@ -114,6 +114,7 @@ function StyleCard({
   const [imgFailed, setImgFailed] = useState(!suggestion.has_sample);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [selectionError, setSelectionError] = useState<string | null>(null);
+  const [selectionConfirmed, setSelectionConfirmed] = useState(false);
   const [timestamp, setTimestamp] = useState(() => Date.now());
   const wasGenerating = useRef(isGenerating);
   const setActive = useSetActiveStyle();
@@ -144,7 +145,7 @@ function StyleCard({
   const showLoading = isGenerating || (!suggestion.has_sample && generationDisabled);
   const sampleRetryAvailable = !suggestion.has_sample && !isGenerating && !generationDisabled;
   const isActive = suggestion.is_active;
-  const canSelect = !isActive && !isGenerating && !selectionDisabled;
+  const canSelect = !isActive && !isGenerating && !selectionDisabled && !setActive.isPending;
 
   // The card itself is the selection — no per-card select buttons.
   const handleCardClick = () => {
@@ -152,7 +153,10 @@ function StyleCard({
     setSelectionError(null);
     setActive.mutate(
       { project: projectName, id: suggestion.id },
-      { onError: (error) => setSelectionError(error.message) },
+      {
+        onSuccess: () => setSelectionConfirmed(true),
+        onError: (error) => setSelectionError(error.message),
+      },
     );
   };
 
@@ -184,13 +188,13 @@ function StyleCard({
                 height={400}
                 aspect="4 / 5"
                 containerClassName="w-full"
-                className="object-cover object-center"
+                className="object-contain object-center"
                 onError={() => setImgFailed(true)}
               />
             )}
 
             {isActive && (
-              <div className="animate-register-stamp absolute left-0 top-0 bg-narrator-gold px-3 py-1.5 font-meta text-[0.58rem] font-bold tracking-[0.1em] text-ink-black shadow-ink-sm">
+              <div onAnimationEnd={() => setSelectionConfirmed(false)} className={`${selectionConfirmed ? "animate-register-stamp " : ""}absolute left-0 top-0 bg-narrator-gold px-3 py-1.5 font-meta text-xs font-bold text-ink-black shadow-ink-sm`}>
                 ✓ {t("YOUR STYLE")}
               </div>
             )}
@@ -384,6 +388,7 @@ export function StyleRoom() {
   const [showSuggestConfirm, setShowSuggestConfirm] = useState(false);
   const [showDirectionComposer, setShowDirectionComposer] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [comparisonView, setComparisonView] = useState<"proof" | "action">("proof");
   const [pendingCustomInput, setPendingCustomInput] = useState<{
     direction: string;
     image: File | null;
@@ -605,6 +610,9 @@ export function StyleRoom() {
   const comparedSuggestions = compareIds
     .map((suggestionId) => suggestions.find((suggestion) => suggestion.id === suggestionId))
     .filter((suggestion): suggestion is StyleSuggestion => !!suggestion);
+  const actionComparisonAvailable = comparedSuggestions.length >= 2
+    && comparedSuggestions.every((style) => style.has_validation && style.validation_url);
+  const comparingAction = comparisonView === "action" && actionComparisonAvailable;
   const staleSuggestions = suggestions.filter((suggestion) => suggestion.sample_stale);
   const refreshEstimate = multiplyEstimate(sampleEstimate, pendingRefresh.length);
 
@@ -743,24 +751,35 @@ export function StyleRoom() {
             <section className="mt-8 bg-ink-black p-4 text-bristol md:p-6">
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <div className="font-meta text-[0.68rem] font-bold tracking-[0.1em] text-narrator-gold">{t("COMPARE PROOFS")}</div>
-                  <p className="mt-1 text-[0.82rem] text-bristol/70">{t("Equal-size proofs make palette, finish, and story fit easier to judge.")}</p>
+                  <h2 className="font-meta text-sm font-bold text-narrator-gold">{t("COMPARE PROOFS")}</h2>
+                  <p className="mt-1 text-sm leading-6 text-bristol/80">{t("Equal-size proofs make palette, finish, and story fit easier to judge.")}</p>
                 </div>
                 <Button variant="onInk" size="xs" onClick={() => setCompareIds([])}>{t("CLEAR")}</Button>
               </div>
-              <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <div role="group" aria-label={t("Comparison images")} className="mt-4 flex flex-wrap gap-3">
+                <Button variant="outline" size="sm" aria-pressed={!comparingAction} onClick={() => setComparisonView("proof")}>{t("STORY PROOFS")}</Button>
+                <Button variant="outline" size="sm" aria-pressed={comparingAction} disabled={!actionComparisonAvailable} onClick={() => setComparisonView("action")}>{t("ACTION AUDITIONS")}</Button>
+              </div>
+              {!actionComparisonAvailable && <p className="mt-2 text-sm text-bristol/80">{t("Action comparison becomes available when each compared direction has a completed action audition.")}</p>}
+              <div className={`mt-4 grid gap-4 md:grid-cols-2 ${comparedSuggestions.length === 3 ? "xl:grid-cols-3" : ""}`}>
                 {comparedSuggestions.map((suggestion) => (
                   <div key={suggestion.id} className="bg-bristol p-3 text-ink-black">
                     <LazyImage
-                      src={`/api/projects/${encodeURIComponent(id)}/files/samples/style_${suggestion.index}.png`}
+                      src={comparingAction
+                        ? suggestion.validation_url!
+                        : `/api/projects/${encodeURIComponent(id)}/files/samples/style_${suggestion.index}.png`}
                       alt={suggestion.label}
                       width={320}
                       height={400}
                       aspect="4 / 5"
-                      className="object-cover object-center"
+                      className="object-contain object-center"
                     />
                     <div className="mt-3 font-display text-[1.1rem] font-black uppercase tracking-[-0.025em]">{suggestion.label}</div>
-                    <p className="mt-1 text-[0.76rem] leading-5 text-ink-black/70">{suggestion.palette}</p>
+                    <dl className="mt-3 space-y-3 text-sm leading-6">
+                      <div><dt className="font-bold">{t("Palette")}</dt><dd>{suggestion.palette}</dd></div>
+                      <div><dt className="font-bold">{t("Line and finish")}</dt><dd>{suggestion.line_rendering}</dd></div>
+                      <div><dt className="font-bold">{t("Story fit")}</dt><dd>{suggestion.story_fit}</dd></div>
+                    </dl>
                   </div>
                 ))}
               </div>
@@ -770,8 +789,8 @@ export function StyleRoom() {
           <section className="mt-10">
             <SectionHeader
               variant="underline"
-              title="STYLE PROOFS"
-              description="Every direction uses the same story-specific audition. Select up to three to compare; choosing one never moves the cards."
+              title={t("STYLE PROOFS")}
+              description={t("Every direction uses the same story-specific audition. Select up to three to compare; choosing one never moves the cards.")}
             />
             <div className="grid gap-6 lg:grid-cols-2">
               {suggestions.map((suggestion) => (

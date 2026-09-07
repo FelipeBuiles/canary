@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/Button";
 import { TextField } from "../ui/Field";
@@ -36,38 +37,7 @@ export function ConfirmModal({
     onClose();
   }, [onClose]);
 
-  useEffect(() => {
-    if (!open) return;
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        handleClose();
-        return;
-      }
-      if (e.key !== "Tab" || !modalRef.current) return;
-      const focusable = modalRef.current.querySelectorAll<HTMLElement>(
-        'button, [href], input, [tabindex]:not([tabindex="-1"])',
-      );
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [handleClose, open]);
+  useDialogFocus(modalRef, { enabled: open, onClose: handleClose });
 
   if (!open) return null;
 
@@ -84,7 +54,7 @@ export function ConfirmModal({
         aria-labelledby="confirm-modal-title"
         aria-describedby="confirm-modal-body"
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-[500px] border-[2px] border-ink-black bg-pulp-paper text-ink-black shadow-ink"
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto w-full max-w-[500px] border-[2px] border-ink-black bg-pulp-paper text-ink-black shadow-ink"
       >
         <form
           className="px-6 pt-5 pb-6 sm:px-8"
@@ -107,7 +77,7 @@ export function ConfirmModal({
               type="button"
               onClick={handleClose}
               aria-label="Cancel"
-              className="inline-flex min-h-11 shrink-0 items-center gap-2 border-[2px] border-ink-black/20 px-3 font-meta text-[0.62rem] tracking-[0.12em] uppercase text-ink-black/60 hover:border-ink-black hover:text-ink-black"
+              className="inline-flex min-h-11 shrink-0 items-center gap-2 border-[2px] border-ink-black/20 px-3 font-meta text-xs tracking-[0.08em] uppercase text-ink-muted hover:border-ink-black hover:text-ink-black"
             >
               Close <ShortcutHint>Esc</ShortcutHint>
             </button>
@@ -122,15 +92,15 @@ export function ConfirmModal({
 
           {confirmInput && (
             <div className="mt-4">
-              <label className="block font-meta text-[0.56rem] tracking-[0.18em] text-ink-black/55 mb-2">
+              <label htmlFor="confirm-modal-input" className="block font-meta text-xs tracking-[0.1em] text-ink-black/70 mb-2">
                 TYPE <span className="font-bold text-ink-black">{confirmInput}</span> TO CONFIRM
               </label>
               <TextField
+                id="confirm-modal-input"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={confirmInput}
                 className="w-full max-w-sm bg-bristol"
-                autoFocus
               />
             </div>
           )}

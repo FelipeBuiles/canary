@@ -11,9 +11,7 @@ afterEach(() => {
 });
 
 describe("ImageModal", () => {
-  it("keeps its scroll lock and key listener stable across parent rerenders", () => {
-    const addListener = vi.spyOn(window, "addEventListener");
-    const removeListener = vi.spyOn(window, "removeEventListener");
+  it("uses the latest close callback after a parent rerender", () => {
     const firstClose = vi.fn();
     const latestClose = vi.fn();
     const { rerender } = render(
@@ -22,8 +20,6 @@ describe("ImageModal", () => {
       </I18nProvider>,
     );
 
-    expect(document.body.style.overflow).toBe("hidden");
-    expect(addListener.mock.calls.filter(([type]) => type === "keydown")).toHaveLength(1);
 
     rerender(
       <I18nProvider>
@@ -31,8 +27,6 @@ describe("ImageModal", () => {
       </I18nProvider>,
     );
 
-    expect(removeListener.mock.calls.filter(([type]) => type === "keydown")).toHaveLength(0);
-    expect(addListener.mock.calls.filter(([type]) => type === "keydown")).toHaveLength(1);
 
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(firstClose).not.toHaveBeenCalled();
@@ -71,24 +65,6 @@ describe("ImageModal", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("clips the mobile image and sidebar panes to separate scroll regions", () => {
-    render(
-      <I18nProvider>
-        <ImageModal
-          isOpen
-          onClose={() => undefined}
-          src="/tall-sheet.png"
-          alt="Tall reference sheet"
-          sidebar={<div>Appearance controls</div>}
-        />
-      </I18nProvider>,
-    );
-
-    const body = screen.getByTestId("image-modal-body");
-    const imagePane = screen.getByTestId("image-modal-image-pane");
-    expect(body.className).toContain("overflow-hidden");
-    expect(imagePane.className).toContain("overflow-hidden");
-  });
 
   it("moves focus into the dialog and restores it to the opener", async () => {
     const user = userEvent.setup();

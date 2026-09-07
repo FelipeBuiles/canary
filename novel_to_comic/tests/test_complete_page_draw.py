@@ -1430,3 +1430,113 @@ def test_visual_review_route_compiles_current_authority_without_redrawing(tmp_pa
             project=(tmp_path, Config(), None), user_id='user'))
         assert generate.await_count == 1
     assert artifacts.provenance_revisions(page.page_number) == (1,)
+
+
+def test_draw_estimate_is_read_only_and_includes_lettering_check(tmp_path: Path) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from novel_to_comic.config import PAGE_OCR_ESTIMATED_COST_USD
+    from novel_to_comic.server.credits import credit_estimate_for_provider_cost
+    from novel_to_comic.server.deps import get_project
+    from novel_to_comic.server.routers.pages import router
+
+    artifacts = TargetArtifacts(tmp_path)
+    page = _page()
+    edition = _edition(production_page_capability_profile())
+    files = _reference_files(tmp_path)
+    artifacts.write_page(page)
+    artifacts.write_book_edition(edition)
+    compiled = compile_page_generation_request(
+        page, edition, _inventory(), files, retry=RetryProvenance(attempt=1),
+    )
+    before = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_project] = lambda: (tmp_path, Config(), None)
+    with patch("novel_to_comic.server.routers.pages.approved_visual_inventory", return_value=_inventory()), \
+         patch("novel_to_comic.server.routers.pages.approved_reference_files", return_value=files), \
+         patch("novel_to_comic.server.credited_job.reserve_credits") as reserve:
+        client = TestClient(app)
+        response = client.get("/pages/7/generate/estimate?depiction=less_graphic")
+        assert response.status_code == 200
+        assert response.json() == dict(credit_estimate_for_provider_cost(
+            float(compiled.request.estimated_cost_usd) + float(PAGE_OCR_ESTIMATED_COST_USD),
+            "draw", reserve=True,
+        ))
+        assert response.json()["reserved_credits"] >= response.json()["estimate_credits"] > 0
+        assert client.get("/pages/7/generate/estimate?depiction=unknown").status_code == 422
+        assert client.get("/pages/7/analyze/estimate").status_code == 409
+        reserve.assert_not_called()
+    after = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    assert after == before
+
+
+def test_existing_page_checks_quote_holds_without_redrawing(tmp_path: Path) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from novel_to_comic.server.deps import get_project
+    from novel_to_comic.server.routers.pages import router
+
+    artifacts = TargetArtifacts(tmp_path)
+    page = _page()
+    files = _reference_files(tmp_path)
+    artifacts.write_page(page)
+    asyncio.run(draw_complete_page(
+        _compile(tmp_path, files=files),
+        adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
+        artifacts=artifacts, page=page,
+    ))
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_project] = lambda: (tmp_path, Config(), None)
+    with patch("novel_to_comic.server.credited_job.reserve_credits") as reserve:
+        client = TestClient(app)
+        for check in ("analyze", "visual-review"):
+            response = client.get(f"/pages/7/{check}/estimate")
+            assert response.status_code == 200
+            assert response.json()["reserved_credits"] >= response.json()["estimate_credits"] > 0
+        assert client.get("/pages/7/generate/estimate").status_code == 409
+        reserve.assert_not_called()
+    assert artifacts.provenance_revisions(7) == (1,)
+
+
+def test_batch_quote_skips_paid_pages_and_sums_individual_holds(tmp_path: Path) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from types import SimpleNamespace
+    from novel_to_comic.server.deps import get_project
+    from novel_to_comic.server.routers.pages import router
+
+    artifacts = TargetArtifacts(tmp_path)
+    first = _page()
+    remaining = [
+        ComicPage.model_validate({
+            **first.model_dump(exclude={"content_sha256"}),
+            "page_number": number,
+        })
+        for number in (8, 9)
+    ]
+    files = _reference_files(tmp_path)
+    for page in [first, *remaining]:
+        artifacts.write_page(page)
+    asyncio.run(draw_complete_page(
+        _compile(tmp_path, files=files),
+        adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
+        artifacts=artifacts, page=first,
+    ))
+    artifacts.write_book_edition(_edition(production_page_capability_profile()))
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_project] = lambda: (tmp_path, Config(), None)
+    with patch.object(TargetArtifacts, "read_plan", return_value=SimpleNamespace(pages=[first, *remaining])), \
+         patch("novel_to_comic.server.routers.pages.approved_visual_inventory", return_value=_inventory()), \
+         patch("novel_to_comic.server.routers.pages.approved_reference_files", return_value=files):
+        client = TestClient(app)
+        batch = client.get("/pages/generate/estimate")
+        single = client.get("/pages/8/generate/estimate")
+        assert batch.status_code == single.status_code == 200
+        assert batch.json()["estimate_credits"] == single.json()["estimate_credits"] * 2
+        assert batch.json()["reserved_credits"] == single.json()["reserved_credits"] * 2
+    assert artifacts.provenance_revisions(7) == (1,)
+    assert artifacts.provenance_revisions(8) == ()
+    assert artifacts.provenance_revisions(9) == ()

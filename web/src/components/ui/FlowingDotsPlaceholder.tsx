@@ -43,7 +43,8 @@ export function FlowingDotsPlaceholder({
     let width = 0;
     let height = 0;
     let visible = true;
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let reducedMotion = motionPreference.matches;
 
     const resize = () => {
       const rect = wrap.getBoundingClientRect();
@@ -126,11 +127,21 @@ export function FlowingDotsPlaceholder({
       : null;
     visibilityObserver?.observe(wrap);
 
+    function onMotionChange(event: MediaQueryListEvent) {
+      reducedMotion = event.matches;
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+      if (reducedMotion) draw(performance.now());
+      else requestDraw();
+    }
+    motionPreference.addEventListener("change", onMotionChange);
     if (reducedMotion) draw(performance.now());
     else requestDraw();
 
     return () => {
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+      motionPreference.removeEventListener("change", onMotionChange);
       observer.disconnect();
       visibilityObserver?.disconnect();
     };
@@ -163,7 +174,7 @@ export function FlowingDotsPlaceholder({
               className={cn(
                 "border-ink-black bg-bristol text-ink-black font-display font-black uppercase leading-none",
                 compact
-                  ? "border-[2px] px-1.5 py-1 text-[0.5rem] tracking-[0.08em]"
+                  ? "max-w-full break-words border-[2px] px-1 py-1 text-xs tracking-normal"
                   : "border-[3px] px-5 py-2.5 text-[clamp(1rem,8vw,1.38rem)] shadow-ink tracking-[-0.03em]",
               )}
             >
@@ -171,7 +182,7 @@ export function FlowingDotsPlaceholder({
             </div>
           )}
           {displayCaption && !compact && (
-            <div className="mt-3.5 border-[2px] border-ink-black bg-pulp-paper px-3 py-1 font-meta text-[0.62rem] font-bold tracking-[0.16em] text-ink-black shadow-paper-sm uppercase">
+            <div className="mt-3.5 border-[2px] border-ink-black bg-pulp-paper px-3 py-1 font-meta text-xs font-bold tracking-[0.08em] text-ink-black shadow-paper-sm uppercase">
               {displayCaption}
             </div>
           )}

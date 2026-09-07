@@ -23,6 +23,10 @@
   --color-ink-soft: #6b685e;
   --color-preview-tint: #e9e0c9;
   --color-warn-orange: #c9650a;
+  --color-action: var(--color-hero-red);
+  --color-ready: #3d694a;
+  --color-selected: var(--color-narrator-gold);
+  --color-on-gold: #625300;
 
   --font-display: "Anybody", sans-serif;
   --font-body: "Be Vietnam Pro", sans-serif;
@@ -42,6 +46,11 @@
 
 @layer base {
   :root {
+    --motion-press: 120ms;
+    --motion-settle: 220ms;
+    --motion-reveal: 320ms;
+    --ease-press: cubic-bezier(0.22, 1, 0.36, 1);
+    scrollbar-color: var(--color-ink-soft) var(--color-pulp-paper);
     color: var(--color-ink-black);
     background: var(--color-pulp-paper);
     font-family: var(--font-body);
@@ -76,6 +85,7 @@
   select {
     font: inherit;
     touch-action: manipulation;
+    caret-color: var(--color-hero-red);
   }
 
   #root {
@@ -194,7 +204,7 @@
     display: block;
     margin-bottom: 0.25rem;
     font-family: var(--font-meta);
-    font-size: 0.64rem;
+    font-size: 0.75rem;
     font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -203,18 +213,18 @@
 
   .ui-field {
     width: 100%;
-    min-height: 2.35rem;
+    min-height: 2.75rem;
     border: 2px solid var(--color-ink-black);
     background: var(--color-pulp-paper);
     padding: 0.4rem 0.6rem;
     color: var(--color-ink-black);
     font-family: var(--font-body);
-    font-size: 0.82rem;
+    font-size: 1rem;
     line-height: 1.35;
     transition:
-      background-color 150ms ease,
-      box-shadow 150ms ease,
-      transform 150ms ease;
+      background-color var(--motion-press) ease,
+      box-shadow var(--motion-press) ease,
+      transform var(--motion-press) ease;
   }
 
   .ui-field::placeholder {
@@ -452,7 +462,7 @@
 @keyframes register-stamp {
   0% {
     transform: translate(5px, 3px) rotate(-1.5deg);
-    opacity: 0;
+    opacity: 0.35;
   }
   100% {
     transform: translate(0, 0) rotate(-1.5deg);
@@ -462,7 +472,16 @@
 
 .animate-register-stamp {
   transform-origin: center;
-  animation: register-stamp 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: register-stamp var(--motion-settle) var(--ease-press);
+}
+
+@keyframes proof-reveal {
+  from { transform: translateY(6px); opacity: 0.4; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.animate-proof-reveal {
+  animation: proof-reveal var(--motion-reveal) var(--ease-press);
 }
 
 @media (max-width: 640px) {
