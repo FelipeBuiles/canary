@@ -1,9 +1,11 @@
 import { lazy, Suspense, type ComponentType, type ReactElement } from "react";
-import { Navigate, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Navigate, Routes, Route } from "react-router-dom";
 import { AuthGuard } from "./components/AuthGuard";
 import { LoadingBlock } from "./components/ui/StateBlock";
 import { useAuth } from "./hooks/useAuth";
 import { I18nProvider } from "./i18n";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "./api/queryClient";
 
 const Shell = lazy(() => import("./layout/Shell").then(({ Shell }) => ({ default: Shell })));
 const ProjectRooms = lazy(() =>
@@ -127,5 +129,17 @@ export function App() {
         </Route>
       </Routes>
     </I18nProvider>
+  );
+}
+
+export function AccountApp() {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  return (
+    <QueryClientProvider key={user?.id ?? "signed-out"} client={queryClient}>
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </QueryClientProvider>
   );
 }

@@ -41,6 +41,32 @@ implementation instructions.
   and SHA-256. Check retry and package rebuild are provider-free; “ready to
   download” is not evidence that the browser completed a download. Do not
   promise model quality or invent generation ETAs.
+- Paid project mutations require `Idempotency-Key`. Durable verified-account,
+  method/path, and input-fingerprint replay survives restarts; an indeterminate
+  receipt requires inspection and explicit recovery, never automatic paid retry.
+  Browser receipts are account-scoped; account changes abort tracked requests,
+  reject late results, replace query caches, and clear pipeline/style/resume state.
+- `/api/projects/{project_id}/jobs` returns live and persisted job observations.
+  Interrupted queued/running jobs appear failed/recoverable, never auto-requeued.
+  Pipeline/style SSE is bounded broadcast, not durable history; refetch status/jobs.
+- Cast (including instructed text rewrites), style work, and covers reserve before
+  paid work. Owned one-hour holds renew every 30 seconds. Startup requires the
+  canonical SQL migration; only expired never-started holds reclaim automatically.
+  Started-expired, legacy unowned, and ambiguous settlement need reconciliation.
+  Never globally release holds at startup or reset.
+- Rejected reruns preserve state/artifacts; admitted non-Draw failure has no full
+  rollback. Draw retains revisions plus pending/unfinished paid-result evidence,
+  recovering the original frozen action until post-settlement acknowledgement.
+  Versioned raw OCR supports provider-free revalidation; uncertain order is
+  nonblocking editorial evidence, not a proven defect.
+- Deployment is one uvicorn worker on one Fly Machine with persistent `/projects`
+  journals. Authenticated drain must precede the idle check; timeout stays drained.
+  The first upgrade from a binary without drain needs controlled maintenance, not
+  an idle-only fallback. Horizontal scaling requires distributed coordination.
+  See [deployment runbook](../deploy.md); these are requirements, not evidence of
+  production migration or deployment.
+- Marketing must describe the actual workflow without quality/time guarantees.
+  No finished-page showcase was added: the available asset was unsuitable.
 
 ## Code navigation
 
@@ -60,6 +86,10 @@ implementation instructions.
 - `config.py`, `model_costs.py`, `usage.py`: configured aliases and cost evidence.
 - `ai/client.py`: gateway calls and provider usage events.
 - `server/credited_job.py`, `server/credits.py`: credit reservation and settlement.
+- `server/admission.py`, `server/event_channel.py`, `server/generation_jobs.py`:
+  durable action/job journal, process-local mutation/drain coordinator, bounded SSE.
+  `server/deployment_status.py` and `scripts/check_deploy_safe.py`: authenticated
+  drain/idle deployment guard and explicit operational recovery.
 - `server/routers/pipeline.py`, `server/routers/pages.py`: pipeline plus page
   correction, visual-review, and render-history APIs.
 - `server/auth.py`, `server/deps.py`: authentication and project scoping.

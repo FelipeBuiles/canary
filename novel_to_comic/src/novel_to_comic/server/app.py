@@ -241,33 +241,23 @@ async def _lifespan(app: FastAPI):
         asyncio.to_thread(_refresh_pricing_if_stale)
     )
 
-    async def _release_stale_reservations():
-        from .db import get_db
-        from .credits import release_all_stale_reservations
+    from .credits import start_reservation_leases, stop_reservation_leases
+    from .db import get_db
 
-        try:
-            released = await asyncio.to_thread(release_all_stale_reservations, get_db())
-            if released:
-                log.info(
-                    "Released %d stale credit reservation(s) from previous server run",
-                    released,
-                )
-        except Exception as exc:
-            log.warning(
-                "Could not clean up stale credit reservations on startup: %s", exc
-            )
-
-    asyncio.create_task(_release_stale_reservations())
+    await asyncio.to_thread(start_reservation_leases, get_db())
 
     worker_count = max(1, int(os.environ.get("CANARY_GENERATION_WORKERS", "5")))
     app.state.generation_worker_tasks = [
         asyncio.create_task(generation_worker(app)) for _ in range(worker_count)
     ]
     yield
-    # Close shared httpx pool used by ai/client.py
-    from novel_to_comic.ai.client import _http
-
-    await _http.aclose()
+    app.state.admission.draining = True
+    # Deployment control drains before shutdown. Forced shutdown cancels work
+    # before closing provider clients, allowing credited runners to settle.
+    pipeline_tasks = list(app.state.running_tasks.values())
+    style_tasks = list(app.state.style_tasks.values())
+    for task in [*pipeline_tasks, *style_tasks]:
+        task.cancel()
     if not app.state.pricing_refresh_task.done():
         app.state.pricing_refresh_task.cancel()
     for task in app.state.generation_worker_tasks:
@@ -275,8 +265,27 @@ async def _lifespan(app: FastAPI):
     await asyncio.gather(
         app.state.pricing_refresh_task,
         *app.state.generation_worker_tasks,
+        *pipeline_tasks,
+        *style_tasks,
         return_exceptions=True,
     )
+    from .generation_jobs import persist_generation_job
+
+    for job in app.state.generation_jobs.values():
+        if job.status == "queued":
+            if job.on_cancel is not None:
+                job.on_cancel()
+            job.status = "failed"
+            job.error = "Server stopped before this job started."
+            job.recoverable = True
+            persist_generation_job(app, job)
+    while not app.state.generation_queue.empty():
+        app.state.generation_queue.get_nowait()
+        app.state.generation_queue.task_done()
+    stop_reservation_leases()
+    from novel_to_comic.ai.client import _http
+
+    await _http.aclose()
 
 
 def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
@@ -297,6 +306,10 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     app.middleware("http")(request_log_middleware)
+    from .admission import Admission, admission_middleware
+
+    app.state.admission = Admission(projects_dir)
+    app.middleware("http")(admission_middleware)
     env = (os.environ.get("CANARY_ENV") or os.environ.get("ENV") or "dev").lower()
     if env == "production":
         from .security_headers import security_headers_middleware
@@ -365,7 +378,7 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
             CORSMiddleware,
             allow_origins=cors_origins,
             allow_methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["Content-Type", "X-Canary-Ops-Token"],
+            allow_headers=["Content-Type", "Authorization", "Idempotency-Key", "X-Canary-Ops-Token"],
         )
 
     @app.get("/api/health", tags=["meta"])
@@ -418,6 +431,18 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     )
     def deployment_status():
         """Report whether in-process generation activity makes a deploy unsafe."""
+        return deployment_activity(app)
+
+    @app.post("/api/ops/drain", tags=["operations"], dependencies=[Depends(require_ops_token)])
+    async def drain():
+        async with app.state.admission.gate:
+            app.state.admission.draining = True
+        return deployment_activity(app)
+
+    @app.post("/api/ops/resume", tags=["operations"], dependencies=[Depends(require_ops_token)])
+    async def resume():
+        async with app.state.admission.gate:
+            app.state.admission.draining = False
         return deployment_activity(app)
 
     # Routers

@@ -102,7 +102,10 @@ def _page_failure(target: TargetArtifacts, page_number: int):
 
 
 def _generation_retry(target: TargetArtifacts, page_number: int) -> RetryProvenance:
-    """Advance the frozen request identity after an incomplete generation."""
+    """Resume an incomplete durable paid result before allocating a retry."""
+    resumable = target.resumable_generation_request(page_number)
+    if resumable is not None and resumable.correction is None:
+        return resumable.retry
 
     prior_requests = [
         target.read_request(page_number, revision)
@@ -126,6 +129,10 @@ def _aggregated_correction_retry(
 ) -> RetryProvenance:
     """Advance retry identity for one exact selected-issue set."""
     selected = frozenset(issue_ids)
+    resumable = target.resumable_generation_request(page_number)
+    if (resumable is not None and resumable.correction is not None
+            and frozenset(resumable.correction.issue_ids) == selected):
+        return resumable.retry
     prior_attempts = [
         target.read_request(page_number, revision)
         for revision in target.request_revisions(page_number)
@@ -230,8 +237,9 @@ def enqueue_all_undrawn_pages(
     user_id: str,
     project_dir,
     config,
+    rerun: bool = False,
 ):
-    """Queue every planned page that does not already have a render."""
+    """Queue missing pages, or explicit replacement revisions without deletion."""
 
     target = TargetArtifacts(project_dir)
     plan = target.read_plan()
@@ -249,7 +257,7 @@ def enqueue_all_undrawn_pages(
 
     for selected in plan.pages:
         page_number = selected.page_number
-        if target.provenance_revisions(page_number):
+        if target.provenance_revisions(page_number) and not rerun:
             continue
         page = target.read_page(page_number)
         compiled = compile_page_generation_request(
@@ -257,7 +265,7 @@ def enqueue_all_undrawn_pages(
             edition,
             inventory,
             reference_files,
-            retry=RetryProvenance(attempt=1),
+            retry=_generation_retry(target, page_number),
             style_template=config.style_template,
         )
         # Validate the whole batch before reserving credits or queueing its
@@ -502,7 +510,10 @@ def _prepare_initial_generation(
 ):
     project_dir, config, _state = project
     target = TargetArtifacts(project_dir)
-    if target.provenance_revisions(page_number):
+    resumable = target.resumable_generation_request(page_number)
+    if target.provenance_revisions(page_number) and (
+        resumable is None or resumable.correction is not None
+    ):
         raise HTTPException(
             409,
             "Page already has a render; create an issue and request a correction.",
@@ -785,6 +796,13 @@ def _prepare_explicit_correction(
         page = target.read_page(page_number)
         edition = ensure_current_page_edition(target, target.read_book_edition())
         provenance = _latest_provenance(target, page_number)
+        resumable = target.resumable_generation_request(page_number)
+        if (resumable is not None and resumable.correction is not None
+                and resumable.correction.parent_render_revision == body.parent_render_revision):
+            # Publication can have succeeded before OCR/settlement failed.
+            # Recompile against the original correction parent, not the new
+            # unpaid/unconfirmed publication, to preserve the frozen identity.
+            provenance = target.read_provenance(page_number, body.parent_render_revision)
         if provenance is None:
             raise StaleCorrectionError("a rendered page is required before correcting findings")
         if body.parent_render_revision != provenance.render.revision:

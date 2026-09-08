@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import uuid as uuid_lib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
@@ -284,6 +283,37 @@ def resolve_cast_asset(project_dir: Path, asset_type: AssetType, asset_id: str, 
 
 
 async def apply_asset_instruction(
+    config: Config, project_dir: Path, db: Any, user_id: str,
+    project_id: str, asset_type: AssetType, asset_id: str, instruction: str,
+    app: Any | None = None, state_id: str | None = None,
+) -> dict[str, Any]:
+    from novel_to_comic.server.credits import (
+        UnifiedCostResolver, reserve_credits, release_reservation,
+        assert_reservation_active,
+    )
+
+    instruction = validate_user_instruction(instruction)
+    resolve_cast_asset(project_dir, asset_type, asset_id, state_id)
+    job_kind = _ASSET_TYPES[asset_type][1]
+    job_asset_id = f"{asset_id}:{state_id}" if state_id else asset_id
+    asset_estimate = UnifiedCostResolver.estimate_asset_regen_cost(
+        config, project_dir, job_kind, job_asset_id,
+    )
+    estimate = UnifiedCostResolver.estimate_instructed_regen_cost(config, asset_estimate, "cast")
+    hold = reserve_credits(db, user_id, project_id, "cast", estimate["estimate_credits"])
+    try:
+        assert_reservation_active(db, hold[0])
+        return await _apply_reserved_instruction(
+            config, project_dir, db, user_id, project_id, asset_type,
+            asset_id, instruction, app, state_id, hold,
+        )
+    except BaseException:
+        if hold[0]:
+            release_reservation(db, hold[0])
+        raise
+
+
+async def _apply_reserved_instruction(
     config: Config,
     project_dir: Path,
     db: Any,
@@ -294,6 +324,7 @@ async def apply_asset_instruction(
     instruction: str,
     app: Any | None = None,
     state_id: str | None = None,
+    hold: tuple[str | None, str] = (None, ""),
 ) -> dict[str, Any]:
     """Rewrite one author instruction into an addendum and queue the regen.
 
@@ -307,12 +338,9 @@ async def apply_asset_instruction(
     from novel_to_comic.ai import ai_request_context
     from novel_to_comic.clients import text
     from novel_to_comic.server.credits import (
-        UnifiedCostResolver,
-        assert_sufficient_credits,
         debit_model_usage,
     )
     from novel_to_comic.server.generation_jobs import (
-        enqueue_generation_job,
         find_active_generation_job,
         generation_job_payload,
         generation_semaphore_for_config,
@@ -344,18 +372,6 @@ async def apply_asset_instruction(
         project_dir, asset_type, asset_id, state_id
     )
 
-    asset_estimate = UnifiedCostResolver.estimate_asset_regen_cost(
-        config, project_dir, job_kind, job_asset_id
-    )
-    instructed_estimate = UnifiedCostResolver.estimate_instructed_regen_cost(
-        config, asset_estimate, "cast"
-    )
-    assert_sufficient_credits(
-        db,
-        user_id,
-        instructed_estimate["estimate_credits"],
-        action=f"{asset_type}_regen",
-    )
 
     instructions_path = _instructions_path(
         project_dir, asset_type, asset_id, state_id
@@ -365,7 +381,7 @@ async def apply_asset_instruction(
         instructions_path
     )
 
-    job_id = str(uuid_lib.uuid4())
+    job_id = hold[1]
     try:
         with ai_request_context(
             user_id=user_id,
@@ -386,6 +402,16 @@ async def apply_asset_instruction(
                 max_output_tokens=4096,
                 feature=feature,
             )
+        if rewrite.usage:
+            debit_model_usage(
+                db,
+                user_id,
+                project_id,
+                rewrite.usage,
+                stage="cast",
+                description=f"Model call: rewrite {asset_type} prompt {asset_id}",
+                job_id=job_id,
+            )
         patch = parse_asset_instruction_patch(rewrite.value)
     except PromptInstructionError as exc:
         logger.warning(
@@ -405,16 +431,6 @@ async def apply_asset_instruction(
         )
         raise HTTPException(502, f"Could not rewrite the prompt: {exc}") from exc
 
-    if rewrite.usage:
-        debit_model_usage(
-            db,
-            user_id,
-            project_id,
-            rewrite.usage,
-            stage="cast",
-            description=f"Model call: rewrite {asset_type} prompt {asset_id}",
-            job_id=job_id,
-        )
 
     # The addendum is persisted before the job is queued: the regeneration reads
     # the active addendum from this log, so a queued job with nothing written
@@ -428,7 +444,7 @@ async def apply_asset_instruction(
         },
     )
 
-    async def _runner() -> None:
+    async def _runner():
         from novel_to_comic.stages import s3_cast
 
         with ai_request_context(
@@ -458,27 +474,24 @@ async def apply_asset_instruction(
                     config, project_dir, asset_id
                 )
         _clear_repaired_cast_failure(project_dir, asset_id)
-        if result.usage:
-            debit_model_usage(
-                db,
-                user_id,
-                project_id,
-                result.usage,
-                stage="cast",
-                description=(
-                    f"Model call: regenerate instructed {asset_type} {asset_id}"
-                ),
-                job_id=job_id,
-            )
+        return result
 
     prune_finished_generation_jobs(app)
-    job = enqueue_generation_job(
+    from novel_to_comic.server.credited_job import enqueue_reserved_generation_job
+
+    job, _created = enqueue_reserved_generation_job(
         app,
         project_name=pkey,
         kind=job_kind,
         label=asset_regen_label(asset_type, asset_id, state_id),
         payload={payload_key: job_asset_id},
-        runner=_runner,
+        work=_runner,
+        project_id=project_id,
+        project_dir=project_dir,
+        stage="cast",
+        reservation_credits=0,
+        existing_hold=hold,
+        debit_description=f"Model call: regenerate instructed {asset_type} {asset_id}",
         user_id=user_id,
         semaphore=generation_semaphore_for_config(app, config),
     )

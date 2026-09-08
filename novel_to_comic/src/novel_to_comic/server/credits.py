@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import uuid as uuid_lib
+from threading import Event, Thread
 from decimal import Decimal, ROUND_CEILING
 from pathlib import Path
 from typing import Literal, TypedDict
@@ -35,6 +36,58 @@ INSTRUCTION_TEXT_CALLS_BY_STAGE: dict[Literal["cast"], int] = {
 }
 
 log = logging.getLogger("canary.credits")
+
+RESERVATION_LEASE_SECONDS = 3600
+_reservation_owner = str(uuid_lib.uuid4())
+_lease_stop = Event()
+_lease_thread: Thread | None = None
+_reservation_jobs: dict[str, str] = {}
+_unsettled_jobs: set[str] = set()
+
+
+def start_reservation_leases(db: Client) -> None:
+    """Fail startup closed on missing lease migration, then renew owned holds."""
+    global _lease_thread
+    if _lease_thread is not None and _lease_thread.is_alive():
+        return
+    renew_reservation_leases(db)
+    _lease_stop.clear()
+
+    def heartbeat() -> None:
+        while not _lease_stop.wait(30):
+            try:
+                renew_reservation_leases(db)
+            except Exception:
+                log.exception("Reservation lease renewal failed; expired work cannot start")
+
+    _lease_thread = Thread(target=heartbeat, name="credit-reservation-leases", daemon=True)
+    _lease_thread.start()
+
+
+def stop_reservation_leases() -> None:
+    """Stop only after work has drained; outstanding holds expire, never mass-release."""
+    global _lease_thread
+    _lease_stop.set()
+    if _lease_thread is not None:
+        _lease_thread.join(timeout=10)
+        _lease_thread = None
+
+
+def renew_reservation_leases(db: Client) -> None:
+    db.rpc("renew_credit_reservation_leases", {
+        "p_owner": _reservation_owner,
+        "p_lease_seconds": RESERVATION_LEASE_SECONDS,
+    }).execute()
+
+
+def assert_reservation_active(db: Client, reservation_id: str | None) -> None:
+    if reservation_id is None:
+        return
+    result = db.rpc("check_credit_reservation_lease", {
+        "p_reservation_id": reservation_id, "p_owner": _reservation_owner,
+    }).execute()
+    if result.data is not True:
+        raise RuntimeError("Credit reservation expired or ownership was lost")
 
 
 class CreditEstimate(TypedDict):
@@ -368,6 +421,8 @@ def reserve_credits(
                 "p_stage": stage,
                 "p_amount_credits": amount_credits,
                 "p_job_id": job_id,
+                "p_owner": _reservation_owner,
+                "p_lease_seconds": RESERVATION_LEASE_SECONDS,
             },
         )
         .execute()
@@ -383,6 +438,7 @@ def reserve_credits(
                 stage=stage,
             ),
         )
+    _reservation_jobs[str(reservation_id)] = job_id
     return str(reservation_id), job_id
 
 
@@ -400,8 +456,8 @@ def debit_model_usage(
 
     The database RPC serializes concurrent calls for the same job and assigns
     only the incremental whole-credit debit. This preserves per-call audit rows
-    without rounding every tiny request up independently. The direct upsert is
-    a deployment fallback until the accompanying schema function is installed.
+    without rounding every tiny request up independently. Ambiguous responses
+    are reconciled by retrying the immutable, idempotent database operation.
     """
     credits, cost_usd = usage_to_credit_debit(usage)
     try:
@@ -414,59 +470,37 @@ def debit_model_usage(
         cost = None
     if credits <= 0:
         return
-    payload = {
-        "user_id": user_id,
-        "project_id": project_id,
-        "amount_credits": -credits,
-        "status": "settled",
-        "stage": stage,
-        "description": description,
-        "usage_call_id": usage.call_id,
-        "provider": usage.provider,
-        "model": usage.model,
-        "provider_model": cost.provider_model if cost else None,
-        "operation": usage.operation,
-        "input_tokens": usage.input_tokens,
-        "output_tokens": usage.output_tokens,
-        "image_count": usage.image_count,
-        "cost_usd": cost_usd,
-        "cost_source": cost.source if cost else None,
-        "pricing_snapshot": cost.pricing_snapshot if cost else None,
-        "job_id": job_id,
+    params = {
+        "p_user_id": user_id,
+        "p_project_id": project_id,
+        "p_job_id": job_id or str(uuid_lib.uuid5(uuid_lib.NAMESPACE_URL, usage.call_id)),
+        "p_stage": stage,
+        "p_description": description,
+        "p_usage_call_id": usage.call_id,
+        "p_provider": usage.provider,
+        "p_model": usage.model,
+        "p_provider_model": cost.provider_model if cost else None,
+        "p_operation": usage.operation,
+        "p_input_tokens": usage.input_tokens,
+        "p_output_tokens": usage.output_tokens,
+        "p_image_count": usage.image_count,
+        "p_cost_usd": cost_usd,
+        "p_cost_source": cost.source if cost else None,
+        "p_pricing_snapshot": cost.pricing_snapshot if cost else None,
+        "p_credits_per_usd": credits_per_provider_usd(),
+        "p_markup": model_cost_markup(),
+        "p_billable": usage_has_billable_activity(usage),
     }
-    if job_id:
+    try:
+        db.rpc("settle_model_usage_credits", params).execute()
+    except Exception:
+        # A lost response is not evidence that the transaction rolled back.
+        # Replay the exact call id; never overwrite a committed incremental zero.
         try:
-            db.rpc(
-                "settle_model_usage_credits",
-                {
-                    "p_user_id": user_id,
-                    "p_project_id": project_id,
-                    "p_job_id": job_id,
-                    "p_stage": stage,
-                    "p_description": description,
-                    "p_usage_call_id": usage.call_id,
-                    "p_provider": usage.provider,
-                    "p_model": usage.model,
-                    "p_provider_model": cost.provider_model if cost else None,
-                    "p_operation": usage.operation,
-                    "p_input_tokens": usage.input_tokens,
-                    "p_output_tokens": usage.output_tokens,
-                    "p_image_count": usage.image_count,
-                    "p_cost_usd": cost_usd,
-                    "p_cost_source": cost.source if cost else None,
-                    "p_pricing_snapshot": cost.pricing_snapshot if cost else None,
-                    "p_credits_per_usd": credits_per_provider_usd(),
-                    "p_markup": model_cost_markup(),
-                    "p_billable": usage_has_billable_activity(usage),
-                },
-            ).execute()
-            return
+            db.rpc("settle_model_usage_credits", params).execute()
         except Exception:
-            log.warning(
-                "Job-level credit settlement unavailable; falling back to per-call rounding",
-                exc_info=True,
-            )
-    db.table("credit_ledger").upsert(payload, on_conflict="usage_call_id").execute()
+            _unsettled_jobs.add(params["p_job_id"])
+            raise
 
 
 def release_reservation(
@@ -474,36 +508,12 @@ def release_reservation(
     reservation_id: str,
 ) -> None:
     """Mark the reservation RELEASED (stage failed or was reset)."""
-    db.table("credit_ledger").update({"status": "released"}).eq("id", reservation_id).eq("status", "reserved").execute()
+    if _reservation_jobs.get(reservation_id) in _unsettled_jobs:
+        log.error("Retaining reservation %s for ambiguous usage reconciliation", reservation_id)
+        return
+    db.rpc("release_credit_reservation", {
+        "p_reservation_id": reservation_id, "p_owner": _reservation_owner,
+    }).execute()
+    _reservation_jobs.pop(reservation_id, None)
 
 
-def release_stage_reservations(
-    db: Client,
-    user_id: str,
-    project_id: str | None,
-    stage: str,
-) -> None:
-    """Release any outstanding reservations for a project stage."""
-    q = (
-        db.table("credit_ledger")
-        .update({"status": "released"})
-        .eq("user_id", user_id)
-        .eq("stage", stage)
-        .eq("status", "reserved")
-    )
-    if project_id:
-        q = q.eq("project_id", project_id)
-    else:
-        q = q.is_("project_id", "null")
-    q.execute()
-
-
-def release_all_stale_reservations(db: Client) -> int:
-    """Release every in-flight reservation — safe to call on server startup when no pipeline is running."""
-    result = (
-        db.table("credit_ledger")
-        .update({"status": "released"})
-        .eq("status", "reserved")
-        .execute()
-    )
-    return len(result.data) if result.data else 0

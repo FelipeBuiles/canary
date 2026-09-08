@@ -912,7 +912,7 @@ describe("PagesRoom", () => {
   });
 
   it("restores review context in this session but lets explicit links win", () => {
-    window.sessionStorage.setItem("page-review:v1:demo", "page=1&review=checks&filter=needs-review");
+    window.sessionStorage.setItem("page-review:v2:signed-out:demo", "page=1&review=checks&filter=needs-review");
     const first = renderRoom();
     expect(screen.getByRole("dialog", { name: "Page 1 review" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Checks" }).getAttribute("aria-pressed")).toBe("true");

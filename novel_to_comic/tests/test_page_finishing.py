@@ -401,7 +401,7 @@ def test_inexact_ocr_and_wrong_dimensions_block_without_normalizing_pixels(
 ) -> None:
     artifacts, _ = _write_valid_book(tmp_path)
     bad_analysis = artifacts.read_analysis(1, 1).model_copy(
-        update={"recognized_lettering": {}, "lettering_matches": ()}
+        update={"recognized_lettering": {}, "lettering_matches": (), "ocr_observations": ()}
     )
     artifacts.analysis_path(1, 1).write_text(bad_analysis.model_dump_json())
 
@@ -982,3 +982,31 @@ def test_a_drawn_page_reaches_export_without_hand_written_analysis(
 
     assert result.preflight.ready_to_export is True
     assert [package.format for package in result.packages] == ["pdf", "cbz"]
+
+
+def test_finish_revalidates_old_observations_without_provider_and_keeps_order_advisory(tmp_path, monkeypatch):
+    from novel_to_comic import page_review
+
+    artifacts, _ = _write_valid_book(tmp_path)
+    monkeypatch.setattr(page_review, "DRAW_VALIDATOR_VERSION", "finish-upgraded-validator")
+    result = finish_book(
+        artifacts, production=FinishProductionSpec(canvas_width=120, canvas_height=180),
+        formats=(),
+    )
+    assert result.preflight.ready_to_export
+    assert artifacts.read_analysis(1, 1).validator_version == "finish-upgraded-validator"
+    assert artifacts.read_raw_ocr(1, 1).render_image_sha256 == artifacts.read_provenance(1, 1).render.image_sha256
+    artifacts.write_issues(1, (
+        PageIssue(
+            id="uncertain-order", issue_type="unverified_lettering_order",
+            classification="editorial_issue", page_number=1, render_revision=1,
+            evidence=("No panel geometry proves the balloon sweep order.",),
+            requested_correction="Review order visually if desired.", status="open",
+        ),
+    ))
+    result = finish_book(
+        artifacts, production=FinishProductionSpec(canvas_width=120, canvas_height=180),
+        formats=(),
+    )
+    assert result.preflight.ready_to_export
+    assert artifacts.read_issues(1)[0].status == "open"

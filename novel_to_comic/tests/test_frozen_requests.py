@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
+import uuid
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -68,6 +69,40 @@ def _make_app() -> SimpleNamespace:
             generation_job_timeout_seconds=30,
         )
     )
+
+
+@pytest.fixture
+def credit_db():
+    """Exercise real reservation helpers against a local lease ledger."""
+    db = SimpleNamespace(holds={}, reservations=0)
+
+    def rpc(name, params):
+        def execute():
+            if name == "reserve_stage_credits":
+                db.reservations += 1
+                hold = str(uuid.uuid4())
+                db.holds[hold] = params["p_owner"]
+                return SimpleNamespace(data=hold)
+            hold = params["p_reservation_id"]
+            owned = db.holds.get(hold) == params["p_owner"]
+            if name == "check_credit_reservation_lease":
+                return SimpleNamespace(data=owned)
+            if name == "release_credit_reservation":
+                if owned:
+                    db.holds.pop(hold)
+                return SimpleNamespace(data=None)
+            raise AssertionError(f"unexpected billing RPC: {name}")
+        return SimpleNamespace(execute=execute)
+
+    db.rpc = rpc
+    with patch("novel_to_comic.server.credited_job.get_db", return_value=db):
+        try:
+            yield db
+        finally:
+            from novel_to_comic.server.credits import release_reservation
+
+            for hold in tuple(db.holds):
+                release_reservation(db, hold)
 
 
 def test_submission_freezes_wire_and_reference_bytes(tmp_path: Path):
@@ -389,7 +424,7 @@ def test_symlinked_request_directory_cannot_cross_project_scope(tmp_path: Path):
         load_frozen_request(project_two, frozen.request_id)
 
 
-def test_frozen_job_loads_only_persisted_request(tmp_path: Path):
+def test_frozen_job_loads_only_persisted_request(tmp_path: Path, credit_db):
     from novel_to_comic.server.credited_job import enqueue_frozen_generation_job
 
     app = _make_app()
@@ -402,9 +437,7 @@ def test_frozen_job_loads_only_persisted_request(tmp_path: Path):
         seen.update(kwargs)
         return ApiResult(value=kwargs["output_path"])
 
-    with patch("novel_to_comic.server.credited_job.get_db"), \
-         patch("novel_to_comic.server.credited_job.assert_sufficient_credits"), \
-         patch("novel_to_comic.server.credited_job.execute_frozen_request", fake_execute):
+    with patch("novel_to_comic.server.credited_job.execute_frozen_request", fake_execute):
         job, created = enqueue_frozen_generation_job(
             app,
             project_name="project",
@@ -420,6 +453,7 @@ def test_frozen_job_loads_only_persisted_request(tmp_path: Path):
             output_path=tmp_path / "draw" / "panel.png",
             debit_description="panel",
             idempotency_key="panel-1",
+            estimate_credits=5,
         )
         source.write_bytes(b"changed-after-submit")
         asyncio.run(job.runner())
@@ -427,6 +461,8 @@ def test_frozen_job_loads_only_persisted_request(tmp_path: Path):
     assert created is True
     assert seen["request_id"]
     assert seen["output_path"] == tmp_path / "draw" / "panel.png"
+    assert credit_db.reservations == 1
+    assert not credit_db.holds
 
 
 def test_staging_failure_does_not_enqueue_or_debit(tmp_path: Path):
@@ -461,7 +497,7 @@ def test_staging_failure_does_not_enqueue_or_debit(tmp_path: Path):
     debit.assert_not_called()
 
 
-def test_duplicate_frozen_enqueue_is_idempotent_and_not_double_queued(tmp_path: Path):
+def test_duplicate_frozen_enqueue_is_idempotent_and_not_double_queued(tmp_path: Path, credit_db):
     from novel_to_comic.server.credited_job import enqueue_frozen_generation_job
 
     app = _make_app()
@@ -481,19 +517,20 @@ def test_duplicate_frozen_enqueue_is_idempotent_and_not_double_queued(tmp_path: 
         "output_path": tmp_path / "draw" / "panel.png",
         "debit_description": "panel",
         "idempotency_key": "panel-1",
+        "estimate_credits": 5,
     }
-    with patch("novel_to_comic.server.credited_job.get_db"), \
-         patch("novel_to_comic.server.credited_job.assert_sufficient_credits"):
-        first, first_created = enqueue_frozen_generation_job(app, **kwargs)
-        second, second_created = enqueue_frozen_generation_job(app, **kwargs)
+    first, first_created = enqueue_frozen_generation_job(app, **kwargs)
+    second, second_created = enqueue_frozen_generation_job(app, **kwargs)
 
     assert first_created is True
     assert second_created is False
     assert second.id == first.id
     assert app.state.generation_queue.qsize() == 1
+    assert credit_db.reservations == 1
+    assert len(credit_db.holds) == 1
 
 
-def test_concurrent_frozen_enqueue_is_idempotent(tmp_path: Path):
+def test_concurrent_frozen_enqueue_is_idempotent(tmp_path: Path, credit_db):
     from novel_to_comic.server.credited_job import enqueue_frozen_generation_job
 
     app = _make_app()
@@ -513,21 +550,22 @@ def test_concurrent_frozen_enqueue_is_idempotent(tmp_path: Path):
         "output_path": tmp_path / "draw" / "panel.png",
         "debit_description": "panel",
         "idempotency_key": "panel-concurrent",
+        "estimate_credits": 5,
     }
 
-    with patch("novel_to_comic.server.credited_job.get_db"), \
-         patch("novel_to_comic.server.credited_job.assert_sufficient_credits"):
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            results = list(
-                executor.map(lambda _index: enqueue_frozen_generation_job(app, **kwargs), range(2))
-            )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(
+            executor.map(lambda _index: enqueue_frozen_generation_job(app, **kwargs), range(2))
+        )
 
     assert sum(created for _, created in results) == 1
     assert results[0][0].id == results[1][0].id
     assert app.state.generation_queue.qsize() == 1
+    assert credit_db.reservations == 1
+    assert len(credit_db.holds) == 1
 
 
-def test_completed_frozen_enqueue_remains_idempotent(tmp_path: Path):
+def test_completed_frozen_enqueue_remains_idempotent(tmp_path: Path, credit_db):
     from novel_to_comic.server.credited_job import enqueue_frozen_generation_job
 
     app = _make_app()
@@ -547,14 +585,13 @@ def test_completed_frozen_enqueue_remains_idempotent(tmp_path: Path):
         "output_path": tmp_path / "draw" / "panel.png",
         "debit_description": "panel",
         "idempotency_key": "panel-complete",
+        "estimate_credits": 5,
     }
 
     async def fake_generate_wire_image(**kwargs):
         return ApiResult(value=kwargs["output_path"])
 
-    with patch("novel_to_comic.server.credited_job.get_db"), \
-        patch("novel_to_comic.server.credited_job.assert_sufficient_credits"), \
-         patch("novel_to_comic.ai.generate_wire_image", fake_generate_wire_image):
+    with patch("novel_to_comic.ai.generate_wire_image", fake_generate_wire_image):
         first, first_created = enqueue_frozen_generation_job(app, **kwargs)
         asyncio.run(first.runner())
         first.status = "complete"
@@ -564,3 +601,5 @@ def test_completed_frozen_enqueue_remains_idempotent(tmp_path: Path):
     assert second_created is False
     assert second.id == first.id
     assert app.state.generation_queue.qsize() == 1
+    assert credit_db.reservations == 1
+    assert not credit_db.holds

@@ -21,6 +21,7 @@ from novel_to_comic.models.draw import (
     PageRenderCorrection,
     PageRenderRevision,
     RenderAnalysis,
+    RawOCRObservation,
 )
 from novel_to_comic.models.page import ComicPage
 from novel_to_comic.models.validation import EditorialIssue, InvariantFailure
@@ -33,6 +34,7 @@ MAX_CORRECTION_NOTE_CHARACTERS = 1000
 MAX_CORRECTION_ANNOTATIONS = 24
 MAX_CORRECTION_CONTEXT_SOURCE_CHARACTERS = 6000
 MAX_CORRECTION_CONTEXT_SELECTED_UNITS = 32
+DRAW_VALIDATOR_VERSION = "panel_order_v3"
 
 
 class StaleCorrectionError(ValueError):
@@ -152,7 +154,7 @@ def _region_order_contradicts(
     regions placed in a contradicting reading order are.
     """
 
-    if not extraction.observed_reading_order:
+    if not extraction.reading_order_proven or not extraction.observed_reading_order:
         return False
     region_by_observation = {
         observation.id: observation.detected_region_id
@@ -165,7 +167,7 @@ def _region_order_contradicts(
             return False
         if not canonical_regions or canonical_regions[-1] != region_id:
             canonical_regions.append(region_id)
-    if len(set(canonical_regions)) < 2:
+    if len(canonical_regions) < 2:
         return False
     remaining = list(extraction.observed_reading_order)
     for region_id in canonical_regions:
@@ -278,8 +280,12 @@ def _compare_lettering(
     observation_order = [
         observation.id for observation in extraction.lettering
     ]
+    order_is_provable = (
+        extraction.reading_order_proven
+        and len(set(canonical_normalized)) == len(canonical_normalized)
+    )
     matched_order = [match.observation_id for match in ordered]
-    if _region_order_contradicts(ordered, extraction):
+    if order_is_provable and _region_order_contradicts(ordered, extraction):
         failures.append(
             _failure(
                 page=page,
@@ -294,7 +300,7 @@ def _compare_lettering(
             )
         )
         return ordered, tuple(failures), ()
-    if matched_order != [
+    if (not order_is_provable and len(matches) > 1) or matched_order != [
         observation_id
         for observation_id in observation_order
         if observation_id in set(matched_order)
@@ -307,7 +313,7 @@ def _compare_lettering(
                 ),
                 owner_stage="draw",
                 code="unverified_lettering_order",
-                message="OCR read the canonical lettering in a different order.",
+                message="OCR panel geometry does not establish the complete lettering order.",
                 artifact_ids=list(canonical_ids),
                 evidence=[
                     *evidence,
@@ -334,18 +340,79 @@ async def analyze_page_render(
     image_sha256 = hashlib.sha256(image).hexdigest()
     if image_sha256 != render.image_sha256:
         raise ValueError("page render bytes do not match render lineage")
+    try:
+        analysis = revalidate_cached_page_render(page=page, render=render, artifacts=artifacts)
+        return PageAnalysisResult(analysis=analysis, usage=None)
+    except ArtifactMissing as exc:
+        if exc.name != "raw_ocr":
+            # A missing downstream issue/artifact is not evidence that the paid
+            # observations are absent, and must never trigger another OCR call.
+            raise
+    read = await ocr.extract(image)
+    raw = RawOCRObservation(
+        page_number=page.page_number, render_revision=render.revision,
+        render_image_sha256=render.image_sha256, extraction=read.value, usage=read.usage,
+    )
+    artifacts.write_raw_ocr(raw)
+    analysis = _validate_observations(page=page, render=render, raw=raw, artifacts=artifacts)
+    return PageAnalysisResult(analysis=analysis, usage=read.usage)
+
+
+def revalidate_cached_page_render(
+    *, page: ComicPage, render: PageRenderRevision, artifacts: TargetArtifacts,
+) -> RenderAnalysis:
+    """Provider-free validation used by Draw retries and Finish preflight."""
+    if render.is_stale_for(page):
+        raise ValueError("page render is stale for the canonical ComicPage")
+    saved = None
     if artifacts.analysis_path(page.page_number, render.revision).exists():
         saved = artifacts.read_analysis(page.page_number, render.revision)
         if saved.render_image_sha256 != render.image_sha256:
             raise ValueError("saved OCR analysis belongs to different render bytes")
-        return PageAnalysisResult(analysis=saved, usage=None)
-    read = await ocr.extract(image)
-    extraction = read.value
+        if (saved.validator_version == DRAW_VALIDATOR_VERSION
+                and saved.comic_page_sha256 == render.comic_page_sha256):
+            record_analysis_issues(artifacts, saved)
+            return saved
+    try:
+        raw = artifacts.read_raw_ocr(page.page_number, render.revision)
+    except ArtifactMissing:
+        if saved is None:
+            raise
+        # Previous validators retained blind observations, but their flat balloon
+        # sorting does not become proven panel evidence on migration.
+        raw = RawOCRObservation(
+            page_number=page.page_number, render_revision=render.revision,
+            render_image_sha256=render.image_sha256, usage=saved.analysis_usage,
+            extraction=OCRExtraction(
+                lettering=saved.ocr_observations, incidental_text=saved.incidental_text,
+                observed_regions=saved.observed_regions,
+                observed_reading_order=saved.observed_reading_order,
+                reading_order_proven=saved.reading_order_proven,
+            ),
+        )
+        artifacts.write_raw_ocr(raw)
+    analysis = _validate_observations(page=page, render=render, raw=raw, artifacts=artifacts)
+    record_analysis_issues(artifacts, analysis)
+    return analysis
+
+
+def _validate_observations(
+    *, page: ComicPage, render: PageRenderRevision,
+    raw: RawOCRObservation, artifacts: TargetArtifacts,
+) -> RenderAnalysis:
+    if (raw.schema_version != 1 or raw.page_number != page.page_number
+            or raw.render_revision != render.revision
+            or raw.render_image_sha256 != render.image_sha256):
+        raise ValueError("saved OCR observations belong to different render bytes")
+    extraction = raw.extraction
     matches, failures, issues = _compare_lettering(page, render, extraction)
     analysis = RenderAnalysis(
         page_number=page.page_number,
         render_revision=render.revision,
         render_image_sha256=render.image_sha256,
+        validator_version=DRAW_VALIDATOR_VERSION,
+        comic_page_sha256=render.comic_page_sha256,
+        reading_order_proven=extraction.reading_order_proven,
         punctuation_policy=PUNCTUATION_POLICY,
         recognized_lettering={
             match.lettering_item_id: match.observed_text for match in matches
@@ -362,10 +429,10 @@ async def analyze_page_render(
             for result in (*failures, *issues)
             for evidence in result.evidence
         ),
-        analysis_usage=read.usage,
+        analysis_usage=raw.usage,
     )
     artifacts.write_analysis(analysis)
-    return PageAnalysisResult(analysis=analysis, usage=read.usage)
+    return analysis
 
 
 def record_analysis_issues(
@@ -382,6 +449,21 @@ def record_analysis_issues(
     """
 
     recorded: list[PageIssue] = []
+    current_ids = {
+        f"page-issue-{result.id}"
+        for result in (*analysis.invariant_failures, *analysis.editorial_issues)
+    }
+    prefix = f"page-issue-draw-page-{analysis.page_number:03d}-render-{analysis.render_revision:03d}-"
+    try:
+        prior = artifacts.read_issues(analysis.page_number)
+    except ArtifactMissing:
+        prior = ()
+    retained = tuple(
+        issue for issue in prior
+        if not (issue.id.startswith(prefix) and issue.id not in current_ids)
+    )
+    if retained != prior:
+        artifacts.write_issues(analysis.page_number, retained)
     for result in (*analysis.invariant_failures, *analysis.editorial_issues):
         invariant = result.kind == "invariant_failure"
         issue = PageIssue(
@@ -394,7 +476,9 @@ def record_analysis_issues(
             render_revision=analysis.render_revision,
             evidence=result.evidence,
             requested_correction=(
-                f"{result.message} Render one corrected complete page whose visible "
+                "Review the page order visually if desired; no redraw is required."
+                if result.code == "unverified_lettering_order"
+                else f"{result.message} Render one corrected complete page whose visible "
                 "lettering matches the canonical ComicPage exactly."
             ),
             lettering_item_ids=lettering_item_ids or result.artifact_ids,
@@ -915,6 +999,11 @@ def resolve_page_issue(
     updated: list[PageIssue] = []
     for issue in issues:
         if issue.id == issue_id:
+            if (
+                issue.status == ("resolved" if verified else "revised")
+                and issue.resolution_revision == resolution_revision
+            ):
+                return issue
             if issue.status not in {"open", "revised"}:
                 raise ValueError("only an open page issue can be resolved")
             resolved = issue.model_copy(

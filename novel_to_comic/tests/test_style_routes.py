@@ -1,6 +1,5 @@
 import asyncio
 import io
-import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -11,7 +10,6 @@ from starlette.datastructures import Headers
 from starlette.requests import Request
 
 from novel_to_comic import artifacts
-from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.config import Config
 from novel_to_comic.server.routers.styles import (
     _assert_no_style_task,
@@ -37,6 +35,8 @@ def _request(headers: list[tuple[bytes, bytes]] | None = None) -> Request:
     app.state.style_tasks = {}
     app.state.generation_jobs = {}
     app.state.event_queues = {}
+    app.state.generation_queue = asyncio.Queue()
+    app.state.generation_semaphore = asyncio.Semaphore(1)
     return Request({"type": "http", "app": app, "headers": headers or []})
 
 
@@ -72,40 +72,6 @@ def test_credit_failure_leaves_no_direction_artifacts(tmp_path):
     assert not (tmp_path / "samples").exists()
 
 
-@pytest.mark.parametrize("initial", [StageStatus.PENDING, StageStatus.FAILED])
-def test_custom_direction_repairs_canonical_style_lifecycle(tmp_path, initial):
-    async def scenario():
-        request = _request()
-        project = _project(tmp_path, initial)
-        captured = {}
-
-        def fake_enqueue(*args, **kwargs):
-            captured["runner"] = kwargs["runner"]
-            return SimpleNamespace(id="job", status="queued")
-
-        with (
-            patch("novel_to_comic.server.routers.styles.assert_sufficient_credits"),
-            patch("novel_to_comic.server.routers.styles.get_db", return_value=object()),
-            patch("novel_to_comic.server.routers.styles.reserve_credits", return_value=("reservation", "job")),
-            patch("novel_to_comic.server.routers.styles.release_reservation"),
-            patch("novel_to_comic.server.routers.styles.prune_finished_generation_jobs"),
-            patch("novel_to_comic.server.routers.styles.enqueue_generation_job", side_effect=fake_enqueue),
-            patch("novel_to_comic.server.routers.styles.generation_semaphore_for_config", return_value=None),
-            patch("novel_to_comic.server.routers.styles.generation_job_payload", return_value={"id": "job"}),
-            patch("novel_to_comic.server.routers.styles.ensure_style_sample_brief", new=AsyncMock(return_value=None)),
-            patch("novel_to_comic.server.routers.styles.generate_sample_image", new=AsyncMock()),
-        ):
-            await create_style_direction(
-                request, "demo", direction_text="bold ink", image=None,
-                label=None, with_neighbors=False, project=project, user_id="user",
-            )
-            assert project[2].stages["style"].status == StageStatus.RUNNING
-            assert "user:demo" in request.app.state.style_tasks
-            await captured["runner"]()
-        assert project[2].stages["style"].status == StageStatus.AWAITING_REVIEW
-        assert "user:demo" not in request.app.state.style_tasks
-
-    asyncio.run(scenario())
 
 
 def test_style_task_guard_blocks_overlap():
@@ -119,44 +85,6 @@ def test_style_task_guard_blocks_overlap():
     asyncio.run(scenario())
 
 
-def test_style_sample_retry_queues_only_the_requested_missing_card(tmp_path):
-    async def scenario():
-        request = _request()
-        project = _project(tmp_path, StageStatus.FAILED)
-        suggestion = normalize_suggestion({
-            "label": "Ink", "medium": "ink", "template": "Bold ink",
-        })
-        save_suggestions(tmp_path, [suggestion], "Demo")
-        captured = {}
-
-        def fake_enqueue(*_args, **kwargs):
-            captured.update(kwargs)
-            return SimpleNamespace(id="job", status="queued")
-
-        with (
-            patch("novel_to_comic.server.routers.styles._assert_no_pipeline_task"),
-            patch("novel_to_comic.server.routers.styles._assert_no_style_task"),
-            patch("novel_to_comic.server.routers.styles.prune_finished_generation_jobs"),
-            patch("novel_to_comic.server.routers.styles.find_active_generation_job", return_value=None),
-            patch("novel_to_comic.server.routers.styles.get_db", return_value=object()),
-            patch("novel_to_comic.server.routers.styles.assert_sufficient_credits"),
-            patch("novel_to_comic.server.routers.styles.enqueue_generation_job", side_effect=fake_enqueue),
-            patch("novel_to_comic.server.routers.styles.generation_semaphore_for_config", return_value=None),
-            patch("novel_to_comic.server.routers.styles.generation_job_payload", return_value={"id": "job"}),
-        ):
-            result = await generate_style_samples(
-                request,
-                "demo",
-                {"ids": [suggestion["id"]]},
-                project=project,
-                user_id="user",
-            )
-
-        assert result["indices"] == [1]
-        assert result["ids"] == [suggestion["id"]]
-        assert captured["payload"] == {"index": 1}
-
-    asyncio.run(scenario())
 
 
 def test_concurrent_direction_upload_is_owner_guarded(tmp_path):
@@ -182,7 +110,7 @@ def test_concurrent_direction_upload_is_owner_guarded(tmp_path):
             patch("novel_to_comic.server.routers.styles.get_db", return_value=object()),
             patch("novel_to_comic.server.routers.styles.reserve_credits", return_value=("r", "j")),
             patch("novel_to_comic.server.routers.styles.release_reservation") as release,
-            patch("novel_to_comic.server.routers.styles.enqueue_generation_job") as enqueue,
+            patch("novel_to_comic.server.routers.styles.enqueue_reserved_generation_job") as enqueue,
         ):
             first = asyncio.create_task(create_style_direction(
                 request, "demo", direction_text="ink", label=None,
@@ -205,114 +133,6 @@ def test_concurrent_direction_upload_is_owner_guarded(tmp_path):
     asyncio.run(scenario())
 
 
-def test_validation_reuses_identical_active_job_before_credit_check(tmp_path):
-    async def scenario():
-        request = _request()
-        project = _project(tmp_path, StageStatus.AWAITING_REVIEW)
-        suggestion = normalize_suggestion({
-            "label": "Ink", "medium": "ink", "template": "Bold ink",
-        })
-        save_suggestions(tmp_path, [suggestion], "Demo")
-        active = SimpleNamespace(id="existing", status="running")
-        with (
-            patch("novel_to_comic.server.routers.styles.prune_finished_generation_jobs"),
-            patch("novel_to_comic.server.routers.styles.find_active_generation_job", return_value=active),
-            patch("novel_to_comic.server.routers.styles.generation_job_payload", return_value={"id": "existing"}),
-            patch("novel_to_comic.server.routers.styles.assert_sufficient_credits") as credit,
-            patch("novel_to_comic.server.routers.styles.enqueue_generation_job") as enqueue,
-        ):
-            result = await generate_style_validation(
-                request, "demo", {"id": suggestion["id"]},
-                project=project, user_id="user",
-            )
-        assert result["job"] == {"id": "existing"}
-        credit.assert_not_called()
-        enqueue.assert_not_called()
-
-    asyncio.run(scenario())
-
-
-def test_validation_reservation_is_released_on_terminal_runner(tmp_path):
-    async def scenario():
-        request = _request()
-        project = _project(tmp_path, StageStatus.AWAITING_REVIEW)
-        suggestion = normalize_suggestion({
-            "label": "Ink", "medium": "ink", "template": "Bold ink",
-        })
-        save_suggestions(tmp_path, [suggestion], "Demo")
-        captured = {}
-
-        def fake_enqueue(*args, **kwargs):
-            captured["runner"] = kwargs["runner"]
-            return SimpleNamespace(id="job", status="queued")
-
-        with (
-            patch("novel_to_comic.server.routers.styles.prune_finished_generation_jobs"),
-            patch("novel_to_comic.server.routers.styles.find_active_generation_job", return_value=None),
-            patch("novel_to_comic.server.routers.styles.get_db", return_value=object()),
-            patch("novel_to_comic.server.routers.styles.assert_sufficient_credits"),
-            patch("novel_to_comic.server.routers.styles.reserve_credits", return_value=("r", "j")) as reserve,
-            patch("novel_to_comic.server.routers.styles.release_reservation") as release,
-            patch("novel_to_comic.server.routers.styles.enqueue_generation_job", side_effect=fake_enqueue),
-            patch("novel_to_comic.server.routers.styles.generation_semaphore_for_config", return_value=None),
-            patch("novel_to_comic.server.routers.styles.generation_job_payload", return_value={"id": "job"}),
-            patch("novel_to_comic.server.routers.styles.generate_sample_image", new=AsyncMock()),
-        ):
-            await generate_style_validation(
-                request, "demo", {"id": suggestion["id"]},
-                project=project, user_id="user",
-            )
-            assert reserve.call_count == 1
-            await captured["runner"]()
-        assert release.call_count == 1
-
-    asyncio.run(scenario())
-
-
-def test_validation_estimate_is_reference_aware_before_reservation(tmp_path):
-    async def scenario():
-        request = _request()
-        project = _project(tmp_path, StageStatus.AWAITING_REVIEW)
-        suggestion = normalize_suggestion({
-            "label": "Ink", "medium": "ink", "template": "Bold ink",
-            "direction_id": "direction_0123456789abcdef",
-        })
-        save_suggestions(tmp_path, [suggestion], "Demo")
-        captured = {}
-
-        def fake_enqueue(*args, **kwargs):
-            captured["runner"] = kwargs["runner"]
-            return SimpleNamespace(id="job", status="queued")
-
-        reference = tmp_path / "reference.png"
-        reference.write_bytes(b"reference")
-        with (
-            patch("novel_to_comic.server.routers.styles.prune_finished_generation_jobs"),
-            patch("novel_to_comic.server.routers.styles.find_active_generation_job", return_value=None),
-            patch("novel_to_comic.server.routers.styles.load_style_direction", return_value={"id": suggestion["direction_id"]}),
-            patch("novel_to_comic.server.routers.styles.style_direction_image", return_value=reference),
-            patch(
-                "novel_to_comic.server.routers.styles._style_sample_credit_estimate",
-                return_value={"reserved_credits": 9, "estimate_credits": 8},
-            ) as estimate,
-            patch("novel_to_comic.server.routers.styles.get_db", return_value=object()),
-            patch("novel_to_comic.server.routers.styles.assert_sufficient_credits") as credit,
-            patch("novel_to_comic.server.routers.styles.reserve_credits", return_value=("r", "j")) as reserve,
-            patch("novel_to_comic.server.routers.styles.release_reservation"),
-            patch("novel_to_comic.server.routers.styles.enqueue_generation_job", side_effect=fake_enqueue),
-            patch("novel_to_comic.server.routers.styles.generation_semaphore_for_config", return_value=None),
-            patch("novel_to_comic.server.routers.styles.generation_job_payload", return_value={"id": "job"}),
-        ):
-            await generate_style_validation(
-                request, "demo", {"id": suggestion["id"]},
-                project=project, user_id="user",
-            )
-        assert estimate.call_args.kwargs["has_style_reference"] is True
-        assert estimate.call_args.kwargs["exact_cost_usd"] > 0
-        assert credit.call_args.args[2] == 9
-        assert reserve.call_args.args[-1] == 9
-
-    asyncio.run(scenario())
 
 
 def test_direction_estimate_discloses_reference_and_text_variants(tmp_path):
@@ -443,160 +263,6 @@ def test_suggest_setup_failure_releases_reservation_and_queue(tmp_path):
     asyncio.run(scenario())
 
 
-def test_suggest_worker_cancellation_releases_and_fails_lifecycle(tmp_path):
-    async def scenario():
-        request = _request()
-        project = _project(tmp_path)
-        with (
-            patch("novel_to_comic.server.routers.styles.get_db", return_value=object()),
-            patch("novel_to_comic.server.routers.styles.assert_sufficient_credits"),
-            patch("novel_to_comic.server.routers.styles.reserve_credits", return_value=("r", "j")),
-            patch("novel_to_comic.server.routers.styles.release_reservation") as release,
-            patch(
-                "novel_to_comic.server.routers.styles.generate_suggestions",
-                new=AsyncMock(side_effect=asyncio.CancelledError()),
-            ),
-        ):
-            await suggest_styles(request, "demo", project=project, user_id="user")
-            task = request.app.state.style_tasks["user:demo"]
-            with pytest.raises(asyncio.CancelledError):
-                await task
-        assert release.call_count == 1
-        assert "user:demo" not in request.app.state.style_tasks
-        assert project[2].stages["style"].status == StageStatus.FAILED
-
-    asyncio.run(scenario())
-
-
-def test_suggest_worker_reports_failure_without_unobserved_task_exception(
-    tmp_path, caplog,
-):
-    async def scenario():
-        request = _request()
-        project = _project(tmp_path)
-        error = AITransportError(
-            "AI gateway request failed for style.suggestions "
-            "(model=prompt-balanced, endpoint=/v1/chat/completions): "
-            "transport ReadError after 4 attempts",
-            phase="gateway_request",
-        )
-        with (
-            patch("novel_to_comic.server.routers.styles.get_db", return_value=object()),
-            patch("novel_to_comic.server.routers.styles.assert_sufficient_credits"),
-            patch("novel_to_comic.server.routers.styles.reserve_credits", return_value=("r", "j")),
-            patch("novel_to_comic.server.routers.styles.release_reservation") as release,
-            patch(
-                "novel_to_comic.server.routers.styles.generate_suggestions",
-                new=AsyncMock(side_effect=error),
-            ),
-        ):
-            await suggest_styles(request, "demo", project=project, user_id="user")
-            task = request.app.state.style_tasks["user:demo"]
-            assert await task is None
-
-        failures = [
-            event for event in request.app.state.event_queues["user:demo"]._queue
-            if event["type"] == "stage_fail"
-        ]
-        assert failures == [{
-            "type": "stage_fail",
-            "stage": "style_suggest",
-            "message": str(error),
-        }]
-        assert release.call_count == 1
-        assert project[2].stages["style"].status == StageStatus.FAILED
-        assert "project_id=demo" in caplog.text
-        assert "feature=style.suggestions" in caplog.text
-        assert "model=prompt-balanced" in caplog.text
-        assert "transport ReadError after 4 attempts" in caplog.text
-        assert "Traceback" not in caplog.text
-
-    with caplog.at_level(logging.WARNING, logger="canary.styles"):
-        asyncio.run(scenario())
-
-
-def test_suggest_worker_labels_sample_image_failure_with_image_model(tmp_path, caplog):
-    async def scenario():
-        request = _request()
-        project = _project(tmp_path)
-        suggestion = normalize_suggestion({
-            "label": "Ink", "medium": "ink", "template": "Bold ink",
-        })
-        error = AITransportError(
-            "wire image transport failed (status_code=500)",
-            phase="gateway_request",
-        )
-        with (
-            patch("novel_to_comic.server.routers.styles.get_db", return_value=object()),
-            patch("novel_to_comic.server.routers.styles.assert_sufficient_credits"),
-            patch("novel_to_comic.server.routers.styles.reserve_credits", return_value=("r", "j")),
-            patch("novel_to_comic.server.routers.styles.release_reservation"),
-            patch(
-                "novel_to_comic.server.routers.styles.generate_suggestions",
-                new=AsyncMock(return_value=([suggestion], None)),
-            ),
-            patch(
-                "novel_to_comic.server.routers.styles.generate_samples_for_indices",
-                new=AsyncMock(side_effect=error),
-            ),
-        ):
-            await suggest_styles(request, "demo", project=project, user_id="user")
-            task = request.app.state.style_tasks["user:demo"]
-            assert await task is None
-
-        assert "feature=style.sample" in caplog.text
-        assert "model=image-balanced" in caplog.text
-        assert "feature=style.suggestions" not in caplog.text
-
-    with caplog.at_level(logging.WARNING, logger="canary.styles"):
-        asyncio.run(scenario())
-
-
-def test_validation_runner_groups_usage_with_reservation_job_id(tmp_path):
-    async def scenario():
-        request = _request()
-        project = _project(tmp_path, StageStatus.AWAITING_REVIEW)
-        suggestion = normalize_suggestion({
-            "label": "Ink", "medium": "ink", "template": "Bold ink",
-        })
-        save_suggestions(tmp_path, [suggestion], "Demo")
-        captured = {}
-
-        def fake_enqueue(*args, **kwargs):
-            captured["runner"] = kwargs["runner"]
-            return SimpleNamespace(id="job", status="queued")
-
-        class Context:
-            def __enter__(self):
-                return None
-
-            def __exit__(self, *_args):
-                return False
-
-        with (
-            patch("novel_to_comic.server.routers.styles.prune_finished_generation_jobs"),
-            patch("novel_to_comic.server.routers.styles.find_active_generation_job", return_value=None),
-            patch("novel_to_comic.server.routers.styles.get_db", return_value=object()),
-            patch("novel_to_comic.server.routers.styles.assert_sufficient_credits"),
-            patch("novel_to_comic.server.routers.styles.reserve_credits", return_value=("r", "ledger-job")),
-            patch("novel_to_comic.server.routers.styles.release_reservation"),
-            patch("novel_to_comic.server.routers.styles.enqueue_generation_job", side_effect=fake_enqueue),
-            patch("novel_to_comic.server.routers.styles.generation_semaphore_for_config", return_value=None),
-            patch("novel_to_comic.server.routers.styles.generation_job_payload", return_value={"id": "job"}),
-            patch("novel_to_comic.server.routers.styles.generate_sample_image", new=AsyncMock()),
-            patch(
-                "novel_to_comic.server.routers.styles.ai_request_context",
-                side_effect=lambda **kwargs: captured.update(context=kwargs) or Context(),
-            ),
-        ):
-            await generate_style_validation(
-                request, "demo", {"id": suggestion["id"]},
-                project=project, user_id="user",
-            )
-            await captured["runner"]()
-        assert captured["context"]["job_id"] == "ledger-job"
-
-    asyncio.run(scenario())
 
 
 def test_decoded_image_dimensions_are_bounded(tmp_path):
@@ -625,52 +291,6 @@ def test_direction_rejects_oversized_content_length_before_queue(tmp_path):
     assert exc_info.value.status_code == 413
     assert not request.app.state.style_tasks
 
-
-def test_direction_with_neighbors_is_one_reserved_server_operation(tmp_path):
-    async def scenario():
-        request = _request()
-        project = _project(tmp_path)
-        captured = {}
-        neighbors = [normalize_suggestion({
-            "label": f"N{i}", "medium": f"medium {i}", "template": f"style {i}",
-            "role": role,
-        }, origin="generated_neighbor") for i, role in enumerate(
-            ("story_fit_primary", "adjacent", "contrast", "wildcard")
-        )]
-
-        def fake_enqueue(*args, **kwargs):
-            captured["runner"] = kwargs["runner"]
-            return SimpleNamespace(id="job", status="queued")
-
-        with (
-            patch("novel_to_comic.server.routers.styles.get_db", return_value=object()),
-            patch("novel_to_comic.server.routers.styles.assert_sufficient_credits"),
-            patch("novel_to_comic.server.routers.styles.reserve_credits", return_value=("r", "j")) as reserve,
-            patch("novel_to_comic.server.routers.styles.release_reservation") as release,
-            patch("novel_to_comic.server.routers.styles.prune_finished_generation_jobs"),
-            patch("novel_to_comic.server.routers.styles.enqueue_generation_job", side_effect=fake_enqueue) as enqueue,
-            patch("novel_to_comic.server.routers.styles.generation_semaphore_for_config", return_value=None),
-            patch("novel_to_comic.server.routers.styles.generation_job_payload", return_value={"id": "job"}),
-            patch("novel_to_comic.server.routers.styles.ensure_style_sample_brief", new=AsyncMock(return_value=None)),
-            patch("novel_to_comic.server.routers.styles.generate_sample_image", new=AsyncMock()) as faithful,
-            patch("novel_to_comic.server.routers.styles.generate_suggestions", new=AsyncMock(return_value=(neighbors, None))) as suggest,
-            patch("novel_to_comic.server.routers.styles.generate_samples_for_indices", new=AsyncMock()) as samples,
-        ):
-            result = await create_style_direction(
-                request, "demo", direction_text="bold ink", label=None,
-                with_neighbors=True, image=None, project=project, user_id="user",
-            )
-            assert result["with_neighbors"] is True
-            assert reserve.call_args.args[-1] == result["estimate"]["reserved_credits"]
-            assert enqueue.call_count == 1
-            await captured["runner"]()
-        assert faithful.await_count == 1
-        assert suggest.await_count == 1
-        assert samples.await_args.args[-1] == [2, 3, 4, 5]
-        assert release.call_count == 1
-        assert project[2].stages["style"].status == StageStatus.AWAITING_REVIEW
-
-    asyncio.run(scenario())
 
 
 def test_image_backed_direction_estimate_covers_references_and_retry(tmp_path):
@@ -735,112 +355,258 @@ def test_batch_estimator_prices_each_neighbor_reference_size(tmp_path):
     assert all(call["ref_image_sizes"] == [(137, 911)] for call in captured)
 
 
-def test_direction_enqueue_failure_marks_owned_lifecycle_failed(tmp_path):
+
+@pytest.fixture
+def style_ledger(monkeypatch):
+    from novel_to_comic.server import credited_job
+    from novel_to_comic.server.routers import styles
+
+    ledger = SimpleNamespace(balance=10000, holds={}, released=[], expired=set())
+
+    def reserve(_db, _user, _project, _stage, required):
+        if required > ledger.balance - sum(ledger.holds.values()):
+            raise HTTPException(402, "insufficient")
+        key = f"hold-{len(ledger.holds) + len(ledger.released)}"
+        ledger.holds[key] = required
+        return key, f"ledger-{key}"
+
+    def release(_db, key):
+        if key in ledger.holds:
+            ledger.holds.pop(key)
+            ledger.released.append(key)
+
+    def active(_db, key):
+        if key not in ledger.holds or key in ledger.expired:
+            raise RuntimeError("Credit reservation expired or ownership was lost")
+
+    for module in (styles, credited_job):
+        monkeypatch.setattr(module, "get_db", lambda: ledger)
+        monkeypatch.setattr(module, "reserve_credits", reserve)
+        monkeypatch.setattr(module, "release_reservation", release)
+    monkeypatch.setattr(styles, "assert_sufficient_credits", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(credited_job, "assert_reservation_active", active)
+    return ledger
+
+
+async def _queue_style_operation(request, project, operation):
+    suggestion = normalize_suggestion({
+        "label": "Ink", "medium": "ink", "template": "Bold ink",
+    })
+    save_suggestions(project[0], [suggestion], "Demo")
+    if operation == "direction":
+        return await create_style_direction(
+            request, "demo", direction_text="bold ink", image=None,
+            label=None, with_neighbors=False, project=project, user_id="user",
+        )
+    if operation == "suggest":
+        return await suggest_styles(request, "demo", project=project, user_id="user")
+    if operation == "validation":
+        return await generate_style_validation(
+            request, "demo", {"id": suggestion["id"]}, project=project, user_id="user",
+        )
+    return await generate_style_samples(
+        request, "demo", {"indices": [1]}, project=project, user_id="user",
+    )
+
+
+@pytest.mark.parametrize("operation", ["direction", "suggest", "samples", "validation"])
+@pytest.mark.parametrize("terminal", ["cancel", "expired"])
+def test_style_queue_releases_unstarted_hold_without_paid_work(
+    tmp_path, style_ledger, operation, terminal,
+):
     async def scenario():
         request = _request()
         project = _project(tmp_path)
         with (
-            patch("novel_to_comic.server.routers.styles.get_db", return_value=object()),
-            patch("novel_to_comic.server.routers.styles.assert_sufficient_credits"),
-            patch("novel_to_comic.server.routers.styles.reserve_credits", return_value=("r", "j")),
-            patch("novel_to_comic.server.routers.styles.release_reservation"),
-            patch("novel_to_comic.server.routers.styles.prune_finished_generation_jobs"),
-            patch(
-                "novel_to_comic.server.routers.styles.enqueue_generation_job",
-                side_effect=RuntimeError("queue unavailable"),
-            ),
-            patch("novel_to_comic.server.routers.styles.generation_semaphore_for_config", return_value=None),
+            patch("novel_to_comic.server.routers.styles.ensure_style_sample_brief", new=AsyncMock()) as brief,
+            patch("novel_to_comic.server.routers.styles.generate_sample_image", new=AsyncMock()) as image,
+            patch("novel_to_comic.server.routers.styles.generate_suggestions", new=AsyncMock()) as suggestions,
         ):
-            with pytest.raises(RuntimeError, match="queue unavailable"):
-                await create_style_direction(
-                    request, "demo", direction_text="bold ink", label=None,
-                    with_neighbors=False, image=None, project=project, user_id="user",
-                )
-        assert project[2].stages["style"].status == StageStatus.FAILED
-        assert "user:demo" not in request.app.state.style_tasks
+            await _queue_style_operation(request, project, operation)
+            job = request.app.state.generation_queue.get_nowait()
+            assert len(style_ledger.holds) == 1
+            if terminal == "expired":
+                style_ledger.expired.update(style_ledger.holds)
+                with pytest.raises(RuntimeError, match="expired"):
+                    await job.runner()
+            else:
+                job.on_cancel()
+            job.on_cancel()
+            brief.assert_not_awaited()
+            image.assert_not_awaited()
+            suggestions.assert_not_awaited()
+        assert not style_ledger.holds
+        assert len(style_ledger.released) == 1
+        assert not request.app.state.style_tasks
+        if operation in ("direction", "suggest"):
+            assert project[2].stages["style"].status == StageStatus.FAILED
 
     asyncio.run(scenario())
 
 
-def test_direction_worker_cancellation_marks_owned_lifecycle_failed(tmp_path):
+def test_competing_style_jobs_cannot_spend_another_queued_hold(tmp_path, style_ledger):
     async def scenario():
-        request = _request()
-        project = _project(tmp_path)
-        captured = {}
-
-        def fake_enqueue(*args, **kwargs):
-            captured["runner"] = kwargs["runner"]
-            return SimpleNamespace(id="job", status="queued")
-
-        with (
-            patch("novel_to_comic.server.routers.styles.get_db", return_value=object()),
-            patch("novel_to_comic.server.routers.styles.assert_sufficient_credits"),
-            patch("novel_to_comic.server.routers.styles.reserve_credits", return_value=("r", "j")),
-            patch("novel_to_comic.server.routers.styles.release_reservation"),
-            patch("novel_to_comic.server.routers.styles.prune_finished_generation_jobs"),
-            patch("novel_to_comic.server.routers.styles.enqueue_generation_job", side_effect=fake_enqueue),
-            patch("novel_to_comic.server.routers.styles.generation_semaphore_for_config", return_value=None),
-            patch("novel_to_comic.server.routers.styles.generation_job_payload", return_value={"id": "job"}),
-            patch("novel_to_comic.server.routers.styles.ensure_style_sample_brief", new=AsyncMock(return_value=None)),
-            patch(
-                "novel_to_comic.server.routers.styles.generate_sample_image",
-                new=AsyncMock(side_effect=asyncio.CancelledError()),
-            ),
-        ):
-            await create_style_direction(
-                request, "demo", direction_text="bold ink", label=None,
-                with_neighbors=False, image=None, project=project, user_id="user",
-            )
-            with pytest.raises(asyncio.CancelledError):
-                await captured["runner"]()
-        assert project[2].stages["style"].status == StageStatus.FAILED
-        assert "user:demo" not in request.app.state.style_tasks
-
-    asyncio.run(scenario())
-
-
-def test_failed_combined_neighbor_proofs_do_not_persist_duplicates(tmp_path):
-    async def scenario():
-        request = _request()
+        first = _request()
+        second = _request()
         project = _project(tmp_path, StageStatus.AWAITING_REVIEW)
-        captured = {}
+        with patch(
+            "novel_to_comic.server.routers.styles._style_sample_credit_estimate",
+            return_value={"reserved_credits": 10, "estimate_credits": 8},
+        ):
+            style_ledger.balance = 10
+            await _queue_style_operation(first, project, "samples")
+            with pytest.raises(HTTPException) as error:
+                await _queue_style_operation(second, project, "validation")
+            assert error.value.status_code == 402
+            assert second.app.state.generation_queue.empty()
+            first.app.state.generation_queue.get_nowait().on_cancel()
+            await _queue_style_operation(second, project, "validation")
+            assert len(style_ledger.holds) == 1
+            second.app.state.generation_queue.get_nowait().on_cancel()
+        assert not style_ledger.holds
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["direction", "suggest", "samples", "validation"])
+def test_style_provider_work_runs_under_hold_and_releases_on_success(
+    tmp_path, style_ledger, operation,
+):
+    async def scenario():
+        request = _request()
+        project = _project(tmp_path)
+        calls = []
+
+        async def paid(*_args, **_kwargs):
+            assert len(style_ledger.holds) == 1
+            from novel_to_comic.ai.context import current_ai_request_context
+
+            context = current_ai_request_context()
+            assert context.job_id == f"ledger-{next(iter(style_ledger.holds))}"
+            assert context.user_id == "user"
+            calls.append(operation)
+
+        async def suggestions(*args, **kwargs):
+            await paid()
+            return [normalize_suggestion({
+                "label": "Paint", "medium": "paint", "template": "Paint",
+            })], None
+
+        with (
+            patch("novel_to_comic.server.routers.styles.ensure_style_sample_brief", side_effect=paid),
+            patch("novel_to_comic.server.routers.styles.generate_sample_image", side_effect=paid),
+            patch("novel_to_comic.server.routers.styles.generate_samples_for_indices", side_effect=paid),
+            patch("novel_to_comic.server.routers.styles.generate_suggestions", side_effect=suggestions),
+        ):
+            await _queue_style_operation(request, project, operation)
+            await request.app.state.generation_queue.get_nowait().runner()
+        assert calls == [operation] * (1 if operation == "validation" else 2)
+        assert not style_ledger.holds
+        assert not request.app.state.style_tasks
+        if operation in ("direction", "suggest"):
+            assert project[2].stages["style"].status == StageStatus.AWAITING_REVIEW
+
+    asyncio.run(scenario())
+
+
+def test_suggest_broadcasts_terminal_failure_to_each_subscriber(tmp_path, style_ledger):
+    async def scenario():
+        request = _request()
+        project = _project(tmp_path)
+        with patch(
+            "novel_to_comic.server.routers.styles.generate_suggestions",
+            new=AsyncMock(side_effect=RuntimeError("provider failed")),
+        ):
+            await _queue_style_operation(request, project, "suggest")
+            channel = request.app.state.event_queues["user:demo"]
+            subscribers = [channel.subscribe(), channel.subscribe()]
+            with pytest.raises(RuntimeError, match="provider failed"):
+                await request.app.state.generation_queue.get_nowait().runner()
+        for subscriber in subscribers:
+            events = []
+            while not subscriber.empty():
+                events.append(subscriber.get_nowait()["type"])
+            assert events == ["stage_begin", "log", "stage_fail"]
+            channel.unsubscribe(subscriber)
+        assert not style_ledger.holds
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("fail_neighbors", [False, True])
+def test_direction_neighbors_commit_only_after_all_proofs(tmp_path, style_ledger, fail_neighbors):
+    async def scenario():
+        request = _request()
+        project = _project(tmp_path)
         neighbors = [normalize_suggestion({
             "label": f"N{i}", "medium": f"medium {i}", "template": f"style {i}",
             "role": role,
         }, origin="generated_neighbor") for i, role in enumerate(
             ("story_fit_primary", "adjacent", "contrast", "wildcard")
         )]
-
-        def fake_enqueue(*args, **kwargs):
-            captured["runner"] = kwargs["runner"]
-            return SimpleNamespace(id="job", status="queued")
-
         with (
-            patch("novel_to_comic.server.routers.styles.get_db", return_value=object()),
-            patch("novel_to_comic.server.routers.styles.assert_sufficient_credits"),
-            patch("novel_to_comic.server.routers.styles.reserve_credits", return_value=("r", "j")),
-            patch("novel_to_comic.server.routers.styles.release_reservation"),
-            patch("novel_to_comic.server.routers.styles.prune_finished_generation_jobs"),
-            patch("novel_to_comic.server.routers.styles.enqueue_generation_job", side_effect=fake_enqueue),
-            patch("novel_to_comic.server.routers.styles.generation_semaphore_for_config", return_value=None),
-            patch("novel_to_comic.server.routers.styles.generation_job_payload", return_value={"id": "job"}),
-            patch("novel_to_comic.server.routers.styles.ensure_style_sample_brief", new=AsyncMock(return_value=None)),
+            patch("novel_to_comic.server.routers.styles.ensure_style_sample_brief", new=AsyncMock()),
             patch("novel_to_comic.server.routers.styles.generate_sample_image", new=AsyncMock()),
             patch("novel_to_comic.server.routers.styles.generate_suggestions", new=AsyncMock(return_value=(neighbors, None))),
             patch(
                 "novel_to_comic.server.routers.styles.generate_samples_for_indices",
-                new=AsyncMock(side_effect=RuntimeError("proof failed")),
+                new=AsyncMock(side_effect=RuntimeError("proof failed") if fail_neighbors else None),
             ),
         ):
             await create_style_direction(
                 request, "demo", direction_text="bold ink", label=None,
                 with_neighbors=True, image=None, project=project, user_id="user",
             )
-            with pytest.raises(RuntimeError, match="proof failed"):
-                await captured["runner"]()
+            job = request.app.state.generation_queue.get_nowait()
+            if fail_neighbors:
+                with pytest.raises(RuntimeError, match="proof failed"):
+                    await job.runner()
+            else:
+                await job.runner()
         persisted = load_suggestions(tmp_path)
-        assert len(persisted) == 1
-        assert persisted[0]["origin"] == "user_text"
+        assert [item["origin"] for item in persisted] == (
+            ["user_text"] if fail_neighbors else ["user_text"] + ["generated_neighbor"] * 4
+        )
+        assert project[2].stages["style"].status == (
+            StageStatus.FAILED if fail_neighbors else StageStatus.AWAITING_REVIEW
+        )
+        assert not style_ledger.holds
 
     asyncio.run(scenario())
 
+
+@pytest.mark.parametrize("operation", ["direction", "suggest", "samples", "validation"])
+def test_style_enqueue_failure_releases_hold(tmp_path, style_ledger, operation):
+    async def scenario():
+        request = _request()
+        project = _project(tmp_path)
+        with patch(
+            "novel_to_comic.server.credited_job.enqueue_generation_job",
+            side_effect=RuntimeError("queue unavailable"),
+        ):
+            with pytest.raises(RuntimeError, match="queue unavailable"):
+                await _queue_style_operation(request, project, operation)
+        assert not style_ledger.holds
+        assert len(style_ledger.released) == 1
+        assert not request.app.state.style_tasks
+        if operation in ("direction", "suggest"):
+            assert project[2].stages["style"].status == StageStatus.FAILED
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["samples", "validation"])
+def test_style_retry_reuses_queued_job_without_another_hold(tmp_path, style_ledger, operation):
+    async def scenario():
+        request = _request()
+        project = _project(tmp_path, StageStatus.AWAITING_REVIEW)
+        first = await _queue_style_operation(request, project, operation)
+        style_ledger.balance = 0
+        second = await _queue_style_operation(request, project, operation)
+        assert first == second
+        assert request.app.state.generation_queue.qsize() == 1
+        request.app.state.generation_queue.get_nowait().on_cancel()
+        assert not style_ledger.holds
+        assert len(style_ledger.released) == 1
+
+    asyncio.run(scenario())

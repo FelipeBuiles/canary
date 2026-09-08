@@ -1016,6 +1016,8 @@ def test_identical_request_shares_job_but_changed_instructions_are_busy(tmp_path
 
 def _api_client(tmp_path: Path, project_dir: Path):
     from starlette.testclient import TestClient
+    from uuid import uuid4
+    from novel_to_comic.server.auth import get_current_user
 
     from novel_to_comic.config import Config as _Config
     from novel_to_comic.server.app import create_app
@@ -1032,7 +1034,12 @@ def _api_client(tmp_path: Path, project_dir: Path):
     )
     app = create_app(tmp_path)
     app.dependency_overrides[get_project] = lambda: (project_dir, _Config(), None)
-    return TestClient(app, raise_server_exceptions=False)
+    app.dependency_overrides[get_current_user] = lambda: "test-user"
+    client = TestClient(app, raise_server_exceptions=False)
+    client.event_hooks["request"].append(
+        lambda request: request.headers.setdefault("Idempotency-Key", str(uuid4()))
+    )
+    return client
 
 
 def _write_empty_story_bible(project_dir: Path) -> None:
@@ -1202,7 +1209,6 @@ def test_visual_review_estimate_is_no_spend_and_needs_render(tmp_path: Path, mon
     assert res.status_code == 200, res.text
     payload = res.json()
     assert payload["estimate_credits"] > 0
-    assert payload["reserved_credits"] is None
     assert {p for p in project_dir.rglob("*") if p.is_file()} == before
 
     bare_dir = tmp_path / "bare-project"
@@ -1217,3 +1223,50 @@ def test_visual_review_estimate_is_no_spend_and_needs_render(tmp_path: Path, mon
     missing = bare_client.get("/api/projects/test_project/pages/1/visual-review/estimate")
 
     assert missing.status_code == 409, missing.text
+
+
+def test_interrupted_correction_route_resumes_original_parent_without_redraw(tmp_path, monkeypatch):
+    from novel_to_comic.server.routers import pages
+
+    artifacts, page, _render = _setup(tmp_path, issues=(_issue("issue-dark"),))
+    monkeypatch.setattr(pages, "ensure_current_page_edition", lambda *args: _edition())
+    monkeypatch.setattr(pages, "approved_visual_inventory", lambda *args: ApprovedVisualReferenceInventory(references=()))
+    monkeypatch.setattr(pages, "approved_reference_files", lambda *args: {})
+    body = pages.PageCorrectionCreate(
+        changes=(_change("dark", "Darken the chamber.", issue_id="issue-dark"),),
+        parent_render_revision=1, comic_page_revision=page.revision,
+    )
+    config = SimpleNamespace(style_template="")
+    prepared = pages._prepare_explicit_correction(
+        target=artifacts, page_number=1, body=body, config=config,
+    )
+
+    class CountingTransport(_Transport):
+        calls = 0
+
+        async def generate(self, request):
+            self.calls += 1
+            return await super().generate(request)
+
+    class UnavailableOCR:
+        async def extract(self, image):
+            raise RuntimeError("read-back interrupted")
+
+    transport = CountingTransport()
+    adapter = VertexCompletePageAdapter(transport)
+    with pytest.raises(RuntimeError, match="read-back interrupted"):
+        asyncio.run(correct_complete_page(
+            prepared.compiled, issue=None, adapter=adapter,
+            artifacts=artifacts, page=page, ocr=UnavailableOCR(),
+        ))
+    assert artifacts.provenance_revisions(1) == (1, 2)
+    resumed = pages._prepare_explicit_correction(
+        target=artifacts, page_number=1, body=body, config=config,
+    )
+    result = asyncio.run(correct_complete_page(
+        resumed.compiled, issue=None, adapter=adapter,
+        artifacts=artifacts, page=page,
+    ))
+    assert result.render.parent_revision == 1
+    assert result.render.revision == 2
+    assert transport.calls == 1

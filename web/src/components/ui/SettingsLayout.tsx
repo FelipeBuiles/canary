@@ -77,6 +77,7 @@ export function SettingsLayout({
               <button
                 key={tab.id}
                 type="button"
+                aria-current={activeTab === tab.id ? "page" : undefined}
                 onClick={() => onTabChange(tab.id)}
                 className={cn(
                   "flex min-h-12 w-full items-center gap-3 border-b border-ink-black/10 px-4 py-3 text-left font-body text-[0.82rem] font-bold transition-colors last:border-b-0",
@@ -102,6 +103,7 @@ export function SettingsLayout({
               <button
                 key={tab.id}
                 type="button"
+                aria-current={activeTab === tab.id ? "page" : undefined}
                 onClick={() => onTabChange(tab.id)}
                 className={cn(
                   "min-h-11 shrink-0 border-b-[3px] px-4 py-2.5 font-meta text-xs tracking-[0.1em] transition-colors",

@@ -35,11 +35,12 @@ from ..credits import (
     UnifiedCostResolver,
     assert_sufficient_credits,
     estimate_stage_credit_reservation,
-    release_stage_reservations,
 )
 from ..db import get_db
 from ..deps import get_project, project_key
 from ..generation_jobs import generation_job_payload
+from ..admission import project_busy
+from ..event_channel import EventChannel
 from ..metrics import increment, observe
 from ..product_events import capture_server_event
 from ..ratelimit import cost_limit, limiter
@@ -165,10 +166,19 @@ async def _run_stage_with_credits(
         project_id=project_id,
         properties={"stage": stage, "rerun": rerun},
     )
+    async def execute():
+        # The credited wrapper invokes this only after acquiring the hold.
+        if rerun:
+            _reset_stage_and_downstream(state, stage)
+            _clear_outputs_for_rerun(project_dir, stage)
+            save_state(state, project_dir)
+        await _run_stage(stage, config, project_dir, state, queue)
+
     try:
         if stage == "draw":
-            await _run_stage(stage, config, project_dir, state, queue)
-            if queue_draw_pages:
+            if not rerun:
+                await execute()
+            if queue_draw_pages or rerun:
                 if request is None or project_id is None:
                     raise ValueError("queueing Draw pages requires an active request")
                 from .pages import enqueue_all_undrawn_pages
@@ -179,6 +189,7 @@ async def _run_stage_with_credits(
                     user_id=user_id,
                     project_dir=project_dir,
                     config=config,
+                    rerun=rerun,
                 )
             job_id = "draw-initialization"
         else:
@@ -189,17 +200,12 @@ async def _run_stage_with_credits(
                 config=config,
                 state=state,
                 stage=stage,
-                run=lambda: _run_stage(
-                    stage,
-                    config,
-                    project_dir,
-                    state,
-                    queue,
-                ),
+                run=execute,
             )
     except CreditReservationDenied as denied:
-        fail_stage(state, stage, denied.message, detail=denied.detail)
-        save_state(state, project_dir)
+        if not rerun:
+            fail_stage(state, stage, denied.message, detail=denied.detail)
+            save_state(state, project_dir)
         event = {
             "type": "stage_fail",
             "stage": stage,
@@ -248,7 +254,7 @@ async def _run_stage_with_credits(
             queue,
             user_id,
             project_id,
-            rerun=rerun,
+            rerun=False,
         )
         if state.stages[next_stage].status != StageStatus.COMPLETE:
             break
@@ -355,21 +361,13 @@ async def _start_stage(
     if stage not in STAGE_NAMES:
         raise HTTPException(400, f"Unknown stage: {stage}. Valid: {STAGE_NAMES}")
     pkey = project_key(user_id, project_id)
-    existing = request.app.state.running_tasks.get(pkey)
-    if existing is not None and not existing.done():
-        raise HTTPException(409, "A stage is already running for this project")
-    style_task = getattr(request.app.state, "style_tasks", {}).get(pkey)
-    if style_task is not None and not style_task.done():
-        raise HTTPException(409, "A style operation is already running")
+    if project_busy(request.app, pkey):
+        raise HTTPException(409, "Wait for all project jobs to finish before running a stage.")
 
     if stage == "adapt":
         _require_adaptation_brief(project_dir)
 
-    if rerun:
-        _reset_stage_and_downstream(state, stage)
-        _clear_outputs_for_rerun(project_dir, stage)
-        save_state(state, project_dir)
-    else:
+    if not rerun:
         _require_previous_stage(state, stage)
 
     if stage in {"cast", "adapt", "plan", "draw", "finish"}:
@@ -386,7 +384,7 @@ async def _start_stage(
             stage,
         )
         assert_sufficient_credits(get_db(), user_id, required, stage=stage)
-    queue: asyncio.Queue = asyncio.Queue()
+    queue = EventChannel()
     request.app.state.event_queues[pkey] = queue
     job = _run_stage_with_credits(
         stage,
@@ -451,27 +449,32 @@ async def event_stream(
     user_id: str = Depends(get_current_user),
 ):
     pkey = project_key(user_id, project_id)
-    queue = request.app.state.event_queues.get(pkey)
-    if queue is None:
-        raise HTTPException(404, "No active run for this project")
+    channel = request.app.state.event_queues.get(pkey)
+    if channel is None:
+        raise HTTPException(404, "No active run for this project; reload project status.")
+    queue = channel.subscribe()
 
     async def generator():
-        while True:
-            if await request.is_disconnected():
-                break
-            try:
-                event = await asyncio.wait_for(queue.get(), timeout=30)
-            except asyncio.TimeoutError:
-                yield ": keepalive\n\n"
-                continue
-            yield f"data: {json.dumps(event)}\n\n"
-            if event.get("type") == "pipeline_done":
-                break
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=30)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                yield f"data: {json.dumps(event)}\n\n"
+                if event.get("type") == "pipeline_done":
+                    break
+        finally:
+            channel.unsubscribe(queue)
 
     return StreamingResponse(generator(), media_type="text/event-stream")
 
 
 @router.get("/generation-jobs")
+@router.get("/jobs")
 def get_generation_jobs(
     request: Request,
     project_id: str,
@@ -485,7 +488,13 @@ def get_generation_jobs(
         if job.project_name == pkey and (ids is None or job.id in ids)
     ]
     jobs.sort(key=lambda job: job.sequence)
-    return {"jobs": [generation_job_payload(request.app, job) for job in jobs]}
+    from ..generation_jobs import recovered_generation_jobs
+
+    recovered = [
+        job for job in recovered_generation_jobs(request.app, pkey)
+        if ids is None or job["id"] in ids
+    ]
+    return {"jobs": recovered + [generation_job_payload(request.app, job) for job in jobs]}
 
 
 @router.post("/approve/{stage}")
@@ -561,7 +570,7 @@ async def approve(
         running = request.app.state.running_tasks.get(pkey)
         if running is not None and not running.done():
             raise HTTPException(409, "A stage is already running for this project")
-        queue: asyncio.Queue = asyncio.Queue()
+        queue = EventChannel()
         request.app.state.event_queues[pkey] = queue
         job = _run_stage_with_credits(
             "adapt",
@@ -590,6 +599,13 @@ def reset_stage(
         raise HTTPException(400, f"Unknown stage: {stage}")
     if state.stages[stage].status != StageStatus.FAILED:
         raise HTTPException(409, f"Stage '{stage}' is not failed.")
+    reset = [stage]
+    state.stages[stage] = StageState()
+    reset.extend(name for name in reset_stale_stages(state) if name != stage)
+    save_state(state, project_dir)
+    return {"status": "reset", "reset": reset}
+
+
 @router.get("/stage-error/{stage}")
 def get_stage_error(
     stage: str,
@@ -607,31 +623,6 @@ def get_stage_error(
     return {
         "stage": stage,
         "error": stage_state.error or "Unknown error",
-        "error_detail": (
-            stage_state.error_detail if local_diagnostics_enabled() else None
-        ),
-        "items_failed": stage_state.items_failed,
-    }
-    save_state(state, project_dir)
-    for stage in reset:
-        release_stage_reservations(get_db(), user_id, project_id, stage)
-    return {"status": "reset", "reset": reset}
-
-
-@router.get("/stage-error/{stage}")
-def get_stage_error(
-    stage: str,
-    project_id: str,
-    project=Depends(get_project),
-):
-    _project_dir, _config, state = project
-    if stage not in STAGE_NAMES:
-        raise HTTPException(400, f"Unknown stage: {stage}")
-    stage_state = state.stages[stage]
-    if stage_state.status != StageStatus.FAILED:
-        raise HTTPException(404, f"Stage '{stage}' is not failed.")
-    return {
-        "stage": stage,
-        "error": stage_state.error or "Unknown error",
+        "error_detail": stage_state.error_detail if local_diagnostics_enabled() else None,
         "items_failed": stage_state.items_failed,
     }

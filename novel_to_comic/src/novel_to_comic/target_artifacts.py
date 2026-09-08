@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import os
 import shutil
 from pathlib import Path
@@ -17,6 +20,7 @@ from novel_to_comic.models.draw import (
     PageGenerationProvenance,
     PageIssue,
     RenderAnalysis,
+    RawOCRObservation,
 )
 from novel_to_comic.models.finish import FinishPreflight
 from novel_to_comic.models.page import BookPlan, ComicPage
@@ -447,7 +451,9 @@ class TargetArtifacts:
                 raise ValueError("immutable page render cannot be overwritten")
             return
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(image)
+        temporary = path.with_name(f".{path.name}.tmp")
+        temporary.write_bytes(image)
+        os.replace(temporary, path)
         self.invalidate_finish()
 
     def read_render(self, page_number: int, render_revision: int) -> bytes:
@@ -478,6 +484,93 @@ class TargetArtifacts:
             PageGenerationProvenance,
         )
 
+    def persist_generated_page(
+        self, provenance: PageGenerationProvenance, image: bytes
+    ) -> None:
+        """Journal the paid result as one atomic record before publishing its pair."""
+        render = provenance.render
+        if hashlib.sha256(image).hexdigest() != render.image_sha256:
+            raise ValueError("generated image does not match provenance")
+        path = self.provenance_path(render.page_number, render.revision).with_suffix(".pending")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps({
+            "provenance": provenance.model_dump(mode="json"),
+            "image": base64.b64encode(image).decode("ascii"),
+        })
+        if path.exists() and path.read_text() != payload:
+            raise ValueError("occupied pending generation revision")
+        temporary = path.with_name(f".{path.name}.tmp")
+        with temporary.open("w") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        self.recover_generated_pages(render.page_number)
+
+    def resumable_generation_request(
+        self, page_number: int,
+    ) -> FrozenPageGenerationRequest | None:
+        """Return the frozen request for an unfinished paid generation action.
+
+        The unfinished marker survives publication until successful completion
+        (including settlement for queued jobs); completed artwork is not a retry.
+        """
+        pending = tuple(self.provenance_path(page_number, 1).parent.glob("provenance_*.pending"))
+        if len(pending) > 1:
+            raise ValueError("multiple pending generated pages require recovery before submission")
+        if pending:
+            payload = json.loads(pending[0].read_text())
+            provenance = PageGenerationProvenance.model_validate(payload["provenance"])
+        else:
+            unfinished = tuple(
+                self.provenance_path(page_number, 1).parent.glob("provenance_*.unfinished")
+            )
+            if not unfinished:
+                return None
+            if len(unfinished) > 1:
+                raise ValueError("multiple unfinished generations require recovery before submission")
+            revision = int(unfinished[0].stem.removeprefix("provenance_"))
+            provenance = self.read_provenance(page_number, revision)
+            if unfinished[0].read_text() != provenance.render.request_sha256:
+                raise ValueError("unfinished generation identity does not match provenance")
+        if provenance.render.page_number != page_number:
+            raise ValueError("durable generation belongs to a different page")
+        for revision in reversed(self.request_revisions(page_number)):
+            request = self.read_request(page_number, revision)
+            if request.request_sha256 == provenance.render.request_sha256:
+                return request
+        raise ValueError("durable paid generation lacks its frozen request; no image request allowed")
+
+    def mark_generation_complete(self, provenance: PageGenerationProvenance) -> None:
+        """Acknowledge operation success; queued jobs call this after settlement."""
+        path = self.provenance_path(
+            provenance.render.page_number, provenance.render.revision
+        ).with_suffix(".unfinished")
+        if path.exists() and path.read_text() != provenance.render.request_sha256:
+            raise ValueError("unfinished generation identity does not match completion")
+        path.unlink(missing_ok=True)
+
+    def recover_generated_pages(self, page_number: int) -> tuple[PageGenerationProvenance, ...]:
+        """Finish interrupted publication without contacting an image provider."""
+        directory = self.provenance_path(page_number, 1).parent
+        recovered: list[PageGenerationProvenance] = []
+        for path in sorted(directory.glob("provenance_*.pending")):
+            payload = json.loads(path.read_text())
+            provenance = PageGenerationProvenance.model_validate(payload["provenance"])
+            image = base64.b64decode(payload["image"], validate=True)
+            render = provenance.render
+            if render.page_number != page_number or hashlib.sha256(image).hexdigest() != render.image_sha256:
+                raise ValueError("invalid pending generated page")
+            self.write_render(page_number=page_number, render_revision=render.revision, image=image)
+            self.write_provenance(provenance)
+            unfinished = path.with_suffix(".unfinished")
+            temporary = unfinished.with_name(f".{unfinished.name}.tmp")
+            temporary.write_text(render.request_sha256)
+            os.replace(temporary, unfinished)
+            path.unlink()
+            recovered.append(provenance)
+        return tuple(recovered)
+
     def visual_review_path(self, page_number: int, render_revision: int, input_sha256: str) -> Path:
         return self.analysis_path(page_number, render_revision).parent / f"visual_{render_revision:03d}_{input_sha256}.json"
 
@@ -497,10 +590,13 @@ class TargetArtifacts:
 
     def write_analysis(self, analysis: RenderAnalysis) -> None:
         path = self.analysis_path(analysis.page_number, analysis.render_revision)
-        created = not path.exists()
-        self._write_immutable_model(path, analysis, RenderAnalysis)
-        if created:
-            self.invalidate_finish()
+        identity = hashlib.sha256(
+            f"{analysis.validator_version}:{analysis.comic_page_sha256}".encode()
+        ).hexdigest()
+        versioned = path.with_name(f"{path.stem}_{identity}.json")
+        self._write_immutable_model(versioned, analysis, RenderAnalysis)
+        self._write_model(path, analysis)
+        self.invalidate_finish()
 
     def read_analysis(
         self,
@@ -509,6 +605,22 @@ class TargetArtifacts:
     ) -> RenderAnalysis:
         path = self.analysis_path(page_number, render_revision)
         return self._read_model("render_analysis", path, RenderAnalysis)
+
+    def raw_ocr_path(self, page_number: int, render_revision: int) -> Path:
+        return self.analysis_path(page_number, render_revision).with_name(
+            f"ocr_{render_revision:03d}_v1.json"
+        )
+
+    def write_raw_ocr(self, observation: RawOCRObservation) -> None:
+        self._write_immutable_model(
+            self.raw_ocr_path(observation.page_number, observation.render_revision),
+            observation, RawOCRObservation,
+        )
+
+    def read_raw_ocr(self, page_number: int, render_revision: int) -> RawOCRObservation:
+        return self._read_model(
+            "raw_ocr", self.raw_ocr_path(page_number, render_revision), RawOCRObservation
+        )
 
     def write_issues(self, page_number: int, issues: tuple[PageIssue, ...]) -> None:
         path = self.issues_path(page_number)

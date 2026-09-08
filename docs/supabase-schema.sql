@@ -147,6 +147,9 @@ alter table public.credit_ledger
   add column if not exists cost_source text,
   add column if not exists pricing_snapshot text,
   add column if not exists job_id uuid,
+  add column if not exists reservation_owner uuid,
+  add column if not exists reservation_expires_at timestamptz,
+  add column if not exists reservation_started_at timestamptz,
   add column if not exists stripe_checkout_session_id text,
   add column if not exists credit_package_id text,
   add column if not exists gross_amount_cents integer,
@@ -328,12 +331,16 @@ create or replace view public.user_credits
 -- Uses a per-user advisory transaction lock so parallel project runs cannot
 -- both observe the same balance and over-reserve credits.
 
+-- Remove the unsafe old overload on upgrades; old binaries must fail closed.
+drop function if exists public.reserve_stage_credits(uuid, uuid, text, integer, uuid);
 create or replace function public.reserve_stage_credits(
   p_user_id       uuid,
   p_project_id    uuid,
   p_stage         text,
   p_amount_credits integer,
-  p_job_id        uuid default null
+  p_job_id        uuid,
+  p_owner         uuid,
+  p_lease_seconds integer
 )
 returns uuid
 language plpgsql
@@ -349,6 +356,22 @@ begin
   end if;
 
   perform pg_advisory_xact_lock(hashtextextended(p_user_id::text, 0));
+  if p_owner is null or p_lease_seconds < 60 or p_lease_seconds > 86400 then
+    raise exception 'Invalid reservation lease';
+  end if;
+  -- Only a never-started expired request can be safely reclaimed automatically.
+  update public.credit_ledger set status = 'released'
+  where user_id = p_user_id and status = 'reserved'
+    and reservation_started_at is null
+    and reservation_expires_at <= clock_timestamp();
+  if exists (
+    select 1 from public.credit_ledger
+    where user_id = p_user_id and status = 'reserved' and amount_credits < 0
+      and (reservation_expires_at is null
+        or reservation_expires_at <= clock_timestamp())
+  ) then
+    raise exception 'Expired credit reservation requires reconciliation';
+  end if;
 
   select coalesce(
     sum(case when status != 'released' then amount_credits else 0 end),
@@ -369,7 +392,7 @@ begin
     status,
     stage,
     description,
-    job_id
+    job_id, reservation_owner, reservation_expires_at
   )
   values (
     p_user_id,
@@ -378,11 +401,76 @@ begin
     'reserved',
     p_stage,
     'Reserved: ' || p_stage,
-    p_job_id
+    p_job_id, p_owner, clock_timestamp() + make_interval(secs => p_lease_seconds)
   )
   returning id into v_reservation_id;
 
   return v_reservation_id;
+end;
+$$;
+
+create or replace function public.renew_credit_reservation_leases(
+  p_owner uuid, p_lease_seconds integer
+) returns void language plpgsql security definer set search_path = public as $$
+begin
+  if p_owner is null or p_lease_seconds < 60 or p_lease_seconds > 86400 then
+    raise exception 'Invalid reservation lease';
+  end if;
+  update public.credit_ledger
+  set reservation_expires_at = clock_timestamp() + make_interval(secs => p_lease_seconds)
+  where status = 'reserved' and reservation_owner = p_owner
+    and reservation_expires_at > clock_timestamp();
+  update public.credit_ledger set status = 'released'
+  where status = 'reserved' and reservation_started_at is null
+    and reservation_expires_at <= clock_timestamp();
+end;
+$$;
+
+create or replace function public.check_credit_reservation_lease(
+  p_reservation_id uuid, p_owner uuid
+) returns boolean language plpgsql security definer set search_path = public as $$
+begin
+  update public.credit_ledger
+  set reservation_started_at = coalesce(reservation_started_at, clock_timestamp())
+  where id = p_reservation_id and reservation_owner = p_owner
+    and status = 'reserved' and reservation_expires_at > clock_timestamp();
+  return found;
+end;
+$$;
+
+-- Usage settlement is append-only, including zero-credit incremental rows.
+-- Project deletion may clear project_id, but cannot change the financial fact.
+create or replace function public.protect_settled_model_usage()
+returns trigger language plpgsql set search_path = public as $$
+begin
+  if old.status = 'reserved' and new.status = 'released'
+    and not coalesce(
+      (old.reservation_owner is not null and old.reservation_owner::text =
+        coalesce(current_setting('canary.reservation_owner', true), ''))
+      or (old.reservation_started_at is null
+        and old.reservation_expires_at <= clock_timestamp()),
+      false
+    ) then
+    raise exception 'Reservation release requires its lease owner';
+  end if;
+  if old.status = 'settled' and old.usage_call_id is not null
+    and (to_jsonb(new) - 'project_id') is distinct from (to_jsonb(old) - 'project_id') then
+    raise exception 'Settled model usage is immutable';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists immutable_settled_model_usage on public.credit_ledger;
+create trigger immutable_settled_model_usage before update on public.credit_ledger
+for each row execute function public.protect_settled_model_usage();
+
+create or replace function public.release_credit_reservation(
+  p_reservation_id uuid, p_owner uuid
+) returns void language plpgsql security definer set search_path = public as $$
+begin
+  perform set_config('canary.reservation_owner', p_owner::text, true);
+  update public.credit_ledger set status = 'released'
+  where id = p_reservation_id and reservation_owner = p_owner and status = 'reserved';
 end;
 $$;
 
@@ -424,14 +512,21 @@ declare
   v_target_debit integer := 0;
   v_increment integer := 0;
 begin
-  perform pg_advisory_xact_lock(
-    hashtextextended(p_user_id::text || ':' || p_job_id::text, 0)
-  );
+  perform pg_advisory_xact_lock(hashtextextended(p_user_id::text, 0));
+  perform pg_advisory_xact_lock(hashtextextended(p_usage_call_id, 1));
 
   select amount_credits into v_existing_amount
   from public.credit_ledger
   where usage_call_id = p_usage_call_id;
   if found then
+    if not exists (
+      select 1 from public.credit_ledger where usage_call_id = p_usage_call_id
+        and user_id = p_user_id and status = 'settled'
+    ) then
+      raise exception 'Usage call belongs to a different settlement';
+    end if;
+    -- Recovered durable artifacts may replay this call under a new job.
+    -- The original usage identity and financial row remain authoritative.
     return abs(v_existing_amount);
   end if;
 
@@ -710,10 +805,16 @@ grant select on public.ops_usage_reconciliation to service_role;
 grant select on public.ops_unit_economics_daily to service_role;
 grant select on public.ops_product_funnel_daily to service_role;
 
-revoke all on function public.reserve_stage_credits(uuid, uuid, text, integer, uuid)
+revoke all on function public.reserve_stage_credits(uuid, uuid, text, integer, uuid, uuid, integer)
   from public, anon, authenticated;
-grant execute on function public.reserve_stage_credits(uuid, uuid, text, integer, uuid)
+grant execute on function public.reserve_stage_credits(uuid, uuid, text, integer, uuid, uuid, integer)
   to service_role;
+revoke all on function public.renew_credit_reservation_leases(uuid, integer),
+  public.check_credit_reservation_lease(uuid, uuid),
+  public.release_credit_reservation(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.renew_credit_reservation_leases(uuid, integer),
+  public.check_credit_reservation_lease(uuid, uuid),
+  public.release_credit_reservation(uuid, uuid) to service_role;
 
 revoke all on function public.settle_model_usage_credits(
   uuid, uuid, uuid, text, text, text, text, text, text, text, integer, integer,

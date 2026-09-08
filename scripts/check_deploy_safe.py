@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -19,23 +20,31 @@ def main() -> int:
         print("CANARY_OPS_TOKEN is required", file=sys.stderr)
         return 2
 
-    request = urllib.request.Request(
-        f"{origin}/api/ops/deployment-status",
-        headers={"X-Canary-Ops-Token": token},
-    )
-    try:
+    def fetch(path: str, method: str = "GET"):
+        request = urllib.request.Request(
+            f"{origin}{path}",
+            headers={"X-Canary-Ops-Token": token},
+            method=method,
+        )
         with urllib.request.urlopen(request, timeout=10) as response:
-            payload = json.load(response)
-    except (OSError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
-        print(f"Could not read deployment status: {exc}", file=sys.stderr)
-        return 2
+            return json.load(response)
 
-    print(json.dumps(payload, indent=2, sort_keys=True))
-    if payload.get("safe_to_deploy") is True:
-        print("Safe to deploy: no generation work is active.")
-        return 0
-    print("Do not deploy: generation work is still active.", file=sys.stderr)
-    return 1
+    try:
+        fetch("/api/ops/drain", "POST")
+        deadline = time.monotonic() + 1800
+        while True:
+            payload = fetch("/api/ops/deployment-status")
+            print(json.dumps(payload, sort_keys=True), flush=True)
+            if payload.get("draining") is True and payload.get("safe_to_deploy") is True:
+                print("Safe to deploy: admission is closed and generation is idle.")
+                return 0
+            if time.monotonic() >= deadline:
+                print("Drain timed out; admission remains closed. Explicit ops resume required.", file=sys.stderr)
+                return 1
+            time.sleep(5)
+    except (OSError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
+        print(f"Could not establish deployment drain: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+import { accountIdentity } from "../../lib/accountEpoch";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -125,7 +126,7 @@ function StoryEditor({ id, data, brief, stageStatus }: {
   const updateBrief = useUpdateBrief();
   const approveBrief = useApproveStage();
   const [savedBrief, setSavedBrief] = useState(brief);
-  const storageKey = `scenewright:brief-drafts:v1:${encodeURIComponent(id)}`;
+  const storageKey = `scenewright:brief-drafts:v2:${accountIdentity ?? "signed-out"}:${encodeURIComponent(id)}`;
   const [{ drafts: storedDrafts, error: storageError }, setDraftStorage] = useState<{ drafts: StoredBriefDraft[]; error: boolean }>(() => {
     try {
       const stored = sessionStorage.getItem(storageKey);

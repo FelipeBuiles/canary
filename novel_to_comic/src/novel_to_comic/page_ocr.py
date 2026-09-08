@@ -41,13 +41,11 @@ _INSTRUCTION = (
     "Use exactly this shape for every item: "
     '{"text":"exact words","role":"comic_lettering|incidental_text",'
     '"box":{"x":0.0,"y":0.0,"width":0.1,"height":0.1}}. '
-    "Return only the JSON object."
+    "Also return panels: a list of bounding boxes using x, y, width, height, "
+    "only for clearly separated rectangular panels. Omit panels when borders "
+    "or reading order are ambiguous. Return only the JSON object."
 )
 
-# Two elements belong to the same reading row when their vertical centres are
-# this close. Comic balloons in one tier sit at slightly different heights, so
-# strict y-sorting would zig-zag across a row and invent order defects.
-_ROW_BAND = 0.06
 
 
 class _ObservedBox(BaseModel):
@@ -135,6 +133,7 @@ class _PageOCRDraft(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     lettering: tuple[_ObservedLettering, ...] = ()
+    panels: tuple[_ObservedBox, ...] = ()
 
     @model_validator(mode="before")
     @classmethod
@@ -146,60 +145,72 @@ class _PageOCRDraft(BaseModel):
         return value
 
 
-def _reading_order(items: list[tuple[int, _ObservedLettering]]) -> list[int]:
-    """Derive left-to-right, top-to-bottom order from detected geometry.
-
-    The order comes from the boxes, not from the order the model happened to
-    list them: geometry is the evidence Draw uses to decide whether a render
-    genuinely contradicts canonical reading order.
-    """
-
-    by_row = sorted(items, key=lambda item: item[1].box.center[1])
-    rows: list[list[tuple[int, _ObservedLettering]]] = []
-    for entry in by_row:
-        centre_y = entry[1].box.center[1]
-        if rows and centre_y - rows[-1][0][1].box.center[1] <= _ROW_BAND:
-            rows[-1].append(entry)
+def _panel_order(panels: tuple[_ObservedBox, ...]) -> tuple[int, ...]:
+    """Prove ordinary separated panel tiers, never a page-wide balloon sweep."""
+    rows: list[list[int]] = []
+    for index in sorted(range(len(panels)), key=lambda index: panels[index].y):
+        panel = panels[index]
+        if rows and panel.y < max(panels[i].y + panels[i].height for i in rows[-1]):
+            row = rows[-1]
+            # Staggered/overlapping tiers and inset panels need visual review.
+            if any(abs(panel.y - panels[i].y) > 0.02
+                   or abs(panel.y + panel.height - panels[i].y - panels[i].height) > 0.02
+                   for i in row):
+                return ()
+            row.append(index)
         else:
-            rows.append([entry])
+            rows.append([index])
     ordered: list[int] = []
     for row in rows:
-        ordered.extend(
-            index for index, _ in sorted(row, key=lambda item: item[1].box.center[0])
-        )
-    return ordered
+        row.sort(key=lambda index: panels[index].x)
+        if any(panels[left].x + panels[left].width > panels[right].x
+               for left, right in zip(row, row[1:])):
+            return ()
+        ordered.extend(row)
+    return tuple(ordered)
 
 
 def build_extraction(draft: _PageOCRDraft) -> OCRExtraction:
     """Convert raw observations into derived evidence with stable IDs."""
 
     indexed = list(enumerate(draft.lettering, start=1))
+    panel_order = _panel_order(draft.panels)
+    assignments: dict[int, int] = {}
+    for index, item in indexed:
+        containing = [
+            panel_index for panel_index, panel in enumerate(draft.panels)
+            if panel.x <= item.box.x and panel.y <= item.box.y
+            and panel.x + panel.width >= item.box.x + item.box.width
+            and panel.y + panel.height >= item.box.y + item.box.height
+        ]
+        if len(containing) == 1:
+            assignments[index] = containing[0]
+    proven = bool(panel_order) and all(
+        index in assignments for index, item in indexed if item.role == "comic_lettering"
+    )
     observations = tuple(
         OCRTextObservation(
-            id=f"ocr_{index:03d}",
-            text=item.text,
-            detected_region_id=f"region_{index:03d}",
-            role=item.role,
+            id=f"ocr_{index:03d}", text=item.text, role=item.role,
+            detected_region_id=(
+                f"panel_{assignments[index]:03d}" if proven and index in assignments
+                else f"region_{index:03d}"
+            ),
         )
         for index, item in indexed
     )
     regions = tuple(
         ObservedRegion(id=f"region_{index:03d}", polygon=item.box.polygon())
         for index, item in indexed
+    ) + tuple(
+        ObservedRegion(id=f"panel_{index:03d}", polygon=panel.polygon())
+        for index, panel in enumerate(draft.panels)
     )
-    comic_items = [
-        entry for entry in indexed if entry[1].role == "comic_lettering"
-    ]
-    order = tuple(f"region_{index:03d}" for index in _reading_order(comic_items))
     return OCRExtraction(
-        lettering=tuple(
-            item for item in observations if item.role == "comic_lettering"
-        ),
-        incidental_text=tuple(
-            item for item in observations if item.role == "incidental_text"
-        ),
+        lettering=tuple(item for item in observations if item.role == "comic_lettering"),
+        incidental_text=tuple(item for item in observations if item.role == "incidental_text"),
         observed_regions=regions,
-        observed_reading_order=order,
+        observed_reading_order=tuple(f"panel_{index:03d}" for index in panel_order) if proven else (),
+        reading_order_proven=proven,
     )
 
 

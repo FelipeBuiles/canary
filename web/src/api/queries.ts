@@ -397,9 +397,9 @@ export function useGenerationJobs(
     enabled: !!project && (ids.length > 0 || watchAll),
     refetchInterval: (query) => {
       const jobs = query.state.data?.jobs ?? [];
-      return watchAll || jobs.some((job) => job.status === "queued" || job.status === "running")
+      return jobs.some((job) => job.status === "queued" || job.status === "running")
         ? 1000
-        : false;
+        : watchAll ? 15_000 : false;
     },
   });
 }
@@ -611,6 +611,7 @@ function invalidatePageReview(qc: ReturnType<typeof useQueryClient>, project: st
   }
   qc.invalidateQueries({ queryKey: ["project", project, "status"] });
   qc.invalidateQueries({ queryKey: ["provider-usage", project] });
+  qc.invalidateQueries({ queryKey: ["project", project, "generation-jobs"] });
 }
 
 export function useGenerateCompletePage() {

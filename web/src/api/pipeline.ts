@@ -29,11 +29,11 @@ export function runPipeline(
 
 export function getGenerationJobs(
   project: string,
-  ids: string[],
+  ids: string[] = [],
 ): Promise<{ jobs: GenerationJob[] }> {
   const params = ids.map((id) => `ids=${encodeURIComponent(id)}`).join("&");
   return apiFetch(
-    `/projects/${encodeURIComponent(project)}/generation-jobs${params ? `?${params}` : ""}`,
+    `/projects/${encodeURIComponent(project)}/jobs${params ? `?${params}` : ""}`,
   );
 }
 

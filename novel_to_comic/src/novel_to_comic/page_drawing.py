@@ -897,6 +897,7 @@ async def draw_complete_page(
     request_revision: int | None = None,
     render_revision: int | None = None,
     parent_render_revision: int | None = None,
+    defer_completion: bool = False,
 ) -> PageGenerationProvenance:
     """Persist and execute exactly one complete-page request."""
 
@@ -909,6 +910,35 @@ async def draw_complete_page(
         raise ValueError("complete-page correction must cite its exact parent render")
     if compiled.request.is_stale_for(page):
         raise ValueError("compiled request is stale for the canonical ComicPage")
+    unfinished = artifacts.resumable_generation_request(page.page_number)
+    if unfinished is not None and unfinished.request_sha256 != compiled.request.request_sha256:
+        raise ValueError("Resume the unfinished paid generation before submitting different page input")
+    artifacts.recover_generated_pages(page.page_number)
+    for revision in reversed(artifacts.provenance_revisions(page.page_number)):
+        saved = artifacts.read_provenance(page.page_number, revision)
+        if (saved.render.request_sha256 == compiled.request.request_sha256
+                and (render_revision is None or saved.render.revision == render_revision)):
+            image = artifacts.read_render(page.page_number, saved.render.revision)
+            if hashlib.sha256(image).hexdigest() != saved.render.image_sha256:
+                raise ValueError("saved paid render bytes do not match provenance")
+            if ocr is not None:
+                await analyze_complete_page(
+                    page=page, render=saved.render,
+                    image=image,
+                    ocr=ocr, artifacts=artifacts,
+                )
+            if not defer_completion:
+                artifacts.mark_generation_complete(saved)
+            return saved
+    occupied_images = set(artifacts.render_revisions(page.page_number))
+    occupied_provenance = set(artifacts.provenance_revisions(page.page_number))
+    if occupied_images != occupied_provenance:
+        raise ValueError(
+            "Interrupted page persistence requires recovery before image generation: "
+            "render/provenance revisions do not match; preserve existing artwork."
+        )
+    if render_revision is not None and render_revision in occupied_images:
+        raise ValueError("render revision is occupied; no image request submitted")
     prepared = adapter.prepare(compiled)
     # Revisions are allocated here, inside the serialized job, not when the
     # route was called: two corrections requested before either ran would
@@ -936,11 +966,7 @@ async def draw_complete_page(
         request_revision=request_revision,
     )
     provider_result = await adapter.generate(prepared)
-    artifacts.write_render(
-        page_number=compiled.request.page_number,
-        render_revision=render_revision,
-        image=provider_result.image_bytes,
-    )
+    # Do not publish the image until its complete paid-result journal exists.
     render = PageRenderRevision(
         page_number=compiled.request.page_number,
         revision=render_revision,
@@ -961,11 +987,7 @@ async def draw_complete_page(
         usage=provider_result.usage,
         provider_request_id=provider_result.provider_request_id,
     )
-    # Provenance is recorded before the page is read back. The image is already
-    # paid for at this point, so a failing analysis must never leave a render
-    # without its billing and lineage record — that would let the page be
-    # generated a second time and charged twice.
-    artifacts.write_provenance(provenance)
+    artifacts.persist_generated_page(provenance, provider_result.image_bytes)
     if ocr is not None:
         await analyze_complete_page(
             page=page,
@@ -974,6 +996,8 @@ async def draw_complete_page(
             ocr=ocr,
             artifacts=artifacts,
         )
+    if not defer_completion:
+        artifacts.mark_generation_complete(provenance)
     return provenance
 
 
@@ -1031,6 +1055,7 @@ async def correct_complete_page(
     ocr: "OCRAdapter | None" = None,
     request_revision: int | None = None,
     render_revision: int | None = None,
+    defer_completion: bool = False,
 ) -> PageGenerationProvenance:
     """Produce one complete revised page for an explicit correction set.
 
@@ -1062,6 +1087,7 @@ async def correct_complete_page(
         request_revision=request_revision,
         render_revision=render_revision,
         parent_render_revision=correction.parent_render_revision,
+        defer_completion=True,
     )
     from novel_to_comic.page_review import resolve_page_issue
 
@@ -1079,6 +1105,8 @@ async def correct_complete_page(
             artifacts, issue_id=corrected.id, page_number=page.page_number,
             resolution_revision=provenance.render.revision, verified=verified,
         )
+    if not defer_completion:
+        artifacts.mark_generation_complete(provenance)
     return provenance
 
 
@@ -1128,6 +1156,7 @@ def enqueue_complete_page_draw(
                     request_revision=request_revision,
                     render_revision=render_revision,
                     parent_render_revision=parent_render_revision,
+                    defer_completion=True,
                 )
             else:
                 provenance = await correct_complete_page(
@@ -1139,6 +1168,7 @@ def enqueue_complete_page_draw(
                     ocr=ocr,
                     request_revision=request_revision,
                     render_revision=render_revision,
+                    defer_completion=True,
                 )
         except BaseException as exc:
             from novel_to_comic.image_failure import (
@@ -1187,9 +1217,6 @@ def enqueue_complete_page_draw(
                 )
             )
             raise
-        artifacts.clear_page_failure(compiled.request.page_number)
-        if on_success is not None:
-            on_success(provenance)
         return ApiResult(
             value=provenance,
             usage=provenance.usage,
@@ -1197,6 +1224,12 @@ def enqueue_complete_page_draw(
             actual_provider_model=provenance.render.model,
             additional_usage=_analysis_usage(artifacts, provenance),
         )
+
+    def _settled(result: ApiResult[PageGenerationProvenance]) -> None:
+        artifacts.clear_page_failure(compiled.request.page_number)
+        if on_success is not None:
+            on_success(result.value)
+        artifacts.mark_generation_complete(result.value)
 
     return enqueue_reserved_generation_job(
         app,
@@ -1217,4 +1250,5 @@ def enqueue_complete_page_draw(
         work=_work,
         debit_description=f"Complete page {compiled.request.page_number}",
         reservation_credits=estimate["reserved_credits"] or 0,
+        on_settled=_settled,
     )

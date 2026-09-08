@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
  */
 const LIVE_STAGE_ASSET_RETRY_DELAYS_MS = [5_000, 10_000, 20_000, 30_000] as const;
 
-export function useLiveStageAsset(src: string, timestamp: number, stageRegenerating: boolean) {
+export function useLiveStageAsset(src: string, timestamp: string | number, stageRegenerating: boolean) {
   const key = `${src}|${stageRegenerating ? "running" : "idle"}`;
   const [probeState, setProbeState] = useState(() => ({
     key,

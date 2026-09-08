@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 import os
 import time
@@ -82,6 +83,7 @@ class GenerationJob:
     classification: ImageFailureClassification | None = None
     user_message: str | None = None
     recoverable: bool | None = None
+    on_cancel: Callable[[], None] | None = None
 
 
 def enqueue_generation_job(
@@ -93,6 +95,7 @@ def enqueue_generation_job(
     runner: GenerationJobRunner,
     user_id: str | None = None,
     semaphore: asyncio.Semaphore | None = None,
+    on_cancel: Callable[[], None] | None = None,
 ) -> GenerationJob:
     global _global_sequence
     sequence = _global_sequence
@@ -108,8 +111,10 @@ def enqueue_generation_job(
         runner=runner,
         user_id=user_id,
         semaphore=semaphore,
+        on_cancel=on_cancel,
     )
 
+    persist_generation_job(app, job)
     if app is not None:
         app.state.generation_jobs[job.id] = job
         app.state.generation_queue.put_nowait(job)
@@ -215,6 +220,7 @@ async def generation_worker(app: FastAPI) -> None:
                     await stack.enter_async_context(semaphore)
                 job.status = "running"
                 job.started_at = _now()
+                persist_generation_job(app, job)
                 logger.info(
                     "[bold cyan]Job start[/] project=[white]%s[/] kind=[cyan]%s[/] label=%s id=[dim]%s[/]",
                     job.project_name,
@@ -233,6 +239,13 @@ async def generation_worker(app: FastAPI) -> None:
                 job.id[:8],
                 time.perf_counter() - started,
             )
+        except asyncio.CancelledError:
+            if job.started_at is None and job.on_cancel is not None:
+                job.on_cancel()
+            job.status = "failed"
+            job.error = "Generation interrupted by server shutdown."
+            job.recoverable = True
+            raise
         except asyncio.TimeoutError:
             job.status = "failed"
             job.error = f"Generation timed out after {timeout_seconds}s"
@@ -273,7 +286,41 @@ async def generation_worker(app: FastAPI) -> None:
             )
         finally:
             job.finished_at = _now()
+            persist_generation_job(app, job)
             app.state.generation_queue.task_done()
+
+
+def persist_generation_job(app, job: GenerationJob) -> None:
+    admission = getattr(app.state, "admission", None) if app is not None else None
+    if admission is None:
+        return
+    payload = generation_job_payload(app, job)
+    with admission.journal() as db:
+        db.execute("CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, project TEXT NOT NULL, payload TEXT NOT NULL)")
+        db.execute("INSERT OR REPLACE INTO jobs VALUES(?,?,?)",
+                   (job.id, job.project_name, json.dumps(payload)))
+
+
+def recovered_generation_jobs(app, pkey: str) -> list[dict]:
+    admission = getattr(app.state, "admission", None)
+    if admission is None:
+        return []
+    with admission.journal() as db:
+        db.execute("CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, project TEXT NOT NULL, payload TEXT NOT NULL)")
+        rows = db.execute("SELECT payload FROM jobs WHERE project=?", (pkey,)).fetchall()
+    recovered = []
+    for row in rows:
+        payload = json.loads(row[0])
+        if payload["id"] in app.state.generation_jobs:
+            continue
+        if payload["status"] in {"queued", "running"}:
+            payload.update(
+                status="failed", error="Server restarted before this job's outcome was recorded.",
+                user_message="Inspect existing output before explicitly retrying this interrupted action.",
+                classification="generation_error", recoverable=True, queue_position=None,
+            )
+        recovered.append(payload)
+    return recovered
 
 
 def _per_user_generation_limit() -> int:

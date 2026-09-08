@@ -14,6 +14,11 @@
 >
 > **Dated 2026-07-04.** Verify against current Fly/Supabase/Stripe dashboards
 > before launch — UI labels drift.
+>
+> **Reliability upgrade requirements, 2026-09-07:** apply the reviewed canonical
+> SQL before starting the new application, preserve `/projects`, and drain before
+> normal releases. These instructions do not record a production migration or
+> deployment; SQL verification was confined to an isolated database.
 
 ## Architecture (one machine, two processes)
 
@@ -46,6 +51,16 @@ for `/health/liveliness`, then supervises both processes. If LiteLLM exits after
 boot, the entrypoint restarts it with a bounded restart budget instead of
 leaving a healthy-looking web app with a dead image gateway. Provider API keys
 live in `canary-web`'s fly secrets; only the proxy process reads them.
+
+Keep **one uvicorn application worker on one Fly Machine**. Generation queue
+workers are concurrent tasks within that application, not additional app
+processes. Admission locks, drain state, and activity counts are process-local;
+horizontal scaling requires a distributed coordinator, not additional Machines
+sharing assumptions about `/projects`. Preserve the mounted volume across
+upgrades: it holds project artifacts, Draw `.pending`/`.unfinished` recovery
+evidence, and `.request-journal.sqlite3` (durable action responses and job
+observations). Losing journals can lose the evidence needed to avoid duplicate
+paid actions; copying artwork alone is not a recovery backup.
 
 ## Prerequisites (before you touch Fly)
 
@@ -129,7 +144,7 @@ echo "GCP_CREDENTIALS_B64=$(base64 < litellm/gcp-credentials.json)" >> ~/.config
 
 ## Step 1 — Supabase schema + auth config
 
-`canary-web` will 500 on every query without these.
+The canonical schema is required for startup, not merely for later queries.
 
 Database changes are a separately reviewed production operation. CI never
 receives a production Postgres connection string and never applies this file
@@ -141,6 +156,21 @@ backup, and record the operator and result in the release evidence.
 psql "<prod database url>" --set ON_ERROR_STOP=1 --single-transaction \
   --file docs/supabase-schema.sql
 ```
+
+For upgrades as well as fresh installs, apply the reviewed current
+`docs/supabase-schema.sql` **before starting the new application**. Its owned
+reservation leases and idempotent usage-settlement RPCs are required: startup
+calls lease renewal before admitting work and fails closed if that contract is
+missing. Review compatibility with the running/rollback binary before applying;
+for the first drain-capable upgrade, use the controlled cutover below.
+
+Reservations have a one-hour owner lease renewed every 30 seconds. Only expired
+never-started holds can be reclaimed automatically. Started-expired holds,
+legacy unowned holds, and ambiguous settlements need manual reconciliation
+against provider usage, call IDs, jobs, and saved output. Do not mass-release
+holds on startup, reset, or lease expiry, and do not assume an interrupted paid
+request was free. A lost ledger response can replay the same idempotent database
+settlement; it must not trigger another provider submission.
 
 In the **Supabase dashboard → Authentication → URL Configuration**:
 
@@ -223,15 +253,32 @@ verify that `git_sha` matches the exact green CI revision and record the
 `build_timestamp`. The backend and frontend receive the same
 `CANARY_VERSION`, which is also used for Sentry release grouping.
 
-### Pilot maintenance-window deployment
+### Maintenance-window upgrades
 
-1. Announce the maintenance window and stop admitting new generation work.
-2. Run `scripts/check_deploy_safe.py` until it reports `safe_to_deploy: true`.
-3. Confirm every CI job is green for the exact local `HEAD`.
-4. Record the current Fly release/image as the rollback target.
-5. Deploy with the release build arguments shown above.
-6. Verify `/api/version`, `/api/health`, and `/api/health/ready`.
-7. Complete a short signed-in smoke test, then reopen generation work.
+1. Announce the maintenance window. Confirm every CI job is green for the exact
+   release SHA and record the current Fly release/image as a rollback target.
+2. On a drain-capable binary, run the authenticated guard below. It closes
+   admission **before** waiting for idle. Do not deploy unless it succeeds.
+3. Apply any separately reviewed canonical SQL changes from Step 1 before the
+   new app starts; preserve the existing `/projects` volume and journals.
+4. Deploy with the release build arguments shown above.
+5. Verify `/api/version`, `/api/health`, and `/api/health/ready`, then complete a
+   short signed-in smoke test. A fresh process starts undrained: keep any external
+   maintenance access restriction in place until verification is complete.
+6. Remove external maintenance restrictions when ready. If the existing process
+   remains drained after an aborted release, explicitly resume it as shown below
+   only after deciding it is safe to admit work again.
+
+**First cutover from an old binary without `/api/ops/drain`:** the automatic
+guard cannot establish its admission barrier. Schedule a controlled maintenance
+cutover: enforce an external block on new user generation/mutation traffic while
+the old process is still running, let admitted work finish, inspect activity and
+unresolved provider/ledger outcomes, then stop the old process before applying
+the reviewed schema and starting the new release on the preserved volume.
+Keep maintenance restrictions until verification is complete. If work cannot
+finish, explicitly reconcile the interruption; do not call it an idle cutover.
+There is **no idle-only fallback** when drain is unavailable, unauthorized, or
+fails. If intake cannot be reliably blocked, do not proceed with the cutover.
 
 Copy `docs/ops/release-evidence-template.md` for each customer-facing release.
 
@@ -242,7 +289,8 @@ The manual dispatch is the operator's confirmation that the maintenance window
 is active. The `Deploy production` job starts only after the backend, frontend,
 and production-image jobs pass for the exact SHA; it then:
 
-1. Refuses to continue unless `/api/ops/deployment-status` reports idle.
+1. Authenticates `POST /api/ops/drain`, then waits for deployment status to show
+   both `draining: true` and `safe_to_deploy: true`.
 2. Deploys the exact tested SHA with immutable release metadata.
 3. Verifies `/api/version`, liveness, readiness, and security headers.
 
@@ -260,31 +308,43 @@ branch, and add these environment secrets:
 - `VITE_SENTRY_DSN` — optional frontend Sentry DSN.
 
 Do not store the Supabase service-role key as a `VITE_*` value. The deploy job
-does not open a maintenance window or block new work by itself. Do not change
-the workflow to deploy automatically on every push until a server-enforced
-drain mode exists. If the repository plan supports required environment
-reviewers, enabling one adds a useful second approval.
+closes server admission but does not announce a customer maintenance window.
+It cannot bootstrap drain on an old binary: complete the controlled first
+cutover before using this workflow. If the repository plan supports required
+environment reviewers, enabling one adds a useful second approval.
 
-### Check whether a deploy is safe
+### Drain, wait for idle, and explicitly resume
 
-`GET /api/ops/deployment-status` aggregates the in-memory pipeline tasks,
-style work, queued/running image jobs, and draw panels. It returns
-`safe_to_deploy: true` only when all counts are zero. The endpoint is protected
-by the `CANARY_OPS_TOKEN` secret and does not reveal project or user details:
+All three endpoints require `X-Canary-Ops-Token: $CANARY_OPS_TOKEN`:
+`POST /api/ops/drain`, `GET /api/ops/deployment-status`, and
+`POST /api/ops/resume`. Drain closes new project mutation/paid-action admission;
+recorded idempotent responses can still replay. Status counts in-progress HTTP
+admissions, pipeline/style tasks, queued/running generation jobs, queue items,
+and in-flight Draw work without revealing account/project details.
+`safe_to_deploy` means all counts are zero; it is safe as a release gate only
+when `draining` is also true on this single application process.
 
 ```bash
+# Requires CANARY_OPS_TOKEN in the operator environment.
+# SCENEWRIGHT_APP_URL selects the target (default: https://canary-web.fly.dev).
+# The script has no drain/resume flags: it always POSTs drain, then polls.
+SCENEWRIGHT_APP_URL=https://canary-web.fly.dev python scripts/check_deploy_safe.py
+
+# Inspect a drain already established by the script:
 curl -fsS https://canary-web.fly.dev/api/ops/deployment-status \
   -H "X-Canary-Ops-Token: $CANARY_OPS_TOKEN"
 
-# Or use the repository guard: it prints the counts and exits non-zero while
-# work is active, so it can gate a manual deploy command.
-python scripts/check_deploy_safe.py
+# Explicitly reopen an existing drained process after a cancelled/failed release:
+curl -fsS -X POST https://canary-web.fly.dev/api/ops/resume \
+  -H "X-Canary-Ops-Token: $CANARY_OPS_TOKEN"
 ```
 
-Treat this as a pre-deploy observation, not an atomic drain lock: a user can
-start work after the check. During the soft launch, announce a short maintenance
-window or otherwise pause generation intake, wait for `safe_to_deploy: true`,
-then deploy. A server-enforced drain mode is the next step before unattended CD.
+The guard polls every five seconds for up to 30 minutes. Timeout exits nonzero
+and **leaves admission drained**; errors never justify deploying anyway or
+automatically resuming. Inspect status and resolve the cause before choosing
+deploy or explicit resume. Drain state is process-local, not persisted across
+restart and not a distributed lock. A status-only idle observation cannot
+replace the authenticated drain-then-idle sequence for normal releases.
 
 ### Use the local operator desk
 
@@ -396,8 +456,10 @@ When you're ready to drop the gating posture and open to the public:
 - [ ] Configure custom SMTP in Supabase for deliverability.
 - [ ] Redeploy `canary-web` so the VITE build-args match the production URL
       (only needed if the Supabase URL changed).
-- [ ] Soak test: kill the machine mid-draw → confirm `/reset-stale` leaves the
-      user uncharged and the project recoverable.
+- [ ] In an isolated recovery exercise, interrupt Draw and inspect persisted jobs,
+      original-action recovery, and provider/ledger evidence. Do not promise that
+      `/reset-stale` makes an interrupted paid action uncharged, and do not use
+      production paid work as an unapproved crash test.
 
 ---
 

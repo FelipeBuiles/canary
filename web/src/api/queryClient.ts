@@ -1,4 +1,4 @@
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, hashKey } from "@tanstack/react-query";
 import { ApiError } from "./client";
 
 /**
@@ -15,9 +15,22 @@ export function retryPolicy(failureCount: number, error: unknown): boolean {
   return failureCount < 3;
 }
 
-export const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: { retry: retryPolicy },
-    mutations: { retry: retryPolicy },
-  },
-});
+export function createAccountQueryClient(account: string | null) {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: retryPolicy,
+        queryKeyHashFn: (key) => hashKey(["account", account, ...key]),
+      },
+      mutations: { retry: false },
+    },
+  });
+}
+
+export let queryClient = createAccountQueryClient(null);
+
+export function replaceAccountQueryClient(account: string | null) {
+  void queryClient.cancelQueries();
+  queryClient.clear();
+  queryClient = createAccountQueryClient(account);
+}
