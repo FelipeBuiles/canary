@@ -1,19 +1,16 @@
 """Couples credit guarantees with the two shapes of credited work.
 
-Generation jobs: each regen handler was doing the same dance — assert credits,
-create a job_id, wrap the runner in ai_request_context + debit_model_usage,
-check for an active duplicate, prune stale jobs, then enqueue.
-``enqueue_credited_job`` owns that coupling so handlers shrink to payload
-assembly + response formatting.
+Generation jobs reserve before publication and release after settlement or
+cancellation. The common reserved lifecycle owns this guarantee for every
+queued paid request.
 
 Stage runs: ``run_credited_stage`` owns the reserve → run → release dance.
 Per-call debits land in the AI client as each API call returns (see
 ai.client._settle_event_usage); the reservation is only an authorization hold
-and is always released, so a crash mid-stage loses at most the in-flight call.
+and is released after work and settlement; ambiguous settlement retains its hold.
 """
 
 import asyncio
-import uuid as uuid_lib
 from collections.abc import Awaitable, Callable
 from functools import wraps
 from pathlib import Path
@@ -36,7 +33,7 @@ from novel_to_comic.state import PipelineState
 from novel_to_comic.usage import ApiResult
 
 from .credits import (
-    assert_sufficient_credits,
+    assert_reservation_active,
     debit_model_usage,
     estimate_stage_credit_reservation,
     release_reservation,
@@ -108,6 +105,7 @@ async def run_credited_stage(
         ) from exc
 
     try:
+        assert_reservation_active(db, reservation_id)
         with ai_request_context(
             user_id=user_id,
             project_id=project_id,
@@ -141,34 +139,14 @@ def enqueue_credited_job(
 ) -> tuple[GenerationJob, bool]:
     """Find or create a generation job backed by a credit guarantee.
 
-    If ``estimate_credits`` is positive, raises 402 if the user cannot cover
-    the estimate.  If a matching job is already active, returns it immediately
-    (created=False).  Otherwise creates a new job whose runner calls ``work()``
-    inside an ``ai_request_context`` and debits the resulting usage on success.
+    Atomically reserves the estimate before queue publication. If a matching
+    job is already active, returns it without another hold. The runner executes
+    under the reservation's billing context and settles every returned usage.
 
     Returns ``(job, created)`` so the caller can tell if this was a dedup hit.
     """
-    if estimate_credits > 0:
-        assert_sufficient_credits(get_db(), user_id, estimate_credits, action=kind)
-
-    existing = find_active_generation_job(app, project_name=project_name, kind=kind, payload=payload)
-    if existing:
-        return existing, False
-
-    job_id = str(uuid_lib.uuid4())
-
-    async def _runner() -> None:
-        with ai_request_context(
-            user_id=user_id,
-            project_id=project_id,
-            project_name=project_dir.name,
-            workspace_id=str(project_dir.parent),
-            stage=stage,
-            job_id=job_id,
-            page_number=payload.get("page_number"),
-            is_correction=bool(payload.get("issue_ids") or payload.get("issue_id")),
-        ):
-            result = await work()
+    async def _work() -> ApiResult[Any]:
+        result = await work()
         # Remove successfully regenerated item from items_failed if it exists
         try:
             from novel_to_comic.state import load_state, save_state
@@ -198,29 +176,15 @@ def enqueue_credited_job(
                 "Failed to remove regenerated item from items_failed for stage %s",
                 stage
             )
-        if result.usage:
-            debit_model_usage(
-                get_db(),
-                user_id,
-                project_id,
-                result.usage,
-                stage=stage,
-                description=debit_description,
-                job_id=job_id,
-            )
+        return result
 
-    prune_finished_generation_jobs(app)
-    job = enqueue_generation_job(
-        app,
-        project_name=project_name,
-        kind=kind,
-        label=label,
-        payload=payload,
-        runner=_runner,
-        user_id=user_id,
-        semaphore=semaphore,
+    return enqueue_reserved_generation_job(
+        app, project_name=project_name, user_id=user_id,
+        project_id=project_id, project_dir=project_dir, stage=stage,
+        kind=kind, label=label, payload=payload, work=_work,
+        debit_description=debit_description, semaphore=semaphore,
+        reservation_credits=estimate_credits,
     )
-    return job, True
 
 
 @_serialize_frozen_enqueue
@@ -235,10 +199,13 @@ def enqueue_reserved_generation_job(
     kind: str,
     label: str,
     payload: dict[str, Any],
-    work: Callable[[], Awaitable[ApiResult[Any]]],
+    work: Callable[[], Awaitable[ApiResult[Any] | None]],
     debit_description: str,
     reservation_credits: int,
     semaphore: asyncio.Semaphore | None = None,
+    existing_hold: tuple[str | None, str] | None = None,
+    on_terminal: Callable[[], None] | None = None,
+    on_settled: Callable[[ApiResult[Any]], None] | None = None,
 ) -> tuple[GenerationJob, bool]:
     """Queue one request with a hold spanning execution, failure, or cancellation."""
 
@@ -249,19 +216,35 @@ def enqueue_reserved_generation_job(
         payload=payload,
     )
     if existing is not None:
+        try:
+            if existing_hold is not None and existing_hold[0] is not None:
+                release_reservation(get_db(), existing_hold[0])
+        finally:
+            if on_terminal is not None:
+                on_terminal()
         return existing, False
 
     db = get_db()
-    reservation_id, ledger_job_id = reserve_credits(
-        db,
-        user_id,
-        project_id,
-        stage,
-        reservation_credits,
+    reservation_id, ledger_job_id = existing_hold if existing_hold is not None else reserve_credits(
+        db, user_id, project_id, stage, reservation_credits,
     )
+    cleaned_up = False
+
+    def _cleanup() -> None:
+        nonlocal cleaned_up
+        if cleaned_up:
+            return
+        cleaned_up = True
+        try:
+            if reservation_id is not None:
+                release_reservation(db, reservation_id)
+        finally:
+            if on_terminal is not None:
+                on_terminal()
 
     async def _runner() -> None:
         try:
+            assert_reservation_active(db, reservation_id)
             with ai_request_context(
                 user_id=user_id,
                 project_id=project_id,
@@ -269,8 +252,13 @@ def enqueue_reserved_generation_job(
                 workspace_id=str(project_dir.parent),
                 stage=stage,
                 job_id=ledger_job_id,
+                page_number=payload.get("page_number"),
+                is_correction=bool(payload.get("issue_ids") or payload.get("issue_id")),
             ):
                 result = await work()
+            # Some multi-call operations settle each provider call themselves.
+            if result is None:
+                return
             # Every provider call this job made is settled under the same
             # ledger job, which keeps one audit row per call while rounding
             # whole credits once for the job as a whole.
@@ -286,9 +274,10 @@ def enqueue_reserved_generation_job(
                     description=debit_description,
                     job_id=ledger_job_id,
                 )
+            if on_settled is not None:
+                on_settled(result)
         finally:
-            if reservation_id is not None:
-                release_reservation(get_db(), reservation_id)
+            _cleanup()
 
     try:
         prune_finished_generation_jobs(app)
@@ -301,10 +290,10 @@ def enqueue_reserved_generation_job(
             runner=_runner,
             user_id=user_id,
             semaphore=semaphore,
+            on_cancel=_cleanup,
         )
     except BaseException:
-        if reservation_id is not None:
-            release_reservation(get_db(), reservation_id)
+        _cleanup()
         raise
     return job, True
 
@@ -478,6 +467,7 @@ async def run_credited_page_check(*, user_id: str, project_id: str, project_dir:
         estimate = credit_estimate_for_provider_cost(estimated_cost_usd, 'draw', reserve=True)
         reservation, job_id = reserve_credits(db, user_id, project_id, 'draw', estimate["reserved_credits"] or 0)
         try:
+            assert_reservation_active(db, reservation)
             with ai_request_context(user_id=user_id, project_id=project_id,
                                     project_name=project_dir.name, stage='draw', job_id=job_id,
                                     page_number=page_number):

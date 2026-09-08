@@ -47,6 +47,7 @@ def deployment_activity(app) -> dict[str, Any]:
     )
 
     counts = {
+        "admitting_requests": getattr(getattr(app.state, "admission", None), "active_requests", 0),
         "pipeline_tasks": pipeline_tasks,
         "style_tasks": style_tasks,
         "queued_generation_jobs": queued_jobs,
@@ -58,5 +59,6 @@ def deployment_activity(app) -> dict[str, Any]:
     return {
         "status": "idle" if safe_to_deploy else "busy",
         "safe_to_deploy": safe_to_deploy,
+        "draining": getattr(getattr(app.state, "admission", None), "draining", False),
         "counts": counts,
     }

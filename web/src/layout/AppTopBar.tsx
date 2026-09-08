@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { supabase } from "../lib/supabase";
 import { useCreditBalance } from "../api/queries";
-import { useAuth } from "../hooks/useAuth";
+import { signOut, useAuth } from "../hooks/useAuth";
 import { useCountUp } from "../hooks/useCountUp";
 import { useTopBarSlotRegister } from "./TopBarSlot";
 import { cn } from "../lib/cn";
@@ -122,7 +121,7 @@ export function AppTopBar() {
               ))}
               <button
                 type="button"
-                onClick={() => supabase.auth.signOut()}
+                onClick={() => void signOut()}
                 className="flex min-h-12 w-full items-center gap-4 border-t border-ink-black/10 px-5 text-left font-body text-[0.88rem] font-bold tracking-[0.04em] text-hero-red hover:bg-chip-red/40"
               >
                 <span className="font-meta text-[0.62rem]">→</span>

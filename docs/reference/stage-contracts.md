@@ -127,9 +127,64 @@ wraps through remaining flagged pages. Reading Adaptation/Plan stays read-only.
 
 ## Recovery and costs
 
+Paid project actions require `Idempotency-Key` (nonblank, at most 200 characters).
+The persistent request journal keys replay by verified account, HTTP method/path,
+and action key; the fingerprint covers query and canonical body (multipart file
+bytes, not its random boundary). A saved response replays without dispatch, even
+while drained, with `Idempotency-Replayed: true`. Different input returns 409
+`idempotency_conflict`; an admitted request without a recorded response returns
+409 `idempotency_indeterminate`. Missing keys return 400
+`idempotency_key_required`. Inspect status, jobs, and saved output before explicit
+recovery; never automatically retry a paid submission or replace its uncertain
+receipt with a fresh key. Request hashes are not provider-side deduplication.
+
+Browser unresolved-action receipts survive reload and are account/input-scoped.
+Account changes abort tracked requests, reject late responses, replace the query
+cache, disconnect pipeline events, and clear style-job and credit-resume state.
+Do not reuse another account's cached project, balance, job, or action state.
+
+`GET /jobs` (also `/generation-jobs`) returns `{"jobs": [...]}` for the verified
+account/project, optionally filtered by repeated `ids` query parameters. It
+combines live jobs with persisted observations. After restart, previously
+queued/running observations become failed/recoverable, not automatically queued.
+Pipeline status and saved artifacts remain recovery authority. Pipeline and
+style SSE broadcast to independent bounded subscribers: 128 events of in-process
+reconnect history and a 256-event queue per subscriber, dropping oldest overflow.
+This is not a durable event log or a substitute for fetching status/jobs.
+
+Cast, instructed Cast rewrites, style direction/suggestions/samples/validation,
+and covers use credit reservations before paid work. Instructed Cast reserves
+before the text rewrite and transfers that hold to the image job; rejected
+rewrites still settle recorded text usage. Holds have a process owner and a
+one-hour lease, renewed every 30 seconds; work checks ownership/expiry before
+starting. Startup requires the reviewed lease/settlement SQL migration before
+admission. Only expired, never-started holds are automatically reclaimable.
+Started-expired holds, legacy unowned holds, and ambiguous settlement require
+operator reconciliation, not global startup/reset release. Ledger settlement
+may replay its identical idempotent database operation; this is not a retry of
+the paid provider request.
+
+Rejected reruns (including missing style or reservation denial) preserve state
+and artifacts. Admitted non-Draw replacements still use stage-owned cleanup:
+there is no general rollback on later failure. Draw replacements retain render
+revisions and recover the original unfinished action before accepting new input.
+
 Adapt and Plan retain input-keyed paid responses outside stage cleanup. Keys
 include model and generation input; reused responses still undergo validation.
-Draw stores render provenance before OCR so text-check retries do not redraw.
+Draw durably saves paid image bytes/provenance in `.pending`, then publishes
+the render with an `.unfinished` identity marker. Recovery retains the original
+frozen request, parent revision, and usage call IDs through publication/OCR
+failures; the unfinished marker clears only after successful operation completion
+and, for queued jobs, post-settlement acknowledgement. A visible render alone
+does not prove settlement or completion. Resume that original action rather than
+redrawing or submitting a different correction.
+
+Versioned raw OCR observations are saved separately from derived analysis.
+Current validators can revalidate saved results provider-free; missing downstream
+artifacts do not justify another OCR call. Proven panel-order contradictions
+block; uncertain order is a nonblocking editorial finding for visual review,
+not proof of a defect or of correctness.
+
 Stage estimates include page references and OCR; Cast estimates include state
 references. Provider usage and credit settlement remain distinct from estimates
 and stage-progress totals. Missing usage is not evidence of zero provider cost.

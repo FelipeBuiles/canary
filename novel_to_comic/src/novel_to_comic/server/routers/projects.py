@@ -61,9 +61,7 @@ from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 
 from ..auth import get_current_user
 from ..credits import (
-    assert_sufficient_credits,
     credit_estimate_for_provider_cost,
-    debit_model_usage,
     provider_usd_to_credits,
 )
 from ..db import get_db
@@ -72,7 +70,6 @@ from ..ratelimit import cost_limit, create_limit, limiter
 from ..product_events import capture_server_event
 from .styles import clear_style_failures_after_selection, is_style_selected
 from ..generation_jobs import (
-    enqueue_generation_job,
     generation_job_payload,
     generation_semaphore_for_config,
     prune_finished_generation_jobs,
@@ -183,9 +180,9 @@ def _finish_ready(project_dir: Path) -> bool:
 
 
 def _is_project_running(user_id: str, project_id: str, request: Request) -> bool:
-    key = project_key(user_id, project_id)
-    task = request.app.state.running_tasks.get(key)
-    return task is not None and not task.done()
+    from ..admission import project_busy
+
+    return project_busy(request.app, project_key(user_id, project_id))
 
 
 def _cover_path(project_dir: Path) -> Path:
@@ -314,7 +311,7 @@ async def _generate_project_cover(
     project_dir: Path,
     user_id: str,
     project_id: str | None,
-) -> Path:
+):
     from novel_to_comic.state import load_state, record_misc_usage, save_state
 
     bible_path = project_dir / "story_bible.json"
@@ -371,14 +368,7 @@ async def _generate_project_cover(
         state = load_state(project_dir)
         record_misc_usage(state, result.usage)
         save_state(state, project_dir)
-        debit_model_usage(
-            get_db(),
-            user_id,
-            project_id,
-            result.usage,
-            description="Model call: project cover",
-        )
-    return output_path
+    return result
 
 
 _ALLOWED_EXTENSIONS = {".txt", ".epub", ".pdf"}
@@ -736,13 +726,7 @@ async def generate_cover(
     if not (project_dir / "story_bible.json").exists():
         raise HTTPException(404, "Story bible not found — run extract first.")
 
-    # Credit pre-check before queuing: cover generation calls the image model
-    # for real (see _generate_project_cover) and is debited on success, so a
-    # zero-balance user would otherwise drive their balance negative.
     cover_estimate = _project_cover_credit_estimate(config)
-    assert_sufficient_credits(
-        get_db(), user_id, cover_estimate["estimate_credits"], action="project_cover",
-    )
 
     existing = _active_project_cover_job(request, pkey)
     if existing:
@@ -752,17 +736,24 @@ async def generate_cover(
             "job": generation_job_payload(request.app, existing),
         }
 
-    async def _runner() -> None:
-        await _generate_project_cover(config, project_dir, user_id, project_id)
+    async def _runner():
+        return await _generate_project_cover(config, project_dir, user_id, project_id)
 
     prune_finished_generation_jobs(request.app)
-    job = enqueue_generation_job(
+    from ..credited_job import enqueue_credited_job
+
+    job, _created = enqueue_credited_job(
         request.app,
         project_name=pkey,
         kind="project_cover",
         label=f"{state.project_name} cover",
         payload={"path": "cover/cover.png"},
-        runner=_runner,
+        work=_runner,
+        project_id=project_id,
+        project_dir=project_dir,
+        stage="cover",
+        estimate_credits=cover_estimate["estimate_credits"],
+        debit_description="Model call: project cover",
         user_id=user_id,
         semaphore=generation_semaphore_for_config(request.app, config),
     )

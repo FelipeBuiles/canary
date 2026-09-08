@@ -164,91 +164,56 @@ def test_audit_pricing_checks_all_quality_preset_aliases(monkeypatch):
     assert expected_aliases.issubset(set(resolver.seen))
 
 
-def test_debit_model_usage_persists_pricing_snapshot():
-    class _Table:
-        def __init__(self):
-            self.payload = None
-            self.on_conflict = None
+def test_committed_settlement_response_loss_preserves_incremental_zero():
+    """Retry a committed tiny call without replacing its zero-credit audit row."""
+    from unittest.mock import patch
 
-        def upsert(self, payload, *, on_conflict):
-            self.payload = payload
-            self.on_conflict = on_conflict
+    class Db:
+        amount = None
+        writes = 0
+        responses = 0
+
+        def rpc(self, name, params):
             return self
 
         def execute(self):
-            return SimpleNamespace(data=[])
-
-    class _Db:
-        def __init__(self):
-            self.table_obj = _Table()
+            if self.amount is None:
+                # A previous call in this job already rounded the total up to 1.
+                self.amount = 0
+                self.writes += 1
+            self.responses += 1
+            if self.responses == 1:
+                raise TimeoutError("committed, response lost")
+            return SimpleNamespace(data=self.amount)
 
         def table(self, name):
-            assert name == "credit_ledger"
-            return self.table_obj
+            return self
 
-    db = _Db()
-    usage = UsageRecord(
-        provider="openai",
-        model="plan-balanced",
-        provider_model="openai/gpt-5.4-mini",
-        operation="text",
-        input_tokens=1000,
-        output_tokens=1000,
-    )
+        def upsert(self, payload, **kwargs):
+            self.amount = payload["amount_credits"]
+            self.writes += 1
+            return self
 
-    debit_model_usage(
-        db,
-        "user_1",
-        "project_1",
-        usage,
-        stage="plan",
-        description="Model call",
-        job_id="00000000-0000-0000-0000-000000000001",
-    )
-
-    assert db.table_obj.on_conflict == "usage_call_id"
-    assert db.table_obj.payload["pricing_snapshot"]
+    db = Db()
+    usage = UsageRecord(provider="openai", model="plan-balanced", operation="text", input_tokens=1)
+    with patch("novel_to_comic.server.credits.usage_to_credit_debit", return_value=(1, 0.001)):
+        debit_model_usage(db, "user", None, usage, description="small call", job_id="job")
+    assert db.amount == 0
+    assert db.writes == 1
 
 
-def test_debit_model_usage_prefers_atomic_job_level_settlement():
-    class _Rpc:
-        def execute(self):
-            return SimpleNamespace(data=1)
+def test_unresolved_settlement_retains_authorization():
+    import pytest
+    from unittest.mock import MagicMock, patch
+    from novel_to_comic.server import credits
 
-    class _Db:
-        def __init__(self):
-            self.name = None
-            self.params = None
-
-        def rpc(self, name, params):
-            self.name = name
-            self.params = params
-            return _Rpc()
-
-        def table(self, _name):  # pragma: no cover - assertion helper
-            raise AssertionError("atomic RPC should own the insert")
-
-    db = _Db()
-    usage = UsageRecord(
-        provider="gemini",
-        model="prompt-balanced",
-        provider_model="vertex_ai/gemini-3.1-flash-lite",
-        operation="text",
-        input_tokens=800,
-        output_tokens=200,
-    )
-
-    debit_model_usage(
-        db,
-        "user_1",
-        "project_1",
-        usage,
-        stage="style",
-        description="Model call: style.suggest",
-        job_id="00000000-0000-0000-0000-000000000001",
-    )
-
-    assert db.name == "settle_model_usage_credits"
-    assert db.params["p_usage_call_id"] == usage.call_id
-    assert db.params["p_cost_usd"] > 0
-    assert db.params["p_credits_per_usd"] > 0
+    db = MagicMock()
+    db.rpc.return_value.execute.side_effect = TimeoutError("outcome unknown")
+    usage = UsageRecord(provider="openai", model="plan-balanced", operation="text", input_tokens=1)
+    with patch.dict(credits._reservation_jobs, {"hold": "job"}), \
+         patch.object(credits, "_unsettled_jobs", set()), \
+         patch.object(credits, "usage_to_credit_debit", return_value=(1, 0.001)):
+        with pytest.raises(TimeoutError):
+            debit_model_usage(db, "user", None, usage, description="small call", job_id="job")
+        credits.release_reservation(db, "hold")
+    db.table.assert_not_called()

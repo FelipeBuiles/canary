@@ -9,6 +9,7 @@ truthful cascade impact, reload persistence, and the apply guards
 from __future__ import annotations
 
 import asyncio
+from uuid import uuid4
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -199,7 +200,11 @@ def _client(
     app = create_app(tmp_path)
     app.dependency_overrides[get_project] = lambda: (project_dir, Config(), state)
     app.dependency_overrides[get_current_user] = lambda: "test-user"
-    return TestClient(app)
+    client = TestClient(app)
+    client.event_hooks["request"].append(
+        lambda request: request.headers.setdefault("Idempotency-Key", str(uuid4()))
+    )
+    return client
 
 
 def test_editorial_get_exposes_findings_with_source_beat_links(tmp_path: Path):
@@ -406,6 +411,9 @@ def test_apply_guards_unknown_stale_applied_and_busy(tmp_path: Path):
     app.dependency_overrides[get_project] = lambda: (project_dir, Config(), state)
     app.dependency_overrides[get_current_user] = lambda: "test-user"
     client = TestClient(app)
+    client.event_hooks["request"].append(
+        lambda request: request.headers.setdefault("Idempotency-Key", str(uuid4()))
+    )
     target = TargetArtifacts(project_dir)
     res = client.post(
         "/api/projects/test_project/story-changes/nope/apply",

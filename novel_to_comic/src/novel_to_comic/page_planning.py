@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from collections.abc import Awaitable, Callable, Mapping
@@ -29,6 +28,7 @@ from novel_to_comic.models.validation import (
     ValidationAttempt,
 )
 from novel_to_comic.stage_runtime import StageRuntime
+from novel_to_comic.paid_shards import run_paid_shards
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import ApiResult, estimate_text_cost
 
@@ -1169,30 +1169,28 @@ async def _produce_book_plan_two_pass(
                 for start, stop in ranges
             )
         )
-        semaphore = asyncio.Semaphore(4)
 
         async def generate_batch(
             start: int, stop: int
         ) -> tuple[int, int, _BookPlanDraft]:
-            async with semaphore:
-                draft = await _generate_detail_batch(
-                    adaptation,
-                    references,
-                    page_map,
-                    start=start,
-                    stop=stop,
-                    generate=generate,
-                    ctx=ctx,
-                    story_instruction=story_instruction,
-                )
+            draft = await _generate_detail_batch(
+                adaptation,
+                references,
+                page_map,
+                start=start,
+                stop=stop,
+                generate=generate,
+                ctx=ctx,
+                story_instruction=story_instruction,
+            )
             ctx.record_item_done()
             return start, stop, draft
 
         try:
-            batches = list(
-                await asyncio.gather(
-                    *(generate_batch(start, stop) for start, stop in ranges)
-                )
+            batches = await run_paid_shards(
+                [lambda start=start, stop=stop: generate_batch(start, stop)
+                 for start, stop in ranges],
+                limit=4,
             )
         except PlanInvariantError as error:
             _persist_validation(

@@ -143,10 +143,8 @@ jobs:
   deploy:
     name: Deploy production
     needs: [backend, web, docker]
-    # GitHub's required-reviewer environment rule is not available on every
-    # repository plan. Keep production human-triggered until Canary has a true
-    # server-enforced drain mode; workflow_dispatch still runs every CI gate
-    # before this job can start.
+    # Production remains human-triggered. The authenticated drain barrier below
+    # excludes new admissions before checking idle and stays set on failure.
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
@@ -185,7 +183,7 @@ jobs:
         with:
           version: 0.4.49
 
-      - name: Confirm production is idle
+      - name: Drain production and wait for idle
         env:
           CANARY_OPS_TOKEN: ${{ secrets.CANARY_OPS_TOKEN }}
           # Keep the deployment guard off the public Cloudflare proxy. The

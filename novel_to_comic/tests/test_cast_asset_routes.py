@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -120,10 +122,24 @@ def _rewrite(addendum: str = "Singe the left sleeve and darken the cuff.") -> Ap
 
 
 def _apply(project_dir: Path, app, **kwargs):
+    db = MagicMock()
+
+    def rpc(name, params):
+        if name == "reserve_stage_credits":
+            value = str(uuid.uuid4())
+        elif name == "check_credit_reservation_lease":
+            value = True
+        elif name == "release_credit_reservation":
+            value = None
+        else:
+            raise AssertionError(f"unexpected billing RPC: {name}")
+        return SimpleNamespace(execute=lambda: SimpleNamespace(data=value))
+
+    db.rpc.side_effect = rpc
     defaults = dict(
         config=Config(),
         project_dir=project_dir,
-        db=MagicMock(),
+        db=db,
         user_id="u1",
         project_id="p1",
         asset_type="character",
@@ -131,7 +147,8 @@ def _apply(project_dir: Path, app, **kwargs):
         instruction="Singe her left sleeve.",
         app=app,
     )
-    return asyncio.run(apply_asset_instruction(**{**defaults, **kwargs}))
+    with patch("novel_to_comic.server.credited_job.get_db", return_value=db):
+        return asyncio.run(apply_asset_instruction(**{**defaults, **kwargs}))
 
 
 # --- Routing ---------------------------------------------------------------
@@ -221,11 +238,9 @@ def test_an_instruction_is_recorded_before_the_regeneration_is_queued(tmp_path: 
         "novel_to_comic.clients.text.generate_json",
         return_value=_rewrite(),
     ), patch(
-        "novel_to_comic.server.credits.assert_sufficient_credits"
-    ), patch(
         "novel_to_comic.server.credits.debit_model_usage"
     ), patch(
-        "novel_to_comic.server.generation_jobs.enqueue_generation_job",
+        "novel_to_comic.server.credited_job.enqueue_generation_job",
         side_effect=_capture,
     ):
         result = _apply(project_dir, app)
@@ -241,7 +256,7 @@ def test_the_instruction_log_keeps_the_authors_words_and_the_rewrite(tmp_path: P
     app = _app()
     with patch(
         "novel_to_comic.clients.text.generate_json", return_value=_rewrite()
-    ), patch("novel_to_comic.server.credits.assert_sufficient_credits"), patch(
+    ), patch(
         "novel_to_comic.server.credits.debit_model_usage"
     ):
         _apply(project_dir, app)
@@ -269,7 +284,7 @@ def test_a_prior_addendum_is_offered_to_the_rewrite(tmp_path: Path):
 
     with patch(
         "novel_to_comic.clients.text.generate_json", side_effect=_fake_generate_json
-    ), patch("novel_to_comic.server.credits.assert_sufficient_credits"), patch(
+    ), patch(
         "novel_to_comic.server.credits.debit_model_usage"
     ):
         _apply(project_dir, app)
@@ -288,7 +303,7 @@ def test_a_state_edit_describes_the_state_not_the_base_character(tmp_path: Path)
 
     with patch(
         "novel_to_comic.clients.text.generate_json", side_effect=_fake_generate_json
-    ), patch("novel_to_comic.server.credits.assert_sufficient_credits"), patch(
+    ), patch(
         "novel_to_comic.server.credits.debit_model_usage"
     ):
         _apply(project_dir, app, state_id="burned")
@@ -311,9 +326,7 @@ def test_an_unknown_asset_is_rejected_before_any_model_call(tmp_path: Path):
     app = _app()
     with patch(
         "novel_to_comic.clients.text.generate_json"
-    ) as generate, patch(
-        "novel_to_comic.server.credits.assert_sufficient_credits"
-    ):
+    ) as generate:
         with pytest.raises(HTTPException) as exc_info:
             _apply(project_dir, app, asset_id="char_404")
         assert exc_info.value.status_code == 404
@@ -329,7 +342,7 @@ def test_props_and_locations_route_to_their_own_asset(tmp_path: Path):
     app = _app()
     with patch(
         "novel_to_comic.clients.text.generate_json", return_value=_rewrite()
-    ), patch("novel_to_comic.server.credits.assert_sufficient_credits"), patch(
+    ), patch(
         "novel_to_comic.server.credits.debit_model_usage"
     ):
         prop = _apply(project_dir, app, asset_type="prop", asset_id="prop_001")
@@ -346,7 +359,7 @@ def test_a_second_edit_is_refused_while_one_is_still_running(tmp_path: Path):
     app = _app()
     with patch(
         "novel_to_comic.clients.text.generate_json", return_value=_rewrite()
-    ), patch("novel_to_comic.server.credits.assert_sufficient_credits"), patch(
+    ), patch(
         "novel_to_comic.server.credits.debit_model_usage"
     ):
         _apply(project_dir, app)

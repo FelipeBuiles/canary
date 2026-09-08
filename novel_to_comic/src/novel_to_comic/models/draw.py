@@ -303,6 +303,7 @@ class OCRExtraction(BaseModel):
     incidental_text: tuple[OCRTextObservation, ...] = ()
     observed_regions: tuple[ObservedRegion, ...] = ()
     observed_reading_order: tuple[str, ...] = ()
+    reading_order_proven: bool = False
 
     @model_validator(mode="after")
     def _validate_evidence_references(self) -> "OCRExtraction":
@@ -330,6 +331,18 @@ class OCRExtraction(BaseModel):
         return self
 
 
+class RawOCRObservation(BaseModel):
+    """Reusable provider observations, independent of the creative validator."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    schema_version: int = 1
+    page_number: int = Field(ge=1)
+    render_revision: int = Field(ge=1)
+    render_image_sha256: str = Field(min_length=64, max_length=64)
+    extraction: OCRExtraction
+    usage: UsageRecord | None = None
+
+
 class LetteringMatch(BaseModel):
     """Exact canonical-to-observed match evidence in page reading order."""
 
@@ -349,6 +362,9 @@ class RenderAnalysis(BaseModel):
     page_number: int = Field(ge=1)
     render_revision: int = Field(ge=1)
     render_image_sha256: str = Field(min_length=64, max_length=64)
+    validator_version: str = "legacy"
+    comic_page_sha256: str = ""
+    reading_order_proven: bool = False
     punctuation_policy: Literal["typographic_lettering_v2"] = "typographic_lettering_v2"
     recognized_lettering: dict[str, str] = Field(default_factory=dict)
     ocr_observations: tuple[OCRTextObservation, ...] = ()
@@ -586,6 +602,14 @@ class PageIssue(BaseModel):
     status: Literal["open", "revised", "accepted", "resolved", "dismissed"]
     resolution_revision: int | None = Field(default=None, ge=1)
     dismissal_reason: str | None = None
+
+    @property
+    def requires_resolution(self) -> bool:
+        """Unproven OCR ordering is advisory, not an export approval gate."""
+        return not (
+            self.classification == "editorial_issue"
+            and self.issue_type == "unverified_lettering_order"
+        )
 
     @model_validator(mode="after")
     def _validate_resolution(self) -> "PageIssue":

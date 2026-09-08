@@ -30,7 +30,7 @@ export function ProjectSettingsPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { language, setLanguage, t } = useI18n();
-  const { data: config } = useProjectConfig(id);
+  const { data: config, error: configError } = useProjectConfig(id);
   const { data: status } = useProjectStatus(id);
   const updateConfig = useUpdateProjectConfig();
   const deleteMutation = useDeleteProject();
@@ -49,7 +49,7 @@ export function ProjectSettingsPage() {
     if (!id) return;
     deleteMutation.mutate(
       { id },
-      { onSuccess: () => navigate("/") },
+      { onSuccess: () => navigate("/", { state: { projectDeleted: projectTitle } }) },
     );
   }
 
@@ -69,6 +69,14 @@ export function ProjectSettingsPage() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
       >
+        {configError && <p role="alert" className="text-sm text-hero-red">{configError.message}</p>}
+        {activeTab !== "delete" && (
+          <div aria-live="polite" aria-atomic="true">
+            {updateConfig.isPending && <p className="text-sm">{t("Saving…")}</p>}
+            {updateConfig.isError && <p role="alert" className="text-sm text-hero-red">{updateConfig.error.message}</p>}
+            {updateConfig.isSuccess && <p role="status" className="text-sm">{t("Settings saved.")}</p>}
+          </div>
+        )}
         {activeTab === "language" && (
           <Card>
             <SettingsRow label={t("UI LANGUAGE")} hint={t("Controls the studio interface language. Stored locally.")}>
@@ -189,6 +197,7 @@ export function ProjectSettingsPage() {
         confirmInput={projectTitle}
         confirmLabel="Delete Project"
         busy={deleteMutation.isPending}
+        error={deleteMutation.error?.message}
         destructive
         onConfirm={handleDelete}
         onClose={() => setShowDeleteConfirm(false)}

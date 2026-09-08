@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import uuid4
 from starlette.testclient import TestClient
 from unittest.mock import MagicMock
 
@@ -127,7 +128,11 @@ def _client(
     app = create_app(tmp_path)
     app.dependency_overrides[get_project] = lambda: (project_dir, Config(), state)
     app.dependency_overrides[get_current_user] = lambda: "test-user"
-    return TestClient(app, raise_server_exceptions=raise_server_exceptions)
+    client = TestClient(app, raise_server_exceptions=raise_server_exceptions)
+    client.event_hooks["request"].append(
+        lambda request: request.headers.setdefault("Idempotency-Key", str(uuid4()))
+    )
+    return client
 
 
 def test_invalid_persisted_adaptation_is_a_concise_conflict(tmp_path: Path):

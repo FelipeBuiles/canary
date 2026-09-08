@@ -1,4 +1,6 @@
 import { supabase } from "../lib/supabase";
+import { accountEpoch, assertAccountEpoch, trackAccountRequest } from "../lib/accountEpoch";
+import { pendingAction } from "./paidAction";
 
 const BASE = "/api";
 
@@ -62,19 +64,36 @@ export async function apiFetch<T>(
   path: string,
   options?: RequestInit,
 ): Promise<T> {
+  const epoch = accountEpoch();
   const { data: { session } } = await supabase.auth.getSession();
+  assertAccountEpoch(epoch);
+  const method = options?.method?.toUpperCase() ?? "GET";
+  const action = session && !["GET", "HEAD", "OPTIONS"].includes(method) && path.startsWith("/projects/")
+    ? await pendingAction(session.user.id, method, path, options?.body)
+    : null;
+  assertAccountEpoch(epoch);
+  const controller = new AbortController();
+  const untrack = trackAccountRequest(controller);
   const isFormData = options?.body instanceof FormData;
   const headers: Record<string, string> = {
     ...(isFormData ? {} : { "Content-Type": "application/json" }),
     ...(session ? { Authorization: `Bearer ${session.access_token}` } : {}),
     ...(options?.headers as Record<string, string> | undefined),
+    ...(action ? { "Idempotency-Key": action.key } : {}),
   };
+  try {
   const res = await fetch(`${BASE}${path}`, {
     ...options,
+    signal: options?.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal,
     headers,
   });
+  assertAccountEpoch(epoch);
   if (!res.ok) {
     const body = await res.text();
+    assertAccountEpoch(epoch);
+    // 409 can mean accepted but indeterminate: retain its receipt, never
+    // silently create a fresh paid action. Other 4xx responses rejected it.
+    if (res.status < 500 && res.status !== 409) action?.complete();
     let message = body;
     let detail: unknown = body;
     try {
@@ -94,5 +113,11 @@ export async function apiFetch<T>(
     }
     throw new ApiError(res.status, message);
   }
-  return res.json();
+  const result = await res.json();
+  assertAccountEpoch(epoch);
+  action?.complete();
+  return result;
+  } finally {
+    untrack();
+  }
 }

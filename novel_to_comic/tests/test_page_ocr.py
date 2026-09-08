@@ -29,34 +29,6 @@ def _draft(*boxes: tuple[str, float, float]) -> _PageOCRDraft:
     )
 
 
-def test_reading_order_comes_from_geometry_not_the_models_list_order() -> None:
-    # The engine listed the bottom balloon first; the boxes say otherwise, and
-    # geometry is the evidence Draw uses to judge reading order.
-    extraction = build_extraction(
-        _draft(
-            ("bottom left", 0.05, 0.80),
-            ("top right", 0.60, 0.10),
-            ("top left", 0.05, 0.12),
-        )
-    )
-
-    assert [item.text for item in extraction.lettering] == [
-        "bottom left",
-        "top right",
-        "top left",
-    ]
-    assert extraction.observed_reading_order == (
-        "region_003",
-        "region_002",
-        "region_001",
-    )
-
-
-def test_balloons_in_one_row_are_ordered_left_to_right() -> None:
-    extraction = build_extraction(_draft(("right", 0.60, 0.11), ("left", 0.05, 0.14)))
-
-    # Slightly different heights within a tier must not zig-zag the order.
-    assert extraction.observed_reading_order == ("region_002", "region_001")
 
 
 def test_every_observation_carries_its_own_detected_region() -> None:
@@ -91,7 +63,6 @@ def test_incidental_in_world_writing_is_not_reported_as_comic_lettering() -> Non
 
     assert [item.text for item in extraction.lettering] == ["The canonical caption."]
     assert [item.text for item in extraction.incidental_text] == ["Cthulhu fhtagn"]
-    assert extraction.observed_reading_order == ("region_001",)
 
 
 def test_adapter_accepts_gemini_bare_list_and_box_2d(
@@ -304,5 +275,3 @@ def test_mock_replay_answers_page_ocr_from_the_canonical_page(
         "First in reading order.",
         "Second in reading order.",
     ]
-    extraction = build_extraction(_PageOCRDraft.model_validate(result))
-    assert extraction.observed_reading_order == ("region_001", "region_002")

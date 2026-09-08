@@ -1,3 +1,4 @@
+import { accountIdentity } from "../lib/accountEpoch";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getPageRenderCorrection,
@@ -32,6 +33,7 @@ function invalidatePageReview(qc: ReturnType<typeof useQueryClient>, project: st
     qc.invalidateQueries({ queryKey: ["project", project, "page-visual-review", pageNumber] });
   }
   qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+  qc.invalidateQueries({ queryKey: ["project", project, "generation-jobs"] });
   qc.invalidateQueries({ queryKey: ["provider-usage", project] });
 }
 
@@ -144,11 +146,11 @@ export interface DraftTarget {
 }
 
 export function draftStorageKey(project: string, pageNumber: number, target: DraftTarget): string {
-  return `canary.revision-draft:${project}:${pageNumber}:${target.comicPageRevision}:${target.parentRenderRevision}`;
+  return `${draftKeyPrefix(project, pageNumber)}${target.comicPageRevision}:${target.parentRenderRevision}`;
 }
 
 function draftKeyPrefix(project: string, pageNumber: number): string {
-  return `canary.revision-draft:${project}:${pageNumber}:`;
+  return `canary.revision-draft:v2:${accountIdentity ?? "signed-out"}:${project}:${pageNumber}:`;
 }
 
 export function loadRevisionDraft(

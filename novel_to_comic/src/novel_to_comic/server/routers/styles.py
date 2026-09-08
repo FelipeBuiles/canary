@@ -54,10 +54,11 @@ from ..credits import (
     release_reservation,
     reserve_credits,
 )
+from ..credited_job import enqueue_reserved_generation_job
+from ..event_channel import EventChannel
 from ..db import get_db
 from ..deps import get_project, project_key
 from ..generation_jobs import (
-    enqueue_generation_job,
     find_active_generation_job,
     generation_job_payload,
     generation_semaphore_for_config,
@@ -523,6 +524,17 @@ async def create_style_direction(
             style_guard.set_result(None)
         raise
 
+    def _terminal() -> None:
+        try:
+            if lifecycle_owned and state.stages["style"].status == StageStatus.RUNNING:
+                fail_stage(state, "style", "Style generation did not complete")
+                save_state(state, project_dir)
+        finally:
+            if not style_guard.done():
+                style_guard.set_result(None)
+            if request.app.state.style_tasks.get(pkey) is style_guard:
+                request.app.state.style_tasks.pop(pkey, None)
+
     async def _runner() -> None:
         try:
             with ai_request_context(
@@ -563,28 +575,23 @@ async def create_style_direction(
                 fail_stage(state, "style", str(exc) or type(exc).__name__)
                 save_state(state, project_dir)
             raise
-        finally:
-            if reservation_id:
-                release_reservation(db, reservation_id)
-            if not style_guard.done():
-                style_guard.set_result(None)
-            if request.app.state.style_tasks.get(pkey) is style_guard:
-                request.app.state.style_tasks.pop(pkey, None)
 
     try:
         prune_finished_generation_jobs(request.app)
-        job = enqueue_generation_job(
+        job, _created = enqueue_reserved_generation_job(
             request.app, project_name=pkey, kind="style_sample",
             label=candidate["label"], payload={"id": candidate["id"], "index": index},
-            runner=_runner,
-            user_id=user_id,
+            work=_runner, user_id=user_id, project_id=project_id,
+            project_dir=project_dir, stage="style",
+            debit_description="Style direction", reservation_credits=required,
+            existing_hold=(reservation_id, job_id), on_terminal=_terminal,
             semaphore=generation_semaphore_for_config(request.app, config),
         )
     except BaseException:
         if lifecycle_owned:
             fail_stage(state, "style", "Failed to enqueue style generation")
             save_state(state, project_dir)
-        if reservation_id:
+        if reservation_id and not style_guard.done():
             release_reservation(db, reservation_id)
         if request.app.state.style_tasks.get(pkey) is style_guard:
             request.app.state.style_tasks.pop(pkey, None)
@@ -641,9 +648,27 @@ async def suggest_styles(
     # Share one job_id across reservation + every per-call debit so the credit
     # ledger collapses the batch into a single grouped row.
     reservation_id, job_id = reserve_credits(db, user_id, project_id, "style", required)
-    queue: asyncio.Queue | None = None
+    queue: EventChannel | None = None
     lifecycle_owned = False
     lifecycle_started = False
+    style_guard = asyncio.get_running_loop().create_future()
+
+    def _terminal() -> None:
+        try:
+            if not any(
+                event["type"] in ("stage_complete", "stage_fail")
+                for event in queue.history
+            ):
+                message = "Style suggestion job did not complete"
+                queue.put_nowait({"type": "stage_fail", "stage": "style_suggest", "message": message})
+                if lifecycle_owned:
+                    fail_stage(state, "style", message)
+                    save_state(state, project_dir)
+        finally:
+            if not style_guard.done():
+                style_guard.set_result(None)
+            if style_running.get(pkey) is style_guard:
+                style_running.pop(pkey, None)
 
     async def _job():
         operation_feature = "style.suggestions"
@@ -742,14 +767,10 @@ async def suggest_styles(
                     "stage=style_suggest feature=%s model=%s error=%s",
                     *log_args,
                 )
-        finally:
-            if reservation_id:
-                release_reservation(db, reservation_id)
-            if style_running.get(pkey) is asyncio.current_task():
-                style_running.pop(pkey, None)
+            raise
 
     try:
-        queue = asyncio.Queue()
+        queue = EventChannel()
         request.app.state.event_queues[pkey] = queue
         lifecycle_owned = state.stages["style"].status not in (
             StageStatus.AWAITING_REVIEW, StageStatus.COMPLETE,
@@ -758,8 +779,16 @@ async def suggest_styles(
             begin_stage(state, "style", 4 if direction else 5)
             lifecycle_started = True
             save_state(state, project_dir)
-        task = asyncio.create_task(_job())
-        style_running[pkey] = task
+        style_running[pkey] = style_guard
+        enqueue_reserved_generation_job(
+            request.app, project_name=pkey, user_id=user_id,
+            project_id=project_id, project_dir=project_dir, stage="style",
+            kind="style_suggest", label="Style suggestions",
+            payload={"direction_id": direction_id}, work=_job,
+            debit_description="Style suggestions", reservation_credits=required,
+            existing_hold=(reservation_id, job_id), on_terminal=_terminal,
+            semaphore=generation_semaphore_for_config(request.app, config),
+        )
     except BaseException as exc:
         if lifecycle_started:
             fail_stage(state, "style", str(exc) or type(exc).__name__)
@@ -770,7 +799,8 @@ async def suggest_styles(
         if request.app.state.event_queues.get(pkey) is queue:
             request.app.state.event_queues.pop(pkey, None)
         style_running.pop(pkey, None)
-        release_reservation(db, reservation_id)
+        if not style_guard.done():
+            release_reservation(db, reservation_id)
         raise
     return {"status": "started"}
 
@@ -813,15 +843,6 @@ async def generate_style_samples(
     if not bible:
         raise HTTPException(404, "Story bible not found — run extract first.")
 
-    # Credit pre-check: each sample calls the image model for real and is
-    # debited via ai.client._settle_event_usage on success. Sum the per-sample
-    # estimate so a zero-balance user can't queue free regens.
-    per_sample = _style_sample_credit_estimate(config)["estimate_credits"]
-    assert_sufficient_credits(
-        get_db(), user_id, max(1, per_sample) * len(indices),
-        action="style_sample_regen",
-    )
-
     jobs = []
     prune_finished_generation_jobs(request.app)
     for idx in indices:
@@ -839,35 +860,35 @@ async def generate_style_samples(
         style_reference = style_direction_image(project_dir, direction)
         sample_config = config.model_copy(update={"style_template": template})
         sample_path = artifacts.style_sample_path(project_dir, idx)
+        estimate = _style_sample_credit_estimate(
+            sample_config, reserve=True, has_style_reference=style_reference is not None,
+            exact_cost_usd=estimate_style_proof_cost_usd(
+                sample_config, project_dir, bible, template, candidate_id,
+                style_reference=style_reference,
+            ),
+        )
 
         async def _runner(
             sample_config=sample_config, sample_path=sample_path,
             candidate_id=candidate_id, style_reference=style_reference,
         ) -> None:
-            with ai_request_context(
-                user_id=user_id,
-                project_id=project_id,
-                project_name=project_dir.name,
-                workspace_id=str(project_dir.parent),
-                stage="style",
-            ):
-                # Disk-cached after the first sample batch, so regens reuse
-                # the same scene the original samples were judged on.
-                brief = await ensure_style_sample_brief(sample_config, bible, project_dir)
-                await generate_sample_image(
-                    sample_config, bible, sample_path, brief=brief,
-                    candidate_id=candidate_id,
-                    style_reference=style_reference,
-                )
+            # Brief generation is paid too: keep it inside the queued hold.
+            brief = await ensure_style_sample_brief(sample_config, bible, project_dir)
+            await generate_sample_image(
+                sample_config, bible, sample_path, brief=brief,
+                candidate_id=candidate_id, style_reference=style_reference,
+            )
 
-        job = enqueue_generation_job(
+        job, _created = enqueue_reserved_generation_job(
             request.app,
             project_name=pkey,
             kind="style_sample",
             label=f"style {idx}",
             payload={"index": idx},
-            runner=_runner,
-            user_id=user_id,
+            work=_runner, user_id=user_id, project_id=project_id,
+            project_dir=project_dir, stage="style",
+            debit_description=f"Style sample {idx}",
+            reservation_credits=estimate["reserved_credits"] or estimate["estimate_credits"],
             semaphore=generation_semaphore_for_config(request.app, sample_config),
         )
         jobs.append(generation_job_payload(request.app, job))
@@ -932,15 +953,6 @@ async def generate_style_validation(
         has_style_reference=style_reference is not None,
         exact_cost_usd=exact_cost,
     )
-    db = get_db()
-    assert_sufficient_credits(
-        db, user_id, estimate["reserved_credits"] or estimate["estimate_credits"],
-        action="style_validation",
-    )
-    reservation_id, job_id = reserve_credits(
-        db, user_id, project_id, "style",
-        estimate["reserved_credits"] or estimate["estimate_credits"],
-    )
     brief = style_validation_brief(bible)
     output_path = artifacts.style_validation_path(project_dir, suggestion_id)
     sample_config = config.model_copy(
@@ -948,35 +960,24 @@ async def generate_style_validation(
     )
 
     async def _runner() -> None:
-        try:
-            with ai_request_context(
-                user_id=user_id, project_id=project_id, project_name=project_dir.name,
-                workspace_id=str(project_dir.parent), stage="style", job_id=job_id,
-            ):
-                await generate_sample_image(
-                    sample_config, bible, output_path, brief=brief,
-                    candidate_id=f"{suggestion_id}:validation",
-                    style_reference=style_reference,
-                    project_dir=project_dir,
-                    subject_action=STYLE_VALIDATION_ACTION,
-                    composition=STYLE_VALIDATION_COMPOSITION,
-                )
-        finally:
-            if reservation_id:
-                release_reservation(db, reservation_id)
-
-    try:
-        job = enqueue_generation_job(
-            request.app, project_name=pkey, kind="style_validation",
-            label=f"{suggestion['label']} validation",
-            payload=payload, runner=_runner,
-            user_id=user_id,
-            semaphore=generation_semaphore_for_config(request.app, sample_config),
+        await generate_sample_image(
+            sample_config, bible, output_path, brief=brief,
+            candidate_id=f"{suggestion_id}:validation",
+            style_reference=style_reference,
+            project_dir=project_dir,
+            subject_action=STYLE_VALIDATION_ACTION,
+            composition=STYLE_VALIDATION_COMPOSITION,
         )
-    except BaseException:
-        if reservation_id:
-            release_reservation(db, reservation_id)
-        raise
+
+    job, _created = enqueue_reserved_generation_job(
+        request.app, project_name=pkey, kind="style_validation",
+        label=f"{suggestion['label']} validation",
+        payload=payload, work=_runner, user_id=user_id,
+        project_id=project_id, project_dir=project_dir, stage="style",
+        debit_description="Style validation",
+        reservation_credits=estimate["reserved_credits"] or estimate["estimate_credits"],
+        semaphore=generation_semaphore_for_config(request.app, sample_config),
+    )
     return {
         "status": "queued", "id": suggestion_id,
         "url": f"/api/projects/{project_id}/files/samples/validations/{suggestion_id}.png",

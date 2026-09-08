@@ -16,6 +16,8 @@ interface PipelineStore {
 let eventSource: EventSource | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectDelay = 1000;
+let activeProject: string | null = null;
+export const PIPELINE_EVENT_LIMIT = 200;
 
 function clearReconnectTimer() {
   if (reconnectTimer) {
@@ -29,7 +31,7 @@ function closeCurrentSource(es?: EventSource) {
   clearReconnectTimer();
   eventSource?.close();
   eventSource = null;
-  reconnectDelay = 1000;
+  activeProject = null;
 }
 
 export const usePipelineStore = create<PipelineStore>((set) => ({
@@ -37,14 +39,23 @@ export const usePipelineStore = create<PipelineStore>((set) => ({
   events: [],
 
   connect: (projectId: string) => {
-    usePipelineStore.getState().disconnect();
+    const continuing = activeProject === projectId;
+    closeCurrentSource();
+    activeProject = projectId;
+    if (!continuing) {
+      reconnectDelay = 1000;
+      set({ events: [] });
+    }
+    set({ connected: false });
     const es = new EventSource(
       `/api/projects/${encodeURIComponent(projectId)}/events`,
     );
     es.onmessage = (e) => {
+      if (eventSource !== es) return;
       try {
         const event: PipelineEvent = JSON.parse(e.data);
-        set((state) => ({ events: [...state.events, event] }));
+        reconnectDelay = 1000;
+        set((state) => ({ events: [...state.events.slice(-(PIPELINE_EVENT_LIMIT - 1)), event] }));
         applyPipelineEvent(queryClient, projectId, event);
         if (
           event.type === "stage_fail"
@@ -96,6 +107,7 @@ export const usePipelineStore = create<PipelineStore>((set) => ({
       }
     };
     es.onopen = () => {
+      if (eventSource !== es) return;
       reconnectDelay = 1000;
       set({ connected: true });
     };
@@ -104,6 +116,7 @@ export const usePipelineStore = create<PipelineStore>((set) => ({
 
   disconnect: () => {
     closeCurrentSource();
+    reconnectDelay = 1000;
     set({ connected: false });
   },
 

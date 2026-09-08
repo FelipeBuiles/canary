@@ -15,6 +15,13 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(autouse=True)
+def isolated_credit_lease_service(monkeypatch):
+    monkeypatch.setattr("novel_to_comic.server.db.get_db", lambda: object())
+    monkeypatch.setattr("novel_to_comic.server.credits.start_reservation_leases", lambda db: None)
+    monkeypatch.setattr("novel_to_comic.server.credits.stop_reservation_leases", lambda: None)
+
+
 def _client():
     # dev=False mounts the SPAStaticFiles frontend at "/".
     return TestClient(create_app(projects_dir=Path("/tmp/nonexistent-projects"), dev=False))

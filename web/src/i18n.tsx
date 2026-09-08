@@ -16,6 +16,9 @@ const STORAGE_KEY = "canary.uiLanguage";
 const TEXT: Record<LanguageCode, Record<string, string>> = {
   en: {},
   es: {
+    "Saving…": "Guardando…",
+    "Settings saved.": "Configuración guardada.",
+    "Project deleted.": "Proyecto eliminado.",
     "{action} is paused": "{action} está en pausa",
     "Adding credits does not start work. Review the estimate and confirm when you are ready.": "Añadir créditos no inicia ningún trabajo. Revisa la estimación y confirma cuando quieras.",
     "Loading balance…": "Cargando saldo…",
@@ -1372,6 +1375,9 @@ const TEXT: Record<LanguageCode, Record<string, string>> = {
     "AWAITING REVIEW": "PENDIENTE DE REVISIÓN",
   },
   fr: {
+    "Saving…": "Enregistrement…",
+    "Settings saved.": "Paramètres enregistrés.",
+    "Project deleted.": "Projet supprimé.",
     "{action} is paused": "{action} est en pause",
     "Adding credits does not start work. Review the estimate and confirm when you are ready.": "Ajouter des crédits ne lance aucun travail. Consultez l’estimation et confirmez quand vous êtes prêt.",
     "Loading balance…": "Chargement du solde…",

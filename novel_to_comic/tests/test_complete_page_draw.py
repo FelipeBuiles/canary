@@ -779,6 +779,7 @@ def test_reserved_generation_job_reserves_executes_debits_and_releases(
             "novel_to_comic.server.credited_job.reserve_credits",
             return_value=("reservation-1", "ledger-job-1"),
         ) as reserve,
+        patch("novel_to_comic.server.credited_job.assert_reservation_active"),
         patch("novel_to_comic.server.credited_job.release_reservation") as release,
         patch("novel_to_comic.server.credited_job.debit_model_usage") as debit,
         patch("novel_to_comic.server.credited_job.ai_request_context"),
@@ -819,6 +820,7 @@ def test_complete_page_enqueue_uses_credited_lifecycle_and_persists_result(
             "novel_to_comic.server.credited_job.reserve_credits",
             return_value=("reservation-1", "ledger-job-1"),
         ) as reserve,
+        patch("novel_to_comic.server.credited_job.assert_reservation_active"),
         patch("novel_to_comic.server.credited_job.release_reservation") as release,
         patch("novel_to_comic.server.credited_job.debit_model_usage") as debit,
         patch("novel_to_comic.server.credited_job.ai_request_context"),
@@ -859,6 +861,7 @@ def test_failed_complete_page_persists_a_user_facing_failure(
             "novel_to_comic.server.credited_job.reserve_credits",
             return_value=("reservation-1", "ledger-job-1"),
         ),
+        patch("novel_to_comic.server.credited_job.assert_reservation_active"),
         patch("novel_to_comic.server.credited_job.release_reservation"),
         patch("novel_to_comic.server.credited_job.debit_model_usage"),
         patch("novel_to_comic.server.credited_job.ai_request_context"),
@@ -900,6 +903,7 @@ def test_failed_ocr_is_recorded_as_analysis_failure_without_losing_render(
             "novel_to_comic.server.credited_job.reserve_credits",
             return_value=("reservation-1", "ledger-job-1"),
         ),
+        patch("novel_to_comic.server.credited_job.assert_reservation_active"),
         patch("novel_to_comic.server.credited_job.release_reservation"),
         patch("novel_to_comic.server.credited_job.debit_model_usage"),
         patch("novel_to_comic.server.credited_job.ai_request_context"),
@@ -963,6 +967,7 @@ def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
             "novel_to_comic.server.credited_job.reserve_credits",
             return_value=("reservation-1", "ledger-job-1"),
         ) as reserve,
+        patch("novel_to_comic.server.credited_job.assert_reservation_active"),
         patch("novel_to_comic.server.credited_job.release_reservation"),
         patch("novel_to_comic.server.credited_job.debit_model_usage") as debit,
         patch("novel_to_comic.server.credited_job.ai_request_context"),
@@ -1022,6 +1027,7 @@ def test_reserved_generation_job_releases_without_debit_on_cancellation(
             "novel_to_comic.server.credited_job.reserve_credits",
             return_value=("reservation-1", "ledger-job-1"),
         ),
+        patch("novel_to_comic.server.credited_job.assert_reservation_active"),
         patch("novel_to_comic.server.credited_job.release_reservation") as release,
         patch("novel_to_comic.server.credited_job.debit_model_usage") as debit,
         patch("novel_to_comic.server.credited_job.ai_request_context"),
@@ -1540,3 +1546,83 @@ def test_batch_quote_skips_paid_pages_and_sums_individual_holds(tmp_path: Path) 
     assert artifacts.provenance_revisions(7) == (1,)
     assert artifacts.provenance_revisions(8) == ()
     assert artifacts.provenance_revisions(9) == ()
+
+
+@pytest.mark.parametrize("publication_step", ["write_render", "write_provenance"])
+def test_interrupted_paid_result_publication_recovers_without_resubmission(
+    tmp_path, monkeypatch, publication_step,
+):
+    artifacts = TargetArtifacts(tmp_path / "project")
+    transport = _RecordingTransport(_provider_result())
+    adapter = VertexCompletePageAdapter(transport)
+    compiled = _compile(tmp_path)
+    original = getattr(artifacts, publication_step)
+    def crash(*args, **kwargs):
+        raise OSError("publication interrupted")
+    monkeypatch.setattr(artifacts, publication_step, crash)
+    with pytest.raises(OSError, match="publication interrupted"):
+        asyncio.run(draw_complete_page(compiled, adapter=adapter, artifacts=artifacts, page=_page()))
+    monkeypatch.setattr(artifacts, publication_step, original)
+    from novel_to_comic.server.routers.pages import _generation_retry
+
+    # Exercise the route's retry decision, not an artificial replay of the
+    # original in-memory compiled object after publication has failed.
+    compiled = compile_page_generation_request(
+        _page(), _edition(), _inventory(), _reference_files(tmp_path),
+        retry=_generation_retry(artifacts, 7),
+    )
+
+    class UnavailableOCR:
+        async def extract(self, image):
+            raise RuntimeError("read-back unavailable after publication")
+
+    with pytest.raises(RuntimeError, match="read-back unavailable"):
+        asyncio.run(draw_complete_page(
+            compiled, adapter=adapter, artifacts=artifacts, page=_page(),
+            ocr=UnavailableOCR(),
+        ))
+    # Recovery has now published provenance and removed the pending journal.
+    # A second route retry must still use the same paid request identity.
+    compiled = compile_page_generation_request(
+        _page(), _edition(), _inventory(), _reference_files(tmp_path),
+        retry=_generation_retry(artifacts, 7),
+    )
+    recovered = asyncio.run(
+        draw_complete_page(compiled, adapter=adapter, artifacts=artifacts, page=_page())
+    )
+    assert len(transport.submitted) == 1
+    assert artifacts.read_render(7, 1) == transport.result.image_bytes
+    assert artifacts.read_provenance(7, 1) == recovered
+    assert recovered.usage == transport.result.usage
+
+
+def test_legacy_orphan_image_blocks_before_paid_submission(tmp_path):
+    artifacts = TargetArtifacts(tmp_path / "project")
+    artifacts.write_render(page_number=7, render_revision=1, image=b"valuable existing artwork")
+    transport = _RecordingTransport(_provider_result())
+    with pytest.raises(ValueError, match="Interrupted page persistence"):
+        asyncio.run(draw_complete_page(
+            _compile(tmp_path), adapter=VertexCompletePageAdapter(transport),
+            artifacts=artifacts, page=_page(),
+        ))
+    assert transport.submitted == []
+    assert artifacts.read_render(7, 1) == b"valuable existing artwork"
+
+
+def test_explicit_occupied_revision_is_rejected_before_paid_submission(tmp_path):
+    artifacts = TargetArtifacts(tmp_path / "project")
+    transport = _RecordingTransport(_provider_result())
+    adapter = VertexCompletePageAdapter(transport)
+    compiled = _compile(tmp_path)
+    asyncio.run(draw_complete_page(compiled, adapter=adapter, artifacts=artifacts, page=_page()))
+    compiled = compile_page_generation_request(
+        _page(), _edition(), _inventory(), _reference_files(tmp_path),
+        retry=RetryProvenance(
+            attempt=2, retries_request_sha256=compiled.request.request_sha256,
+        ),
+    )
+    with pytest.raises(ValueError, match="occupied"):
+        asyncio.run(draw_complete_page(
+            compiled, adapter=adapter, artifacts=artifacts, page=_page(), render_revision=1,
+        ))
+    assert len(transport.submitted) == 1

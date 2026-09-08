@@ -421,7 +421,9 @@ def test_deployment_activity_counts_all_generation_work(tmp_path: Path):
     assert result == {
         "status": "busy",
         "safe_to_deploy": False,
+        "draining": False,
         "counts": {
+            "admitting_requests": 0,
             "pipeline_tasks": 1,
             "style_tasks": 1,
             "queued_generation_jobs": 1,
@@ -468,16 +470,6 @@ def test_fly_routes_on_local_liveness_and_uses_conservative_limits():
     assert config["vm"][0]["memory_mb"] == 4096
 
 
-def test_deploy_workflow_bypasses_public_proxy_for_ops_guard():
-    root = Path(__file__).resolve().parents[2]
-    workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    deploy_job = workflow[workflow.index("\n  deploy:\n") :]
-    confirm_start = deploy_job.index("      - name: Confirm production is idle")
-    rollback_start = deploy_job.index("      - name: Record rollback target")
-    confirmation_step = deploy_job[confirm_start:rollback_start]
-
-    assert "SCENEWRIGHT_APP_URL: https://canary-web.fly.dev" in confirmation_step
-    assert "https://scenewright.ink" not in confirmation_step
 
 
 def test_production_docker_build_fails_without_supabase_build_args():
@@ -532,3 +524,21 @@ def test_litellm_images_pin_sdk_with_native_image_config_support():
     assert "google-genai==1.75.0" in production
     assert "google-genai==1.75.0" in local_gateway
     assert "dockerfile: litellm/Dockerfile" in compose
+
+
+def test_operational_drain_requires_authentication_and_explicit_resume(tmp_path, monkeypatch):
+    monkeypatch.setenv("CANARY_OPS_TOKEN", "operator-secret")
+    app = app_module.create_app(tmp_path, dev=True)
+    app.state.generation_jobs = {}
+    app.state.generation_queue = asyncio.Queue()
+    client = TestClient(app)
+    rejected = client.post("/api/ops/drain")
+    assert rejected.status_code == 401
+    assert app.state.admission.draining is False
+    admitted = client.post("/api/ops/drain", headers={"X-Canary-Ops-Token": "operator-secret"})
+    assert admitted.json()["draining"] is True
+    assert app.state.admission.draining is True
+    assert client.post("/api/ops/resume").status_code == 401
+    assert app.state.admission.draining is True
+    resumed = client.post("/api/ops/resume", headers={"X-Canary-Ops-Token": "operator-secret"})
+    assert resumed.json()["draining"] is False

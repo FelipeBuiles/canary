@@ -530,6 +530,24 @@ def finish_book(
     adaptation = artifacts.read_adaptation()
     edition = artifacts.read_book_edition()
     pages = tuple(artifacts.read_page(item.page_number) for item in plan.pages)
+    from novel_to_comic.page_review import revalidate_cached_page_render
+
+    # Validation may invalidate old packages/normalized pages. Finish all such
+    # mutations before writing any new production output for this book.
+    analyses: dict[int, RenderAnalysis] = {}
+    for page in pages:
+        revisions = artifacts.provenance_revisions(page.page_number)
+        if not revisions:
+            continue
+        render = artifacts.read_provenance(page.page_number, revisions[-1]).render
+        try:
+            analyses[page.page_number] = revalidate_cached_page_render(
+                page=page, render=render, artifacts=artifacts,
+            )
+        except (ArtifactMissing, ValueError):
+            # Missing/incompatible observations require an explicit Analyze,
+            # never a provider call from Finish.
+            continue
     appearance = _appearance_diagnostics(adaptation, pages)
     preflight_pages: list[PreflightPage] = []
     correction_requests: list[DrawCorrectionRequest] = []
@@ -625,13 +643,7 @@ def finish_book(
                         ),
                     )
                 )
-            try:
-                analysis = artifacts.read_analysis(
-                    selected.page_number,
-                    render.revision,
-                )
-            except ArtifactMissing:
-                analysis = None
+            analysis = analyses.get(page.page_number)
             dismissed_failure_ids = frozenset(
                 issue.id.removeprefix("page-issue-")
                 for issue in issues
@@ -775,6 +787,7 @@ def finish_book(
             for issue in issues
             if issue.status in {"open", "revised"}
             and issue.classification == "editorial_issue"
+            and issue.requires_resolution
         )
         accepted = tuple(
             issue.id

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import re
@@ -34,6 +33,7 @@ from novel_to_comic.models.validation import (
     ValidationAttempt,
 )
 from novel_to_comic.stage_runtime import StageRuntime
+from novel_to_comic.paid_shards import run_paid_shards
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.text_utils import normalize_display_text
 from novel_to_comic.usage import ApiResult, estimate_text_cost
@@ -1843,7 +1843,6 @@ async def _generate_book_drafts(
     model: str | None = None,
     known_speaker_ids: set[str],
 ) -> list[_BookDraft]:
-    semaphore = asyncio.Semaphore(_ADAPT_MAX_CONCURRENCY)
     completed = 0
     # Shards stream concurrently, so the reported fraction is how much of the
     # whole pass has arrived rather than any single shard's share of it.
@@ -1859,19 +1858,18 @@ async def _generate_book_drafts(
 
     async def generate_one(index: int, prompt: str) -> _BookDraft:
         nonlocal completed
-        async with semaphore:
-            with stream_observer(lambda chars: report(index, chars)):
-                draft = await _generate_book_draft(
-                    prompt=prompt,
-                    generate=generate,
-                    ctx=ctx,
-                    checkpoint_name=(
-                        checkpoint_names[index] if checkpoint_names is not None else None
-                    ),
-                    artifacts=artifacts,
-                    model=model,
-                    known_speaker_ids=known_speaker_ids,
-                )
+        with stream_observer(lambda chars: report(index, chars)):
+            draft = await _generate_book_draft(
+                prompt=prompt,
+                generate=generate,
+                ctx=ctx,
+                checkpoint_name=(
+                    checkpoint_names[index] if checkpoint_names is not None else None
+                ),
+                artifacts=artifacts,
+                model=model,
+                known_speaker_ids=known_speaker_ids,
+            )
         if record_progress:
             ctx.record_item_done()
             completed += 1
@@ -1879,10 +1877,10 @@ async def _generate_book_drafts(
         return draft
 
     ctx.activity(fraction=0.0, detail=detail, force=True)
-    drafts = list(
-        await asyncio.gather(
-            *(generate_one(index, prompt) for index, prompt in enumerate(prompts))
-        )
+    drafts = await run_paid_shards(
+        [lambda index=index, prompt=prompt: generate_one(index, prompt)
+         for index, prompt in enumerate(prompts)],
+        limit=_ADAPT_MAX_CONCURRENCY,
     )
     ctx.activity(fraction=1.0, detail=detail, force=True)
     return drafts
@@ -2411,33 +2409,30 @@ async def produce_book_adaptation(
         candidate: BookAdaptation | None = None
         validation = AdaptationValidation()
         known_speaker_ids = {character.id for character in story_bible.characters}
-        semaphore = asyncio.Semaphore(_ADAPT_MAX_CONCURRENCY)
         completed_blueprints = 0
 
         async def generate_blueprint(index: int) -> _BlueprintDraft:
             nonlocal completed_blueprints
-            async with semaphore:
-                blueprint = await _generate_blueprint(
-                    prompt=blueprint_prompts[index],
-                    brief=brief,
-                    source_unit_ids=shards[index],
-                    owned_requirement_ids=shard_requirements[index],
-                    checkpoint_name=f"blueprint/shard_{index + 1:03d}",
-                    model=model,
-                    artifacts=artifacts,
-                    generate=generate,
-                    ctx=ctx,
-                )
+            blueprint = await _generate_blueprint(
+                prompt=blueprint_prompts[index],
+                brief=brief,
+                source_unit_ids=shards[index],
+                owned_requirement_ids=shard_requirements[index],
+                checkpoint_name=f"blueprint/shard_{index + 1:03d}",
+                model=model,
+                artifacts=artifacts,
+                generate=generate,
+                ctx=ctx,
+            )
             completed_blueprints += 1
             ctx.record_item_done()
             ctx.progress(1 + completed_blueprints, total_steps)
             return blueprint
 
         ctx.activity(fraction=0.0, detail="locking story structure", force=True)
-        blueprints = list(
-            await asyncio.gather(
-                *(generate_blueprint(index) for index in range(len(shards)))
-            )
+        blueprints = await run_paid_shards(
+            [lambda index=index: generate_blueprint(index) for index in range(len(shards))],
+            limit=_ADAPT_MAX_CONCURRENCY,
         )
         ctx.activity(fraction=1.0, detail="locking story structure", force=True)
         lettering_prompts = [
@@ -2461,17 +2456,16 @@ async def produce_book_adaptation(
 
         async def generate_lettering(index: int) -> _BookDraft:
             nonlocal completed_lettering
-            async with semaphore:
-                draft = await _generate_locked_lettering(
-                    prompt=lettering_prompts[index],
-                    blueprint=blueprints[index],
-                    known_speaker_ids=known_speaker_ids,
-                    checkpoint_name=f"lettering/shard_{index + 1:03d}",
-                    model=model,
-                    artifacts=artifacts,
-                    generate=generate,
-                    ctx=ctx,
-                )
+            draft = await _generate_locked_lettering(
+                prompt=lettering_prompts[index],
+                blueprint=blueprints[index],
+                known_speaker_ids=known_speaker_ids,
+                checkpoint_name=f"lettering/shard_{index + 1:03d}",
+                model=model,
+                artifacts=artifacts,
+                generate=generate,
+                ctx=ctx,
+            )
             completed_lettering += 1
             ctx.record_item_done()
             ctx.progress(
@@ -2481,10 +2475,9 @@ async def produce_book_adaptation(
             return draft
 
         ctx.activity(fraction=0.0, detail="writing locked lettering", force=True)
-        generated_drafts = list(
-            await asyncio.gather(
-                *(generate_lettering(index) for index in range(len(shards)))
-            )
+        generated_drafts = await run_paid_shards(
+            [lambda index=index: generate_lettering(index) for index in range(len(shards))],
+            limit=_ADAPT_MAX_CONCURRENCY,
         )
         ctx.activity(fraction=1.0, detail="writing locked lettering", force=True)
         drafts = [

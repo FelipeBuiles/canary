@@ -1428,6 +1428,35 @@
   }
 }
 
+/* Short desktop windows keep the decision and its action together. */
+@media (min-width: 901px) and (max-height: 760px) {
+  .landing-hero__copy {
+    justify-content: flex-start;
+    padding: 2rem clamp(2rem, 4vw, 4rem);
+  }
+
+  .landing-hero h1 {
+    margin-top: 1.25rem;
+    font-size: clamp(3rem, 4.2vw, 3.5rem);
+  }
+
+  .landing-hero__body {
+    margin-top: 1.25rem;
+    font-size: 1rem;
+    line-height: 1.55;
+  }
+
+  .landing-hero__actions {
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-top: 1.5rem;
+  }
+
+  .landing-hero__formats {
+    margin-top: 1.25rem;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .landing-comic-sheet {
     animation: none;

@@ -1,8 +1,8 @@
+import { useReferenceJob } from "../../hooks/useReferenceJob";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   useApproveStage,
-  useGenerationJobs,
   useProjectStatus,
   useStageEstimate,
   useStoryBible,
@@ -52,7 +52,7 @@ const REF_VIEWS = [
  * Read-only derived views sent to the image model. Panel framing chooses the
  * portrait for close shots and the full-body crop for other shots.
  */
-function ReferenceViews({ projectName, charId, timestamp }: { projectName: string; charId: string; timestamp: number }) {
+function ReferenceViews({ projectName, charId, timestamp }: { projectName: string; charId: string; timestamp: string | number }) {
   const [failed, setFailed] = useState<Record<string, boolean>>({});
 
   const visiblePoses = REF_VIEWS.filter(({ pose }) => !failed[pose]);
@@ -65,7 +65,7 @@ function ReferenceViews({ projectName, charId, timestamp }: { projectName: strin
       </div>
       <div className="flex flex-wrap gap-2">
         {visiblePoses.map(({ pose, label }) => {
-          const src = `/api/projects/${encodeURIComponent(projectName)}/files/refs/${encodeURIComponent(charId)}/${pose}.png?t=${timestamp}`;
+          const src = `/api/projects/${encodeURIComponent(projectName)}/files/refs/${encodeURIComponent(charId)}/${pose}.png?t=${encodeURIComponent(timestamp)}`;
           return (
             <div
               key={pose}
@@ -268,33 +268,12 @@ function StateRefTile({
   state: AppearanceState;
 }) {
   const { t } = useI18n();
-  const [imgFailed, setImgFailed] = useState(false);
-  const [timestamp, setTimestamp] = useState(() => Date.now());
-  const [activeJob, setActiveJob] = useState<GenerationJob | null>(null);
-  const [regenError, setRegenError] = useState<string | null>(null);
+  const { imgFailed, setImgFailed, timestamp, setTimestamp, activeJob, setActiveJob, regenError, setRegenError } =
+    useReferenceJob(projectName, "char_id", charId, state.id);
   const [confirmRegen, setConfirmRegen] = useState(false);
   const regenState = useRegenStateRef();
-  const { data: generationJobs } = useGenerationJobs(projectName, activeJob ? [activeJob.id] : []);
   const { data: regenEstimate } = useAssetRegenEstimate(projectName, "character", charId, state.id);
 
-  useEffect(() => {
-    const job = generationJobs?.jobs[0];
-    if (!job) return;
-    const timer = window.setTimeout(() => {
-      if (job.status === "complete") {
-        setTimestamp(Date.now());
-        setImgFailed(false);
-        setActiveJob(null);
-        setRegenError(null);
-      } else if (job.status === "failed") {
-        setActiveJob(null);
-        setRegenError(job.error ?? "Regeneration failed");
-      } else {
-        setActiveJob(job);
-      }
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [generationJobs]);
 
   const thumbUrl = `/api/projects/${encodeURIComponent(projectName)}/files/refs/${encodeURIComponent(charId)}/states/${encodeURIComponent(state.id)}/portrait.png?t=${timestamp}`;
 
@@ -414,17 +393,14 @@ function CharacterCastCard({
   stageRegenerating: boolean;
 }) {
   const refUrl = `/api/projects/${encodeURIComponent(projectName)}/files/refs/${encodeURIComponent(character.id)}/sheet.png`;
-  const [imgFailed, setImgFailed] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [timestamp, setTimestamp] = useState(() => Date.now());
-  const [activeJob, setActiveJob] = useState<GenerationJob | null>(null);
-  const [regenError, setRegenError] = useState<string | null>(null);
+  const { imgFailed, setImgFailed, timestamp, setTimestamp, activeJob, setActiveJob, regenError, setRegenError } =
+    useReferenceJob(projectName, "char_id", character.id);
   const [instruction, setInstruction] = useState("");
   const [instructionError, setInstructionError] = useState<string | null>(null);
   const [lastAddendum, setLastAddendum] = useState<string | null>(null);
   const regenRef = useRegenRef();
   const regenRefInstructed = useRegenRefWithInstruction();
-  const { data: generationJobs } = useGenerationJobs(projectName, activeJob ? [activeJob.id] : []);
   const { data: regenEstimate } = useAssetRegenEstimate(projectName, "character", character.id, undefined, isModalOpen);
   const { data: generationMeta, isLoading: isMetaLoading } = useImageGenerationMeta(
     projectName,
@@ -433,34 +409,15 @@ function CharacterCastCard({
     timestamp,
   );
 
-  useEffect(() => {
-    const job = generationJobs?.jobs[0];
-    if (!job) return;
-    const timer = window.setTimeout(() => {
-      if (job.status === "complete") {
-        setTimestamp(Date.now());
-        setImgFailed(false);
-        setActiveJob(null);
-        setRegenError(null);
-      } else if (job.status === "failed") {
-        setActiveJob(null);
-        setRegenError(job.error ?? "Regeneration failed");
-      } else {
-        setActiveJob(job);
-      }
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [generationJobs]);
 
   useEffect(() => {
     if (!stageRegenerating) {
       const timer = window.setTimeout(() => {
         setTimestamp(Date.now());
-        setImgFailed(false);
       }, 0);
       return () => window.clearTimeout(timer);
     }
-  }, [stageRegenerating]);
+  }, [stageRegenerating, setTimestamp]);
 
   const startRegen = () => {
     setRegenError(null);
@@ -704,33 +661,12 @@ function LocationStateTile({
   state: AppearanceState;
 }) {
   const { t } = useI18n();
-  const [imgFailed, setImgFailed] = useState(false);
-  const [timestamp, setTimestamp] = useState(() => Date.now());
-  const [activeJob, setActiveJob] = useState<GenerationJob | null>(null);
-  const [regenError, setRegenError] = useState<string | null>(null);
+  const { imgFailed, setImgFailed, timestamp, activeJob, setActiveJob, regenError, setRegenError } =
+    useReferenceJob(projectName, "loc_id", locId, state.id);
   const [confirmRegen, setConfirmRegen] = useState(false);
   const regenState = useRegenLocationState();
-  const { data: generationJobs } = useGenerationJobs(projectName, activeJob ? [activeJob.id] : []);
   const { data: regenEstimate } = useAssetRegenEstimate(projectName, "location", locId, state.id);
 
-  useEffect(() => {
-    const job = generationJobs?.jobs[0];
-    if (!job) return;
-    const timer = window.setTimeout(() => {
-      if (job.status === "complete") {
-        setTimestamp(Date.now());
-        setImgFailed(false);
-        setActiveJob(null);
-        setRegenError(null);
-      } else if (job.status === "failed") {
-        setActiveJob(null);
-        setRegenError(job.error ?? "Regeneration failed");
-      } else {
-        setActiveJob(job);
-      }
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [generationJobs]);
 
   const imageUrl = `/api/projects/${encodeURIComponent(projectName)}/files/plates/${encodeURIComponent(state.id)}.png?t=${timestamp}`;
   const busy = regenState.isPending || !!activeJob;
@@ -843,17 +779,14 @@ function LocationPlateCard({
   stageRegenerating: boolean;
 }) {
   const plateUrl = `/api/projects/${encodeURIComponent(projectName)}/files/plates/${encodeURIComponent(location.id)}.png`;
-  const [imgFailed, setImgFailed] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [timestamp, setTimestamp] = useState(() => Date.now());
-  const [activeJob, setActiveJob] = useState<GenerationJob | null>(null);
-  const [localRegenError, setLocalRegenError] = useState<string | null>(null);
+  const { imgFailed, setImgFailed, timestamp, setTimestamp, activeJob, setActiveJob, regenError, setRegenError: setLocalRegenError } =
+    useReferenceJob(projectName, "loc_id", location.id);
   const [instruction, setInstruction] = useState("");
   const [instructionError, setInstructionError] = useState<string | null>(null);
   const [lastAddendum, setLastAddendum] = useState<string | null>(null);
   const regenPlate = useRegenPlate();
   const regenPlateInstructed = useRegenPlateWithInstruction();
-  const { data: generationJobs } = useGenerationJobs(projectName, activeJob ? [activeJob.id] : []);
   const { data: regenEstimate } = useAssetRegenEstimate(projectName, "location", location.id, undefined, isModalOpen);
   const { data: generationMeta, isLoading: isMetaLoading } = useImageGenerationMeta(
     projectName,
@@ -862,36 +795,15 @@ function LocationPlateCard({
     timestamp,
   );
 
-  const regenError = localRegenError;
-
-  useEffect(() => {
-    const job = generationJobs?.jobs[0];
-    if (!job) return;
-    const timer = window.setTimeout(() => {
-      if (job.status === "complete") {
-        setTimestamp(Date.now());
-        setImgFailed(false);
-        setActiveJob(null);
-        setLocalRegenError(null);
-      } else if (job.status === "failed") {
-        setActiveJob(null);
-        setLocalRegenError(job.error ?? "Regeneration failed");
-      } else {
-        setActiveJob(job);
-      }
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [generationJobs]);
 
   useEffect(() => {
     if (!stageRegenerating) {
       const timer = window.setTimeout(() => {
         setTimestamp(Date.now());
-        setImgFailed(false);
       }, 0);
       return () => window.clearTimeout(timer);
     }
-  }, [stageRegenerating]);
+  }, [stageRegenerating, setTimestamp]);
 
   const startRegen = () => {
     setLocalRegenError(null);
@@ -1092,17 +1004,14 @@ function PropRefCard({
   stageRegenerating: boolean;
 }) {
   const refUrl = `/api/projects/${encodeURIComponent(projectName)}/files/refs/props/${encodeURIComponent(prop.id)}/ref.png`;
-  const [imgFailed, setImgFailed] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [timestamp, setTimestamp] = useState(() => Date.now());
-  const [activeJob, setActiveJob] = useState<GenerationJob | null>(null);
-  const [localRegenError, setLocalRegenError] = useState<string | null>(null);
+  const { imgFailed, setImgFailed, timestamp, setTimestamp, activeJob, setActiveJob, regenError, setRegenError: setLocalRegenError } =
+    useReferenceJob(projectName, "prop_id", prop.id);
   const [instruction, setInstruction] = useState("");
   const [instructionError, setInstructionError] = useState<string | null>(null);
   const [lastAddendum, setLastAddendum] = useState<string | null>(null);
   const regenProp = useRegenProp();
   const regenPropInstructed = useRegenPropWithInstruction();
-  const { data: generationJobs } = useGenerationJobs(projectName, activeJob ? [activeJob.id] : []);
   const { data: regenEstimate } = useAssetRegenEstimate(projectName, "prop", prop.id, undefined, isModalOpen);
   const { data: generationMeta, isLoading: isMetaLoading } = useImageGenerationMeta(
     projectName,
@@ -1111,36 +1020,15 @@ function PropRefCard({
     timestamp,
   );
 
-  const regenError = localRegenError;
-
-  useEffect(() => {
-    const job = generationJobs?.jobs[0];
-    if (!job) return;
-    const timer = window.setTimeout(() => {
-      if (job.status === "complete") {
-        setTimestamp(Date.now());
-        setImgFailed(false);
-        setActiveJob(null);
-        setLocalRegenError(null);
-      } else if (job.status === "failed") {
-        setActiveJob(null);
-        setLocalRegenError(job.error ?? "Regeneration failed");
-      } else {
-        setActiveJob(job);
-      }
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [generationJobs]);
 
   useEffect(() => {
     if (!stageRegenerating) {
       const timer = window.setTimeout(() => {
         setTimestamp(Date.now());
-        setImgFailed(false);
       }, 0);
       return () => window.clearTimeout(timer);
     }
-  }, [stageRegenerating]);
+  }, [stageRegenerating, setTimestamp]);
 
   const startRegen = () => {
     setLocalRegenError(null);

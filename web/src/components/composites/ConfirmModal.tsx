@@ -12,6 +12,7 @@ export interface ConfirmModalProps {
   confirmInput?: string;
   confirmLabel?: string;
   busy?: boolean;
+  error?: string | null;
   destructive?: boolean;
   onConfirm: () => void;
   onClose: () => void;
@@ -24,6 +25,7 @@ export function ConfirmModal({
   confirmInput,
   confirmLabel = "Confirm",
   busy = false,
+  error,
   destructive = false,
   onConfirm,
   onClose,
@@ -33,9 +35,10 @@ export function ConfirmModal({
 
   const inputMatches = !confirmInput || input === confirmInput;
   const handleClose = useCallback(() => {
+    if (busy) return;
     setInput("");
     onClose();
-  }, [onClose]);
+  }, [busy, onClose]);
 
   useDialogFocus(modalRef, { enabled: open, onClose: handleClose });
 
@@ -61,7 +64,6 @@ export function ConfirmModal({
           onSubmit={(event) => {
             event.preventDefault();
             if (!busy && inputMatches) {
-              setInput("");
               onConfirm();
             }
           }}
@@ -76,6 +78,7 @@ export function ConfirmModal({
             <button
               type="button"
               onClick={handleClose}
+              disabled={busy}
               aria-label="Cancel"
               className="inline-flex min-h-11 shrink-0 items-center gap-2 border-[2px] border-ink-black/20 px-3 font-meta text-xs tracking-[0.08em] uppercase text-ink-muted hover:border-ink-black hover:text-ink-black"
             >
@@ -89,6 +92,7 @@ export function ConfirmModal({
           >
             {body}
           </p>
+          {error && <p role="alert" className="mt-4 text-sm text-hero-red">{error}</p>}
 
           {confirmInput && (
             <div className="mt-4">
@@ -98,6 +102,7 @@ export function ConfirmModal({
               <TextField
                 id="confirm-modal-input"
                 value={input}
+                disabled={busy}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={confirmInput}
                 className="w-full max-w-sm bg-bristol"

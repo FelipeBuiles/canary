@@ -1,3 +1,4 @@
+import { accountIdentity } from "../../lib/accountEpoch";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
@@ -443,7 +444,7 @@ export function PagesRoom() {
     restoredProject.current = id;
     if (searchParams.size > 0) return;
     try {
-      const saved = sessionStorage.getItem(`page-review:v1:${id}`);
+      const saved = sessionStorage.getItem(`page-review:v2:${accountIdentity ?? "signed-out"}:${id}`);
       if (saved) setSearchParams(new URLSearchParams(saved), { replace: true });
     } catch { /* Storage is optional; the URL remains authoritative. */ }
   }, [id, searchParams, setSearchParams]);
@@ -459,7 +460,7 @@ export function PagesRoom() {
     try {
       const saved = new URLSearchParams(next);
       saved.delete("reading");
-      sessionStorage.setItem(`page-review:v1:${id}`, saved.toString());
+      sessionStorage.setItem(`page-review:v2:${accountIdentity ?? "signed-out"}:${id}`, saved.toString());
     } catch { /* Private browsing must not block review. */ }
   }
 

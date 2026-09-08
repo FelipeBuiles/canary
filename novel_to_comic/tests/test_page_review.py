@@ -107,12 +107,9 @@ def _render(
 
 
 class _OCR:
-    """A stub whose observations each carry their own detected region.
+    """A stub with independently established panel-order evidence.
 
-    Real page OCR reports one region per balloon, and that geometry is what
-    lets Draw tell a genuine reading-order defect from an engine's sweep order.
-    ``shared_region`` models the opposite case: an engine that cannot separate
-    the balloons, and therefore cannot prove anything about their order.
+    ``shared_region`` models geometry that cannot separate the lettering.
     """
 
     def __init__(self, *texts: str, shared_region: bool = False) -> None:
@@ -150,6 +147,7 @@ class _OCR:
                 ],
                 observed_regions=regions,
                 observed_reading_order=[region.id for region in regions],
+                reading_order_proven=not self.shared_region,
             ),
             usage=UsageRecord(
                 provider="gemini",
@@ -558,6 +556,13 @@ def test_correction_supersedes_without_overwriting_parent_or_creating_panels(
     artifacts = TargetArtifacts(tmp_path)
     parent_image = b"parent-complete-page"
     parent = _render(image=parent_image)
+    from novel_to_comic.models.draw import PageGenerationProvenance
+
+    artifacts.write_provenance(PageGenerationProvenance(
+        render=parent,
+        usage=UsageRecord(provider="fixture", model=parent.model, operation="image",
+                          image_count=1, cost_usd=0),
+    ))
     artifacts.write_render(
         page_number=34,
         render_revision=1,
@@ -645,3 +650,158 @@ def test_reading_order_checks_geometry_even_when_ocr_array_matches_copy():
     extraction = extraction.model_copy(update={"observed_reading_order": tuple(reversed(extraction.observed_reading_order))})
     _, failures, _ = _compare_lettering(page, _render(), extraction)
     assert [failure.code for failure in failures] == ["reordered_lettering"]
+
+
+def test_cross_panel_a_b_c_is_not_rejected_by_page_wide_balloon_sort(tmp_path):
+    from novel_to_comic.page_ocr import _PageOCRDraft, build_extraction
+    from novel_to_comic.page_review import _compare_lettering
+
+    original = _page()
+    letters = [
+        LetteringItem(id=f"letter-{index}", kind="caption", text=text, source_unit_ids=["source-1"])
+        for index, text in enumerate(("A", "B", "C"), 1)
+    ]
+    page = original.model_copy(update={
+        "content": [original.content[0].model_copy(update={"lettering": letters})],
+        "reading_order": ["content-1", "letter-1", "letter-2", "letter-3"],
+    })
+    # A/B belong to the left panel; C to the right. A page-wide y sweep
+    # would incorrectly report A, C, B even though the panels read A, B, C.
+    payload = {
+        "lettering": [
+            {"text": text, "box": {"x": x, "y": y, "width": 0.1, "height": 0.1}}
+            for text, x, y in (("A", 0.1, 0.1), ("C", 0.7, 0.2), ("B", 0.1, 0.6))
+        ],
+    }
+    extraction = build_extraction(_PageOCRDraft.model_validate(payload))
+    _, failures, editorial = _compare_lettering(page, _render(), extraction)
+    assert not failures
+    assert [issue.code for issue in editorial] == ["unverified_lettering_order"]
+    payload["panels"] = [
+        {"x": 0, "y": 0, "width": 0.45, "height": 0.9},
+        {"x": 0.55, "y": 0, "width": 0.45, "height": 0.9},
+    ]
+    extraction = build_extraction(_PageOCRDraft.model_validate(payload))
+    _, failures, _ = _compare_lettering(page, _render(), extraction)
+    assert not failures
+    # Putting canonical B in the second panel and C back in the first
+    # contradicts the independently observed panel order.
+    payload["lettering"][1]["text"] = "B"
+    payload["lettering"][2]["text"] = "C"
+    _, failures, _ = _compare_lettering(
+        page, _render(), build_extraction(_PageOCRDraft.model_validate(payload))
+    )
+    assert [failure.code for failure in failures] == ["reordered_lettering"]
+
+
+def test_validator_upgrade_reuses_raw_ocr_without_provider_call(tmp_path, monkeypatch):
+    from novel_to_comic import page_review
+
+    artifacts = TargetArtifacts(tmp_path)
+    ocr = _OCR("The door opened…", "It wasn't a dream.")
+    first = _analyze(page=_page(), render=_render(), image=b"page-34", ocr=ocr, artifacts=artifacts)
+
+    async def forbidden(image):
+        raise AssertionError("validator upgrade must not call a provider")
+
+    monkeypatch.setattr(ocr, "extract", forbidden)
+    monkeypatch.setattr(page_review, "DRAW_VALIDATOR_VERSION", "test-next-validator")
+    second = _analyze(page=_page(), render=_render(), image=b"page-34", ocr=ocr, artifacts=artifacts)
+    assert second.validator_version == "test-next-validator"
+    assert second.lettering_matches == first.lettering_matches
+    assert artifacts.read_raw_ocr(34, 1).extraction.lettering == first.ocr_observations
+    assert len(list(artifacts.analysis_path(34, 1).parent.glob("analysis_001_*.json"))) == 2
+
+
+def test_validator_crash_preserves_raw_paid_observations(tmp_path, monkeypatch):
+    from novel_to_comic import page_review
+
+    artifacts = TargetArtifacts(tmp_path)
+    original = page_review._compare_lettering
+    def crash(*args):
+        raise RuntimeError("validator crash")
+    monkeypatch.setattr(page_review, "_compare_lettering", crash)
+    with pytest.raises(RuntimeError, match="validator crash"):
+        _analyze(page=_page(), render=_render(), image=b"page-34",
+                 ocr=_OCR("The door opened…", "It wasn't a dream."), artifacts=artifacts)
+    monkeypatch.setattr(page_review, "_compare_lettering", original)
+    analysis = page_review.revalidate_cached_page_render(
+        page=_page(), render=_render(), artifacts=artifacts,
+    )
+    assert analysis.lettering_valid
+    assert analysis.recognized_lettering == {"letter-1": "The door opened…", "letter-2": "It wasn't a dream."}
+
+
+def test_cached_current_validation_reconciles_issues_after_interruption(tmp_path, monkeypatch):
+    from novel_to_comic import page_review
+
+    artifacts = TargetArtifacts(tmp_path)
+    analysis = _analyze(
+        page=_page(), render=_render(), image=b"page-34",
+        ocr=_OCR("The door opened…", "It wasn't a dream."), artifacts=artifacts,
+    )
+    artifacts.write_issues(34, (
+        PageIssue(
+            id="page-issue-draw-page-034-render-001-reordered_lettering",
+            issue_type="reordered_lettering", classification="invariant_failure",
+            page_number=34, render_revision=1,
+            evidence=("Old validator incorrectly sorted all balloons.",),
+            requested_correction="Correct lettering order.", status="open",
+        ),
+    ))
+    monkeypatch.setattr(page_review, "DRAW_VALIDATOR_VERSION", "post-interruption-validator")
+    reconcile = page_review.record_analysis_issues
+    def crash(*args, **kwargs):
+        raise RuntimeError("interrupted before issue reconciliation")
+    monkeypatch.setattr(page_review, "record_analysis_issues", crash)
+    with pytest.raises(RuntimeError, match="interrupted before issue reconciliation"):
+        page_review.revalidate_cached_page_render(
+            page=_page(), render=_render(), artifacts=artifacts,
+        )
+    assert artifacts.read_analysis(34, 1).validator_version == "post-interruption-validator"
+    assert summarize_page_issues(artifacts).can_continue is False
+    monkeypatch.setattr(page_review, "record_analysis_issues", reconcile)
+    retried = page_review.revalidate_cached_page_render(
+        page=_page(), render=_render(), artifacts=artifacts,
+    )
+    assert retried.lettering_matches == analysis.lettering_matches
+    assert summarize_page_issues(artifacts).can_continue is True
+    assert artifacts.read_issues(34) == ()
+
+
+def test_replayed_correction_can_finish_after_issue_resolution_was_saved(tmp_path):
+    from novel_to_comic.page_review import resolve_page_issue
+
+    artifacts = TargetArtifacts(tmp_path)
+    issue = PageIssue(
+        id="page-issue-draw-page-034-render-001-missing_lettering",
+        issue_type="missing_lettering", classification="invariant_failure",
+        page_number=34, render_revision=1, evidence=("Missing canonical caption.",),
+        requested_correction="Restore the caption.", status="open",
+    )
+    artifacts.write_issues(34, (issue,))
+    resolved = resolve_page_issue(
+        artifacts, issue_id=issue.id, page_number=34, resolution_revision=2, verified=True,
+    )
+    replayed = resolve_page_issue(
+        artifacts, issue_id=issue.id, page_number=34, resolution_revision=2, verified=True,
+    )
+    assert replayed == resolved
+    assert artifacts.read_issues(34) == (resolved,)
+
+
+def test_missing_downstream_artifact_does_not_repeat_paid_ocr(tmp_path, monkeypatch):
+    from novel_to_comic import page_review
+    from novel_to_comic.target_artifacts import ArtifactMissing
+
+    artifacts = TargetArtifacts(tmp_path)
+    ocr = _OCR("The door opened…", "It wasn't a dream.")
+    _analyze(page=_page(), render=_render(), image=b"page-34", ocr=ocr, artifacts=artifacts)
+    async def forbidden(image):
+        raise AssertionError("downstream artifact failure must not repeat OCR")
+    def missing_issue_artifact(*args, **kwargs):
+        raise ArtifactMissing("page_issues", artifacts.issues_path(34))
+    monkeypatch.setattr(ocr, "extract", forbidden)
+    monkeypatch.setattr(page_review, "record_analysis_issues", missing_issue_artifact)
+    with pytest.raises(ArtifactMissing, match="page_issues"):
+        _analyze(page=_page(), render=_render(), image=b"page-34", ocr=ocr, artifacts=artifacts)

@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useCallback, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCreateProject, useDeleteProject, useGenerateProjectCover, useProjects, useImportStory } from "../api/queries";
@@ -108,6 +108,7 @@ function NewProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
 }
 
 export function Library() {
+  const location = useLocation();
   const { t } = useI18n();
   const { data: projects, isLoading, error, refetch } = useProjects();
   const generateCover = useGenerateProjectCover();
@@ -134,6 +135,11 @@ export function Library() {
 
   return (
     <div className="mx-auto w-full max-w-[1540px] space-y-12 pb-10 md:space-y-14">
+      {location.state?.projectDeleted && (
+        <p role="status" className="bg-narrator-gold p-4 text-sm">
+          {t("Project deleted.")} {location.state.projectDeleted}
+        </p>
+      )}
       {isEmpty ? <FirstIssueInvitation onStart={() => setNewProjectOpen(true)} /> : <section className="relative grid overflow-hidden border-[3px] border-ink-black bg-ink-black text-bristol shadow-paper lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="relative z-10 px-6 py-9 sm:px-9 sm:py-11 lg:px-12">
           <div className="inline-flex bg-hero-red px-3 py-1.5 font-meta text-[0.58rem] font-bold tracking-[0.14em] text-bristol uppercase">
